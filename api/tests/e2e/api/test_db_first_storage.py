@@ -112,6 +112,55 @@ async def read_test_workflow(x: int) -> int:
             headers=platform_admin.headers,
         )
 
+    @pytest.mark.asyncio
+    async def test_editor_rejects_unsupported_decorator_without_replacing_source_or_cache(
+        self, e2e_client, platform_admin,
+    ):
+        """Invalid source is refused before storage and the Python module cache change."""
+        from src.core.module_cache import get_module
+
+        path = "decorator_rejection_preserves_source.py"
+        accepted = (
+            "from bifrost import workflow\n"
+            "@workflow(name='accepted_decorator_source')\n"
+            "def accepted_decorator_source(): pass\n"
+        )
+        rejected = (
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def accepted_decorator_source(): pass\n"
+        )
+        try:
+            initial = e2e_client.put(
+                "/api/files/editor/content",
+                headers=platform_admin.headers,
+                json={"path": path, "content": accepted, "encoding": "utf-8"},
+            )
+            assert initial.status_code in (200, 201), initial.text
+            cached_before = await get_module(path)
+            assert cached_before is not None
+
+            response = e2e_client.put(
+                "/api/files/editor/content",
+                headers=platform_admin.headers,
+                json={"path": path, "content": rejected, "encoding": "utf-8"},
+            )
+
+            assert response.status_code == 400
+            assert "timeout_seconds" in response.text
+            stored = e2e_client.get(
+                f"/api/files/editor/content?path={path}", headers=platform_admin.headers,
+            )
+            assert stored.status_code == 200
+            assert stored.json()["content"] == accepted
+            cached_after = await get_module(path)
+            assert cached_after is not None
+            assert cached_after["content"] == cached_before["content"] == accepted
+        finally:
+            e2e_client.delete(
+                f"/api/files/editor?path={path}", headers=platform_admin.headers,
+            )
+
     def test_workflow_update_preserves_identity(self, e2e_client, platform_admin):
         """Updating workflow code preserves the workflow ID (update, not recreate)."""
         original_content = '''"""Hash Test Workflow"""

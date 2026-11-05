@@ -543,7 +543,10 @@ async def replace_role_assignments(
     user = target.user
     if is_system_account(user.id):
         raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
-    if user.id == caller.principal.user_id:
+    is_self = user.id == caller.principal.user_id
+    # Temporary bridge for local SDK development; the intended dev path keeps
+    # secrets in the engine.
+    if is_self and not caller.is_platform_admin:
         if PLATFORM_ADMIN_ROLE_ID not in {item.role_id for item in request.additional}:
             from shared.account_guards import (
                 AccountGuardError,
@@ -733,6 +736,13 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     """The signed-in user's own authorization, read from the database."""
     ctx = await build_authorization_context(session, user_id)
     base_name = await session.scalar(select(Role.name).where(Role.id == ctx.base_role_id))
+    home_organization_name = (
+        await session.scalar(
+            select(Organization.name).where(Organization.id == ctx.home_organization_id)
+        )
+        if ctx.home_organization_id
+        else None
+    )
     grants = [
         AuthorizationGrant(
             permission=permission,
@@ -755,6 +765,7 @@ async def authorization_summary(session: AsyncSession, user_id: UUID) -> Authori
     return AuthorizationSummary(
         is_platform_admin=ctx.is_platform_admin,
         home_organization_id=ctx.home_organization_id,
+        home_organization_name=home_organization_name,
         provider_organization_id=PROVIDER_ORG_ID,
         base_role=AuthorizationBaseRole(id=ctx.base_role_id, name=base_name or ""),
         grants=grants,

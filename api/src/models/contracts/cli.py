@@ -65,6 +65,23 @@ class CLIFileDeleteRequest(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class FileMoveResult(BaseModel):
+    """One item's outcome in a ``files.move`` platform-job result.
+
+    ``path`` is set only when the file landed somewhere other than
+    ``destination`` (rename mode). ``error`` is ``code`` or ``code: message``
+    (≤ 500 characters), and the literal ``"forbidden"`` for a policy denial.
+    """
+
+    source: str
+    destination: str
+    path: str | None = None
+    renamed: bool = False
+    adopted: bool = False
+    status_code: int
+    error: str | None = None
+
+
 # ==================== CLI CONFIG OPERATIONS ====================
 
 
@@ -209,11 +226,8 @@ class SDKIntegrationsListMappingsRequest(BaseModel):
     scope: str | None = Field(
         default=None,
         description=(
-            "Optional org scope. Omit / pass null to list only the caller's "
-            "own org mapping, unless the resolved org is a provider org, "
-            "which lists all mappings. Platform admins and provider-org "
-            "members may pass 'global' (no filter, all orgs) or a specific "
-            "org UUID."
+            "Accepted from older SDK callers and ignored: the list always "
+            "returns every mapping the caller may read with Integrations Read."
         ),
     )
 

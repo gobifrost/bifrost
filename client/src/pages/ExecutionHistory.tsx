@@ -67,6 +67,7 @@ import { useScopeStore } from "@/stores/scopeStore";
 import { useIsDesktop } from "@/hooks/useMediaQuery";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useAuthorization } from "@/services/authorization";
 import { GLOBAL_TARGET } from "@/lib/authorization";
 import { formatDate } from "@/lib/utils";
@@ -85,7 +86,6 @@ import {
 	readExecutionHistoryRestore,
 } from "./ExecutionHistory/navigation";
 
-type Organization = components["schemas"]["OrganizationPublic"];
 type ExecutionStatus =
 	components["schemas"]["ExecutionStatus"] | "Cancelling" | "Cancelled";
 
@@ -290,12 +290,7 @@ export function ExecutionHistory() {
 		enabled: canDiscoverOrganizations,
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	// Build filters including date range.
 	// The Failed tab means the whole failure group (Failed, Timeout, Stuck,

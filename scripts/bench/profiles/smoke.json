@@ -1,0 +1,53 @@
+{
+  "description": "Quick end-to-end check of the harness: every class, two runs each, light seed. Not a baseline.",
+  "classes": [
+    "wf-noop",
+    "wf-sdk",
+    "wf-wait",
+    "wf-cpu",
+    "wf-large",
+    "agent-chat",
+    "agent-tools",
+    "agent-codemode",
+    "chat-first",
+    "chat-followup"
+  ],
+  "sequential": 2,
+  "burst": 2,
+  "burst_rounds": 1,
+  "timeout_s": 180,
+  "settle_s": 5,
+  "idle_s": 40,
+  "idle_db_s": 30,
+  "seed": {
+    "workflow": 20,
+    "tool": 10,
+    "data_provider": 5
+  },
+  "table_docs": 200,
+  "worker_replicas": 0,
+  "worker_policy": {
+    "warm_workers": 1,
+    "max_workers": 2,
+    "worker_memory_mib": 2048
+  },
+  "env": {
+    "MALLOC_ARENA_MAX": "2"
+  },
+  "api_env": {
+    "BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB": "2048"
+  },
+  "api_resources": {
+    "limits": {
+      "cpu": "1",
+      "memory": "1Gi"
+    },
+    "requests": {
+      "cpu": "100m",
+      "memory": "512Mi"
+    }
+  },
+  "thp_emulation": false,
+  "onepassword_item": "op://Development/DeepSeek/API Key",
+  "onepassword_profile": "personal"
+}

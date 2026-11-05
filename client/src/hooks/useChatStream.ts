@@ -99,7 +99,10 @@ export function useChatStream({
 	const queryClient = useQueryClient();
 	const restoreGeneration = useRef(0);
 	const [restoreAttempt, setRestoreAttempt] = useState(0);
-	const [restoreState, setRestoreState] = useState<{ id: string; phase: "loading" | "error" | "ready" } | null>(null);
+	const [restoreState, setRestoreState] = useState<{
+		id: string;
+		phase: "loading" | "error" | "ready";
+	} | null>(null);
 	const [isConnected, setIsConnected] = useState(() =>
 		webSocketService.isConnected(),
 	);
@@ -182,6 +185,8 @@ export function useChatStream({
 
 	useEffect(
 		() => () => {
+			restoreGeneration.current++;
+			currentConversationIdRef.current = undefined;
 			artifactJobUnsubscribersRef.current.forEach((unsubscribe) =>
 				unsubscribe(),
 			);
@@ -364,10 +369,12 @@ export function useChatStream({
 			setRestoreState({ id: conversationId, phase: "loading" });
 			try {
 				await webSocketService.connectToChat(conversationId);
-				if (cancelled || generation !== restoreGeneration.current) return;
+				if (cancelled || generation !== restoreGeneration.current)
+					return;
 				setIsConnected(true);
 			} catch (error) {
-				if (cancelled || generation !== restoreGeneration.current) return;
+				if (cancelled || generation !== restoreGeneration.current)
+					return;
 				console.error("[useChatStream] Failed to connect:", error);
 				setIsConnected(false);
 				setRestoreState({ id: conversationId, phase: "error" });
@@ -420,13 +427,29 @@ export function useChatStream({
 			setRestoreState({ id: targetConversationId, phase: "loading" });
 			void getChatRunState(targetConversationId)
 				.then((state) => {
-					if (generation !== restoreGeneration.current || currentConversationIdRef.current !== targetConversationId) return;
+					if (
+						generation !== restoreGeneration.current ||
+						currentConversationIdRef.current !==
+							targetConversationId
+					)
+						return;
 					hydrateRunState(targetConversationId, state);
-					setRestoreState({ id: targetConversationId, phase: "ready" });
+					setRestoreState({
+						id: targetConversationId,
+						phase: "ready",
+					});
 				})
 				.catch(() => {
-					if (generation !== restoreGeneration.current || currentConversationIdRef.current !== targetConversationId) return;
-					setRestoreState({ id: targetConversationId, phase: "error" });
+					if (
+						generation !== restoreGeneration.current ||
+						currentConversationIdRef.current !==
+							targetConversationId
+					)
+						return;
+					setRestoreState({
+						id: targetConversationId,
+						phase: "error",
+					});
 				});
 		});
 	}, [hydrateRunState]);
@@ -459,8 +482,9 @@ export function useChatStream({
 			});
 			subscribeToConversation(targetConversationId);
 
+			let acceptedRun: Awaited<ReturnType<typeof createChatRun>>;
 			try {
-				await createChatRun({
+				acceptedRun = await createChatRun({
 					conversation_id: targetConversationId,
 					content: message,
 					client_run_id: runId,
@@ -470,13 +494,6 @@ export function useChatStream({
 					),
 					model_profile_id: modelProfileId,
 				});
-				// The command is durable before this resolves. Subscribe next, then
-				// replay state to close the command/subscription race without making
-				// the socket responsible for the run.
-				await webSocketService.connectToChat(targetConversationId);
-				const state = await getChatRunState(targetConversationId);
-				hydrateRunState(targetConversationId, state);
-				invalidateConversation(targetConversationId);
 			} catch (error) {
 				console.error(
 					"[useChatStream] Failed to create chat run:",
@@ -497,10 +514,59 @@ export function useChatStream({
 				setStreamError(errorMessage);
 				throw error;
 			}
+
+			// The POST accepted a durable run. Observation failure must not mark it
+			// failed or reject the submission, which would invite sending it again.
+			invalidateConversation(targetConversationId);
+			hydrateConversationProjection(targetConversationId, {
+				conversation_id: targetConversationId,
+				runs: {
+					[acceptedRun.run_id]: {
+						run_id: acceptedRun.run_id,
+						conversation_id: targetConversationId,
+						status: acceptedRun.status,
+						// The acknowledgment has no event sequence; preserve newer replay state.
+						last_sequence: 0,
+					},
+				},
+			});
+			if (currentConversationIdRef.current !== targetConversationId)
+				return;
+			const generation = ++restoreGeneration.current;
+			setRestoreState({ id: targetConversationId, phase: "loading" });
+			try {
+				await webSocketService.connectToChat(targetConversationId);
+				if (
+					generation !== restoreGeneration.current ||
+					currentConversationIdRef.current !== targetConversationId
+				)
+					return;
+				setIsConnected(true);
+				const state = await getChatRunState(targetConversationId);
+				if (
+					generation !== restoreGeneration.current ||
+					currentConversationIdRef.current !== targetConversationId
+				)
+					return;
+				hydrateRunState(targetConversationId, state);
+				setRestoreState({ id: targetConversationId, phase: "ready" });
+			} catch (error) {
+				if (
+					generation !== restoreGeneration.current ||
+					currentConversationIdRef.current !== targetConversationId
+				)
+					return;
+				console.error(
+					"[useChatStream] Failed to observe accepted chat run:",
+					error,
+				);
+				setRestoreState({ id: targetConversationId, phase: "error" });
+			}
 		},
 		[
 			applyChatRunEvent,
 			conversationId,
+			hydrateConversationProjection,
 			hydrateRunState,
 			invalidateConversation,
 			setStreamError,
@@ -531,8 +597,12 @@ export function useChatStream({
 
 	return {
 		sendMessage,
-		isRestoring: restoreState?.id === conversationId && restoreState?.phase === "loading",
-		restoreError: restoreState?.id === conversationId && restoreState?.phase === "error",
+		isRestoring:
+			restoreState?.id === conversationId &&
+			restoreState?.phase === "loading",
+		restoreError:
+			restoreState?.id === conversationId &&
+			restoreState?.phase === "error",
 		retryRestore: () => setRestoreAttempt((attempt) => attempt + 1),
 		isConnected,
 		isStreaming,

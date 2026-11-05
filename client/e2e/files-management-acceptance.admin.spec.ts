@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const SHARE = `e2e-files-management-${UNIQUE}`.replace(/[^a-z0-9-]/g, "-");

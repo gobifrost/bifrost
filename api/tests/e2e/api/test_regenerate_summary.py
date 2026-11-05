@@ -8,6 +8,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime, timezone
 from typing import AsyncGenerator
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import pytest
@@ -73,6 +74,45 @@ async def failed_summary_run(
 
 
 class TestRegenerateSummary:
+    async def test_regeneration_locks_run_before_staging_summary(
+        self, monkeypatch, platform_admin
+    ):
+        """Recovery and regeneration serialize on the run before either stages work."""
+        from src.routers import agent_runs as router_module
+
+        run = AgentRun(id=uuid4(), trigger_type="api", status="completed")
+        statements = []
+
+        class Result:
+            def scalar_one_or_none(self):
+                return run
+
+        class Session:
+            async def execute(self, statement):
+                statements.append(statement)
+                return Result()
+
+            async def commit(self):
+                return None
+
+        async def stage_after_lock(db, staged_run):
+            assert db is session
+            assert staged_run is run
+            lock = statements[0]._for_update_arg
+            assert lock is not None
+            assert AgentRun.__table__ in lock.of
+            return None
+
+        session = Session()
+        monkeypatch.setattr(router_module, "load_caller", AsyncMock(return_value=object()))
+        monkeypatch.setattr(router_module, "require_operation", lambda *_: None)
+        monkeypatch.setattr(router_module, "hand_off_summary", AsyncMock())
+        monkeypatch.setattr(router_module, "request_summary", stage_after_lock)
+
+        response = await router_module.regenerate_summary(run.id, session, platform_admin)
+
+        assert response == {"status": "enqueued", "run_id": str(run.id)}
+
     async def test_admin_can_regenerate(
         self,
         e2e_client,

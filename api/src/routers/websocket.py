@@ -17,6 +17,11 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from shared import access_checks
+from shared.browser_impersonation import (
+    BrowserImpersonationError,
+    is_browser_impersonation,
+    validate_browser_impersonation,
+)
 from shared.claims.preresolve import preresolve_for_policies
 from shared.policies.probe import is_subscribe_authorized
 from shared.policy_rules import PolicyRuleDomainMismatch, PolicyRuleNotFound, resolve_policy_refs
@@ -309,16 +314,17 @@ async def _current_table_policy_user(user: UserPrincipal, table_id: str) -> User
         table = await db.get(TableOrm, table_uuid)
         if caller is None or table is None or not user_reach(caller).covers(table.organization_id):
             return None
-        role_rows = (
-            await db.execute(
-                select(Role.id, Role.name)
-                .join(UserRole, UserRole.role_id == Role.id)
-                .where(UserRole.user_id == caller.ctx.user_id)
-            )
-        ).all()
         policy_user = _fresh_table_policy_user(caller.principal)
-        policy_user.role_ids = [row.id for row in role_rows]
-        policy_user.role_names = [row.name for row in role_rows]
+        if user.authorization_context is None:
+            role_rows = (
+                await db.execute(
+                    select(Role.id, Role.name)
+                    .join(UserRole, UserRole.role_id == Role.id)
+                    .where(UserRole.user_id == caller.ctx.user_id)
+                )
+            ).all()
+            policy_user.role_ids = [row.id for row in role_rows]
+            policy_user.role_names = [row.name for row in role_rows]
         policy_user.roles = list(policy_user.role_names)
         return policy_user
 
@@ -666,7 +672,17 @@ def _websocket_actor(websocket: WebSocket, user: UserPrincipal) -> ActorContext:
         name=user.name,
         ip_address=ip_address,
         user_agent=websocket.headers.get("user-agent"),
+        impersonated_by_user_id=user.impersonated_by_user_id,
+        impersonation_session_id=user.impersonation_session_id,
     )
+
+
+def _collect_websocket_checks(user: UserPrincipal):
+    return access_checks.start_collecting({
+        "sub": str(user.user_id),
+        "impersonated_by_user_id": user.impersonated_by_user_id,
+        "impersonation_session_id": user.impersonation_session_id,
+    }, surface="web", principal=user)
 
 
 async def _emit_table_subscribe_denial(
@@ -778,9 +794,17 @@ async def _handle_file_message(
 
 
 async def _current_ws_caller(db, user: UserPrincipal):
-    """Reload the original caller and current role state before a live read."""
+    """Use human facts after the socket's epoch check; reload other callers.
+
+    Connection authentication and the input/delivery guard validate the human
+    epoch before these resource checks. Rebuilding its roles here would add
+    a second authority source after that shared boundary.
+    """
     try:
-        return await refresh_caller(db, await load_caller(db, user))
+        caller = await load_caller(db, user)
+        if user.authorization_context is not None:
+            return caller
+        return await refresh_caller(db, caller)
     except CallerUnavailable:
         return None
 
@@ -870,14 +894,13 @@ async def can_access_app(user: UserPrincipal, app_id: str, *, write: bool = Fals
             session=db,
             org_id=caller.ctx.home_organization_id if caller.ctx is not None else None,
             caller=caller,
+            access_mode="write" if write else "read",
         )
         try:
             app = await repo.can_access(id=app_uuid)
         except AccessDeniedError:
             return False
-        return app is not None and (
-            not write or allows_permission(caller, "apps.readwrite", app.organization_id)
-        )
+        return app is not None
 
 
 async def can_access_conversation_current(user: UserPrincipal, conversation_id: str) -> bool:
@@ -1003,6 +1026,26 @@ async def _delivery_allowed(user: UserPrincipal, channel: str, payload: dict[str
     return True
 
 
+async def _require_live_impersonation(websocket: WebSocket, user: UserPrincipal) -> None:
+    """Recheck human expiry/epoch or support-session liveness before any data."""
+    if user.authorization_context is not None:
+        # Reauthenticate the original handshake credential. An epoch change,
+        # logout or expiry closes this socket before its next sensitive event;
+        # the browser refreshes and reconnects with its current cookies.
+        if await get_current_user_ws(websocket) is None:
+            await websocket.close(code=4001, reason="Authentication refresh required")
+            raise WebSocketDisconnect(code=4001)
+        return
+    if not is_browser_impersonation(user):
+        return
+    try:
+        async with get_db_context() as db:
+            await validate_browser_impersonation(db, user)
+    except BrowserImpersonationError:
+        await websocket.close(code=4001, reason="Impersonation session ended")
+        raise WebSocketDisconnect(code=4001)
+
+
 def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
     def remove_connection(channel: str) -> None:
         if channel in manager.connections:
@@ -1011,6 +1054,7 @@ def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
                 manager.connections.pop(channel, None)
 
     async def dispatch(channel: str, payload: dict[str, Any]) -> None:
+        await _require_live_impersonation(websocket, user)
         # Table and file handlers own their visibility filtering and delivery.
         # A filtered message is not an authorization revocation, so it must not
         # remove the socket from the channel before a later visible message.
@@ -1099,7 +1143,7 @@ async def websocket_connect(
         await websocket.close(code=4003, reason="Form sessions cannot use WebSockets")
         return
 
-    checks = access_checks.collect_person(user.user_id)
+    checks = _collect_websocket_checks(user)
 
     # Filter channels - users can only subscribe to their own user channel
     # and execution channels (we'll validate execution access separately)
@@ -1229,6 +1273,7 @@ async def websocket_connect(
         # Keep connection alive and handle incoming messages
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
 
             # Handle subscription changes
             if data.get("type") == "subscribe":
@@ -1261,6 +1306,7 @@ async def websocket_connect(
                             "type": "subscribed",
                             "channel": channel
                         })
+                        manager.request_queue_position_refresh()
                     elif channel.startswith("service:"):
                         # Service log streaming - platform admins only
                         service_id = channel.split(":", 1)[1]
@@ -1595,7 +1641,7 @@ async def websocket_execution(
         return
 
     # Validate user has access to this execution
-    checks = access_checks.collect_person(user.user_id)
+    checks = _collect_websocket_checks(user)
     try:
         allowed = await can_access_execution(user, execution_id)
         _judge_access_checks("/ws/execution/{execution_id}")
@@ -1619,6 +1665,7 @@ async def websocket_execution(
 
         while True:
             data = await websocket.receive_json()
+            await _require_live_impersonation(websocket, user)
             if data.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
 

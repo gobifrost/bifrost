@@ -17,6 +17,27 @@ from src.models.orm.workflows import Workflow
 pytestmark = pytest.mark.e2e
 
 
+@pytest.mark.parametrize("status_filter", ["running", "Success,unknown"])
+def test_executions_reject_invalid_status_values(
+    e2e_client, platform_admin, status_filter
+):
+    response = e2e_client.get(
+        "/api/executions",
+        params={"status": status_filter, "limit": 1},
+        headers=platform_admin.headers,
+    )
+
+    assert response.status_code == 422, response.text
+    assert "status" in response.json()["detail"]
+
+    valid_response = e2e_client.get(
+        "/api/executions",
+        params={"status": "Success,Running", "limit": 1},
+        headers=platform_admin.headers,
+    )
+    assert valid_response.status_code == 200, valid_response.text
+
+
 @pytest_asyncio.fixture
 async def seeded_execution_history(
     db_session: AsyncSession,

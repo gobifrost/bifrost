@@ -65,13 +65,19 @@ def test_user_is_platform_admin_uses_role_id_instead_of_a_flag():
     assert evaluate(expr, row={}, user=FakeUser(is_platform_admin=True)) is False
 
 
-def test_policy_authority_is_separate_from_the_user_admin_fact():
+def test_full_access_satisfies_the_legacy_admin_term_and_the_authority():
+    """Policies written with ``user.is_platform_admin`` admitted every workflow
+    before Zero Trust Automation; a Full Access run keeps that, while a direct
+    caller or a run without the authority does not."""
     user_fact = _e({"user": "is_platform_admin"})
     authority = _e({"authority": "platform_admin"})
     full_execution = FakeUser(policy_authorities=frozenset({"platform_admin"}))
+    direct_person = FakeUser()
 
-    assert evaluate(user_fact, row={}, user=full_execution) is False
+    assert evaluate(user_fact, row={}, user=full_execution) is True
     assert evaluate(authority, row={}, user=full_execution) is True
+    assert evaluate(user_fact, row={}, user=direct_person) is False
+    assert evaluate(authority, row={}, user=direct_person) is False
 
 
 # --- Logic ---

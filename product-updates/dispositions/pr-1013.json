@@ -1,0 +1,13 @@
+{
+  "key": "pr:1013",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Activate the existing approved impersonation note through verified landed source metadata; no separate customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1013",
+      "https://github.com/gobifrost/bifrost/pull/1012"
+    ]
+  }
+}

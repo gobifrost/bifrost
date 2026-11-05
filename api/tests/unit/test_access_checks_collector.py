@@ -86,7 +86,34 @@ def test_verified_engine_requests_collect_their_durable_lineage() -> None:
         assert collector.run_user_id == run_user
         assert collector.workflow_id == workflow
         assert collector.execution_id == execution
+        assert collector.cache == {
+            access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY: (
+                principal.runtime_authority.run_user,
+                principal.runtime_authority.powers,
+            )
+        }
         assert collector.notes == [access_checks.Note("scope_switch", target, {})]
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_runtime_access_checks_retain_verified_impersonation_provenance() -> None:
+    from dataclasses import replace
+
+    operator, session = uuid4(), uuid4()
+    principal = _runtime_principal()
+    assert principal.runtime_authority is not None
+    principal.runtime_authority = replace(
+        principal.runtime_authority,
+        impersonated_by_user_id=operator,
+        impersonation_session_id=session,
+    )
+    token = access_checks.start_collecting(_runtime_payload(principal), principal=principal)
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id == operator
+        assert collector.impersonation_session_id == session
     finally:
         access_checks.stop_collecting(token)
     assert access_checks.current() is None
@@ -143,6 +170,12 @@ def test_anonymous_system_and_unverified_runtime_payloads_are_not_collected() ->
     assert access_checks.start_collecting(
         {"sub": str(uuid4()), "engine_execution_id": str(uuid4())}
     ) is None
+    assert access_checks.start_collecting(
+        {"credential_kind": "workflow_execution", "sub": str(uuid4())},
+        principal=UserPrincipal(
+            user_id=uuid4(), email="forged@example.test", organization_id=None
+        ),
+    ) is None
     assert access_checks.start_collecting({"sub": SYSTEM_USER_ID, "embed": True}) is None
 
 
@@ -192,6 +225,54 @@ def test_renew_hands_back_the_notes_and_collects_afresh() -> None:
     assert access_checks.current() is None
 
 
+def test_renew_discards_verified_runtime_policy_recording_facts() -> None:
+    principal = _runtime_principal()
+    token = access_checks.start_collecting(_runtime_payload(principal), principal=principal)
+    try:
+        first = access_checks.renew()
+        fresh = access_checks.current()
+        assert first is not None
+        assert access_checks.POLICY_RECORD_SUBJECT_CACHE_KEY in first.cache
+        assert fresh is not None and fresh.cache == {}
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_a_persons_collector_keeps_impersonation_provenance() -> None:
+    person, operator, session = uuid4(), uuid4(), uuid4()
+    token = access_checks.start_collecting(
+        {
+            "sub": str(person),
+            "impersonated_by_user_id": str(operator),
+            "impersonation_session_id": str(session),
+        }
+    )
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id == operator
+        assert collector.impersonation_session_id == session
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_malformed_impersonation_provenance_does_not_skip_access_checks() -> None:
+    token = access_checks.start_collecting(
+        {
+            "sub": str(uuid4()),
+            "impersonated_by_user_id": "not-a-uuid",
+            "impersonation_session_id": "not-a-uuid",
+        }
+    )
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.impersonated_by_user_id is None
+        assert collector.impersonation_session_id is None
+    finally:
+        access_checks.stop_collecting(token)
+
+
 def test_a_global_object_is_launched_where_the_caller_is() -> None:
     contoso, fabrikam = uuid4(), uuid4()
     token = access_checks.collect_person(uuid4())
@@ -217,6 +298,28 @@ def test_a_note_after_the_collector_closed_is_not_kept() -> None:
         collector.closed = True
         access_checks.note("secret", None, kind="config", name="k")
         assert collector.notes == []
+    finally:
+        access_checks.stop_collecting(token)
+
+
+def test_suspending_collection_drops_notes_and_restores_after_an_error() -> None:
+    token = access_checks.collect_person(uuid4())
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+
+        try:
+            with access_checks.suspend_collecting():
+                assert access_checks.current() is None
+                access_checks.note_power("users.impersonate", None, subject="user:operator")
+                raise RuntimeError("revalidation denied")
+        except RuntimeError as exc:
+            assert str(exc) == "revalidation denied"
+
+        assert access_checks.current() is collector
+        assert collector.notes == []
+        access_checks.note("scope_switch", None, name="restored")
+        assert collector.notes == [access_checks.Note("scope_switch", None, {"name": "restored"})]
     finally:
         access_checks.stop_collecting(token)
 

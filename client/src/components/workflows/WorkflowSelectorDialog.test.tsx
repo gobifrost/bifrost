@@ -24,6 +24,10 @@ vi.mock("@/hooks/useOrganizations", () => ({
 		data: [{ id: "org-1", name: "Operations" }],
 	}),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 function makeWorkflow(overrides: Record<string, unknown> = {}) {
 	return {
@@ -40,6 +44,7 @@ function makeWorkflow(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
 	mocks.refetch.mockReset();
 	mocks.fetchWorkflowRolesBatch.mockReset();
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 });
 
 describe("WorkflowSelectorDialog", () => {

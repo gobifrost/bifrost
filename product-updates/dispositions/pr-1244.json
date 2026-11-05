@@ -1,0 +1,14 @@
+{
+  "key": "pr:1244",
+  "classification": "highlight",
+  "entry_ids": [
+    "7c3f355d-80d0-4876-a19b-090fef538cf9"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1244",
+      "General Writing and Humanizer copy review: concise description of the approved Run in Organization controls and existing-permissions boundary; workflow/form route and desktop/mobile light/dark screenshots verified in the passing production-browser journey."
+    ]
+  }
+}

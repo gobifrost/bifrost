@@ -1,0 +1,14 @@
+{
+  "key": "pr:1209",
+  "classification": "highlight",
+  "entry_ids": [
+    "4b51ab48-ffe8-4397-80fa-97e30abcec01"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1209",
+      "Reviewed correction to workflow start latency under load; focused tests and the preserved-UI benchmark verify the customer-facing behavior."
+    ]
+  }
+}

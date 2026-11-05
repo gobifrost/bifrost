@@ -216,15 +216,12 @@ class TestRedisClientSingleton:
 
 
 
-@pytest.mark.asyncio
-async def test_set_pending_execution_stores_lineage():
-    from src.core.redis_client import RedisClient
+def test_pending_execution_record_carries_lineage():
+    from src.core.redis_client import pending_execution_record
 
-    client = RedisClient()
-    client._redis = AsyncMock()
     lineage = {"run_user_id": "u", "started_by_user_id": "u", "root_execution_id": "e1"}
 
-    await client.set_pending_execution(
+    record = pending_execution_record(
         execution_id="e1",
         workflow_id="wf",
         parameters={},
@@ -235,5 +232,4 @@ async def test_set_pending_execution_stores_lineage():
         lineage=lineage,
     )
 
-    _, _, payload = client._redis.setex.await_args.args
-    assert json.loads(payload)["lineage"] == lineage
+    assert record.get("lineage") == lineage

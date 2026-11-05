@@ -96,7 +96,7 @@ class Agent(Base):
     organization: Mapped["Organization | None"] = relationship(back_populates="agents")
     llm_profile: Mapped["AIModelProfile | None"] = relationship(
         back_populates="agents",
-        lazy="selectin",
+        lazy="raise",
     )
     owner: Mapped["User | None"] = relationship(foreign_keys=[owner_user_id])
     conversations: Mapped[list["Conversation"]] = relationship(

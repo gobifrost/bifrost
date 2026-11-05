@@ -14,6 +14,7 @@ from uuid import UUID
 
 from sqlalchemy import delete, func, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from src.core.database import get_db_context
 from src.models.contracts.audit_retention import AuditRetentionInfo, AuditRetentionSettings
@@ -38,20 +39,38 @@ class DeleteMismatch(Exception):
 
 
 def snapshot_query():
-    """Audit events with the actor and organization names an archive line snapshots."""
+    """Audit events with actor, operator, and organization names to snapshot."""
+    impersonator = aliased(User)
     return (
-        select(AuditLog, User.email, User.name, Organization.name)
+        select(
+            AuditLog,
+            User.email,
+            User.name,
+            Organization.name,
+            impersonator.email,
+            impersonator.name,
+        )
         .outerjoin(User, User.id == AuditLog.user_id)
+        .outerjoin(impersonator, impersonator.id == AuditLog.impersonated_by_user_id)
         .outerjoin(Organization, Organization.id == AuditLog.organization_id)
     )
 
 
-def snapshot_row(log: AuditLog, email: str | None, name: str | None, org_name: str | None) -> ArchiveRow:
+def snapshot_row(
+    log: AuditLog,
+    email: str | None,
+    name: str | None,
+    org_name: str | None,
+    impersonated_by_email: str | None,
+    impersonated_by_name: str | None,
+) -> ArchiveRow:
     return ArchiveRow(
         id=log.id,
         created_at=log.created_at,
         organization_id=log.organization_id,
         user_id=log.user_id,
+        impersonated_by_user_id=log.impersonated_by_user_id,
+        impersonation_session_id=log.impersonation_session_id,
         action=log.action,
         resource_type=log.resource_type,
         resource_id=log.resource_id,
@@ -65,6 +84,8 @@ def snapshot_row(log: AuditLog, email: str | None, name: str | None, org_name: s
         details=log.details,
         actor_email=email,
         actor_name=name,
+        impersonated_by_email=impersonated_by_email,
+        impersonated_by_name=impersonated_by_name,
         organization_name=org_name,
     )
 
@@ -85,8 +106,8 @@ async def select_batch(
     )
     rows: list[ArchiveRow] = []
     total = 0
-    for log, email, name, org_name in result.all():
-        row = snapshot_row(log, email, name, org_name)
+    for record in result.all():
+        row = snapshot_row(*record)
         size = line_size(row)
         if rows and total + size > max_bytes:
             break

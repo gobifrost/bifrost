@@ -10,7 +10,9 @@ mapping in one pure function means HTTP and worker-local (Unix socket)
 requests audit identically.
 
 Human and embed claims supply attribution only. Runtime requests use
-:func:`actor_from_runtime_principal` after durable credential verification.
+:func:`actor_from_runtime_principal`: on a legacy runtime token, after its
+database verification; on a ``ver: 1`` token, from its signed claims, which
+the auth dependency validates before any handler can emit an event.
 """
 
 from __future__ import annotations
@@ -95,8 +97,23 @@ def actor_from_token_payload(
     if payload is None:
         return None
 
+    if "ver" in payload and "credential_kind" not in payload:
+        from src.services.authorization.tokens import parse_human_claims
+
+        claims = parse_human_claims(payload)
+        if claims is None:
+            return None
+        return ActorContext(
+            user_id=claims.usr.id, organization_id=claims.usr.org,
+            email=claims.usr.email, name=claims.usr.name,
+            ip_address=ip_address, user_agent=user_agent, source="http",
+            surface=resolve_self_reported_surface(surface_header),
+        )
+
     email = payload.get("email")
     name = payload.get("name")
+    impersonated_by_user_id = _uuid_or_none(payload.get("impersonated_by_user_id"))
+    impersonation_session_id = _uuid_or_none(payload.get("impersonation_session_id"))
 
     if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
         return None
@@ -112,6 +129,8 @@ def actor_from_token_payload(
             source="http",
             execution_id=None,
             surface="embed",
+            impersonated_by_user_id=impersonated_by_user_id,
+            impersonation_session_id=impersonation_session_id,
         )
 
     return ActorContext(
@@ -124,13 +143,17 @@ def actor_from_token_payload(
         source="http",
         execution_id=None,
         surface=resolve_self_reported_surface(surface_header),
+        impersonated_by_user_id=impersonated_by_user_id,
+        impersonation_session_id=impersonation_session_id,
     )
 
 
 def actor_from_runtime_principal(
     principal: UserPrincipal, *, ip_address: str | None, user_agent: str | None,
 ) -> ActorContext:
-    """Runtime attribution comes from verified durable identity, never extra claims."""
+    """Runtime attribution from the run's identity: database-verified for a
+    legacy token, signed claims (``tokens.attribution_principal``) otherwise,
+    never unsigned or extra claims."""
     authority = principal.runtime_authority
     if authority is None:
         raise ValueError("Runtime authority required")
@@ -140,4 +163,6 @@ def actor_from_runtime_principal(
         email=principal.email, name=principal.name, ip_address=ip_address,
         user_agent=user_agent, source=surface, surface=surface,
         execution_id=authority.credential_id if authority.kind != "agent_run" else None,
+        impersonated_by_user_id=authority.impersonated_by_user_id,
+        impersonation_session_id=authority.impersonation_session_id,
     )

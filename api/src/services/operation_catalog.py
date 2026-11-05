@@ -73,6 +73,7 @@ _ROLE_RESOURCE_ASSIGNMENT_SURFACE_EXCLUSIONS = {
     "manifest": "Role resource assignments are deployment-local authorization state.",
     "sdk": _ROLE_SDK_EXCLUSION,
 }
+_FILE_MOVE_MCP_EXCLUSION = "File-content operations have no MCP tools; moves are an SDK and CLI surface."
 _PLATFORM_JOB_SDK_EXCLUSION = "Platform-job status is a platform operation surface, not an application SDK binding."
 _CLAIM_SDK_EXCLUSION = (
     "Custom Claim administration is not available to application SDKs."
@@ -946,6 +947,24 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="solutions.app_builds.lookup",
+        summary="Check reusable builds before Solution app compilation",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="POST", path="/api/solutions/{solution_id}/app-builds/lookup",
+            request_model="SolutionAppBuildLookup", response_model="SolutionAppBuildMatches",
+        ),
+        action_scopes=("solutions.deploy",),
+        authorization_resolver="Solution capability and exact resource boundary",
+        exclusions={
+            "cli": "Internal preflight of solution deploy, not a standalone CLI command.",
+            "mcp": _SOLUTION_ARTIFACT_MCP_EXCLUSION,
+            "native_builder": _SOLUTION_ARTIFACT_MCP_EXCLUSION,
+            "manifest": _SOLUTION_MANIFEST_EXCLUSION,
+            "sdk": _SOLUTION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="solutions.deploy",
         summary="Deploy a local Solution archive into an existing install",
         target_kind=OperationTargetKind.RESOURCE,
@@ -1103,6 +1122,28 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         async_policy=OperationAsyncPolicy.EXECUTION_WORKER,
         exclusions={
             "manifest": "Execution does not mutate portable Workflow definitions.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workflows.parameters",
+        summary="Get current parameters for a launchable Workflow",
+        target_kind=OperationTargetKind.RESOURCE,
+        rest=RestOperationBinding(
+            method="GET",
+            path="/api/workflows/{workflow_id}/parameters",
+            response_model="list[WorkflowParameter]",
+        ),
+        native_builder=False,
+        action_scopes=("workflows.execute",),
+        authorization_resolver=(
+            "WorkflowRepository execution access and execution-context policy"
+        ),
+        exclusions={
+            "cli": "The CLI supplies execution parameters directly and does not render the rerun dialog.",
+            "mcp": "Parameter metadata is only used to render the authenticated platform rerun dialog.",
+            "native_builder": "Rerun dialog metadata is not a Builder authoring target.",
+            "manifest": "Parameter metadata is derived from the Workflow signature and does not mutate portable definitions.",
+            "sdk": _WORKFLOW_SDK_EXCLUSION,
         },
     ),
     OperationDefinition(
@@ -3499,6 +3540,56 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         ),
         exclusions={
             "manifest": "Workspace deletes may regenerate manifests through entity indexing; no one manifest entry owns the operation."
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.move",
+        summary="Move one file within a location",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/move",
+            request_model="FileMoveRequest",
+            response_model="PlatformJobAccepted",
+        ),
+        cli=CliOperationBinding(path=("files", "move")),
+        native_builder=True,
+        action_scopes=("repository.readwrite",),
+        authorization_resolver="File policy read and delete on the source and write on the destination, evaluated at enqueue",
+        side_effects=(
+            "enqueue a durable files.move Platform Job",
+            "copy server-side, re-key file metadata, and delete the source object",
+            "publish file activity",
+        ),
+        async_policy=OperationAsyncPolicy.PLATFORM_JOB,
+        exclusions={
+            "mcp": _FILE_MOVE_MCP_EXCLUSION,
+            "manifest": "Moving runtime files does not change portable manifest state.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="workspace.files.move_many",
+        summary="Move up to 500 files within a location",
+        target_kind=OperationTargetKind.WORKSPACE,
+        rest=RestOperationBinding(
+            method="POST",
+            path="/api/files/move-many",
+            request_model="FileMoveBatchRequest",
+            response_model="PlatformJobAccepted",
+        ),
+        native_builder=True,
+        action_scopes=("repository.readwrite",),
+        authorization_resolver="File policy read and delete on each source and write on each destination, evaluated at enqueue",
+        side_effects=(
+            "enqueue a durable files.move Platform Job",
+            "copy server-side, re-key file metadata, and delete source objects",
+            "publish file activity",
+        ),
+        async_policy=OperationAsyncPolicy.PLATFORM_JOB,
+        exclusions={
+            "cli": "A batch is an SDK primitive; the CLI moves one file with `files move`.",
+            "mcp": _FILE_MOVE_MCP_EXCLUSION,
+            "manifest": "Moving runtime files does not change portable manifest state.",
         },
     ),
     OperationDefinition(

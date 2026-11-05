@@ -16,7 +16,8 @@ class SchedulerReplicaStatus(BaseModel):
     id: str
     hostname: str
     pid: int
-    job_slots: int
+    # Executors run platform jobs; API control replicas do not.
+    runs_platform_jobs: bool
     is_leader: bool
     online: bool
     started_at: datetime
@@ -55,12 +56,15 @@ class SchedulerTaskStatus(BaseModel):
 
 class SchedulerCapacityStatus(BaseModel):
     replicas_online: int
-    slots_total: int
-    slots_running: int
+    platform_jobs_running: int
     jobs_queued: int
     jobs_waiting_for_memory: int
     oldest_queued_seconds: float | None = None
     max_memory_utilization_percent: float | None = Field(default=None, ge=0)
+    # Accepted work (workflow runs, agent runs, summaries) no executor has
+    # claimed yet, and how long the oldest has waited.
+    runs_waiting: int = 0
+    oldest_waiting_run_seconds: float | None = None
 
 
 class SystemDiagnosticLogPublic(BaseModel):

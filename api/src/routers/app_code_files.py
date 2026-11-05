@@ -24,6 +24,7 @@ from enum import Enum
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Path, status
+from shared.models import ApplicationBundleManifest
 
 from src.core.auth import Context, CurrentUser
 from src.core.log_safety import log_safe
@@ -552,6 +553,7 @@ async def render_app(
 
 @render_router.get(
     "/bundle-manifest",
+    response_model=ApplicationBundleManifest,
     summary="Get the bundle manifest for an app (esbuild path)",
 )
 async def get_bundle_manifest(
@@ -569,7 +571,9 @@ async def get_bundle_manifest(
 
     If no manifest exists yet, triggers a build and returns that one.
     """
-    app = await get_application_or_404(ctx, app_id)
+    # The manifest bootstraps the running app, just like its dist/assets.
+    # Source reads remain behind get_application_or_404 (apps.read).
+    app = await _get_application_by_id_or_404(ctx, app_id)
     app_storage = AppStorageService()
     storage_mode = "preview" if mode == FileMode.draft else "live"
     app_id_str = str(app.id)
@@ -615,6 +619,7 @@ async def get_bundle_manifest(
             "organization_id": str(app.organization_id) if app.organization_id else None,
             "app_model": "standalone_v2",
             "runtime_contract": runtime_contract,
+            "sdk_binding_api_major": app.sdk_binding_api_major,
         }
 
     import json as _json
@@ -822,7 +827,7 @@ async def get_v2_dist_asset(
     hashed entry/css from the bundle-manifest and loads them from this dist/
     prefix; the app's own bundle pulls any further chunks from here too.
     """
-    from botocore.exceptions import ClientError
+    from src.core.s3_transport import S3Error
     from fastapi import HTTPException
     from fastapi.responses import Response
 
@@ -834,9 +839,8 @@ async def get_v2_dist_asset(
         data = await SolutionAppBuilder().read_dist(
             str(app.id), rel, deployment_id=app.active_deployment_id
         )
-    except ClientError as exc:
-        # read_dist surfaces a missing key as the raw botocore ClientError from
-        # get_object (Code=NoSuchKey). Only THAT is a 404 — anything else is a
+    except S3Error as exc:
+        # A missing object (Code=NoSuchKey) is a 404; anything else is a
         # real storage failure and must surface, not masquerade as not-found.
         if exc.response.get("Error", {}).get("Code") == "NoSuchKey":
             raise HTTPException(

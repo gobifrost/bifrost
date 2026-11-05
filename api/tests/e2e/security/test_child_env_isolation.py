@@ -2,12 +2,12 @@
 E2E security guardrail: child process environment isolation (Phase 2).
 
 Registers real workflows and executes them through the real path
-(API -> queue -> worker container -> template fork -> child), then asserts
+(API -> dispatch -> executor container -> template fork -> child), then asserts
 on the env the workflow saw from inside its own process. This probes the
 exact process that runs customer code — not the test-runner.
 
 RED on main (children inherit the full worker env, including
-BIFROST_SECRET_KEY and the DB/RabbitMQ/S3 credentials). GREEN with the
+BIFROST_SECRET_KEY and the DB/S3 credentials). GREEN with the
 Phase 2 template env scrub + engine-token hand-down + API module-fetch
 endpoint on this branch. No env gate: the scrub is unconditional in the
 worker, so these assertions must always hold.
@@ -32,7 +32,6 @@ async def e2e_security_env_probe() -> dict:
         "secret_key_present": "BIFROST_SECRET_KEY" in env,
         "database_url_present": "BIFROST_DATABASE_URL" in env,
         "database_url_sync_present": "BIFROST_DATABASE_URL_SYNC" in env,
-        "rabbitmq_url_present": "BIFROST_RABBITMQ_URL" in env,
         "s3_vars": sorted(k for k in env if k.startswith("BIFROST_S3_")),
         "redis_url_present": bool(env.get("BIFROST_REDIS_URL")),
     }
@@ -100,10 +99,10 @@ class TestChildEnvIsolation:
     def test_child_env_has_no_platform_credentials(
         self, e2e_client, platform_admin, env_probe_workflow
     ):
-        """The child env must contain no SECRET_KEY / DB / RabbitMQ / S3 vars.
+        """The child env must contain no SECRET_KEY / DB / S3 vars.
 
         BIFROST_REDIS_URL must be absent. Execution context, module source,
-        logs, and SDK buffering are parent-mediated or worker-UDS operations.
+        logs, and SDK buffering use parent mediation or scoped API HTTP.
         """
         data = execute_workflow_sync(
             e2e_client,
@@ -124,9 +123,6 @@ class TestChildEnvIsolation:
         )
         assert probe.get("database_url_sync_present") is False, (
             "BIFROST_DATABASE_URL_SYNC is present in the execution child env."
-        )
-        assert probe.get("rabbitmq_url_present") is False, (
-            "BIFROST_RABBITMQ_URL is present in the execution child env."
         )
         assert probe.get("s3_vars") == [], (
             f"S3 credentials present in execution child env: {probe.get('s3_vars')}"

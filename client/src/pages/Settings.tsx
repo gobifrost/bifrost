@@ -23,9 +23,7 @@ import { MemorySettings } from "@/pages/settings/MemorySettings";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
-import { KubernetesExecutions } from "@/pages/settings/KubernetesExecutions";
-import { ZeroTrustAutomation } from "@/pages/settings/ZeroTrustAutomation";
-import { getKubernetesStatus } from "@/services/kubernetes";
+import { KubernetesSettings } from "@/pages/settings/KubernetesSettings";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -44,7 +42,6 @@ import {
 	Wrench,
 } from "lucide-react";
 import { Github } from "@/components/icons/GithubIcon";
-import { KubernetesIcon } from "@/components/icons/KubernetesIcon";
 
 type SettingsItem = {
 	value: string;
@@ -80,7 +77,7 @@ const settingsSections: SettingsSection[] = [
 			},
 			{
 				value: "ai-chat",
-				label: "Chat Instructions",
+				label: "Behavior",
 				icon: MessageSquareText,
 				content: AIBehaviorSettings,
 			},
@@ -130,12 +127,6 @@ const settingsSections: SettingsSection[] = [
 				icon: Key,
 				content: WorkflowKeys,
 			},
-			{
-				value: "zero-trust-automation",
-				label: "Zero Trust Automation",
-				icon: Shield,
-				content: ZeroTrustAutomation,
-			},
 		],
 	},
 	{
@@ -159,10 +150,7 @@ const settingsSections: SettingsSection[] = [
 	},
 ];
 
-function findActiveSectionId(
-	sections: SettingsSection[],
-	currentTab: string,
-) {
+function findActiveSectionId(sections: SettingsSection[], currentTab: string) {
 	return (
 		sections.find((section) =>
 			section.items.some((item) => item.value === currentTab),
@@ -170,52 +158,29 @@ function findActiveSectionId(
 	);
 }
 
-const kubernetesSection: SettingsSection = {
-	id: "kubernetes",
-	label: "Kubernetes",
-	icon: KubernetesIcon,
-		items: [
-			{
-				value: "kubernetes-executions",
-				label: "Executions",
-				icon: Container,
-				content: KubernetesExecutions,
-			},
-		],
+const workerSection: SettingsSection = {
+	id: "workers",
+	label: "Workers",
+	icon: Container,
+	items: [
+		{
+			value: "kubernetes-executions",
+			label: "Scaling & Isolation",
+			icon: Container,
+			content: KubernetesSettings,
+		},
+	],
 };
+const allSettingsSections = [...settingsSections, workerSection];
 
 export function Settings() {
 	const navigate = useNavigate();
 	const location = useLocation();
-	const [kubernetesAvailable, setKubernetesAvailable] = useState(false);
-
-	// The Kubernetes section appears only when the deployment configured
-	// the remote-build backend. It is a second home for K8s options later
-	// (e.g. built-in monitoring) beside today's Executions toggles.
-	useEffect(() => {
-		let active = true;
-		getKubernetesStatus()
-			.then((status) => {
-				if (active) setKubernetesAvailable(status.configured);
-			})
-			.catch(() => {
-				if (active) setKubernetesAvailable(false);
-			});
-		return () => {
-			active = false;
-		};
-	}, []);
-
-	const sections = useMemo(
-		() =>
-			kubernetesAvailable
-				? [...settingsSections, kubernetesSection]
-				: settingsSections,
-		[kubernetesAvailable],
-	);
-
 	// Parse the current tab from the URL path
 	const requestedTab = location.pathname.split("/settings/")[1];
+
+	// Scaling and job concurrency apply to every worker provider.
+	const sections = allSettingsSections;
 	const currentTab = sections.some((section) =>
 		section.items.some((item) => item.value === requestedTab),
 	)

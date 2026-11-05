@@ -260,3 +260,56 @@ async def test_embed_session_never_receives_execution_diagnostics():
     user.embed = True
 
     assert not await ws_mod.can_read_execution_diagnostics(user, str(uuid.uuid4()))
+
+
+async def test_revoked_impersonation_cannot_deliver_existing_subscription(monkeypatch):
+    from contextlib import asynccontextmanager
+    from fastapi import WebSocketDisconnect
+    import pytest
+    from shared.browser_impersonation import BrowserImpersonationError
+
+    user = _user()
+    user.impersonated_by_user_id = uuid.uuid4()
+    user.impersonation_session_id = uuid.uuid4()
+    websocket = _websocket_with_subscriptions()
+    websocket.close = AsyncMock()
+
+    @asynccontextmanager
+    async def database():
+        yield MagicMock()
+
+    monkeypatch.setattr(ws_mod, "get_db_context", database)
+    validate = AsyncMock(side_effect=BrowserImpersonationError("revoked"))
+    monkeypatch.setattr(ws_mod, "validate_browser_impersonation", validate)
+    allowed = AsyncMock(return_value=True)
+    monkeypatch.setattr(ws_mod, "_delivery_allowed", allowed)
+
+    with pytest.raises(WebSocketDisconnect):
+        await ws_mod._make_delivery_dispatcher(websocket, user)(
+            f"user:{user.user_id}", {"type": "notification"},
+        )
+
+    validate.assert_awaited_once()
+    allowed.assert_not_awaited()
+    websocket.send_json.assert_not_awaited()
+    websocket.close.assert_awaited_once_with(code=4001, reason="Impersonation session ended")
+
+
+def test_websocket_audit_and_access_checks_retain_operator():
+    from shared import access_checks
+
+    user = _user()
+    user.impersonated_by_user_id = uuid.uuid4()
+    user.impersonation_session_id = uuid.uuid4()
+    actor = ws_mod._websocket_actor(MagicMock(), user)
+    assert actor.impersonated_by_user_id == user.impersonated_by_user_id
+    assert actor.impersonation_session_id == user.impersonation_session_id
+    token = ws_mod._collect_websocket_checks(user)
+    try:
+        collector = access_checks.current()
+        assert collector is not None
+        assert collector.run_user_id == user.user_id
+        assert collector.impersonated_by_user_id == user.impersonated_by_user_id
+        assert collector.impersonation_session_id == user.impersonation_session_id
+    finally:
+        access_checks.stop_collecting(token)

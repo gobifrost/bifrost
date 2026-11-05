@@ -62,6 +62,23 @@ class TestHumanToken:
         assert actor.source == "http"
         assert actor.execution_id is None
 
+    def test_impersonation_claims_map_to_audit_provenance(self):
+        target_id, operator_id, session_id = (uuid4() for _ in range(3))
+
+        actor = _actor(
+            {
+                "sub": str(target_id),
+                "org_id": str(uuid4()),
+                "impersonated_by_user_id": str(operator_id),
+                "impersonation_session_id": str(session_id),
+            }
+        )
+
+        assert actor is not None
+        assert actor.user_id == target_id
+        assert actor.impersonated_by_user_id == operator_id
+        assert actor.impersonation_session_id == session_id
+
 
 @pytest.mark.parametrize("claims", [
     {"credential_kind": "workflow_execution", "sub": str(uuid4())},
@@ -88,10 +105,12 @@ def test_runtime_actor_uses_verified_identity_and_scope(kind, surface):
     actor_id, run_user_id, credential_id, scope = (uuid4() for _ in range(4))
     context = AuthorizationContext(user_id=run_user_id, home_organization_id=None,
         base_role_id=uuid4(), base_permissions=frozenset(), is_external=False)
+    operator_id, session_id = uuid4(), uuid4()
     authority = RuntimeAuthority(kind=kind, credential_id=credential_id,
         run_user=RunUser(run_user_id, context, None, is_active=True), powers=None,
         acting_user_id=actor_id, organization_id=scope, workflow_id=None,
-        started_by_user_id=None, root_execution_id=None)
+        started_by_user_id=None, root_execution_id=None,
+        impersonated_by_user_id=operator_id, impersonation_session_id=session_id)
     principal = UserPrincipal(user_id=actor_id, email="actor@example.test",
         organization_id=uuid4(), name="Contoso Actor", runtime_authority=authority)
     actor = actor_from_runtime_principal(principal, ip_address=None, user_agent="pytest")
@@ -101,6 +120,8 @@ def test_runtime_actor_uses_verified_identity_and_scope(kind, surface):
     assert actor.execution_id == (None if kind == "agent_run" else credential_id)
     assert actor.ip_address is None
     assert actor.user_agent == "pytest"
+    assert actor.impersonated_by_user_id == operator_id
+    assert actor.impersonation_session_id == session_id
 
 
 def test_runtime_actor_requires_verified_authority():

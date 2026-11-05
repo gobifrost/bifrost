@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders, screen } from "@/test-utils";
 import { Settings } from "./Settings";
@@ -44,24 +44,11 @@ vi.mock("@/pages/settings/MCP", () => ({
 vi.mock("@/pages/settings/Maintenance", () => ({
 	Maintenance: () => <h2>Maintenance Panel</h2>,
 }));
-vi.mock("@/pages/settings/KubernetesExecutions", () => ({
-	KubernetesExecutions: () => <h2>Executions Panel</h2>,
-}));
-
-const kubernetesStatusMock = vi.fn();
-
-vi.mock("@/services/kubernetes", () => ({
-	getKubernetesStatus: (...args: unknown[]) => kubernetesStatusMock(...args),
+vi.mock("@/pages/settings/KubernetesSettings", () => ({
+	KubernetesSettings: () => <h2>Kubernetes Panel</h2>,
 }));
 
 describe("Settings", () => {
-	beforeEach(() => {
-		kubernetesStatusMock.mockReset();
-		kubernetesStatusMock.mockResolvedValue({
-			configured: false,
-			backend: "local",
-		});
-	});
 	it("retains a visited panel draft and hides inactive controls", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<Settings />, {
@@ -192,37 +179,30 @@ describe("Settings", () => {
 		expect(screen.getByRole("button", { name: /^github$/i })).toBeVisible();
 	});
 
-	it("shows the Kubernetes section only when the deployment configures it", async () => {
+	it("opens worker settings without a Kubernetes availability gate", async () => {
 		const user = userEvent.setup();
-		kubernetesStatusMock.mockResolvedValue({
-			configured: true,
-			backend: "kubernetes",
-		});
 		renderWithProviders(<Settings />, {
 			initialEntries: ["/settings/ai"],
 		});
 
 		await user.click(
-			await screen.findByRole("button", { name: /^kubernetes$/i }),
+			await screen.findByRole("button", { name: /^workers$/i }),
 		);
-		await user.click(screen.getByRole("button", { name: /^executions$/i }));
+		await user.click(
+			screen.getByRole("button", { name: /^scaling & isolation$/i }),
+		);
 		expect(
-			screen.getByRole("heading", { name: /executions panel/i }),
+			screen.getByRole("heading", { name: /kubernetes panel/i }),
 		).toBeVisible();
 	});
 
-	it("hides the Kubernetes section on deployments without it", async () => {
-		kubernetesStatusMock.mockResolvedValue({
-			configured: false,
-			backend: "local",
-		});
+	it("keeps existing direct links to worker settings usable", async () => {
 		renderWithProviders(<Settings />, {
-			initialEntries: ["/settings/ai"],
+			initialEntries: ["/settings/kubernetes-executions"],
 		});
 
-		await screen.findByRole("button", { name: /^models$/i });
 		expect(
-			screen.queryByRole("button", { name: /^kubernetes$/i }),
-		).not.toBeInTheDocument();
+			await screen.findByRole("heading", { name: /kubernetes panel/i }),
+		).toBeVisible();
 	});
 });

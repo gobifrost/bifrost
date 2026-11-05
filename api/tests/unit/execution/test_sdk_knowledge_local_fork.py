@@ -95,7 +95,7 @@ class TestForkedKnowledgeTransport:
         self, monkeypatch, async_session_factory
     ):
         """A real forked child runs the full knowledge facade, HTTP dead."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
 
         tag = uuid4().hex[:8]
         ns = f"fork-ns-{tag}"
@@ -142,7 +142,7 @@ class TestForkedKnowledgeTransport:
         from tests.helpers.live_execution import create_live_execution
 
         engine_execution_id = str(uuid4())
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=engine_execution_id,
             timeout_seconds=120,
         )

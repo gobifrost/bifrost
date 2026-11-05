@@ -81,6 +81,31 @@ def _make_zip(
     return buf.getvalue()
 
 
+async def test_zip_preview_accepts_identical_duplicate_members(e2e_client, platform_admin):
+    """The HTTP preview accepts old platform archives without a repair job."""
+    slug = f"zip-duplicate-{uuid.uuid4().hex[:8]}"
+    archive = io.BytesIO(_make_zip(slug))
+    with zipfile.ZipFile(archive, "a") as z:
+        z.writestr("app-logo.png", b"identical logo")
+        with pytest.warns(UserWarning, match="Duplicate name"):
+            z.writestr("app-logo.png", b"identical logo")
+
+    headers = {
+        key: value for key, value in platform_admin.headers.items()
+        if key.lower() != "content-type"
+    }
+    response = e2e_client.post(
+        "/api/solutions/install/preview",
+        headers=headers,
+        files={"file": (f"{slug}.zip", archive.getvalue(), "application/zip")},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["slug"] == slug
+    assert response.json()["existing_install"] is None
+    assert [workflow["name"] for workflow in response.json()["workflows"]] == ["main"]
+
+
 @pytest.fixture(scope="module")
 def installed_zip(e2e_client, platform_admin):
     """One installed bundle for preview and export round-trip contracts."""

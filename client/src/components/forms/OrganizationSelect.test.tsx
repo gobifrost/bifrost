@@ -27,13 +27,18 @@ const mockOrgs = [
 ];
 
 const useOrganizationsMock = vi.fn();
+const mockUseAuthorization = vi.fn();
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: (...args: unknown[]) => useOrganizationsMock(...args),
 }));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 beforeEach(() => {
 	useOrganizationsMock.mockReturnValue({ data: mockOrgs, isLoading: false });
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 });
 
 async function renderSelect(overrides: Record<string, unknown> = {}) {
@@ -69,6 +74,24 @@ describe("OrganizationSelect", () => {
 		await renderSelect({ value: "org-1" });
 
 		expect(screen.getByText("Acme")).toBeInTheDocument();
+	});
+
+	it("shows the home organization label without offering an excluded destination", async () => {
+		useOrganizationsMock.mockReturnValue({ data: [], isLoading: false });
+		mockUseAuthorization.mockReturnValue({
+			authorization: {
+				home_organization_id: "home-org",
+				home_organization_name: "Covi",
+			},
+		});
+		const { user } = await renderSelect({
+			value: "home-org",
+			filterOrganizations: () => false,
+		});
+
+		expect(screen.getByText("Covi")).toBeVisible();
+		await user.click(screen.getByRole("combobox"));
+		expect(screen.queryByRole("option", { name: "Covi" })).toBeNull();
 	});
 
 	it("shows 'All' when value is undefined and showAll is true", async () => {
@@ -191,3 +214,15 @@ describe("OrganizationSelect", () => {
  await user.click(screen.getByRole("option", { name: /Only me/ }));
  expect(onChange).toHaveBeenCalledWith(PERSONAL_SCOPE);
  });
+
+it("opens inside a form without submitting it", async () => {
+	const submit = vi.fn((event: React.FormEvent) => event.preventDefault());
+	const { user } = renderWithProviders(
+		<form onSubmit={submit}>
+			<OrganizationSelect value="org-1" onChange={vi.fn()} />
+		</form>,
+	);
+	await user.click(screen.getByRole("combobox"));
+	expect(screen.getByRole("option", { name: /^Acme/ })).toBeVisible();
+	expect(submit).not.toHaveBeenCalled();
+});

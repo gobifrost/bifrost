@@ -14,6 +14,7 @@ modules from Redis cache instead of the filesystem.
 from __future__ import annotations
 
 import logging
+import hashlib
 import resource
 import sys
 from dataclasses import dataclass
@@ -34,7 +35,13 @@ logger = logging.getLogger(__name__)
 
 
 def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
-    """Install the handed-down engine token for this one-shot process."""
+    """Install the handed-down engine credentials for this one-shot process.
+
+    A claims-format run receives an access token and a run refresh token; a
+    legacy-format run's refresh slot holds its access token, which
+    ``/auth/refresh`` refuses (it never needs refreshing: the API never
+    challenges a legacy token).
+    """
     engine_token = context_data.get("engine_token")
     if not engine_token:
         return False
@@ -43,12 +50,13 @@ def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
 
     api_url = os.getenv("BIFROST_API_URL", "http://api:8000")
     # The SDK's process backend takes precedence over keyring or JSON
-    # persistence and supports refresh-on-401 by updating this tuple. Avoiding
-    # persistence also prevents headless keyring probes from importing optional
-    # DBus/desktop modules through the virtual importer on every execution.
+    # persistence and supports challenge-driven refresh by updating this
+    # tuple. Avoiding persistence also prevents headless keyring probes from
+    # importing optional DBus/desktop modules through the virtual importer on
+    # every execution.
     os.environ["BIFROST_API_URL"] = api_url
     os.environ["BIFROST_ACCESS_TOKEN"] = engine_token
-    os.environ["BIFROST_REFRESH_TOKEN"] = engine_token
+    os.environ["BIFROST_REFRESH_TOKEN"] = context_data.get("engine_refresh_token") or engine_token
     return True
 
 
@@ -129,6 +137,8 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
 
     # Capture starting resource usage
     start_rss, start_utime, start_stime = _get_resource_usage()
+    # The loaded workflow's code version; its memory is learned per version.
+    code_hash: str | None = None
 
     # Activate the per-execution Solution import root BEFORE any workspace code
     # loads. With no solution_id this is a no-op (plain _repo/ behavior). The
@@ -193,6 +203,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                     cached = get_module_sync(file_path)
                     if cached:
                         loaded_code = cached["content"]
+                        code_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
                         workflow_func, metadata, load_error = load_workflow_from_db(
                             code=loaded_code,
                             path=file_path,
@@ -220,8 +231,6 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
             # Validate content hash if pinned at dispatch time
             content_hash = context_data.get("content_hash")
             if content_hash and loaded_code:
-                import hashlib
-
                 actual_hash = hashlib.sha256(
                     loaded_code.encode("utf-8")
                 ).hexdigest()
@@ -251,6 +260,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                         "cpu_user_seconds": metrics.cpu_user_seconds,
                         "cpu_system_seconds": metrics.cpu_system_seconds,
                         "cpu_total_seconds": metrics.cpu_total_seconds,
+                        "code_hash": code_hash,
                     },
                 }
 
@@ -288,10 +298,11 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
             event=event_ctx,
             solution_id=context_data.get("solution_id"),  # install scope for SDK
             artifact_workspace_id=context_data.get("artifact_workspace_id"),
-            # The token this process just installed as its SDK credentials
-            # (see _set_process_engine_credentials above) - registered as a
-            # secret so it is redacted from this execution's output.
+            # The credentials this process just installed for the SDK (see
+            # _set_process_engine_credentials above) - registered as secrets
+            # so they are redacted from this execution's output.
             engine_token=context_data.get("engine_token"),
+            engine_refresh_token=context_data.get("engine_refresh_token"),
         )
 
         # Execute
@@ -320,6 +331,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                 "cpu_user_seconds": metrics.cpu_user_seconds,
                 "cpu_system_seconds": metrics.cpu_system_seconds,
                 "cpu_total_seconds": metrics.cpu_total_seconds,
+                "code_hash": code_hash,
             },
         }
 
@@ -346,6 +358,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                 "cpu_user_seconds": metrics.cpu_user_seconds,
                 "cpu_system_seconds": metrics.cpu_system_seconds,
                 "cpu_total_seconds": metrics.cpu_total_seconds,
+                "code_hash": code_hash,
             },
         }
 
@@ -408,12 +421,16 @@ async def run_service(
             name=caller_data["name"],
         )
 
-        # Renewable service credential handed down at dispatch (no SECRET_KEY
-        # in the child). The engine supervisor refreshes it from the parent's
-        # Redis handoff for the life of the attempt.
-        from bifrost._service_runtime import install_service_credentials
+        # Service credentials handed down at dispatch (no SECRET_KEY in the
+        # child). A claims-format attempt also gets a run refresh token and
+        # refreshes on the API's challenge; a legacy-format attempt's engine
+        # supervisor installs the parent's rotated tokens.
+        from bifrost._service_runtime import install_legacy_service_token, install_service_credentials
 
-        install_service_credentials(service_cfg.get("token", ""))
+        if service_cfg.get("refresh_token"):
+            install_service_credentials(service_cfg.get("token", ""), service_cfg["refresh_token"])
+        else:
+            install_legacy_service_token(service_cfg.get("token", ""))
 
         # Load the @service function (same DB-first loader as workflows).
         service_func = None
@@ -449,8 +466,6 @@ async def run_service(
 
         content_hash = context_data.get("content_hash")
         if content_hash and loaded_code:
-            import hashlib
-
             actual_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
             if actual_hash != content_hash:
                 logger.warning(
@@ -494,6 +509,7 @@ async def run_service(
                 ),
                 token=service_cfg.get("token", ""),
                 token_expires_at=service_cfg.get("token_expires_at", ""),
+                refresh_token=service_cfg.get("refresh_token"),
             ),
         )
 

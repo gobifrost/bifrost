@@ -154,12 +154,39 @@ def deploy_solution(e2e_client, solution_id, headers, body):
 
 
 @pytest.fixture
-def cli_client(e2e_api_url, platform_admin):
-    """Bind a ``BifrostClient`` to the E2E API + admin JWT for the CLI run."""
+def cli_client(e2e_api_url, platform_admin, monkeypatch):
+    """Bind the CLI to an independent, real human credential family.
+
+    CLI commands use the production client refresh path, which resolves a
+    credential pair from its normal process-backed store on an exact refresh
+    challenge.  Sharing the REST fixture's refresh family here would let a
+    command consume its single-use refresh token and break later assertions
+    that intentionally use the REST fixture client.
+    """
     from bifrost import client as bifrost_client_module
     from bifrost.client import BifrostClient
+    from tests.e2e.fixtures.setup import _login_user
+    from tests.e2e.fixtures.users import E2EUser
 
-    client = BifrostClient(e2e_api_url, platform_admin.access_token)
+    cli_user = E2EUser(
+        email=platform_admin.email,
+        password=platform_admin.password,
+        name=platform_admin.name,
+        user_id=platform_admin.user_id,
+        totp_secret=platform_admin.totp_secret,
+        organization_id=platform_admin.organization_id,
+        is_superuser=platform_admin.is_superuser,
+    )
+    _login_user(cli_user)
+    assert cli_user.access_token is not None
+    assert cli_user.refresh_token is not None
+
+    monkeypatch.setenv("BIFROST_API_URL", e2e_api_url)
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", cli_user.access_token)
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", cli_user.refresh_token)
+    bifrost_client_module._reset_refresh_coordinators_for_tests()
+
+    client = BifrostClient(e2e_api_url, cli_user.access_token)
     previous = getattr(bifrost_client_module._thread_local, "bifrost_client", None)
     bifrost_client_module._thread_local.bifrost_client = client
     try:
@@ -169,6 +196,7 @@ def cli_client(e2e_api_url, platform_admin):
             bifrost_client_module._thread_local.__dict__.pop("bifrost_client", None)
         else:
             bifrost_client_module._thread_local.bifrost_client = previous
+        bifrost_client_module._reset_refresh_coordinators_for_tests()
 
 
 @pytest.fixture

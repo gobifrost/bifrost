@@ -46,6 +46,7 @@ caller's own items.
 | `solutions.delete` | — | `bifrost_solution_delete` | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.sync` | — | `bifrost_solution_sync` | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.export` | `bifrost solution export` | — | `solutions.read`, `solutions.build` |
+| `solutions.app_builds.lookup` | — | — | `solutions.deploy` |
 | `solutions.deploy` | `bifrost solution deploy` | — | `solutions.readwrite`, `solutions.deploy` |
 | `solutions.install` | `bifrost solution install` | — | `solutions.deploy` |
 | `solutions.capture` | `bifrost solution capture` | — | `solutions.readwrite`, `solutions.build` |
@@ -53,6 +54,7 @@ caller's own items.
 | `workflows.validate` | `bifrost workflows validate` | `bifrost_workflow_validate` | `workflows.read` |
 | `workflows.register` | `bifrost workflows register` | `bifrost_workflow_register` | `workflows.readwrite`, `repository.read` |
 | `workflows.execute` | `bifrost workflows execute` | `bifrost_workflow_execute` | `workflows.execute` |
+| `workflows.parameters` | — | — | `workflows.execute` |
 | `workflows.get` | `bifrost workflows get` | `bifrost_workflow_get` | `workflows.read` |
 | `workflows.update` | `bifrost workflows update` | `bifrost_workflow_update` | `workflows.readwrite` |
 | `workflows.delete` | `bifrost workflows delete` | `bifrost_workflow_delete` | `workflows.readwrite`, `repository.readwrite` |
@@ -170,6 +172,8 @@ caller's own items.
 | `workspace.files.exists` | `bifrost files exists` | `bifrost_file_exists` | `repository.read` |
 | `workspace.files.write` | `bifrost files write` | `bifrost_file_write` | `repository.readwrite` |
 | `workspace.files.delete` | `bifrost files delete` | `bifrost_file_delete` | `repository.readwrite` |
+| `workspace.files.move` | `bifrost files move` | — | `repository.readwrite` |
+| `workspace.files.move_many` | — | — | `repository.readwrite` |
 | `workspace.files.pull` | — | — | `repository.read` |
 | `workspace.files.manifest` | — | — | `repository.read` |
 | `workspace.files.watch` | — | — | `repository.read` |

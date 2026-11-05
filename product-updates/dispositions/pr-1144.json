@@ -1,0 +1,13 @@
+{
+  "key": "pr:1144",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal backend reliability fix: agent run terminal status writes retry through a brief database outage; not announced.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1144",
+      "Jack (2026-10-29) decided via the coordinator that this PR gets no Product Update and is classified Omit."
+    ]
+  }
+}

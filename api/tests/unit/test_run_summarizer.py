@@ -5,6 +5,9 @@ Validates the Task 12 implementation: ``summarize_run`` loads a completed
 extraction, and persists the parsed result onto the run record + an
 ``AIUsage`` row.
 """
+import json
+from functools import partial
+
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -14,6 +17,9 @@ from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.ai_usage import AIUsage
+from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+from src.services.execution.summary_dispatch import SummaryOwnershipLost, summary_owner_session, request_summary
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services.llm import LLMResponse
 from src.services.execution.run_summarizer import (
     _clamp_confidence,
@@ -75,6 +81,50 @@ def _build_mock_client(response):
     return client
 
 
+@pytest.mark.parametrize("interruption", ["worker_loss", "regeneration"])
+async def test_stale_summary_cannot_overwrite_a_replacement_result(async_session_factory, seed_completed_run, interruption):
+    from src.services.execution import run_summarizer as mod
+
+    worker_id = uuid4()
+    claim_id = uuid4()
+    async with async_session_factory() as db:
+        db.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+        await db.flush()
+        db.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family="agent_summary", subject_id=seed_completed_run.id))
+        await db.commit()
+
+    async def complete(**_kwargs):
+        async with async_session_factory() as db:
+            worker = await db.get(ExecutionWorker, worker_id)
+            run = await db.get(AgentRun, seed_completed_run.id)
+            if interruption == "worker_loss":
+                worker.state = "lost"
+            else:
+                await request_summary(db, run)
+                db.add(ExecutionWorkerClaim(worker_id=worker_id, family="agent_summary", subject_id=run.id))
+            run.asked, run.summary_status = "replacement result", "completed"
+            await db.commit()
+        return _build_mock_llm_response('{"asked": "stale result", "did": "stale"}')
+
+    client = _build_mock_client(None)
+    client.complete = AsyncMock(side_effect=complete)
+    try:
+        with patch.object(mod, "get_summarization_client", new=AsyncMock(return_value=(client, "test-model"))):
+            with pytest.raises(SummaryOwnershipLost):
+                await summarize_run(
+                    seed_completed_run.id,
+                    partial(summary_owner_session, async_session_factory, seed_completed_run.id, worker_id, claim_id),
+                )
+        async with async_session_factory() as db:
+            run = await db.get(AgentRun, seed_completed_run.id)
+            assert (run.asked, run.summary_status) == ("replacement result", "completed")
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(delete(WorkDispatch).where(WorkDispatch.subject_id == seed_completed_run.id))
+            await db.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await db.commit()
+
+
 @pytest.mark.asyncio
 async def test_summarize_run_populates_asked_did_confidence(
     async_session_factory, seed_completed_run
@@ -127,6 +177,39 @@ async def test_summarize_run_populates_asked_did_confidence(
             .all()
         )
         assert any(u.model == "claude-haiku-4-5" for u in usages)
+
+
+@pytest.mark.asyncio
+async def test_summarize_run_preserves_pinned_execution_mode_outside_llm_metadata(
+    async_session_factory, seed_completed_run
+):
+    from src.services.execution import run_summarizer as mod
+
+    async with async_session_factory() as db:
+        run = await db.get(AgentRun, seed_completed_run.id)
+        assert run is not None
+        run.run_metadata = {"agent_execution_mode": "delegated"}
+        await db.commit()
+
+    generated_metadata = {
+        **{f"fact_{index}": str(index) for index in range(16)},
+        "agent_execution_mode": "automatic",
+    }
+    mock_client = _build_mock_client(
+        _build_mock_llm_response(json.dumps({"metadata": generated_metadata}))
+    )
+    with patch.object(
+        mod,
+        "get_summarization_client",
+        new=AsyncMock(return_value=(mock_client, "claude-haiku-4-5")),
+    ):
+        await summarize_run(seed_completed_run.id, async_session_factory)
+
+    async with async_session_factory() as db:
+        run = await db.get(AgentRun, seed_completed_run.id)
+        assert run is not None
+        assert run.run_metadata["agent_execution_mode"] == "delegated"
+        assert len(run.run_metadata) == 16
 
 
 @pytest.mark.asyncio

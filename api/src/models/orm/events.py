@@ -347,6 +347,10 @@ class Event(Base):
     # Source metadata
     source_ip: Mapped[str | None] = mapped_column(String(45), default=None)  # IPv6 max
 
+    # Unique identity of one scheduled occurrence (source + UTC time). Lets
+    # overlapping trigger leaders fire each occurrence at most once.
+    occurrence_key: Mapped[str | None] = mapped_column(String(255), default=None)
+
     # Processing status
     status: Mapped[EventStatus] = mapped_column(
         PgEnum(
@@ -377,6 +381,12 @@ class Event(Base):
         Index("ix_events_received_at", "received_at"),
         Index("ix_events_status", "status"),
         Index("ix_events_event_type", "event_type"),
+        Index(
+            "ux_events_occurrence_key",
+            "occurrence_key",
+            unique=True,
+            postgresql_where=text("occurrence_key IS NOT NULL"),
+        ),
         # For the run.retention job's `created_at < cutoff` query (configurable window)
         Index(
             "ix_events_created_at",

@@ -1,0 +1,25 @@
+configs:
+  rewst_migration_api_url:
+    id: 46c95c73-2ed1-4551-a5a5-5b94bcf6a831
+    key: rewst_migration_api_url
+    type: string
+    required: false
+    description: Observed Rewst GraphQL endpoint for this private pilot
+    default: https://api.rewst.io/graphql
+    position: 0
+  rewst_migration_org_id:
+    id: d2830d62-14dd-4c16-8d6a-cbef26d35bc8
+    key: rewst_migration_org_id
+    type: string
+    required: false
+    description: Authorized Rewst provider organization ID for read-only inventory
+    default: ""
+    position: 1
+  rewst_migration_app_session:
+    id: 0f2825b0-bc81-4acd-b9c1-4a4729d5d8c9
+    key: rewst_migration_app_session
+    type: secret
+    required: false
+    description: Private Rewst appSession cookie used only inside workflows
+    default: null
+    position: 2

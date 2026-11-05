@@ -13,12 +13,11 @@ KIND_CONTEXT="kind-${CLUSTER_NAME}"
 NAMESPACE="bifrost-local"
 IMAGE_NAME="${BIFROST_K8S_IMAGE:-bifrost-api:kind-${WORKTREE_HASH}}"
 KIND_VERSION="${BIFROST_KIND_VERSION:-v0.24.0}"
-KEDA_VERSION="${BIFROST_KEDA_VERSION:-2.16.1}"
 KIND_BIN="${BIN_DIR}/kind-${KIND_VERSION}"
 
 usage() {
   cat <<USAGE
-Usage: $0 <up|status|down|collect|experiment|build-experiment|kubectl -- <args>>
+Usage: $0 <up|status|down|collect|build-experiment|control-experiment|pool-experiment|pool-drills|pressure-test|kubectl -- <args>>
 
 Environment overrides:
   BIFROST_KIND_CLUSTER_NAME  Cluster name (default: bifrost-<worktree-hash>)
@@ -26,8 +25,8 @@ Environment overrides:
   BIFROST_K8S_IMAGE          API image tag to deploy (default: bifrost-api:kind-<worktree-hash>)
   BIFROST_KIND_SKIP_BUILD    Set to 1 to skip docker build and load BIFROST_K8S_IMAGE
   BIFROST_KIND_VERSION       Kind version (default: v0.24.0)
-  BIFROST_KEDA_VERSION       KEDA version without leading v (default: 2.16.1)
-  BIFROST_KIND_BUILD_JOBS    Set to 1 to opt into Kubernetes App build Jobs
+  BIFROST_KIND_BUILD_JOBS    Set to 1 to apply the builds overlay's Job settings (Jobs run as
+                             bifrost-build-runner); isolation is turned on in Settings
 USAGE
 }
 
@@ -129,13 +128,9 @@ render_runtime_manifest() {
     kind == "Deployment" && /^  name: / {
       deployment=$2
     }
-    build_jobs == "1" && deployment == "bifrost-scheduler" && $0 == "      automountServiceAccountToken: false" {
-      print "      automountServiceAccountToken: true"
-      print "      serviceAccountName: bifrost-build-controller"
-      next
-    }
     { print }
-    build_jobs == "1" && (deployment == "bifrost-api" || deployment == "bifrost-scheduler") && $0 == "                name: bifrost-local-secrets" {
+    # The API starts every Job, so it reads the Job settings.
+    build_jobs == "1" && deployment == "bifrost-api" && $0 == "                name: bifrost-local-secrets" {
       print "            - configMapRef:"
       print "                name: bifrost-build-jobs-config"
     }
@@ -159,7 +154,7 @@ apply_build_jobs_manifest() {
     return
   fi
 
-  apply_local_manifest "${ROOT_DIR}/k8s/local/build-jobs.yaml"
+  kubectl_local apply -f "${ROOT_DIR}/k8s/local/build-jobs.yaml"
 }
 
 build_and_load_image() {
@@ -174,13 +169,6 @@ build_and_load_image() {
     --tag "${IMAGE_NAME}" \
     "${ROOT_DIR}"
   "${KIND_BIN}" load docker-image "${IMAGE_NAME}" --name "${CLUSTER_NAME}"
-}
-
-install_keda() {
-  kubectl_local apply --server-side -f "https://github.com/kedacore/keda/releases/download/v${KEDA_VERSION}/keda-${KEDA_VERSION}.yaml"
-  kubectl_local rollout status deployment/keda-operator -n keda --timeout=180s
-  kubectl_local rollout status deployment/keda-metrics-apiserver -n keda --timeout=180s
-  kubectl_local rollout status deployment/keda-admission -n keda --timeout=180s
 }
 
 runtime_revision() {
@@ -205,7 +193,6 @@ collect_on_failure() {
 wait_for_dependencies() {
   kubectl_local wait --for=condition=Ready pod -l app.kubernetes.io/name=postgres -n "${NAMESPACE}" --timeout=180s
   kubectl_local wait --for=condition=Available deployment/pgbouncer -n "${NAMESPACE}" --timeout=180s
-  kubectl_local wait --for=condition=Ready pod -l app.kubernetes.io/name=rabbitmq -n "${NAMESPACE}" --timeout=180s
   kubectl_local wait --for=condition=Ready pod -l app.kubernetes.io/name=redis -n "${NAMESPACE}" --timeout=180s
   kubectl_local wait --for=condition=Ready pod -l app.kubernetes.io/name=seaweedfs -n "${NAMESPACE}" --timeout=180s
 }
@@ -218,14 +205,12 @@ up() {
 
   ensure_cluster
   build_and_load_image
-  install_keda
   local rendered
   rendered="$(write_rendered_manifests)"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/namespace.yaml"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/config.yaml"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/postgres.yaml"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/pgbouncer.yaml"
-  kubectl_local apply -f "${ROOT_DIR}/k8s/local/rabbitmq.yaml"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/redis.yaml"
   kubectl_local apply -f "${ROOT_DIR}/k8s/local/seaweedfs.yaml"
   wait_for_dependencies
@@ -233,12 +218,11 @@ up() {
   apply_local_manifest "${ROOT_DIR}/k8s/local/init.yaml"
   kubectl_local wait --for=condition=complete job/bifrost-init -n "${NAMESPACE}" --timeout=300s
   apply_build_jobs_manifest
+  kubectl_local apply -f "${ROOT_DIR}/k8s/local/api-rbac.yaml"
   apply_runtime_manifest "${ROOT_DIR}/k8s/local/bifrost.yaml" "$(runtime_revision "${rendered}")"
-  kubectl_local apply -f "${ROOT_DIR}/k8s/local/keda.yaml"
   kubectl_local rollout status deployment/bifrost-api -n "${NAMESPACE}" --timeout=300s
   kubectl_local rollout status deployment/bifrost-scheduler -n "${NAMESPACE}" --timeout=180s
   kubectl_local rollout status deployment/bifrost-worker -n "${NAMESPACE}" --timeout=180s
-  kubectl_local wait --for=condition=Ready=True scaledobject/bifrost-worker -n "${NAMESPACE}" --timeout=180s
   trap - ERR
   status
 }
@@ -257,7 +241,7 @@ status() {
   echo "Login email: dev@gobifrost.com"
 
   if [[ -f "${KUBECONFIG_PATH}" ]]; then
-    kubectl_local get pods,svc,job,scaledobject,hpa -n "${NAMESPACE}" || true
+    kubectl_local get pods,svc,job -n "${NAMESPACE}" || true
   fi
 }
 
@@ -269,13 +253,11 @@ collect() {
 
   local out_dir="${STATE_DIR}/collect/$(date +%Y%m%d-%H%M%S)"
   mkdir -p "${out_dir}"
-  kubectl_local get all,scaledobject,hpa -n "${NAMESPACE}" -o wide > "${out_dir}/resources.txt" || true
+  kubectl_local get all -n "${NAMESPACE}" -o wide > "${out_dir}/resources.txt" || true
   kubectl_local describe pods -n "${NAMESPACE}" > "${out_dir}/pods-describe.txt" || true
-  kubectl_local describe scaledobject -n "${NAMESPACE}" > "${out_dir}/scaledobjects-describe.txt" || true
   kubectl_local logs -n "${NAMESPACE}" -l app.kubernetes.io/name=bifrost-api --all-containers --tail=500 > "${out_dir}/api.log" || true
   kubectl_local logs -n "${NAMESPACE}" -l app.kubernetes.io/name=bifrost-scheduler --all-containers --tail=500 > "${out_dir}/scheduler.log" || true
   kubectl_local logs -n "${NAMESPACE}" -l app.kubernetes.io/name=bifrost-worker --all-containers --tail=500 > "${out_dir}/worker.log" || true
-  kubectl_local logs -n "${NAMESPACE}" -l app.kubernetes.io/name=rabbitmq --all-containers --tail=500 > "${out_dir}/rabbitmq.log" || true
   echo "Collected diagnostics in ${out_dir}"
 }
 
@@ -288,8 +270,11 @@ down() {
 }
 
 case "${1:-}" in
-  experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/spike.py" "$@" ;;
   build-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/build_spike.py" "$@" ;;
+  control-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/control_spike.py" "$@" ;;
+  pool-experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pool_spike.py" "$@" ;;
+  pool-drills) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pool_drills.py" "$@" ;;
+  pressure-test) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/pressure_test.py" "$@" ;;
   up) up ;;
   status) status ;;
   down) down ;;

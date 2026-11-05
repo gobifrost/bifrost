@@ -17,6 +17,11 @@ class AuditLogActor(BaseModel):
     user_id: UUID | None = Field(None, description="Acting user's ID (null for system events)")
     user_email: str | None = Field(None, description="Acting user's email")
     user_name: str | None = Field(None, description="Acting user's display name")
+    impersonated_by_user_id: UUID | None = Field(
+        None, description="Operator who impersonated the acting user"
+    )
+    impersonated_by_email: str | None = Field(None, description="Impersonating operator's email")
+    impersonated_by_name: str | None = Field(None, description="Impersonating operator's display name")
     organization_id: UUID | None = Field(
         None, description="Organization the event happened in (an access check's target organization)"
     )
@@ -47,6 +52,9 @@ class AuditLogEntry(BaseModel):
     execution_id: UUID | None = Field(
         None,
         description="Workflow execution that produced the event, when supported",
+    )
+    impersonation_session_id: UUID | None = Field(
+        None, description="Browser impersonation session that produced the event"
     )
     actor: AuditLogActor = Field(..., description="Who performed the action")
     ip_address: str | None = Field(None)

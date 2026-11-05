@@ -17,9 +17,6 @@ This module exposes:
 - :func:`append_user_message_and_reply`: append a user turn, call the
   tuning LLM for a reply, persist both on the conversation's JSONB
   ``messages`` column, and record an ``AIUsage`` row for cost tracking.
-- :func:`enqueue_tune_chat`: thin RabbitMQ publish helper used by the API
-  router that accepts a new user message; the worker consumes the message
-  and invokes :func:`append_user_message_and_reply`.
 - :func:`propose_consolidated_tuning`: single LLM call producing one
   consolidated prompt proposal informed by all flagged runs.
 - :func:`dry_run_consolidated`: per-run dry-run of a consolidated
@@ -38,8 +35,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.core.log_safety import log_safe
-from src.jobs.queue_names import TUNE_CHAT_QUEUE
-from src.jobs.rabbitmq import publish_message
 from src.models.orm.agent_prompt_history import AgentPromptHistory
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_runs import AgentRun
@@ -168,13 +163,6 @@ async def append_user_message_and_reply(
     await db.commit()
     await db.refresh(conv)
     return conv
-
-
-async def enqueue_tune_chat(run_id: UUID, content: str) -> None:
-    """Publish a tune-chat message for the agent-tuning-chat worker."""
-    await publish_message(
-        TUNE_CHAT_QUEUE, {"run_id": str(run_id), "content": content}
-    )
 
 
 # ---------------------------------------------------------------------------
@@ -337,15 +325,16 @@ async def dry_run_consolidated(
     db: AsyncSession,
     session_factory: async_sessionmaker[AsyncSession],
     caller: "Caller",
-) -> list[tuple[UUID, bool, str, float]]:
+) -> list[tuple[UUID, bool, str, float, bool]]:
     """Run :func:`evaluate_against_prompt` for each flagged run (capped).
 
-    Returns a list of ``(run_id, would_still_decide_same, reasoning, confidence)``
+    Returns a list of
+    ``(run_id, would_still_decide_same, reasoning, confidence, evaluation_failed)``
     tuples, capped at :data:`CONSOLIDATED_DRY_RUN_LIMIT` runs to bound cost.
     """
     pairs = await _load_flagged_runs_with_conversations(agent_id, db, caller)
     capped = pairs[:CONSOLIDATED_DRY_RUN_LIMIT]
-    results: list[tuple[UUID, bool, str, float]] = []
+    results: list[tuple[UUID, bool, str, float, bool]] = []
     for run, _conv in capped:
         verdict = await evaluate_against_prompt(
             run_id=run.id,
@@ -358,6 +347,7 @@ async def dry_run_consolidated(
                 verdict.would_still_decide_same,
                 verdict.reasoning,
                 verdict.confidence,
+                verdict.evaluation_failed,
             )
         )
     return results

@@ -1,0 +1,13 @@
+{
+  "key": "pr:1104",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Updates maintainer documentation-refresh paths and release freshness checks to the new public documentation source; no application runtime behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1104",
+      "Codex reviewed the tooling-only change under Jack's 2026-10-28 authorization to publish product documentation and update its existing consumers. Public website publication is verified separately in gobifrost/website#32."
+    ]
+  }
+}

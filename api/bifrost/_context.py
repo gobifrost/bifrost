@@ -68,15 +68,25 @@ class _ContextProxy:
 context: "ExecutionContext" = _ContextProxy()  # type: ignore[assignment]
 
 
+# Secrets registered while no execution context existed yet (for example an
+# access token refreshed while the engine loads the workflow's modules). Each
+# new execution context starts with them, so they are redacted from its
+# output too. Cleared with the context.
+_pending_secrets: set[str] = set()
+
+
 def set_execution_context(ctx: "ExecutionContext") -> None:
     """
     Set the execution context for the current workflow execution.
 
-    Called by the workflow engine before executing user code.
+    Called by the workflow engine before executing user code. Secrets
+    registered before any context existed are registered on it.
 
     Args:
         ctx: ExecutionContext with user, org, and permission info
     """
+    for value in tuple(_pending_secrets):
+        ctx._register_dynamic_secret(value)
     _execution_context.set(ctx)
 
 
@@ -106,6 +116,7 @@ def clear_execution_context() -> None:
     Called by the workflow engine after user code execution completes.
     """
     _execution_context.set(None)
+    _pending_secrets.clear()
 
 
 def get_default_scope() -> str | None:
@@ -169,9 +180,13 @@ def register_secret(value: "str | None") -> None:
     Called by SDK modules after receiving decrypted secrets from the API
     so the engine scrubber will redact them from outputs and logs.
 
-    Safe to call outside a workflow execution — silently no-ops.
+    Outside a workflow execution the value is kept and registered on the next
+    execution context to be set (see ``set_execution_context``), so a secret
+    obtained while the engine is still loading the workflow is redacted too.
     """
     ctx = _execution_context.get()
     if ctx is None:
+        if value:
+            _pending_secrets.add(value)
         return
     ctx._register_dynamic_secret(value)

@@ -32,6 +32,7 @@ class AuthStatusResponse(BaseModel):
     """
     needs_setup: bool
     password_login_enabled: bool
+    passkey_login_enabled: bool = True
     mfa_required_for_password: bool
     oauth_providers: list[OAuthProviderInfo]
     auto_redirect_to_sso: bool = False
@@ -144,8 +145,3 @@ class DeviceTokenResponse(BaseModel):
 class DeviceTokenErrorResponse(BaseModel):
     """Error response for device token request."""
     error: str  # "authorization_pending", "expired_token", "access_denied"
-
-
-class DeviceAuthorizeRequest(BaseModel):
-    """Request to authorize a device using user code."""
-    user_code: str

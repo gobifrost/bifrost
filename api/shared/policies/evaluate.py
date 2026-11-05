@@ -89,12 +89,16 @@ def _resolve_row_path(row: dict | None, path: str) -> Any:
 def resolve_user_field(user: Any, field: str) -> Any:
     """Pull a policy user field from ``user``.
 
-    Policy ``is_platform_admin`` is the retained legacy term. It means the
-    user holds the built-in Platform Admin role at any boundary, never that a
-    token or execution context carries an administrative flag.
+    Policy ``is_platform_admin`` is the retained legacy term. It holds for a
+    member of the built-in Platform Admin role at any boundary, and for a Full
+    Access workflow run, which carries the platform-admin policy authority.
+    Before Zero Trust Automation every workflow call was evaluated as a
+    superuser, so policies written with this term admitted workflows; Full
+    Access keeps that. A direct call or a Declared Permissions run without the
+    authority does not hold it.
     """
     if field == "is_platform_admin":
-        return any(
+        return "platform_admin" in getattr(user, "policy_authorities", ()) or any(
             str(role_id) == str(PLATFORM_ADMIN_ROLE_ID)
             for role_id in getattr(user, "role_ids", ())
         )
@@ -108,18 +112,13 @@ def resolve_user_field(user: Any, field: str) -> Any:
 
 
 def resolve_policy_authority(user: Any, authority: str) -> bool:
-    """Return an internal policy authority without changing user facts.
+    """Return an internal policy authority without changing role membership.
 
     The built-in Platform Admin authority is held by an actual Platform Admin
-    role member, or materializes the configured power of a Full workflow. It
-    never alters ``user`` fields or role membership exposed to expressions.
+    role member, or materializes the configured power of a Full workflow; it
+    is the same fact as the legacy ``is_platform_admin`` term.
     """
-    if authority != "platform_admin":
-        return False
-    return bool(
-        resolve_user_field(user, "is_platform_admin")
-        or authority in getattr(user, "policy_authorities", ())
-    )
+    return authority == "platform_admin" and bool(resolve_user_field(user, "is_platform_admin"))
 
 
 def _resolve_claims_field(user: Any, name: str) -> Any:

@@ -94,6 +94,7 @@ async def test_git_connected_solution_sync_enqueues_one_notified_solution_job(
         "resource_id": str(solution_id),
         "title": "Update Managed Git from Git",
         "action_url": f"/solutions/{solution_id}",
+        "memory_profile_key": f"solution.git_sync.memory.v1:{solution_id}",
     }
     notification.assert_awaited_once_with(db, job)
     db.commit.assert_awaited_once()

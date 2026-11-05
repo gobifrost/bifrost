@@ -12,12 +12,14 @@ import io
 import re
 import warnings
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-import cairosvg
 from defusedxml import ElementTree as DefusedET
-from PIL import Image, ImageOps, UnidentifiedImageError
 
 from shared.svg_sanitizer import SvgSanitizationError, sanitize_svg
+
+if TYPE_CHECKING:
+    from PIL import Image
 
 LOGO_ALLOWED_CONTENT_TYPES = {
     "image/jpeg",
@@ -96,6 +98,8 @@ def _svg_aspect_ratio(data: bytes) -> float:
 
 def _svg_to_png(data: bytes) -> bytes:
     """Rasterize a sanitized SVG at a bounded size while preserving its ratio."""
+    import cairosvg
+
     ratio = _svg_aspect_ratio(data)
     if ratio >= 1:
         width = LOGO_THUMBNAIL_MAX_DIMENSION
@@ -119,6 +123,8 @@ def _svg_to_png(data: bytes) -> bytes:
 
 def _open_raster(data: bytes, content_type: str) -> Image.Image:
     """Decode a raster image, rejecting mismatched formats and pixel bombs."""
+    from PIL import Image, ImageOps, UnidentifiedImageError
+
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -144,6 +150,8 @@ def _open_raster(data: bytes, content_type: str) -> Image.Image:
 
 def _square_canvas(source: Image.Image, dimension: int) -> Image.Image:
     """Contain an image in a transparent square without cropping or stretching."""
+    from PIL import Image
+
     contained = source.copy()
     contained.thumbnail((dimension, dimension), Image.Resampling.LANCZOS)
     canvas = Image.new("RGBA", (dimension, dimension), (0, 0, 0, 0))

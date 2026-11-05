@@ -1,0 +1,10 @@
+{
+  "key": "pr:1049",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Fixes a start-up regression in the #769 rollout (cold executors declared lost) before any release carried it.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1049"]
+  }
+}

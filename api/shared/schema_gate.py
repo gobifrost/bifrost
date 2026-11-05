@@ -16,6 +16,7 @@ from pathlib import Path
 
 from alembic.config import Config
 from alembic.script import ScriptDirectory
+from alembic.script.revision import RevisionError
 from alembic.util.exc import CommandError
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
@@ -48,7 +49,9 @@ def _known_ancestors(script: ScriptDirectory) -> Callable[[str], frozenset[str] 
             return frozenset(
                 r.revision for r in script.iterate_revisions(revision, "base")
             )
-        except CommandError:
+        except (CommandError, RevisionError):
+            # A revision missing from this image's history was written by a
+            # newer image; alembic reports it as a RevisionError.
             return None
 
     return ancestors
@@ -62,6 +65,23 @@ async def current_revisions(engine: AsyncEngine) -> frozenset[str]:
         except ProgrammingError:
             return frozenset()
         return frozenset(row[0] for row in result)
+
+
+async def revisions_from_a_newer_image(
+    engine: AsyncEngine,
+    *,
+    ancestors_of: Callable[[str], frozenset[str] | None] | None = None,
+) -> frozenset[str]:
+    """Recorded revisions this image does not know: a newer release wrote them.
+
+    The init step must not try to migrate such a database (an older image
+    started for a rollback): ``alembic upgrade`` cannot locate the revision.
+    """
+    if ancestors_of is None:
+        ancestors_of = _known_ancestors(_script_directory())
+    return frozenset(
+        revision for revision in await current_revisions(engine) if ancestors_of(revision) is None
+    )
 
 
 def is_at_or_ahead(

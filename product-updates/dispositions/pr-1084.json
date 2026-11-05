@@ -1,0 +1,14 @@
+{
+  "key": "pr:1084",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduce API memory retained after large responses.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1084",
+      "Authorized production resource investigation. Independent review of frozen commit 2dedbaa1c found no remaining actionable issues. 29 focused startup/harness tests, the live agent-runtime boundary, and API type/lint checks passed. Controlled response-burst comparisons verified unchanged response bytes and similar CPU cost. This is a bounded allocator-retention repair: smaller-response absolute quiet memory can be slightly higher, and a restored fully warmed production baseline is not claimed. Existing standard Docker/Kubernetes commands require no operator configuration changes."
+    ]
+  }
+}

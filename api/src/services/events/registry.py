@@ -86,6 +86,33 @@ CURATED_TOPICS = [
         ),
     },
     {
+        "topic": "workflow.completed",
+        "description": "Fired after a workflow execution is durably recorded as successful.",
+        "category": "Workflows",
+        "emitted_by": "Workflow executor",
+        "example_body": _body(
+            actor=_SYSTEM_ACTOR,
+            workflow={
+                "id": "550e8400-e29b-41d4-a716-446655440040",
+                "name": "sync_tickets",
+            },
+            execution={
+                "id": "550e8400-e29b-41d4-a716-446655440050",
+                "status": "Success",
+                "attempt": 1,
+                "max_attempts": 1,
+                "started_at": "2026-05-28T12:34:54Z",
+                "completed_at": "2026-05-28T12:34:56Z",
+                "duration_ms": 1234,
+            },
+            trigger={
+                "type": "event",
+                "event_type": "ticket.created",
+                "event_id": "550e8400-e29b-41d4-a716-446655440060",
+            },
+        ),
+    },
+    {
         "topic": "workflow.retry_exhausted",
         "description": "Fired when a workflow has no retry attempts remaining.",
         "category": "Workflows",

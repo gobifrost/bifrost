@@ -120,7 +120,7 @@ export function DeveloperSettings() {
 						</Button>
 						<Button variant="outline" asChild>
 							<a
-								href="https://docs.gobifrost.com/sdk"
+								href="https://gobifrost.com/docs/sdk-reference/sdk/external-sdk/"
 								target="_blank"
 								rel="noopener noreferrer"
 							>

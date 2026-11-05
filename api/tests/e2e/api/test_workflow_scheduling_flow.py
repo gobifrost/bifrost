@@ -99,19 +99,14 @@ async def test_schedule_promote_run_terminal(
 ):
     """Schedule → wait for maturity → promoter → worker → Success."""
     from src.core.database import reset_db_state
-    from src.jobs.rabbitmq import rabbitmq
     import src.core.redis_client as redis_module
 
-    # The app-side DB engine, Redis singleton, and RabbitMQ connection pool
-    # are cached in module globals and pin their connections to whichever
-    # asyncio loop first touched them. Resetting all three forces fresh
-    # clients on this loop — the promoter below uses the DB and Redis when
-    # reading the matured row, and RabbitMQ when publishing it. Without the
-    # pool reset, init_pools() short-circuits on a pool bound to a dead loop
-    # and the publish fails with RuntimeError: Event loop is closed.
+    # The app-side DB engine and Redis singleton are cached in module globals
+    # and pin their connections to whichever asyncio loop first touched them.
+    # Resetting both forces fresh clients on this loop — the promoter below
+    # uses the DB and Redis when reading the matured row and dispatching it.
     reset_db_state()
     redis_module._redis_client = None
-    rabbitmq.reset_pools()
 
     resp = _schedule(
         e2e_client, platform_admin, runnable_workflow["id"], delay_seconds=2
@@ -133,10 +128,8 @@ async def test_schedule_promote_run_terminal(
     # behaviorally fine — the row still gets promoted and the worker still
     # runs it — but it makes asserting `promoted >= 1` flaky. So we drop
     # the promoted-count assertion and verify the post-condition: the row
-    # left SCHEDULED (regardless of which tick promoted it) and any
-    # publishes our call attempted didn't fail.
-    _, failures = await promote_due_executions()
-    assert failures == 0, f"expected 0 publish failures, got {failures}"
+    # left SCHEDULED (regardless of which tick promoted it).
+    await promote_due_executions()
 
     # Poll for the worker to run it to a terminal status.
     deadline = asyncio.get_event_loop().time() + 60

@@ -1,4 +1,4 @@
-"""Home organization uses existing resource repositories as its access authority."""
+"""Home uses the common resource visibility resolver as its access authority."""
 
 from datetime import datetime, timezone
 from uuid import UUID
@@ -21,12 +21,10 @@ from shared.logo_processing import is_logo_thumbnail_version
 from src.models.orm.home import HomeCollection, HomeResourcePreference
 from src.models.orm.organizations import Organization
 from src.models.orm.agents import Agent
-from src.repositories.applications import ApplicationRepository
 from src.models.orm.forms import Form
 from src.models.orm.applications import Application
-from shared.scope_resolver import shared_read_organization
-from shared.sdk_forms import check_form_access
-from src.services.agent_write_policy import agent_query_in_reach, can_read_agent, caller_user_id
+from shared.resource_access import ResourceAccessResolver, ResourceKind
+from src.services.agent_write_policy import agent_query_in_reach, caller_user_id
 from src.services.authorization.enforce import Caller, allows_permission, load_caller, permitted_organizations, require_permission, user_reach
 
 
@@ -86,22 +84,21 @@ async def catalog(db: AsyncSession, caller: Caller) -> list[HomeResource]:
         app_query = app_query.where(app_reach)
     if form_reach is not None:
         form_query = form_query.where(form_reach)
-    app_repo = ApplicationRepository(db, caller.ctx.home_organization_id, caller=caller)
-    apps = [
-        app for app in (await db.scalars(app_query)).all()
-        if allows_permission(caller, "apps.readbasic", shared_read_organization(caller, app.organization_id))
-        and await app_repo._can_access_entity(app)
-    ]
-    forms = [
-        form for form in (await db.scalars(form_query)).all()
-        if await check_form_access(db, form, caller)
-    ]
-    agents = [
-        agent for agent in (await db.scalars(
-            agent_query_in_reach(caller).options(defer(Agent.logo_data), defer(Agent.logo_thumbnail_data)).where(Agent.is_active.is_(True))
-        )).all()
-        if await can_read_agent(db, caller, agent)
-    ]
+    access = ResourceAccessResolver(db, caller)
+    apps = await access.filter_readable(
+        ResourceKind.APP, list((await db.scalars(app_query)).all())
+    )
+    forms = await access.filter_readable(
+        ResourceKind.FORM, list((await db.scalars(form_query)).all())
+    )
+    agents = await access.filter_readable(
+        ResourceKind.AGENT,
+        list((await db.scalars(
+            agent_query_in_reach(caller).options(
+                defer(Agent.logo_data), defer(Agent.logo_thumbnail_data)
+            ).where(Agent.is_active.is_(True))
+        )).all()),
+    )
     org_ids = {
         entity.organization_id
         for entity in [*apps, *forms, *agents]

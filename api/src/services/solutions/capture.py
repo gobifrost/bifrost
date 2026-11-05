@@ -16,6 +16,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 if TYPE_CHECKING:
     import pathspec
@@ -624,7 +625,11 @@ class SolutionCaptureService:
         from bifrost.manifest_codec import Destination
 
         rows = (
-            await self.db.execute(select(Agent).where(Agent.solution_id == solution_id))
+            await self.db.execute(
+                select(Agent)
+                .options(selectinload(Agent.llm_profile))
+                .where(Agent.solution_id == solution_id)
+            )
         ).scalars().all()
         out: list[dict[str, Any]] = []
         for agent in rows:

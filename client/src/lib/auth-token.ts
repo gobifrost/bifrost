@@ -1,7 +1,7 @@
 /**
  * Auth token storage utilities.
  *
- * The platform stores two distinct kinds of access token:
+ * The platform stores three distinct kinds of access token:
  *
  * 1. The user's normal access token — issued by the login flow, kept in
  *    `localStorage`, shared across all tabs of the same origin.
@@ -13,12 +13,18 @@
  *    to the iframe / tab that received them and never overwrite the user's
  *    normal session in another tab on the same origin.
  *
+ * 3. An impersonation token — short-lived and revocable, kept in
+ *    `localStorage` so every regular tab shares the support session without
+ *    replacing the operator's normal login or refresh cookies.
+ *
  * The embed token is delivered via a URL fragment (`#embed_token=…`) so it
  * never reaches the server in a Referer header or proxy log.
  */
 
 export const ACCESS_TOKEN_KEY = "bifrost_access_token";
 export const EMBED_TOKEN_KEY = "bifrost_embed_token";
+/** A short-lived support-session token, isolated to the current browser tab. */
+export const IMPERSONATION_TOKEN_KEY = "bifrost_impersonation_token";
 
 const EMBED_HASH_PREFIX = "#embed_token=";
 
@@ -29,7 +35,17 @@ export interface EmbedTokenClaims {
 	form_id?: string;
 }
 
-function parseTokenClaims(token: string): EmbedTokenClaims | null {
+export interface ImpersonationTokenClaims {
+	sub?: string;
+	email?: string;
+	name?: string;
+	org_id?: string | null;
+	impersonated_by_user_id?: string;
+	impersonation_session_id?: string;
+	exp?: number;
+}
+
+function parseTokenClaims<T>(token: string): T | null {
 	try {
 		const encoded = token.split(".")[1];
 		if (!encoded) return null;
@@ -38,7 +54,7 @@ function parseTokenClaims(token: string): EmbedTokenClaims | null {
 			normalized.length + ((4 - (normalized.length % 4)) % 4),
 			"=",
 		);
-		return JSON.parse(atob(padded)) as EmbedTokenClaims;
+		return JSON.parse(atob(padded)) as T;
 	} catch {
 		return null;
 	}
@@ -87,19 +103,46 @@ export function consumeEmbedTokenFromHash(): void {
 
 /**
  * Return the access token to attach to outbound requests from this tab.
- * Prefers the per-tab embed token when present (we're inside an embed
- * context), otherwise falls back to the user's normal access token.
+ * Prefers this tab's embed token, then the browser-wide impersonation token,
+ * then the user's normal access token. Embed capability sessions are isolated
+ * from support sessions even when the operator starts impersonating elsewhere.
  */
 export function getActiveToken(): string | null {
 	const embed = sessionStorage.getItem(EMBED_TOKEN_KEY);
 	if (embed) return embed;
+	const impersonation = localStorage.getItem(IMPERSONATION_TOKEN_KEY);
+	if (impersonation) return impersonation;
 	return localStorage.getItem(ACCESS_TOKEN_KEY);
 }
 
 /** Read non-sensitive routing claims from the tab-scoped embed token. */
 export function getEmbedTokenClaims(): EmbedTokenClaims | null {
 	const token = sessionStorage.getItem(EMBED_TOKEN_KEY);
-	return token ? parseTokenClaims(token) : null;
+	return token ? parseTokenClaims<EmbedTokenClaims>(token) : null;
+}
+
+/** Save a browser-wide support session without disturbing the operator login. */
+export function setImpersonationToken(token: string): void {
+	localStorage.setItem(IMPERSONATION_TOKEN_KEY, token);
+}
+
+/** End the browser-wide support session. */
+export function clearImpersonationToken(): void {
+	localStorage.removeItem(IMPERSONATION_TOKEN_KEY);
+}
+
+export function isImpersonating(): boolean {
+	return (
+		!isEmbedSession() &&
+		localStorage.getItem(IMPERSONATION_TOKEN_KEY) !== null
+	);
+}
+
+/** Read non-sensitive claims used to render the support-session chrome. */
+export function getImpersonationTokenClaims(): ImpersonationTokenClaims | null {
+	if (isEmbedSession()) return null;
+	const token = localStorage.getItem(IMPERSONATION_TOKEN_KEY);
+	return token ? parseTokenClaims<ImpersonationTokenClaims>(token) : null;
 }
 
 /**
@@ -112,13 +155,18 @@ export function isEmbedSession(): boolean {
 }
 
 /**
- * Clear both kinds of access token. Called on logout and on hard auth
- * failures so a stale embed token can't keep an authenticated session
- * alive after the user has signed out.
+ * Clear this context's access tokens on logout and ordinary hard auth failures.
+ * An embed owns only its capability token, so clearing that token never ends a
+ * support session that another regular tab started.
  */
 export function clearAuthTokens(): void {
+	if (isEmbedSession()) {
+		clearEmbedToken();
+		return;
+	}
 	localStorage.removeItem(ACCESS_TOKEN_KEY);
 	sessionStorage.removeItem(EMBED_TOKEN_KEY);
+	clearImpersonationToken();
 }
 
 /**

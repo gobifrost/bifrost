@@ -17,29 +17,6 @@ from pathlib import Path
 from collections.abc import Mapping
 from typing import Any
 
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Alignment, Font, PatternFill
-from openpyxl.utils import get_column_letter
-from PIL import Image
-from reportlab.lib import colors
-from reportlab.lib.enums import TA_CENTER
-from reportlab.lib.pagesizes import A4, LETTER
-from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-from reportlab.lib.units import inch
-from reportlab.platypus import (
-    Image as ReportLabImage,
-    ListFlowable,
-    ListItem,
-    Paragraph,
-    SimpleDocTemplate,
-    Spacer,
-    Table,
-    TableStyle,
-)
-
 from src.models.contracts.artifacts import (
     DocumentArtifactSpec,
     SpreadsheetArtifactSpec,
@@ -121,6 +98,8 @@ def validate_artifact_content(
             ) from exc
         return
     if content_type in {"image/png", "image/jpeg", "image/webp", "image/gif"}:
+        from PIL import Image
+
         expected_format = {
             "image/png": "PNG",
             "image/jpeg": "JPEG",
@@ -231,6 +210,23 @@ def _generate_pdf(
     spec: DocumentArtifactSpec,
     image_content: Mapping[str, bytes] | None = None,
 ) -> GeneratedArtifact:
+    from PIL import Image
+    from reportlab.lib import colors
+    from reportlab.lib.enums import TA_CENTER
+    from reportlab.lib.pagesizes import A4, LETTER
+    from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+    from reportlab.lib.units import inch
+    from reportlab.platypus import (
+        Image as ReportLabImage,
+        ListFlowable,
+        ListItem,
+        Paragraph,
+        SimpleDocTemplate,
+        Spacer,
+        Table,
+        TableStyle,
+    )
+
     buffer = io.BytesIO()
     page_size = LETTER if spec.page_size == "letter" else A4
     document = SimpleDocTemplate(
@@ -353,6 +349,10 @@ def _generate_docx(
     spec: DocumentArtifactSpec,
     image_content: Mapping[str, bytes] | None = None,
 ) -> GeneratedArtifact:
+    from docx import Document
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Inches, Pt
+
     document = Document()
     section = document.sections[0]
     section.top_margin = Inches(0.75)
@@ -413,6 +413,10 @@ def _generate_docx(
 
 def generate_spreadsheet(spec: SpreadsheetArtifactSpec) -> GeneratedArtifact:
     """Generate a styled XLSX workbook from bounded tabular data."""
+    from openpyxl import Workbook, load_workbook
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
     workbook = Workbook()
     workbook.remove(workbook.active)
     header_fill = PatternFill("solid", fgColor="1E3A5F")

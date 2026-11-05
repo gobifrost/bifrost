@@ -2,10 +2,10 @@
 MCP (Model Context Protocol) Router
 
 Provides external access to Bifrost's MCP server for LLM clients like Claude Desktop.
-Uses FastMCP to expose tools via Streamable HTTP transport with Bearer token authentication.
+Uses the bundled MCP SDK to expose tools via Streamable HTTP with Bearer authentication.
 
 Architecture:
-    - FastMCP server is mounted as an ASGI sub-application at /mcp
+    - MCP SDK server is mounted as an ASGI sub-application at /mcp
     - JWT Bearer token authentication using Bifrost's existing auth system
     - /mcp exposes stable agent discovery, dispatch, instruction, and memory tools
     - /mcp/{agent_id} preserves the native agent-scoped tool surface
@@ -29,15 +29,24 @@ Usage:
 """
 
 import logging
-from typing import NoReturn
+from typing import Annotated, NoReturn
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response
+from mcp.server.auth.middleware.bearer_auth import RequireAuthMiddleware
+from mcp.server.auth.routes import build_resource_metadata_url
+from mcp.server.streamable_http_manager import StreamableHTTPSessionManager
+from pydantic import AnyHttpUrl
+from starlette.applications import Starlette
 from starlette.middleware.cors import CORSMiddleware
+from starlette.routing import Route
 
 from src.config import get_settings
 from src.core.auth import CurrentActiveUser
 from shared.run_lineage import principal_lineage
+from shared.models import MCPPackageBranding, MCPPackageBrandingUpdate
+from shared.mcp_package_branding import MCPPackageBrandingService
+from shared.logo_processing import LOGO_MAX_SOURCE_BYTES, LogoProcessingError
 from src.core.db_deps import DbSession
 from src.models.contracts.mcp import (
     MCPConfigRequest,
@@ -215,23 +224,73 @@ async def download_mcp_run_plugin(
     """Download the instance-matched Bifrost Agent package."""
     from shared.version import get_version
     from src.services.mcp_server.run_package import (
-        PLUGIN_FILENAME,
+        PackageIdentity,
         build_bifrost_run_plugin,
     )
 
     await _require_mcp_enabled(db)
+    service = MCPPackageBrandingService(db)
+    branding = await service.get()
+    identity = PackageIdentity(branding.name, await service.logo())
     zip_bytes = build_bifrost_run_plugin(
-        get_settings().public_url,
-        get_version(),
+        get_settings().public_url, get_version(), identity,
     )
     return Response(
         content=zip_bytes,
         media_type="application/zip",
         headers={
-            "Content-Disposition": f'attachment; filename="{PLUGIN_FILENAME}"',
+            "Content-Disposition": f'attachment; filename="{identity.filename}"',
             "Cache-Control": "no-store",
         },
     )
+
+
+@router.get("/run/branding", response_model=MCPPackageBranding)
+async def get_package_branding(current_user: CurrentActiveUser, db: DbSession) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.read", None)
+    return await MCPPackageBrandingService(db).get()
+
+
+@router.put("/run/branding", response_model=MCPPackageBranding)
+async def update_package_branding(
+    request: MCPPackageBrandingUpdate, current_user: CurrentActiveUser, db: DbSession,
+) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    result = await MCPPackageBrandingService(db).update(request, current_user.email)
+    await db.commit()
+    return result
+
+
+@router.get("/run/branding/logo")
+async def get_package_logo(db: DbSession) -> Response:
+    logo = await MCPPackageBrandingService(db).logo()
+    if logo is None:
+        raise HTTPException(status_code=404, detail="No custom package logo")
+    return Response(logo, media_type="image/png", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/run/branding/logo", response_model=MCPPackageBranding)
+async def upload_package_logo(
+    file: Annotated[UploadFile, File()], current_user: CurrentActiveUser, db: DbSession,
+) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    content = await file.read(LOGO_MAX_SOURCE_BYTES + 1)
+    try:
+        result = await MCPPackageBrandingService(db).upload_logo(
+            content, file.content_type or "", current_user.email,
+        )
+    except LogoProcessingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await db.commit()
+    return result
+
+
+@router.delete("/run/branding/logo", response_model=MCPPackageBranding)
+async def delete_package_logo(current_user: CurrentActiveUser, db: DbSession) -> MCPPackageBranding:
+    require_permission(await load_caller(db, current_user), "mcp.readwrite", None)
+    result = await MCPPackageBrandingService(db).delete_logo(current_user.email)
+    await db.commit()
+    return result
 
 
 @router.get("/status")
@@ -304,27 +363,19 @@ def get_mcp_asgi_app():
     """
     from contextlib import asynccontextmanager
 
-    from src.services.mcp_server.server import HAS_FASTMCP
-
-    if not HAS_FASTMCP:
-        logger.warning("FastMCP not installed - MCP HTTP endpoint will not be available")
-        return None
-
-    # Import here to avoid circular imports and only when FastMCP is available
+    # Import here to avoid the router/server cycle during application startup.
     from src.services.mcp_server.server import (
         BifrostMCPServer,
         MCPContext,
         _register_workflow_tools,
     )
 
-    # Create OAuth 2.1 auth provider for Bifrost
-    try:
-        from src.services.mcp_server.auth import create_bifrost_auth_provider
-        auth_provider = create_bifrost_auth_provider()
-        logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
-    except ImportError as e:
-        logger.warning(f"Could not create auth provider: {e}")
-        auth_provider = None
+    # Create OAuth 2.1 auth provider for Bifrost. MCP is never mounted without
+    # this verifier: an unavailable auth implementation is a startup failure.
+    from src.services.mcp_server.auth import create_bifrost_auth_provider
+
+    auth_provider = create_bifrost_auth_provider()
+    logger.info("Created Bifrost OAuth 2.1 auth provider for MCP")
 
     # Create a default context for tool schema generation
     # The actual user context is derived from the validated JWT token
@@ -336,25 +387,42 @@ def get_mcp_asgi_app():
     server = BifrostMCPServer(default_context)
     fastmcp_server = server.get_fastmcp_server(auth=auth_provider)
 
-    # Add tool filtering middleware to filter tools/list based on user permissions
-    try:
-        from src.services.mcp_server.middleware import ToolFilterMiddleware
-        fastmcp_server.add_middleware(ToolFilterMiddleware())
-        logger.info("Added ToolFilterMiddleware for per-user tool filtering")
-    except ImportError as e:
-        logger.warning(f"Could not add ToolFilterMiddleware: {e}")
+    # The SDK manager owns Streamable HTTP session and notification behavior.
+    # We deliberately retain stateless JSON responses to match the former
+    # FastMCP mount's wire contract.
+    session_manager = StreamableHTTPSessionManager(
+        app=fastmcp_server._lowlevel_server,
+        json_response=True,
+        stateless=True,
+        # Match the documented ingress ceiling; the SDK defaults to only 4 MiB.
+        max_request_body_size=100 * 1024 * 1024,
+    )
 
-    # Create ASGI app with default path="/mcp" - we mount at root so FastMCP
-    # handles /mcp directly without Starlette's trailing slash redirect
-    mcp_app = fastmcp_server.http_app(json_response=True, stateless_http=True)
+    async def mcp_endpoint(scope, receive, send):
+        await session_manager.handle_request(scope, receive, send)
 
-    # Store original lifespan before wrapping
-    original_lifespan = getattr(mcp_app, 'lifespan', None)
+    mcp_app = Starlette(
+        routes=[
+            Route(
+                "/mcp",
+                endpoint=RequireAuthMiddleware(
+                    mcp_endpoint,
+                    auth_provider.required_scopes,
+                    build_resource_metadata_url(
+                        AnyHttpUrl(f"{auth_provider.base_url}/mcp")
+                    ),
+                ),
+                methods=["POST", "DELETE"],
+            ),
+            *auth_provider.get_routes(mcp_path="/mcp"),
+        ],
+        middleware=auth_provider.get_middleware(),
+    )
 
     # Create combined lifespan that registers workflow tools on startup
     @asynccontextmanager
     async def combined_lifespan(app):
-        """Combined lifespan that registers workflow tools and runs FastMCP lifespan."""
+        """Register workflow tools and run the SDK session manager."""
         # Register workflow tools on startup
         try:
             count = await _register_workflow_tools(fastmcp_server)
@@ -362,11 +430,7 @@ def get_mcp_asgi_app():
         except Exception as e:
             logger.warning(f"Failed to register workflow tools: {e}")
 
-        # Run original FastMCP lifespan if present
-        if original_lifespan:
-            async with original_lifespan(app):
-                yield
-        else:
+        async with session_manager.run():
             yield
 
     # Wrap with agent-scoping middleware to handle /mcp/{agent_id} paths
@@ -387,7 +451,7 @@ def get_mcp_asgi_app():
     # Store combined lifespan on the wrapper for main.py to find
     cors_app.lifespan = combined_lifespan  # type: ignore[attr-defined]
 
-    logger.info("Created FastMCP ASGI application with OAuth 2.1 auth and CORS")
+    logger.info("Created MCP SDK ASGI application with OAuth 2.1 auth and CORS")
 
     return cors_app
 

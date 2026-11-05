@@ -18,6 +18,43 @@ from src.services.manifest_generator import generate_manifest
 
 @pytest.mark.e2e
 class TestScopeAwareManifest:
+
+    async def test_workspace_export_serializes_a_queried_agent_model_profile(
+        self, db_session
+    ) -> None:
+        """Manifest generation explicitly loads the profile used for its name."""
+        from src.models.orm.agents import Agent
+        from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
+
+        connection = AIProviderConnection(
+            id=uuid.uuid4(),
+            name=f"manifest-provider-{uuid.uuid4().hex[:8]}",
+            provider="openai",
+            encrypted_api_key="encrypted-fixture-key",
+        )
+        profile = AIModelProfile(
+            id=uuid.uuid4(),
+            name=f"manifest-profile-{uuid.uuid4().hex[:8]}",
+            connection_id=connection.id,
+            model="gpt-4o-mini",
+        )
+        agent = Agent(
+            id=uuid.uuid4(),
+            name=f"manifest-agent-{uuid.uuid4().hex[:8]}",
+            system_prompt="Serialize my configured model profile.",
+            created_by="test",
+            llm_profile_id=profile.id,
+        )
+        db_session.add_all([connection, profile, agent])
+        await db_session.flush()
+        agent_id = agent.id
+        profile_name = profile.name
+        db_session.expunge_all()
+
+        manifest = await generate_manifest(db_session)
+
+        assert manifest.agents[str(agent_id)].llm_profile == profile_name
+
     async def test_solution_filter_excludes_repo_and_other_installs(self, db_session) -> None:
         db = db_session
         sol = Solution(id=uuid.uuid4(), slug=f"man-{uuid.uuid4().hex[:8]}", name="M", organization_id=None)

@@ -1,4 +1,6 @@
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 
@@ -6,6 +8,8 @@ from shared.form_runtime import (
     FormRuntimeValidationError,
     form_capability_fingerprint,
     normalize_allowed_origins,
+    load_startup_result,
+    store_startup_result,
     validate_form_submission,
 )
 
@@ -101,6 +105,46 @@ def test_normalize_allowed_origins_canonicalizes_and_deduplicates():
 def test_normalize_allowed_origins_rejects_non_origins(origin):
     with pytest.raises(ValueError):
         normalize_allowed_origins([origin])
+
+
+@pytest.mark.asyncio
+async def test_startup_handle_cannot_be_replayed_in_a_different_organization(monkeypatch):
+    from src.core.cache import redis_client
+
+    values: dict[str, str] = {}
+
+    class Redis:
+        async def setex(self, key, _ttl, value):
+            values[key] = value
+
+        async def get(self, key):
+            return values.get(key)
+
+    @asynccontextmanager
+    async def get_redis():
+        yield Redis()
+
+    monkeypatch.setattr(redis_client, "get_redis", get_redis)
+    user = SimpleNamespace(
+        embed=False,
+        user_id=uuid4(),
+        token_exp=None,
+    )
+    first_org = str(uuid4())
+    handle, _ = await store_startup_result(
+        form_id="form-1",
+        organization_id=first_org,
+        user=user,
+        result={"source": "first-org"},
+    )
+
+    with pytest.raises(ValueError, match="invalid or expired"):
+        await load_startup_result(
+            handle=handle,
+            form_id="form-1",
+            organization_id=str(uuid4()),
+            user=user,
+        )
 
 
 def test_submission_validation_rejects_unknown_display_and_missing_fields():

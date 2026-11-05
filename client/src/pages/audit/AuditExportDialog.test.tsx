@@ -14,6 +14,9 @@ const createExport = vi.fn();
 const downloadExport = vi.fn();
 const watchJob = vi.fn();
 const stopWatching = vi.fn();
+const { mockUseAuthorization } = vi.hoisted(() => ({
+	mockUseAuthorization: vi.fn(),
+}));
 
 vi.mock("@/services/auditRetention", () => ({
 	createAuditExport: (body: unknown) => createExport(body),
@@ -32,6 +35,9 @@ vi.mock("@/hooks/useOrganizations", () => ({
 		error: null,
 		refetch: vi.fn(),
 	}),
+}));
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 import { AuditExportDialog } from "./AuditExportDialog";
@@ -92,6 +98,8 @@ describe("AuditExportDialog", () => {
 		downloadExport.mockReset().mockResolvedValue(undefined);
 		watchJob.mockReset();
 		stopWatching.mockReset();
+		mockUseAuthorization.mockReset();
+		mockUseAuthorization.mockReturnValue({ authorization: undefined });
 	});
 
 	it("requires both dates", async () => {

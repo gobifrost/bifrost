@@ -123,6 +123,7 @@ export interface IntegrationOverviewProps {
 	onCreateOAuthConfig: () => void;
 	isAuthorizePending: boolean;
 	isRefreshPending: boolean;
+	canManageDefinitions: boolean;
 }
 
 export function IntegrationOverview({
@@ -140,6 +141,7 @@ export function IntegrationOverview({
 	onCreateOAuthConfig,
 	isAuthorizePending,
 	isRefreshPending,
+	canManageDefinitions,
 }: IntegrationOverviewProps) {
 	return (
 		<div className="grid min-w-0 grid-cols-1 gap-4 xl:grid-cols-2">
@@ -155,15 +157,18 @@ export function IntegrationOverview({
 								Default config values for new mappings
 							</CardDescription>
 						</div>
-						<Button
-							variant="ghost"
-							size="sm"
-							className="min-h-11 self-start"
-							onClick={onOpenDefaultsDialog}
-							aria-label="Configure default values"
-						>
-							<Pencil className="h-4 w-4 shrink-0" /> Configure
-						</Button>
+						{canManageDefinitions && (
+							<Button
+								variant="ghost"
+								size="sm"
+								className="min-h-11 self-start"
+								onClick={onOpenDefaultsDialog}
+								aria-label="Configure default values"
+							>
+								<Pencil className="h-4 w-4 shrink-0" />{" "}
+								Configure
+							</Button>
+						)}
 					</div>
 				</CardHeader>
 				<CardContent>
@@ -257,36 +262,37 @@ export function IntegrationOverview({
 							) : integration.has_oauth_config ? (
 								<AlertCircle className="h-4 w-4 text-[var(--bf-warning)]" />
 							) : null}
-							{integration.has_oauth_config && (
-								<DropdownMenu>
-									<DropdownMenuTrigger asChild>
-										<Button
-											variant="ghost"
-											size="icon"
-											className="min-h-11 min-w-11"
-											aria-label="OAuth configuration actions"
-										>
-											<MoreVertical className="h-4 w-4 shrink-0" />
-										</Button>
-									</DropdownMenuTrigger>
-									<DropdownMenuContent align="end">
-										<DropdownMenuItem
-											onClick={onEditOAuthConfig}
-										>
-											<Pencil className="h-4 w-4 mr-2" />
-											Edit Configuration
-										</DropdownMenuItem>
-										<DropdownMenuItem
-											variant="destructive"
-											onClick={onDeleteOAuthConfig}
-											className="focus:text-destructive"
-										>
-											<Trash2 className="h-4 w-4 mr-2" />
-											Delete Configuration
-										</DropdownMenuItem>
-									</DropdownMenuContent>
-								</DropdownMenu>
-							)}
+							{canManageDefinitions &&
+								integration.has_oauth_config && (
+									<DropdownMenu>
+										<DropdownMenuTrigger asChild>
+											<Button
+												variant="ghost"
+												size="icon"
+												className="min-h-11 min-w-11"
+												aria-label="OAuth configuration actions"
+											>
+												<MoreVertical className="h-4 w-4 shrink-0" />
+											</Button>
+										</DropdownMenuTrigger>
+										<DropdownMenuContent align="end">
+											<DropdownMenuItem
+												onClick={onEditOAuthConfig}
+											>
+												<Pencil className="h-4 w-4 mr-2" />
+												Edit Configuration
+											</DropdownMenuItem>
+											<DropdownMenuItem
+												variant="destructive"
+												onClick={onDeleteOAuthConfig}
+												className="focus:text-destructive"
+											>
+												<Trash2 className="h-4 w-4 mr-2" />
+												Delete Configuration
+											</DropdownMenuItem>
+										</DropdownMenuContent>
+									</DropdownMenu>
+								)}
 						</div>
 					</div>
 				</CardHeader>
@@ -351,82 +357,86 @@ export function IntegrationOverview({
 							)}
 
 							{/* Action buttons */}
-							<div className="flex min-w-0 flex-wrap items-center gap-2 pt-1">
-								{canUseAuthCodeFlow && (
-									<Button
-										variant={
-											isOAuthConnected
-												? "outline"
-												: "default"
-										}
-										size="sm"
-										className="min-h-11 flex-1"
-										onClick={onOAuthConnect}
-										disabled={isAuthorizePending}
-									>
-										{isAuthorizePending ? (
-											<>
-												<Loader2 className="mr-2 h-3 w-3 animate-spin motion-reduce:animate-none" />
-												Connecting...
-											</>
-										) : isOAuthConnected ? (
-											"Reconnect default"
-										) : (
-											"Connect default"
-										)}
-									</Button>
-								)}
-								{/* For client_credentials flow when not connected, show Get Token button */}
-								{!canUseAuthCodeFlow &&
-									!isOAuthConnected &&
-									oauthConfig && (
+							{canManageDefinitions && (
+								<div className="flex min-w-0 flex-wrap items-center gap-2 pt-1">
+									{canUseAuthCodeFlow && (
 										<Button
-											variant="default"
+											variant={
+												isOAuthConnected
+													? "outline"
+													: "default"
+											}
 											size="sm"
 											className="min-h-11 flex-1"
-											onClick={onOAuthRefresh}
-											disabled={isRefreshPending}
+											onClick={onOAuthConnect}
+											disabled={isAuthorizePending}
 										>
-											{isRefreshPending ? (
+											{isAuthorizePending ? (
 												<>
 													<Loader2 className="mr-2 h-3 w-3 animate-spin motion-reduce:animate-none" />
-													Getting Token...
+													Connecting...
 												</>
-											) : oauthConfig?.status ===
-											  "failed" ? (
-												"Retry"
+											) : isOAuthConnected ? (
+												"Reconnect default"
 											) : (
-												"Get Token"
+												"Connect default"
 											)}
 										</Button>
 									)}
-								{isOAuthConnected &&
-									oauthConfig?.expires_at && (
-										<Button
-											variant="outline"
-											size="sm"
-											className="min-h-11"
-											onClick={onOAuthRefresh}
-											disabled={isRefreshPending}
-										>
-											{isRefreshPending ? (
-												<>
-													<Loader2 className="mr-2 h-3 w-3 animate-spin motion-reduce:animate-none" />
-													Refreshing...
-												</>
-											) : (
-												<>
-													<RotateCw className="mr-2 h-3 w-3" />
-													Refresh default token
-												</>
-											)}
-										</Button>
-									)}
-							</div>
-							<p className="text-xs text-muted-foreground mt-1">
-								Used when an organization isn't individually
-								connected via its mapping.
-							</p>
+									{/* For client_credentials flow when not connected, show Get Token button */}
+									{!canUseAuthCodeFlow &&
+										!isOAuthConnected &&
+										oauthConfig && (
+											<Button
+												variant="default"
+												size="sm"
+												className="min-h-11 flex-1"
+												onClick={onOAuthRefresh}
+												disabled={isRefreshPending}
+											>
+												{isRefreshPending ? (
+													<>
+														<Loader2 className="mr-2 h-3 w-3 animate-spin motion-reduce:animate-none" />
+														Getting Token...
+													</>
+												) : oauthConfig?.status ===
+												  "failed" ? (
+													"Retry"
+												) : (
+													"Get Token"
+												)}
+											</Button>
+										)}
+									{isOAuthConnected &&
+										oauthConfig?.expires_at && (
+											<Button
+												variant="outline"
+												size="sm"
+												className="min-h-11"
+												onClick={onOAuthRefresh}
+												disabled={isRefreshPending}
+											>
+												{isRefreshPending ? (
+													<>
+														<Loader2 className="mr-2 h-3 w-3 animate-spin motion-reduce:animate-none" />
+														Refreshing...
+													</>
+												) : (
+													<>
+														<RotateCw className="mr-2 h-3 w-3" />
+														Refresh default token
+													</>
+												)}
+											</Button>
+										)}
+								</div>
+							)}
+							{canManageDefinitions && (
+								<p className="text-xs text-muted-foreground mt-1">
+									Used when an organization isn't individually
+									connected via its mapping.
+								</p>
+							)}
 						</div>
 					) : (
 						<div className="flex min-w-0 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -442,15 +452,17 @@ export function IntegrationOverview({
 									</p>
 								</div>
 							</div>
-							<Button
-								variant="outline"
-								size="sm"
-								className="min-h-11 self-start sm:self-auto"
-								onClick={onCreateOAuthConfig}
-							>
-								<Plus className="h-3 w-3 mr-2" />
-								Configure
-							</Button>
+							{canManageDefinitions && (
+								<Button
+									variant="outline"
+									size="sm"
+									className="min-h-11 self-start sm:self-auto"
+									onClick={onCreateOAuthConfig}
+								>
+									<Plus className="h-3 w-3 mr-2" />
+									Configure
+								</Button>
+							)}
 						</div>
 					)}
 				</CardContent>

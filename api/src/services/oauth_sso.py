@@ -10,7 +10,9 @@ All OAuth flows use PKCE for enhanced security.
 Configuration is stored in the database (system_configs table).
 """
 
+import asyncio
 import hashlib
+import io
 import logging
 import secrets
 from dataclasses import dataclass
@@ -19,6 +21,8 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+import jwt
+from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,6 +33,20 @@ from src.services.oauth_provider import append_query_params
 
 logger = logging.getLogger(__name__)
 
+# The tenant id Entra gives personal Microsoft accounts (outlook.com, live.com, and
+# personal accounts created on a work address). Bifrost signs in work accounts only.
+MICROSOFT_CONSUMER_TENANT_ID = "9188040d-6c67-4c5b-b112-36a304b66dad"
+# Google addresses that are not Workspace accounts, so carry no `hd` claim.
+GOOGLE_CONSUMER_DOMAINS = {"gmail.com", "googlemail.com"}
+# Signed-in user's profile photo. User.Read, already requested for Entra
+# sign-in, covers this call. It is best-effort and must not fail login.
+MICROSOFT_GRAPH_PHOTO_URL = "https://graph.microsoft.com/v1.0/me/photo/$value"
+_MICROSOFT_PHOTO_TIMEOUT_SECONDS = 10.0
+# Same ceiling as a manual avatar upload in the profile router.
+_MICROSOFT_PHOTO_MAX_BYTES = 2 * 1024 * 1024
+_MICROSOFT_PHOTO_MAX_PIXELS = 4096 * 4096
+_MICROSOFT_PHOTO_CONTENT_TYPES = {"JPEG": "image/jpeg", "PNG": "image/png"}
+
 
 @dataclass
 class OAuthUserInfo:
@@ -38,7 +56,9 @@ class OAuthUserInfo:
     email: str
     name: str | None = None
     picture: str | None = None
-    email_verified: bool = False
+    # This records only the provider's claim. Email authority for a new link is
+    # established separately by ``validate_email_for_linking``.
+    email_verified: bool | None = None
     raw_data: dict | None = None
 
 
@@ -315,30 +335,66 @@ class OAuthService:
         return self._parse_user_info(provider, user_data)
 
     def _parse_user_info(self, provider: str, data: dict) -> OAuthUserInfo:
-        """Parse provider-specific user info into standard format."""
+        """Extract a normalized OAuth identity without authorizing a new email link."""
         if provider == "microsoft":
             return OAuthUserInfo(
                 provider=provider,
-                provider_user_id=data.get("id", ""),
-                email=data.get("mail") or data.get("userPrincipalName", ""),
+                provider_user_id=_provider_user_id(data.get("id")),
+                # Graph's `mail` is free text and never identifies a Bifrost user.
+                email=_normalized_email(data.get("userPrincipalName")),
                 name=data.get("displayName"),
-                picture=None,  # Microsoft requires separate Graph API call for photo
-                email_verified=True,  # Microsoft always verifies emails
+                # Graph /me has no picture URL. The photo is fetched separately
+                # from /me/photo/$value and stored on the user at sign-in.
+                picture=None,
+                email_verified=None,
                 raw_data=data,
             )
 
-        else:
-            # Google and any other standard OIDC provider both use the
-            # canonical sub/email/name/picture/email_verified claims.
-            return OAuthUserInfo(
-                provider=provider,
-                provider_user_id=data.get("sub", ""),
-                email=data.get("email", ""),
-                name=data.get("name"),
-                picture=data.get("picture"),
-                email_verified=data.get("email_verified", False),
-                raw_data=data,
-            )
+        return OAuthUserInfo(
+            provider=provider,
+            provider_user_id=_provider_user_id(data.get("sub")),
+            email=_normalized_email(data.get("email")),
+            name=data.get("name"),
+            picture=data.get("picture"),
+            email_verified=data.get("email_verified") if isinstance(data.get("email_verified"), bool) else None,
+            raw_data=data,
+        )
+
+    def validate_email_for_linking(self, user_info: OAuthUserInfo, tokens: OAuthTokens) -> None:
+        """Require a provider-authoritative email before creating a new OAuth link.
+
+        A linked account is authenticated solely by its provider ID, so current
+        email claims cannot revoke access to an established mapping. Email is
+        only relevant when creating that mapping or provisioning a user.
+        """
+        if not user_info.email:
+            raise OAuthError("OAuth provider did not return email address")
+
+        data = user_info.raw_data or {}
+
+        if user_info.provider == "microsoft":
+            tenant_id = _microsoft_tenant_id(tokens.id_token)
+            if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
+                raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
+            if "#ext#" in user_info.email:
+                raise OAuthError("Guest accounts can't sign in. Sign in with your own organization's account.")
+            return
+
+        if user_info.provider == "google":
+            if data.get("email_verified") is not True:
+                raise OAuthError("Google hasn't verified this account's email address.")
+            domain = user_info.email.rpartition("@")[2]
+            hosted_domain = data.get("hd")
+            if domain not in GOOGLE_CONSUMER_DOMAINS and (
+                not isinstance(hosted_domain, str) or not hosted_domain.strip()
+            ):
+                raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
+            return
+
+        # Generic OIDC is a trusted issuer selected through platform settings.
+        # Preserve its existing email policy unless it explicitly denies verification.
+        if data.get("email_verified") is False:
+            raise OAuthError("Your identity provider hasn't verified this account's email address.")
 
     # ========================================================================
     # OAuth Account Management
@@ -416,6 +472,18 @@ class OAuthService:
 
         return oauth_account
 
+    async def apply_microsoft_profile_photo(self, user: User, access_token: str) -> None:
+        """Copy the Entra profile photo onto ``user`` when Graph returns one.
+
+        A missing photo, a 404, or an unreadable body leaves whatever avatar
+        the user already has in place. Network and HTTP failures return
+        without raising so the caller can finish signing the user in.
+        """
+        photo = await fetch_microsoft_profile_photo(access_token)
+        if photo is None:
+            return
+        user.avatar_data, user.avatar_content_type = photo
+
     async def unlink_oauth_account(
         self,
         user_id: UUID,
@@ -466,3 +534,104 @@ class OAuthService:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _microsoft_tenant_id(id_token: str | None) -> str:
+    """The `tid` claim of a Microsoft ID token.
+
+    The token comes straight from Microsoft's token endpoint over TLS in the code exchange,
+    so its signature isn't checked (OpenID Connect Core 3.1.3.7).
+    """
+    if not id_token:
+        raise OAuthError("Microsoft didn't return an ID token")
+    try:
+        claims = jwt.decode(id_token, options={"verify_signature": False})
+    except jwt.PyJWTError as e:
+        raise OAuthError("Microsoft returned an unreadable ID token") from e
+    tenant_id = claims.get("tid")
+    if not tenant_id:
+        raise OAuthError("Microsoft's ID token has no tenant")
+    return str(tenant_id).lower()
+
+
+def _provider_user_id(value: object) -> str:
+    """Return a stable provider identifier or reject it before any lookup."""
+    if not isinstance(value, str) or not value.strip():
+        raise OAuthError("OAuth provider did not return a stable user ID")
+    return value
+
+
+def _normalized_email(value: object) -> str:
+    """Normalize an optional email-like claim without deciding whether to trust it."""
+    return value.strip().lower() if isinstance(value, str) else ""
+
+
+async def _authorize_graph_photo_request(request: httpx.Request) -> None:
+    """Keep the Entra access token on graph.microsoft.com.
+
+    ``/me/photo/$value`` sometimes redirects to a short-lived download URL.
+    That URL authenticates itself. The bearer token must not follow it to
+    another host.
+    """
+    if request.url.scheme != "https" or request.url.host != "graph.microsoft.com":
+        request.headers.pop("Authorization", None)
+
+
+def _microsoft_photo_content_type(body: bytes) -> str | None:
+    """Return image/jpeg or image/png when ``body`` is a bounded photo."""
+    if not body or len(body) > _MICROSOFT_PHOTO_MAX_BYTES:
+        return None
+    try:
+        with Image.open(io.BytesIO(body)) as image:
+            content_type = _MICROSOFT_PHOTO_CONTENT_TYPES.get(image.format or "")
+            if content_type is None or image.width < 1 or image.height < 1:
+                return None
+            if image.width * image.height > _MICROSOFT_PHOTO_MAX_PIXELS:
+                return None
+            image.load()
+    except (UnidentifiedImageError, Image.DecompressionBombError, OSError, ValueError) as exc:
+        logger.info("Microsoft profile photo discarded: %s", type(exc).__name__)
+        return None
+    return content_type
+
+
+async def fetch_microsoft_profile_photo(access_token: str) -> tuple[bytes, str] | None:
+    """Fetch the signed-in user's Graph profile photo.
+
+    Returns ``(bytes, content_type)`` or None. A missing photo (including
+    Graph's 404), a timeout, a non-image body, or any other photo error
+    returns None and never raises.
+    """
+    if not access_token:
+        return None
+    try:
+        async with asyncio.timeout(_MICROSOFT_PHOTO_TIMEOUT_SECONDS):
+            async with httpx.AsyncClient(
+                timeout=_MICROSOFT_PHOTO_TIMEOUT_SECONDS,
+                follow_redirects=True,
+                event_hooks={"request": [_authorize_graph_photo_request]},
+            ) as client:
+                async with client.stream(
+                    "GET",
+                    MICROSOFT_GRAPH_PHOTO_URL,
+                    headers={"Authorization": f"Bearer {access_token}"},
+                ) as response:
+                    if response.url.scheme != "https" or response.status_code == 404:
+                        return None
+                    if response.status_code != 200:
+                        logger.info("Microsoft profile photo unavailable: HTTP %s", response.status_code)
+                        return None
+                    body = bytearray()
+                    async for chunk in response.aiter_bytes():
+                        if len(body) + len(chunk) > _MICROSOFT_PHOTO_MAX_BYTES:
+                            return None
+                        body.extend(chunk)
+    except (httpx.HTTPError, TimeoutError) as exc:
+        logger.info("Microsoft profile photo request failed: %s", type(exc).__name__)
+        return None
+
+    photo = bytes(body)
+    content_type = _microsoft_photo_content_type(photo)
+    if content_type is None:
+        return None
+    return photo, content_type

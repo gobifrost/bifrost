@@ -1,0 +1,14 @@
+{
+  "key": "pr:1103",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Agent runs and chat messages run in separate worker processes, so a busy or memory-full API no longer delays or blocks them.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1103",
+      "Jack asked on 2026-10-28 to move agent runs to workers after production Triage Agent runs stalled behind the API's memory gate; before/after benchmark in docs/benchmarks/2026-10-28-agent-runs-on-workers.md."
+    ]
+  }
+}

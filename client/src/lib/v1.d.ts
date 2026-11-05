@@ -152,7 +152,6 @@ export interface paths {
          *     Checks:
          *     - Database connectivity
          *     - Redis connectivity
-         *     - RabbitMQ connectivity
          *     - S3 bucket availability when S3 is configured
          *
          *     Returns:
@@ -329,6 +328,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/auth/impersonate/{user_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Start Browser Impersonation
+         * @description Mint a browser-wide, original-session-bound impersonation marker.
+         */
+        post: operations["start_browser_impersonation_auth_impersonate__user_id__post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/impersonation/end": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * End Browser Impersonation
+         * @description Exit using the original operator, even after marker expiry or revocation.
+         */
+        post: operations["end_browser_impersonation_auth_impersonation_end_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/auth/refresh": {
         parameters: {
             query?: never;
@@ -353,6 +392,11 @@ export interface paths {
          *     2. HttpOnly cookie (browser clients): Automatically sent
          *
          *     Rate limited: 10 requests per minute per IP address.
+         *
+         *     A run refresh token (``type: run_refresh``, in the body) instead
+         *     re-evaluates its run and returns a new access token with the same run
+         *     refresh token: it is reusable and unrotated, sets no cookies, and is not
+         *     rate limited per IP, since many runs share a worker's address.
          *
          *     Args:
          *         request: FastAPI request object
@@ -413,8 +457,8 @@ export interface paths {
          * Logout
          * @description Logout current user and revoke refresh token.
          *
-         *     Clears authentication cookies and revokes the current refresh token.
-         *     The access token will remain valid until expiry (30 minutes max).
+         *     Clears authentication cookies and revokes the current durable session.
+         *     Its epoch bump refuses prior access credentials on their next operation.
          *
          *     For API clients using Bearer auth, the refresh_token should be passed
          *     in the request body. For browser clients using cookies, the token is
@@ -454,8 +498,8 @@ export interface paths {
          *     - User wants to sign out everywhere
          *     - Password has been changed
          *
-         *     Note: Access tokens will remain valid until expiry (30 minutes max).
-         *     For immediate revocation, consider also changing the password.
+         *     Session revocation and the authority-epoch bump commit atomically, so
+         *     existing access tokens are refused before their next protected operation.
          *
          *     Args:
          *         response: FastAPI response (to clear current cookies)
@@ -732,25 +776,53 @@ export interface paths {
         put?: never;
         /**
          * Authorize Device
-         * @description Authorize a device code (user approves CLI access).
-         *
-         *     This endpoint is called by the web UI when a logged-in user enters the
-         *     user_code and approves CLI access. The CLI will then receive tokens on
-         *     its next poll to /device/token.
-         *
-         *     Requires authentication - user must be logged in to authorize a device.
-         *
-         *     Args:
-         *         authorize_request: Device authorization request with user_code
-         *         current_user: Current authenticated user (from JWT)
-         *
-         *     Returns:
-         *         Success response
-         *
-         *     Raises:
-         *         HTTPException: If user_code is invalid or expired
+         * @description Approve a CLI login after explicit confirmation. The first decision is final.
          */
         post: operations["authorize_device_auth_device_authorize_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/device/deny": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deny Device
+         * @description Deny a CLI login without ever calling the approval endpoint.
+         */
+        post: operations["deny_device_auth_device_deny_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/auth/app-connections/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get App Connection
+         * @description Review one MCP connection; opening this endpoint never issues credentials.
+         */
+        get: operations["get_app_connection_auth_app_connections__request_id__get"];
+        put?: never;
+        /**
+         * Decide App Connection Request
+         * @description Record a user-bound, explicit approval or denial before handing off to the app.
+         */
+        post: operations["decide_app_connection_request_auth_app_connections__request_id__post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1284,7 +1356,7 @@ export interface paths {
         put?: never;
         /**
          * Get passkey authentication options
-         * @description Generate WebAuthn authentication options for passwordless login. Returns a challenge that should be passed to navigator.credentials.get(). If email is provided, limits credentials to that user. If email is omitted, uses discoverable credentials (passkey autofill).
+         * @description Generate WebAuthn authentication options for passwordless login. Returns a challenge that should be passed to navigator.credentials.get(). Uses discoverable credentials without disclosing account membership. The optional email field is accepted without changing the public challenge.
          */
         post: operations["get_authentication_options_auth_passkeys_authenticate_options_post"];
         delete?: never;
@@ -2471,6 +2543,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/workflows/{workflow_id}/parameters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get launchable Workflow parameters
+         * @description Returns current input parameters for a Workflow the caller may execute. Uses the same sharing, organization reach, and Solution scope checks as execution.
+         */
+        get: operations["workflows.parameters"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/workflows/{workflow_id}/run-identities": {
         parameters: {
             query?: never;
@@ -3118,6 +3210,46 @@ export interface paths {
          * @description Delete a file from a managed or custom location.
          */
         post: operations["workspace.files.delete"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move File
+         * @description Move one file within a location as a durable platform job.
+         */
+        post: operations["workspace.files.move"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/files/move-many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Move Files
+         * @description Move up to 500 files within a location as one durable platform job.
+         */
+        post: operations["workspace.files.move_many"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4680,9 +4812,10 @@ export interface paths {
          * List all mappings for an integration
          * @description List all mappings for an integration via SDK.
          *
-         *     Scope resolution and response construction live in the shared
+         *     Reach filtering and response construction live in the shared
          *     integrations service (``shared.sdk_integrations``), which the
-         *     worker-local engine child calls for the same inputs.
+         *     worker-local engine child calls for the same inputs. ``request.scope``
+         *     is ignored: the list returns every mapping the caller may read.
          */
         post: operations["sdk_integrations_list_mappings_api_sdk_integrations_list_mappings_post"];
         delete?: never;
@@ -5601,6 +5734,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/kubernetes/policy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Kubernetes Policy */
+        put: operations["update_kubernetes_policy_api_admin_kubernetes_policy_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/required-instructions": {
         parameters: {
             query?: never;
@@ -6267,17 +6417,15 @@ export interface paths {
          * Cancel Backfill Job
          * @description Mark a backfill job as cancelled so the UI unblocks.
          *
-         *     This does NOT drain messages already on the ``agent-summarization``
-         *     queue — RabbitMQ will keep delivering them and the worker will keep
-         *     summarising individual runs. What it does do:
+         *     This does NOT withdraw summaries already dispatched — executors keep
+         *     summarising those runs. What it does do:
          *
          *     - flips ``status`` from ``running`` to ``cancelled``
          *     - sets ``completed_at`` so the row stops appearing in "active" queries
          *     - broadcasts final state so the progress card dismisses itself
          *
-         *     Use this when progress has stalled (e.g. the worker was restarted
-         *     mid-job and prefetched messages went back on the queue but the counter
-         *     never advanced) — admins need a way out.
+         *     Use this when progress has stalled and the counter never advanced —
+         *     admins need a way out.
          */
         post: operations["cancel_backfill_job_api_agent_runs_backfill_jobs__job_id__cancel_post"];
         delete?: never;
@@ -7380,6 +7528,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/maintenance/app-sdk-upgrades/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get automatic App SDK upgrade settings */
+        get: operations["get_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_get"];
+        /** Update automatic App SDK upgrade settings */
+        put: operations["update_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/maintenance/artifact-retention/settings": {
         parameters: {
             query?: never;
@@ -7459,6 +7625,26 @@ export interface paths {
         };
         /** Preview which archived audit events an archive window would delete */
         get: operations["preview_audit_expiry_api_maintenance_audit_retention_preview_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/maintenance/authz/legacy-status": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List what still depends on legacy runtime credentials
+         * @description Live workflow executions and service attempts whose credentials are in the legacy format, and connected remote launchers that receive legacy credentials. The release that removes legacy runtime tokens refuses to install while either list is non-empty. Read-only.
+         */
+        get: operations["get_legacy_credential_status_api_maintenance_authz_legacy_status_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -8191,6 +8377,43 @@ export interface paths {
         put?: never;
         post?: never;
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/run/branding": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Branding */
+        get: operations["get_package_branding_api_mcp_run_branding_get"];
+        /** Update Package Branding */
+        put: operations["update_package_branding_api_mcp_run_branding_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mcp/run/branding/logo": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Package Logo */
+        get: operations["get_package_logo_api_mcp_run_branding_logo_get"];
+        put?: never;
+        /** Upload Package Logo */
+        post: operations["upload_package_logo_api_mcp_run_branding_logo_post"];
+        /** Delete Package Logo */
+        delete: operations["delete_package_logo_api_mcp_run_branding_logo_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -9603,6 +9826,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/solutions/{solution_id}/app-builds/lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Lookup Solution App Builds */
+        post: operations["solutions.app_builds.lookup"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/solutions/{solution_id}/deploy": {
         parameters: {
             query?: never;
@@ -10354,6 +10594,46 @@ export interface paths {
         post: operations["upload_application_logo_api_applications__app_id__logo_post"];
         /** Delete application logo */
         delete: operations["delete_application_logo_api_applications__app_id__logo_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-sdk/v1/manifest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Manifest
+         * @description Select the API instance's current factory without caching the pointer.
+         */
+        get: operations["get_manifest_api_app_sdk_v1_manifest_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/app-sdk/assets/{fingerprint}.js": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Asset
+         * @description Serve an exact immutable factory artifact from shared platform storage.
+         */
+        get: operations["get_asset_api_app_sdk_assets__fingerprint__js_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -11621,11 +11901,22 @@ export interface components {
         AIBehaviorResponse: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @enum {string}
+             */
+            agent_execution_mode: "delegated" | "automatic";
         };
         /** AIBehaviorUpdate */
         AIBehaviorUpdate: {
             /** Default System Prompt */
             default_system_prompt?: string | null;
+            /**
+             * Agent Execution Mode
+             * @description Omit to retain the current platform execution mode.
+             * @enum {string}
+             */
+            agent_execution_mode?: "delegated" | "automatic";
         };
         /** AIConnectionTestResponse */
         AIConnectionTestResponse: {
@@ -13119,6 +13410,30 @@ export interface components {
             /** Ai Cost */
             ai_cost?: string;
         };
+        /** AppConnectionDecision */
+        AppConnectionDecision: {
+            /** Approved */
+            approved: boolean;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /**
+         * AppConnectionDetails
+         * @description A user-bound preview of one external app connection.
+         */
+        AppConnectionDetails: {
+            /** Client Name */
+            client_name: string;
+            /** Redirect Uri */
+            redirect_uri: string;
+            /** Consent Token */
+            consent_token: string;
+        };
+        /** AppConnectionResult */
+        AppConnectionResult: {
+            /** Redirect Url */
+            redirect_url?: string | null;
+        };
         /**
          * AppDependencyIssue
          * @description A missing dependency issue in an app.
@@ -13195,6 +13510,25 @@ export interface components {
                 [key: string]: string;
             };
         };
+        /**
+         * AppSdkUpgradeSettings
+         * @description Platform-wide policy for automatic App SDK upgrades.
+         */
+        AppSdkUpgradeSettings: {
+            /**
+             * Enabled
+             * @default false
+             */
+            enabled: boolean;
+        };
+        /**
+         * AppSdkUpgradeSettingsUpdate
+         * @description Requested platform-wide App SDK upgrade policy.
+         */
+        AppSdkUpgradeSettingsUpdate: {
+            /** Enabled */
+            enabled: boolean;
+        };
         /** AppValidationIssue */
         AppValidationIssue: {
             /** Severity */
@@ -13220,6 +13554,44 @@ export interface components {
              * @default []
              */
             warnings: components["schemas"]["AppValidationIssue"][];
+        };
+        /**
+         * ApplicationBundleManifest
+         * @description Built App assets and the host contracts needed before entry evaluation.
+         */
+        ApplicationBundleManifest: {
+            /** Entry */
+            entry: string | null;
+            /** Css */
+            css: string | null;
+            /** Base Url */
+            base_url: string;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "preview" | "live";
+            /** Dependencies */
+            dependencies: {
+                [key: string]: string;
+            };
+            /**
+             * Migrated
+             * @default false
+             */
+            migrated: boolean;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * App Model
+             * @default inline_v1
+             * @enum {string}
+             */
+            app_model: "inline_v1" | "standalone_v2";
+            /** Runtime Contract */
+            runtime_contract?: "mount-v1" | null;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
         };
         /**
          * ApplicationCreate
@@ -13422,6 +13794,11 @@ export interface components {
              * @description SDK/server contract version used for the active app build.
              */
             sdk_contract_version?: number | null;
+            /**
+             * Sdk Binding Api Major
+             * @description Hosted SDK public API major selected by the active app binding; null for a bundled SDK.
+             */
+            sdk_binding_api_major?: number | null;
             /**
              * Sdk Built At
              * @description When the active app build's SDK provenance was recorded.
@@ -13915,6 +14292,21 @@ export interface components {
              */
             user_name?: string | null;
             /**
+             * Impersonated By User Id
+             * @description Operator who impersonated the acting user
+             */
+            impersonated_by_user_id?: string | null;
+            /**
+             * Impersonated By Email
+             * @description Impersonating operator's email
+             */
+            impersonated_by_email?: string | null;
+            /**
+             * Impersonated By Name
+             * @description Impersonating operator's display name
+             */
+            impersonated_by_name?: string | null;
+            /**
              * Organization Id
              * @description Organization the event happened in (an access check's target organization)
              */
@@ -13990,6 +14382,11 @@ export interface components {
              * @description Workflow execution that produced the event, when supported
              */
             execution_id?: string | null;
+            /**
+             * Impersonation Session Id
+             * @description Browser impersonation session that produced the event
+             */
+            impersonation_session_id?: string | null;
             /** @description Who performed the action */
             actor: components["schemas"]["AuditLogActor"];
             /** Ip Address */
@@ -14128,6 +14525,11 @@ export interface components {
             needs_setup: boolean;
             /** Password Login Enabled */
             password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @default true
+             */
+            passkey_login_enabled: boolean;
             /** Mfa Required For Password */
             mfa_required_for_password: boolean;
             /** Oauth Providers */
@@ -14139,6 +14541,38 @@ export interface components {
             auto_redirect_to_sso: boolean;
             /** Default Sso Provider */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
+        };
+        /**
+         * AuthenticatedFormRuntimeDefinition
+         * @description Execution scope metadata for signed-in callers, excluded from embeds.
+         */
+        AuthenticatedFormRuntimeDefinition: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+            /** Description */
+            description?: string | null;
+            form_schema: components["schemas"]["FormRuntimeSchema"];
+            /** Allowed Query Params */
+            allowed_query_params?: string[] | null;
+            /**
+             * Has Startup
+             * @default false
+             */
+            has_startup: boolean;
+            /**
+             * Captcha Required
+             * @default false
+             */
+            captcha_required: boolean;
+            /** Is Active */
+            is_active: boolean;
+            /** Organization Id */
+            organization_id: string | null;
         };
         /** AuthorizationBaseRole */
         AuthorizationBaseRole: {
@@ -14176,6 +14610,8 @@ export interface components {
             is_platform_admin: boolean;
             /** Home Organization Id */
             home_organization_id: string | null;
+            /** Home Organization Name */
+            home_organization_name?: string | null;
             /**
              * Provider Organization Id
              * Format: uuid
@@ -14492,6 +14928,11 @@ export interface components {
              */
             file: string;
         };
+        /** Body_upload_package_logo_api_mcp_run_branding_logo_post */
+        Body_upload_package_logo_api_mcp_run_branding_logo_post: {
+            /** File */
+            file: string;
+        };
         /**
          * BrandingSettings
          * @description Global platform branding configuration
@@ -14556,6 +14997,26 @@ export interface components {
             primary_color?: string | null;
             /** @description Fixed product terminology overrides for the platform UI */
             terminology?: components["schemas"]["BrandingTerminology"] | null;
+        };
+        /**
+         * BrowserImpersonationTokenResponse
+         * @description A short-lived bearer credential for one browser impersonation tab.
+         */
+        BrowserImpersonationTokenResponse: {
+            /** Access Token */
+            access_token: string;
+            /**
+             * Token Type
+             * @default bearer
+             * @constant
+             */
+            token_type: "bearer";
+            /**
+             * Expires In
+             * @default 1800
+             * @constant
+             */
+            expires_in: 1800;
         };
         /** BulkExportRequest */
         BulkExportRequest: {
@@ -16363,7 +16824,7 @@ export interface components {
         };
         /**
          * DeviceAuthorizeRequest
-         * @description Request to authorize a device using user code.
+         * @description The code for a CLI device login being approved or denied.
          */
         DeviceAuthorizeRequest: {
             /** User Code */
@@ -16888,6 +17349,11 @@ export interface components {
             reasoning: string;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /**
          * DryRunRequest
@@ -16915,6 +17381,11 @@ export interface components {
             alternative_action?: string | null;
             /** Confidence */
             confidence: number;
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
         };
         /** DryRunTurn */
         DryRunTurn: {
@@ -16933,6 +17404,11 @@ export interface components {
              * @enum {string}
              */
             predicted: "up" | "down";
+            /**
+             * Evaluation Failed
+             * @default false
+             */
+            evaluation_failed: boolean;
             /**
              * At
              * Format: date-time
@@ -18603,6 +19079,80 @@ export interface components {
          * @enum {string}
          */
         FileMode: "draft" | "live";
+        /**
+         * FileMoveBatchRequest
+         * @description Move up to 500 files within one non-workspace location (one platform job).
+         */
+        FileMoveBatchRequest: {
+            /** Items */
+            items: components["schemas"]["FileMoveItem"][];
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
+        /**
+         * FileMoveItem
+         * @description One file to move within the request's location.
+         */
+        FileMoveItem: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+        };
+        /**
+         * FileMoveRequest
+         * @description Move one file within a non-workspace location (a durable platform job).
+         */
+        FileMoveRequest: {
+            /**
+             * Source
+             * @description Current path relative to the location root
+             */
+            source: string;
+            /**
+             * Destination
+             * @description New path relative to the location root
+             */
+            destination: string;
+            /**
+             * Location
+             * @description Storage location. Special values: workspace (default), temp, uploads. Custom names like reports are accepted; internal prefixes _repo, _tmp, and _apps are blocked.
+             */
+            location: string;
+            /**
+             * Scope
+             * @description Org scope; Solution context wins.
+             */
+            scope?: string | null;
+            /**
+             * On Conflict
+             * @description error: fail an item whose destination exists. rename: use the first free 'name (n).ext' instead.
+             * @default error
+             * @enum {string}
+             */
+            on_conflict: "error" | "rename";
+        };
         /** FilePolicies */
         FilePolicies: {
             /** Policies */
@@ -20136,6 +20686,24 @@ export interface components {
             /** Collections */
             collections: components["schemas"]["HomeCollectionPublic"][];
         };
+        /**
+         * HostedAppSdkDescriptor
+         * @description The current immutable browser SDK factory for one binding API major.
+         */
+        HostedAppSdkDescriptor: {
+            /** Api Major */
+            api_major: number;
+            /** Factory Version */
+            factory_version: number;
+            /** Factory Id */
+            factory_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+            /** Integrity */
+            integrity: string;
+            /** Asset Url */
+            asset_url: string;
+        };
         /** IdentityBaseRole */
         IdentityBaseRole: {
             /**
@@ -21201,7 +21769,7 @@ export interface components {
         };
         /**
          * KubernetesExecutionJobType
-         * @description One remotely-eligible job type with its product opt-in state.
+         * @description One isolatable job type with its per-type state.
          */
         KubernetesExecutionJobType: {
             /** Job Type */
@@ -21214,8 +21782,6 @@ export interface components {
             enabled: boolean;
             /** Default Enabled */
             default_enabled: boolean;
-            /** Allowed By Deployment */
-            allowed_by_deployment: boolean;
             /** Max Concurrency */
             max_concurrency?: number | null;
             /** Default Max Concurrency */
@@ -21223,15 +21789,22 @@ export interface components {
         };
         /**
          * KubernetesExecutionSettings
-         * @description Product opt-in state for remote execution, per job type.
+         * @description Everything Settings -> Kubernetes shows.
          */
         KubernetesExecutionSettings: {
+            policy: components["schemas"]["KubernetesPolicyValues"];
+            /** Imported From Env */
+            imported_from_env: {
+                [key: string]: components["schemas"]["KubernetesPolicyProvenance"];
+            };
             /** Job Types */
             job_types: components["schemas"]["KubernetesExecutionJobType"][];
+            /** Unread Variables */
+            unread_variables: string[];
         };
         /**
          * KubernetesExecutionUpdate
-         * @description Toggle remote execution and/or concurrency for one job type.
+         * @description Toggle isolation and/or concurrency for one job type.
          *
          *     max_concurrency is tri-state: omitted leaves the override unchanged,
          *     null clears it back to the code default, 1-32 sets it.
@@ -21245,14 +21818,65 @@ export interface components {
             max_concurrency?: number | null;
         };
         /**
+         * KubernetesPolicyProvenance
+         * @description A setting whose value was imported from a deployment variable.
+         */
+        KubernetesPolicyProvenance: {
+            /** Variable */
+            variable: string;
+            /**
+             * Imported At
+             * Format: date-time
+             */
+            imported_at: string;
+        };
+        /**
+         * KubernetesPolicyUpdate
+         * @description Change any of the scaling and isolation settings; omitted ones stay.
+         */
+        KubernetesPolicyUpdate: {
+            /** Warm Workers */
+            warm_workers?: number | null;
+            /** Max Workers */
+            max_workers?: number | null;
+            /** Worker Memory Mib */
+            worker_memory_mib?: number | null;
+            /** Largest Worker Mib */
+            largest_worker_mib?: number | null;
+            /** Idle Seconds */
+            idle_seconds?: number | null;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled?: boolean | null;
+            /** Max Isolated Pods */
+            max_isolated_pods?: number | null;
+        };
+        /**
+         * KubernetesPolicyValues
+         * @description Worker scaling and isolated-job settings in effect.
+         */
+        KubernetesPolicyValues: {
+            /** Warm Workers */
+            warm_workers: number;
+            /** Max Workers */
+            max_workers: number;
+            /** Worker Memory Mib */
+            worker_memory_mib: number;
+            /** Largest Worker Mib */
+            largest_worker_mib: number;
+            /** Idle Seconds */
+            idle_seconds: number;
+            /** Isolated Jobs Enabled */
+            isolated_jobs_enabled: boolean;
+            /** Max Isolated Pods */
+            max_isolated_pods: number;
+        };
+        /**
          * KubernetesStatus
-         * @description Whether this deployment configured remote build execution.
+         * @description Whether this API may manage Kubernetes Jobs (the page gate).
          */
         KubernetesStatus: {
             /** Configured */
             configured: boolean;
-            /** Backend */
-            backend: string;
         };
         /**
          * LLMModelInfo
@@ -21284,6 +21908,66 @@ export interface components {
             tool_call?: boolean | null;
             /** Reasoning Choices */
             reasoning_choices?: string[];
+        };
+        /**
+         * LegacyCredentialStatus
+         * @description What still depends on legacy runtime credentials.
+         *
+         *     The release that removes legacy runtime tokens (token PR1c) refuses to
+         *     install while either list is non-empty.
+         */
+        LegacyCredentialStatus: {
+            /** Live Runs */
+            live_runs: components["schemas"]["LegacyRuntimeRun"][];
+            /** Launchers */
+            launchers: components["schemas"]["LegacyLauncher"][];
+        };
+        /**
+         * LegacyLauncher
+         * @description A connected remote launcher that receives legacy-format credentials.
+         */
+        LegacyLauncher: {
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Hostname */
+            hostname?: string | null;
+            /** State */
+            state: string;
+            /**
+             * Credential Protocol
+             * @description The protocol its last hello reported; 1 when it reported none
+             */
+            credential_protocol: number;
+        };
+        /**
+         * LegacyRuntimeRun
+         * @description A live run still holding legacy-format runtime credentials.
+         */
+        LegacyRuntimeRun: {
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "workflow_execution" | "service_attempt";
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Name
+             * @description The workflow name, or the service attempt's service ID
+             */
+            name: string;
+            /** Status */
+            status: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Started At */
+            started_at?: string | null;
         };
         /**
          * LinkedAccountResponse
@@ -21888,6 +22572,26 @@ export interface components {
              * @default false
              */
             schema_included: boolean;
+        };
+        /**
+         * MCPPackageBranding
+         * @description Saved package display name, installation identifier, and optional logo.
+         */
+        MCPPackageBranding: {
+            /** Name */
+            name: string;
+            /** Slug */
+            slug: string;
+            /** Logo Url */
+            logo_url?: string | null;
+        };
+        /**
+         * MCPPackageBrandingUpdate
+         * @description Instance-wide identity for downloaded agent plugin packages.
+         */
+        MCPPackageBrandingUpdate: {
+            /** Name */
+            name: string;
         };
         /**
          * MCPRunInfoResponse
@@ -23111,6 +23815,28 @@ export interface components {
              * @description Configured SSO provider used for the preferred redirect
              */
             default_sso_provider?: ("microsoft" | "google" | "oidc") | null;
+            /**
+             * Password Login Enabled
+             * @description Whether password login is available to accounts without an SSO exclusion
+             * @default true
+             */
+            password_login_enabled: boolean;
+            /**
+             * Passkey Login Enabled
+             * @description Whether passkey login/enrollment is available to accounts without an SSO exclusion
+             * @default true
+             */
+            passkey_login_enabled: boolean;
+            /**
+             * Excluded User Ids
+             * @description Users exempt from login restrictions; null safely exempts platform admins
+             */
+            excluded_user_ids?: string[] | null;
+            /**
+             * Excluded Organization Ids
+             * @description Organizations exempt from login restrictions
+             */
+            excluded_organization_ids?: string[];
         };
         /**
          * OAuthProviderConfigResponse
@@ -24459,6 +25185,8 @@ export interface components {
             contributors: components["schemas"]["ProductUpdateContributor"][];
             /** Assets */
             assets: components["schemas"]["ProductUpdateAsset"][];
+            /** Agent Prompt */
+            agent_prompt?: string | null;
             /** Additional Areas */
             additional_areas?: string[] | null;
             /** Release */
@@ -25883,7 +26611,7 @@ export interface components {
             name: string;
             /**
              * Scope
-             * @description Optional org scope. Omit / pass null to list only the caller's own org mapping, unless the resolved org is a provider org, which lists all mappings. Platform admins and provider-org members may pass 'global' (no filter, all orgs) or a specific org UUID.
+             * @description Accepted from older SDK callers and ignored: the list always returns every mapping the caller may read with Integrations Read.
              */
             scope?: string | null;
         };
@@ -26213,10 +26941,8 @@ export interface components {
         SchedulerCapacityStatus: {
             /** Replicas Online */
             replicas_online: number;
-            /** Slots Total */
-            slots_total: number;
-            /** Slots Running */
-            slots_running: number;
+            /** Platform Jobs Running */
+            platform_jobs_running: number;
             /** Jobs Queued */
             jobs_queued: number;
             /** Jobs Waiting For Memory */
@@ -26225,6 +26951,13 @@ export interface components {
             oldest_queued_seconds?: number | null;
             /** Max Memory Utilization Percent */
             max_memory_utilization_percent?: number | null;
+            /**
+             * Runs Waiting
+             * @default 0
+             */
+            runs_waiting: number;
+            /** Oldest Waiting Run Seconds */
+            oldest_waiting_run_seconds?: number | null;
         };
         /** SchedulerDiagnosticsResponse */
         SchedulerDiagnosticsResponse: {
@@ -26260,8 +26993,8 @@ export interface components {
             hostname: string;
             /** Pid */
             pid: number;
-            /** Job Slots */
-            job_slots: number;
+            /** Runs Platform Jobs */
+            runs_platform_jobs: boolean;
             /** Is Leader */
             is_leader: boolean;
             /** Online */
@@ -26860,7 +27593,7 @@ export interface components {
              * Blocked Reason
              * @description Launch suppression, if any
              */
-            blocked_reason?: ("policy" | "crash_loop" | "disabled") | null;
+            blocked_reason?: ("policy" | "crash_loop" | "disabled" | "too_large") | null;
             /**
              * Restart Eligible At
              * @description Earliest next attempt
@@ -27339,6 +28072,31 @@ export interface components {
             name?: string | null;
             /** Email */
             email: string;
+        };
+        /**
+         * SolutionAppBuildCandidate
+         * @description Manifest app identity and a digest computed before local compilation.
+         */
+        SolutionAppBuildCandidate: {
+            /**
+             * App Id
+             * Format: uuid
+             */
+            app_id: string;
+            /** Fingerprint */
+            fingerprint: string;
+        };
+        /** SolutionAppBuildLookup */
+        SolutionAppBuildLookup: {
+            /** Apps */
+            apps: components["schemas"]["SolutionAppBuildCandidate"][];
+        };
+        /** SolutionAppBuildMatches */
+        SolutionAppBuildMatches: {
+            /** Matches */
+            matches: {
+                [key: string]: string;
+            };
         };
         /** SolutionAppSdkStatus */
         SolutionAppSdkStatus: {
@@ -29593,6 +30351,10 @@ export interface components {
             sdk_fingerprint: string;
             /** Sdk Contract Version */
             sdk_contract_version: number;
+            /** Sdk Binding Api Major */
+            sdk_binding_api_major?: number | null;
+            /** Sdk Supported Binding Api Majors */
+            sdk_supported_binding_api_majors?: number[];
         };
         /**
          * VideoArtifactSpec
@@ -30202,7 +30964,7 @@ export interface components {
             sync?: boolean | null;
             /**
              * Code
-             * @description Optional: Python code to execute as script (base64 encoded). If provided, executes code instead of looking up workflow by ID.
+             * @description Optional: Python code to execute as a script, as plain text. If provided, executes code instead of looking up workflow by ID.
              */
             code?: string | null;
             /**
@@ -30212,7 +30974,7 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context within the caller's reach. Requires workflows.execute in the target organization.
+             * @description Override execution org context within the caller's reach; use global for Global scope. Requires workflows.execute in the target organization.
              */
             org_id?: string | null;
             /**
@@ -30521,6 +31283,16 @@ export interface components {
              * @default 1800
              */
             timeout_seconds: number;
+            /**
+             * Memory Request Mib
+             * @description Declared memory a run of this workflow requests from an executor; when unset, the learned value is used
+             */
+            memory_request_mib?: number | null;
+            /**
+             * Learned Memory Bytes
+             * @description Peak memory its recent runs added (learned per code version); None before a measured run
+             */
+            learned_memory_bytes?: number | null;
             /** @description Retry configuration */
             retry_policy?: components["schemas"]["RetryPolicy"] | null;
             /**
@@ -30949,6 +31721,11 @@ export interface components {
              * @description Cache TTL in seconds for data providers (0-86400, default 300)
              */
             cache_ttl_seconds?: number | null;
+            /**
+             * Memory Request Mib
+             * @description Declared memory (MiB) a run requests from an executor; null uses the learned value
+             */
+            memory_request_mib?: number | null;
             /**
              * Tags
              * @description Tags for categorization and search
@@ -31790,6 +32567,55 @@ export interface operations {
             };
         };
     };
+    start_browser_impersonation_auth_impersonate__user_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                user_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BrowserImpersonationTokenResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    end_browser_impersonation_auth_impersonation_end_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     refresh_token_auth_refresh_post: {
         parameters: {
             query?: never;
@@ -32121,6 +32947,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    deny_device_auth_device_deny_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DeviceAuthorizeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeviceAuthorizeResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_app_connection_auth_app_connections__request_id__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionDetails"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    decide_app_connection_request_auth_app_connections__request_id__post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppConnectionDecision"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppConnectionResult"];
                 };
             };
             /** @description Validation Error */
@@ -34607,9 +35532,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["WorkflowExecution"] | {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["WorkflowExecution"];
                 };
             };
             /** @description Validation Error */
@@ -35317,6 +36240,37 @@ export interface operations {
             };
         };
     };
+    "workflows.parameters": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                workflow_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowParameter"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_workflow_run_identities_api_workflows__workflow_id__run_identities_get: {
         parameters: {
             query?: never;
@@ -35743,7 +36697,10 @@ export interface operations {
     };
     get_form_runtime_api_forms__form_id__runtime_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to load a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -35758,7 +36715,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": components["schemas"]["FormRuntimeDefinition"];
+                    "application/json": components["schemas"]["AuthenticatedFormRuntimeDefinition"] | components["schemas"]["FormRuntimeDefinition"];
                 };
             };
             /** @description Validation Error */
@@ -36011,7 +36968,10 @@ export interface operations {
     };
     submit_form_api_forms__form_id__submissions_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36046,7 +37006,10 @@ export interface operations {
     };
     execute_startup_workflow_api_forms__form_id__startup_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36083,7 +37046,10 @@ export interface operations {
     };
     get_form_field_options_api_forms__form_id__fields__field_name__options_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to execute a global form. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36119,7 +37085,10 @@ export interface operations {
     };
     generate_upload_url_api_forms__form_id__upload_post: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Organization in which to store a global form upload. */
+                org_id?: string | null;
+            };
             header?: never;
             path: {
                 form_id: string;
@@ -36822,6 +37791,72 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.move": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workspace.files.move_many": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["FileMoveBatchRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
             };
             /** @description Validation Error */
             422: {
@@ -40948,6 +41983,39 @@ export interface operations {
             };
         };
     };
+    update_kubernetes_policy_api_admin_kubernetes_policy_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["KubernetesPolicyUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["KubernetesExecutionSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_required_instructions_api_required_instructions_get: {
         parameters: {
             query?: never;
@@ -44459,6 +45527,59 @@ export interface operations {
             };
         };
     };
+    get_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSdkUpgradeSettings"];
+                };
+            };
+        };
+    };
+    update_app_sdk_upgrade_settings_api_maintenance_app_sdk_upgrades_settings_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AppSdkUpgradeSettingsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AppSdkUpgradeSettings"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_artifact_retention_settings_api_maintenance_artifact_retention_settings_get: {
         parameters: {
             query?: never;
@@ -44646,6 +45767,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_legacy_credential_status_api_maintenance_authz_legacy_status_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegacyCredentialStatus"];
                 };
             };
         };
@@ -45887,6 +47028,132 @@ export interface operations {
                 content: {
                     "application/json": unknown;
                     "application/zip": unknown;
+                };
+            };
+        };
+    };
+    get_package_branding_api_mcp_run_branding_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+        };
+    };
+    update_package_branding_api_mcp_run_branding_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["MCPPackageBrandingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_package_logo_api_mcp_run_branding_logo_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    upload_package_logo_api_mcp_run_branding_logo_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "multipart/form-data": components["schemas"]["Body_upload_package_logo_api_mcp_run_branding_logo_post"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_package_logo_api_mcp_run_branding_logo_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MCPPackageBranding"];
                 };
             };
         };
@@ -48652,6 +49919,41 @@ export interface operations {
             };
         };
     };
+    "solutions.app_builds.lookup": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                solution_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SolutionAppBuildLookup"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionAppBuildMatches"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "solutions.deploy": {
         parameters: {
             query?: {
@@ -50075,6 +51377,55 @@ export interface operations {
             };
         };
     };
+    get_manifest_api_app_sdk_v1_manifest_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HostedAppSdkDescriptor"];
+                };
+            };
+        };
+    };
+    get_asset_api_app_sdk_assets__fingerprint__js_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                fingerprint: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     list_app_files_api_applications__app_id__files_get: {
         parameters: {
             query?: {
@@ -50269,9 +51620,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["ApplicationBundleManifest"];
                 };
             };
             /** @description Validation Error */

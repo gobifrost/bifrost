@@ -5,20 +5,18 @@ Exercises the full path — workflow code in a forked worker child calling
 the three stage-2c operations — against the same seeded integration the
 external HTTP endpoint serves:
 
-- the workflow records that the worker injected its engine socket, so the
-  fixed operations ride the shared client's worker-local HTTP transport;
+- the workflow confirms the default physical worker has no UDS, so the
+  fixed operations use scoped shared API HTTP;
 - upsert create/update round-trips through the parent service with the
   merged-config echo, delete commits, and a missing-provider refresh
   fails loudly with the HTTP-shaped ``RuntimeError`` (refresh success
-  persistence is covered by unit and forked-child socket tests with a
+  persistence is covered by unit and forked-child tests with a
   mocked provider HTTP call — no real OAuth provider exists in the test
   stack);
 - the same committed state is verified over external HTTP afterwards.
 
-The zero-HTTP proof for the migrated operations lives in the unit and
-forked-child socket tests (``test_worker_sdk_http.py``,
-``test_worker_sdk_http_fork.py``), where the child's network API is
-unreachable yet the integration calls succeed over the worker socket.
+The default physical worker has no UDS; these operations use scoped shared API
+HTTP while the test verifies their persisted state over external HTTP.
 """
 
 import uuid
@@ -164,9 +162,8 @@ class TestSdkIntegrationMutationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its engine socket, so the fixed operations ran
-        # over the shared client's worker-local transport.
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["created_entity"] == live_mut_keys["entity"]
         assert out["created_region"] == "eu-live"
         assert out["updated_entity"] == live_mut_keys["entity"] + "-2"

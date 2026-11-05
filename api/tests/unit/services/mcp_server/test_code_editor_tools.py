@@ -18,13 +18,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from fastmcp.tools import ToolResult
 from mcp.types import TextContent
 
 from src.core.principal import UserPrincipal
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
 from src.services.authorization.enforce import Caller
 from src.services.mcp_server.server import MCPContext
+from src.services.mcp_server.tool_result import ToolResult
 
 
 def get_result_data(result: ToolResult) -> dict:
@@ -36,6 +36,8 @@ def get_result_text(result: ToolResult) -> str:
     """Extract display text from a ToolResult."""
     if not result.content:
         return ""
+    if isinstance(result.content, str):
+        return result.content
     texts = [block.text for block in result.content if isinstance(block, TextContent)]
     return "\n".join(texts)
 

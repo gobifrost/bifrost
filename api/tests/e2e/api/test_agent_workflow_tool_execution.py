@@ -19,14 +19,13 @@ from sqlalchemy import delete, update
 
 from src.models.contracts.artifacts import ModelCapabilities
 from src.core.principal import UserPrincipal
-from src.models.contracts.agents import ChatRequest
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
-from src.routers.chat import send_message
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
+from tests.e2e.fixtures.chat_turn import chat_turn_in_process
 
 
 pytestmark = pytest.mark.asyncio
@@ -143,14 +142,11 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
                 organization_id=org1_user.organization_id,
                 is_superuser=org1_user.is_superuser,
             )
-            response = await send_message(
-                conversation_id=conversation_id,
-                request=ChatRequest(message="Run the workflow tool."),
-                db=db_session,
-                user=principal,
+            reply = await chat_turn_in_process(
+                db_session, principal, conversation_id, "Run the workflow tool."
             )
 
-        assert response.content == "Workflow tool completed."
+        assert reply == "Workflow tool completed."
         messages_response = e2e_client.get(
             f"/api/chat/conversations/{conversation_id}/messages",
             headers=org1_user.headers,

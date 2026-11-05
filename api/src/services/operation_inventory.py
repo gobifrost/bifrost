@@ -67,6 +67,38 @@ _DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
 
 
 def _rest_disposition(method: str, path: str) -> dict[str, str]:
+    if path == "/auth/app-connections/{request_id}" and method in {"GET", "POST"}:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Reviews or records the user's app authentication decision; "
+                "owns no entity state."
+            ),
+        }
+    if method == "POST" and path in {"/auth/device/authorize", "/auth/device/deny"}:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Records the user's decision for CLI authentication; "
+                "owns no entity state."
+            ),
+        }
+    if (method, path) == ("POST", "/auth/impersonate/{user_id}"):
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Starts a browser authentication impersonation session; "
+                "owns no entity state."
+            ),
+        }
+    if (method, path) == ("POST", "/auth/impersonation/end"):
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "Ends a browser authentication impersonation session; "
+                "owns no entity state."
+            ),
+        }
     if (method, path) == ("POST", "/api/solutions/{solution_id}/dev-context"):
         return {
             "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,

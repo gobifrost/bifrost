@@ -5,9 +5,8 @@ resources:
   - config.yaml
   - postgres.yaml
   - pgbouncer.yaml
-  - rabbitmq.yaml
   - redis.yaml
   - seaweedfs.yaml
   - init.yaml
+  - api-rbac.yaml
   - bifrost.yaml
-  - keda.yaml

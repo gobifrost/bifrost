@@ -1,0 +1,12 @@
+{
+  "key": "pr:1038",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Reliability fix: an event delivery and the run it starts are recorded in one transaction, so a crash can no longer leave a run without its delivery (which a retry could run twice), and retrying one delivery no longer re-queues its pending siblings. No new product surface.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1038"
+    ]
+  }
+}

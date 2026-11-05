@@ -27,6 +27,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from shared.sdk_execution_reads import (
     SdkExecutionReadError,
@@ -465,6 +466,23 @@ class TestListSdkExecutions:
             limit=25,
         )
         assert [e.execution_id for e in filtered] == [str(failed.id)]
+
+    @pytest.mark.parametrize("status_filter", ["running", "Success,unknown"])
+    async def test_invalid_status_is_rejected_without_aborting_the_session(
+        self, db_session, status_filter
+    ):
+        admin = await _seed_user(db_session, is_superuser=True)
+
+        with pytest.raises(SdkExecutionReadError) as error:
+            await list_sdk_executions(
+                db_session,
+                _admin(user_id=admin.id),
+                status_filter=status_filter,
+            )
+
+        assert error.value.status_code == 422
+        assert "status" in error.value.detail
+        assert await db_session.scalar(select(1)) == 1
 
     async def test_non_superuser_sees_only_own(self, db_session):
         org = await _seed_org(db_session)

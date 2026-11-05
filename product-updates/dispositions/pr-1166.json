@@ -1,0 +1,13 @@
+{
+  "key": "pr:1166",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the already approved #1163 usage-reporting notice; no additional customer-facing behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1166",
+      "Prepared image bundle contains the approved #1163 notice, explicit IP/request-metadata nonretention wording, and permanent opt-out. All 35 prior notices and all previously verified source/contributor records remain intact; repository hygiene and Product Updates tests passed."
+    ]
+  }
+}

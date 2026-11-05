@@ -24,6 +24,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useAuthorization } from "@/services/authorization";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { useTables, useDeleteTable } from "@/services/tables";
 import { TableDialog } from "@/components/tables/TableDialog";
 import { TablesClaimsTab } from "@/pages/TablesClaimsTab";
@@ -93,17 +94,12 @@ export function Tables() {
 		enabled: canReadOrganizations,
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const tables = data?.tables ?? [];
 	const knownOrganizations = [
 		...(user?.organizationId
-			? [{ id: user.organizationId, name: "Home Organization" }]
+			? [{ id: user.organizationId, name: getOrgName(user.organizationId) }]
 			: []),
 		...tables.flatMap((table) =>
 			table.organization_id

@@ -9,7 +9,6 @@ Tests the BifrostAuthProvider class which implements OAuth 2.1 for MCP:
 Uses mocked dependencies for fast, isolated testing.
 """
 
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -19,11 +18,10 @@ from src.core.security import create_access_token
 from src.services.mcp_server.auth import (
     BifrostAuthProvider,
     create_bifrost_auth_provider,
-    _mcp_auth_code_key,
-    _mcp_client_key,
-    _mcp_state_key,
 )
 
+
+from shared.mcp_oauth import _mcp_auth_code_key, _mcp_state_key
 
 # ==================== Fixtures ====================
 
@@ -32,18 +30,6 @@ from src.services.mcp_server.auth import (
 def auth_provider() -> BifrostAuthProvider:
     """Create a BifrostAuthProvider with test base URL."""
     return BifrostAuthProvider(base_url="https://test.example.com")
-
-
-@pytest.fixture
-def admin_token_payload() -> dict:
-    """Create a payload for a platform admin user."""
-    return {
-        "sub": str(uuid4()),
-        "email": "admin@platform.local",
-        "name": "Platform Admin",
-        "is_superuser": True,
-        "org_id": str(uuid4()),
-    }
 
 
 @pytest.fixture
@@ -59,24 +45,9 @@ def regular_user_payload() -> dict:
 
 
 @pytest.fixture
-def admin_access_token(admin_token_payload) -> str:
-    """Create a valid access token for a platform admin."""
-    return create_access_token(admin_token_payload)
-
-
-@pytest.fixture
 def regular_user_access_token(regular_user_payload) -> str:
     """Create a valid access token for a regular user."""
     return create_access_token(regular_user_payload)
-
-
-@pytest.fixture
-def expired_token(admin_token_payload) -> str:
-    """Create an expired access token."""
-    return create_access_token(
-        admin_token_payload,
-        expires_delta=timedelta(seconds=-1),  # Already expired
-    )
 
 
 # ==================== BifrostAuthProvider Tests ====================
@@ -239,11 +210,6 @@ class TestRedisKeys:
         assert "test-code-123" not in key
         assert key == again
 
-    def test_mcp_client_key(self):
-        """Should generate correct client key."""
-        key = _mcp_client_key("client-id-456")
-        assert key == "bifrost:mcp:client:client-id-456"
-
     def test_mcp_state_key(self):
         """Should generate correct state key."""
         key = _mcp_state_key("state-789")
@@ -272,3 +238,36 @@ class TestCreateBifrostAuthProvider:
         provider = create_bifrost_auth_provider()
         assert isinstance(provider, BifrostAuthProvider)
         assert provider.base_url == "https://default.example.com"
+
+
+async def test_browser_impersonation_cannot_grant_independent_mcp_session(auth_provider):
+    from starlette.requests import Request
+    from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
+
+    request = Request({
+        "type": "http", "method": "GET", "path": "/mcp/callback",
+        "query_string": b"internal_state=example",
+        "headers": [(b"cookie", f"{IMPERSONATION_COOKIE_NAME}=support-session".encode())],
+    })
+    with patch("src.core.cache.get_shared_redis", new_callable=AsyncMock) as redis:
+        response = await auth_provider._callback(request)
+    assert response.status_code == 403
+    redis.assert_not_awaited()
+
+
+async def test_browser_support_token_cannot_authenticate_mcp(auth_provider, regular_user_payload):
+    token = create_access_token({
+        **regular_user_payload,
+        "impersonated_by_user_id": str(uuid4()),
+        "impersonation_session_id": str(uuid4()),
+    })
+    with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
+        assert await auth_provider.verify_token(token) is None
+    access.assert_not_awaited()
+
+
+async def test_legacy_human_token_cannot_authenticate_mcp(auth_provider, regular_user_access_token):
+    """Only the v1 human claim schema can establish a new MCP session."""
+    with patch.object(auth_provider, "_check_mcp_access", new_callable=AsyncMock) as access:
+        assert await auth_provider.verify_token(regular_user_access_token) is None
+    access.assert_not_awaited()

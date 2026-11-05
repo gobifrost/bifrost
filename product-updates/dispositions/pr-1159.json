@@ -1,0 +1,13 @@
+{
+  "key": "pr:1159",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal activation of the already approved #1158 announcement and the already approved #1157 routine-fix summary; no additional customer-facing behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1159",
+      "Canonical validation and image preparation confirm the approved #1158 entry and #1157 summary are present while historical feed records remain intact."
+    ]
+  }
+}

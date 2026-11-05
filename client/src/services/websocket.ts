@@ -104,6 +104,13 @@ export interface ExecutionUpdate {
 	requiredMemoryMb?: number;
 }
 
+/** Queue metadata that does not change the execution's authoritative status. */
+export interface ExecutionQueueUpdate {
+	executionId: string;
+	queuePosition: number;
+	waitReason: WaitReason;
+}
+
 // ExecutionLog from backend (auto-generated from OpenAPI)
 export type ExecutionLogMessage = components["schemas"]["ExecutionLogPublic"];
 
@@ -347,6 +354,12 @@ type WebSocketMessage =
 	| { type: "unsubscribed"; channel: string }
 	| { type: "pong" }
 	| { type: "execution_update"; executionId: string; [key: string]: unknown }
+	| {
+			type: "execution_queue_update";
+			executionId: string;
+			queuePosition: number;
+			waitReason: WaitReason;
+	  }
 	| { type: "execution_log"; executionId: string; [key: string]: unknown }
 	| { type: "service_log"; service_id: string; [key: string]: unknown }
 	| { type: "history_update"; [key: string]: unknown }
@@ -401,6 +414,7 @@ interface NotificationPayload {
 }
 
 type ExecutionUpdateCallback = (update: ExecutionUpdate) => void;
+type ExecutionQueueUpdateCallback = (update: ExecutionQueueUpdate) => void;
 type ExecutionLogCallback = (log: ExecutionLog) => void;
 type ServiceLogCallback = (log: ServiceLog) => void;
 type NewExecutionCallback = (execution: NewExecution) => void;
@@ -446,6 +460,10 @@ class WebSocketService {
 	private executionUpdateCallbacks = new Map<
 		string,
 		Set<ExecutionUpdateCallback>
+	>();
+	private executionQueueUpdateCallbacks = new Map<
+		string,
+		Set<ExecutionQueueUpdateCallback>
 	>();
 	private executionLogCallbacks = new Map<
 		string,
@@ -542,12 +560,12 @@ class WebSocketService {
 			const params = new URLSearchParams();
 			channels.forEach((ch) => params.append("channels", ch));
 
-			// For embed tokens, pass as query param since browser WebSocket
-			// API can't set custom headers. getActiveToken() prefers the
-			// per-tab embed token (sessionStorage) over the user token.
-			const embedToken = getActiveToken();
-			if (embedToken && isEmbedToken(embedToken)) {
-				params.set("token", embedToken);
+			// Embed tokens need a query parameter because the browser WebSocket API
+			// cannot set custom authorization headers. Browser impersonation uses
+			// its HttpOnly marker cookie, so its bearer never enters the URL.
+			const activeToken = getActiveToken();
+			if (activeToken && isEmbedToken(activeToken)) {
+				params.set("token", activeToken);
 			}
 
 			const wsUrl = `${protocol}//${host}/ws/connect?${params.toString()}`;
@@ -600,7 +618,8 @@ class WebSocketService {
 							console.warn(
 								"[WebSocket] Token expired, refreshing before reconnect",
 							);
-							await refreshAccessToken();
+							const refreshed = await refreshAccessToken();
+							if (!refreshed) return;
 						}
 						this.connect(Array.from(this.desiredChannels));
 					}, delay);
@@ -695,6 +714,10 @@ class WebSocketService {
 
 			case "execution_update":
 				this.dispatchExecutionUpdate(message);
+				break;
+
+			case "execution_queue_update":
+				this.dispatchExecutionQueueUpdate(message);
 				break;
 
 			case "execution_log":
@@ -937,6 +960,20 @@ class WebSocketService {
 		this.historyUpdateCallbacks.forEach((cb) => cb(historyUpdate));
 	}
 
+	private dispatchExecutionQueueUpdate(
+		message: { type: "execution_queue_update" } & ExecutionQueueUpdate,
+	) {
+		const update: ExecutionQueueUpdate = {
+			executionId: message.executionId,
+			queuePosition: message.queuePosition,
+			waitReason: message.waitReason,
+		};
+		const callbacks = this.executionQueueUpdateCallbacks.get(
+			update.executionId,
+		);
+		callbacks?.forEach((cb) => cb(update));
+	}
+
 	private dispatchHistoryUpdate(
 		message: { type: "history_update" } & Record<string, unknown>,
 	) {
@@ -1108,6 +1145,28 @@ class WebSocketService {
 			this.executionUpdateCallbacks.get(executionId)?.delete(callback);
 			if (this.executionUpdateCallbacks.get(executionId)?.size === 0) {
 				this.executionUpdateCallbacks.delete(executionId);
+			}
+		};
+	}
+
+	/**
+	 * Subscribe to queue metadata advisories for a specific execution.
+	 */
+	onExecutionQueueUpdate(
+		executionId: string,
+		callback: ExecutionQueueUpdateCallback,
+	): () => void {
+		if (!this.executionQueueUpdateCallbacks.has(executionId)) {
+			this.executionQueueUpdateCallbacks.set(executionId, new Set());
+		}
+		this.executionQueueUpdateCallbacks.get(executionId)!.add(callback);
+
+		return () => {
+			this.executionQueueUpdateCallbacks.get(executionId)?.delete(callback);
+			if (
+				this.executionQueueUpdateCallbacks.get(executionId)?.size === 0
+			) {
+				this.executionQueueUpdateCallbacks.delete(executionId);
 			}
 		};
 	}

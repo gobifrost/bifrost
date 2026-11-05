@@ -31,7 +31,7 @@ from src.models.contracts.llm import LLMModelInfo
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.ai_models import AIModelAssignment, AIModelProfile, AIProviderConnection
 from src.services.ai_model_service import AIModelService, ProviderConnectionTestConfig
-from src.services.ai_behavior_service import AIBehaviorService
+from src.services.ai_behavior_service import AIBehaviorService, UNSET
 from src.services.model_catalog import catalog_summary, get_model_catalog
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
@@ -76,8 +76,10 @@ router = APIRouter(
 async def get_ai_behavior(db: DbSession, user: CurrentActiveUser) -> AIBehaviorResponse:
     await _authorize_platform_setting(db, user, AI_BEHAVIOR_GET_OPERATION)
     del user
+    behavior = AIBehaviorService(db)
     return AIBehaviorResponse(
-        default_system_prompt=await AIBehaviorService(db).get_default_system_prompt()
+        default_system_prompt=await behavior.get_default_system_prompt(),
+        agent_execution_mode=await behavior.get_agent_execution_mode(),
     )
 
 
@@ -88,12 +90,21 @@ async def update_ai_behavior(
     user: CurrentActiveUser,
 ) -> AIBehaviorResponse:
     await _authorize_platform_setting(db, user, AI_BEHAVIOR_UPDATE_OPERATION)
-    prompt = await AIBehaviorService(db).set_default_system_prompt(
-        request.default_system_prompt,
+    updated = await AIBehaviorService(db).update_behavior(
+        default_system_prompt=(
+            request.default_system_prompt
+            if "default_system_prompt" in request.model_fields_set
+            else UNSET
+        ),
+        agent_execution_mode=(
+            request.agent_execution_mode
+            if "agent_execution_mode" in request.model_fields_set
+            else UNSET
+        ),
         updated_by=user.email,
     )
     await db.commit()
-    return AIBehaviorResponse(default_system_prompt=prompt)
+    return AIBehaviorResponse(**updated)
 
 
 def _raise_service_error(error: Exception) -> NoReturn:
@@ -103,6 +114,7 @@ def _raise_service_error(error: Exception) -> NoReturn:
 
 
 def _connection_response(connection: AIProviderConnection) -> AIProviderConnectionResponse:
+    assert connection.profile_count is not None, "Connection management queries must load profile counts"
     return AIProviderConnectionResponse(
         id=connection.id,
         name=connection.name,
@@ -110,7 +122,7 @@ def _connection_response(connection: AIProviderConnection) -> AIProviderConnecti
         endpoint=connection.endpoint,
         catalog_provider_id=connection.catalog_provider_id,
         api_key_set=bool(connection.encrypted_api_key),
-        profile_count=len(connection.profiles),
+        profile_count=connection.profile_count,
         anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
         created_at=connection.created_at,
         updated_at=connection.updated_at,
@@ -129,6 +141,7 @@ def _connection_summary(connection: AIProviderConnection) -> AIProviderConnectio
 
 
 def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
+    assert profile.referenced_agent_count is not None, "Profile management queries must load agent counts"
     capabilities = ModelCapabilities.model_validate(profile.capabilities) if profile.capabilities else None
     return AIModelProfileResponse(
         id=profile.id,
@@ -145,7 +158,7 @@ def _profile_response(profile: AIModelProfile) -> AIModelProfileResponse:
         ),
         connection=_connection_summary(profile.connection),
         assignment_keys=[assignment.assignment_key for assignment in profile.assignments],
-        referenced_agent_count=len(profile.agents),
+        referenced_agent_count=profile.referenced_agent_count,
         created_at=profile.created_at,
         updated_at=profile.updated_at,
     )

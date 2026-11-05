@@ -190,6 +190,11 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 #: Committed fingerprint of the contract surface above. If a code change flips
 #: the live fingerprint, this test fails — update this value, and raise the
 #: server's MIN_CLI_VERSION IF the change requires a new CLI. See module docstring.
+# Additive Solution build-lookup DTOs; existing CLI/SDK contracts are unchanged.
+# Additive Global scope marker on the existing string org_id field; its
+# description now documents that value. Existing CLI shapes and minimum version
+# are unchanged.
+# Additive agent package branding settings models; existing CLI shapes are unchanged.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -386,13 +391,28 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # These transports are additive and ship with the existing 1.4.2 floor;
     # the legacy contract marker remains frozen. The execution scope description
     # now documents original reach and the named execution permission.
-    # Workflow conversion request/report/payload DTOs (2026-10-18) are additive
-    # and ship with new commands. Existing CLI contracts and minimum stay intact.
-    # Conversion review no longer accepts identity strategy or broad-identity
-    # acknowledgement fields (2026-10-18). The conversion commands and review
-    # files are unreleased, so the existing 1.4.2 floor already selects the
-    # first compatible CLI; fingerprint refreshed only.
-    "e5632eaca4a741f7a66c4ad6af951090113948cb2ecc526e6339d8a4b053248f"
+    # SDKIntegrationsListMappingsRequest.scope is documented as accepted and
+    # ignored (description only; the field is unchanged).
+    # AuditLogEntry and AuditLogActor gained optional browser-impersonation
+    # provenance (2026-10-19). ADDITIVE: existing CLI audit readers ignore
+    # unknown fields, so the compatible 1.4.2 floor remains unchanged.
+    # The existing users.impersonate catalog description also names browser sessions.
+    #
+    # File move request/response DTOs for `bifrost files move` (2026-10-20).
+    # ADDITIVE: new CLI command and routes; existing DTOs are unchanged.
+    # DeviceAuthorizeRequest is now shared (2026-10-27). Its wire shape is
+    # unchanged; approval and denial use distinct routes. Fingerprint only.
+    # App SDK upgrade settings and the historical manual-job model (2026-10-30).
+    # ADDITIVE shared models; existing CLI contracts and minimum are unchanged.
+    # Hosted App SDK provenance adds optional sdk_binding_api_major. Existing
+    # clients can ignore the additive field; the CLI minimum remains unchanged.
+    # External capacity models and daily UsageReport are both additive.
+    # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
+    # App consent models and the Global org_id scope marker are additive.
+    # Existing CLI shapes and minimum version remain unchanged (2026-11-04).
+    # Workflow conversion commands and their report DTOs are additive; existing
+    # CLI contracts remain compatible (2026-11-05).
+    "6132cb8847c6a0e81a44db348f4b5fb4eab6b22afead9dff4c13e73459eedd96"
 )
 
 

@@ -478,23 +478,15 @@ class TestOrgIsolation:
                    execution.get("organization_id") in [None, str(org1_user.organization_id)], \
                 "Org user should only see their own executions"
 
-    def test_scope_param_ignored_for_executions_list(self, e2e_client, org1_user, org2):
-        """Scope parameter is ignored for non-superusers on executions list."""
-        response_with_scope = e2e_client.get(
+    def test_scope_outside_reach_lists_no_executions(self, e2e_client, org1_user, org2):
+        """An explicit scope only narrows the caller's reach, never widens it."""
+        response = e2e_client.get(
             "/api/executions",
             params={"scope": org2["id"]},
             headers=org1_user.headers,
         )
-        response_without_scope = e2e_client.get(
-            "/api/executions",
-            headers=org1_user.headers,
-        )
-        assert response_with_scope.status_code == 200
-        assert response_without_scope.status_code == 200
-        data_with = response_with_scope.json()
-        data_without = response_without_scope.json()
-        assert len(data_with.get("executions", [])) == len(data_without.get("executions", [])), \
-            "Scope param should be ignored for non-superusers"
+        assert response.status_code == 200, response.text
+        assert response.json()["executions"] == []
 
     # =========================================================================
     # Cross-Org Access Attempts (Direct ID Access)

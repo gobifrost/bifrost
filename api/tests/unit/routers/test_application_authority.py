@@ -1,5 +1,6 @@
 """Named App authority retains original-user reach and Global read fallback."""
 
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -13,7 +14,7 @@ from src.services.authorization.context import AuthorizationContext, Boundary, B
 from src.services.authorization.enforce import Caller, allows_permission
 
 
-def _caller(*, home, grants=()) -> Caller:
+def _caller(*, home, grants=(), permissions=("apps.readbasic",)) -> Caller:
     original_user_id = uuid4()
     principal = UserPrincipal(
         user_id=uuid4(),  # effects/transport principal is not authorization context
@@ -28,7 +29,7 @@ def _caller(*, home, grants=()) -> Caller:
             home_organization_id=home,
             base_role_id=uuid4(),
             is_external=False,
-            base_permissions=frozenset({"apps.readbasic"}),
+            base_permissions=frozenset(permissions),
             role_grants=grants,
         ),
     )
@@ -71,3 +72,66 @@ async def test_app_repository_uses_original_reach_not_principal_admin_claim() ->
 
     assert await repo._can_access_entity(allowed)
     assert not await repo._can_access_entity(blocked)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permission", "access_mode", "allowed"),
+    [
+        ("apps.readwrite", "read", False),
+        ("apps.readwrite", "write", True),
+        ("apps.read", "read", False),
+        ("apps.read", "inspect", True),
+    ],
+)
+async def test_app_repository_preserves_management_access_without_basic_read(
+    permission, access_mode, allowed
+) -> None:
+    home = uuid4()
+    caller = _caller(home=home, permissions={permission})
+    app = SimpleNamespace(id=uuid4(), organization_id=home, access_level="role_based")
+    repo = ApplicationRepository(SimpleNamespace(), home, caller=caller, access_mode=access_mode)
+
+    assert await repo._can_access_entity(app) is allowed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permissions", "readable", "writable"),
+    [
+        ({"apps.readbasic"}, True, False),
+        ({"apps.readwrite"}, False, True),
+        (set(), False, False),
+    ],
+)
+async def test_app_websocket_uses_the_same_read_and_write_decisions(
+    db_session, permissions, readable, writable
+) -> None:
+    from src.models.orm.applications import Application
+    from src.models.orm.organizations import Organization
+    from src.routers.websocket import can_access_app
+
+    home = uuid4()
+    db_session.add(Organization(id=home, name="App Socket Authority", created_by="test"))
+    await db_session.flush()
+    app = Application(
+        name="Socket App",
+        slug=f"socket-{uuid4().hex}",
+        organization_id=home,
+        access_level="everyone",
+        created_by="test",
+    )
+    db_session.add(app)
+    await db_session.flush()
+    caller = _caller(home=home, permissions=permissions)
+
+    @asynccontextmanager
+    async def database():
+        yield db_session
+
+    with (
+        patch("src.routers.websocket.get_db_context", database),
+        patch("src.routers.websocket._current_ws_caller", new=AsyncMock(return_value=caller)),
+    ):
+        assert await can_access_app(caller.principal, str(app.id)) is readable
+        assert await can_access_app(caller.principal, str(app.id), write=True) is writable

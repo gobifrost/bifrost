@@ -260,7 +260,10 @@ class TestPlatformOperator:
     def test_own_authorization_summary(self, e2e_client, world, platform_admin) -> None:
         summary = _ok(e2e_client.get("/auth/authorization", headers=world["operator"].headers))
         assert summary["is_platform_admin"] is False
+        assert summary["home_organization_id"] == str(PROVIDER_ORG_ID)
+        assert summary["home_organization_name"]
         assert {"permission": "users.readwrite", "boundary": {"kind": "managed_organizations", "organization_id": None}} in summary["grants"]
+        assert e2e_client.get(f"/api/organizations/{PROVIDER_ORG_ID}", headers=world["operator"].headers).status_code == 403
         admin = _ok(e2e_client.get("/auth/authorization", headers=platform_admin.headers))
         assert admin["is_platform_admin"] is True
         assert {"permission": "*", "boundary": {"kind": "platform", "organization_id": None}} in admin["grants"]
@@ -302,7 +305,7 @@ def test_regular_user_is_refused_every_identity_route(e2e_client, org1_user, wor
     assert _ok(e2e_client.get("/auth/authorization", headers=headers))["is_platform_admin"] is False
 
 
-def test_engine_token_lists_users_over_the_worker_socket(e2e_client, platform_admin, org1, org1_user) -> None:
+def test_engine_token_lists_users_over_scoped_http(e2e_client, platform_admin, org1, org1_user) -> None:
     name = f"e2e_r3a_users_list_{_tag()}"
     path = f"{name}.py"
     content = f'''"""R3a engine users.list."""
@@ -327,7 +330,7 @@ async def {name}():
         )
         result = execute_workflow_sync(e2e_client, org1_user.headers, registered["id"], max_wait=120.0)
         assert result["status"] == "Success", result
-        assert result["result"]["used_socket"] is True
+        assert result["result"]["used_socket"] is False
         assert result["result"]["count"] > 0
     finally:
         e2e_client.delete(f"/api/files/editor?path={path}", headers=platform_admin.headers)

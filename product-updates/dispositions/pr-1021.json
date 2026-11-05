@@ -1,0 +1,14 @@
+{
+  "key": "pr:1021",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "SDK updates work for Apps captured into a Solution.",
+  "category": "fix",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1021",
+      "Maintainer authorized shipping the production SDK update repair on 2026-10-20; this corrects the remaining captured-App identity failure exposed by its production retry."
+    ]
+  }
+}

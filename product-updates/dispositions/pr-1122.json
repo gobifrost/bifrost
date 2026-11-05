@@ -1,0 +1,12 @@
+{
+  "key": "pr:1122",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Test-only cleanup of rows leaked by slow fork tests; no product behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1122"
+    ]
+  }
+}

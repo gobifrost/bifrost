@@ -484,3 +484,64 @@ class TestResolveSolutionInstallId:
         )
         assert result == "00000000-0000-0000-0000-000000000001"
         client.get.assert_not_called()
+
+
+class TestMove:
+    def _run(self, args, accepted, job_bodies):
+        client = mock.AsyncMock()
+        client.post = mock.AsyncMock(return_value=_fake_response(accepted, status=202))
+        client.get = mock.AsyncMock(side_effect=[_fake_response(b) for b in job_bodies])
+        with mock.patch("bifrost.client.BifrostClient.get_instance", return_value=client):
+            result = CliRunner().invoke(files_group, args)
+        return result, client
+
+    def _item(self, **overrides) -> dict:
+        return {"source": "a/r.pdf", "destination": "b/r.pdf", "path": None, "renamed": False,
+                "adopted": False, "status_code": 200, "error": None, **overrides}
+
+    def test_moves_and_prints_final_path(self) -> None:
+        result, client = self._run(
+            ["move", "a/r.pdf", "b/r.pdf", "--location", "docs", "--rename"],
+            {"job_id": "job-1", "status": "queued"},
+            [{"status": "succeeded", "result": {"results": [self._item(path="b/r (1).pdf", renamed=True)]}}],
+        )
+        assert result.exit_code == 0, result.output
+        assert result.output.strip().endswith("b/r (1).pdf")
+        path, body = client.post.await_args.args[0], client.post.await_args.kwargs["json"]
+        assert path == "/api/files/move"
+        assert body == {"source": "a/r.pdf", "destination": "b/r.pdf", "location": "docs", "on_conflict": "rename"}
+
+    def test_item_failure_exits_non_zero(self) -> None:
+        result, _ = self._run(
+            ["move", "a/r.pdf", "b/r.pdf", "--location", "docs"],
+            {"job_id": "job-1"},
+            [{"status": "succeeded", "result": {"results": [self._item(status_code=409, error="file_exists")]}}],
+        )
+        assert result.exit_code != 0
+        assert "409" in result.output and "file_exists" in result.output
+
+    def test_job_failure_prints_checkpoint(self) -> None:
+        checkpoint = {"moved": 0, "failed": [], "in_flight": {"index": 0, "source": "a/r.pdf", "destination": "b/r.pdf"}}
+        failed = {"status": "failed", "error": {"message": "timeout"}, "result": checkpoint}
+        result, client = self._run(
+            ["move", "a/r.pdf", "b/r.pdf", "--location", "docs"],
+            {"job_id": "job-1"},
+            [failed, failed],
+        )
+        assert result.exit_code != 0
+        assert '"in_flight"' in result.output
+        assert client.get.await_count == 2
+
+    def test_solution_flag_targets_the_install(self) -> None:
+        install = "11111111-1111-1111-1111-111111111111"
+        result, client = self._run(
+            ["move", "a", "b", "--location", "docs", "--solution", install],
+            {"job_id": "job-1"},
+            [{"status": "succeeded", "result": {"results": [self._item()]}}],
+        )
+        assert result.exit_code == 0, result.output
+        assert client.post.await_args.args[0] == f"/api/files/move?solution={install}"
+
+    def test_location_is_required(self) -> None:
+        result, _ = self._run(["move", "a", "b"], {"job_id": "x"}, [])
+        assert result.exit_code != 0 and "--location" in result.output

@@ -96,6 +96,45 @@ async def test_capture_table_keeps_rows_and_exports_manifest(db_session) -> None
     assert exported["schema"]["columns"][0]["name"] == "title"
 
 
+async def test_solution_bundle_serializes_a_queried_agent_model_profile(db_session) -> None:
+    """Solution capture loads the profile required by ManifestAgent.from_row."""
+    from src.models.orm.agents import Agent
+    from src.models.orm.ai_models import AIModelProfile, AIProviderConnection
+
+    db = db_session
+    sol = await _make_solution(db)
+    connection = AIProviderConnection(
+        id=uuid.uuid4(),
+        name=f"capture-provider-{uuid.uuid4().hex[:8]}",
+        provider="openai",
+        encrypted_api_key="encrypted-fixture-key",
+    )
+    profile = AIModelProfile(
+        id=uuid.uuid4(),
+        name=f"capture-profile-{uuid.uuid4().hex[:8]}",
+        connection_id=connection.id,
+        model="gpt-4o-mini",
+    )
+    agent = Agent(
+        id=uuid.uuid4(),
+        name=f"capture-agent-{uuid.uuid4().hex[:8]}",
+        system_prompt="Capture my configured model profile.",
+        created_by="test",
+        solution_id=sol.id,
+        llm_profile_id=profile.id,
+    )
+    db.add_all([connection, profile, agent])
+    await db.flush()
+    agent_id = agent.id
+    profile_name = profile.name
+    db.expunge_all()
+
+    bundle = await SolutionCaptureService(db).bundle_for(sol)
+
+    exported = next(item for item in bundle.agents if item["id"] == str(agent_id))
+    assert exported["llm_profile"] == profile_name
+
+
 async def test_bundle_for_prebuilt_app_reads_active_versioned_dist(
     db_session, monkeypatch
 ) -> None:

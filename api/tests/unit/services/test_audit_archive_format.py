@@ -25,11 +25,13 @@ _DEFAULT_DETAILS: Any = object()
 def _row(n: int, *, org: UUID | None = ORG, at: datetime | None = None, details: Any = _DEFAULT_DETAILS) -> ArchiveRow:
     return ArchiveRow(
         id=UUID(int=n), created_at=at or datetime(2026, 1, 2, 3, 4, 5, tzinfo=timezone.utc),
-        organization_id=org, user_id=None, action="access.check", resource_type="table",
+        organization_id=org, user_id=None, impersonated_by_user_id=None, impersonation_session_id=None,
+        action="access.check", resource_type="table",
         resource_id=None, outcome="success", source="workflow", operation_id=None, surface="workflow",
         execution_id=None, ip_address=None, user_agent=None,
         details={"enforced": False} if details is _DEFAULT_DETAILS else details,
-        actor_email=None, actor_name=None, organization_name="Example Org",
+        actor_email=None, actor_name=None, impersonated_by_email=None, impersonated_by_name=None,
+        organization_name="Example Org",
     )
 
 
@@ -113,11 +115,13 @@ def test_every_field_round_trips_and_non_utc_rows_land_on_their_utc_day() -> Non
     est = timezone(timedelta(hours=-5))
     full = ArchiveRow(
         id=UUID(int=1), created_at=datetime(2026, 1, 2, 23, 30, 0, 123456, tzinfo=est),
-        organization_id=ORG, user_id=UUID(int=2), action="user.update", resource_type="user",
+        organization_id=ORG, user_id=UUID(int=2), impersonated_by_user_id=UUID(int=5),
+        impersonation_session_id=UUID(int=6), action="user.update", resource_type="user",
         resource_id=UUID(int=3), outcome="denied", source="http", operation_id="users.update",
         surface="web", execution_id=UUID(int=4), ip_address="203.0.113.7", user_agent="curl/8",
         details={"nested": {"list": [1, 2.5, None, "x"]}}, actor_email="a@example.com",
-        actor_name="Ada", organization_name="Example Org",
+        actor_name="Ada", impersonated_by_email="operator@example.com", impersonated_by_name="Opal",
+        organization_name="Example Org",
     )
     bare = _row(5, details=None, at=datetime(2026, 1, 3, 4, 30, 0, tzinfo=timezone.utc))
     assert ArchiveRow.from_line(full.to_line()) == full
@@ -128,6 +132,24 @@ def test_every_field_round_trips_and_non_utc_rows_land_on_their_utc_day() -> Non
     segment = segments[0]
     assert segment.ids == (UUID(int=5), UUID(int=1))
     assert verify_segment(segment.body, sha256=segment.sha256, ids=segment.ids) == [bare, full]
+
+
+def test_old_archive_line_without_impersonation_fields_remains_readable() -> None:
+    line = _row(1).to_line()
+    for key in (
+        "impersonated_by_user_id",
+        "impersonation_session_id",
+        "impersonated_by_email",
+        "impersonated_by_name",
+    ):
+        line.pop(key)
+
+    restored = ArchiveRow.from_line(line)
+
+    assert restored.impersonated_by_user_id is None
+    assert restored.impersonation_session_id is None
+    assert restored.impersonated_by_email is None
+    assert restored.impersonated_by_name is None
 
 
 def test_line_size_is_the_encoded_line_length() -> None:

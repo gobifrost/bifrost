@@ -1,0 +1,13 @@
+{
+  "key": "pr:937",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal GitHub Actions dependency maintenance; no customer-facing runtime change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/937",
+      "https://github.com/actions/github-script/releases/tag/v9.0.0"
+    ]
+  }
+}

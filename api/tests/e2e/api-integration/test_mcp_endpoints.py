@@ -29,7 +29,9 @@ class _PersistedMCPCallers:
     """
 
     @pytest.fixture(autouse=True)
-    def _persisted_callers(self, platform_admin, org1_user):
+    def _persisted_callers(self, platform_admin, org1_user, human_minter):
+        human_minter(platform_admin)
+        human_minter(org1_user)
         self.admin_headers = platform_admin.headers
         self.org_user_headers = org1_user.headers
         self.platform_admin_email = platform_admin.email
@@ -42,7 +44,7 @@ class TestMCPConfigEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/config endpoint access control."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
         """Reset MCP config before and after each test.
 
         ``test_put_config_success_for_platform_admin`` PUTs ``enabled=True``
@@ -52,7 +54,9 @@ class TestMCPConfigEndpoint(_PersistedMCPCallers):
         DELETEs ensures a teardown failure surfaces as a teardown failure
         rather than as a flake two layers downstream.
         """
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
@@ -184,8 +188,9 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/tools endpoint access control."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self, platform_admin):
+    def _ensure_agent_with_tools(self, platform_admin, human_minter):
         """Create an agent with system tools so /api/mcp/tools returns results."""
+        human_minter(platform_admin)
         headers = platform_admin.headers
 
         resp = requests.post(
@@ -210,6 +215,8 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
 
         yield
 
+        human_minter(platform_admin)
+        headers = platform_admin.headers
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
             headers=headers,
@@ -368,8 +375,10 @@ class TestMCPRunEndpoint(_PersistedMCPCallers):
     """Tests for /api/mcp/run and /api/mcp/run/plugin."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
         assert pre.status_code == 200, (
@@ -501,14 +510,16 @@ class TestMCPConfigToolFiltering(_PersistedMCPCallers):
     """Tests for MCP config tool whitelist/blacklist functionality."""
 
     @pytest.fixture(autouse=True)
-    def reset_config(self, platform_admin):
+    def reset_config(self, platform_admin, human_minter):
         """Reset MCP config before and after each test.
 
         Asserts the teardown DELETE actually returned 200 so that a silent
         teardown failure (e.g. transient API unavailability) cannot leak
         state into the next test and present as a stale-read flake.
         """
+        human_minter(platform_admin)
         headers = platform_admin.headers
+        self.admin_headers = headers
 
         # Reset before test — must succeed; failure leaves stale state.
         pre = requests.delete(f"{TEST_API_URL}/api/mcp/config", headers=headers)
@@ -658,3 +669,66 @@ class TestMCPConfigToolFiltering(_PersistedMCPCallers):
         data = response.json()
         assert data["enabled"] is True  # Default
         assert data["is_configured"] is False
+
+
+class TestMCPPackageBranding(_PersistedMCPCallers):
+    """Saved identity and logo must reach downloads for every active user."""
+
+    @pytest.mark.e2e
+    def test_saved_branding_reaches_package_download(self):
+        from PIL import Image
+
+        url = f"{TEST_API_URL}/api/mcp/run/branding"
+        previous = requests.get(url, headers=self.admin_headers)
+        assert previous.status_code == 200
+        old_logo = requests.get(url + "/logo")
+        upload_headers = {key: value for key, value in self.admin_headers.items() if key.lower() != "content-type"}
+        original = BytesIO()
+        Image.new("RGBA", (400, 200), "blue").save(original, "PNG")
+        try:
+            saved = requests.put(url, json={"name": "Covi Production"}, headers=self.admin_headers)
+            assert saved.status_code == 200, saved.text
+            assert saved.json()["slug"] == "covi-production"
+            uploaded = requests.post(url + "/logo", files={"file": ("brand.png", original.getvalue(), "image/png")}, headers=upload_headers)
+            assert uploaded.status_code == 200, uploaded.text
+            persisted = requests.get(url, headers=self.admin_headers)
+            assert persisted.status_code == 200
+            assert persisted.json()["name"] == "Covi Production"
+            logo = requests.get(url + "/logo")
+            assert logo.status_code == 200
+            with Image.open(BytesIO(logo.content)) as image:
+                assert image.size == (128, 128)
+                assert image.format == "PNG"
+            downloaded = requests.get(f"{TEST_API_URL}/api/mcp/run/plugin", headers=self.org_user_headers)
+            assert downloaded.status_code == 200, downloaded.text
+            assert 'filename="covi-production.zip"' in downloaded.headers["content-disposition"]
+            with zipfile.ZipFile(BytesIO(downloaded.content)) as archive:
+                assert json.loads(archive.read("plugin.json"))["name"] == "covi-production"
+                assert "covi_production" in json.loads(archive.read(".mcp.json"))["mcpServers"]
+                assert archive.read("assets/logo.png") == logo.content
+            removed = requests.delete(url + "/logo", headers=self.admin_headers)
+            assert removed.status_code == 200
+            assert removed.json()["logo_url"] is None
+            absent_logo = requests.get(url + "/logo")
+            assert absent_logo.status_code == 404
+        finally:
+            restored = requests.put(url, json={"name": previous.json()["name"]}, headers=self.admin_headers)
+            assert restored.status_code == 200
+            if old_logo.status_code == 200:
+                restored_logo = requests.post(url + "/logo", files={"file": ("old.png", old_logo.content, "image/png")}, headers=upload_headers)
+                assert restored_logo.status_code == 200
+            else:
+                cleaned_up = requests.delete(url + "/logo", headers=self.admin_headers)
+                assert cleaned_up.status_code == 200
+
+    @pytest.mark.e2e
+    @pytest.mark.parametrize("method,path,kwargs", [
+        ("get", "", {}),
+        ("put", "", {"json": {"name": "Other Instance"}}),
+        ("post", "/logo", {"files": {"file": ("bad.png", b"invalid", "image/png")}}),
+        ("delete", "/logo", {}),
+    ])
+    def test_org_user_cannot_configure_package(self, method, path, kwargs):
+        headers = {key: value for key, value in self.org_user_headers.items() if key.lower() != "content-type"} if "files" in kwargs else self.org_user_headers
+        response = requests.request(method, f"{TEST_API_URL}/api/mcp/run/branding{path}", headers=headers, **kwargs)
+        assert response.status_code == 403

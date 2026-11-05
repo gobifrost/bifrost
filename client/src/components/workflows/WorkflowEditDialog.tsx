@@ -61,7 +61,7 @@ import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import { TagsInput } from "@/components/ui/tags-input";
 import { copyToClipboard } from "@/lib/clipboard";
-import { cn } from "@/lib/utils";
+import { cn, formatBytes } from "@/lib/utils";
 import { toast } from "sonner";
 import { useRoles } from "@/hooks/useRoles";
 import { useUpdateWorkflow } from "@/hooks/useWorkflows";
@@ -127,6 +127,8 @@ export function WorkflowEditDialog({
 
 	// Execution tab state
 	const [timeoutSeconds, setTimeoutSeconds] = useState(1800);
+	// Empty: runs request the memory learned from recent runs.
+	const [memoryRequestMib, setMemoryRequestMib] = useState("");
 
 	// Economics tab state
 	const [timeSaved, setTimeSaved] = useState(0);
@@ -228,6 +230,7 @@ export function WorkflowEditDialog({
 
 			// Execution
 			setTimeoutSeconds(workflow.timeout_seconds ?? 1800);
+			setMemoryRequestMib(workflow.memory_request_mib?.toString() ?? "");
 
 			// Economics
 			setTimeSaved(workflow.time_saved ?? 0);
@@ -304,6 +307,8 @@ export function WorkflowEditDialog({
 				category: category || "General",
 				tags: tags,
 				timeout_seconds: timeoutSeconds,
+				memory_request_mib:
+					memoryRequestMib === "" ? null : Number(memoryRequestMib),
 				execution_mode: executionMode,
 				time_saved: timeSaved,
 				value: value,
@@ -589,6 +594,22 @@ export function WorkflowEditDialog({
 								/>
 								<p className="text-xs text-muted-foreground">
 									Maximum execution time (0-86400 seconds, default 1800). Set to 0 to disable the timeout.
+								</p>
+							</div>
+							<div className="space-y-2">
+								<Label htmlFor="memory-request">Memory Request (MiB)</Label>
+								<Input
+									id="memory-request"
+									type="number"
+									min={1}
+									placeholder="Learned"
+									value={memoryRequestMib}
+									onChange={(e) => setMemoryRequestMib(e.target.value)}
+								/>
+								<p className="text-xs text-muted-foreground">
+									{workflow?.learned_memory_bytes != null
+										? `Runs use up to ${formatBytes(workflow.learned_memory_bytes)} (learned from recent runs). Leave empty to request that; set a value to override it.`
+										: "Not measured yet: runs request 64 MiB until one finishes. Set a value to override it."}
 								</p>
 							</div>
 						</TabsContent>

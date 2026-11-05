@@ -43,6 +43,7 @@ function renderOverview(
 			onCreateOAuthConfig={onCreateOAuthConfig}
 			isAuthorizePending={false}
 			isRefreshPending={false}
+			canManageDefinitions
 			{...overrides}
 		/>,
 	);

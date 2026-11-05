@@ -1,4 +1,4 @@
-import { BundledAppShell } from "./BundledAppShell";
+import { BundledAppShell, prepareAppBundle } from "./BundledAppShell";
 /**
  * Component tests for BundledAppShell.
  *
@@ -84,6 +84,7 @@ function mockManifestOk(
 		migrated: boolean;
 		app_model: string;
 		runtime_contract: "mount-v1" | null;
+		sdk_binding_api_major: number | null;
 	}> = {},
 ) {
 	mockAuthFetch.mockResolvedValueOnce({
@@ -179,17 +180,44 @@ describe("BundledAppShell — loading", () => {
 });
 
 describe("BundledAppShell — error path", () => {
-	it("renders the 'Bundle Load Error' panel when the manifest fetch fails", async () => {
-		// Silence the expected console.error from the failed dynamic import.
-		vi.spyOn(console, "error").mockImplementation(() => {});
-		mockManifestError(500, "manifest broken");
+	it.each([
+		[401, "Sign in again to open this app."],
+		[403, "You do not have permission to open this app."],
+		[404, "This app is unavailable."],
+		[500, "The app could not be loaded. Please try again."],
+	])(
+		"shows a safe message for a %i manifest response",
+		async (status, expectedMessage) => {
+			// Silence the expected console.error from the failed dynamic import.
+			vi.spyOn(console, "error").mockImplementation(() => {});
+			mockManifestError(
+				status,
+				'{"detail":"internal deployment metadata"}',
+			);
 
-		await renderShell();
+			await renderShell();
 
-		expect(
-			await screen.findByText(/bundle load error/i),
-		).toBeInTheDocument();
-		expect(screen.getByText(/manifest broken/i)).toBeInTheDocument();
+			expect(
+				await screen.findByText(/bundle load error/i),
+			).toBeInTheDocument();
+			expect(
+				screen.getByLabelText("Bundle error details"),
+			).toHaveTextContent(expectedMessage);
+			expect(
+				screen.queryByText(/internal deployment metadata/i),
+			).not.toBeInTheDocument();
+			expect(
+				screen.queryByText(new RegExp(`\\b${status}\\b`)),
+			).not.toBeInTheDocument();
+		},
+	);
+
+	it("does not expose a manifest response body while preparing a bundle", async () => {
+		mockManifestError(403, '{"detail":"internal deployment metadata"}');
+
+		await expect(
+			prepareAppBundle({ appId: "prepared-forbidden", isPreview: false }),
+		).rejects.toThrow("You do not have permission to open this app.");
 	});
 });
 
@@ -234,6 +262,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			entry: "assets/main-prepared.js",
 			base_url: "/api/applications/app-prepared/dist",
 			runtime_contract: "mount-v1",
+			sdk_binding_api_major: 1,
 		});
 		const { BundledAppShell, prepareAppBundle } =
 			await import("./BundledAppShell");
@@ -261,7 +290,12 @@ describe("BundledAppShell — app_model render branch", () => {
 			await screen.findByTestId("solution-v2-app-root"),
 		).toBeInTheDocument();
 		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
-		expect(mockStandaloneV2App).toHaveBeenCalledWith(expect.objectContaining({ solutionId: "solution-prepared" }));
+		expect(mockStandaloneV2App).toHaveBeenCalledWith(
+			expect.objectContaining({
+				solutionId: "solution-prepared",
+				sdkBindingApiMajor: 1,
+			}),
+		);
 	});
 
 	it("mounts the standalone v2 app same-document (no iframe) and injects auth", async () => {
@@ -270,6 +304,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			entry: "assets/main-abc.js",
 			base_url: "/api/applications/app-1/dist",
 			runtime_contract: "mount-v1",
+			sdk_binding_api_major: 1,
 		});
 		// The host token the shell injects for the app.
 		localStorage.setItem("bifrost_access_token", "tok-xyz");
@@ -289,6 +324,7 @@ describe("BundledAppShell — app_model render branch", () => {
 				appSlug: "my-app",
 				entry: "assets/main-abc.js",
 				runtimeContract: "mount-v1",
+				sdkBindingApiMajor: 1,
 			}),
 		);
 

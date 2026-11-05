@@ -1,0 +1,24 @@
+{
+  "key": "pr:1135",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine client dependency updates and dependency security maintenance; formal release security review remains required.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1135",
+      "https://github.com/gobifrost/bifrost/pull/1077",
+      "https://github.com/gobifrost/bifrost/pull/1007",
+      "https://github.com/gobifrost/bifrost/pull/912",
+      "https://github.com/gobifrost/bifrost/pull/841",
+      "https://github.com/gobifrost/bifrost/pull/840",
+      "https://github.com/capricorn86/happy-dom/security/advisories/GHSA-834v-8h66-3h79",
+      "https://github.com/cure53/DOMPurify/releases/tag/3.4.17",
+      "Root reviewed dependency diffs and sanitizer consumers, independently verified 35 focused tests; no consumer configuration or authority changes."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1135"
+  }
+}

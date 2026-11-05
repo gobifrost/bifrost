@@ -2,11 +2,14 @@
 # Used by all services: API, Discovery, Scheduler, Worker
 # Multi-stage build for efficient image size
 
+# Use the same supported Node runtime for every App build surface.
+FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f021078f5f4a5d687a77d280c1d9 AS node-toolchain
+
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2 AS builder
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS builder
 
 WORKDIR /app
 
@@ -24,15 +27,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# python:3.14-slim already supports --require-hashes (>= 8.0).
+# python:3.14.10-slim already supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
-# python:3.14-slim
-FROM python:3.14-slim@sha256:caaf356f40667c496d405780745b9ac25771c189a51dfcc42430d531ea09f8a2
+# Python security patch: interpreter denylist and patched bundled pip.
+FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
@@ -43,21 +46,32 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libcairo2 \
     curl \
     gosu \
+    libnss-wrapper \
     git \
     awscli \
-    nodejs npm \
+    libjemalloc2 \
+    libatomic1 \
+    libstdc++6 \
     && rm -rf /var/lib/apt/lists/*
 
-# Debian's npm 9.2.0 crashes in Arborist peer-set resolution on valid V2 App
-# dependency trees ("Cannot read properties of null (reading 'edgesOut')").
-# Keep the build toolchain pinned and verify its official registry tarball
-# before installing it so App deploys and SDK rebuilds resolve them.
+# npm 10 also crashes in peer-set resolution on valid retained App sources.
+# Vendor a supported Node runtime, then install the verified npm resolver.
+COPY --from=node-toolchain /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-toolchain /usr/local/lib/node_modules/npm /usr/local/lib/node_modules/npm
+RUN ln -s ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+    && ln -s ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
 COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
 RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.14/site-packages /usr/local/lib/python3.14/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
+RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
+
+# Keep OpenSSL's system/private CA selection. Exclude only retired distro
+# roots, including their hashed-directory entries, and persist those exclusions.
+COPY api/scripts/prune_retired_ca.py /tmp/prune_retired_ca.py
+RUN python /tmp/prune_retired_ca.py && rm /tmp/prune_retired_ca.py
 
 # Install `bifrost` CLI shim. The bifrost Python package is mounted at
 # /app/bifrost/ via PYTHONPATH=/app, so `python -m bifrost` works. The shim
@@ -87,6 +101,10 @@ RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \
       --output /app/artifacts \
       --version "${BIFROST_VERSION}"
 
+# Compile platform source after CLI packaging, before npm adds dependency trees.
+# Checked hashes preserve source-change invalidation; keep the full preload graph.
+RUN python -m compileall -f --invalidation-mode checked-hash -q /app/src /app/shared /app/bifrost
+
 # Install app compiler Node.js dependencies
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
 COPY api/src/services/app_compiler/compile.js /app/src/services/app_compiler/
@@ -102,7 +120,7 @@ RUN cd /app/src/services/app_bundler && npm ci --omit=dev
 # /api/sdk/download can bundle + serve the installable `bifrost` package without
 # the client/ tree at runtime. A unit test enforces this file list stays in sync.
 COPY api/src/services/sdk_package/package.json api/src/services/sdk_package/package-lock.json /app/src/services/sdk_package/
-COPY api/src/services/sdk_package/build_sdk.js /app/src/services/sdk_package/
+COPY api/src/services/sdk_package/build_sdk.js api/src/services/sdk_package/build_types.js api/src/services/sdk_package/tsconfig.types.json /app/src/services/sdk_package/
 RUN cd /app/src/services/sdk_package && npm ci --omit=dev
 COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/tables.ts \
@@ -122,11 +140,20 @@ COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/branding-theme.ts \
      client/src/lib/app-sdk/brand-palette.ts \
      client/src/lib/app-sdk/bifrost-header.tsx \
+     client/src/lib/app-sdk/errors.ts \
+     client/src/lib/app-sdk/hosted-binding.tsx \
+     client/src/lib/app-sdk/hosted-contract.ts \
+     client/src/lib/app-sdk/hosted-loader.ts \
      /app/src/services/sdk_package/sdk_src/
+COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.v2.ts
 COPY client/src/lib/app-sdk/index.v2.ts /app/src/services/sdk_package/sdk_src/index.ts
+COPY client/src/lib/v1.d.ts /app/src/services/sdk_package/sdk_src/v1.d.ts
 # Contract version stamp (read directly by Python, not bundled by esbuild) —
 # see sdk_contract_version() in sdk_package/__init__.py.
 COPY client/src/lib/app-sdk/sdk-contract.json /app/src/services/sdk_package/sdk_src/sdk-contract.json
+RUN mkdir -p /app/artifacts/app-sdk \
+    && node /app/src/services/sdk_package/build_sdk.js hosted \
+      /app/src/services/sdk_package/sdk_src /app/artifacts/app-sdk/hosted-v1.js
 
 # Create non-root user
 RUN useradd -m -u 1000 bifrost && \
@@ -136,9 +163,12 @@ RUN useradd -m -u 1000 bifrost && \
 RUN mkdir -p /workspace /tmp/bifrost && \
     chown -R bifrost:bifrost /workspace /tmp/bifrost
 
-# Copy entrypoint script
+# Copy shared API startup scripts. The Uvicorn shim keeps Kubernetes command
+# overrides on the API allocator path without invoking the root entrypoint.
 COPY api/entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+COPY api/scripts/api-allocator.sh /usr/local/bin/api-allocator.sh
+COPY api/scripts/uvicorn-shim.sh /usr/local/bin/uvicorn
+RUN chmod 755 /entrypoint.sh /usr/local/bin/api-allocator.sh /usr/local/bin/uvicorn
 
 # Don't switch to bifrost here - entrypoint handles user switching
 # This allows the entrypoint to fix volume permissions when needed

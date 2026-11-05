@@ -29,6 +29,10 @@ const mockUseOrganizations = vi.fn();
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: () => mockUseOrganizations(),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 function makeAgent(overrides: Record<string, unknown> = {}) {
 	return {
@@ -62,6 +66,7 @@ beforeEach(() => {
 	mockUseOrganizations.mockReturnValue({
 		data: [{ id: "org-1", name: "Acme" }],
 	});
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 });
 
 async function renderDialog(

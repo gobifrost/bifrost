@@ -2,6 +2,52 @@
 
 > Regenerate: `python api/scripts/skill-truth/generate.py`. CI enforces freshness.
 
+## `admin`
+
+```
+Usage: admin [OPTIONS] COMMAND [ARGS]...
+
+  Platform administration.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  authz  Inspect runtime credentials and the authority version.
+```
+
+### `admin authz`
+
+```
+Usage: admin authz [OPTIONS] COMMAND [ARGS]...
+
+  Inspect runtime credentials and the authority version.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  legacy-status  List live runs and remote launchers still on legacy...
+```
+
+#### `admin authz legacy-status`
+
+```
+Usage: admin authz legacy-status [OPTIONS]
+
+  List live runs and remote launchers still on legacy runtime credentials.
+
+  Restart a listed service attempt through the normal service restart (it
+  relaunches with new-format credentials) and upgrade a listed launcher;
+  legacy workflow runs end on their own.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+```
+
 ## `agents`
 
 ```
@@ -1175,6 +1221,7 @@ Commands:
   delete    Delete a workspace file, optionally guarded by its current...
   exists    Check if a file exists.
   list      List files in a directory (default: location root).
+  move      Move one file within a location as a durable server-side job.
   policies  Manage file access policies.
   read      Read a workspace file and write its contents to stdout.
   search    Search workspace and Solution source like grep, one page at a...
@@ -1231,6 +1278,32 @@ Options:
   --solution TEXT  Solution install slug or UUID. When given, targets that
                    install's file scope (location defaults to "solutions").
                    Slug resolved via GET /api/solutions.
+  --json           Emit JSON instead of human-readable output.
+  --help           Show this message and exit.
+```
+
+### `files move`
+
+```
+Usage: files move [OPTIONS] SOURCE DESTINATION
+
+  Move one file within a location as a durable server-side job.
+
+  The file is copied server-side, its metadata follows it, and the original is
+  deleted only after the copy is verified. Workspace files cannot be moved.
+  Prints the final path.
+
+Options:
+  --location TEXT  Storage location. Special: "workspace" (default), "temp",
+                   "uploads". Custom names (e.g. "reports") are accepted;
+                   "_repo", "_tmp", and "_apps" are blocked.  [required]
+  --solution TEXT  Solution install slug or UUID. When given, targets that
+                   install's file scope (location defaults to "solutions").
+                   Slug resolved via GET /api/solutions.
+  --rename         If the destination exists, use the next free 'name (n).ext'
+                   instead of failing.
+  --timeout FLOAT  Seconds to follow the move job; the job keeps running after
+                   the CLI stops waiting.  [default: 14400]
   --json           Emit JSON instead of human-readable output.
   --help           Show this message and exit.
 ```
@@ -3368,7 +3441,8 @@ Options:
   --params-file FILE  Path to a JSON file with input parameters. Mutually
                       exclusive with --params.
   --org TEXT          Override execution org context (UUID or name). Requires
-                      platform admin. Omit to use the caller's default org.
+                      workflow execution permission at a reachable
+                      organization. Omit to use the caller's default org.
   --json              Emit JSON instead of human-readable output.
   --help              Show this message and exit.
 ```
@@ -3603,6 +3677,7 @@ Options:
   --description TEXT              description
   --category TEXT                 category
   --timeout-seconds INTEGER       timeout_seconds
+  --memory-request-mib INTEGER    memory_request_mib
   --tags TEXT                     tags (repeat for multiple).
   --endpoint-enabled / --no-endpoint-enabled
                                   endpoint_enabled (tri-state; omit to leave

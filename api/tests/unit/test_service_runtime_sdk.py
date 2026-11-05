@@ -8,6 +8,7 @@ from bifrost import service
 from bifrost.client import get_client
 from bifrost._service_runtime import (
     clear_service_runtime,
+    install_legacy_service_token,
     install_service_credentials,
     install_service_runtime,
     take_ready_report,
@@ -61,7 +62,8 @@ async def test_wait_outside_service_execution_raises():
         await service.wait_until_stopping()
 
 
-def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
+@pytest.mark.asyncio
+async def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     from bifrost.client import (
         _clear_engine_socket,
         _install_engine_socket,
@@ -69,22 +71,65 @@ def test_rotated_service_credentials_update_cached_sdk_client(monkeypatch):
     )
 
     monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
-    # install_service_credentials mutates both variables directly; register
+    # install_legacy_service_token mutates both variables directly; register
     # them with monkeypatch so later SDK tests see their original environment.
     monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
     monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
     previous = getattr(_thread_local, "bifrost_client", None)
     _thread_local.bifrost_client = None
     _install_engine_socket("/tmp/service-test.sock")
+    client = None
     try:
-        assert install_service_credentials("initial-token")
+        assert install_legacy_service_token("initial-token")
         assert getattr(_thread_local, "bifrost_client", None) is None
         client = get_client()
-        assert client._get_engine_async_client().headers["Authorization"] == "Bearer initial-token"
+        pool = client._get_engine_async_client()
+        assert pool.headers["Authorization"] == "Bearer initial-token"
 
-        assert install_service_credentials("rotated-token")
+        assert install_legacy_service_token("rotated-token")
         assert get_client() is client
-        assert client._get_engine_async_client().headers["Authorization"] == "Bearer rotated-token"
+        assert client._get_engine_async_client() is pool
+        assert pool.headers["Authorization"] == "Bearer rotated-token"
     finally:
+        if client is not None:
+            await client.close()
         _clear_engine_socket()
         _thread_local.bifrost_client = previous
+
+
+def test_a_claims_attempt_installs_an_access_token_and_its_run_refresh_token(monkeypatch):
+    from bifrost.credentials import resolve_credentials
+
+    monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
+
+    assert install_service_credentials("claims-access", "run-refresh")
+    assert not install_service_credentials("claims-access", "")
+
+    resolved = resolve_credentials("http://service-test.invalid")
+    assert resolved is not None
+    assert (resolved.credentials.access_token, resolved.credentials.refresh_token) == ("claims-access", "run-refresh")
+
+
+def test_a_rotated_legacy_token_never_replaces_a_run_refresh_token(monkeypatch):
+    """After a rollback, an older parent rotates legacy tokens into a
+    claims-format attempt: only the access slot may change, so the attempt
+    can still refresh once the newer API is back."""
+    from bifrost.credentials import resolve_credentials
+
+    monkeypatch.setenv("BIFROST_API_URL", "http://service-test.invalid")
+    monkeypatch.setenv("BIFROST_ACCESS_TOKEN", "test-placeholder")
+    monkeypatch.setenv("BIFROST_REFRESH_TOKEN", "test-placeholder")
+    try:
+        assert install_service_credentials("claims-access", "run-refresh")
+        assert install_legacy_service_token("legacy-rotated")
+
+        resolved = resolve_credentials("http://service-test.invalid")
+        assert resolved is not None
+        assert (resolved.credentials.access_token, resolved.credentials.refresh_token) == (
+            "legacy-rotated",
+            "run-refresh",
+        )
+    finally:
+        clear_service_runtime()

@@ -17,6 +17,7 @@ These tests pin the fix:
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID, uuid4
 
@@ -25,6 +26,7 @@ import pytest
 from src.repositories.config import ConfigRepository
 from tests.helpers.authorization import admin_caller
 from src.models.contracts.config import (
+    SetConfigRequest,
     UpdateConfigRequest,
     ConfigType,
 )
@@ -124,6 +126,20 @@ async def test_router_invalidates_old_cache_entry_on_rename():
 
     ctx = MagicMock()
     ctx.db = repo.session
+    order: list[str] = []
+
+    async def commit():
+        order.append("commit")
+
+    async def invalidate(*args):
+        assert order == ["commit"]
+        order.append("invalidate")
+
+    async def upsert(*args):
+        assert order == ["commit", "invalidate"]
+        order.append("upsert")
+
+    ctx.db.commit = AsyncMock(side_effect=commit)
     ctx.org_id = org
     ctx.user = MagicMock(email="admin@example.com", is_superuser=True)
     user = MagicMock(email="admin@example.com")
@@ -132,8 +148,8 @@ async def test_router_invalidates_old_cache_entry_on_rename():
     with (
         patch("src.routers.config.ConfigRepository", return_value=repo),
         patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
-        patch("src.routers.config.invalidate_config", new=AsyncMock()) as inv,
-        patch("src.routers.config.upsert_config", new=AsyncMock()) as ups,
+        patch("src.routers.config.invalidate_config", new=AsyncMock(side_effect=invalidate)) as inv,
+        patch("src.routers.config.upsert_config", new=AsyncMock(side_effect=upsert)) as ups,
     ):
         await update_config(config_id, request, ctx, user)
 
@@ -144,6 +160,80 @@ async def test_router_invalidates_old_cache_entry_on_rename():
     assert args is not None
     assert args.args[0] == str(org)
     assert args.args[1] == "new_name"
+    assert order == ["commit", "invalidate", "upsert"]
+
+
+@pytest.mark.asyncio
+async def test_router_commits_new_config_before_advancing_cache_generation():
+    """A reader cannot observe a new cache generation before the DB row commits."""
+    from src.routers.config import set_config
+
+    org = uuid4()
+    response = MagicMock()
+    repo = MagicMock()
+    repo.set_config = AsyncMock(
+        return_value=MagicMock(response=response, stored_value="stored-value")
+    )
+    ctx = MagicMock()
+    ctx.org_id = org
+    ctx.db = AsyncMock()
+    order: list[str] = []
+
+    async def commit():
+        order.append("commit")
+
+    async def upsert(*args):
+        assert order == ["commit"]
+        order.append("upsert")
+
+    ctx.db.commit = AsyncMock(side_effect=commit)
+    request = SetConfigRequest(key="new_config", value="value", type=ConfigType.STRING)
+    user = MagicMock(email="admin@example.com")
+
+    with (
+        patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
+        patch("src.routers.config.upsert_config", new=AsyncMock(side_effect=upsert)),
+    ):
+        assert await set_config(request, ctx, user) is response
+
+    assert order == ["commit", "upsert"]
+
+
+@pytest.mark.asyncio
+async def test_router_commits_delete_before_advancing_cache_generation():
+    """A deleted config stays cache-visible until its transaction commits."""
+    from src.routers.config import delete_config
+
+    org = uuid4()
+    config_id = uuid4()
+    existing = SimpleNamespace(org_id=str(org))
+    deleted = SimpleNamespace(organization_id=org, key="deleted_config")
+    repo = MagicMock()
+    repo.get_config_by_id = AsyncMock(return_value=existing)
+    repo.delete_config = AsyncMock(return_value=deleted)
+    ctx = MagicMock()
+    ctx.org_id = org
+    ctx.db = AsyncMock()
+    order: list[str] = []
+
+    async def commit():
+        order.append("commit")
+
+    async def invalidate(*args):
+        assert order == ["commit"]
+        order.append("invalidate")
+
+    ctx.db.commit = AsyncMock(side_effect=commit)
+    user = MagicMock(email="admin@example.com")
+    with (
+        patch("src.routers.config.ConfigRepository", return_value=repo),
+        patch("src.routers.config.load_caller", new=AsyncMock(return_value=admin_caller())),
+        patch("src.routers.config.invalidate_config", new=AsyncMock(side_effect=invalidate)),
+    ):
+        await delete_config(config_id, ctx, user)
+
+    assert order == ["commit", "invalidate"]
 
 
 @pytest.mark.asyncio

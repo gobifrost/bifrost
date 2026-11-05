@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "../fixtures/api-fixture";
 
 const email = process.env.BIFROST_PREVIEW_EMAIL;
 const password = process.env.BIFROST_PREVIEW_PASSWORD;

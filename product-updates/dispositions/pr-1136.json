@@ -1,0 +1,21 @@
+{
+  "key": "pr:1136",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine AI dependency alignment and test compatibility maintenance; formal release security review remains required.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1136",
+      "https://github.com/gobifrost/bifrost/pull/1004",
+      "https://github.com/pydantic/pydantic-ai/pull/10561",
+      "https://github.com/pydantic/pydantic-ai/releases/tag/v2.58.0",
+      "https://github.com/pydantic/pydantic-ai/releases/tag/v2.59.0",
+      "Root reviewed the complete dependency and test diff, original fixture preservation, upstream compatibility/security applicability, and 128 focused passing tests."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1136"
+  }
+}

@@ -10,6 +10,8 @@ Used by both SDK (reads) and API routes (invalidation).
 
 from __future__ import annotations
 
+import json
+
 
 def _get_scope(org_id: str | None) -> str:
     """Get the scope prefix for a key."""
@@ -25,9 +27,12 @@ def _get_scope(org_id: str | None) -> str:
 
 def config_hash_key(org_id: str | None) -> str:
     """
-    Key for the hash containing all config values for an org.
+    Base key for a complete config snapshot hash.
 
-    Structure: HASH where field = config key, value = JSON config data
+    The versioned reader key adds global and (for an org) local generations
+    plus the ``v2`` format suffix. A v2 hash has an unquoted ``complete``
+    metadata field and JSON-string-encoded user-key fields, each containing
+    JSON config data.
 
     NOTE: Org-scoped config caches are merged views (global fallback
     overlaid with org-specific values). To invalidate every org cache
@@ -35,11 +40,9 @@ def config_hash_key(org_id: str | None) -> str:
     keys via SCAN — the org-scoped key embeds a version suffix that
     advances when ``CONFIG_GLOBAL_VERSION_KEY`` is bumped.
 
-    The lookup for the current version is async, so use
-    ``config_hash_key_versioned`` instead from any caller that has
-    a Redis client. This sync helper returns the BASE key (no version
-    suffix) and is reserved for cases where the version is not needed
-    (e.g. global-only reads, ``invalidate_all_config``).
+    The lookup for the current version is async, so readers must use
+    ``config_hash_key_versioned``. This helper is only the stable base used to
+    derive a versioned snapshot key.
     """
     scope = _get_scope(org_id)
     return f"bifrost:{scope}:config"
@@ -57,6 +60,30 @@ def config_key(org_id: str | None, key: str) -> str:
 
 
 CONFIG_GLOBAL_VERSION_KEY = "bifrost:config:global_version"
+
+
+def config_scope_version_key(org_id: str) -> str:
+    """Version counter for one organization's merged config view.
+
+    A keyed config read can finish its database query after an org write has
+    committed.  Advancing this counter makes the old fill unreachable instead
+    of relying on a delete racing that reader.
+    """
+    return f"bifrost:org:{org_id}:config_version"
+
+
+CONFIG_CACHE_COMPLETE_FIELD = "complete"
+
+
+def config_cache_field(key: str) -> str:
+    """Encode a user config key into the cache hash's data namespace.
+
+    Every user field is a JSON string (and therefore starts with ``\"``),
+    while metadata uses fixed unquoted fields such as ``complete``. The two
+    namespaces cannot collide, including for direct database imports that
+    bypass request-model key validation.
+    """
+    return json.dumps(key)
 
 
 async def _current_global_version(redis_client) -> int:  # type: ignore[no-untyped-def]
@@ -82,18 +109,29 @@ async def config_hash_key_versioned(
 ) -> str:
     """Versioned variant of ``config_hash_key``.
 
-    Org-scoped keys embed the current global-version. Global keys are
-    unversioned (the version IS the global-config-write signal).
+    Every view embeds its current invalidation generation.  Org-scoped keys
+    include both the global fallback generation and their own local generation.
+    This lets a reader safely fill only the version it observed before its SQL
+    query: a concurrent global or org mutation advances the next reader to a
+    different key.
 
     Reader and writer must use this helper so a global write naturally
     causes every org read to see a fresh cache key (and thus a DB
     re-merge on next read).
     """
     base = config_hash_key(org_id)
+    global_version = await _current_global_version(redis_client)
     if org_id is None or org_id == "GLOBAL":
-        return base
-    version = await _current_global_version(redis_client)
-    return f"{base}:v{version}"
+        return f"{base}:v{global_version}:v2"
+
+    raw_org_version = await redis_client.get(config_scope_version_key(org_id))
+    if isinstance(raw_org_version, bytes):
+        raw_org_version = raw_org_version.decode()
+    try:
+        org_version = int(raw_org_version) if raw_org_version is not None else 0
+    except (TypeError, ValueError):
+        org_version = 0
+    return f"{base}:g{global_version}:o{org_version}:v2"
 
 
 # =============================================================================
@@ -193,6 +231,11 @@ def embed_execution_key(jti: str, execution_id: str) -> str:
     return f"bifrost:embed:exec:{jti}:{execution_id}"
 
 
+def browser_impersonation_session_key(session_id: str) -> str:
+    """Key for one short-lived, bearer-only browser impersonation session."""
+    return f"bifrost:auth:browser-impersonation:{session_id}"
+
+
 # =============================================================================
 # Execution-Scoped Keys (Process Isolation)
 # =============================================================================
@@ -250,6 +293,16 @@ def execution_logs_stream_key(execution_id: str) -> str:
     Structure: STREAM with log entries
     """
     return f"bifrost:logs:{execution_id}"
+
+
+def execution_log_recovery_cursor_key() -> str:
+    """Cursor for bounded scans of retained execution-log streams."""
+    return "bifrost:execution-log-recovery:cursor"
+
+
+def execution_log_retention_cursor_key() -> str:
+    """Cursor for bounded orphaned execution-log stream reclamation."""
+    return "bifrost:execution-log-retention:cursor"
 
 
 def service_logs_stream_key(attempt_id: str) -> str:
@@ -310,27 +363,8 @@ def agent_run_steps_stream_key(run_id: str) -> str:
 
 
 # =============================================================================
-# Authentication Keys (Refresh Token JTI, OAuth State, Rate Limiting)
+# Authentication Keys (OAuth State, Rate Limiting)
 # =============================================================================
-
-
-def refresh_token_jti_key(user_id: str, jti: str) -> str:
-    """
-    Key for an active refresh token JTI.
-
-    Structure: STRING with value "1" (existence check only)
-    TTL: 7 days (matches refresh token expiry)
-    """
-    return f"bifrost:auth:refresh:{user_id}:{jti}"
-
-
-def user_refresh_tokens_pattern(user_id: str) -> str:
-    """
-    Pattern to find all refresh tokens for a user (for revoke-all).
-
-    Use with KEYS or SCAN command.
-    """
-    return f"bifrost:auth:refresh:{user_id}:*"
 
 
 def oauth_state_key(state: str) -> str:
@@ -385,12 +419,12 @@ TTL_ROLES = 600  # 10 minutes
 TTL_ORGS = 3600  # 1 hour
 TTL_PENDING_EXECUTION = 3600  # 1 hour (safety for orphaned pending executions)
 TTL_ACTIVE_EXECUTION = 3600  # 1 hour (recreated while the child is active)
+TTL_EXECUTION_LOGS = 604800  # 7 days (durable DB copy is authoritative after flush)
 
 # Embed TTLs
 TTL_EMBED_EXECUTION = 86400  # 24 hours (embed session → execution link)
 
 # Auth TTLs
-TTL_REFRESH_TOKEN = 604800  # 7 days (matches refresh token expiry)
 TTL_OAUTH_STATE = 600  # 10 minutes
 TTL_RATE_LIMIT = 60  # 1 minute window
 TTL_DEVICE_CODE = 300  # 5 minutes (device authorization flow)

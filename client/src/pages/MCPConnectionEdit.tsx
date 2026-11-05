@@ -49,6 +49,7 @@ import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
 import { $api, apiClient } from "@/lib/api-client";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { toast } from "sonner";
 
 export function MCPConnectionEdit() {
@@ -87,13 +88,11 @@ export function MCPConnectionEdit() {
 	);
 
 	const { data: organizations = [] } = useOrganizations();
+	const getOrgName = useOrganizationName(organizations);
 	const orgName = useMemo(() => {
 		if (!connection) return null;
-		return (
-			organizations.find((o) => o.id === connection.organization_id)
-				?.name ?? connection.organization_id
-		);
-	}, [organizations, connection]);
+		return getOrgName(connection.organization_id);
+	}, [connection, getOrgName]);
 
 	const updateConnection = $api.useMutation(
 		"patch",

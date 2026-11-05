@@ -59,6 +59,34 @@ def _reset_context():
 
 class TestEmitAuditResolvesOperationIdFromScope:
     @pytest.mark.asyncio
+    async def test_impersonation_provenance_is_persisted(self, monkeypatch):
+        created = {}
+
+        async def fake_create(**kwargs):
+            created.update(kwargs)
+            return MagicMock(id=uuid4())
+
+        mock_repo = MagicMock()
+        mock_repo.create = AsyncMock(side_effect=fake_create)
+        monkeypatch.setattr(
+            "src.services.audit.AuditLogRepository", lambda session: mock_repo
+        )
+        operator_id, session_id = uuid4(), uuid4()
+        set_actor(
+            ActorContext(
+                user_id=uuid4(),
+                organization_id=uuid4(),
+                impersonated_by_user_id=operator_id,
+                impersonation_session_id=session_id,
+            )
+        )
+
+        await emit_audit(_session_mock(), "user.update")
+
+        assert created["impersonated_by_user_id"] == operator_id
+        assert created["impersonation_session_id"] == session_id
+
+    @pytest.mark.asyncio
     async def test_catalogued_route_in_scope_is_recorded(self, monkeypatch):
         created = {}
 

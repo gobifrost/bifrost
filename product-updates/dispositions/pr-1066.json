@@ -1,0 +1,14 @@
+{
+  "key": "pr:1066",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workers use less memory while idle and preserve running workflows through API restarts.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1066",
+      "Jack requested promotion of the thin runner with existing functionality preserved and authorized finishing verification and merging. Live verification covers all registered job types and API restart adoption."
+    ]
+  }
+}

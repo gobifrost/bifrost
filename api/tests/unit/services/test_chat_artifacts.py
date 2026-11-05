@@ -67,6 +67,20 @@ def test_chat_artifact_tools_hide_unconfigured_media_generators() -> None:
     assert CREATE_VIDEO_TOOL not in definitions
 
 
+def test_chat_artifact_tools_document_the_serialized_result_contract() -> None:
+    definitions = artifact_tool_definitions(
+        image_generation_enabled=True,
+        video_generation_enabled=True,
+    )
+
+    assert all(
+        definition.return_schema is not None
+        and definition.return_schema["type"] == "string"
+        and "json.loads" in definition.return_schema["description"]
+        for definition in definitions
+    )
+
+
 @pytest.mark.asyncio
 async def test_document_tool_reads_prior_workspace_image() -> None:
     conversation_id = uuid4()

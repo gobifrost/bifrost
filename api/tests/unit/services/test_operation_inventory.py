@@ -2,6 +2,8 @@
 
 from pathlib import Path
 
+import pytest
+
 from src.main import app
 from src.services.operation_inventory import build_operation_inventory
 
@@ -13,15 +15,17 @@ REPO_ROOT = API_ROOT.parent
 def test_every_observed_surface_is_classified_with_a_reason() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     # R1a snapshot against current main. There is no Builder runtime on main
-    # yet (native_builder is a Builder-phase surface), and cli/mcp counts
+    # yet (native_builder is a Builder-phase surface). The reviewed workflow
+    # conversion surfaces add four CLI commands, four MCP tools, and four REST
+    # routes; cli/mcp counts otherwise
     # reflect main's pre-rename tool/command surface: R1b lands each domain's
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 175,
+        "cli": 177,
         "manifest": 16,
         "mcp": 98,
-        "rest": 687,
+        "rest": 707,  # Main's additions plus the conversion REST surface.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -29,6 +33,19 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_app_consent_is_authentication_transport(method: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(
+        row for row in inventory["uncataloged"]["rest"]
+        if row["path"] == "/auth/app-connections/{request_id}" and row["method"] == method
+    )
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Reviews or records the user's app authentication decision; owns no entity state."
+    )
 
 
 def test_solution_dev_context_is_authentication_transport() -> None:
@@ -43,6 +60,42 @@ def test_solution_dev_context_is_authentication_transport() -> None:
     assert row["reason"] == (
         "Issues user-bound context for local Solution development; owns no entity state."
     )
+
+
+@pytest.mark.parametrize("path", ["/auth/device/authorize", "/auth/device/deny"])
+def test_device_decisions_are_authentication_transport(path: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Records the user's decision for CLI authentication; owns no entity state."
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [
+        (
+            "/auth/impersonate/{user_id}",
+            "Starts a browser authentication impersonation session; owns no entity state.",
+        ),
+        (
+            "/auth/impersonation/end",
+            "Ends a browser authentication impersonation session; owns no entity state.",
+        ),
+    ],
+)
+def test_browser_impersonation_routes_are_authentication_transport(
+    path: str, reason: str
+) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == reason
 
 
 def test_organization_listing_is_available_to_application_sdks() -> None:

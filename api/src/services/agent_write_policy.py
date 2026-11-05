@@ -30,11 +30,11 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.scope_resolver import UNSET, RequestedScope, shared_read_organization
+from shared.scope_resolver import UNSET, RequestedScope
+from shared.resource_access import ResourceAccessResolver, ResourceKind, can_write_resource
 from src.core.db_deps import DbSession
 from src.models.contracts.agents import AgentCreate, AgentUpdate
 from src.models.orm import Agent, MCPConnection, Role, Workflow
-from src.models.orm.agents import AgentRole
 from src.repositories.workflows import WorkflowRepository
 from src.services.authorization.enforce import Caller
 
@@ -53,46 +53,6 @@ def agent_query_in_reach(caller: Caller):
     return query if reach is None else query.where(reach)
 
 
-async def agent_has_acl_access(
-    db: AsyncSession,
-    caller: Caller,
-    agent: Agent,
-) -> bool:
-    """Apply an Agent's object ACL after the caller has reached its org.
-
-    Permission reach deliberately does not rewrite object visibility: the
-    original user's external status still cannot use the authenticated tier,
-    and role-based agents still require a role intersection.  ``agents.read`` is the
-    explicit administrative permission that reaches non-private agents
-    without their ordinary ACL.
-    """
-    from src.models.enums import AgentAccessLevel
-    from src.models.orm.users import UserRole
-
-    if agent.access_level == AgentAccessLevel.EVERYONE:
-        return True
-    user_id = caller_user_id(caller)
-    if agent.access_level == AgentAccessLevel.PRIVATE:
-        return agent.owner_user_id is not None and agent.owner_user_id == user_id
-    if agent.access_level == AgentAccessLevel.AUTHENTICATED:
-        return caller.ctx is not None and not caller.ctx.is_external
-    if agent.access_level != AgentAccessLevel.ROLE_BASED or user_id is None:
-        return False
-    role_ids = (
-        await db.execute(select(UserRole.role_id).where(UserRole.user_id == user_id))
-    ).scalars().all()
-    if not role_ids:
-        return False
-    return (
-        await db.execute(
-            select(AgentRole.agent_id).where(
-                AgentRole.agent_id == agent.id,
-                AgentRole.role_id.in_(role_ids),
-            )
-        )
-    ).scalar_one_or_none() is not None
-
-
 async def can_read_agent(
     db: AsyncSession,
     caller: Caller,
@@ -100,44 +60,17 @@ async def can_read_agent(
     *,
     selected_organization_id: RequestedScope = UNSET,
 ) -> bool:
-    """Read a reachable Agent, retaining its selected org's shared defaults."""
-    from src.services.authorization.enforce import (
-        allows_permission,
-        user_reach,
-    )
-
-    user_id = caller_user_id(caller)
-    if not user_reach(caller).covers(agent.organization_id):
-        return False
-    if agent.access_level.value == "private":
-        if agent.owner_user_id == user_id:
-            return True
-        return allows_permission(caller, "agents.read.all", agent.organization_id)
-    permission_org = shared_read_organization(
-        caller, agent.organization_id, selected_organization_id=selected_organization_id
-    )
-    if allows_permission(caller, "agents.read", permission_org):
-        return True
-    return allows_permission(caller, "agents.readbasic", permission_org) and await agent_has_acl_access(
-        db, caller, agent
+    """Use the common resource resolver, including private Agent policy."""
+    return await ResourceAccessResolver(db, caller).can_read(
+        ResourceKind.AGENT,
+        agent,
+        selected_organization_id=selected_organization_id,
     )
 
 
 def can_write_agent(caller: Caller, agent: Agent) -> bool:
-    """Whether the original caller may manage an Agent at its actual org."""
-    from src.services.authorization.enforce import (
-        allows_permission,
-        user_reach,
-    )
-
-    user_id = caller_user_id(caller)
-    if not user_reach(caller).covers(agent.organization_id):
-        return False
-    if agent.access_level.value == "private" and agent.owner_user_id == user_id:
-        return True
-    if agent.access_level.value == "private":
-        return allows_permission(caller, "agents.readwrite.all", agent.organization_id)
-    return allows_permission(caller, "agents.readwrite", agent.organization_id)
+    """Use the common resolver at the Agent's persisted organization."""
+    return can_write_resource(ResourceKind.AGENT, caller, agent)
 
 
 def can_configure_agent(caller: Caller, agent: Agent) -> bool:
@@ -149,17 +82,11 @@ def can_configure_agent(caller: Caller, agent: Agent) -> bool:
     different person's private Agent remains protected by its additional
     ``agents.readwrite.all`` resource gate.
     """
-    from src.services.authorization.enforce import allows_permission, user_reach
+    from src.services.authorization.enforce import allows_permission
 
-    if not user_reach(caller).covers(agent.organization_id):
-        return False
-    if not allows_permission(caller, "agents.readwrite", agent.organization_id):
-        return False
-    if agent.access_level.value != "private":
-        return True
-    if agent.owner_user_id == caller_user_id(caller):
-        return True
-    return allows_permission(caller, "agents.readwrite.all", agent.organization_id)
+    return can_write_agent(caller, agent) and allows_permission(
+        caller, "agents.readwrite", agent.organization_id
+    )
 
 #: Fields an ordinary private-Agent owner may never set to a non-empty/non-null value.
 PRIVILEGED_LIST_FIELDS: tuple[str, ...] = (

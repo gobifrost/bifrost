@@ -1,0 +1,14 @@
+{
+  "key": "pr:1096",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "GitHub token validation now shows the GitHub HTTP status and error reason in Settings.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1096",
+      "Codex reviewed this routine diagnostic fix and its customer-facing summary under the request to expose the actual validation error. Regression tests cover authentication, permissions, and rate-limit responses; no customer upgrade action is required."
+    ]
+  }
+}

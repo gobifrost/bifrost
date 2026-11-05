@@ -1,0 +1,15 @@
+{
+  "key": "pr:1134",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal documentation screenshot tooling dependencies and compatibility tests; no customer-facing runtime change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1134",
+      "https://github.com/gobifrost/bifrost/pull/976",
+      "https://github.com/gobifrost/bifrost/pull/932",
+      "https://github.com/gobifrost/bifrost/pull/934"
+    ]
+  }
+}

@@ -9,7 +9,7 @@ tests/
 │   ├── services/   # Service layer unit tests
 │   ├── handlers/   # HTTP handler unit tests
 │   └── ...
-├── e2e/            # Tests requiring Docker stack (DB, Redis, RabbitMQ)
+├── e2e/            # Tests requiring Docker stack (DB, Redis, S3)
 │   ├── engine/     # Engine tests that need process execution
 │   ├── platform/   # Platform service tests with real DB
 │   ├── mcp/        # MCP protocol tests
@@ -37,7 +37,7 @@ tests/
 
 ### Unit Tests (`tests/unit/`)
 - Test business logic in isolation
-- Mock all external dependencies (DB, Redis, RabbitMQ)
+- Mock all external dependencies (DB, Redis, S3)
 - No Docker required
 - Marker: `@pytest.mark.unit`
 
@@ -62,7 +62,7 @@ tests/
 
 ### Function-scoped (fresh per test)
 - `db_session` - Database session with automatic rollback
-- `mock_rabbitmq` / `mock_redis` - Mocks for unit tests
+- `mock_redis` - Mock for unit tests
 - `cleanup_workspace_files` - Workspace file cleanup
 
 ### Auth fixtures (`tests/fixtures/auth.py`)

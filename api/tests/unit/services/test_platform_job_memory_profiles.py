@@ -11,8 +11,11 @@ from src.jobs.platform.solution_deploy import (
 )
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.services.platform_job_memory_profiles import (
-    UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES,
+    MEMORY_PROFILE_SAFETY_MARGIN_BYTES,
+    UNKNOWN_WORKLOAD_FLOOR_BYTES,
+    build_resource_memory_profile_key,
     build_solution_memory_profile_key,
+    record_platform_job_memory_profile,
 )
 from src.services.platform_jobs import enqueue_platform_job
 
@@ -119,4 +122,63 @@ async def test_enqueue_platform_job_keeps_unknown_solution_floor(
     )
 
     assert reused is False
-    assert job.memory_required_bytes == UNKNOWN_SOLUTION_WORKLOAD_FLOOR_BYTES
+    assert job.memory_required_bytes == UNKNOWN_WORKLOAD_FLOOR_BYTES
+
+
+def test_resource_memory_profile_keys_follow_the_solution_key_style() -> None:
+    resource_id = uuid4()
+
+    assert (
+        build_resource_memory_profile_key("application.deploy", resource_id)
+        == f"application.deploy.memory.v1:{resource_id}"
+    )
+
+
+@pytest.mark.asyncio
+async def test_an_out_of_memory_attempt_learns_at_least_its_limit_plus_the_margin(
+    db_session,
+) -> None:
+    """Even when no heartbeat measured it (start and peak equal)."""
+    from src.models.orm.platform_jobs import PlatformJob
+
+    key = f"solution.git_sync.memory.v1:{uuid4()}"
+    limit = 2048 * 1024 * 1024
+    job = PlatformJob(
+        memory_profile_key=key,
+        memory_required_bytes=512 * 1024 * 1024,
+        memory_start_bytes=300 * 1024 * 1024,
+        memory_peak_bytes=300 * 1024 * 1024,
+        memory_limit_bytes=limit,
+    )
+
+    await record_platform_job_memory_profile(db_session, job, out_of_memory=True)
+
+    profile = await db_session.get(PlatformJobMemoryProfile, key)
+    assert job.memory_required_bytes == limit + MEMORY_PROFILE_SAFETY_MARGIN_BYTES
+    assert profile is not None
+    assert profile.memory_required_bytes == limit + MEMORY_PROFILE_SAFETY_MARGIN_BYTES
+
+
+@pytest.mark.asyncio
+async def test_an_attempt_the_runner_stopped_learns_only_what_it_measured(
+    db_session,
+) -> None:
+    """The runner's own memory guard stops an attempt short of its limit:
+    no limit-based learning."""
+    from src.models.orm.platform_jobs import PlatformJob
+
+    key = f"application.sdk_update.memory.v1:{uuid4()}"
+    job = PlatformJob(
+        memory_profile_key=key,
+        memory_required_bytes=512 * 1024 * 1024,
+        memory_start_bytes=300 * 1024 * 1024,
+        memory_peak_bytes=1000 * 1024 * 1024,
+        memory_limit_bytes=2048 * 1024 * 1024,
+    )
+
+    await record_platform_job_memory_profile(db_session, job)
+
+    profile = await db_session.get(PlatformJobMemoryProfile, key)
+    assert job.memory_required_bytes == 512 * 1024 * 1024
+    assert profile is not None
+    assert profile.memory_required_bytes == 700 * 1024 * 1024 + MEMORY_PROFILE_SAFETY_MARGIN_BYTES

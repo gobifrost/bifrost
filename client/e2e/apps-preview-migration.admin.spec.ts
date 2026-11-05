@@ -30,7 +30,7 @@ import {
 	grantWorkspaceAppPolicy,
 	publishAppAndWait,
 } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 import { LEGACY_CONTROLS_TSX } from "./fixtures/legacy-controls";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;

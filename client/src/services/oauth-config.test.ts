@@ -49,4 +49,24 @@ describe("OAuth config service", () => {
 			queryKey: ["get", "/auth/status"],
 		});
 	});
+	it("keeps mutation pending until both policy consumers refresh", async () => {
+		let release!: () => void;
+		const pending = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+		mocks.invalidateQueries.mockReturnValue(pending);
+		useUpdateOAuthLoginPreference();
+		const options = mocks.useMutation.mock.calls[0]?.[2] as {
+			onSuccess: () => Promise<void>;
+		};
+		let completed = false;
+		const refresh = options.onSuccess().then(() => {
+			completed = true;
+		});
+		await Promise.resolve();
+		expect(completed).toBe(false);
+		release();
+		await refresh;
+		expect(completed).toBe(true);
+	});
 });

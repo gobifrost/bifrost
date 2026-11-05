@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 import { test, expect } from "./fixtures/api-fixture";
 

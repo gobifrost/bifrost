@@ -25,6 +25,7 @@ from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.org_filter import OrgFilterType
 from shared.scope_resolver import UNSET
+from shared.resource_access import ResourceAccessResolver, ResourceKind
 from src.models.contracts.agent_stats import AgentStatsResponse, FleetStatsResponse
 from src.models.contracts.agents import (
     AgentAccessLevel,
@@ -256,19 +257,18 @@ async def list_agents(
         is_external=user.is_external,
     )
     candidates = await repo.list_all_in_scope(OrgFilterType.ALL, active_only=active_only)
-    agents: list[Agent] = []
+    scoped_candidates: list[Agent] = []
     for agent in candidates:
         if has_explicit_scope and agent.organization_id != requested_org:
             continue
         if discovery_only and agent.organization_id not in (None, caller.ctx.home_organization_id if caller.ctx else None):
             continue
-        if await can_read_agent(
-            db,
-            caller,
-            agent,
-            selected_organization_id=requested_org if has_explicit_scope else UNSET,
-        ):
-            agents.append(agent)
+        scoped_candidates.append(agent)
+    agents = await ResourceAccessResolver(db, caller).filter_readable(
+        ResourceKind.AGENT,
+        scoped_candidates,
+        selected_organization_id=requested_org if has_explicit_scope else UNSET,
+    )
 
     # Batch-compute dependency counts (tool count per agent)
     agent_ids = [a.id for a in agents]
@@ -452,7 +452,6 @@ async def create_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -561,7 +560,6 @@ async def update_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -763,7 +761,6 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
             selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
@@ -772,6 +769,10 @@ async def update_agent(
 
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
+
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("agent", str(agent_id))
 
     return _agent_to_public(agent)
 
@@ -797,6 +798,10 @@ async def delete_agent(
     await db.execute(delete(Agent).where(Agent.id == agent_id))
     await db.flush()
 
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("agent", str(agent_id))
+
 
 @router.post("/{agent_id}/promote")
 async def promote_agent(
@@ -813,7 +818,6 @@ async def promote_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )

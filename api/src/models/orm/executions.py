@@ -8,8 +8,8 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.enums import ExecutionStatus
@@ -60,6 +60,8 @@ class Execution(Base):
     cpu_total_seconds: Mapped[float | None] = mapped_column(Float, default=None)
     peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
     peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    # Peak RSS minus RSS at fork: the most memory the run itself added.
+    peak_memory_growth_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
 
     # Economics - final values for this execution
     time_saved: Mapped[int] = mapped_column(Integer, default=0)  # Minutes saved
@@ -76,6 +78,11 @@ class Execution(Base):
         ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
     root_execution_id: Mapped[UUID | None] = mapped_column(default=None)
+    # Browser impersonation is audit provenance, never execution authority.
+    # These are intentionally not foreign keys so deleting an operator does
+    # not erase attribution from durable history.
+    impersonated_by_user_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
+    impersonation_session_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     organization_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("organizations.id"), default=None
     )
@@ -95,6 +102,10 @@ class Execution(Base):
     scheduled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True
     )
+    # Format of the credentials minted for this run: 2 = access token plus
+    # run refresh token; NULL = the legacy single runtime token (older code
+    # does not know this column).
+    credential_version: Mapped[int | None] = mapped_column(SmallInteger, default=None)
 
     # Relationships
     executed_by_user: Mapped["User"] = relationship(back_populates="executions", foreign_keys=[executed_by])

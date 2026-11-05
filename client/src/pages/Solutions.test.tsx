@@ -39,6 +39,10 @@ vi.mock("@/hooks/useOrganizations", () => ({
 		data: [{ id: "org-1", name: "Acme Corp" }],
 	}),
 }));
+const mockUseAuthorization = vi.fn();
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
+}));
 
 const mockCreateRepoMutate = vi.fn();
 vi.mock("@/hooks/useGitHub", () => ({
@@ -110,6 +114,7 @@ function makeSolution(overrides: Record<string, unknown> = {}) {
 }
 
 beforeEach(() => {
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 	vi.clearAllMocks();
 	mockListSolutions.mockResolvedValue({ solutions: [] });
 	mockUpdateSelectedSolutionAppSdks.mockResolvedValue({

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1017",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "App lists and Integration controls now reflect the access already enforced when opening or updating a resource. Home organization names display consistently.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1017",
+      "Reviewed the shared resource resolver against its 22-case matrix, SDK/MCP/runtime/Home consumer checks, and 37 final live/contract checks, plus identity/CLI contract, 296 focused Vitest checks, administrator and provider-operator browser journeys, and API/client lint and types. Organization discovery and server authorization boundaries remain enforced. No upgrade action is required."
+    ]
+  }
+}

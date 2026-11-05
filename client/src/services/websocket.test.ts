@@ -1,5 +1,152 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import {
+	ACCESS_TOKEN_KEY,
+	EMBED_TOKEN_KEY,
+	setImpersonationToken,
+} from "@/lib/auth-token";
 import { type PlatformJobUpdate, webSocketService } from "./websocket";
+
+class MockWebSocket {
+	static readonly OPEN = 1;
+	static urls: string[] = [];
+	static instances: MockWebSocket[] = [];
+	readonly readyState = MockWebSocket.OPEN;
+	onopen: ((event: Event) => void) | null = null;
+	onmessage: ((event: MessageEvent) => void) | null = null;
+	onerror: ((event: Event) => void) | null = null;
+	onclose: ((event: CloseEvent) => void) | null = null;
+	private listeners = new Map<string, Set<(event: Event) => void>>();
+
+	constructor(url: string) {
+		MockWebSocket.urls.push(url);
+		MockWebSocket.instances.push(this);
+		queueMicrotask(() => this.emit("open"));
+	}
+
+	addEventListener(type: string, listener: (event: Event) => void) {
+		const listeners = this.listeners.get(type) ?? new Set();
+		listeners.add(listener);
+		this.listeners.set(type, listeners);
+	}
+
+	send() {}
+
+	close() {
+		this.emit("close", { code: 1000 } as CloseEvent);
+	}
+
+	emit(type: string, event: Event = new Event(type)) {
+		if (type === "open") this.onopen?.(event);
+		if (type === "close") this.onclose?.(event as CloseEvent);
+		for (const listener of this.listeners.get(type) ?? []) listener(event);
+	}
+}
+
+const socketService = webSocketService as unknown as {
+	_connect(channels: string[]): Promise<void>;
+	disconnect(): Promise<void>;
+};
+
+beforeEach(() => {
+	localStorage.clear();
+	sessionStorage.clear();
+	MockWebSocket.urls = [];
+	MockWebSocket.instances = [];
+	vi.stubGlobal("WebSocket", MockWebSocket);
+});
+
+afterEach(async () => {
+	await socketService.disconnect();
+	vi.unstubAllGlobals();
+	localStorage.clear();
+	sessionStorage.clear();
+});
+
+describe("platform WebSocket authentication", () => {
+	it("does not reconnect after a 4001 when session refresh fails", async () => {
+		vi.useFakeTimers();
+		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
+		const connected = socketService._connect(["notifications"]);
+		await vi.runAllTicks();
+		await connected;
+
+		MockWebSocket.instances[0].emit("close", { code: 4001 } as CloseEvent);
+		await vi.advanceTimersByTimeAsync(2_000);
+
+		expect(MockWebSocket.urls).toHaveLength(1);
+		vi.useRealTimers();
+	});
+
+	it("keeps the impersonation handshake free of a bearer query token", async () => {
+		localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
+		setImpersonationToken("impersonated-token");
+
+		await socketService._connect(["notifications"]);
+
+		const url = new URL(MockWebSocket.urls[0]);
+		expect(url.searchParams.has("token")).toBe(false);
+		expect(url.searchParams.getAll("channels")).toEqual(["notifications"]);
+	});
+
+	it("keeps the normal session cookie-only handshake free of a token query", async () => {
+		localStorage.setItem(ACCESS_TOKEN_KEY, "operator-token");
+
+		await socketService._connect(["notifications"]);
+
+		const url = new URL(MockWebSocket.urls[0]);
+		expect(url.searchParams.has("token")).toBe(false);
+	});
+
+	it("keeps the existing embed token handshake in the query", async () => {
+		const embedToken = `header.${btoa(JSON.stringify({ embed: true }))}.signature`;
+		sessionStorage.setItem(EMBED_TOKEN_KEY, embedToken);
+
+		await socketService._connect(["notifications"]);
+
+		const url = new URL(MockWebSocket.urls[0]);
+		expect(url.searchParams.get("token")).toBe(embedToken);
+	});
+});
+
+describe("execution queue WebSocket contract", () => {
+	it("routes queue advisories only to execution queue subscribers", () => {
+		const queueCallback = vi.fn();
+		const executionCallback = vi.fn();
+		const historyCallback = vi.fn();
+		const unsubscribeQueue = webSocketService.onExecutionQueueUpdate(
+			"execution-1",
+			queueCallback,
+		);
+		const unsubscribeExecution = webSocketService.onExecutionUpdate(
+			"execution-1",
+			executionCallback,
+		);
+		const unsubscribeHistory = webSocketService.onHistoryUpdate(historyCallback);
+
+		(
+			webSocketService as unknown as {
+				handleMessage(message: unknown): void;
+			}
+		).handleMessage({
+			type: "execution_queue_update",
+			executionId: "execution-1",
+			queuePosition: 3,
+			waitReason: "queued",
+		});
+
+		expect(queueCallback).toHaveBeenCalledExactlyOnceWith({
+			executionId: "execution-1",
+			queuePosition: 3,
+			waitReason: "queued",
+		});
+		expect(executionCallback).not.toHaveBeenCalled();
+		expect(historyCallback).not.toHaveBeenCalled();
+
+		unsubscribeQueue();
+		unsubscribeExecution();
+		unsubscribeHistory();
+	});
+});
 
 describe("platform-job WebSocket contract", () => {
 	it("dispatches the same durable snapshot by job id", () => {

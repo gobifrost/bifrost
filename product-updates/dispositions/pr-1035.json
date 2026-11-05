@@ -1,0 +1,12 @@
+{
+  "key": "pr:1035",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Runtime infrastructure for opt-in pool executors: package changes are recorded in PostgreSQL so every executor applies them, including one that was not listening at the time. Default installations keep the existing broadcast; no product behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1035"
+    ]
+  }
+}

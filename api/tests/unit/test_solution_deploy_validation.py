@@ -7,6 +7,7 @@ for each rejected or accepted manifest detail.
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -67,6 +68,37 @@ async def test_missing_workflow_function_refuses_without_writing(db_session):
         await SolutionDeployer(db_session).deploy(bundle)
 
     assert await db_session.get(Workflow, solution_entity_id(solution.id, manifest_id)) is None
+
+
+async def test_deploy_rejects_decorator_settings_before_reporting_or_upsert(
+    db_session, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    solution = await _install(db_session)
+    table_id = uuid4()
+    deployer = SolutionDeployer(db_session)
+    report_phase = AsyncMock()
+    monkeypatch.setattr(deployer, "_report_phase", report_phase)
+    bundle = SolutionBundle(
+        solution=solution,
+        python_files={
+            "helpers/unregistered.py": (
+                "from bifrost import workflow\n"
+                "@workflow(timeout_seconds=30)\n"
+                "def rejected(): pass\n"
+            ),
+        },
+        tables=[{
+            "id": str(table_id),
+            "name": "must_not_upsert",
+            "schema": {"columns": [{"name": "value"}]},
+        }],
+    )
+
+    with pytest.raises(SolutionDeployConflict, match="timeout_seconds"):
+        await deployer.deploy(bundle)
+
+    report_phase.assert_not_awaited()
+    assert await db_session.get(Table, solution_entity_id(solution.id, table_id)) is None
 
 
 async def test_unknown_table_policy_ref_refuses_without_writing(db_session):

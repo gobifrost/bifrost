@@ -18,7 +18,11 @@ from fastapi.responses import PlainTextResponse
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.core.rate_limit import RateLimiter
-from src.services.events.processor import EventProcessor, resolve_webhook_source
+from src.services.events.processor import (
+    EventProcessor,
+    QueuedDeliveries,
+    resolve_webhook_source,
+)
 from src.services.webhooks.protocol import (
     Deliver,
     Rejected,
@@ -199,27 +203,28 @@ async def receive_webhook(
         )
 
     if isinstance(result, Deliver):
-        # Event accepted - commit transaction and queue deliveries
+        # Each delivery's run commits with the event and the delivery's
+        # record of it. If queueing fails outright, the event is still
+        # recorded with pending deliveries; the webhook does not fail.
+        queued = QueuedDeliveries()
+        if result.event_id:
+            try:
+                async with db.begin_nested():
+                    queued = await processor.queue_event_deliveries(result.event_id)
+            except Exception as e:
+                logger.error(f"Error queueing deliveries: {log_safe(e)}", exc_info=True)
         await db.commit()
+        await queued.hand_off()
 
-        # Queue workflow executions asynchronously
-        # This is done after commit to ensure delivery records exist
-        try:
-            if result.event_id:
-                queued = await processor.queue_event_deliveries(result.event_id)
-                await db.commit()
-
-                logger.info(
-                    f"Webhook accepted: {log_safe(source_id)}",
-                    extra={
-                        "source_id": log_safe(source_id),
-                        "event_id": str(result.event_id),
-                        "deliveries_queued": queued,
-                    },
-                )
-        except Exception as e:
-            logger.error(f"Error queueing deliveries: {log_safe(e)}", exc_info=True)
-            # Event was recorded, just couldn't queue - don't fail the webhook
+        if result.event_id:
+            logger.info(
+                f"Webhook accepted: {log_safe(source_id)}",
+                extra={
+                    "source_id": log_safe(source_id),
+                    "event_id": str(result.event_id),
+                    "deliveries_queued": queued.count,
+                },
+            )
 
         # Return 202 Accepted
         return Response(

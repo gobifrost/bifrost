@@ -4,19 +4,21 @@ Single source of truth for all code execution (workflows, scripts, data provider
 """
 
 import asyncio
-import dis
+import copy
 import inspect
 import json
 import logging
 import os
+import re
 import signal
 import sys
-from contextlib import redirect_stdout, redirect_stderr
+from contextlib import ExitStack, contextmanager, redirect_stdout, redirect_stderr
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from io import StringIO
 from pathlib import Path
-from typing import Any, get_type_hints, get_origin, get_args, Union
+from types import CodeType
+from typing import Any, Callable, Iterator, Mapping, get_type_hints, get_origin, get_args, Union
 
 from pydantic import BaseModel
 
@@ -32,6 +34,148 @@ from src.core.secret_string import redact_secrets
 logger = logging.getLogger(__name__)
 
 
+_RUNTIME_TRANSPORT_LOGGERS = (
+    "httpcore",
+    "hpack",
+    "h2",
+    "h11",
+    "urllib3.connectionpool",
+)
+
+
+def _is_runtime_transport_logger(name: str) -> bool:
+    return any(
+        name == family or name.startswith(f"{family}.")
+        for family in _RUNTIME_TRANSPORT_LOGGERS
+    )
+
+
+_RUNTIME_CREDENTIAL_HEADERS = (
+    "authorization",
+    "proxy-authorization",
+    "cookie",
+    "set-cookie",
+)
+_RUNTIME_CREDENTIAL_HEADER_PATTERN = "|".join(_RUNTIME_CREDENTIAL_HEADERS)
+_RUNTIME_HEADER_LINE_RE = re.compile(
+    rf"(?i)(\b(?:{_RUNTIME_CREDENTIAL_HEADER_PATTERN})\s*:\s*)(.*?)(?=(?:[\r\n]|\\[rn])|$)"
+)
+_RUNTIME_HEADER_STRUCTURED_RE = re.compile(
+    rf"(?i)((?:b)?(?:\\?['\"])(?:{_RUNTIME_CREDENTIAL_HEADER_PATTERN})(?:\\?['\"])\s*[:,]\s*(?:b)?)"
+)
+
+
+def _quoted_log_scalar_end(message: str, start: int) -> int | None:
+    """Return the end of a quoted repr/JSON scalar without splitting its value."""
+    escaped_delimiter = message.startswith("\\'", start) or message.startswith('\\"', start)
+    delimiter_length = 2 if escaped_delimiter else 1
+    quote = message[start + delimiter_length - 1]
+    index = start + delimiter_length
+    while index < len(message):
+        if escaped_delimiter:
+            if message.startswith(f"\\{quote}", index):
+                following = index + 2
+                while following < len(message) and message[following].isspace():
+                    following += 1
+                if following == len(message) or message[following] in ",)]}":
+                    return index + 2
+                index += 2
+                continue
+        elif message[index] == "\\":
+            index += 2
+            continue
+        elif message[index] == quote:
+            return index + 1
+        index += 1
+    return None
+
+
+def _sanitize_structured_header_values(message: str) -> str:
+    """Redact quoted dict and bytes-tuple header values without truncating them."""
+    sanitized: list[str] = []
+    cursor = 0
+    for match in _RUNTIME_HEADER_STRUCTURED_RE.finditer(message):
+        if match.start() < cursor:
+            continue
+        value_start = match.end()
+        if value_start >= len(message) or message[value_start] not in "'\\\"":
+            continue
+        value_end = _quoted_log_scalar_end(message, value_start)
+        if value_end is None:
+            delimiter_length = 2 if message[value_start] == "\\" else 1
+            delimiter = message[value_start:value_start + delimiter_length]
+            sanitized.append(message[cursor:value_start])
+            sanitized.append(f"{delimiter}[REDACTED]")
+            return "".join(sanitized)
+        delimiter_length = 2 if message[value_start] == "\\" else 1
+        delimiter = message[value_start:value_start + delimiter_length]
+        sanitized.append(message[cursor:value_start])
+        sanitized.append(f"{delimiter}[REDACTED]{delimiter}")
+        cursor = value_end
+    sanitized.append(message[cursor:])
+    return "".join(sanitized)
+
+
+def _sanitize_runtime_log_message(message: str, secret_values: set[str]) -> str:
+    """Redact credentials from HTTP header renderings before they leave the engine."""
+    sanitized = _sanitize_structured_header_values(message)
+    sanitized = _RUNTIME_HEADER_LINE_RE.sub(
+        lambda match: f"{match.group(1)}[REDACTED]", sanitized
+    )
+    return redact_secrets(sanitized, secret_values)
+
+
+class _RuntimeLogSanitizingFormatter(logging.Formatter):
+    """Format a cloned record so console output cannot alter capture behavior."""
+
+    def __init__(
+        self,
+        formatter: logging.Formatter | None,
+        secret_values: Callable[[], set[str]],
+    ) -> None:
+        super().__init__()
+        self._formatter = formatter or logging.Formatter()
+        self._secret_values = secret_values
+
+    def format(self, record: logging.LogRecord) -> str:
+        formatted = self._formatter.format(copy.copy(record))
+        return _sanitize_runtime_log_message(formatted, self._secret_values())
+
+
+@contextmanager
+def _runtime_logging_scope(
+    root_logger: logging.Logger,
+    secret_values: Callable[[], set[str]],
+) -> Iterator[None]:
+    """Capture user DEBUG logs while keeping transport noise and credentials scoped."""
+    root_level = root_logger.level
+    handlers = list(root_logger.handlers)
+    handler_formatters = [(handler, handler.formatter) for handler in handlers]
+    logger_levels: dict[logging.Logger, int] = {}
+    for name, candidate in logging.root.manager.loggerDict.items():
+        if not isinstance(candidate, logging.Logger):
+            continue
+        if _is_runtime_transport_logger(name):
+            logger_levels[candidate] = candidate.level
+    for family in _RUNTIME_TRANSPORT_LOGGERS:
+        transport_logger = logging.getLogger(family)
+        logger_levels.setdefault(transport_logger, transport_logger.level)
+
+    for handler, formatter in handler_formatters:
+        handler.setFormatter(_RuntimeLogSanitizingFormatter(formatter, secret_values))
+    for transport_logger, level in logger_levels.items():
+        transport_logger.setLevel(max(level, logging.INFO))
+    root_logger.setLevel(logging.DEBUG)
+    try:
+        yield
+    finally:
+        root_logger.setLevel(root_level)
+        for transport_logger, level in logger_levels.items():
+            transport_logger.setLevel(level)
+        for handler, formatter in handler_formatters:
+            handler.setFormatter(formatter)
+
+
 def _human_size(num_bytes: int) -> str:
     """Format byte count as human-readable string."""
     for unit in ("B", "KB", "MB", "GB"):
@@ -39,6 +183,52 @@ def _human_size(num_bytes: int) -> str:
             return f"{num_bytes:.1f}{unit}" if unit != "B" else f"{num_bytes}{unit}"
         num_bytes /= 1024  # type: ignore[assignment]
     return f"{num_bytes:.1f}TB"
+
+
+# Attribute naming the code object whose locals are captured when it returns,
+# for callables that run user code in an inner function (inline scripts).
+_CAPTURE_CODE_ATTR = "_bifrost_capture_code"
+
+# sys.monitoring tool ids CPython leaves unassigned (0, 1, 2 and 5 are the
+# conventional debugger, coverage, profiler and optimizer ids).
+_CAPTURE_TOOL_IDS = (3, 4)
+
+
+@contextmanager
+def _capture_locals_on_return(
+    code: CodeType, capture: Callable[[Mapping[str, Any]], None]
+) -> Iterator[None]:
+    """Call ``capture`` with the frame's locals whenever ``code`` returns.
+
+    A PEP 669 ``PY_RETURN`` event scoped to ``code`` alone fires once per
+    return; no other code is instrumented and no per-line or per-call Python
+    callback runs. An await suspension raises ``PY_YIELD`` and an exception
+    raises ``PY_UNWIND``, so neither reaches ``capture``. ``sys.settrace`` is
+    left alone, so an attached debugger keeps its tracer.
+    """
+    monitoring = sys.monitoring
+    tool_id = next(
+        (t for t in _CAPTURE_TOOL_IDS if monitoring.get_tool(t) is None), None
+    )
+    if tool_id is None:
+        raise RuntimeError(
+            "Workflow variable capture could not get a sys.monitoring tool id: "
+            f"ids {_CAPTURE_TOOL_IDS} are all in use"
+        )
+
+    def on_return(returning_code: CodeType, instruction_offset: int, retval: object) -> None:
+        # The returning frame is the caller of this callback.
+        capture(sys._getframe(1).f_locals)
+
+    monitoring.use_tool_id(tool_id, "bifrost-variable-capture")
+    try:
+        monitoring.register_callback(tool_id, monitoring.events.PY_RETURN, on_return)
+        monitoring.set_local_events(tool_id, code, monitoring.events.PY_RETURN)
+        yield
+    finally:
+        monitoring.set_local_events(tool_id, code, monitoring.events.NO_EVENTS)
+        monitoring.register_callback(tool_id, monitoring.events.PY_RETURN, None)
+        monitoring.free_tool_id(tool_id)
 
 
 # Import bifrost context management for SDK support
@@ -64,10 +254,13 @@ class ServiceRunConfig:
     revision: str | None = None
     graceful_shutdown_seconds: int = 30
     startup_grace_seconds: int = 60
-    # Initial renewable credential; the supervisor installs fresher ones
-    # from the parent's Redis handoff as they arrive.
+    # Initial credential. A claims-format attempt also has a run refresh
+    # token, and the SDK refreshes on the API's challenge; a legacy-format
+    # attempt's supervisor installs fresher tokens from the parent's Redis
+    # handoff as they arrive.
     token: str = ""
     token_expires_at: str = ""
+    refresh_token: str | None = None
 
 
 @dataclass
@@ -127,11 +320,13 @@ class ExecutionRequest:
     # no variable tracing) and attempt-scoped log streaming.
     service: ServiceRunConfig | None = None
 
-    # The pre-minted engine token this process installed as its SDK
-    # credentials (see worker.py::_set_process_engine_credentials).
-    # Registered as a dynamic secret so _scrub_outputs redacts it from
-    # results, logs, variables and error messages.
+    # The pre-minted engine credentials this process installed for the SDK
+    # (see worker.py::_set_process_engine_credentials). Registered as dynamic
+    # secrets so _scrub_outputs redacts them from results, logs, variables
+    # and error messages; access tokens refreshed later are registered when
+    # the SDK installs them.
     engine_token: str | None = None
+    engine_refresh_token: str | None = None
 
 
 @dataclass
@@ -235,8 +430,15 @@ def _scrub_outputs(
     logs: list[dict[str, Any]] | None = None,
     error_message: str | None = None,
 ) -> tuple[Any, dict[str, Any] | None, list[dict[str, Any]] | None, str | None]:
-    """Scrub secret values from execution outputs before returning."""
+    """Scrub credentials from logs/errors and known secrets from all outputs."""
     secret_values = context._collect_secret_values()
+    if logs is not None:
+        logs = [
+            {**entry, "message": _sanitize_runtime_log_message(entry["message"], secret_values)}
+            for entry in logs
+        ]
+    if error_message is not None:
+        error_message = _sanitize_runtime_log_message(error_message, secret_values)
     if not secret_values:
         return result, variables, logs, error_message
     return (
@@ -324,10 +526,11 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         artifact_workspace_id=request.artifact_workspace_id,
     )
 
-    # The engine token this process installed as its SDK credentials is a
-    # secret like any other: register it so _scrub_outputs redacts it from
-    # the result, logs, variables and error message.
+    # The engine credentials this process installed for the SDK are secrets
+    # like any other: register them so _scrub_outputs redacts them from the
+    # result, logs, variables and error message.
     context._register_dynamic_secret(request.engine_token)
+    context._register_dynamic_secret(request.engine_refresh_token)
 
     # Set bifrost SDK context if available
     if BIFROST_CONTEXT_AVAILABLE:
@@ -604,15 +807,16 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             context=execution_context,
         )
 
-        logger.error(
-            f"Execution error: {request.name or 'script'}",
-            extra={
-                "execution_id": request.execution_id,
-                "error": error_message,
-                "error_type": type(e).__name__
-            },
-            exc_info=True
-        )
+        with _runtime_logging_scope(logging.getLogger(), context._collect_secret_values):
+            logger.error(
+                f"Execution error: {request.name or 'script'}",
+                extra={
+                    "execution_id": request.execution_id,
+                    "error": _sanitize_runtime_log_message(error_message, context._collect_secret_values()),
+                    "error_type": type(e).__name__
+                },
+                exc_info=True
+            )
 
         # Add traceback to logs
         import traceback
@@ -692,7 +896,7 @@ async def execute_service(
 
     Service-mode semantics (vs one-shot workflows):
     - the service coroutine runs indefinitely until it returns, raises, or
-      a stop is requested — no timeout kill, no ``sys.settrace`` variable
+      a stop is requested — no timeout kill, no variable
       capture, no completion Postgres flush;
     - stop arrives cooperatively: SIGTERM/SIGINT sets the supervision event
       (installed on the loop, overriding the pool's loop-top flag handler)
@@ -747,11 +951,15 @@ async def execute_service(
     if BIFROST_CONTEXT_AVAILABLE:
         set_execution_context(context)
 
-    # Install the initial renewable credential handed down at dispatch.
+    # Install the credentials handed down at dispatch, now that the
+    # execution context exists to register them for redaction.
     if cfg.token:
-        from bifrost._service_runtime import install_service_credentials
+        from bifrost._service_runtime import install_legacy_service_token, install_service_credentials
 
-        install_service_credentials(cfg.token)
+        if cfg.refresh_token:
+            install_service_credentials(cfg.token, cfg.refresh_token)
+        else:
+            install_legacy_service_token(cfg.token)
 
     stop_event = asyncio.Event()
     from bifrost._service_runtime import (
@@ -822,11 +1030,7 @@ async def execute_service(
         # they land verbatim in ServiceAttempt.error via the attempts API.
         secret_values = context._collect_secret_values()
         raw_message = format_exception_message(e)
-        error_message = (
-            redact_secrets(raw_message, secret_values)
-            if secret_values
-            else raw_message
-        )
+        error_message = _sanitize_runtime_log_message(raw_message, secret_values)
         service_logger.error("service failed: %s", error_message)
         e.__traceback__ = None
         return ExecutionResult(
@@ -864,7 +1068,7 @@ async def _service_supervisor(
     cfg: ServiceRunConfig, stop_event: asyncio.Event
 ) -> None:
     """Exchange only this attempt's control state over its authenticated API."""
-    from bifrost._service_runtime import install_service_credentials, take_ready_report
+    from bifrost._service_runtime import install_legacy_service_token, take_ready_report
     from bifrost.client import get_client, raise_for_status_with_detail
 
     ready_pending = False
@@ -884,8 +1088,12 @@ async def _service_supervisor(
             if payload["stop_requested"]:
                 stop_event.set()
                 break
-            if payload["access_token"] is not None:
-                install_service_credentials(payload["access_token"])
+            # Only a legacy-format attempt installs a token its parent
+            # rotates. A claims-format attempt refreshes its own access
+            # token and ignores rotations, which an older API (after a
+            # rollback) sends for every attempt it supervises.
+            if payload["access_token"] is not None and not cfg.refresh_token:
+                install_legacy_service_token(payload["access_token"])
                 cfg.token_expires_at = payload["token_expires_at"]
         except asyncio.CancelledError:
             break
@@ -940,8 +1148,7 @@ async def _execute_service_with_trace(
         def emit(self, record: logging.LogRecord) -> None:
             message = record.getMessage()
             current_secrets = context._collect_secret_values()
-            if current_secrets:
-                message = redact_secrets(message, current_secrets)
+            message = _sanitize_runtime_log_message(message, current_secrets)
             service_logs.append(
                 {"level": record.levelname, "message": message}
             )
@@ -953,14 +1160,17 @@ async def _execute_service_with_trace(
     handler = ServiceLogHandler()
     handler.setLevel(logging.DEBUG)
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)
-    root_logger.addHandler(handler)
-    # System rows are first-class service log entries: starting is emitted
-    # here so the handler above captures it like every later row.
-    logging.getLogger(getattr(func, "__module__", __name__)).info(
-        "service starting (revision %s)", cfg.revision or "unknown"
+    logging_scope = ExitStack()
+    logging_scope.enter_context(
+        _runtime_logging_scope(root_logger, context._collect_secret_values)
     )
+    root_logger.addHandler(handler)
     try:
+        # System rows are first-class service log entries: starting is emitted
+        # here so the handler above captures it like every later row.
+        logging.getLogger(getattr(func, "__module__", __name__)).info(
+            "service starting (revision %s)", cfg.revision or "unknown"
+        )
         sig = inspect.signature(func)
         params = list(sig.parameters.values())
         accepted_param_names = {p.name for p in params}
@@ -1030,6 +1240,7 @@ async def _execute_service_with_trace(
         return user_task.result(), service_logs, False
     finally:
         root_logger.removeHandler(handler)
+        logging_scope.close()
 
 
 def _script_to_callable(code: str, name: str):
@@ -1041,7 +1252,7 @@ def _script_to_callable(code: str, name: str):
     streaming.
 
     The script code is wrapped in an async main() function to enable:
-    - Proper variable capture via sys.settrace()
+    - Variable capture when main() returns
     - Function-level logging that can be filtered
     - Support for both sync and async code
 
@@ -1058,8 +1269,8 @@ def _script_to_callable(code: str, name: str):
     # Decode base64 code
     script_code = base64.b64decode(code).decode('utf-8')
 
-    # Wrap script code in an async main() function
-    # This allows sys.settrace() to capture variables properly
+    # Wrap script code in an async main() function whose locals are captured
+    # when it returns
     # Add return statement to capture 'result' variable if set
     wrapped_code = f"""async def main():
 {textwrap.indent(script_code, '    ')}
@@ -1068,13 +1279,17 @@ def _script_to_callable(code: str, name: str):
 
     # Compile wrapped script
     compiled_code = compile(wrapped_code, f'<script:{name}>', 'exec')
+    main_code = next(
+        const for const in compiled_code.co_consts
+        if isinstance(const, CodeType) and const.co_name == 'main'
+    )
 
     async def script_wrapper(context: ExecutionContext, **parameters):
         """
         Async wrapper that executes the script code.
 
         The script code runs inside an async main() function, allowing:
-        - sys.settrace() to capture variables from main's frame
+        - variable capture from main's frame when it returns
         - await to work in user scripts
         - Proper logging with script-specific logger
         """
@@ -1104,7 +1319,14 @@ def _script_to_callable(code: str, name: str):
         setattr(script_logging, 'critical', script_logger.critical)
         setattr(script_logging, 'exception', script_logger.exception)
         setattr(script_logging, 'log', script_logger.log)
-        setattr(script_logging, 'getLogger', lambda name=None: script_logger)  # Return our logger for any getLogger calls
+        def get_script_logger(name: str | None = None) -> logging.Logger:
+            # Third-party modules imported by a script bind this logger during
+            # import, so transport families must retain their real identities.
+            if name is not None and _is_runtime_transport_logger(name):
+                return logging.getLogger(name)
+            return script_logger
+
+        setattr(script_logging, 'getLogger', get_script_logger)
 
         # Temporarily replace logging in sys.modules so imports get our wrapper
         original_logging = sys.modules.get('logging')
@@ -1139,9 +1361,10 @@ def _script_to_callable(code: str, name: str):
             # Clear exec namespace to release references to context, params, user objects
             exec_globals.clear()
 
-    # Set function metadata for trace filtering
+    # Set function metadata for logging and error messages
     script_wrapper.__name__ = name
     script_wrapper.__module__ = f'<script:{name}>'
+    setattr(script_wrapper, _CAPTURE_CODE_ATTR, main_code)
 
     return script_wrapper
 
@@ -1154,10 +1377,11 @@ async def _execute_workflow_with_trace(
     broadcaster: Any = None
 ) -> tuple[Any, dict[str, Any], list[str]]:
     """
-    Execute a workflow function with variable capture using sys.settrace().
+    Execute a workflow function, capturing its local variables.
 
     This is the same approach used for scripts, ensuring consistency.
-    Captures all local variables from the function as it executes.
+    Captures the function's local variables when it returns, or from the
+    traceback when it raises.
     Streams logs in real-time via SignalR if broadcaster is provided.
 
     Args:
@@ -1214,8 +1438,7 @@ async def _execute_workflow_with_trace(
             # Format: [LEVEL] message
             message = record.getMessage()
             _current_secrets = context._collect_secret_values()
-            if _current_secrets:
-                message = redact_secrets(message, _current_secrets)
+            message = _sanitize_runtime_log_message(message, _current_secrets)
             log_entry = f"[{record.levelname}] {message}"
             workflow_logs.append(log_entry)
 
@@ -1262,7 +1485,10 @@ async def _execute_workflow_with_trace(
 
     # Attach to root logger since workflows use logging.info() which goes to root
     root_logger = logging.getLogger()
-    root_logger.setLevel(logging.DEBUG)  # Set logger level to capture DEBUG messages
+    logging_scope = ExitStack()
+    logging_scope.enter_context(
+        _runtime_logging_scope(root_logger, context._collect_secret_values)
+    )
     root_logger.addHandler(handler)
 
     def remove_circular_refs(obj, seen=None):
@@ -1335,38 +1561,11 @@ async def _execute_workflow_with_trace(
 
     exception_to_raise = None
 
-    # A coroutine emits a trace "return" whenever an await suspends it, and
-    # normal await completion can emit a StopIteration "exception". Capturing
-    # locals at either point repeatedly serializes large SDK request values.
-    # The outer exception handler captures locals from the traceback on real
-    # failures, so this trace only needs the final return instruction.
-    def trace_func(frame, event, arg):
-        # Trace the workflow function OR script's main() function
-        # Scripts wrap their code in an async main() function
-        if frame.f_code.co_name not in (func_name, 'main'):
-            return None
-
-        if (
-            event == 'return'
-            and frame.f_lasti >= 0
-            and dis.opname[frame.f_code.co_code[frame.f_lasti]]
-            in ('RETURN_VALUE', 'RETURN_CONST')
-        ):
-            capture_variables_from_locals(frame.f_locals)
-
-        return trace_func
-
-    # Build trace function chain (with existing trace if present, e.g., debugpy)
-    existing_trace = sys.gettrace()
-
-    def chained_trace_func(frame, event, arg):
-        # Call our trace function first
-        trace_func(frame, event, arg)
-
-        # Then call the existing trace function (e.g., debugpy)
-        if existing_trace:
-            return existing_trace(frame, event, arg)
-        return chained_trace_func
+    # Successful runs capture locals when the workflow (or a script's main())
+    # returns. The outer exception handler captures them from the traceback on
+    # failures. Unwrap functools.wraps decorators so the user's function, not
+    # a wrapper such as a retry decorator, is the one observed.
+    capture_code = getattr(func, _CAPTURE_CODE_ATTR, None) or inspect.unwrap(func).__code__
 
     try:
         # Inspect function signature to determine if it expects context parameter
@@ -1430,14 +1629,11 @@ async def _execute_workflow_with_trace(
         if BIFROST_CONTEXT_AVAILABLE:
             set_execution_context(context)
 
-        # Set up trace function for variable capture
-        sys.settrace(chained_trace_func if existing_trace else trace_func)
         try:
-            # Run the workflow directly - isolation is provided by subprocess
-            result = await _run_workflow_async()
+            with _capture_locals_on_return(capture_code, capture_variables_from_locals):
+                # Run the workflow directly - isolation is provided by subprocess
+                result = await _run_workflow_async()
         finally:
-            # Clear trace function
-            sys.settrace(None)
             # Clear context
             if BIFROST_CONTEXT_AVAILABLE:
                 clear_execution_context()
@@ -1501,9 +1697,9 @@ async def _execute_workflow_with_trace(
         # has already been formatted and logged above, so the chain is no longer needed.
         e.__traceback__ = None
     finally:
-        # Note: trace function cleanup is handled in _run_workflow_in_thread
         # Clean up the logging handler
         root_logger.removeHandler(handler)
+        logging_scope.close()
         # Note: Extra params are now stored in context.parameters instead of being
         # injected into func.__globals__, so no cleanup needed here
 

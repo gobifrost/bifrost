@@ -15,7 +15,6 @@ class TestHeartbeatCgroupData:
         pool.worker_id = "test-worker"
         pool.processes = {}
         pool.service_processes = {}
-        pool.max_workers = 10
         pool._started_at = datetime.now(timezone.utc)
         pool._requirements_installed = 0
         pool._requirements_total = 0
@@ -38,7 +37,6 @@ class TestHeartbeatCgroupData:
         pool.worker_id = "test-worker"
         pool.processes = {}
         pool.service_processes = {}
-        pool.max_workers = 10
         pool._started_at = datetime.now(timezone.utc)
         pool._requirements_installed = 0
         pool._requirements_total = 0
@@ -61,7 +59,6 @@ class TestHeartbeatCgroupData:
         pool.worker_id = "test-worker"
         pool.processes = {}
         pool.service_processes = {}
-        pool.max_workers = 10
         pool._started_at = datetime.now(timezone.utc)
         pool._requirements_installed = 0
         pool._requirements_total = 0

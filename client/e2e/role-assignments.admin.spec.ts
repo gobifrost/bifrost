@@ -10,7 +10,7 @@
  * Reader is added the same way, at places the server fixes.
  */
 
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 import { test, expect } from "./fixtures/api-fixture";
 

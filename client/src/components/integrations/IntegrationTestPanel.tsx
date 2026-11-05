@@ -25,6 +25,8 @@ export interface IntegrationTestPanelProps {
 	onClearResult: () => void;
 	onTest: () => void;
 	isTestPending: boolean;
+	canTestAt: (organizationId: string | null) => boolean;
+	testableOrganizations: Array<{ id: string; name: string }>;
 }
 
 export function IntegrationTestPanel({
@@ -38,6 +40,8 @@ export function IntegrationTestPanel({
 	onClearResult,
 	onTest,
 	isTestPending,
+	canTestAt,
+	testableOrganizations,
 }: IntegrationTestPanelProps) {
 	return (
 		<Dialog
@@ -71,14 +75,19 @@ export function IntegrationTestPanel({
 								);
 								onClearResult();
 							}}
-							showGlobal={true}
+							showGlobal={canTestAt(null)}
 							showAll={false}
+							knownOrganizations={testableOrganizations}
+							loadOrganizations={false}
+							filterOrganizations={(organization) =>
+								canTestAt(organization.id)
+							}
 							placeholder="Select organization..."
 						/>
 						<p className="text-sm text-muted-foreground">
-							Select "Global" to test with integration defaults
-							only, or choose an organization to test with merged
-							config and OAuth.
+							{canTestAt(null)
+								? "Select Global to test with integration defaults only, or choose an organization to test with merged config and OAuth."
+								: "Choose an organization to test with its merged configuration and OAuth."}
 						</p>
 					</div>
 
@@ -114,7 +123,7 @@ export function IntegrationTestPanel({
 					<Button
 						className="min-h-11"
 						onClick={onTest}
-						disabled={isTestPending}
+						disabled={isTestPending || !canTestAt(testOrgId)}
 					>
 						{isTestPending ? (
 							<>

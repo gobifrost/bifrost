@@ -1,0 +1,10 @@
+{
+  "key": "pr:1101",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Refresh verified source metadata to activate the existing approved workflow completion note; no separate customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1101"]
+  }
+}

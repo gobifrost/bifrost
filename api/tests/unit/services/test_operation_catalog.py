@@ -192,6 +192,13 @@ WORKFLOW_OPERATIONS = {
         ("workflows", "execute"),
         "bifrost_workflow_execute",
     ),
+    "workflows.parameters": (
+        "GET",
+        "/api/workflows/{workflow_id}/parameters",
+        None,
+        None,
+        False,
+    ),
     "workflows.update": (
         "PATCH",
         "/api/workflows/{workflow_id}",
@@ -288,6 +295,9 @@ PLATFORM_JOB_OPERATIONS = {
 }
 
 SOLUTION_OPERATIONS = {
+    "solutions.app_builds.lookup": (
+        "POST", "/api/solutions/{solution_id}/app-builds/lookup", None, None, False,
+    ),
     "solutions.list": (
         "GET",
         "/api/solutions",
@@ -1044,6 +1054,20 @@ WORKSPACE_FILE_OPERATIONS = {
         "/api/files/delete",
         ("files", "delete"),
         "bifrost_file_delete",
+    ),
+    "workspace.files.move": (
+        "POST",
+        "/api/files/move",
+        ("files", "move"),
+        None,
+        True,
+    ),
+    "workspace.files.move_many": (
+        "POST",
+        "/api/files/move-many",
+        None,
+        None,
+        True,
     ),
     "workspace.files.pull": (
         "POST",

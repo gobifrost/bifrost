@@ -1,17 +1,21 @@
-"""The consumer writes the lineage its pending record carries onto the execution row."""
+"""The consumer writes the lineage its claimed run carries onto the execution row."""
 
-from unittest.mock import AsyncMock, patch
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
 from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+from src.services.authorization.tokens import RunCredentials
+from src.services.execution.process_pool import CredentialRoute
 
 MODULE = "src.jobs.consumers.workflow_execution"
 EXECUTION_ID = "00000000-0000-0000-0000-000000000001"
 RUN_USER_ID = "00000000-0000-0000-0000-0000000000aa"
+MESSAGE = {"execution_id": EXECUTION_ID, "code": "eA==", "script_name": "inline"}
 
 
-def _pending(**extra) -> dict:
+def _claimed(**extra) -> dict:
     return {
         "execution_id": EXECUTION_ID,
         "workflow_id": None,
@@ -21,87 +25,71 @@ def _pending(**extra) -> dict:
         "user_id": RUN_USER_ID,
         "user_name": "Person",
         "user_email": "p@example.com",
-        "cancelled": True,
+        "lineage": None,
         **extra,
     }
 
 
-async def _created_with(pending: dict) -> dict:
+def _consumer(route: CredentialRoute = CredentialRoute(1)) -> WorkflowExecutionConsumer:
+    consumer = WorkflowExecutionConsumer.__new__(WorkflowExecutionConsumer)
+    consumer._redis_client = AsyncMock()
+    consumer._pool = AsyncMock()
+    # A legacy route by default: its token is signed without a database read.
+    consumer._pool.credential_route = Mock(return_value=route)
+    return consumer
+
+
+async def _created_with(claimed: dict) -> dict:
     with (
-        patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None),
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
-        patch(f"{MODULE}.update_execution", new=AsyncMock()),
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
         patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
         patch(
-            "shared.run_cancellation.cancel_redis_queued_run_if_user_deleted",
-            new=AsyncMock(return_value=False),
-        ),
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock()),
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
     ):
-        consumer = WorkflowExecutionConsumer()
-        consumer._redis_client = AsyncMock()
-        consumer._redis_client.get_pending_execution.return_value = pending
-        await consumer.process_message(
-            {"execution_id": EXECUTION_ID, "code": "eA==", "script_name": "inline"}
-        )
+        consumer = _consumer()
+        await consumer.process_message(MESSAGE, claimed)  # type: ignore[arg-type]
+    consumer._pool.route_execution.assert_awaited_once()
+    refresh.assert_called_once_with()
     assert create.await_args is not None
     return dict(create.await_args.kwargs)
 
 
 @pytest.mark.asyncio
-async def test_row_gets_the_pending_lineage() -> None:
+async def test_row_gets_the_claimed_lineage() -> None:
     lineage = {
         "run_user_id": RUN_USER_ID,
         "started_by_user_id": RUN_USER_ID,
         "root_execution_id": EXECUTION_ID,
     }
 
-    assert (await _created_with(_pending(lineage=lineage)))["lineage"] == lineage
+    assert (await _created_with(_claimed(lineage=lineage)))["lineage"] == lineage
 
 
 @pytest.mark.asyncio
-async def test_pending_record_written_before_lineage_existed_is_still_consumed() -> None:
-    assert (await _created_with(_pending()))["lineage"] is None
+async def test_row_gets_the_claimed_impersonation_provenance() -> None:
+    operator_id = "00000000-0000-0000-0000-0000000000bb"
+    session_id = "00000000-0000-0000-0000-0000000000cc"
 
-
-@pytest.mark.asyncio
-async def test_cancelled_promoted_run_is_discarded_before_worker_dispatch() -> None:
-    class _DbContext:
-        async def __aenter__(self):
-            return session
-
-        async def __aexit__(self, *_args):
-            return False
-
-    session = AsyncMock()
-    pending = _pending(cancelled=False)
-    with (
-        patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None),
-        patch(f"{MODULE}.get_db_context", return_value=_DbContext()),
-        patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
-        patch("shared.run_cancellation.claim_pending_run_for_dispatch", new=AsyncMock(return_value=False)),
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock()),
-    ):
-        consumer = WorkflowExecutionConsumer()
-        consumer._redis_client = AsyncMock()
-        consumer._redis_client.get_pending_execution.return_value = pending
-        await consumer.process_message(
-            {
-                "execution_id": EXECUTION_ID,
-                "code": "eA==",
-                "script_name": "inline",
-                "execution_record_exists": True,
+    created = await _created_with(
+        _claimed(
+            impersonation_provenance={
+                "impersonated_by_user_id": operator_id,
+                "impersonation_session_id": session_id,
             }
         )
+    )
 
-    create.assert_not_awaited()
-    session.commit.assert_awaited_once()
-    consumer._redis_client.delete_pending_execution.assert_awaited_once_with(EXECUTION_ID)
+    assert created["impersonation_provenance"] == {
+        "impersonated_by_user_id": operator_id,
+        "impersonation_session_id": session_id,
+    }
 
 
 @pytest.mark.asyncio
-async def test_redis_queued_run_for_a_deleted_user_is_discarded_before_dispatch() -> None:
+async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> None:
     class _DbContext:
         async def __aenter__(self):
             return session
@@ -110,31 +98,56 @@ async def test_redis_queued_run_for_a_deleted_user_is_discarded_before_dispatch(
             return False
 
     session = AsyncMock()
-    pending = _pending(
-        cancelled=False,
-        lineage={
-            "run_user_id": RUN_USER_ID,
-            "started_by_user_id": RUN_USER_ID,
-            "root_execution_id": EXECUTION_ID,
-        },
-    )
     with (
-        patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None),
         patch(f"{MODULE}.get_db_context", return_value=_DbContext()),
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(
-            "shared.run_cancellation.cancel_redis_queued_run_if_user_deleted",
-            new=AsyncMock(return_value=True),
-        ),
-        patch("src.services.execution.queue_tracker.remove_from_queue", new=AsyncMock()),
+            "src.services.execution.workflow_dispatch.notify_discarded_sync_run",
+            new=AsyncMock(),
+        ) as notify,
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
     ):
-        consumer = WorkflowExecutionConsumer()
-        consumer._redis_client = AsyncMock()
-        consumer._redis_client.get_pending_execution.return_value = pending
-        await consumer.process_message(
-            {"execution_id": EXECUTION_ID, "code": "eA==", "script_name": "inline"}
-        )
+        consumer = _consumer()
+        await consumer.process_message({**MESSAGE, "sync": True}, None)
 
     create.assert_not_awaited()
-    session.commit.assert_awaited_once()
-    consumer._redis_client.delete_pending_execution.assert_awaited_once_with(EXECUTION_ID)
+    consumer._pool.route_execution.assert_not_awaited()
+    notify.assert_awaited_once()
+    refresh.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("route", "credential_version", "refresh_token"),
+    [(CredentialRoute(2), 2, "run-refresh"), (CredentialRoute(1, 7), None, None)],
+    ids=["claims route", "legacy launcher"],
+)
+async def test_credentials_are_minted_for_the_route_chosen_first(
+    route: CredentialRoute, credential_version: int | None, refresh_token: str | None
+) -> None:
+    issued = RunCredentials("access", refresh_token, datetime.now(timezone.utc), credential_version)
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ) as refresh,
+        patch(
+            "src.services.authorization.tokens.issue_run_credentials", new=AsyncMock(return_value=issued)
+        ) as mint,
+    ):
+        consumer = _consumer(route)
+        await consumer.process_message(MESSAGE, _claimed())  # type: ignore[arg-type]
+
+    assert create.await_args.kwargs["credential_version"] == credential_version
+    assert mint.await_args.kwargs["protocol"] == route.protocol
+    routed = consumer._pool.route_execution.await_args.kwargs
+    assert routed["credential_route"] == route
+    assert routed["context"]["engine_token"] == "access"
+    assert routed["context"].get("engine_refresh_token") == refresh_token
+    refresh.assert_called_once_with()

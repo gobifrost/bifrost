@@ -23,7 +23,7 @@ and are added in their sub-plans.
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -197,6 +197,18 @@ class SolutionWorkflowNameMismatch(Exception):
     """
 
 
+def _validate_bundle_python_files(python_files: Mapping[str, str]) -> None:
+    """Refuse unsupported decorators before a Solution deploy changes state."""
+    from bifrost.decorator_validation import validate_python_decorators
+    from bifrost.definition_validation import DefinitionValidationError
+
+    for path, source in sorted(python_files.items()):
+        try:
+            validate_python_decorators(source, path=path)
+        except DefinitionValidationError as exc:
+            raise SolutionDeployConflict(str(exc)) from exc
+
+
 def _is_downgrade(new: str | None, current: str | None) -> bool:
     """True only when both versions parse as PEP 440 and new < current.
     Unparseable or absent versions are unordered — never block on them."""
@@ -277,20 +289,23 @@ class CompiledSolutionAppDeployment:
     dist: dict[str, bytes]
     sdk_metadata: CurrentApplicationSdkMetadata | None = None
     source_built: bool = False
+    build_identity: str | None = None
+    reused: bool = False
 
 
 def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | None":
     """Accept the complete stamp emitted after a CLI-installed SDK build.
 
-    Generic prebuilt bundles have no trusted build provenance and intentionally
-    remain unknown. The CLI records this only after reading the exact SDK package
-    npm installed for its local Vite build.
+    Generic prebuilt bundles without this stamp remain unknown. This is the
+    privileged deploy author's attestation, not independent inspection of the
+    JavaScript. The CLI emits it from the exact installed SDK package.
     """
     if not isinstance(value, dict):
         return None
     package_version = value.get("package_version")
     fingerprint = value.get("fingerprint")
     contract_version = value.get("contract_version")
+    binding_api_major = value.get("binding_api_major")
     if (
         not isinstance(package_version, str)
         or not package_version
@@ -298,6 +313,7 @@ def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | No
         or not fingerprint
         or not isinstance(contract_version, int)
         or isinstance(contract_version, bool)
+        or (binding_api_major is not None and (type(binding_api_major) is not int or binding_api_major < 1))
     ):
         return None
     from src.services.application_sdk_status import CurrentApplicationSdkMetadata
@@ -306,6 +322,7 @@ def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | No
         package_version=package_version,
         fingerprint=fingerprint,
         contract_version=contract_version,
+        binding_api_major=binding_api_major,
     )
 
 
@@ -431,6 +448,8 @@ class SolutionDeployer:
         P1-c) NOR a failed build (Codex R4) leaves DB ahead of S3 — a build error
         raises here, before commit; finalize is just retryable PUTs.
         """
+        _validate_bundle_python_files(bundle.python_files)
+
         solution = bundle.solution
         sid = solution.id
         await self._report_phase("Reconciling Solution resources", 20)
@@ -950,10 +969,6 @@ class SolutionDeployer:
                 content_hash = await _measure(
                     "runtime_source_s3", lambda: storage.write(rel_path, body)
                 )
-                await _measure(
-                    "file_index",
-                    lambda: index.index_solution(sid, rel_path, body, content_hash),
-                )
                 storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
                 # Write-through so the next execution reads the new bytes, not the
                 # 24h-TTL cache. Only .py files are import-cached.
@@ -962,18 +977,22 @@ class SolutionDeployer:
                         "redis_module_cache",
                         lambda: set_module(storage_key, content, content_hash),
                     )
+                await _measure(
+                    "file_index",
+                    lambda: index.index_solution(sid, rel_path, body, content_hash),
+                )
 
             # Remove files dropped from the bundle (full replace of source).
             for rel_path in prior - new_rel:
                 await _measure("runtime_source_s3", lambda: storage.delete(rel_path))
-                await _measure(
-                    "file_index", lambda: index.unindex_solution(sid, rel_path)
-                )
                 if rel_path.endswith(".py"):
                     await _measure(
                         "redis_module_cache",
                         lambda: invalidate_module(storage._key(rel_path)),
                     )
+                await _measure(
+                    "file_index", lambda: index.unindex_solution(sid, rel_path)
+                )
             await self.db.flush()
         finally:
             if self._instrumentation is not None:
@@ -1409,6 +1428,9 @@ class SolutionDeployer:
                 # prebuilt bundle lacks it and therefore remains SDK-unknown.
                 "prebuilt_sdk_metadata": mapp.get("prebuilt_sdk_metadata"),
                 "dependencies": mapp.get("dependencies") or {},
+                "build_recipe": mapp.get("build_recipe"),
+                "reuse_deployment_id": mapp.get("reuse_deployment_id"),
+                "slug": mapp.get("slug"),
             })
         return builds
 
@@ -1455,6 +1477,27 @@ class SolutionDeployer:
             for rel, b64 in (b.get("bin") or {}).items():
                 src_bytes[rel] = _b64.b64decode(b64)
             source_built = prebuilt_bytes is None
+            hint = b.get("reuse_deployment_id")
+            identity = None
+            if src_bytes and b.get("build_recipe"):
+                identity = await asyncio.to_thread(
+                    builder.attested_identity, b["app_id"], src_bytes, b["dependencies"], b["build_recipe"],
+                    package_name=b.get("slug") or "bifrost-app",
+                )
+            elif source_built:
+                identity = await asyncio.to_thread(builder.source_identity, b["app_id"], src_bytes, b["dependencies"])
+            old = b["expected_old_deployment_id"]
+            if hint and (str(old) != hint or identity is None):
+                raise SolutionDeployConflict("App build reuse became stale; re-run the deploy.")
+            if old is not None and identity is not None and await builder.can_reuse(b["app_id"], old, identity):
+                out.append(CompiledSolutionAppDeployment(
+                    app_id=b["app_id"], solution_id=b["solution_id"],
+                    deployment_id=old, expected_old_deployment_id=old,
+                    superseded_deployment_id=None, dist={}, build_identity=identity, reused=True,
+                ))
+                continue
+            if hint:
+                raise SolutionDeployConflict("App build reuse artifacts changed; re-run the deploy.")
             sdk_metadata = None
             # compile_dist is subprocess-bound (npm/vite) → run off the loop.
             dist = await asyncio.to_thread(
@@ -1482,6 +1525,7 @@ class SolutionDeployer:
                     dist=dist,
                     sdk_metadata=sdk_metadata,
                     source_built=source_built,
+                    build_identity=(builder.last_build_identity if source_built else identity),
                 )
             )
         return out
@@ -1499,10 +1543,14 @@ class SolutionDeployer:
         upload_started_at = perf_counter()
         try:
             for item in compiled:
+                if item.reused:
+                    continue
+                uploaded.append(item)
                 await builder.upload_deployment(
                     item.app_id, item.deployment_id, item.dist
                 )
-                uploaded.append(item)
+                if item.build_identity is not None:
+                    await builder.write_build_identity(item.app_id, item.deployment_id, item.build_identity, item.dist)
         except Exception:
             for item in uploaded:
                 try:
@@ -1526,6 +1574,8 @@ class SolutionDeployer:
             await self._activate_compiled_dists(compiled)
         except Exception:
             for item in compiled:
+                if item.reused:
+                    continue
                 try:
                     await builder.delete_deployment(item.app_id, item.deployment_id)
                 except Exception:  # noqa: BLE001 - best-effort cleanup before retry
@@ -1571,7 +1621,7 @@ class SolutionDeployer:
                         Application.id,
                         Application.solution_id,
                         Application.active_deployment_id,
-                    ).where(Application.id.in_(app_ids))
+                    ).where(Application.id.in_(app_ids)).order_by(Application.id).with_for_update()
                 )
             ).all()
             by_id = {row[0]: row for row in rows}
@@ -1598,6 +1648,8 @@ class SolutionDeployer:
 
             now = datetime.now(timezone.utc)
             for item in compiled:
+                if item.reused:
+                    continue
                 meta = item.sdk_metadata
                 values = {
                     "active_deployment_id": item.deployment_id,
@@ -1605,6 +1657,7 @@ class SolutionDeployer:
                     "sdk_package_version": meta.package_version if meta else None,
                     "sdk_fingerprint": meta.fingerprint if meta else None,
                     "sdk_contract_version": meta.contract_version if meta else None,
+                    "sdk_binding_api_major": meta.binding_api_major if meta else None,
                     "sdk_built_at": now if meta else None,
                 }
                 result = await db.execute(

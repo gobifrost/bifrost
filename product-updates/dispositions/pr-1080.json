@@ -1,0 +1,14 @@
+{
+  "key": "pr:1080",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workflow policy logging avoids repeated database reads, and full worker pools can update while preserving warm capacity.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1080",
+      "Requested investigation and reasonable production fixes for API resource usage. Independent static review of f61854d5be24b1231fc420712bc0bc6643dd20f0 found no actionable regressions. Verified 125 focused tests, three live audit-contract checks, and API type/lint checks. Request-local recording reuses authenticated runtime facts without changing enforcement or revocation checks. Full-pool rotation preserves measured warm capacity and the hard worker maximum; active runs finish naturally."
+    ]
+  }
+}

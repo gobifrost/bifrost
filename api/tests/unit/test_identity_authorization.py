@@ -34,9 +34,14 @@ from tests.helpers.authorization import admin_caller
 pytestmark = pytest.mark.asyncio
 
 
-def _delegate(*grants: tuple[set[str], tuple[Boundary, ...]], home: UUID = PROVIDER_ORG_ID) -> Caller:
+def _delegate(
+    *grants: tuple[set[str], tuple[Boundary, ...]],
+    home: UUID = PROVIDER_ORG_ID,
+    user_id: UUID | None = None,
+) -> Caller:
+    user_id = user_id or uuid4()
     ctx = AuthorizationContext(
-        user_id=uuid4(),
+        user_id=user_id,
         home_organization_id=home,
         base_role_id=USER_ROLE_ID,
         is_external=False,
@@ -44,7 +49,7 @@ def _delegate(*grants: tuple[set[str], tuple[Boundary, ...]], home: UUID = PROVI
         role_grants=tuple(RoleGrant(uuid4(), frozenset(p), b) for p, b in grants),
     )
     return Caller(
-        UserPrincipal(user_id=ctx.user_id, email="delegate@example.com", organization_id=home),
+        UserPrincipal(user_id=user_id, email="delegate@example.com", organization_id=home),
         ctx,
     )
 
@@ -236,6 +241,31 @@ class TestUpdateUser:
         assert updated.is_superuser is True
         assert user.base_role_id == USER_ROLE_ID
         assert await _boundaries(db_session, user.id, PLATFORM_ADMIN_ROLE_ID) == {("platform", None)}
+
+    async def test_last_excluded_admin_cannot_be_demoted_or_deactivated(self, db_session) -> None:
+        from shared.sdk_users import UserServiceError
+        from src.models.contracts.oauth_config import OAuthLoginPreference
+        from src.services.oauth_config_service import OAuthConfigService
+
+        recovery = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        await OAuthConfigService(db_session).set_login_preference(
+            OAuthLoginPreference(excluded_user_ids=[recovery.id])
+        )
+        for fields in ({"is_superuser": False}, {"is_active": False}):
+            with pytest.raises(UserServiceError, match="active platform admin"):
+                await self._update(db_session, admin_caller(), recovery, **fields)
+
+    async def test_new_admin_defaults_to_excluded_after_policy_is_explicit(self, db_session) -> None:
+        from src.models.contracts.oauth_config import OAuthLoginPreference
+        from src.services.oauth_config_service import OAuthConfigService
+
+        recovery = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        policy = OAuthConfigService(db_session)
+        await policy.set_login_preference(OAuthLoginPreference(excluded_user_ids=[recovery.id]))
+        promoted = await _user(db_session, PROVIDER_ORG_ID)
+        await self._update(db_session, admin_caller(), promoted, is_superuser=True)
+        assert promoted.id in (await policy.get_login_preference()).excluded_user_ids
 
     async def test_last_active_platform_admin_cannot_be_demoted_or_deactivated(self, db_session) -> None:
         from shared.sdk_users import UserServiceError
@@ -925,6 +955,97 @@ class TestRoleAssignments:
         )
         assert [a.role_id for a in response.additional] == [PLATFORM_ADMIN_ROLE_ID]
 
+    async def test_platform_admin_can_add_and_remove_own_secrets_reader(self, db_session) -> None:
+        from src.models.orm.audit import AuditLog
+        from src.services.audit_context import ActorContext, clear_actor, set_actor
+        from src.services.user_role_assignments import authorization_summary
+
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        caller = admin_caller(user_id=user.id)
+        assert not any(
+            grant.permission == "secrets.read"
+            for grant in (await authorization_summary(db_session, user.id)).grants
+        )
+
+        actor_token = set_actor(ActorContext(user_id=user.id, organization_id=PROVIDER_ORG_ID))
+        try:
+            added = await self._put(
+                db_session,
+                caller,
+                user,
+                additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}, {"role_id": DECRYPTION_ROLE_ID}],
+            )
+            assert {assignment.role_id for assignment in added.additional} == {
+                PLATFORM_ADMIN_ROLE_ID,
+                DECRYPTION_ROLE_ID,
+            }
+            assert await _boundaries(db_session, user.id, DECRYPTION_ROLE_ID) == {
+                ("platform", None),
+                ("managed_organizations", None),
+                ("organization", PROVIDER_ORG_ID),
+            }
+
+            removed = await self._put(
+                db_session,
+                caller,
+                user,
+                additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}],
+            )
+        finally:
+            clear_actor(actor_token)
+
+        assert [assignment.role_id for assignment in removed.additional] == [PLATFORM_ADMIN_ROLE_ID]
+        assert not any(
+            grant.permission == "secrets.read"
+            for grant in (await authorization_summary(db_session, user.id)).grants
+        )
+        events = (
+            await db_session.scalars(
+                select(AuditLog).where(
+                    AuditLog.action == "user.role_assignments_updated",
+                    AuditLog.resource_id == user.id,
+                )
+            )
+        ).all()
+        assert len(events) == 2
+        assert {event.user_id for event in events} == {user.id}
+        added_event = next(
+            event
+            for event in events
+            if str(DECRYPTION_ROLE_ID) in event.details["after"]["additional"]
+        )
+        removed_event = next(
+            event
+            for event in events
+            if str(DECRYPTION_ROLE_ID) in event.details["before"]["additional"]
+            and str(DECRYPTION_ROLE_ID) not in event.details["after"]["additional"]
+        )
+        assert added_event.details["after"]["additional"][str(DECRYPTION_ROLE_ID)] == [
+            "managed_organizations",
+            f"organization:{PROVIDER_ORG_ID}",
+            "platform",
+        ]
+        assert str(DECRYPTION_ROLE_ID) not in removed_event.details["after"]["additional"]
+
+    async def test_platform_admin_can_assign_themselves_an_ordinary_role(self, db_session) -> None:
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        role = await _role(db_session)
+
+        response = await self._put(
+            db_session,
+            admin_caller(user_id=user.id),
+            user,
+            additional=[{"role_id": PLATFORM_ADMIN_ROLE_ID}, {"role_id": role.id}],
+        )
+
+        assert {assignment.role_id for assignment in response.additional} == {
+            PLATFORM_ADMIN_ROLE_ID,
+            role.id,
+        }
+        assert await _boundaries(db_session, user.id, role.id) == {
+            ("organization", PROVIDER_ORG_ID)
+        }
+
     async def test_authorization_summary_lists_an_admins_grants(self, db_session) -> None:
         from src.services.user_role_assignments import authorization_summary
 
@@ -947,6 +1068,19 @@ class TestRoleAssignments:
             for g in summary.grants
             if g.permission == "secrets.read"
         } == {("platform", None), ("managed_organizations", None), ("organization", PROVIDER_ORG_ID)}
+
+    async def test_authorization_summary_includes_only_the_callers_home_organization_name(
+        self, db_session
+    ) -> None:
+        from src.services.user_role_assignments import authorization_summary
+
+        organization = await _org(db_session)
+        user = await _user(db_session, organization.id)
+
+        summary = await authorization_summary(db_session, user.id)
+
+        assert summary.home_organization_id == organization.id
+        assert summary.home_organization_name == organization.name
 
     async def test_secrets_reader_boundaries_cannot_be_chosen(self, db_session) -> None:
         from src.services.user_role_assignments import (
@@ -1160,15 +1294,34 @@ class TestRoleAssignments:
         )
         assert {a.role_id for a in response.additional} == {with_permission.id, plain.id}
 
-    async def test_own_assignments_cannot_be_changed(self, db_session) -> None:
+    async def test_non_admin_cannot_change_own_assignments_with_delegated_privileged_access(self, db_session) -> None:
         from src.services.user_role_assignments import RoleAssignmentError
 
-        org = await _org(db_session)
-        user = await _user(db_session, org.id)
-        caller = admin_caller(user_id=user.id)
+        user = await _user(db_session, PROVIDER_ORG_ID)
+        caller = _delegate(
+            (
+                {
+                    "roleassignments.read",
+                    "roleassignments.readwrite",
+                    "privilegedaccess.readwrite",
+                    "userlifecycle.readwrite",
+                    "users.readwrite",
+                },
+                _at(PROVIDER_ORG_ID),
+            ),
+            user_id=user.id,
+        )
         with pytest.raises(RoleAssignmentError) as exc_info:
-            await self._put(db_session, caller, user)
+            await self._put(db_session, caller, user, additional=[{"role_id": DECRYPTION_ROLE_ID}])
         assert exc_info.value.status_code == 400
+
+    async def test_platform_admin_cannot_remove_their_own_last_admin_role(self, db_session) -> None:
+        from src.services.user_role_assignments import RoleAssignmentError
+
+        user = await _user(db_session, PROVIDER_ORG_ID, admin=True)
+        with pytest.raises(RoleAssignmentError) as exc_info:
+            await self._put(db_session, admin_caller(user_id=user.id), user, additional=[])
+        assert exc_info.value.status_code == 409
 
     async def test_assign_users_to_role_writes_the_default_boundary(self, db_session) -> None:
         from shared.sdk_roles import assign_users_to_role

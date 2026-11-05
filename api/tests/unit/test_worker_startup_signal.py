@@ -7,7 +7,7 @@ import sys
 
 
 def test_worker_startup_sigterm_exits_during_blocked_app_import():
-    """SIGTERM during heavy app import should exit instead of being ignored."""
+    """SIGTERM during the heavy executor import should exit instead of being ignored."""
 
     code = r'''
 import importlib.abc
@@ -18,7 +18,7 @@ import threading
 
 class BlockingWorkerAppFinder(importlib.abc.MetaPathFinder, importlib.abc.Loader):
     def find_spec(self, fullname, path, target=None):
-        if fullname == "src.worker.app":
+        if fullname == "src.worker.remote.launcher":
             return importlib.machinery.ModuleSpec(fullname, self)
         return None
 

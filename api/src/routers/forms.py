@@ -15,6 +15,7 @@ import json
 import re
 import secrets
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile, status
@@ -24,12 +25,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser
-from src.config import get_settings
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
-from src.core.rate_limit import RateLimiter, get_client_ip
+from src.core.rate_limit import RateLimiter
 from src.models.enums import FormAccessLevel
-from src.repositories.workflows import WorkflowRepository
 from src.services.audit import emit_audit
 from src.models import Execution as ExecutionORM
 from src.models import Form as FormORM, FormField as FormFieldORM, FormRole as FormRoleORM
@@ -37,54 +36,21 @@ from src.models import FormPublication as FormPublicationORM
 from src.services.solutions.guard import assert_not_solution_managed
 from src.models import Role as RoleORM
 from src.models import Workflow as WorkflowORM
-from src.models.orm.solutions import Solution
 from src.models import FormCreate, FormUpdate, FormPublic
 from src.models import FileUploadRequest, FileUploadResponse, UploadedFileMetadata
 from src.models import FormStartupResponse
-from src.models.enums import ExecutionStatus
 from src.models.contracts.forms import (
     FormPublicationPublic,
     FormPublicationReview,
     FormPublicationUpdate,
-    FormConfirmationResponse,
-    FormExecutionResponse,
     FormCaptchaChallenge,
     FormFieldOptionsRequest,
     FormFieldOptionsResponse,
     FormRuntimeDefinition,
+    AuthenticatedFormRuntimeDefinition,
     FormSubmissionRequest,
     FormSubmissionResponse,
 )
-from shared import access_checks
-from shared.form_publication import build_publication_review
-from shared.form_captcha import (
-    FormCaptchaError,
-    create_form_captcha_challenge,
-    redeem_form_captcha_solution,
-)
-from shared.form_provider import FormProviderError, execute_form_field_provider
-from shared.form_execution import create_form_execution_context
-from shared.run_lineage import principal_lineage
-from shared.form_runtime import (
-    FormRuntimeValidationError,
-    accept_external_submission,
-    clear_embed_upload_references,
-    consume_startup_result,
-    form_capability_fingerprint,
-    load_startup_result,
-    normalize_allowed_origins,
-    release_external_submission,
-    register_embed_upload,
-    reserve_external_submission,
-    store_startup_result,
-    validate_embed_upload_references,
-    validate_form_submission,
-)
-from shared.logo_processing import (
-    LogoProcessingError,
-    process_logo,
-)
-from shared.scope_resolver import shared_read_organization
 from shared.sdk_forms import (
     SdkFormError,
     attach_form_logo_fields,
@@ -112,6 +78,7 @@ from src.services.authorization.enforce import (
     require_permission,
     user_reach,
 )
+from shared.scope_resolver import UNSET, RequestedScope
 
 logger = logging.getLogger(__name__)
 
@@ -149,6 +116,8 @@ _FORM_EMBED_LIMITERS = {
 
 
 async def _limit_embed_action(http_request: Request, ctx, action: str) -> None:
+    from src.core.rate_limit import get_client_ip
+
     if not ctx.user.embed:
         return
     if not ctx.user.jti:
@@ -410,6 +379,8 @@ async def _load_form_for_publication(db: AsyncSession, form_id: UUID) -> FormORM
 async def _publication_response(
     db: AsyncSession, form: FormORM
 ) -> FormPublicationPublic:
+    from shared.form_publication import build_publication_review
+
     review = FormPublicationReview.model_validate(
         await build_publication_review(db, form)
     )
@@ -578,6 +549,8 @@ async def review_form_publication(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationReview:
+    from shared.form_publication import build_publication_review
+
     form = await _load_form_for_publication(db, form_id)
     await _require_form_read_access(db, user, form)
     return FormPublicationReview.model_validate(
@@ -612,6 +585,9 @@ async def publish_form(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormPublicationPublic:
+    from shared.form_publication import build_publication_review
+    from shared.form_runtime import normalize_allowed_origins
+
     form = await _load_form_for_publication(db, form_id)
     await _require_form_permission(db, user, form, "forms.readwrite")
     review = FormPublicationReview.model_validate(
@@ -732,7 +708,7 @@ async def rotate_form_publication_key(
 
 @router.get(
     "/{form_id}/runtime",
-    response_model=FormRuntimeDefinition,
+    response_model=AuthenticatedFormRuntimeDefinition | FormRuntimeDefinition,
     summary="Load a sanitized form runtime definition",
 )
 async def get_form_runtime(
@@ -741,7 +717,11 @@ async def get_form_runtime(
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
-) -> FormRuntimeDefinition:
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to load a global form."),
+    ] = None,
+) -> AuthenticatedFormRuntimeDefinition | FormRuntimeDefinition:
     form = (
         await db.execute(
             select(FormORM)
@@ -752,10 +732,15 @@ async def get_form_runtime(
     if form is None or not form.is_active:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Form not found")
 
-    publication = await _authorize_form_runtime(db, ctx, form)
+    publication = await _authorize_form_runtime(
+        db, ctx, form, selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    if ctx.user.embed and org_id is not None:
+        raise HTTPException(status_code=403, detail="Embedded form sessions cannot select an organization")
     await _limit_embed_action(http_request, ctx, "runtime")
 
-    runtime = FormRuntimeDefinition.model_validate(form)
+    runtime_model = FormRuntimeDefinition if ctx.user.embed else AuthenticatedFormRuntimeDefinition
+    runtime = runtime_model.model_validate(form)
     return runtime.model_copy(
         update={
             "captcha_required": bool(
@@ -777,6 +762,9 @@ async def create_form_captcha(
     user: CurrentActiveUser,
     db: DbSession,
 ) -> FormCaptchaChallenge:
+    from src.config import get_settings
+    from shared.form_captcha import FormCaptchaError, create_form_captcha_challenge
+
     result = await db.execute(
         select(FormORM)
         .options(selectinload(FormORM.fields))
@@ -958,6 +946,10 @@ async def update_form(
     # Sync form roles to referenced workflows (additive)
     await sync_form_roles_to_workflows(db, form, form.fields, assigned_by=ctx.user.email)
 
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("form", str(form_id))
+
     logger.info(f"Updated form {log_safe(form_id)}")
 
     # Invalidate cache after successful update
@@ -1016,6 +1008,8 @@ async def upload_form_logo(
     file: UploadFile = File(..., description="Logo image (PNG/JPEG/SVG, ≤5MB)"),
 ) -> dict:
     """Upload a square logo for a form."""
+    from shared.logo_processing import LogoProcessingError, process_logo
+
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
     if not form:
@@ -1063,6 +1057,9 @@ async def get_form_logo(
     ctx: Context,
     db: DbSession,
 ) -> Response:
+    from shared import access_checks
+    from shared.scope_resolver import shared_read_organization
+
     result = await db.execute(select(FormORM).where(FormORM.id == form_id))
     form = result.scalar_one_or_none()
     if form is None or not form.is_active or not form.logo_data:
@@ -1205,6 +1202,10 @@ async def delete_form(
         await db.flush()
         logger.info(f"Soft deleted form {log_safe(form_id)}")
 
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("form", str(form_id))
+
     # Invalidate cache
     if CACHE_INVALIDATION_AVAILABLE and invalidate_form:
         org_id = str(form_org_id) if form_org_id else None
@@ -1225,9 +1226,17 @@ async def delete_form(
 
 
 async def _authorize_form_runtime(
-    db: AsyncSession, ctx, form: FormORM
+    db: AsyncSession,
+    ctx,
+    form: FormORM,
+    *,
+    selected_organization_id: RequestedScope = UNSET,
 ) -> FormPublicationORM | None:
     """Authorize one form runtime action and enforce public approval freshness."""
+    from shared import access_checks
+    from shared.form_runtime import form_capability_fingerprint
+    from shared.scope_resolver import shared_read_organization
+    from src.models.orm.solutions import Solution
 
     if ctx.user.embed:
         if form.solution_id is not None:
@@ -1267,12 +1276,21 @@ async def _authorize_form_runtime(
         return None
 
     caller = await load_caller(db, ctx.user)
-    if not await check_form_access(db, form, caller):
+    if not await check_form_access(
+        db,
+        form,
+        caller,
+        selected_organization_id=selected_organization_id,
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Access denied to form",
         )
-    permission_org = shared_read_organization(caller, form.organization_id)
+    permission_org = shared_read_organization(
+        caller,
+        form.organization_id,
+        selected_organization_id=selected_organization_id,
+    )
     access_checks.note_launch(
         (
             "forms.read"
@@ -1287,7 +1305,11 @@ async def _authorize_form_runtime(
 
 
 async def _form_launch_authority(
-    db: AsyncSession, ctx, form: FormORM
+    db: AsyncSession,
+    ctx,
+    form: FormORM,
+    *,
+    requested_organization_id: UUID | None = None,
 ) -> tuple[UUID | None, Caller | None]:
     """Resolve the form's execution target and named launch authority.
 
@@ -1298,13 +1320,26 @@ async def _form_launch_authority(
     execution organization. Shared Global forms run at that caller's selected
     home/runtime organization rather than silently requiring a Global grant.
     """
-    if ctx.user.embed:
-        return (form.organization_id or ctx.org_id), None
-
-    caller = await load_caller(db, ctx.user)
-    execution_org_id = shared_read_organization(caller, form.organization_id)
-    require_permission(caller, "workflows.execute", execution_org_id)
-    return execution_org_id, caller
+    from shared.form_execution import (
+        FormExecutionScopeError,
+        resolve_form_execution_scope,
+    )
+    requested_scope = (
+        UNSET if requested_organization_id is None else requested_organization_id
+    )
+    try:
+        caller = None if ctx.user.embed else await load_caller(db, ctx.user)
+        scope = await resolve_form_execution_scope(
+            db,
+            user=ctx.user,
+            form_organization_id=form.organization_id,
+            requested_organization_id=requested_scope,
+            embed_organization_id=ctx.org_id,
+            caller=caller,
+        )
+    except FormExecutionScopeError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=exc.detail) from None
+    return scope.organization_id, scope.caller
 
 
 @router.post(
@@ -1320,6 +1355,10 @@ async def submit_form(
     user: CurrentActiveUser,
     db: DbSession,
     request: FormSubmissionRequest = Body(default=None),
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to execute a global form."),
+    ] = None,
 ) -> FormSubmissionResponse:
     """
     Execute the workflow linked to a form.
@@ -1333,7 +1372,26 @@ async def submit_form(
     HMAC sessions and authenticated users retain the execution summary used by
     the existing result journey.
     """
+    from src.config import get_settings
+    from src.models.contracts.forms import FormConfirmationResponse, FormExecutionResponse
+    from src.models.enums import ExecutionStatus
+    from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from shared import access_checks
+    from shared.form_captcha import FormCaptchaError, redeem_form_captcha_solution
+    from shared.form_execution import create_form_execution_context
+    from shared.form_runtime import (
+        FormRuntimeValidationError,
+        accept_external_submission,
+        clear_embed_upload_references,
+        consume_startup_result,
+        load_startup_result,
+        release_external_submission,
+        reserve_external_submission,
+        validate_embed_upload_references,
+        validate_form_submission,
+    )
+    from shared.run_lineage import principal_lineage
 
     # Default request if None (backward compatibility with empty body)
     if request is None:
@@ -1353,7 +1411,13 @@ async def submit_form(
             detail="Form not found",
         )
 
-    publication = await _authorize_form_runtime(db, ctx, form)
+    publication = await _authorize_form_runtime(
+        db, ctx, form,
+        selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    anchor_org_id, launch_caller = await _form_launch_authority(
+        db, ctx, form, requested_organization_id=org_id
+    )
     await _limit_embed_action(http_request, ctx, "submission")
 
     # Form must have a workflow_id
@@ -1421,9 +1485,7 @@ async def submit_form(
             startup_result = await load_startup_result(
                 handle=request.startup_handle,
                 form_id=str(form.id),
-                organization_id=(
-                    str(form.organization_id) if form.organization_id else None
-                ),
+                organization_id=str(anchor_org_id) if anchor_org_id else None,
                 user=ctx.user,
             )
         except ValueError as exc:
@@ -1452,7 +1514,6 @@ async def submit_form(
     # caller's: a cross-org bypass caller (platform admin / provider) executing
     # an org-scoped form must resolve the install's own workflow and run in the
     # form's org. Caller identity was already used for AUTHORIZATION above.
-    anchor_org_id, launch_caller = await _form_launch_authority(db, ctx, form)
     accepted_lineage = await principal_lineage(db, ctx.user)
     if accepted_lineage is None:
         raise HTTPException(
@@ -1692,6 +1753,10 @@ async def execute_startup_workflow(
     user: CurrentActiveUser,
     db: DbSession,
     input_data: dict = Body(default={}),
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to execute a global form."),
+    ] = None,
 ) -> FormStartupResponse:
     """
     Execute the launch workflow to populate form context.
@@ -1709,7 +1774,12 @@ async def execute_startup_workflow(
     Returns:
         FormStartupResponse with the launch workflow's result
     """
+    from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import run_workflow, WorkflowNotFoundError, WorkflowLoadError
+    from shared import access_checks
+    from shared.form_execution import create_form_execution_context
+    from shared.form_runtime import store_startup_result
+    from shared.run_lineage import principal_lineage
 
     # Get the form
     result = await db.execute(
@@ -1725,7 +1795,13 @@ async def execute_startup_workflow(
             detail="Form not found",
         )
 
-    await _authorize_form_runtime(db, ctx, form)
+    await _authorize_form_runtime(
+        db, ctx, form,
+        selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    launch_anchor_org_id, launch_caller = await _form_launch_authority(
+        db, ctx, form, requested_organization_id=org_id
+    )
     await _limit_embed_action(http_request, ctx, "startup")
 
     allowed_startup_inputs = set(form.allowed_query_params or [])
@@ -1758,7 +1834,6 @@ async def execute_startup_workflow(
     # here — a form user with no role on the launch workflow must still reach it.
     # Anchored to the FORM's org like the execute path: a cross-org bypass
     # caller must resolve the install's own launch workflow, not their org's.
-    launch_anchor_org_id, launch_caller = await _form_launch_authority(db, ctx, form)
     accepted_lineage = await principal_lineage(db, ctx.user)
     if accepted_lineage is None:
         raise HTTPException(
@@ -1815,7 +1890,7 @@ async def execute_startup_workflow(
         handle, expires_at = await store_startup_result(
             form_id=str(form.id),
             organization_id=(
-                str(form.organization_id) if form.organization_id else None
+                str(launch_anchor_org_id) if launch_anchor_org_id else None
             ),
             user=ctx.user,
             result=response.result,
@@ -1866,7 +1941,16 @@ async def get_form_field_options(
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to execute a global form."),
+    ] = None,
 ) -> FormFieldOptionsResponse:
+    from shared import access_checks
+    from shared.form_provider import FormProviderError, execute_form_field_provider
+    from shared.run_lineage import principal_lineage
+    from shared.scope_resolver import shared_read_organization
+
     result = await db.execute(
         select(FormORM)
         .options(selectinload(FormORM.fields))
@@ -1875,13 +1959,18 @@ async def get_form_field_options(
     form = result.scalar_one_or_none()
     if form is None or not form.is_active:
         raise HTTPException(status_code=404, detail="Form unavailable")
-    await _authorize_form_runtime(db, ctx, form)
+    await _authorize_form_runtime(
+        db, ctx, form,
+        selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    provider_org_id, _provider_caller = await _form_launch_authority(
+        db, ctx, form, requested_organization_id=org_id
+    )
     await _limit_embed_action(http_request, ctx, "provider")
 
     field = next((item for item in form.fields if item.name == field_name), None)
     if field is None or field.data_provider_id is None:
         raise HTTPException(status_code=404, detail="Field options unavailable")
-    provider_org_id, _provider_caller = await _form_launch_authority(db, ctx, form)
     accepted_lineage = await principal_lineage(db, ctx.user)
     if accepted_lineage is None:
         raise HTTPException(
@@ -2017,6 +2106,10 @@ async def generate_upload_url(
     ctx: Context,
     user: CurrentActiveUser,
     db: DbSession,
+    org_id: Annotated[
+        UUID | None,
+        Query(description="Organization in which to store a global form upload."),
+    ] = None,
 ) -> FileUploadResponse:
     """
     Generate a presigned S3 URL for direct file upload.
@@ -2030,6 +2123,7 @@ async def generate_upload_url(
         FileUploadResponse with presigned URL and file metadata
     """
     from src.services.file_storage import FileStorageService
+    from shared.form_runtime import register_embed_upload
 
     # Verify form exists and user has access
     result = await db.execute(
@@ -2045,7 +2139,13 @@ async def generate_upload_url(
             detail="Form not found",
         )
 
-    await _authorize_form_runtime(db, ctx, form)
+    await _authorize_form_runtime(
+        db, ctx, form,
+        selected_organization_id=UNSET if org_id is None else org_id,
+    )
+    upload_org_id, _upload_caller = await _form_launch_authority(
+        db, ctx, form, requested_organization_id=org_id
+    )
     await _limit_embed_action(http_request, ctx, "upload")
 
     if ctx.user.embed and not request.field_name:
@@ -2085,14 +2185,14 @@ async def generate_upload_url(
 
     # Generate the upload's relative path. The full S3 key is built by the
     # unified files resolver: `uploads/{scope}/{relative_path}`. Scope is the
-    # caller's effective org (matches what the workflow's SDK will resolve to
-    # when it reads the file with `location="uploads"` and no explicit scope).
+    # selected execution org, which matches the scope used by every subsequent
+    # form workflow stage when it reads the file with `location="uploads"`.
     from shared.file_paths import resolve_s3_key
     file_uuid = str(uuid4())
     sanitized_name = _sanitize_filename(request.file_name)
     owner_segment = f"{ctx.user.jti}/" if ctx.user.embed else ""
     relative_path = f"{form_id}/{owner_segment}{file_uuid}/{sanitized_name}"
-    upload_scope = str(ctx.org_id) if ctx.org_id else "global"
+    upload_scope = str(upload_org_id) if upload_org_id else "global"
     s3_key = resolve_s3_key("uploads", upload_scope, relative_path)
 
     # Generate presigned URL against the full S3 key, but surface the

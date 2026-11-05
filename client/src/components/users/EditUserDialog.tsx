@@ -11,6 +11,7 @@ import {
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Info, ShieldAlert, X } from "lucide-react";
+import { ImpersonateUserButton } from "./ImpersonateUserButton";
 import { useAuthorization } from "@/services/authorization";
 import type { components } from "@/lib/v1";
 
@@ -98,6 +99,9 @@ function EditUserDialogContent({
 				onCancel={close}
 				onBusyChange={setSaving}
 			/>
+			<div className="shrink-0 border-t border-border/70 px-4 py-3 sm:px-6">
+				<ImpersonateUserButton user={user} />
+			</div>
 		</DialogContent>
 	);
 }

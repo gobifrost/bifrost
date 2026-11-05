@@ -1,0 +1,12 @@
+{
+  "key": "pr:1126",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal database-load reduction for idle installs; no user-visible behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1126"
+    ]
+  }
+}

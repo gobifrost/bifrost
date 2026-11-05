@@ -1,0 +1,14 @@
+{
+  "key": "pr:1157",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Workers now report their own build version and handle interrupted enrollment and startup failures correctly.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1157",
+      "Reviewed the shared launcher lifecycle, static build reporting, and concise routine-fix summary. Both new launcher regressions failed before the repair; 181 focused tests and Dockerized API Pyright and Ruff passed."
+    ]
+  }
+}

@@ -69,12 +69,18 @@ async def test_context_renewal_can_refresh_user_before_the_data_request(monkeypa
     requests = []
     clients = []
     refreshes = 0
-    original_http_client = httpx.AsyncClient
+    from bifrost._refreshing import RefreshingAsyncClient
+
+    original_http_client = RefreshingAsyncClient
 
     def respond(request):
-        requests.append(request)
+        requests.append(request.headers["Authorization"])
         if request.headers["Authorization"] == "Bearer expired-user-token":
-            return httpx.Response(401)
+            # The API's challenge for an expired token, raised before any effect.
+            return httpx.Response(
+                401,
+                headers={"WWW-Authenticate": 'Bearer error="invalid_token", error_description="refresh_required"'},
+            )
         if request.url.path.endswith("/dev-context"):
             return httpx.Response(200, json={
                 "token": "signed-context", "expires_at": time.time() + 600,
@@ -88,7 +94,7 @@ async def test_context_renewal_can_refresh_user_before_the_data_request(monkeypa
         clients.append(http)
         return http
 
-    monkeypatch.setattr("bifrost.client.httpx.AsyncClient", make_http)
+    monkeypatch.setattr("bifrost.client.RefreshingAsyncClient", make_http)
     client = BifrostClient("https://selected.test", "expired-user-token")
 
     async def refresh(observed):
@@ -96,15 +102,15 @@ async def test_context_renewal_can_refresh_user_before_the_data_request(monkeypa
         refreshes += 1
         assert observed == "expired-user-token"
         client.install_access_token("renewed-user-token")
-        return True
+        return "renewed-user-token"
 
-    monkeypatch.setattr(client, "_refresh_and_update", refresh)
+    monkeypatch.setattr(client, "refresh_access_token", refresh)
     client._solution_dev_session = SolutionDevSession(client, solution_id, str(uuid4()))
     try:
         response = await client.get("/api/tables/items/documents/count")
         assert response.status_code == 200
         assert refreshes == 1
-        assert requests[-1].headers["Authorization"] == "Bearer renewed-user-token"
+        assert requests[-1] == "Bearer renewed-user-token"
         assert len(requests) == 3
     finally:
         await client.close()

@@ -18,20 +18,16 @@ from pydantic import BaseModel
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
     oauth_state_key,
-    refresh_token_jti_key,
     TTL_OAUTH_STATE,
-    TTL_REFRESH_TOKEN,
 )
 from src.core.log_safety import log_safe
-from src.config import get_settings
 from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
-from src.core.security import create_access_token, create_refresh_token, generate_csrf_token
+from src.models import User
 from src.services.oauth_sso import OAuthError, OAuthService
-from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
-from shared.external_access import (
-    resolve_provider_org_claim,
-)
+from src.services.user_provisioning import ensure_user_provisioned
+from shared.auth_cookies import set_auth_cookies
+from shared.human_sessions import issue_human_session
 from shared.identities import refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
@@ -39,60 +35,19 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
 
-# =============================================================================
-# Cookie Helpers
-# =============================================================================
-
-
-def _set_oauth_auth_cookies(response: Response, access_token: str, refresh_token: str) -> None:
-    """
-    Set HttpOnly authentication cookies for OAuth login.
-
-    This mirrors the cookie-setting logic from auth.py but is kept here to avoid
-    circular imports. Browser clients get XSS protection from HttpOnly cookies.
-
-    Args:
-        response: FastAPI response object
-        access_token: JWT access token
-        refresh_token: JWT refresh token
-    """
-    settings = get_settings()
-    # Only use secure cookies in production - dev and testing use HTTP
-    secure = settings.is_production
-
-    # Access token cookie (short-lived)
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=secure,
-        samesite="lax",
-        max_age=30 * 60,  # 30 minutes
-        path="/",
-    )
-
-    # Refresh token cookie (long-lived)
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=secure,
-        samesite="lax",
-        max_age=7 * 24 * 60 * 60,  # 7 days
-        path="/",
-    )
-
-    # CSRF token cookie (JS readable for X-CSRF-Token header)
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key="csrf_token",
-        value=csrf_token,
-        httponly=False,  # JS needs to read this
-        secure=secure,
-        samesite="strict",
-        max_age=30 * 60,  # Match access token
-        path="/",
-    )
+async def _save_microsoft_profile_photo(
+    oauth_service: OAuthService,
+    user: User,
+    provider: str,
+    access_token: str,
+) -> None:
+    """Store an Entra profile photo without letting photo errors fail login."""
+    if provider != "microsoft":
+        return
+    try:
+        await oauth_service.apply_microsoft_profile_photo(user, access_token)
+    except Exception:
+        logger.warning("Microsoft profile photo was not saved", exc_info=True)
 
 
 # =============================================================================
@@ -337,12 +292,6 @@ async def oauth_callback(
             tokens=tokens,
         )
 
-        if not user_info.email:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="OAuth provider did not return email address",
-            )
-
     except OAuthError as e:
         logger.error(f"OAuth callback error: {log_safe(e)}")
         raise HTTPException(
@@ -365,10 +314,23 @@ async def oauth_callback(
 
         # Update OAuth account
         await oauth_service.link_oauth_account(user, user_info, tokens)
+        await _save_microsoft_profile_photo(
+            oauth_service, user, callback_data.provider, tokens.access_token
+        )
         await db.commit()
 
     else:
-        # New user or linking new OAuth account - provision user
+        # New user or linking new OAuth account. Existing mappings authenticate
+        # by stable provider ID; email authority is only required to create one.
+        try:
+            oauth_service.validate_email_for_linking(user_info, tokens)
+        except OAuthError as e:
+            logger.error(f"OAuth callback linking error: {log_safe(e)}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(e),
+            )
+
         try:
             result = await ensure_user_provisioned(
                 db=db,
@@ -383,6 +345,9 @@ async def oauth_callback(
             user.last_login = datetime.now(timezone.utc)
             user.is_registered = True
             user.is_verified = True
+            await _save_microsoft_profile_photo(
+                oauth_service, user, callback_data.provider, tokens.access_token
+            )
             await db.commit()
 
         except ValueError as e:
@@ -398,30 +363,7 @@ async def oauth_callback(
         )
     refuse_identity_sign_in(user)
 
-    # Get user roles
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    # Build JWT claims
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-        "oauth_provider": callback_data.provider,  # Mark as OAuth login
-    }
-
-    # Generate tokens
-    access_token = create_access_token(data=token_data)
-    refresh_token, jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store JTI in Redis for revocation support
-    r = await get_shared_redis()
-    await r.setex(refresh_token_jti_key(str(user.id), jti), TTL_REFRESH_TOKEN, "1")
+    tokens = await issue_human_session(user.id)
 
     logger.info(
         f"OAuth login successful: {log_safe(user.email)}",
@@ -434,11 +376,11 @@ async def oauth_callback(
 
     # Set HttpOnly cookies for browser clients (XSS protection)
     # Also sets CSRF token cookie for subsequent requests
-    _set_oauth_auth_cookies(response, access_token, refresh_token)
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
 
     return OAuthTokenResponse(
-        access_token=access_token,
-        refresh_token=refresh_token,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 

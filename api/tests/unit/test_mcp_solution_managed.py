@@ -420,8 +420,8 @@ async def test_mcp_delete_table_refuses_managed(monkeypatch):
 # ── Apps: thin REST wrappers forward REST's Solution-managed refusal ─────────
 # The guard lives in the REST handlers (e2e: tests/e2e/platform/
 # test_solution_readonly_full.py covers update/publish/replace/rollback/files/
-# dependencies). Multi-install slug resolution is the shared
-# ApplicationRepository.get_by_slug_global used by GET /api/applications/{slug}.
+# dependencies). Multi-install slug resolution for GET /api/applications/{slug}
+# is ApplicationRepository.get in Caller mode (_get_by_slug_for_caller).
 
 
 @asynccontextmanager

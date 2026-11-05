@@ -6,12 +6,21 @@ including parameter mapping, method handling, and schema structure.
 """
 
 import pytest
+import json
+from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from src.services.openapi_endpoints import (
+    _install_custom_openapi,
     generate_workflow_openapi_schema,
     _param_to_openapi_schema,
     get_endpoint_enabled_workflows,
+    refresh_workflow_endpoint,
+    register_workflow_endpoint,
+    remove_workflow_endpoint,
     TYPE_TO_OPENAPI,
 )
 
@@ -319,3 +328,77 @@ class TestTypeMapping:
     def test_object_variants_consistent(self):
         """Object type variants produce same schema."""
         assert TYPE_TO_OPENAPI["json"] == TYPE_TO_OPENAPI["dict"] == TYPE_TO_OPENAPI["object"]
+
+
+class TestOpenAPIResponseCache:
+    """Tests for the encoded OpenAPI response cache."""
+
+    def test_http_response_matches_fresh_openapi_dict(self):
+        app = FastAPI(title="Cached schema")
+        _install_custom_openapi(app)
+
+        schema = app.openapi()
+        schema["info"]["title"] = "mutated"
+
+        response = TestClient(app).get("/openapi.json")
+
+        assert response.content == json.dumps(
+            app.openapi(),
+            ensure_ascii=False,
+            allow_nan=False,
+            indent=None,
+            separators=(",", ":"),
+        ).encode("utf-8")
+        assert response.json()["info"]["title"] == "Cached schema"
+        assert app.openapi_schema is None
+
+    def test_http_response_adds_root_path_server_like_fastapi(self):
+        app = FastAPI(title="Root path schema")
+        _install_custom_openapi(app)
+
+        rooted_response = TestClient(app, root_path="/proxy").get("/openapi.json")
+        direct_response = TestClient(app).get("/openapi.json")
+
+        assert rooted_response.json()["servers"][0] == {"url": "/proxy"}
+        assert "servers" not in direct_response.json()
+
+    def test_workflow_changes_invalidate_the_cached_response(self):
+        app = FastAPI()
+        _install_custom_openapi(app)
+        workflow = SimpleNamespace(
+            name="cached_workflow",
+            description="Cached workflow",
+            endpoint_enabled=True,
+            allowed_methods=["GET"],
+            parameters_schema=[],
+            type="workflow",
+        )
+
+        register_workflow_endpoint(app, workflow)
+        initial_schema = TestClient(app).get("/openapi.json").json()
+
+        assert initial_schema["paths"]["/api/endpoints/cached_workflow"]["get"]["security"] == [
+            {"BifrostApiKey": []}
+        ]
+        assert initial_schema["components"]["securitySchemes"]["BifrostApiKey"]["name"] == "X-Bifrost-Key"
+
+        workflow.allowed_methods = ["POST"]
+        refresh_workflow_endpoint(app, workflow)
+        updated_schema = TestClient(app).get("/openapi.json").json()
+
+        assert "post" in updated_schema["paths"]["/api/endpoints/cached_workflow"]
+        assert "get" not in updated_schema["paths"]["/api/endpoints/cached_workflow"]
+
+        remove_workflow_endpoint(app, workflow.name)
+
+        assert "/api/endpoints/cached_workflow" not in TestClient(app).get("/openapi.json").json()["paths"]
+
+    def test_installing_twice_preserves_one_openapi_route_and_generator(self):
+        app = FastAPI()
+        _install_custom_openapi(app)
+        installed_openapi = app.openapi
+
+        _install_custom_openapi(app)
+
+        assert app.openapi is installed_openapi
+        assert len([route for route in app.routes if route.path == "/openapi.json"]) == 1

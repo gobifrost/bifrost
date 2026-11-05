@@ -11,9 +11,10 @@ FastAPI-free: imported by shared resolvers that worker closures load.
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Iterator, Literal
 from uuid import UUID
 
 from shared.system_account_guard import is_system_account
@@ -30,6 +31,10 @@ ALL_ORGS: Literal["*"] = "*"
 NoteTarget = UUID | None | Literal["*"]
 # What a person's own request notes; every kind is noted for a run.
 _DIRECT_KINDS = frozenset({"permission", "scope_switch", "run_as"})
+# The verified runtime subject used only to record an enforced policy decision.
+# Keep this name shared with the policy recorder so the request-local cache
+# cannot silently diverge from its producer.
+POLICY_RECORD_SUBJECT_CACHE_KEY = "policy_record_subject"
 # Objects whose organization and owner are read when the note is judged,
 # after the response, instead of in the request.
 OwnedKind = Literal["execution", "agent_run", "artifact_workspace", "agent_tools"]
@@ -73,6 +78,10 @@ class Collector:
     agent_run_id: UUID | None = None
     # Some chat bridges have run lineage without a persistent AgentRun.
     is_run: bool = False
+    # Browser impersonation provenance for access-check audit rows. The
+    # collector's run user remains the effective target.
+    impersonated_by_user_id: UUID | None = None
+    impersonation_session_id: UUID | None = None
 
 
 _current: ContextVar[Collector | None] = ContextVar("access_check_collector", default=None)
@@ -80,6 +89,14 @@ _current: ContextVar[Collector | None] = ContextVar("access_check_collector", de
 
 def _uuid(value: Any) -> UUID | None:
     return UUID(str(value)) if value else None
+
+
+def _optional_uuid(value: Any) -> UUID | None:
+    """Treat malformed attribution-only claims as absent."""
+    try:
+        return _uuid(value)
+    except (ValueError, TypeError, AttributeError):
+        return None
 
 
 def start_collecting(
@@ -100,6 +117,17 @@ def start_collecting(
         collector.surface = "agent" if collector.agent_run_id else surface
         # An agent adds no workflow power; it is judged on its original user.
         collector.direct = runtime.powers is None
+        # RuntimeAuthority names the verified run: legacy tokens are verified
+        # before the collector begins, and claims are validated by the auth
+        # dependency before any handler can note a check. Recording can reuse
+        # its subject; authorization still loads and enforces current policy
+        # facts independently.
+        collector.cache[POLICY_RECORD_SUBJECT_CACHE_KEY] = (
+            runtime.run_user,
+            runtime.powers,
+        )
+        collector.impersonated_by_user_id = runtime.impersonated_by_user_id
+        collector.impersonation_session_id = runtime.impersonation_session_id
         return token
     if any(key in payload for key in ("credential_kind", "engine_execution_id", "service_id", "engine_agent_run_id")):
         return None
@@ -107,6 +135,8 @@ def start_collecting(
     collector = _current.get()
     if token is not None and collector is not None:
         collector.surface = surface
+        collector.impersonated_by_user_id = _optional_uuid(payload.get("impersonated_by_user_id"))
+        collector.impersonation_session_id = _optional_uuid(payload.get("impersonation_session_id"))
     return token
 
 
@@ -135,6 +165,16 @@ def current() -> Collector | None:
     return _current.get()
 
 
+@contextmanager
+def suspend_collecting() -> Iterator[None]:
+    """Temporarily discard notes from an internal authorization recheck."""
+    token = _current.set(None)
+    try:
+        yield
+    finally:
+        _current.reset(token)
+
+
 def renew() -> Collector | None:
     """Hand back the current collector and collect afresh for the same caller:
     a long-lived connection is judged message by message. The token from
@@ -151,6 +191,8 @@ def renew() -> Collector | None:
             surface=collector.surface,
             agent_run_id=collector.agent_run_id,
             is_run=collector.is_run,
+            impersonated_by_user_id=collector.impersonated_by_user_id,
+            impersonation_session_id=collector.impersonation_session_id,
         )
     )
     return collector

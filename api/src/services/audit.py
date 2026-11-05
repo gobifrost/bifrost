@@ -104,6 +104,8 @@ async def emit_audit(
                 execution_id=actor.execution_id,
                 operation_id=operation_id,
                 surface=actor.surface,
+                impersonated_by_user_id=actor.impersonated_by_user_id,
+                impersonation_session_id=actor.impersonation_session_id,
             )
 
     try:

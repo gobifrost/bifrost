@@ -45,6 +45,7 @@ import {
 import { useApplicationSdkUpdateJobs } from "@/hooks/useApplicationSdkUpdateJobs";
 import { canUpdateApplicationSdk } from "@/components/applications/ApplicationSdkStatusBadge";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { SearchBox } from "@/components/search/SearchBox";
 import { useSearch } from "@/hooks/useSearch";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
@@ -53,8 +54,6 @@ import type { components } from "@/lib/v1";
 import { toast } from "sonner";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
-
-type Organization = components["schemas"]["OrganizationPublic"];
 
 export function Applications() {
 	const updateAllSdkDescriptionId = useId();
@@ -102,12 +101,7 @@ export function Applications() {
 		enabled: authorization.canAnywhere("organizations.read"),
 	});
 
-	// Helper to get organization name from ID
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o: Organization) => o.id === orgId);
-		return org?.name || orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const canManageApps = authorization.canAnywhere("apps.readwrite");
 	const canManageApp = (app: ApplicationListItem) =>

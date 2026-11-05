@@ -1,0 +1,12 @@
+{
+  "key": "pr:966",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Regression tests only; no runtime behavior, customer-facing capability, authority or budget change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/966"
+    ]
+  }
+}

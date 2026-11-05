@@ -4,10 +4,8 @@ Exercises the full path — workflow code in a forked worker child calling the
 fixed ``bifrost.forms.list`` / ``bifrost.forms.get`` — and verifies the same
 form over external HTTP, proving parity end to end:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated calls rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the engine child (token-equivalent superuser, like the HTTP engine-token
   path) sees the org-scoped form the test created, reads its detail, and maps
   a missing id to ``ValueError``;
@@ -39,7 +37,7 @@ def live_forms_keys():
 
 @pytest.fixture(scope="module")
 def live_form(e2e_client, platform_admin, org1, live_forms_keys):
-    """Create an org-scoped form the workflow reads back over the socket."""
+    """Create an org-scoped form the workflow reads through scoped shared API HTTP."""
     resp = e2e_client.post(
         "/api/forms",
         headers=platform_admin.headers,
@@ -75,9 +73,6 @@ from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local forms E2E")
 async def {name}():
-    # The engine injected its private socket; the zero-HTTP proof lives in
-    # the unit and forked-child socket tests where the child's network API
-    # is dead by environment.
     used_socket = get_engine_socket_path() is not None
     listed = await forms.list()
     saw = any(f.name == "{form_name}" for f in listed)
@@ -131,10 +126,8 @@ class TestSdkFormsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["saw"] is True, out
         assert out["detail_id"] == live_form["id"], out
         assert out["detail_name"] == live_form["name"], out

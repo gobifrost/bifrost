@@ -38,6 +38,8 @@ class ArchiveRow:
     created_at: datetime
     organization_id: UUID | None
     user_id: UUID | None
+    impersonated_by_user_id: UUID | None
+    impersonation_session_id: UUID | None
     action: str
     resource_type: str | None
     resource_id: UUID | None
@@ -52,13 +54,18 @@ class ArchiveRow:
     # Snapshots taken at archive time; the live rows may be renamed or deleted later.
     actor_email: str | None
     actor_name: str | None
+    impersonated_by_email: str | None
+    impersonated_by_name: str | None
     organization_name: str | None
 
     def to_line(self) -> dict[str, Any]:
         line = asdict(self)
         line["schema"] = SCHEMA
         line["created_at"] = _iso(self.created_at)
-        for name in ("id", "organization_id", "user_id", "resource_id", "execution_id"):
+        for name in (
+            "id", "organization_id", "user_id", "impersonated_by_user_id",
+            "impersonation_session_id", "resource_id", "execution_id",
+        ):
             line[name] = _uuid(getattr(self, name))
         return line
 
@@ -73,6 +80,11 @@ class ArchiveRow:
             created_at=datetime.fromisoformat(line["created_at"]),
             organization_id=_parse_uuid(line["organization_id"]),
             user_id=_parse_uuid(line["user_id"]),
+            # Version 1 segments written before browser impersonation had no
+            # provenance keys. Missing values are intentionally treated as
+            # absent so existing retained audit history stays exportable.
+            impersonated_by_user_id=_parse_uuid(line.get("impersonated_by_user_id")),
+            impersonation_session_id=_parse_uuid(line.get("impersonation_session_id")),
             action=line["action"],
             resource_type=line["resource_type"],
             resource_id=_parse_uuid(line["resource_id"]),
@@ -86,6 +98,8 @@ class ArchiveRow:
             details=line["details"],
             actor_email=line["actor_email"],
             actor_name=line["actor_name"],
+            impersonated_by_email=line.get("impersonated_by_email"),
+            impersonated_by_name=line.get("impersonated_by_name"),
             organization_name=line["organization_name"],
         )
 

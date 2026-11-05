@@ -57,6 +57,8 @@ import {
 } from "@/components/integrations/IntegrationMappingsTab";
 import { IntegrationTestPanel } from "@/components/integrations/IntegrationTestPanel";
 import { IntegrationDefaultsDialog } from "@/components/integrations/IntegrationDefaultsDialog";
+import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
+import { useAuthorization } from "@/services/authorization";
 
 interface MappingFormData {
 	organization_id: string;
@@ -68,6 +70,16 @@ interface MappingFormData {
 
 export function IntegrationDetail() {
 	const { id: integrationId } = useParams<{ id: string }>();
+	const authorization = useAuthorization();
+	const canManageDefinitions = authorization.canAt(
+		"integrations.readwrite",
+		GLOBAL_TARGET,
+	);
+	const canManageMapping = (organizationId: string) =>
+		authorization.canAt(
+			"integrations.readwrite",
+			orgTarget(organizationId),
+		);
 
 	const [oauthConfigDialogOpen, setOAuthConfigDialogOpen] = useState(false);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -147,6 +159,28 @@ export function IntegrationDetail() {
 		() => (Array.isArray(orgsData) ? orgsData : []),
 		[orgsData],
 	);
+	const homeOrganization = useMemo(() => {
+		const id = authorization.authorization?.home_organization_id;
+		const name = authorization.authorization?.home_organization_name;
+		return id && name ? { id, name } : undefined;
+	}, [authorization.authorization]);
+	const canTestAt = (organizationId: string | null) =>
+		authorization.canAt("integrations.read", orgTarget(organizationId));
+	const testableOrganizations = (() => {
+		const known = new Map(
+			organizations.map((organization: { id: string; name: string }) => [
+				organization.id,
+				organization,
+			]),
+		);
+		if (homeOrganization) known.set(homeOrganization.id, homeOrganization);
+		return [...known.values()].filter((organization) =>
+			authorization.canAt(
+				"integrations.read",
+				orgTarget(organization.id),
+			),
+		);
+	})();
 	const mappings = useMemo(
 		() => integration?.mappings || [],
 		[integration?.mappings],
@@ -236,6 +270,11 @@ export function IntegrationDetail() {
 			};
 		});
 	}, [organizations, mappings, isLoadingOrgs, isLoadingIntegration]);
+	const canManageAllMappings =
+		orgsWithMappings.length > 0 &&
+		orgsWithMappings.every((organization) =>
+			canManageMapping(organization.id),
+		);
 
 	// Listen for OAuth success messages from popup window
 	useEffect(() => {
@@ -292,6 +331,12 @@ export function IntegrationDetail() {
 			entity_name?: string;
 		}>,
 	) => {
+		if (
+			!mappingsToSave.every((mapping) =>
+				canManageMapping(mapping.organization_id),
+			)
+		)
+			return;
 		if (mappingSaveActive.current) return;
 		mappingSaveActive.current = true;
 		setMappingSaveError(null);
@@ -341,11 +386,12 @@ export function IntegrationDetail() {
 	};
 
 	const handleDeleteMappingClick = (org: OrgWithMapping) => {
+		if (!canManageMapping(org.id)) return;
 		setDeleteMappingConfirm(org);
 	};
 
 	const handleConnectMapping = async (org: OrgWithMapping) => {
-		if (!integrationId) return;
+		if (!integrationId || !canManageMapping(org.id)) return;
 		if (pendingMappingActionRef.current) return;
 		const pendingAction: PendingMappingAction = {
 			orgId: org.id,
@@ -412,7 +458,7 @@ export function IntegrationDetail() {
 	};
 
 	const handleDisconnectMapping = async (org: OrgWithMapping) => {
-		if (!integrationId) return;
+		if (!integrationId || !canManageMapping(org.id)) return;
 		if (pendingMappingActionRef.current) return;
 		const mappingId = org.mapping?.id;
 		if (!mappingId) return;
@@ -439,7 +485,7 @@ export function IntegrationDetail() {
 	};
 
 	const handleRefreshMapping = async (org: OrgWithMapping) => {
-		if (!integrationId) return;
+		if (!integrationId || !canManageMapping(org.id)) return;
 		if (pendingMappingActionRef.current) return;
 		const mappingId = org.mapping?.id;
 		if (!mappingId) return;
@@ -470,7 +516,7 @@ export function IntegrationDetail() {
 
 	const handleDeleteMappingConfirm = async () => {
 		const org = deleteMappingConfirm;
-		if (!integrationId || !org?.mapping)
+		if (!integrationId || !org?.mapping || !canManageMapping(org.id))
 			throw new Error("Mapping unavailable");
 		await deleteMutation.mutateAsync({
 			params: {
@@ -485,7 +531,12 @@ export function IntegrationDetail() {
 
 	// Handle main integration OAuth connect
 	const handleIntegrationOAuthConnect = async () => {
-		if (!integration?.has_oauth_config || !integrationId) return;
+		if (
+			!canManageDefinitions ||
+			!integration?.has_oauth_config ||
+			!integrationId
+		)
+			return;
 
 		const redirectUri = `${window.location.origin}/oauth/callback/${integrationId}`;
 
@@ -499,7 +550,12 @@ export function IntegrationDetail() {
 
 	// Handle main integration OAuth refresh
 	const handleIntegrationOAuthRefresh = async () => {
-		if (!integration?.has_oauth_config || !integrationId) return;
+		if (
+			!canManageDefinitions ||
+			!integration?.has_oauth_config ||
+			!integrationId
+		)
+			return;
 
 		try {
 			await refreshMutation.mutateAsync({
@@ -513,13 +569,15 @@ export function IntegrationDetail() {
 
 	// Handle OAuth config deletion
 	const handleDeleteOAuthConfig = async () => {
-		if (!integrationId) throw new Error("Integration unavailable");
+		if (!canManageDefinitions || !integrationId)
+			throw new Error("Integration unavailable");
 		await deleteOAuthMutation.mutateAsync({
 			params: { path: { connection_name: integrationId } },
 		});
 	};
 
 	const handleOpenConfigDialog = (orgId: string) => {
+		if (!canManageMapping(orgId)) return;
 		const org = orgsWithMappings.find((o) => o.id === orgId);
 		if (org) {
 			setSelectedOrgForConfig(org);
@@ -528,7 +586,12 @@ export function IntegrationDetail() {
 	};
 
 	const handleSaveOrgConfig = async (config: Record<string, unknown>) => {
-		if (!selectedOrgForConfig || !integrationId) return;
+		if (
+			!selectedOrgForConfig ||
+			!integrationId ||
+			!canManageMapping(selectedOrgForConfig.id)
+		)
+			return;
 
 		const plan = planOrgConfigSave(selectedOrgForConfig, config);
 		if (plan.kind === "noop") return;
@@ -557,6 +620,7 @@ export function IntegrationDetail() {
 
 	// Configuration Defaults Dialog handlers
 	const handleOpenDefaultsDialog = () => {
+		if (!canManageDefinitions) return;
 		setDefaultsError(null);
 		if (!integration?.config_schema) return;
 		// Initialize form with current default values from config_defaults
@@ -571,6 +635,7 @@ export function IntegrationDetail() {
 
 	const handleSaveDefaults = async () => {
 		if (
+			!canManageDefinitions ||
 			!integrationId ||
 			!integration?.config_schema ||
 			updateConfigMutation.isPending
@@ -686,7 +751,7 @@ export function IntegrationDetail() {
 
 	// Handle test connection
 	const handleTestConnection = async () => {
-		if (!integrationId) return;
+		if (!integrationId || !canTestAt(testOrgId)) return;
 
 		setTestResult(null);
 
@@ -706,8 +771,10 @@ export function IntegrationDetail() {
 	};
 
 	const handleOpenTestDialog = () => {
-		// Default to Global (null) - tests with integration defaults only
-		setTestOrgId(null);
+		if (!canTestAt(null) && testableOrganizations.length === 0) return;
+		setTestOrgId(
+			canTestAt(null) ? null : (testableOrganizations[0]?.id ?? null),
+		);
 		setTestEndpoint("/");
 		setTestResult(null);
 		setTestDialogOpen(true);
@@ -728,7 +795,7 @@ export function IntegrationDetail() {
 		);
 	}
 
-	if ((isIntegrationError && !integration) || (isOrgsError && !orgsData)) {
+	if (isIntegrationError && !integration) {
 		return (
 			<div className="space-y-4">
 				{isIntegrationError && !integration && (
@@ -738,16 +805,6 @@ export function IntegrationDetail() {
 						pending={isFetchingIntegration}
 						onRetry={() => {
 							void refetchIntegration();
-						}}
-					/>
-				)}
-				{isOrgsError && !orgsData && (
-					<IntegrationReadError
-						resource="organizations"
-						cached={false}
-						pending={isFetchingOrgs}
-						onRetry={() => {
-							void refetchOrgs();
 						}}
 					/>
 				)}
@@ -784,8 +841,16 @@ export function IntegrationDetail() {
 					).description
 				}
 				onTest={handleOpenTestDialog}
-				onGenerateSDK={() => setGenerateSDKDialogOpen(true)}
-				onEdit={() => setEditDialogOpen(true)}
+				onGenerateSDK={() => {
+					if (canManageDefinitions) setGenerateSDKDialogOpen(true);
+				}}
+				onEdit={() => {
+					if (canManageDefinitions) setEditDialogOpen(true);
+				}}
+				canTestConnection={
+					canTestAt(null) || testableOrganizations.length > 0
+				}
+				canManageDefinitions={canManageDefinitions}
 			/>
 			<PageScrollArea className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (
@@ -824,6 +889,7 @@ export function IntegrationDetail() {
 					onCreateOAuthConfig={() => setOAuthConfigDialogOpen(true)}
 					isAuthorizePending={authorizeMutation.isPending}
 					isRefreshPending={refreshMutation.isPending}
+					canManageDefinitions={canManageDefinitions}
 				/>
 
 				{/* Tabs for Mappings and Config Overrides */}
@@ -914,6 +980,8 @@ export function IntegrationDetail() {
 									matchStats={matchStats}
 									isMatching={isMatching}
 									isDeletePending={deleteMutation.isPending}
+									canManageMapping={canManageMapping}
+									canManageAllMappings={canManageAllMappings}
 									onRunAutoMatch={runAutoMatch}
 									onAcceptAllSuggestions={
 										handleAcceptAllSuggestions
@@ -954,6 +1022,7 @@ export function IntegrationDetail() {
 										integration?.config_schema || []
 									}
 									integrationId={integrationId || ""}
+									canManageMapping={canManageMapping}
 								/>
 							</CardContent>
 						</Card>
@@ -962,7 +1031,7 @@ export function IntegrationDetail() {
 			</PageScrollArea>
 
 			{/* OAuth Configuration Dialog (Create) */}
-			{integrationId && (
+			{canManageDefinitions && integrationId && (
 				<CreateOAuthConnectionDialog
 					open={oauthConfigDialogOpen}
 					onOpenChange={setOAuthConfigDialogOpen}
@@ -971,7 +1040,7 @@ export function IntegrationDetail() {
 			)}
 
 			{/* OAuth Configuration Dialog (Edit) */}
-			{integrationId && (
+			{canManageDefinitions && integrationId && (
 				<CreateOAuthConnectionDialog
 					open={editingOAuthConfig}
 					onOpenChange={setEditingOAuthConfig}
@@ -981,63 +1050,74 @@ export function IntegrationDetail() {
 			)}
 
 			{/* Edit Integration Dialog */}
-			<CreateIntegrationDialog
-				open={editDialogOpen}
-				onOpenChange={setEditDialogOpen}
-				editIntegrationId={integrationId}
-				initialData={integration}
-			/>
-
-			{/* Org Config Dialog */}
-			{selectedOrgForConfig && (
-				<OrgConfigDialog
-					open={configDialogOpen}
-					onOpenChange={setConfigDialogOpen}
-					orgId={selectedOrgForConfig.id}
-					orgName={selectedOrgForConfig.name}
-					configSchema={integration?.config_schema || []}
-					currentConfig={selectedOrgForConfig.formData.config}
-					onSave={handleSaveOrgConfig}
+			{canManageDefinitions && (
+				<CreateIntegrationDialog
+					open={editDialogOpen}
+					onOpenChange={setEditDialogOpen}
+					editIntegrationId={integrationId}
+					initialData={integration}
 				/>
 			)}
 
-			{/* Configuration Defaults Dialog */}
-			<IntegrationDefaultsDialog
-				error={defaultsError}
-				open={defaultsDialogOpen}
-				onOpenChange={setDefaultsDialogOpen}
-				configSchema={integration?.config_schema || []}
-				formValues={defaultsFormValues}
-				onFormValuesChange={setDefaultsFormValues}
-				onSave={handleSaveDefaults}
-				isSaving={updateConfigMutation.isPending}
-			/>
+			{/* Org Config Dialog */}
+			{selectedOrgForConfig &&
+				canManageMapping(selectedOrgForConfig.id) && (
+					<OrgConfigDialog
+						open={configDialogOpen}
+						onOpenChange={setConfigDialogOpen}
+						orgId={selectedOrgForConfig.id}
+						orgName={selectedOrgForConfig.name}
+						configSchema={integration?.config_schema || []}
+						currentConfig={selectedOrgForConfig.formData.config}
+						onSave={handleSaveOrgConfig}
+					/>
+				)}
 
-			<IntegrationDeleteDialog
-				open={deleteMappingConfirm !== null}
-				onOpenChange={(open) => {
-					if (!open) setDeleteMappingConfirm(null);
-				}}
-				title="Delete Mapping"
-				onConfirm={handleDeleteMappingConfirm}
-			>
-				Delete the mapping for{" "}
-				<strong>{deleteMappingConfirm?.name}</strong>? This removes the
-				organization's integration configuration and cannot be undone.
-			</IntegrationDeleteDialog>
-			<IntegrationDeleteDialog
-				open={deleteOAuthDialogOpen}
-				onOpenChange={setDeleteOAuthDialogOpen}
-				title="Delete OAuth Configuration"
-				onConfirm={handleDeleteOAuthConfig}
-			>
-				Delete the OAuth configuration for{" "}
-				<strong>{integration?.name}</strong>? This removes the OAuth
-				connection and stored tokens and cannot be undone.
-			</IntegrationDeleteDialog>
+			{/* Configuration Defaults Dialog */}
+			{canManageDefinitions && (
+				<IntegrationDefaultsDialog
+					error={defaultsError}
+					open={defaultsDialogOpen}
+					onOpenChange={setDefaultsDialogOpen}
+					configSchema={integration?.config_schema || []}
+					formValues={defaultsFormValues}
+					onFormValuesChange={setDefaultsFormValues}
+					onSave={handleSaveDefaults}
+					isSaving={updateConfigMutation.isPending}
+				/>
+			)}
+
+			{deleteMappingConfirm &&
+				canManageMapping(deleteMappingConfirm.id) && (
+					<IntegrationDeleteDialog
+						open
+						onOpenChange={(open) => {
+							if (!open) setDeleteMappingConfirm(null);
+						}}
+						title="Delete Mapping"
+						onConfirm={handleDeleteMappingConfirm}
+					>
+						Delete the mapping for{" "}
+						<strong>{deleteMappingConfirm.name}</strong>? This
+						removes the organization's integration configuration and
+						cannot be undone.
+					</IntegrationDeleteDialog>
+				)}
+			{canManageDefinitions && (
+				<IntegrationDeleteDialog
+					open={deleteOAuthDialogOpen}
+					onOpenChange={setDeleteOAuthDialogOpen}
+					title="Delete OAuth Configuration"
+					onConfirm={handleDeleteOAuthConfig}
+				>
+					Delete the OAuth configuration for{" "}
+					<strong>{integration?.name}</strong>? This removes the OAuth
+					connection and stored tokens and cannot be undone.
+				</IntegrationDeleteDialog>
+			)}
 
 			{/* Generate SDK Dialog */}
-			{integrationId && (
+			{canManageDefinitions && integrationId && (
 				<GenerateSDKDialog
 					open={generateSDKDialogOpen}
 					onOpenChange={setGenerateSDKDialogOpen}
@@ -1059,6 +1139,8 @@ export function IntegrationDetail() {
 				onClearResult={() => setTestResult(null)}
 				onTest={handleTestConnection}
 				isTestPending={testMutation.isPending}
+				canTestAt={canTestAt}
+				testableOrganizations={testableOrganizations}
 			/>
 		</PageWorkspace>
 	);

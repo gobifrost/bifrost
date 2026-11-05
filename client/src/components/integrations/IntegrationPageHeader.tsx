@@ -8,12 +8,16 @@ export function IntegrationPageHeader({
 	onTest,
 	onGenerateSDK,
 	onEdit,
+	canTestConnection,
+	canManageDefinitions,
 }: {
 	name: string;
 	description?: string;
 	onTest: () => void;
 	onGenerateSDK: () => void;
 	onEdit: () => void;
+	canTestConnection: boolean;
+	canManageDefinitions: boolean;
 }) {
 	return (
 		<header className="min-w-0 space-y-3">
@@ -43,33 +47,39 @@ export function IntegrationPageHeader({
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-2 xl:shrink-0">
-					<Button
-						type="button"
-						variant="outline"
-						className="min-h-11"
-						onClick={onTest}
-					>
-						<Zap className="size-4" />
-						Test Connection
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						className="min-h-11"
-						onClick={onGenerateSDK}
-					>
-						<Code className="size-4" />
-						Generate SDK
-					</Button>
-					<Button
-						type="button"
-						variant="outline"
-						className="min-h-11"
-						onClick={onEdit}
-					>
-						<Pencil className="size-4" />
-						Edit
-					</Button>
+					{canTestConnection && (
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onTest}
+						>
+							<Zap className="size-4" />
+							Test Connection
+						</Button>
+					)}
+					{canManageDefinitions && (
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onGenerateSDK}
+						>
+							<Code className="size-4" />
+							Generate SDK
+						</Button>
+					)}
+					{canManageDefinitions && (
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onEdit}
+						>
+							<Pencil className="size-4" />
+							Edit
+						</Button>
+					)}
 				</div>
 			</div>
 		</header>

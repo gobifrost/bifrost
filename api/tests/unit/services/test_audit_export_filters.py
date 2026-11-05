@@ -28,10 +28,12 @@ def _row(
     at: datetime = datetime(2001, 6, 1, tzinfo=UTC),
 ) -> ArchiveRow:
     return ArchiveRow(
-        id=UUID(int=1), created_at=at, organization_id=org, user_id=None, action=action,
+        id=UUID(int=1), created_at=at, organization_id=org, user_id=None,
+        impersonated_by_user_id=None, impersonation_session_id=None, action=action,
         resource_type="table", resource_id=None, outcome="success", source="workflow",
         operation_id=None, surface="workflow", execution_id=None, ip_address=None,
         user_agent=None, details=None, actor_email=None, actor_name=None,
+        impersonated_by_email=None, impersonated_by_name=None,
         organization_name="Example Org",
     )
 

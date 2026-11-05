@@ -1,0 +1,14 @@
+{
+  "key": "pr:1111",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "The audit retention setting shows the real 30-day default while it loads, and an app's SDK update status no longer jumps back to queued after the update has started.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1111",
+      "Jack asked to merge the nightly Playwright fixes on 2026-10-28; full local nightly 196 passed, 0 failed."
+    ]
+  }
+}

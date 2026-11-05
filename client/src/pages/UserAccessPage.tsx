@@ -38,6 +38,7 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { UserActionsMenu } from "@/components/users/UserActionsMenu";
+import { ImpersonateUserButton } from "@/components/users/ImpersonateUserButton";
 import { UserProfileForm } from "@/components/users/UserProfileForm";
 import { UserRoleAssignmentsPanel } from "@/components/users/UserRoleAssignmentsPanel";
 import { UserStatusBadge } from "@/components/users/UserStatusBadge";
@@ -521,12 +522,15 @@ export function UserAccessPage() {
 							onDeleted={() => navigate("/users/identities")}
 						/>
 					) : (
-						// The Profile tab is the profile editor, so no Edit Profile.
-						<UserActionsMenu
-							label={`${person.name || person.email} actions`}
-							triggerRef={actionsButtonRef}
-							{...accountActions.menuPropsFor(person)}
-						/>
+						<div className="flex items-center gap-2">
+							<ImpersonateUserButton user={person} />
+							{/* The Profile tab is the profile editor, so no Edit Profile. */}
+							<UserActionsMenu
+								label={`${person.name || person.email} actions`}
+								triggerRef={actionsButtonRef}
+								{...accountActions.menuPropsFor(person)}
+							/>
+						</div>
 					)
 				}
 			/>

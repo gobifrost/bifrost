@@ -32,6 +32,9 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
+    ), patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
     ):
         yield
 
@@ -310,8 +313,9 @@ class TestDelegationUsesFactory:
             new_callable=AsyncMock,
             return_value=child_run_result,
         ), patch(
-            "src.services.execution.run_summarizer.enqueue_summarize",
+            "src.services.execution.summary_dispatch.stage_summary",
             new_callable=AsyncMock,
+            return_value=None,
         ), patch(
             "src.services.execution.autonomous_agent_executor.load_runtime_principal",
             new=AsyncMock(return_value=caller.principal),

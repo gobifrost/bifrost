@@ -67,6 +67,7 @@ import {
 } from "@/components/solutions/CreateEditSolution";
 import { useSearch } from "@/hooks/useSearch";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import {
 	listSolutions,
 	type Solution,
@@ -154,11 +155,7 @@ export function Solutions() {
 	const solutions = solutionsData?.solutions ?? [];
 	const sdkUpdateJobs = useApplicationSdkUpdateJobs();
 
-	const getOrgName = (orgId: string | null | undefined): string => {
-		if (!orgId) return "Global";
-		const org = organizations?.find((o) => o.id === orgId);
-		return org?.name ?? orgId;
-	};
+	const getOrgName = useOrganizationName(organizations);
 
 	const scopeFiltered =
 		filterOrgId === undefined

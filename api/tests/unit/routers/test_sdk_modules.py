@@ -77,7 +77,7 @@ class _ScopeDb:
         self.workflow = workflow
         self.solution = solution
 
-    async def get(self, model, _identity):
+    async def get(self, model, _identity, **_kwargs):
         return self.workflow if model.__name__ == "Workflow" else self.solution
 
 

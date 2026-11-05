@@ -6,6 +6,37 @@ Tests the complete flow from device code request → user authorization → toke
 
 import pytest
 import httpx
+import jwt
+import time
+
+
+@pytest.fixture(autouse=True)
+def fresh_browser_credentials(org1_user, human_minter):
+    """Approval needs the matching live cookie as well as the bearer token."""
+    human_minter(org1_user)
+
+
+@pytest.mark.e2e
+def test_denied_device_login_is_final(e2e_client: httpx.Client, org1_user):
+    code = e2e_client.post("/auth/device/code").json()
+    decision = e2e_client.post(
+        "/auth/device/deny",
+        json={"user_code": code["user_code"]},
+        headers=browser_headers(org1_user),
+    )
+    assert decision.status_code == 200
+    # A second browser tab cannot reverse the first decision.
+    repeated = e2e_client.post(
+        "/auth/device/authorize",
+        json={"user_code": code["user_code"]},
+        headers=browser_headers(org1_user),
+    )
+    assert repeated.status_code == 409
+    token = e2e_client.post("/auth/device/token", json={"device_code": code["device_code"]})
+    assert token.json() == {"error": "access_denied"}
+    assert e2e_client.post(
+        "/auth/device/token", json={"device_code": code["device_code"]},
+    ).json() == {"error": "expired_token"}
 
 
 @pytest.mark.e2e
@@ -48,11 +79,17 @@ def test_device_flow_complete_success(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
     auth_data = response.json()
     assert auth_data["success"] is True
+    repeated = e2e_client.post(
+        "/auth/device/deny",
+        json={"user_code": user_code},
+        headers=browser_headers(org1_user),
+    )
+    assert repeated.status_code == 409
 
     # Step 4: Poll again after authorization (should get tokens)
     response = e2e_client.post(
@@ -68,6 +105,9 @@ def test_device_flow_complete_success(
     assert "token_type" in token_data
     assert "expires_in" in token_data
     assert token_data["token_type"] == "bearer"
+    payload = jwt.decode(token_data["access_token"], options={"verify_signature": False})
+    assert abs(payload["exp"] - time.time() - token_data["expires_in"]) < 3
+    assert 3500 < token_data["expires_in"] <= 5400
 
     # Verify access token works
     response = e2e_client.get(
@@ -110,7 +150,7 @@ def test_device_flow_invalid_user_code(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": "INVALID-CODE"},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 404
     data = response.json()
@@ -137,7 +177,7 @@ def test_device_flow_one_time_use(
     response = e2e_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
 
@@ -162,8 +202,9 @@ def test_device_flow_one_time_use(
 
 
 @pytest.mark.e2e
+@pytest.mark.parametrize("endpoint", ["/auth/device/authorize", "/auth/device/deny"])
 def test_device_flow_authorization_requires_auth(
-    e2e_client: httpx.Client,
+    e2e_client: httpx.Client, endpoint: str,
 ):
     """
     Test that device authorization requires authentication.
@@ -176,7 +217,7 @@ def test_device_flow_authorization_requires_auth(
 
     # Try to authorize without token
     response = e2e_client.post(
-        "/auth/device/authorize",
+        endpoint,
         json={"user_code": user_code}
     )
     assert response.status_code == 401
@@ -229,7 +270,7 @@ def test_device_flow_refresh_token_works(
     response = private_client.post(
         "/auth/device/authorize",
         json={"user_code": user_code},
-        headers=org1_user.headers
+        headers=browser_headers(org1_user)
     )
     assert response.status_code == 200
 
@@ -258,3 +299,7 @@ def test_device_flow_refresh_token_works(
         headers={"Authorization": f"Bearer {new_tokens['access_token']}"}
     )
     assert response.status_code == 200
+
+
+def browser_headers(user):
+    return {**user.headers, "Cookie": f"refresh_token={user.refresh_token}"}

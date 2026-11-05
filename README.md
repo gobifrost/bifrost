@@ -20,6 +20,7 @@
 -   [Quick Start](#quick-start)
 -   [Documentation](#documentation)
 -   [Security & Verification](#security--verification)
+-   [Usage Reporting](#usage-reporting)
 -   [Contributing](#contributing)
 -   [License](#license)
 
@@ -84,6 +85,20 @@ AI tools like Claude Code, GitHub Copilot, and GPT Codex can help you:
 
 The platform handles the hard parts - OAuth flows, credential encryption, multi-tenant isolation, and API authentication - so you can focus on solving business problems. With the right guidance and AI assistance, you can build automations that would have required a full development team just a few years ago, **enabling limitless possibilities for your Integration Services business**.
 
+### Migrating From Rewst
+
+The Bifrost plugin includes [`bifrost:rewst-migration`](.claude/skills/bifrost-rewst-migration/SKILL.md)
+for extracting Rewst definitions, preparing a migration plan, and verifying
+integrations, workflows, forms, apps, and cutovers. Start with:
+
+> Use bifrost:rewst-migration to inspect my Rewst setup, collect the remaining
+> decisions up front, and prepare an execution-ready migration plan.
+
+The skill includes a private GraphQL extraction helper and a fresh plan template.
+Users provide their own authorized session and current read queries; credentials,
+exports, and migration progress stay outside the distributed package. Private API
+schemas can change, so extraction reports its actual coverage and missing data.
+
 ---
 
 ## Key Features
@@ -126,13 +141,34 @@ This starts:
 -   **API** (FastAPI) - proxied through client
 -   **PostgreSQL** - Database
 -   **Redis** - Caching and sessions
--   **RabbitMQ** - Message queue for async workflows
+-   **Scheduler and Worker** - Executors that run workflows and agent runs
 
 **Access the Platform:**
 
 -   **Client UI**: http://localhost:3000
 -   **API Docs (Swagger)**: http://localhost:3000/api/docs
 -   **API Docs (ReDoc)**: http://localhost:3000/api/redoc
+
+### Upgrading
+
+Bifrost no longer uses RabbitMQ. If your `docker-compose.yml` predates this,
+leave its `rabbitmq` service and `BIFROST_RABBITMQ_URL` settings in place for the
+first start after upgrading: the API moves any runs an earlier release left
+queued there into PostgreSQL, then disconnects. Once the API logs
+`Drained work queued by an earlier release`, clean up: delete the `rabbitmq` service, its
+`depends_on` entries, the `BIFROST_RABBITMQ_URL` lines and the `rabbitmq_data`
+volume from the compose file, remove `RABBITMQ_PASSWORD` from `.env`, then run:
+
+```bash
+docker compose up -d --remove-orphans
+docker volume rm bifrost_rabbitmq_data
+```
+
+The API records the drain once nothing is left queued, and later starts no
+longer connect (each start warns that `BIFROST_RABBITMQ_URL` is no longer used
+until it is removed). A rollback to a release that queues to RabbitMQ needs
+that record deleted, so the next upgrade drains again:
+`DELETE FROM system_configs WHERE category = 'runtime' AND key = 'legacy_broker_drained';`
 
 ---
 
@@ -146,7 +182,7 @@ The full stack runs in Docker with hot reload enabled for both API and client:
 ./debug.sh              # Start all services with hot reload
 ```
 
-This launches PostgreSQL, Redis, RabbitMQ, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
+This launches PostgreSQL, Redis, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
 
 Changes to files in `api/src/`, `api/shared/`, and `client/src/` automatically reload — **do not restart containers for code changes.**
 
@@ -207,16 +243,17 @@ For test authoring conventions, fixture layout, and debugging tips, see [`CLAUDE
                            │
                     ┌──────┴──────┐
                     ▼             ▼
-              ┌─────────┐   ┌──────────┐
-              │  Redis  │   │ RabbitMQ │
-              │ (Cache) │   │ (Queue)  │
-              └─────────┘   └──────────┘
+              ┌─────────┐   ┌─────────────┐
+              │  Redis  │   │  Executors  │
+              │ (Cache) │   │ (scheduler, │
+              └─────────┘   │   worker)   │
+                            └─────────────┘
 ```
 
 -   **FastAPI** - Async Python API with automatic OpenAPI documentation
 -   **PostgreSQL** - Primary data store with SQLAlchemy ORM
 -   **Redis** - Session storage and caching
--   **RabbitMQ** - Async workflow execution queue
+-   **Executors** - Scheduler and worker containers that claim workflow and agent runs from PostgreSQL
 -   **React** - Modern frontend with TypeScript
 
 ---
@@ -274,6 +311,15 @@ Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
 
 ---
 
+## Usage Reporting
+
+Production installations report a random installation ID, version, and daily
+workflow and agent run totals to `https://reports.gobifrost.com/usage` by default.
+Development, testing, and debug instances do not report. Set
+`BIFROST_USAGE_REPORTING_ENABLED=false` to exclude staging or cloned instances,
+or to permanently opt out. See [Usage Reporting](docs/runbooks/usage-reporting.md)
+for the complete payload, schedule, and privacy details.
+
 ## Contributing
 
 This is intended to be a community-driven project built to ensure the Integration Services industry has the tools it needs without vendor lock-in or extractive pricing. However for the time being, while I work out the kinks, contributions and issues will be closed. Stay tuned!
@@ -281,6 +327,8 @@ This is intended to be a community-driven project built to ensure the Integratio
 ## License
 
 This project is licensed under the AGPL License - see the [LICENSE](LICENSE) file for details.
+
+The [Cloudflare MIT notice](LICENSES/cloudflare-codemode-MIT.txt) covers the adapted [capability-search ranking code](api/src/services/capabilities/search.py) used by Automatic agents and MCP discovery. Its Cloudflare copyright attribution is retained from the upstream code and does not identify Cloudflare as the copyright owner of Bifrost as a whole.
 
 **Why AGPL?** To ensure this platform remains open and available to everyone. If you modify and deploy Bifrost, you must share those modifications with the community. This prevents proprietary forks and ensures improvements benefit everyone.
 

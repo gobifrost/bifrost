@@ -23,7 +23,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from src.services.mcp_server.tools.db import get_tool_db
 from src.services.file_storage import FileStorageService

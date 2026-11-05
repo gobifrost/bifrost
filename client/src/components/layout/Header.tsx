@@ -93,8 +93,8 @@ export function Header({
 	};
 
 	return (
-		<header className="sticky top-0 z-40 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
-			<div className="flex min-h-16 items-center px-1 py-2 sm:py-0 sm:px-4 lg:px-6">
+		<header className="sticky top-0 z-40 min-h-16 w-full border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+			<div className="flex min-h-[calc(4rem-1px)] items-center px-1 py-2 sm:py-0 sm:px-4 lg:px-6">
 				{/* Mobile Menu Button */}
 				<Button
 					variant="ghost"

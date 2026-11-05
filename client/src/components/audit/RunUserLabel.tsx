@@ -18,6 +18,16 @@ function actorName(entry: AuditLogEntry): string {
  * event targeted. Anyone else shows by email or name.
  */
 export function RunUserLabel({ entry }: { entry: AuditLogEntry }) {
+	if (entry.actor.impersonated_by_user_id) {
+		return (
+			<span className="inline-flex min-w-0 flex-col [overflow-wrap:anywhere]">
+				<span>{actorName(entry)}</span>
+				<span className="text-xs text-muted-foreground">
+					Impersonated by {entry.actor.impersonated_by_email || entry.actor.impersonated_by_name || entry.actor.impersonated_by_user_id}
+				</span>
+			</span>
+		);
+	}
 	const runUser = storedTrace(entry.details)?.steps.find(
 		(step) => step.key === "run_user",
 	);

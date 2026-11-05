@@ -433,6 +433,10 @@ class ManifestAgent(EntityCodec, BaseModel):
         in (rather than read from relationships) so the caller controls
         eager-loading and ordering — matching the pattern used for workflow/form roles.
         """
+        # A transient agent may have no profile foreign key and a ``lazy=raise``
+        # relationship.  Do not touch that relationship in the null case.  A
+        # configured profile remains an explicit caller-loading contract.
+        llm_profile = agent.llm_profile.name if agent.llm_profile_id is not None else None
         return cls(
             id=str(agent.id),
             name=agent.name,
@@ -450,7 +454,7 @@ class ManifestAgent(EntityCodec, BaseModel):
             knowledge_sources=list(agent.knowledge_sources) if agent.knowledge_sources else [],
             system_tools=list(agent.system_tools) if agent.system_tools else [],
             mcp_connection_ids=[str(m) for m in (mcp_connection_ids or [])],
-            llm_profile=agent.llm_profile.name if getattr(agent, "llm_profile", None) else None,
+            llm_profile=llm_profile,
             llm_max_tokens=agent.llm_max_tokens,
             max_iterations=agent.max_iterations,
             max_token_budget=agent.max_token_budget,
@@ -927,11 +931,13 @@ class ManifestFiles(BaseModel):
 
     locations: list[str] = Field(default_factory=list, **classify(FieldClass.CONTENT))
 
-    @field_validator("locations")
+    @field_validator("locations", mode="before")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
-        from shared.file_paths import validate_location_name
+        from bifrost.file_locations import validate_location_name
 
+        if not isinstance(value, list):
+            raise ValueError("locations must be a list")
         normalized: list[str] = []
         seen: set[str] = set()
         for raw in value:
@@ -980,8 +986,8 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
     id: str = Field(description="Custom Claim UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(description="Claim name, unique per org", **classify(FieldClass.CONTENT, match_key=True))
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
-    # Null = global (unattached workspace content). Install and git-sync
-    # manifests always carry an org UUID; only the workspace projection clears it.
+    # Null = global. Git sync preserves scope; Solution install stamps the
+    # destination organization rather than importing the source scope.
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
     type: Literal["list", "scalar"] = Field(default="list", description="list | scalar", **classify(FieldClass.CONTENT))
     query: ClaimQuery = Field(description="Source table query that resolves the claim", **classify(FieldClass.CONTENT))
@@ -993,7 +999,7 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
             id=str(claim.id),
             name=claim.name,
             description=claim.description,
-            organization_id=str(claim.organization_id),
+            organization_id=str(claim.organization_id) if claim.organization_id else None,
             type=claim.type,  # type: ignore[arg-type]
             query=ClaimQuery.model_validate(claim.query),
         )
@@ -1539,12 +1545,9 @@ def parse_manifest(yaml_str: str) -> Manifest:
     """Parse a YAML string into a Manifest object."""
     if not yaml_str or not yaml_str.strip():
         return Manifest()
+    from bifrost.definition_validation import read_workspace_manifest
 
-    data = yaml.safe_load(yaml_str)
-    if not data or not isinstance(data, dict):
-        return Manifest()
-
-    return Manifest(**data)
+    return read_workspace_manifest(MANIFEST_LEGACY_FILE, yaml_str)
 
 
 def serialize_manifest(manifest: Manifest) -> str:
@@ -1628,16 +1631,16 @@ def parse_manifest_dir(files: dict[str, str]) -> Manifest:
     Missing files are treated as empty.
     """
     merged: dict[str, object] = {}
+    from bifrost.definition_validation import read_workspace_manifest
+
     for key, filename in MANIFEST_FILES.items():
         content = files.get(filename, "")
         if not content or not content.strip():
             continue
-        data = yaml.safe_load(content)
-        if data and isinstance(data, dict):
-            if key == "files":
-                merged[key] = data
-            else:
-                merged[key] = data.get(key)
+        decoded = read_workspace_manifest(filename, content)
+        value = getattr(decoded, key)
+        if value:
+            merged[key] = value
     return Manifest(**merged)  # type: ignore[arg-type]
 
 

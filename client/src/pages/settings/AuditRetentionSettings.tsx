@@ -173,8 +173,9 @@ function storedSummary(info: AuditRetentionStatus["info"]): string {
 
 export function AuditRetentionSettings() {
 	const [status, setStatus] = useState<AuditRetentionStatus | null>(null);
+	// Shown (disabled) until the saved policy loads: the server defaults.
 	const [draft, setDraft] = useState<Draft>({
-		hotDays: "90",
+		hotDays: "30",
 		archiveDays: "365",
 		forever: false,
 	});

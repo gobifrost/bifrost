@@ -17,6 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.models.orm.agent_runs import AgentRun
+from src.services.ai_behavior_service import AGENT_EXECUTION_MODE_METADATA_KEY
 
 
 class TooManyMetadataKeys(ValueError):
@@ -34,24 +35,36 @@ async def set_run_metadata(
     *,
     session_factory: async_sessionmaker[AsyncSession],
 ) -> None:
-    """Replace a run's metadata dict.
+    """Replace agent-authored run metadata while retaining platform-owned fields.
 
     Validates the key-count cap and truncates over-long keys/values. Commits
     the change in its own session so the helper can be called from a tool
-    context that does not own the request session.
+    context that does not own the request session. The execution mode is
+    selected by the platform before the run begins, so an agent may neither
+    replace nor remove it.
     """
-    if len(metadata) > MAX_KEYS:
-        raise TooManyMetadataKeys(
-            f"Maximum {MAX_KEYS} metadata keys (got {len(metadata)})"
-        )
-    cleaned = {
-        str(k)[:MAX_KEY_LEN]: str(v)[:MAX_VALUE_LEN]
-        for k, v in metadata.items()
-    }
     async with session_factory() as db:
         run = (
-            await db.execute(select(AgentRun).where(AgentRun.id == run_id))
+            await db.execute(
+                select(AgentRun).where(AgentRun.id == run_id).with_for_update(of=AgentRun)
+            )
         ).scalar_one()
+        persisted_mode = (run.run_metadata or {}).get(
+            AGENT_EXECUTION_MODE_METADATA_KEY
+        )
+        has_persisted_mode = persisted_mode in {"delegated", "automatic"}
+        cleaned = {
+            key: str(value)[:MAX_VALUE_LEN]
+            for raw_key, value in metadata.items()
+            if (key := str(raw_key)[:MAX_KEY_LEN]) != AGENT_EXECUTION_MODE_METADATA_KEY
+        }
+        max_agent_keys = MAX_KEYS - int(has_persisted_mode)
+        if len(cleaned) > max_agent_keys:
+            raise TooManyMetadataKeys(
+                f"Maximum {max_agent_keys} agent metadata keys (got {len(cleaned)})"
+            )
         # Python attribute; DB column is ``metadata``.
+        if has_persisted_mode:
+            cleaned[AGENT_EXECUTION_MODE_METADATA_KEY] = persisted_mode
         run.run_metadata = cleaned
         await db.commit()

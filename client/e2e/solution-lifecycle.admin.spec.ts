@@ -1,5 +1,4 @@
 import { Buffer } from "node:buffer";
-import { type APIRequestContext } from "@playwright/test";
 import { test as base, expect, type AuthedApi } from "./fixtures/api-fixture";
 
 const CRC_TABLE = Array.from({ length: 256 }, (_, n) => {
@@ -86,14 +85,12 @@ function minimalSolutionZip(slug: string): Buffer {
 
 async function deploySolution(
 	api: AuthedApi,
-	request: APIRequestContext,
 	solutionId: string,
 	slug: string,
 ) {
-	const response = await request.post(
+	const response = await api.post(
 		`/api/solutions/${solutionId}/deploy?force=true`,
 		{
-			headers: await api.csrfHeader(),
 			multipart: {
 				file: {
 					name: `${slug}.zip`,
@@ -166,7 +163,7 @@ const test = base.extend<{
 }>({
 	solutionStatus: ["active", { option: true }],
 	solution: [
-		async ({ api, request, solutionStatus }, provideSolution) => {
+		async ({ api, solutionStatus }, provideSolution) => {
 			const slug = `e2e-lifecycle-${crypto.randomUUID()}`;
 			const solutionName = slug.toUpperCase();
 			const response = await api.post("/api/solutions", {
@@ -182,7 +179,7 @@ const test = base.extend<{
 				id: string;
 			};
 			try {
-				await deploySolution(api, request, solutionId, slug);
+				await deploySolution(api, solutionId, slug);
 				await expectPersistedStatus(api, solutionId, "active");
 				if (solutionStatus === "inactive") {
 					const uninstall = await api.post(

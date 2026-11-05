@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import { AccessLevelSelect } from "@/components/access/AccessLevelSelect";
 import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
@@ -66,6 +67,7 @@ export function EntityAssignmentPanel({
 	onOrganization,
 	onAccess,
 }: EntityAssignmentPanelProps) {
+	const getOrgName = useOrganizationName(organizations);
 	const [draft, setDraft] = useState<ChangeDraft>({
 		organizationId: NO_CHANGE,
 		accessLevel: NO_CHANGE,
@@ -357,16 +359,16 @@ export function EntityAssignmentPanel({
 								</div>
 								<ChangeLine
 									label="Scope"
-									current={scopeName(
+									current={getOrgName(
 										entity.organizationId,
-										organizations,
+										"Unknown organization",
 									)}
 									proposed={
 										!organizationChanges(entity, draft)
 											? null
-											: scopeName(
+											: getOrgName(
 													draft.organizationId,
-													organizations,
+													"Unknown organization",
 												)
 									}
 								/>
@@ -464,17 +466,6 @@ function ChangeLine({
 			/>
 			<span className="font-medium text-primary">{proposed}</span>
 		</p>
-	);
-}
-
-function scopeName(
-	organizationId: string | null,
-	organizations: Organization[],
-) {
-	if (!organizationId) return "Global";
-	return (
-		organizations.find((organization) => organization.id === organizationId)
-			?.name ?? "Unknown organization"
 	);
 }
 

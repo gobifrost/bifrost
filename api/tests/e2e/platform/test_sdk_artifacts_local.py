@@ -6,10 +6,8 @@ deterministic renderer (``create_text``) — against the same values the
 external HTTP endpoints serve, proving parity (exact bytes, versioned refs,
 workspace scope, signed-URL semantics, error mapping) end to end:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated calls rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the same artifacts are then verified over external HTTP
   (``/api/sdk/artifacts*``): list, content bytes, and download URL shape.
 """
@@ -126,10 +124,8 @@ class TestSdkArtifactsLocalE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The engine injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["back_small_ok"] is True
         assert out["back_big_ok"] is True
         assert out["back_dict_ok"] is True
@@ -148,7 +144,7 @@ class TestSdkArtifactsLocalE2E:
         assert read.status_code == 200, read.text
         assert read.content == b"# Small live\n\nLocal transport write.\n"
 
-        # Renderer bytes written over the socket are identical over HTTP.
+        # Renderer bytes written through scoped shared API HTTP are identical externally.
         text = e2e_client.get(
             f"/api/sdk/artifacts/{out['text_id']}/content",
             headers=platform_admin.headers,

@@ -64,4 +64,18 @@ describe("ManualEntityIdInput", () => {
 		);
 		expect(input).toHaveValue("later");
 	});
+
+	it("renders read-only when mapping changes are unavailable", () => {
+		renderWithProviders(
+			<ManualEntityIdInput
+				orgId="org"
+				value="customer-1"
+				onCommit={vi.fn()}
+				disabled
+			/>,
+		);
+		expect(
+			screen.getByRole("textbox", { name: "External entity ID" }),
+		).toBeDisabled();
+	});
 });

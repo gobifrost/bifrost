@@ -1,0 +1,17 @@
+{
+  "key": "pr:1186",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1186",
+      "https://github.com/gobifrost/bifrost/blob/20c9db7be9fdbdd617ecd338adba11eb4657c292/docs/product-updates-authoring.md",
+      "https://github.com/modelcontextprotocol/python-sdk/blob/v2.3.0/docs/migration.md",
+      "https://github.com/gobifrost/bifrost/pull/1186/files",
+      "https://github.com/gobifrost/bifrost/actions/runs/41753856837/job/126325174682",
+      "https://github.com/gobifrost/bifrost/actions/runs/41755309546/job/126330895184"
+    ]
+  },
+  "reason": "Internal MCP SDK upgrade and Bifrost compatibility repairs. Existing customer tool names, workflow schemas, authentication, configuration, and integration result formats are preserved; no customer action or in-app announcement is required. Dependency-only automation declines source repairs on the trusted base; this change fixes its manual-review routing and retains the protected merge checks."
+}

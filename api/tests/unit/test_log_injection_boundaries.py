@@ -141,24 +141,19 @@ async def test_sdk_scanner_sanitizes_reference_and_path(caplog):
 
 @pytest.mark.asyncio
 async def test_agent_run_enqueue_sanitizes_trigger_in_log(monkeypatch, caplog):
+    from contextlib import asynccontextmanager
+
     from src.services.execution import agent_run_service
 
     session = AsyncMock()
-    session_context = MagicMock()
-    session_context.__aenter__ = AsyncMock(return_value=session)
-    session_context.__aexit__ = AsyncMock(return_value=False)
-    session_factory = MagicMock(return_value=session_context)
-    monkeypatch.setattr(
-        agent_run_service,
-        "get_session_factory",
-        MagicMock(return_value=session_factory),
-    )
+    session.add = MagicMock()
 
-    redis_context = MagicMock()
-    redis_context.__aenter__ = AsyncMock(return_value=AsyncMock())
-    redis_context.__aexit__ = AsyncMock(return_value=False)
-    monkeypatch.setattr(agent_run_service, "get_redis", lambda: redis_context)
-    monkeypatch.setattr(agent_run_service, "publish_message", AsyncMock())
+    @asynccontextmanager
+    async def accept_context():
+        yield session
+
+    monkeypatch.setattr(agent_run_service, "get_dispatch_db_context", accept_context)
+    monkeypatch.setattr(agent_run_service, "hand_off_agent_run", AsyncMock(return_value=True))
 
     with caplog.at_level(logging.INFO, logger=agent_run_service.__name__):
         await agent_run_service.enqueue_agent_run(
@@ -203,20 +198,3 @@ async def test_role_cache_sanitizes_user_id_in_invalidation_log(monkeypatch, cap
     message = caplog.messages[-1]
     _assert_sanitized(message)
     assert "user\\nFORGED" in message
-
-
-@pytest.mark.asyncio
-async def test_pending_execution_miss_sanitizes_execution_id_in_log(caplog):
-    from src.core import redis_client
-
-    client = redis_client.RedisClient()
-    client._redis = AsyncMock()
-    client._redis.get.return_value = None
-
-    with caplog.at_level(logging.WARNING, logger=redis_client.__name__):
-        result = await client.get_pending_execution("run\nFORGED\x1b[31m")
-
-    assert result is None
-    message = caplog.messages[-1]
-    _assert_sanitized(message)
-    assert "run\\nFORGED" in message

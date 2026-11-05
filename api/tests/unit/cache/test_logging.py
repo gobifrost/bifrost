@@ -11,15 +11,35 @@ from uuid import uuid4
 
 import pytest
 
+from bifrost import _logging
 from bifrost._logging import (
+    LogFlushReceipt,
     append_log_to_stream,
     publish_log_to_pubsub,
     log_and_broadcast,
     append_log_to_stream_async,
+    acknowledge_staged_logs,
     read_logs_from_stream,
+    recover_terminal_execution_logs,
     flush_logs_to_postgres,
     close_thread_redis,
 )
+from src.core.cache.keys import TTL_EXECUTION_LOGS
+
+
+def _sync_log_pipeline(redis: MagicMock, entry_id: str) -> MagicMock:
+    pipeline = MagicMock()
+    pipeline.execute.return_value = [entry_id, True]
+    redis.pipeline.return_value.__enter__.return_value = pipeline
+    return pipeline
+
+
+def _async_log_pipeline(redis: AsyncMock, entry_id: str) -> MagicMock:
+    pipeline = MagicMock()
+    pipeline.execute = AsyncMock(return_value=[entry_id, True])
+    redis.pipeline = MagicMock()
+    redis.pipeline.return_value.__aenter__.return_value = pipeline
+    return pipeline
 
 
 class TestAppendLogToStream:
@@ -31,7 +51,7 @@ class TestAppendLogToStream:
 
         with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
             mock_redis = MagicMock()
-            mock_redis.xadd.return_value = "1234567890-0"
+            pipeline = _sync_log_pipeline(mock_redis, "1234567890-0")
             mock_get_redis.return_value = mock_redis
 
             entry_id = append_log_to_stream(
@@ -42,10 +62,15 @@ class TestAppendLogToStream:
             )
 
             assert entry_id == "1234567890-0"
-            mock_redis.xadd.assert_called_once()
+            pipeline.xadd.assert_called_once()
+            pipeline.execute.assert_called_once_with(raise_on_error=False)
+            pipeline.expire.assert_called_once_with(
+                f"bifrost:logs:{exec_id}", TTL_EXECUTION_LOGS
+            )
+            mock_redis.delete.assert_not_called()
 
             # Verify the call arguments
-            call_args = mock_redis.xadd.call_args
+            call_args = pipeline.xadd.call_args
             stream_key = call_args[0][0]
             entry = call_args[0][1]
 
@@ -61,7 +86,7 @@ class TestAppendLogToStream:
 
         with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
             mock_redis = MagicMock()
-            mock_redis.xadd.return_value = "1234567890-0"
+            pipeline = _sync_log_pipeline(mock_redis, "1234567890-0")
             mock_get_redis.return_value = mock_redis
 
             entry_id = append_log_to_stream(
@@ -71,7 +96,7 @@ class TestAppendLogToStream:
             )
 
             assert entry_id is not None
-            call_args = mock_redis.xadd.call_args
+            call_args = pipeline.xadd.call_args
             entry = call_args[0][1]
             assert entry["execution_id"] == str(exec_uuid)
 
@@ -79,7 +104,7 @@ class TestAppendLogToStream:
         """Normalizes log level to uppercase."""
         with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
             mock_redis = MagicMock()
-            mock_redis.xadd.return_value = "1234567890-0"
+            pipeline = _sync_log_pipeline(mock_redis, "1234567890-0")
             mock_get_redis.return_value = mock_redis
 
             append_log_to_stream(
@@ -88,7 +113,7 @@ class TestAppendLogToStream:
                 message="Warning message",
             )
 
-            call_args = mock_redis.xadd.call_args
+            call_args = pipeline.xadd.call_args
             entry = call_args[0][1]
             assert entry["level"] == "WARNING"
 
@@ -96,7 +121,7 @@ class TestAppendLogToStream:
         """Handles None metadata by serializing to empty object."""
         with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
             mock_redis = MagicMock()
-            mock_redis.xadd.return_value = "1234567890-0"
+            pipeline = _sync_log_pipeline(mock_redis, "1234567890-0")
             mock_get_redis.return_value = mock_redis
 
             append_log_to_stream(
@@ -106,7 +131,7 @@ class TestAppendLogToStream:
                 metadata=None,
             )
 
-            call_args = mock_redis.xadd.call_args
+            call_args = pipeline.xadd.call_args
             entry = call_args[0][1]
             assert entry["metadata"] == "{}"
 
@@ -114,7 +139,8 @@ class TestAppendLogToStream:
         """Returns None and resets connection on error."""
         with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
             mock_redis = MagicMock()
-            mock_redis.xadd.side_effect = Exception("Connection failed")
+            pipeline = _sync_log_pipeline(mock_redis, "unused")
+            pipeline.execute.side_effect = Exception("Connection failed")
             mock_get_redis.return_value = mock_redis
 
             with patch("bifrost._logging._local") as mock_local:
@@ -127,6 +153,37 @@ class TestAppendLogToStream:
                 )
 
                 assert entry_id is None
+
+    @pytest.mark.parametrize("cleanup_result", [0, 1])
+    @pytest.mark.parametrize(
+        "expiry_result", [False, RuntimeError("expiry failed")]
+    )
+    def test_append_log_to_stream_conditionally_deletes_unbounded_stream(
+        self, cleanup_result, expiry_result
+    ):
+        """Expiry recovery atomically preserves bounded or repaired streams."""
+        exec_id = "exec-123"
+
+        with patch("bifrost._logging._get_sync_redis") as mock_get_redis:
+            mock_redis = MagicMock()
+            mock_redis.eval.return_value = cleanup_result
+            pipeline = _sync_log_pipeline(mock_redis, "1234567890-0")
+            pipeline.execute.return_value = ["1234567890-0", expiry_result]
+            mock_get_redis.return_value = mock_redis
+
+            entry_id = append_log_to_stream(
+                execution_id=exec_id,
+                level="INFO",
+                message="Message",
+            )
+
+            assert entry_id is None
+            mock_redis.eval.assert_called_once_with(
+                _logging._DELETE_UNBOUNDED_STREAM_SCRIPT,
+                1,
+                f"bifrost:logs:{exec_id}",
+            )
+            mock_redis.delete.assert_not_called()
 
 
 class TestPublishLogToPubsub:
@@ -244,7 +301,7 @@ class TestAsyncLogFunctions:
 
         with patch("src.core.cache.get_redis") as mock_get_redis:
             mock_redis = AsyncMock()
-            mock_redis.xadd.return_value = "async-entry-id"
+            pipeline = _async_log_pipeline(mock_redis, "async-entry-id")
             mock_get_redis.return_value.__aenter__.return_value = mock_redis
 
             entry_id = await append_log_to_stream_async(
@@ -254,13 +311,19 @@ class TestAsyncLogFunctions:
             )
 
             assert entry_id == "async-entry-id"
+            pipeline.execute.assert_awaited_once_with(raise_on_error=False)
+            pipeline.expire.assert_called_once_with(
+                f"bifrost:logs:{exec_id}", TTL_EXECUTION_LOGS
+            )
+            mock_redis.delete.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_append_log_to_stream_async_handles_error(self):
         """Async version returns None on error."""
         with patch("src.core.cache.get_redis") as mock_get_redis:
             mock_redis = AsyncMock()
-            mock_redis.xadd.side_effect = Exception("Async error")
+            pipeline = _async_log_pipeline(mock_redis, "unused")
+            pipeline.execute.side_effect = Exception("Async error")
             mock_get_redis.return_value.__aenter__.return_value = mock_redis
 
             entry_id = await append_log_to_stream_async(
@@ -270,6 +333,60 @@ class TestAsyncLogFunctions:
             )
 
             assert entry_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("cleanup_result", [0, 1])
+    @pytest.mark.parametrize(
+        "expiry_result", [False, RuntimeError("expiry failed")]
+    )
+    async def test_append_log_to_stream_async_conditionally_deletes_unbounded_stream(
+        self, cleanup_result, expiry_result
+    ):
+        """Async expiry recovery preserves bounded or concurrently repaired streams."""
+        exec_id = "exec-123"
+
+        with patch("src.core.cache.get_redis") as mock_get_redis:
+            mock_redis = AsyncMock()
+            mock_redis.eval.return_value = cleanup_result
+            pipeline = _async_log_pipeline(mock_redis, "async-entry-id")
+            pipeline.execute.return_value = ["async-entry-id", expiry_result]
+            mock_get_redis.return_value.__aenter__.return_value = mock_redis
+
+            entry_id = await append_log_to_stream_async(
+                execution_id=exec_id,
+                level="INFO",
+                message="Message",
+            )
+
+            assert entry_id is None
+            mock_redis.eval.assert_awaited_once_with(
+                _logging._DELETE_UNBOUNDED_STREAM_SCRIPT,
+                1,
+                f"bifrost:logs:{exec_id}",
+            )
+            mock_redis.delete.assert_not_awaited()
+
+
+class TestPersistenceBoundary:
+    """Execution children must not acquire Redis or database persistence paths."""
+
+    @pytest.mark.asyncio
+    async def test_persistence_and_recovery_entrypoints_require_server_process(self):
+        receipt = LogFlushReceipt(
+            execution_id=str(uuid4()),
+            stream_key="bifrost:logs:test",
+            entry_ids=("1-0",),
+        )
+        with patch(
+            "bifrost._logging._require_server_process",
+            side_effect=RuntimeError("Direct log storage access is unavailable in execution children"),
+        ):
+            with pytest.raises(RuntimeError, match="execution children"):
+                await acknowledge_staged_logs(receipt)
+            with pytest.raises(RuntimeError, match="execution children"):
+                await flush_logs_to_postgres(receipt.execution_id)
+            with pytest.raises(RuntimeError, match="execution children"):
+                await recover_terminal_execution_logs()
 
     @pytest.mark.asyncio
     async def test_read_logs_from_stream_success(self):
@@ -337,39 +454,22 @@ class TestFlushLogsToPostgres:
 
     @pytest.mark.asyncio
     async def test_flush_logs_persists_entries(self):
-        """Successfully persists entries and clears stream."""
+        """The owned wrapper commits before it acknowledges its receipt."""
         exec_id = str(uuid4())
+        receipt = LogFlushReceipt(exec_id, f"bifrost:logs:{exec_id}", ("1234-0", "1234-1"))
+        mock_db = MagicMock()
+        mock_db.commit = AsyncMock()
+        with (
+            patch("src.core.database.get_session_factory") as mock_session_factory,
+            patch("bifrost._logging.stage_logs_to_postgres", AsyncMock(return_value=receipt)),
+            patch("bifrost._logging.acknowledge_staged_logs", new_callable=AsyncMock) as acknowledge,
+        ):
+            mock_session_factory.return_value.return_value.__aenter__.return_value = mock_db
+            count = await flush_logs_to_postgres(exec_id)
 
-        with patch("src.core.cache.get_redis") as mock_get_redis:
-            mock_redis = AsyncMock()
-            mock_redis.xrange.return_value = [
-                ("1234-0", {
-                    "level": "INFO",
-                    "message": "Log 1",
-                    "metadata": "{}",
-                    "timestamp": "2025-01-01T00:00:00",
-                }),
-                ("1234-1", {
-                    "level": "INFO",
-                    "message": "Log 2",
-                    "metadata": "{}",
-                    "timestamp": "2025-01-01T00:00:01",
-                }),
-            ]
-            mock_get_redis.return_value.__aenter__.return_value = mock_redis
-
-            # Patch at the location where it's used, not where it's defined
-            with patch("src.core.database.get_session_factory") as mock_session_factory:
-                mock_db = MagicMock()
-                mock_db.commit = AsyncMock()  # commit is async
-                mock_session_factory.return_value.return_value.__aenter__.return_value = mock_db
-
-                count = await flush_logs_to_postgres(exec_id)
-
-                assert count == 2
-                mock_db.add_all.assert_called_once()
-                mock_db.commit.assert_called_once()
-                mock_redis.delete.assert_called_once()
+        assert count == 2
+        mock_db.commit.assert_awaited_once()
+        acknowledge.assert_awaited_once_with(receipt)
 
 
 class TestCloseThreadRedis:

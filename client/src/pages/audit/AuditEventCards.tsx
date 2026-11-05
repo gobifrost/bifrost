@@ -1,3 +1,4 @@
+import { RunUserLabel } from "@/components/audit/RunUserLabel";
 import type { AuditLogEntry } from "@/hooks/useAuditLog";
 import { AuditOutcome } from "./AuditOutcome";
 
@@ -40,15 +41,11 @@ export function AuditEventCards({
 						{new Date(entry.timestamp).toLocaleString()}
 					</time>
 					<dl className="mt-4 space-y-3 text-sm">
+						<div>
+							<dt className="text-xs text-muted-foreground">Actor</dt>
+							<dd className="mt-1"><RunUserLabel entry={entry} /></dd>
+						</div>
 						{[
-							[
-								"Actor",
-								entry.actor.user_email ||
-									entry.actor.user_name ||
-									(entry.source !== "http"
-										? `(${entry.source})`
-										: "(unauthenticated)"),
-							],
 							[
 								"Resource",
 								entry.resource_type

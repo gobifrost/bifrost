@@ -11,9 +11,8 @@ from src.core.database import get_db_context
 from src.core.pubsub import publish_app_published
 from src.jobs.platform.base import (
     PlatformJobContext,
-    PlatformJobDefinition,
     PlatformJobFailure,
-    PlatformJobPolicy,
+    define_platform_job,
 )
 from src.models.orm.applications import Application
 from src.repositories.applications import ApplicationRepository
@@ -139,16 +138,6 @@ async def run_application_publish(
         ) from exc
 
 
-APPLICATION_PUBLISH_DEFINITION = PlatformJobDefinition(
-    job_type=APPLICATION_PUBLISH_JOB_TYPE,
-    payload_version=1,
-    payload_model=ApplicationPublishPayload,
-    handler=run_application_publish,
-    policy=PlatformJobPolicy(
-        timeout_seconds=20 * 60,
-        max_attempts=2,
-        max_concurrency=1,
-        retry_on_runner_loss=True,
-        min_memory_headroom_mb=256,
-    ),
+APPLICATION_PUBLISH_DEFINITION = define_platform_job(
+    APPLICATION_PUBLISH_JOB_TYPE, ApplicationPublishPayload, run_application_publish
 )

@@ -1,0 +1,16 @@
+{
+  "key": "pr:1240",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1240",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; functional head 751b3b115ec77b5771cf6a8debe75cd0f196fa80.",
+      "Codex reviewed this routine-fix classification under Thomas Bray's explicit publication authorization. This is contributor editorial review, not maintainer approval, merge approval or a security attestation.",
+      "The existing IfMatch argument is now forwarded and signed for PUT. Native Linux validation passed all 37 S3 transport unit tests, full API Ruff and hash-pinned Pyright. Hosted checks and normal maintainer review remain required.",
+      "Maintainer scoped repair and protected-merge approval: native request async:call_e05fb62d15d54682a9882efb29a3fc06, question 0, resolved 2026-11-04T17:02:31.700Z. Visibility reviewed under Jack\u2019s standing routine-fix omission policy; no security disclosure or breaking change identified."
+    ]
+  },
+  "reason": "Routine storage correctness repair; no new customer-facing capability or required customer action."
+}

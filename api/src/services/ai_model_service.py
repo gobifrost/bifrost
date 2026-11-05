@@ -13,7 +13,7 @@ from uuid import UUID
 from cryptography.fernet import Fernet
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import joinedload, selectinload, with_expression
 
 from src.config import get_settings
 from src.models.contracts.ai_models import AIModelAssignmentKey, AIProviderKind
@@ -45,6 +45,19 @@ if TYPE_CHECKING:
     from src.services.provider_catalog_service import ProviderTestResult
 
 logger = logging.getLogger(__name__)
+
+_CONNECTION_PROFILE_COUNT = (
+    select(func.count(AIModelProfile.id))
+    .where(AIModelProfile.connection_id == AIProviderConnection.id)
+    .correlate_except(AIModelProfile)
+    .scalar_subquery()
+)
+_PROFILE_AGENT_COUNT = (
+    select(func.count(Agent.id))
+    .where(Agent.llm_profile_id == AIModelProfile.id)
+    .correlate_except(Agent)
+    .scalar_subquery()
+)
 
 OPENROUTER_DEFAULT_ENDPOINT = "https://openrouter.ai/api/v1"
 PROVIDER_DEFAULT_ENDPOINTS: dict[AIProviderKind, str] = {
@@ -334,7 +347,7 @@ class AIModelService:
                     },
                 )
             next_id = current.failover_profile_id
-            current = await self.get_profile(next_id) if next_id is not None else None
+            current = await self._resolve_head_profile(profile_id=next_id) if next_id is not None else None
         if not configs and errors:
             raise errors[0]
         return configs
@@ -356,7 +369,6 @@ class AIModelService:
                         select(AIModelProfile)
                         .options(
                             joinedload(AIModelProfile.connection),
-                            selectinload(AIModelProfile.failover_profile),
                         )
                         .where(AIModelProfile.id == profile_id)
                     )
@@ -376,7 +388,6 @@ class AIModelService:
                         select(AIModelProfile)
                         .options(
                             joinedload(AIModelProfile.connection),
-                            selectinload(AIModelProfile.failover_profile),
                         )
                         .where(
                             func.lower(AIModelProfile.name)
@@ -399,9 +410,6 @@ class AIModelService:
                         .options(
                             joinedload(AIModelAssignment.profile).joinedload(
                                 AIModelProfile.connection
-                            ),
-                            joinedload(AIModelAssignment.profile).selectinload(
-                                AIModelProfile.failover_profile
                             ),
                         )
                         .where(AIModelAssignment.assignment_key == assignment_key)
@@ -505,8 +513,6 @@ class AIModelService:
                     select(AIModelProfile)
                     .options(
                         joinedload(AIModelProfile.connection),
-                        selectinload(AIModelProfile.failover_profile),
-                        selectinload(AIModelProfile.assignments),
                     )
                     .where(AIModelProfile.enabled_for_chat.is_(True))
                     .order_by(func.lower(AIModelProfile.name))
@@ -519,7 +525,7 @@ class AIModelService:
         assignment = (
             (
                 await self.session.execute(
-                    select(AIModelAssignment).where(
+                    select(AIModelAssignment.profile_id).where(
                         AIModelAssignment.assignment_key == "chat_default"
                     )
                 )
@@ -527,7 +533,7 @@ class AIModelService:
             .scalars()
             .first()
         )
-        return profiles, assignment.profile_id if assignment else None
+        return profiles, assignment
 
     async def profile_capabilities(self, profile: AIModelProfile) -> ModelCapabilities:
         """Chat capabilities for a profile.
@@ -565,7 +571,7 @@ class AIModelService:
     ) -> tuple[AIModelProfile, LLMConfig, ModelCapabilities]:
         """Resolve an explicit Chat profile UUID or the default Chat assignment."""
         if profile_id is not None:
-            profile = await self.get_profile(profile_id)
+            profile = await self._resolve_head_profile(profile_id=profile_id)
         else:
             assignment = (
                 (
@@ -574,12 +580,6 @@ class AIModelService:
                         .options(
                             joinedload(AIModelAssignment.profile).joinedload(
                                 AIModelProfile.connection
-                            ),
-                            joinedload(AIModelAssignment.profile).selectinload(
-                                AIModelProfile.failover_profile
-                            ),
-                            joinedload(AIModelAssignment.profile).selectinload(
-                                AIModelProfile.assignments
                             ),
                         )
                         .where(AIModelAssignment.assignment_key == "chat_default")
@@ -599,14 +599,18 @@ class AIModelService:
         if not profile.enabled_for_chat:
             raise ValueError(f"Model profile '{profile.name}' is not enabled for Chat.")
 
-        config = await self.resolve_config(profile_id=profile.id)
+        config = await self._config_for_profile(profile)
         return profile, config, await self.profile_capabilities(profile)
 
     async def list_connections(self) -> list[AIProviderConnection]:
         return list(
             (
                 await self.session.execute(
-                    select(AIProviderConnection).order_by(
+                    select(AIProviderConnection)
+                    .options(
+                        with_expression(AIProviderConnection.profile_count, _CONNECTION_PROFILE_COUNT)
+                    )
+                    .order_by(
                         func.lower(AIProviderConnection.name)
                     )
                 )
@@ -621,7 +625,9 @@ class AIModelService:
             (
                 await self.session.execute(
                     select(AIProviderConnection)
-                    .options(selectinload(AIProviderConnection.profiles))
+                    .options(
+                        with_expression(AIProviderConnection.profile_count, _CONNECTION_PROFILE_COUNT)
+                    )
                     .where(AIProviderConnection.id == connection_id)
                 )
             )
@@ -742,7 +748,13 @@ class AIModelService:
             (
                 await self.session.execute(
                     select(AIModelProfile)
-                    .options(selectinload(AIModelProfile.failover_profile))
+                    .options(
+                        selectinload(AIModelProfile.failover_profile),
+                        selectinload(AIModelProfile.assignments)
+                        .load_only(AIModelAssignment.assignment_key, raiseload=True)
+                        .raiseload("*"),
+                        with_expression(AIModelProfile.referenced_agent_count, _PROFILE_AGENT_COUNT),
+                    )
                     .order_by(func.lower(AIModelProfile.name))
                 )
             )
@@ -759,7 +771,10 @@ class AIModelService:
                     .options(
                         joinedload(AIModelProfile.connection),
                         selectinload(AIModelProfile.failover_profile),
-                        selectinload(AIModelProfile.assignments),
+                        selectinload(AIModelProfile.assignments)
+                        .load_only(AIModelAssignment.assignment_key, raiseload=True)
+                        .raiseload("*"),
+                        with_expression(AIModelProfile.referenced_agent_count, _PROFILE_AGENT_COUNT),
                     )
                     .where(AIModelProfile.id == profile_id)
                     .execution_options(populate_existing=True)
@@ -908,7 +923,7 @@ class AIModelService:
         profile = await self.get_profile(profile_id)
         if await self._profile_has_any_assignment(profile.id):
             raise ValueError("Model profile is used by assignments")
-        if profile.agents:
+        if profile.referenced_agent_count:
             raise ValueError("Model profile is used by agents")
         fallback_users = await self._failover_dependents(profile.id)
         if fallback_users:
@@ -1049,9 +1064,12 @@ class AIModelService:
                         joinedload(AIModelAssignment.profile).joinedload(
                             AIModelProfile.failover_profile
                         ),
-                        joinedload(AIModelAssignment.profile).selectinload(
-                            AIModelProfile.assignments
-                        ),
+                        joinedload(AIModelAssignment.profile)
+                        .selectinload(AIModelProfile.assignments)
+                        .load_only(AIModelAssignment.assignment_key, raiseload=True)
+                        .raiseload("*"),
+                        joinedload(AIModelAssignment.profile)
+                        .with_expression(AIModelProfile.referenced_agent_count, _PROFILE_AGENT_COUNT),
                     )
                     .order_by(AIModelAssignment.assignment_key)
                 )

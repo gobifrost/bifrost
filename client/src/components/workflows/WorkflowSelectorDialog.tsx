@@ -38,12 +38,11 @@ import { cn } from "@/lib/utils";
 import { $api } from "@/lib/api-client";
 import { fetchWorkflowRolesBatch } from "@/hooks/useWorkflowRoles";
 import { useOrganizations } from "@/hooks/useOrganizations";
+import { useOrganizationName } from "@/hooks/useOrganizationName";
 import type { components } from "@/lib/v1";
 
 type WorkflowMetadata = components["schemas"]["WorkflowMetadata"];
 type ExecutableType = components["schemas"]["ExecutableType"];
-type Organization = components["schemas"]["OrganizationPublic"];
-
 /**
  * Role representation for the dialog
  */
@@ -266,15 +265,13 @@ export function WorkflowSelectorDialog({
 	// Fetch organizations for name lookup
 	const { data: organizations } = useOrganizations({});
 
+	const resolveOrganizationName = useOrganizationName(organizations);
 	const getOrgName = useCallback(
 		(orgId: string | null | undefined): string | null => {
 			if (!orgId) return null;
-			const org = organizations?.find(
-				(o: Organization) => o.id === orgId,
-			);
-			return org?.name || orgId;
+			return resolveOrganizationName(orgId);
 		},
-		[organizations],
+		[resolveOrganizationName],
 	);
 
 	const isLoading = isLoadingWorkflows || isLoadingRoles;

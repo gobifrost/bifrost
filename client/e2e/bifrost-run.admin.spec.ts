@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 test.describe("Bifrost Agent", () => {
 	test("downloads the instance Agent Plugin from the header", async ({

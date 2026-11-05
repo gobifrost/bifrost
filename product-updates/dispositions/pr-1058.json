@@ -1,0 +1,13 @@
+{
+  "key": "pr:1058",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Consolidates and activates the existing approved Automatic feature announcement; release prose and verified source metadata only, no additional runtime behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1058",
+      "Maintainer explicitly approved the revised announcement and requested shipment with “Send it” on 2026-10-24. The original Automatic feature UUID is retained; approved bundle and release rendering verified."
+    ]
+  }
+}

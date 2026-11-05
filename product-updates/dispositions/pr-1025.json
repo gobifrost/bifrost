@@ -1,0 +1,14 @@
+{
+  "key": "pr:1025",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Activates already reviewed Product Updates and isolates manually seeded job-status test fixtures from lease recovery; no additional customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1025",
+      "Verified merged source PR #1024 and prepared its existing approved entry in the image bundle.",
+      "Queue failure traced to a running fixture with no lease; use the canonical lease duration, clean up committed rows, and verify live-lease recovery deterministically."
+    ]
+  }
+}

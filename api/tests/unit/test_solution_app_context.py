@@ -24,7 +24,11 @@ from src.services.solution_scope import (
 )
 
 
-def _caller(org_id: UUID) -> Caller:
+def _caller(
+    org_id: UUID,
+    *,
+    permissions: frozenset[str] = frozenset({"apps.readbasic"}),
+) -> Caller:
     principal = UserPrincipal(
         user_id=uuid4(),
         email="person@example.test",
@@ -37,7 +41,7 @@ def _caller(org_id: UUID) -> Caller:
             home_organization_id=org_id,
             base_role_id=uuid4(),
             is_external=False,
-            base_permissions=frozenset(),
+            base_permissions=permissions,
         ),
     )
 
@@ -110,14 +114,25 @@ async def test_sealed_solution_accepts_visible_human_own_app_context(
     ) == solution.id
 
 
-@pytest.mark.parametrize("case", ["mismatched", "unreadable", "inactive"])
+@pytest.mark.parametrize(
+    "case", ["mismatched", "unreadable", "inactive", "missing_basic"]
+)
 async def test_human_app_context_rejects_nonmatching_unreadable_or_inactive_app(
     db_session, current_caller, case: str
 ) -> None:
     org, solution, app = await _install_with_app(
         db_session, app_access="private" if case == "unreadable" else "authenticated"
     )
-    caller = await current_caller(_caller(org.id))
+    caller = await current_caller(
+        _caller(
+            org.id,
+            permissions=(
+                frozenset()
+                if case == "missing_basic"
+                else frozenset({"apps.readbasic"})
+            ),
+        )
+    )
     ctx = _context(db_session, caller, app, solution)
 
     target_id = uuid4() if case == "mismatched" else solution.id

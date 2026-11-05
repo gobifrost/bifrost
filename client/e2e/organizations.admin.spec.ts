@@ -7,7 +7,7 @@
  * Mirrors: api/tests/e2e/api/test_organizations.py
  */
 
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 import { test, expect } from "./fixtures/api-fixture";
 
 function organizationRow(page: Page, name: string) {

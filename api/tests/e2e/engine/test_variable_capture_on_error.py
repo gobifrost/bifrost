@@ -2,44 +2,10 @@
 Test variable capture during workflow exceptions.
 """
 
-import logging
-import sys
 import pytest
 from src.sdk.decorators import workflow
 from src.services.execution.engine import execute, ExecutionRequest, ExecutionStatus
 from src.sdk.context import Caller, Organization
-
-logger = logging.getLogger(__name__)
-
-
-def is_coverage_running() -> bool:
-    """Check if coverage.py is active (interferes with sys.settrace for variable capture)."""
-    # Check if coverage module is loaded and active
-    if 'coverage' in sys.modules:
-        try:
-            import coverage
-            # Check if there's an active coverage instance
-            cov = coverage.Coverage.current()
-            if cov is not None:
-                return True
-        except (ImportError, AttributeError) as e:
-            # Older/incompatible coverage versions don't have Coverage.current — fall through to trace check
-            logger.debug(f"coverage.Coverage.current unavailable: {e}")
-
-    # Fallback: check trace function
-    trace = sys.gettrace()
-    if trace is not None:
-        trace_module = getattr(trace, '__module__', '') or ''
-        trace_name = getattr(trace, '__name__', '') or ''
-        if 'coverage' in trace_module or 'coverage' in trace_name:
-            return True
-
-    return False
-
-
-# Skip variable capture assertions when coverage is running
-# (coverage.py uses sys.settrace which conflicts with our variable capture)
-SKIP_VAR_CAPTURE = is_coverage_running()
 
 
 class TestVariableCaptureOnError:
@@ -83,17 +49,15 @@ class TestVariableCaptureOnError:
         assert "Something went wrong!" in result.error_message
 
         # Verify variables were captured despite the exception
-        # (skip if coverage is running - it interferes with sys.settrace)
-        if not SKIP_VAR_CAPTURE:
-            assert result.variables is not None
-            assert "user_name" in result.variables
-            assert result.variables["user_name"] == "John Doe"
-            assert "user_age" in result.variables
-            assert result.variables["user_age"] == 30
-            assert "settings" in result.variables
-            assert result.variables["settings"] == {"theme": "dark", "notifications": True}
-            assert "counter" in result.variables
-            assert result.variables["counter"] == 42
+        assert result.variables is not None
+        assert "user_name" in result.variables
+        assert result.variables["user_name"] == "John Doe"
+        assert "user_age" in result.variables
+        assert result.variables["user_age"] == 30
+        assert "settings" in result.variables
+        assert result.variables["settings"] == {"theme": "dark", "notifications": True}
+        assert "counter" in result.variables
+        assert result.variables["counter"] == 42
 
     @pytest.mark.asyncio
     async def test_variables_captured_on_async_exception(self):
@@ -141,15 +105,13 @@ class TestVariableCaptureOnError:
         assert "Async operation failed" in result.error_message
 
         # Verify variables were captured with their latest values
-        # (skip if coverage is running - it interferes with sys.settrace)
-        if not SKIP_VAR_CAPTURE:
-            assert result.variables is not None
-            assert "data" in result.variables
-            assert result.variables["data"] == {"id": 123, "name": "Test"}
-            assert "status" in result.variables
-            assert result.variables["status"] == "failed"  # Updated value
-            assert "attempt" in result.variables
-            assert result.variables["attempt"] == 2  # Updated value
+        assert result.variables is not None
+        assert "data" in result.variables
+        assert result.variables["data"] == {"id": 123, "name": "Test"}
+        assert "status" in result.variables
+        assert result.variables["status"] == "failed"  # Updated value
+        assert "attempt" in result.variables
+        assert result.variables["attempt"] == 2  # Updated value
 
     @pytest.mark.asyncio
     async def test_attribute_error_captures_dict_variable(self):
@@ -190,14 +152,12 @@ class TestVariableCaptureOnError:
         assert result.error_type == "AttributeError"
 
         # Verify variables were captured
-        # (skip if coverage is running - it interferes with sys.settrace)
-        if not SKIP_VAR_CAPTURE:
-            assert result.variables is not None
-            assert "oauth_response" in result.variables
-            assert result.variables["oauth_response"] == {
-                "access_token": "test_token_123",
-                "expires_in": 3600
-            }
-            assert "url" in result.variables  # noqa: F821
-            assert result.variables["url"] == "https://graph.microsoft.com/v1.0/users"
-            # Note: headers might not be captured since the error happens on that line
+        assert result.variables is not None
+        assert "oauth_response" in result.variables
+        assert result.variables["oauth_response"] == {
+            "access_token": "test_token_123",
+            "expires_in": 3600
+        }
+        assert "url" in result.variables  # noqa: F821
+        assert result.variables["url"] == "https://graph.microsoft.com/v1.0/users"
+        # Note: headers might not be captured since the error happens on that line

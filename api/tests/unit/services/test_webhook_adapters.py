@@ -5,6 +5,7 @@ Tests HMAC-SHA256 signature verification and the GenericWebhookAdapter
 request handling logic.
 """
 
+import asyncio
 import base64
 import hashlib
 import hmac
@@ -14,12 +15,14 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import httpx
 import jwt
 import pytest
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from bifrost.webhooks import WebhookAdapter as SdkWebhookAdapter
 from src.services.webhooks import registry as webhook_registry
+from src.services.webhooks.adapters import microsoft_bot_framework as bot_framework
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
 from src.services.webhooks.adapters.local_fixture import LocalFixtureWebhookAdapter
 from src.services.webhooks.adapters.microsoft_bot_framework import (
@@ -867,3 +870,126 @@ class TestMicrosoftBotFrameworkAdapter:
 
         assert isinstance(result, Deliver)
         assert result.data["tenant_id"] == "other-tenant"
+
+    @pytest.mark.asyncio
+    async def test_concurrent_unknown_kids_share_one_refresh(self, adapter, monkeypatch):
+        calls: list[str] = []
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, url):
+                calls.append(url)
+                await asyncio.sleep(0)
+                request = httpx.Request("GET", url)
+                if url == adapter._OPENID_URL:
+                    return httpx.Response(
+                        200,
+                        request=request,
+                        json={
+                            "issuer": adapter._EXPECTED_ISSUER,
+                            "id_token_signing_alg_values_supported": ["RS256"],
+                            "jwks_uri": "https://login.botframework.com/v1/.well-known/keys",
+                        },
+                    )
+                return httpx.Response(
+                    200,
+                    request=request,
+                    json={"keys": [{"kid": "current-key"}]},
+                )
+
+        monkeypatch.setattr(
+            bot_framework.httpx, "AsyncClient", lambda **_kwargs: Client()
+        )
+        monkeypatch.setattr(bot_framework.time, "monotonic", lambda: 1_000.0)
+        adapter._jwks = [{"kid": "previous-key"}]
+        adapter._jwks_expires_at = 2_000.0
+        adapter._jwks_refreshed_at = 0.0
+
+        results = await asyncio.gather(
+            *(adapter._get_signing_jwk(f"unknown-{index}") for index in range(20)),
+            return_exceptions=True,
+        )
+
+        assert all(isinstance(result, ValueError) for result in results)
+        assert calls == [
+            adapter._OPENID_URL,
+            "https://login.botframework.com/v1/.well-known/keys",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_failed_unknown_kid_refresh_is_throttled(self, adapter, monkeypatch):
+        calls: list[str] = []
+
+        class Client:
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *_args):
+                return None
+
+            async def get(self, url):
+                calls.append(url)
+                await asyncio.sleep(0)
+                request = httpx.Request("GET", url)
+                raise httpx.ConnectError("metadata unavailable", request=request)
+
+        monkeypatch.setattr(
+            bot_framework.httpx, "AsyncClient", lambda **_kwargs: Client()
+        )
+        monkeypatch.setattr(bot_framework.time, "monotonic", lambda: 1_000.0)
+        adapter._jwks = [{"kid": "previous-key"}]
+        adapter._jwks_expires_at = 2_000.0
+        adapter._jwks_refreshed_at = 0.0
+
+        results = await asyncio.gather(
+            *(adapter._get_signing_jwk(f"unknown-{index}") for index in range(20)),
+            return_exceptions=True,
+        )
+
+        assert sum(isinstance(result, httpx.ConnectError) for result in results) == 1
+        assert sum(isinstance(result, ValueError) for result in results) == 19
+        assert calls == [adapter._OPENID_URL]
+
+        with pytest.raises(ValueError, match="Unknown Bot Framework signing key"):
+            await adapter._get_signing_jwk("another-unknown-key")
+        assert calls == [adapter._OPENID_URL]
+
+    @pytest.mark.asyncio
+    async def test_waiting_cache_reader_reuses_keys_published_under_lock(
+        self, adapter, monkeypatch
+    ):
+        monkeypatch.setattr(bot_framework.time, "monotonic", lambda: 1_000.0)
+        monkeypatch.setattr(
+            bot_framework.httpx, "AsyncClient",
+            lambda **_kwargs: pytest.fail("cached keys must avoid a network request"),
+        )
+        await adapter._jwks_lock.acquire()
+        waiter = asyncio.create_task(adapter._get_jwks())
+        await asyncio.sleep(0)
+        assert not waiter.done()
+        keys = [{"kid": "rotated-key"}]
+        adapter._jwks = keys
+        adapter._jwks_expires_at = 2_000.0
+        adapter._jwks_lock.release()
+        assert await waiter is keys
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("generation_changed", [True, False])
+    async def test_unknown_key_waiter_reuses_refresh_or_failed_refresh_cooldown(
+        self, adapter, monkeypatch, generation_changed
+    ):
+        monkeypatch.setattr(bot_framework.time, "monotonic", lambda: 1_000.0)
+        monkeypatch.setattr(
+            bot_framework.httpx, "AsyncClient",
+            lambda **_kwargs: pytest.fail("waiting callers must not refresh again"),
+        )
+        keys = [{"kid": "current-key"}]
+        adapter._jwks = keys
+        adapter._jwks_generation = 2 if generation_changed else 1
+        adapter._unknown_key_refresh_attempted_at = 999.0
+        assert await adapter._get_jwks(refresh_for_unknown_kid_generation=1) is keys

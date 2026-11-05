@@ -173,6 +173,7 @@ async def authorize_file_policy(
     content_type: str | None = None,
     solution_id: UUID | None = None,
     organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
+    policy_cache: Any = None,
 ) -> bool:
     """Evaluate file policy access (non-final per-tier probe, no audit)."""
     from src.services.file_policy_service import FilePolicyService
@@ -224,6 +225,7 @@ async def authorize_file_policy(
         path=path,
         user=user,
         solution_id=resolved_solution_id,
+        cache=policy_cache,
     )
     await record_file_policy(
         db,
@@ -287,6 +289,7 @@ async def require_file_policy(
     content_type: str | None = None,
     solution_id: UUID | None = None,
     organization_id: UUID | None | object = _USE_CONTEXT_SOLUTION_ID,
+    policy_cache: Any = None,
 ) -> None:
     allowed = await authorize_file_policy(
         caller_or_ctx,
@@ -296,6 +299,7 @@ async def require_file_policy(
         path=path,
         solution_id=solution_id,
         organization_id=organization_id,
+        policy_cache=policy_cache,
     )
     if not allowed:
         await deny_file_policy(

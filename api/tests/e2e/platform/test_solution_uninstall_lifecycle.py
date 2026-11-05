@@ -15,7 +15,7 @@ import uuid
 from uuid import UUID
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.models.orm.solutions import Solution as SolutionORM
 from src.models.orm.solution_config_schema import SolutionConfigSchema
@@ -204,21 +204,52 @@ async def test_deletion_summary_counts_external_listeners(
     ])
     await db_session.commit()
 
-    summary = e2e_client.get(f"/api/solutions/{sid}/deletion-summary", headers=headers)
-    assert summary.status_code == 200, summary.text
-    body = summary.json()
-    assert body["events"] == 2  # 1 source + 1 managed subscription
-    assert body["external_event_subscriptions"] == 2
+    try:
+        summary = e2e_client.get(
+            f"/api/solutions/{sid}/deletion-summary", headers=headers
+        )
+        assert summary.status_code == 200, summary.text
+        body = summary.json()
+        assert body["events"] == 2  # 1 source + 1 managed subscription
+        assert body["external_event_subscriptions"] == 2
 
-    ok = e2e_client.request("DELETE", f"/api/solutions/{sid}", headers=headers,
-                             params={"confirm": slug})
-    assert ok.status_code == 200, ok.text
+        ok = e2e_client.request(
+            "DELETE", f"/api/solutions/{sid}", headers=headers,
+            params={"confirm": slug},
+        )
+        assert ok.status_code == 200, ok.text
 
-    db_session.expire_all()
-    remaining = set((await db_session.execute(
-        select(EventSubscription.id).where(EventSubscription.id.in_(
-            [managed_sub, ext_on_source, ext_to_sol_wf, unrelated]
-        ))
-    )).scalars().all())
-    # The summary matched reality: exactly the counted rows were removed.
-    assert remaining == {unrelated}
+        db_session.expire_all()
+        remaining = set(
+            (
+                await db_session.execute(
+                    select(EventSubscription.id).where(
+                        EventSubscription.id.in_(
+                            [managed_sub, ext_on_source, ext_to_sol_wf, unrelated]
+                        )
+                    )
+                )
+            ).scalars().all()
+        )
+        # The summary matched reality: exactly the counted rows were removed.
+        assert remaining == {unrelated}
+    finally:
+        # The unrelated workspace listener deliberately survives hard-delete.
+        # Remove every exact fixture row if the assertion path did not already
+        # hard-delete the Solution, so a later Git Sync cannot see a
+        # source-less workspace workflow.
+        await db_session.execute(
+            delete(EventSubscription).where(
+                EventSubscription.id.in_(
+                    [managed_sub, ext_on_source, ext_to_sol_wf, unrelated]
+                )
+            )
+        )
+        await db_session.execute(
+            delete(EventSource).where(EventSource.id.in_([source_id, other_source]))
+        )
+        await db_session.execute(
+            delete(Workflow).where(Workflow.id.in_([sol_wf, ws_wf]))
+        )
+        await db_session.execute(delete(SolutionORM).where(SolutionORM.id == sid))
+        await db_session.commit()

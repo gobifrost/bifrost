@@ -4,12 +4,10 @@ Exercises the full path — workflow code in a forked worker child calling
 the fixed ``bifrost.events.emit`` — proving parity with the external
 HTTP API:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated call rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated call uses scoped shared API HTTP;
 - the emit round-trips inside the workflow through the real ``/api/events/emit``
-  route served on that socket (event id + subscriber count);
+  route (event id + subscriber count);
 - the committed event row is verified over external HTTP.
 """
 
@@ -57,11 +55,9 @@ def live_events_workflow(
 ):
     """Workflow exercising events.emit through the live worker.
 
-    The workflow records that the engine injected the worker's private
-    socket, so the migrated call rode the shared client transport (the
-    zero-HTTP proof lives in the unit and forked-child socket tests, where
-    the child's network API is dead). The test then verifies the committed
-    event row over external HTTP.
+    The default physical worker has no UDS, so the migrated call uses scoped
+    shared API HTTP. The test then verifies the committed event row over
+    external HTTP.
     """
     name = f"e2e_sdk_local_events_{live_events_keys['tag']}"
     path = f"{name}.py"
@@ -72,9 +68,6 @@ from bifrost.client import get_engine_socket_path
 
 @workflow(name="{name}", description="Local events.emit E2E")
 async def {name}():
-    # The engine injected its private socket; the zero-HTTP proof lives in
-    # the unit and forked-child socket tests where the child's network API
-    # is dead by environment.
     used_socket = get_engine_socket_path() is not None
     result = await events.emit("{topic}", {{"ping": "local"}})
     return {{
@@ -122,10 +115,8 @@ class TestSdkEventsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated call rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["subscribers_notified"] == 0
 
         event_id = out["event_id"]

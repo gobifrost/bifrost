@@ -172,6 +172,54 @@ async def emit_workflow_failure_events(
         )
 
 
+async def emit_workflow_completed_event(
+    *,
+    workflow_id: str | UUID | None,
+    workflow_name: str | None,
+    execution_id: str | UUID,
+    organization_id: str | UUID | None,
+    user_id: str | UUID | None,
+    user_email: str | None,
+    user_name: str | None,
+    started_at: datetime | None,
+    completed_at: datetime,
+    duration_ms: int,
+    attempt: int = 1,
+    max_attempts: int = 1,
+    trigger_event: dict[str, Any] | None = None,
+) -> None:
+    """Emit the metadata-only terminal-success event for a workflow run."""
+    execution: dict[str, Any] = {
+        "id": str(execution_id),
+        "status": "Success",
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "started_at": _iso(started_at),
+        "completed_at": _iso(completed_at),
+        "duration_ms": duration_ms,
+    }
+
+    body = {
+        **_base_body(
+            organization_id=organization_id,
+            actor=_user_actor(user_id=user_id, email=user_email, name=user_name),
+            occurred_at=completed_at,
+        ),
+        "workflow": {
+            "id": str(workflow_id) if workflow_id else None,
+            "name": workflow_name,
+        },
+        "execution": execution,
+        "trigger": _trigger_from_event_context(trigger_event),
+    }
+    await _emit(
+        "workflow.completed",
+        body,
+        organization_id=organization_id,
+        triggered_by=str(user_id) if user_id else None,
+    )
+
+
 def _integration_body(
     *,
     integration_id: str | UUID | None,

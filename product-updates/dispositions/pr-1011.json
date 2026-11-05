@@ -1,0 +1,14 @@
+{
+  "key": "pr:1011",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Full Access workflows can again use tables and files whose policies admit platform admins, even when the person running them is not one.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1011",
+      "Claude drafted this routine-fix summary on 2026-10-19 after Jack approved the rule (Full Access satisfies legacy platform-admin policy rules; direct non-admin calls stay refused). No customer upgrade action is required."
+    ]
+  }
+}

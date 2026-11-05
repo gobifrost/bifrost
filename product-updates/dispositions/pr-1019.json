@@ -1,0 +1,14 @@
+{
+  "key": "pr:1019",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "SDK updates can rebuild retained Solution sources with identical duplicate files, and valid App dependency trees no longer crash the build installer.",
+  "category": "fix",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1019",
+      "Maintainer approved automatic handling of identical archive duplicates without source edits or a repair job and authorized shipping the production SDK update fix on 2026-10-20."
+    ]
+  }
+}

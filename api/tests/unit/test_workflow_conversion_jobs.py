@@ -23,11 +23,7 @@ def test_registered_conversion_jobs_support_fenced_recovery_and_cancellation(
     assert not definition.policy.retry_on_failure
     assert definition.policy.allow_running_cancellation
     assert definition.policy.min_memory_headroom_mb >= 384
-    assert (
-        definition.policy.admission_memory_ratio
-        < definition.policy.hard_memory_ratio
-        < 1
-    )
+    assert 0 < definition.policy.hard_memory_ratio < 1
 
 
 def test_durable_analysis_payload_cannot_widen_partial_scope_into_platform_cutover():

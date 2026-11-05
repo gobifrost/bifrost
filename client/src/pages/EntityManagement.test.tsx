@@ -9,6 +9,7 @@ import { EntityManagement } from "./EntityManagement";
 const authFetch = vi.hoisted(() => vi.fn());
 const updateWorkflow = vi.hoisted(() => vi.fn());
 const apiPost = vi.hoisted(() => vi.fn());
+const mockUseAuthorization = vi.hoisted(() => vi.fn());
 const sourceState = vi.hoisted(() => ({
 	formsLoading: false,
 	workflowAccess: "authenticated",
@@ -51,6 +52,10 @@ vi.mock("framer-motion", () => {
 vi.mock("@/lib/api-client", () => ({
 	authFetch: (...args: unknown[]) => authFetch(...args),
 	apiClient: { POST: (...args: unknown[]) => apiPost(...args) },
+}));
+
+vi.mock("@/services/authorization", () => ({
+	useAuthorization: () => mockUseAuthorization(),
 }));
 
 vi.mock("@/hooks/useMediaQuery", () => ({
@@ -233,6 +238,8 @@ beforeEach(() => {
 	updateWorkflow.mockReset();
 	updateWorkflow.mockResolvedValue({});
 	apiPost.mockReset();
+	mockUseAuthorization.mockReset();
+	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 	sourceState.reset();
 	mediaState.reset();
 });

@@ -1,0 +1,9 @@
+{
+  "key": "pr:1012",
+  "classification": "highlight",
+  "entry_ids": ["773b8dba-4d08-4ae8-87a9-a14e9989beb0"],
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1012", "Maintainer approved the impersonation behavior and authorized merge after permission and audit review."]
+  }
+}
