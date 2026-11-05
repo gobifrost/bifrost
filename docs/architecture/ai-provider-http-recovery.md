@@ -10,6 +10,8 @@ and sleeps. There is no provider selection or fallback in this policy.
 | Surface | Classification | Recovery |
 | --- | --- | --- |
 | Agent/chat/model requests through `agent_runtime/model_factory.py` and `llm/pydantic_client.py` | Existing model request contract | Existing `AIRetryTransport`; policy moved without changing attempts, delays or terminal responses |
+| Provider SDK discovery in `provider_catalog_service.py` | Idempotent read | OpenAI/Anthropic use the existing shared transport; Google retains native SDK retry settings, consuming shared attempt/status constants |
+| Compatibility probes in `openai_transport_detection.py` and `opencode_go_detection.py` | Existing model request contract | Existing shared transport; no media submission |
 | Embeddings through `embeddings/factory.py` | Existing embedding request contract | Existing shared transport |
 | `model_catalog.refresh_model_catalog`, models.dev GET | Idempotent read | Shared bounded GET retry; final HTTP exception remains available to the maintenance job; last good stored catalog remains intact |
 | `model_pricing.py` and provider/model discovery | Local catalog lookup | No direct HTTP request; earlier OpenRouter catalog/pricing HTTP surfaces have been replaced by the shared catalog |
