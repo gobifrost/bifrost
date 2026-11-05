@@ -43,7 +43,7 @@ class TestReadFileModuleCacheGuard:
             service = MagicMock()
             service._s3_client.get_client.return_value.__aenter__ = AsyncMock(return_value=mock_s3_client)
             service._s3_client.get_client.return_value.__aexit__ = AsyncMock()
-            service.settings.s3_bucket = "test"
+            service.settings.storage_bucket = "test"
             service.read_file = FileOperationsService.read_file.__get__(service)
 
             await service.read_file("apps/myapp/pages/index.tsx")
@@ -58,7 +58,7 @@ class TestWriteFileDecoratorAcceptance:
 
         service = FileOperationsService.__new__(FileOperationsService)
         service.db = AsyncMock()
-        service.settings = SimpleNamespace(s3_bucket="test-bucket")
+        service.settings = SimpleNamespace(storage_bucket="test-bucket")
         service._s3_client = MagicMock()
         s3 = AsyncMock()
         service._s3_client.get_client.return_value.__aenter__.return_value = s3
@@ -74,6 +74,7 @@ class TestWriteFileDecoratorAcceptance:
             await service.write_file("workflows/current.py", b"VALUE = 2\n")
 
         s3.put_object.assert_awaited_once()
+        assert s3.put_object.await_args.kwargs["Bucket"] == "test-bucket"
         cached.assert_awaited_once_with("workflows/current.py", "VALUE = 2\n", "source-hash")
 
     @pytest.mark.asyncio
@@ -105,7 +106,7 @@ class TestMoveFileModuleCache:
 
         service = FileOperationsService.__new__(FileOperationsService)
         service.db = AsyncMock()
-        service.settings = SimpleNamespace(s3_bucket="test-bucket")
+        service.settings = SimpleNamespace(storage_bucket="test-bucket")
         s3 = AsyncMock()
         context = MagicMock()
         context.__aenter__ = AsyncMock(return_value=s3)
@@ -150,6 +151,8 @@ class TestMoveFileModuleCache:
         assert [call.args for call in invalidate.await_args_list] == [
             ("workflows/old.py",), ("workflows/new.py",),
         ]
+        assert s3.copy_object.await_args.kwargs["Bucket"] == "test-bucket"
+        assert s3.copy_object.await_args.kwargs["CopySource"]["Bucket"] == "test-bucket"
         move_index.assert_awaited_once_with("workflows/old.py", "workflows/new.py")
 
     @pytest.mark.asyncio
