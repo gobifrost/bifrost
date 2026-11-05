@@ -271,6 +271,8 @@ async def test_shared_rebuild_preserves_active_on_failure_and_cleans_new_artifac
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 
@@ -344,11 +346,18 @@ async def test_shared_rebuild_does_not_persist_solution_source(
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = "build-inputs"
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 
         async def upload_deployment(self, application_id, deployment_id, dist):
             events.append(("upload", (application_id, deployment_id, dist)))
+
+        async def write_build_identity(self, application_id, deployment_id, identity, dist):
+            assert identity == "build-inputs"
+            assert dist == {"index.html": b"built"}
+            events.append(("provenance", (application_id, deployment_id)))
 
         async def delete_deployment(self, application_id, deployment_id):
             events.append(("delete_dist", (application_id, deployment_id)))
@@ -400,6 +409,8 @@ async def test_shared_rebuild_does_not_persist_solution_source(
         ),
     )
 
+    assert ("provenance", (app_id, new_id)) in events
+    assert events.index(("upload", (app_id, new_id, {"index.html": b"built"}))) < events.index(("provenance", (app_id, new_id)))
     assert result["deployment_id"] == str(new_id)
     assert app.active_deployment_id == new_id
     assert app.sdk_fingerprint == "new-fp"
@@ -430,6 +441,8 @@ async def test_shared_rebuild_requires_fresh_activation_row_and_cleans_artifacts
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 
@@ -531,6 +544,8 @@ async def test_shared_rebuild_activates_solution_app_with_core_update(
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 
@@ -623,6 +638,8 @@ async def test_shared_rebuild_stale_solution_pointer_cleans_new_artifacts(
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 

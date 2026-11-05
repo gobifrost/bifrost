@@ -453,6 +453,8 @@ async def test_target_sdk_mismatch_before_compile_never_builds_or_activates(
     app = _app(active_deployment_id=uuid4())
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **_kwargs):
             raise AssertionError("a mismatched target must stop before compilation")
 
@@ -500,6 +502,8 @@ async def test_target_sdk_mismatch_before_activation_cleans_new_artifacts(
     )
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **kwargs):
             assert kwargs == {}
             events.append(("compile", None))
@@ -566,6 +570,8 @@ async def test_automatic_upgrade_keeps_previous_artifacts_and_respects_setting(
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **kwargs):
             assert kwargs["require_lockfile"] is True
             return {"index.html": b"built"}
@@ -643,6 +649,8 @@ async def test_automatic_upgrade_disabled_before_activation_keeps_old_active(
     events: list[tuple[str, object]] = []
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **_kwargs):
             return {"index.html": b"built"}
 

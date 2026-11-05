@@ -44,6 +44,7 @@ def _stub_app_build(monkeypatch):
     uploaded: dict[str, dict] = {}
 
     def _fake_compile(self, app_id, src_files, dependencies, prebuilt_dist=None):
+        self.last_build_identity = self.source_identity(app_id, src_files, dependencies) if not prebuilt_dist else None
         return prebuilt_dist or {"index.html": b"<html></html>"}
 
     async def _fake_upload(self, app_id, dist):
@@ -64,6 +65,22 @@ def _stub_app_build(monkeypatch):
     async def _fake_delete_all_app_artifacts(self, app_id):
         uploaded.pop(str(app_id), None)
 
+    from bifrost.app_build_identity import digest_json, file_identity
+
+    def _identity(self, app_id, files, deps):
+        return digest_json([str(app_id), file_identity(files), deps])
+
+    async def _write_identity(self, app_id, deployment_id, identity, dist):
+        if str(app_id) in uploaded:
+            uploaded[str(app_id)]["identity"] = identity
+
+    async def _can_reuse(self, app_id, deployment_id, identity):
+        record = uploaded.get(str(app_id), {})
+        return deployment_id is not None and record.get("deployment_id") == deployment_id and record.get("identity") == identity
+
+    monkeypatch.setattr(app_build.SolutionAppBuilder, "source_identity", _identity)
+    monkeypatch.setattr(app_build.SolutionAppBuilder, "write_build_identity", _write_identity)
+    monkeypatch.setattr(app_build.SolutionAppBuilder, "can_reuse", _can_reuse)
     monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _fake_compile)
     monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _fake_upload, raising=False)
     monkeypatch.setattr(
@@ -440,7 +457,10 @@ class TestSolutionAppDeploy:
         uploaded: list[tuple[uuid.UUID, uuid.UUID]] = []
         deleted: list[tuple[uuid.UUID, uuid.UUID]] = []
 
+        attempted = []
+
         async def _upload_then_fail(self, uploaded_app_id, deployment_id, dist):
+            attempted.append((uploaded_app_id, deployment_id))
             attempts["n"] += 1
             if attempts["n"] >= 2:
                 raise RuntimeError("second app failed")
@@ -487,7 +507,9 @@ class TestSolutionAppDeploy:
         for app_id in app_ids:
             app = await db.get(Application, app_id)
             assert app.active_deployment_id is None
-        assert deleted == uploaded
+        assert deleted == attempted
+        assert len(uploaded) == 1
+        assert len(deleted) == 2
 
     async def test_stale_active_pointer_blocks_activation(self, db_session, monkeypatch):
         from src.services.solutions import app_build
@@ -1223,3 +1245,81 @@ class TestDeployTransactionalS3:
         await db.flush()
         with pytest.raises(SolutionFinalizeIncomplete):
             await result.finalize_s3()
+
+
+@pytest.mark.e2e
+async def test_source_redeploy_reuses_only_unchanged_app_and_preserves_metadata(db_session, _stub_app_build, monkeypatch):
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata
+
+    monkeypatch.setattr("src.services.application_sdk_status.current_sdk_metadata", lambda: CurrentApplicationSdkMetadata(
+        package_version="1", fingerprint="sdk", contract_version=1,
+    ))
+    sol = Solution(id=uuid.uuid4(), slug=f"reuse-{uuid.uuid4().hex[:8]}", name="Reuse")
+    db_session.add(sol)
+    await db_session.flush()
+    one, two = str(uuid.uuid4()), str(uuid.uuid4())
+    apps = [dict(_app_entry(one, "one"), dist_files=None, src_files={"index.html": "one"}),
+            dict(_app_entry(two, "two"), dist_files=None, src_files={"index.html": "two"})]
+    result = await SolutionDeployer(db_session).deploy(SolutionBundle(solution=sol, apps=apps))
+    await result.finalize_s3()
+    first = await db_session.get(Application, solution_entity_id(sol.id, uuid.UUID(one)))
+    second = await db_session.get(Application, solution_entity_id(sol.id, uuid.UUID(two)))
+    await db_session.refresh(first)
+    await db_session.refresh(second)
+    first_pointer, second_pointer = first.active_deployment_id, second.active_deployment_id
+    first_stamp = (first.deployed_at, first.sdk_built_at, first.sdk_fingerprint)
+    apps[0]["name"] = "Updated Metadata"
+    apps[1]["src_files"]["index.html"] = "changed"
+    result = await SolutionDeployer(db_session).deploy(SolutionBundle(solution=sol, apps=apps))
+    await result.finalize_s3()
+    await db_session.refresh(first)
+    await db_session.refresh(second)
+    assert first.active_deployment_id == first_pointer
+    assert (first.deployed_at, first.sdk_built_at, first.sdk_fingerprint) == first_stamp
+    assert first.name == "Updated Metadata"
+    assert second.active_deployment_id != second_pointer
+
+
+@pytest.mark.e2e
+async def test_reused_app_remains_in_activation_fence_and_is_never_deleted(db_session, monkeypatch):
+    from src.services.solutions.deploy import CompiledSolutionAppDeployment, SolutionFinalizeIncomplete
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    sol = Solution(id=uuid.uuid4(), slug=f"fence-{uuid.uuid4().hex[:8]}", name="Fence")
+    db_session.add(sol)
+    await db_session.flush()
+    app_id, expected, moved = uuid.uuid4(), uuid.uuid4(), uuid.uuid4()
+    db_session.add(Application(id=app_id, name="Fence", slug=f"fence-{app_id.hex[:8]}",
+                               solution_id=sol.id, app_model="standalone_v2", active_deployment_id=moved))
+    await db_session.flush()
+    deleted = []
+
+    async def delete(self, app_id, deployment_id):
+        deleted.append(deployment_id)
+
+    monkeypatch.setattr(SolutionAppBuilder, "delete_deployment", delete)
+    item = CompiledSolutionAppDeployment(app_id=app_id, solution_id=sol.id, deployment_id=expected,
+        expected_old_deployment_id=expected, superseded_deployment_id=None, dist={}, reused=True)
+    with pytest.raises(SolutionFinalizeIncomplete):
+        await SolutionDeployer(db_session)._upload_compiled_dists([item])
+    assert deleted == []
+
+
+@pytest.mark.parametrize("moved,missing", [(True, False), (False, True)])
+async def test_cli_reuse_hint_conflicts_if_pointer_or_artifacts_change(monkeypatch, moved, missing):
+    from unittest.mock import AsyncMock
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    old, hinted = uuid.uuid4(), uuid.uuid4()
+    if not moved:
+        hinted = old
+    monkeypatch.setattr(SolutionAppBuilder, "attested_identity", lambda *a, **k: "inputs")
+    can_reuse = AsyncMock(return_value=not missing)
+    monkeypatch.setattr(SolutionAppBuilder, "can_reuse", can_reuse)
+    spec = {"app_id": uuid.uuid4(), "solution_id": uuid.uuid4(), "expected_old_deployment_id": old,
+            "reuse_deployment_id": str(hinted), "build_recipe": {"schema": 1}, "src": {"index.html": "source"},
+            "dist": None, "dependencies": {}}
+    with pytest.raises(SolutionDeployConflict, match="re-run the deploy"):
+        await SolutionDeployer(AsyncMock())._compile_app_dists([spec])
+    if moved:
+        can_reuse.assert_not_called()

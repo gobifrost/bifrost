@@ -1,0 +1,19 @@
+{
+  "key": "pr:1252",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal caching of existing Solution app builds; no new capability or required customer action merits an in-app announcement.",
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1252",
+      "Native owner conversation on 2026-11-05: Jack authorized testable backend work through merge, then confirmed \u201cYou own it. Send it.\u201d This records editorial disposition, not a bypass of protected checks.",
+      "Verified gobifrost/bifrost PR #1252 is authored by jackmusick from branch 1247-solution-build-reuse; issue #1247 by MTG-Thomas supplies the problem report.",
+      "Focused shared identity, CLI, deployment, SDK rebuild, export/import, Git consumers and contract checks passed after updating two endpoint snapshots. Real Vite build/redeploy and HTTP/S3 preflight passed; API Pyright/Ruff and client TypeScript/ESLint passed.",
+      "Existing Solution deploy authorization, ownership reconciliation and row-locked activation fences remain authoritative. Unstamped builds compile normally; CLI hints are revalidated. No security disclosure or customer configuration step identified."
+    ]
+  }
+}

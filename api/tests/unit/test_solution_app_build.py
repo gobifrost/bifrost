@@ -20,6 +20,13 @@ from src.services.solutions.app_build import SolutionAppBuilder
 from src.services.solutions.deploy import SolutionDeployConflict
 
 
+@pytest.fixture(autouse=True)
+def _stub_identity_toolchain(monkeypatch):
+    # These tests stub Vite/materialization; actual identity inputs have their
+    # own tests and must not query Node or npm through a stubbed subprocess.
+    monkeypatch.setattr(SolutionAppBuilder, "source_identity", lambda *a, **k: "a" * 64)
+
+
 @pytest.mark.e2e
 async def test_prebuilt_dist_is_used_without_building(monkeypatch):
     """A non-empty prebuilt_dist short-circuits the vite build and is uploaded."""
