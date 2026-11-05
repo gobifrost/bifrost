@@ -51,7 +51,10 @@ def launch_limit(worker: Any, standard_limit: int) -> int:
     return worker.memory_limit_bytes or standard_limit
 
 
-def job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
+def job_baseline(
+    workers: Any, standard_limit: int, threshold: float, *,
+    estimate_bytes: int = JOB_BASELINE_ESTIMATE_BYTES,
+) -> int:
     """A Job's own memory, from the largest any Job worker reported (its
     limit at the threshold, less the budget it measured)."""
     reported = [
@@ -59,7 +62,7 @@ def job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
         for worker in workers
         if worker.form in MANAGED_WORKER_FORMS and worker.memory_budget_bytes is not None
     ]
-    return max(reported, default=JOB_BASELINE_ESTIMATE_BYTES)
+    return max(reported, default=estimate_bytes)
 
 
 @dataclass(frozen=True)

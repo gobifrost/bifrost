@@ -251,7 +251,10 @@ class WorkerCapacityController(ABC):
         """Settings -> Kubernetes sizes at the baseline live Jobs report."""
         threshold = self.settings.memory_pressure_threshold
         return JobSizing.of(
-            policy, threshold, job_baseline(workers, policy.worker_memory_mib * 2**20, threshold)
+            policy, threshold, job_baseline(
+                workers, policy.worker_memory_mib * 2**20, threshold,
+                estimate_bytes=self.settings.pool_worker_baseline_estimate_mib * 2**20,
+            )
         )
 
     def _lifetime_handoff_imminent(self, worker: ExecutionWorker, now: datetime) -> bool:

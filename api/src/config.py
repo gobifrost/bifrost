@@ -174,6 +174,11 @@ class Settings(BaseSettings):
         description="Seconds a launched worker may take to become ready",
     )
     pool_worker_memory_request_mib: int = Field(default=512, ge=1)
+    pool_worker_baseline_estimate_mib: int = Field(
+        default=768, ge=1,
+        description="Deployment-specific cold worker baseline estimate; "
+        "ready workers use their reported memory budgets instead",
+    )
     pool_worker_cpu_request: str = Field(default="250m")
     pool_worker_cpu_limit: str = Field(default="2")
 

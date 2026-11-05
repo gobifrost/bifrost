@@ -63,6 +63,7 @@ SETTINGS = SimpleNamespace(
     pool_worker_cpu_request="250m",
     pool_worker_cpu_limit="2",
     memory_pressure_threshold=0.85,
+    pool_worker_baseline_estimate_mib=768,
     redis_url=get_settings().redis_url,
 )
 
@@ -2703,3 +2704,65 @@ async def test_the_worker_controller_idles_when_its_pod_gives_no_job_identity(
 
     resolve.assert_awaited_once()
     client.close.assert_awaited_once()
+
+
+@pytest.mark.parametrize("measured_budget", [64 * MIB, 512 * MIB])
+async def test_configured_cold_baseline_changes_planning_not_measured_admission(
+    db, measured_budget: int,
+) -> None:
+    policy = replace(POLICY, worker_memory_mib=1024, largest_worker_mib=1024, max_workers=1)
+    await _store_policy(db.sessions, policy)
+    execution_id = await _accept_pool_run()
+    await _set_request(db.sessions, execution_id, 128 * MIB)
+    settings = SimpleNamespace(**{**vars(SETTINGS), "pool_worker_baseline_estimate_mib": 512})
+    pool = controller.WorkerPoolController(FakeCluster(), settings, SPEC)  # type: ignore[arg-type]
+    launches = await asyncio.gather(pool.launch_for_demand(policy), pool.launch_for_demand(policy))
+    assert sorted(len(ids) for ids in launches) == [0, 1]
+    worker_id = next(ids[0] for ids in launches if ids)
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.memory_limit_bytes == GIB
+        assert worker.reserved_for_dispatch_id is None
+    assert await _claim(worker_id) is None
+    await pool.reconcile_worker(worker_id, policy)
+    await _admit(db.sessions, worker_id, pool_up=False)
+    await _report_budget(worker_id, measured_budget)
+    claim = await _claim(worker_id, fits=measured_budget, budget=measured_budget)
+    assert (claim is not None) == (measured_budget >= 128 * MIB)
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert pool._sizing(policy, [worker]).largest_budget_bytes == measured_budget
+
+
+def test_cold_baseline_estimate_keeps_default_and_measured_reports_take_precedence() -> None:
+    from src.config import Settings
+    from src.services.memory_requests import JOB_BASELINE_ESTIMATE_BYTES
+
+    assert Settings.model_fields["pool_worker_baseline_estimate_mib"].default * MIB == JOB_BASELINE_ESTIMATE_BYTES
+    measured = SimpleNamespace(form="job", memory_limit_bytes=GIB, memory_budget_bytes=64 * MIB)
+    assert sizing.job_baseline([], GIB, .85, estimate_bytes=512 * MIB) == 512 * MIB
+    assert sizing.job_baseline([measured], GIB, .85, estimate_bytes=512 * MIB) == int(GIB * .85) - 64 * MIB
+    with pytest.raises(ValueError, match="pool_worker_baseline_estimate_mib"):
+        Settings(secret_key="synthetic-signing-key-" + "x" * 32, pool_worker_baseline_estimate_mib=0)
+
+
+async def test_configured_cold_baseline_provisions_for_a_queued_platform_job(db) -> None:
+    from src.models.orm.platform_jobs import PlatformJob
+
+    policy = replace(POLICY, worker_memory_mib=1024, largest_worker_mib=1024, max_workers=1)
+    job = PlatformJob(
+        job_type="files.move", payload={}, memory_required_bytes=128 * MIB,
+        requested_by_user_id=str(uuid4()), requested_by_email="fixture@example.invalid",
+        requested_by_name="Fixture", title="Cold file move",
+    )
+    async with db.sessions() as session:
+        session.add(job)
+        await session.commit()
+    settings = SimpleNamespace(**{**vars(SETTINGS), "pool_worker_baseline_estimate_mib": 512})
+    pool = controller.WorkerPoolController(FakeCluster(), settings, SPEC)  # type: ignore[arg-type]
+    [worker_id] = await pool.launch_for_demand(policy)
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.memory_limit_bytes == GIB
+        assert worker.reserved_for_dispatch_id is None
+        assert (await session.get(PlatformJob, job.id)).status == "queued"
