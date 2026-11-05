@@ -4,8 +4,7 @@ Covers the PR #21 entity_id fallback at the scheduler entry point. The
 scheduler is the one refresh path that previously had no dedicated test;
 this pins the invariant that:
 
-  - the scheduler calls ``build_token_refresh_context`` with ``org_id=None``
-    (scheduler is global; no org context)
+  - the scheduler calls ``build_token_refresh_context`` with the stored token organization
   - the scheduler delegates to ``refresh_oauth_token_http`` for the HTTP call
   - an integration with only ``entity_id`` set (no ``default_entity_id``)
     still produces a fully-resolved token URL
@@ -19,13 +18,14 @@ from uuid import uuid4
 
 class TestSchedulerUsesSharedPrimitives:
     @pytest.mark.asyncio
-    async def test_scheduler_passes_org_id_none_to_context_builder(self):
-        """Scheduler is global — it must pass org_id=None so org mapping is skipped."""
+    async def test_scheduler_passes_token_org_to_context_builder(self):
+        """Scheduling globally must preserve each stored token organization."""
         from src.jobs.schedulers import oauth_token_refresh as sched
 
         # Minimal token row
         token = MagicMock()
         token.id = uuid4()
+        token.organization_id = uuid4()
         token.encrypted_refresh_token = None  # client_credentials-shaped
         token.expires_at = datetime.now(timezone.utc) + timedelta(minutes=1)
 
@@ -49,7 +49,7 @@ class TestSchedulerUsesSharedPrimitives:
         mock_db.execute = AsyncMock(return_value=token_query_result)
         mock_db.commit = AsyncMock()
         # get returns either the token or the provider
-        mock_db.get = AsyncMock(side_effect=[token, provider])
+        mock_db.get = AsyncMock(side_effect=[token, provider, None])
 
         class _DbCtxManager:
             async def __aenter__(self):
@@ -100,7 +100,7 @@ class TestSchedulerUsesSharedPrimitives:
 
         # Scheduler delegated once to each shared helper for the single token
         mock_build.assert_called_once()
-        assert mock_build.call_args.kwargs["org_id"] is None
+        assert mock_build.call_args.kwargs["org_id"] == token.organization_id
         assert mock_build.call_args.kwargs["provider"] is provider
         mock_refresh.assert_called_once()
         assert results["refreshed_successfully"] == 1

@@ -3,9 +3,9 @@
 This is the single source of truth for ``{entity_id}`` placeholder resolution
 in OAuth refresh URL templates. The fallback chain is:
 
-  1. org-scoped integration mapping's entity_id (when org_id is provided)
-  2. integration.default_entity_id
-  3. integration.entity_id
+  1. the selected token's same-organization mapping
+  2. the effective organization mapping for legacy token links
+  3. integration defaults for global credentials
 
 These tests pin the chain so the scheduler, SDK endpoint, and oauth_connections
 router cannot drift.
@@ -149,6 +149,144 @@ class TestBuildTokenRefreshContextEntityIdFallback:
         )
 
         assert td["token_url_defaults"]["entity_id"] == "org-specific-tenant"
+
+    @pytest.mark.asyncio
+    async def test_token_mapping_beats_provider_and_integration_defaults(self):
+        """A token's own tenant mapping is authoritative for refresh URLs."""
+        from src.services.oauth_provider import build_token_refresh_context
+
+        org_id = uuid4()
+        provider = _make_provider(
+            integration_id=uuid4(),
+            token_url_defaults={"entity_id": "provider-default"},
+        )
+        token = MagicMock()
+        token.id = uuid4()
+        token.organization_id = org_id
+        token.encrypted_refresh_token = None
+        mapping = _make_mapping(entity_id="token-tenant")
+        mapping_result = MagicMock()
+        mapping_result.scalar_one_or_none.return_value = mapping
+        db = AsyncMock()
+        db.execute = AsyncMock(return_value=mapping_result)
+
+        td = await build_token_refresh_context(
+            db=db, provider=provider, token=token, org_id=None
+        )
+
+        assert td["token_url_defaults"]["entity_id"] == "token-tenant"
+        assert td["context_error"] is None
+        db.execute.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_selected_global_token_keeps_global_integration_default(self):
+        """Caller org authorization does not rescope a selected global token."""
+        from src.services.oauth_provider import build_token_refresh_context
+
+        provider = _make_provider(
+            integration_id=uuid4(),
+            token_url_defaults={"custom_key": "preserved"},
+        )
+        token = MagicMock()
+        token.id = uuid4()
+        token.organization_id = None
+        token.encrypted_refresh_token = b"encrypted-refresh"
+        no_mapping = MagicMock()
+        no_mapping.scalar_one_or_none.return_value = None
+        integration_result = MagicMock()
+        integration_result.scalar_one_or_none.return_value = _make_integration(
+            default_entity_id="global-tenant"
+        )
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[no_mapping, integration_result])
+
+        td = await build_token_refresh_context(
+            db=db,
+            provider=provider,
+            token=token,
+            org_id=uuid4(),
+        )
+
+        assert td["token_url_defaults"] == {
+            "custom_key": "preserved",
+            "entity_id": "global-tenant",
+        }
+        assert td["context_error"] is None
+        assert db.execute.await_count == 2
+
+    @pytest.mark.asyncio
+    async def test_tenant_token_without_mapping_fails_closed(self):
+        """A tenant token cannot inherit a provider-wide entity_id default."""
+        from src.services.oauth_provider import build_token_refresh_context
+
+        provider = _make_provider(
+            integration_id=uuid4(),
+            token_url_defaults={"entity_id": "wrong-default"},
+        )
+        token = MagicMock()
+        token.id = uuid4()
+        token.organization_id = uuid4()
+        token.encrypted_refresh_token = None
+        no_mapping = MagicMock()
+        no_mapping.scalar_one_or_none.return_value = None
+        db = AsyncMock()
+        db.execute = AsyncMock(side_effect=[no_mapping, no_mapping])
+
+        td = await build_token_refresh_context(
+            db=db, provider=provider, token=token, org_id=None
+        )
+
+        assert "entity_id" not in td["token_url_defaults"]
+        assert td["context_error"] == (
+            "Tenant-scoped OAuth token has no matching integration mapping "
+            "entity_id"
+        )
+
+    @pytest.mark.asyncio
+    async def test_explicit_org_cannot_override_token_org(self):
+        """Conflicting tenant inputs fail before mapping or provider access."""
+        from src.services.oauth_provider import build_token_refresh_context
+
+        provider = _make_provider(
+            integration_id=uuid4(),
+            token_url_defaults={"entity_id": "wrong-default"},
+        )
+        token = MagicMock()
+        token.id = uuid4()
+        token.organization_id = uuid4()
+        token.encrypted_refresh_token = None
+        db = AsyncMock()
+
+        td = await build_token_refresh_context(
+            db=db, provider=provider, token=token, org_id=uuid4()
+        )
+
+        assert "entity_id" not in td["token_url_defaults"]
+        assert td["context_error"] == (
+            "OAuth token organization does not match refresh context"
+        )
+        db.execute.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refresh_does_not_call_provider_when_context_is_unsafe(self):
+        """Context resolution failures stop before any provider request."""
+        from src.services.oauth_provider import refresh_oauth_token_http
+
+        td = {
+            "token_id": uuid4(),
+            "provider_id": uuid4(),
+            "provider_name": "TestProvider",
+            "context_error": "tenant mapping unresolved",
+        }
+
+        outcome = await refresh_oauth_token_http(td)
+
+        assert outcome == {
+            "token_id": td["token_id"],
+            "provider_id": td["provider_id"],
+            "success": False,
+            "error": "tenant mapping unresolved",
+        }
 
     @pytest.mark.asyncio
     async def test_existing_token_url_defaults_are_preserved(self):
