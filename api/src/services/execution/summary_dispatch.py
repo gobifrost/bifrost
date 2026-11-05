@@ -233,7 +233,7 @@ async def fail_remote_summary(*, worker_id: UUID, run_id: UUID, claim_id: UUID, 
     """Settle an interrupted summary without changing the original agent run."""
     async with get_db_context() as db:
         if not await fence_remote_owner(db, for_update=True):
-            return
+            raise ConnectionError("Remote ownership was lost before ending the summary")
         await db.scalar(select(AgentRun.id).where(AgentRun.id == run_id).with_for_update())
         owned = exists().where(
             ExecutionWorkerClaim.id == claim_id,

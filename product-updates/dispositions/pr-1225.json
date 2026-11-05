@@ -1,0 +1,16 @@
+{
+  "key": "pr:1225",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal API-to-worker control resilience during transient database read failures; no new capability or customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1225"
+    ]
+  },
+  "security_review": {
+    "status": "not_required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1225"
+  }
+}
