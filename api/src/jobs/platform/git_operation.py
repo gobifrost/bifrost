@@ -210,5 +210,8 @@ async def run_git_operation(
 
 
 GIT_OPERATION_DEFINITION = define_platform_job(
-    "workspace.git", GitOperationPayload, run_git_operation
+    "workspace.git", GitOperationPayload, run_git_operation,
+    # v2 fences old executors that retain Git state only on their local disk.
+    # v1 has the identical wire schema; queued jobs use the new durable handler.
+    historical_payload_models={1: GitOperationPayload},
 )

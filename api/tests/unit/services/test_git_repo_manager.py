@@ -1,25 +1,36 @@
 """Tests for GitRepoManager — S3-backed persistent git working tree."""
 
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
 
 from src.services.git_repo_manager import GitRepoManager, WorkspaceStorageChanged
+from src.config import Settings
+
+
+@pytest.mark.parametrize("configured", [None, "/tmp/bifrost/solution-repo-fixtures/git-checkouts/worker"])
+def test_fresh_executor_import_uses_configured_checkout_parent(monkeypatch, configured):
+    import subprocess
+    import sys
+
+    if configured is None:
+        monkeypatch.delenv("BIFROST_GIT_WORK_DIR", raising=False)
+    else:
+        monkeypatch.setenv("BIFROST_GIT_WORK_DIR", configured)
+    result = subprocess.run(
+        [sys.executable, "-c", "from src.services.git_repo_manager import PERSISTENT_WORK_DIR; print(PERSISTENT_WORK_DIR)"],
+        check=True, capture_output=True, text=True,
+    )
+    assert result.stdout.strip() == (configured or "/tmp/git")
 
 
 @pytest.fixture
 def mock_settings():
     """Create mock settings for S3 configuration."""
-    settings = MagicMock()
-    settings.s3_bucket = "bifrost-local"
-    settings.s3_endpoint_url = "http://seaweedfs:8333"
-    settings.s3_access_key = "bifrost"
-    settings.s3_secret_key = "bifrost123"
-    settings.s3_region = "us-east-1"
-    settings.redis_url = ""  # Disable Redis lock in unit tests
-    return settings
+    return Settings(_env_file=None, s3_bucket="bifrost-local", s3_endpoint_url="http://seaweedfs:8333",
+        s3_access_key="bifrost", s3_secret_key="bifrost123", s3_region="us-east-1", redis_url="")
 
 
 @pytest.fixture
@@ -483,3 +494,89 @@ class TestCheckout:
                 async with manager.checkout():
                     pass  # pragma: no cover
             mock_up.assert_not_awaited()
+
+
+@pytest.mark.parametrize("writer_fails", [False, True])
+async def test_isolated_checkout_publishes_without_replacing_pending_work(
+    manager, tmp_path, monkeypatch, writer_fails,
+):
+    from src.services.git_workspace_state import GitWorkspaceState, tree_fingerprint
+
+    pending = tmp_path / "pending"
+    pending.mkdir()
+    (pending / "draft.txt").write_text("unacknowledged local work")
+    monkeypatch.setattr("src.services.git_repo_manager.PERSISTENT_WORK_DIR", pending)
+    state = GitWorkspaceState(manager)
+    state.record(pending, "acknowledged-etag", tree_fingerprint(pending))
+    receipt = state._receipt_path(pending).read_bytes()
+
+    async def download(target):
+        target.mkdir(parents=True)
+        (target / "draft.txt").write_text("published content")
+        await manager._record_source_receipt(target)
+
+    uploaded = []
+
+    async def upload(source):
+        uploaded.append((source / "draft.txt").read_text())
+
+    monkeypatch.setattr(manager, "sync_down", download)
+    monkeypatch.setattr(manager, "sync_up", upload)
+    views = []
+
+    async def write():
+        async with manager.checkout(isolated=True) as view:
+            views.append(view)
+            (view / "draft.txt").write_text("regenerated published content")
+            if writer_fails:
+                raise RuntimeError("writer failed")
+
+    if writer_fails:
+        with pytest.raises(RuntimeError, match="writer failed"):
+            await write()
+    else:
+        await write()
+    assert uploaded == ([] if writer_fails else ["regenerated published content"])
+    assert (pending / "draft.txt").read_text() == "unacknowledged local work"
+    assert state._receipt_path(pending).read_bytes() == receipt
+    assert not views[0].parent.exists()
+
+
+@pytest.mark.parametrize("reader_fails", [False, True])
+async def test_readonly_checkout_preserves_unacknowledged_local_work(
+    manager, tmp_path, monkeypatch, reader_fails,
+):
+    from src.services.git_workspace_state import GitWorkspaceState, tree_fingerprint
+
+    pending = tmp_path / "pending"
+    pending.mkdir()
+    (pending / "draft.txt").write_text("unacknowledged local work")
+    monkeypatch.setattr("src.services.git_repo_manager.PERSISTENT_WORK_DIR", pending)
+    state = GitWorkspaceState(manager)
+    state.record(pending, "acknowledged-etag", tree_fingerprint(pending))
+    receipt = state._receipt_path(pending).read_bytes()
+
+    async def published_snapshot(target):
+        target.mkdir(parents=True, exist_ok=True)
+        (target / "draft.txt").write_text("published content")
+        await manager._record_source_receipt(target)
+
+    monkeypatch.setattr(manager, "sync_down", published_snapshot)
+    views = []
+
+    async def read():
+        async with manager.checkout_readonly() as view:
+            views.append(view)
+            assert (view / "draft.txt").read_text() == "published content"
+            if reader_fails:
+                raise RuntimeError("reader failed")
+            return view
+
+    if reader_fails:
+        with pytest.raises(RuntimeError, match="reader failed"):
+            await read()
+    else:
+        await read()
+    assert (pending / "draft.txt").read_text() == "unacknowledged local work"
+    assert state._receipt_path(pending).read_bytes() == receipt
+    assert not views[0].parent.exists()  # includes the snapshot's sidecar receipt

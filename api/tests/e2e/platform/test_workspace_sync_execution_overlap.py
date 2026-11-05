@@ -26,6 +26,7 @@ from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.integrations import Integration
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.git_repo_manager import GitRepoManager
+from src.services.git_workspace_state import GitWorkspaceState
 from src.services.github_config import (
     delete_github_config,
     get_github_config,
@@ -35,16 +36,9 @@ from src.services.github_sync import GitHubSyncService
 from src.services.repo_storage import RepoStorage
 from tests.e2e.conftest import poll_until, write_and_register
 from tests.e2e.platform.thin_live_helpers import wait_for_job
+from tests.git_workspace_isolation import isolated_git_workspaces
 
 pytestmark = pytest.mark.e2e
-
-
-def _empty_directory(path: Path) -> None:
-    for entry in path.iterdir():
-        if entry.is_dir() and not entry.is_symlink():
-            shutil.rmtree(entry)
-        else:
-            entry.unlink()
 
 
 @pytest.fixture
@@ -52,19 +46,8 @@ def isolated_git_checkouts(tmp_path):
     """Start both physical executors fresh without merging their local caches."""
     root = Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts")
     checkouts = [root / name for name in ("worker", "scheduler")]
-    for checkout in checkouts:
-        assert checkout.is_dir(), f"missing test-harness Git mount: {checkout}"
-        shutil.copytree(checkout, tmp_path / checkout.name, symlinks=True)
-    try:
-        for checkout in checkouts:
-            _empty_directory(checkout)
-        yield
-    finally:
-        for checkout in checkouts:
-            _empty_directory(checkout)
-            shutil.copytree(
-                tmp_path / checkout.name, checkout, dirs_exist_ok=True, symlinks=True,
-            )
+    with isolated_git_workspaces(checkouts, tmp_path):
+        yield checkouts
 
 
 def _source(function: str, eager: str, lazy: str, version: str) -> str:
@@ -192,6 +175,10 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
         baseline = wait_for_job(e2e_client, headers, fetched.json()["job_id"], "workspace.git")
         assert baseline["result"]["success"] is True, baseline
         assert baseline["result"]["changed_files"] == [], baseline
+        assert any(
+            GitWorkspaceState._receipt_path(checkout).is_file()
+            for checkout in isolated_git_checkouts
+        ), "executor receipt is outside the test-visible checkout parent mount"
 
         def enqueue(hold: bool) -> str:
             response = e2e_client.post(

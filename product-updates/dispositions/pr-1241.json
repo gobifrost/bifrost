@@ -1,0 +1,26 @@
+{
+  "key": "pr:1241",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1241",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; functional head 770591ad0f1010073acf72b95289b7717535545a; depends on S3 conditional-write prerequisite PR 1240.",
+      "Codex reviewed this routine-fix wording under Thomas Bray's explicit publication authorization. This is contributor editorial classification, not maintainer approval, security approval or merge authorization.",
+      "Exact functional source passed 122 focused unit/harness tests, full API Ruff/Pyright, and 16 real-S3 handoff/conflict/cleanup/overlap/freshness tests. Hosted checks and normal sensitive-path maintainer review remain separate requirements.",
+      "Maintainer owns routine corrective follow-through: coordinator native mobile message 2a0273ec-47a5-4729-85ef-29f94fcebc73, after clarification f57caef2-27f1-4d0e-a71e-af41e894ab37. Scope: isolate Reimport from pending Git state, focused verification and protected merge; no new feature or public prose.",
+      "Sensitive-path review traced immutable snapshot verification, conditional pointer publication, editor freshness, credential removal, cancellation and existing lock limits. Reimport uses an isolated published snapshot without changing the pending checkout or its receipt. No disclosure, CVE or changed authorization boundary identified.",
+      "Omitted under Jack\u2019s standing routine-fix visibility policy; original Thomas Bray commits and source credit retained.",
+      "Local regression setup disposition: adding a new organization after Commit correctly required deletion confirmation; revised the test to change only a valid YAML comment, keeping entity membership constant while exercising Reimport receipt isolation. No product deletion behavior was changed.",
+      "Independent bounded Astra sensitive-path review found no blockers in checkout isolation, immutable checkpoint/conditional-pointer publication, credential cleanup or existing authorization. Focused local Docker run: 114 tests passed, zero failures/errors/skips; includes Git handoff/conflicts/disconnect, Reimport non-deletion and empty-source safeguards. No additional queued jobs were added by the Reimport regression.",
+      "Full API Pyright and Ruff passed after the corrective repair. Normalized merge-group eligibility validation for PR 1241 passed. Local full backend, frontend and browser suites were not run; protected merge checks remain authoritative. Owned test stack stopped before releasing the heavy lease.",
+      "Merge-group CI 41899722196 failure disposition: shard1 had 91 local-Git fixture failures because workspace() bypassed the fixture\u2019s local storage simulation; routed workspace to the existing local context and restored the checkout-path monkeypatch lifecycle. Shard2 had five handoff failures when preceding tests left committed workflow/app rows; test sessions now isolate synthetic workspace rows inside an outer rollback and seed neighboring entities to verify restoration. No production behavior, deletion policy, permissions, retries or skips changed. All 229 focused tests passed with zero failures/errors/skips, including the full local Git suite and real-S3 handoffs on merged main.",
+      "Final fixture-repair verification: 229 focused tests passed in 138.99s (zero failures/errors/skips), full API Pyright/Ruff passed, canonical merge-group eligibility passed. Owned test stack stopped by the full-lifecycle wrapper. Full backend/browser suites remain the protected queue gate; no repeat-until-green, retries, skips or timeout changes."
+    ]
+  },
+  "reason": "Routine Git workspace correctness repair; no new front-facing capability or required customer action.",
+  "security_review": {
+    "status": "not_required"
+  }
+}
