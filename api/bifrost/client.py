@@ -607,8 +607,6 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
                 # Success - we have tokens
                 if "access_token" in poll_data:
-                    print(" OK")
-
                     # Calculate expiry time
                     expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in", 1800))
 
@@ -619,6 +617,8 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                         refresh_token=poll_data["refresh_token"],
                         expires_at=expires_at.isoformat(),
                     )
+
+                    print(" OK")
 
                     # Get user info
                     try:

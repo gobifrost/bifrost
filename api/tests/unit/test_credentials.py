@@ -588,6 +588,20 @@ class TestKeyringBackend:
         backend.save(Credentials("http://b", "at", "rt", "2030-01-01T00:00:00+00:00"))
         assert sorted(backend.list_urls()) == ["http://a", "http://b"]
 
+    def test_windows_public_backend_supports_large_records(self, monkeypatch, tmp_path):
+        from bifrost.credentials import KeyringBackend
+
+        monkeypatch.setattr(creds_mod.platform, "system", lambda: "Windows")
+        monkeypatch.setattr(creds_mod, "get_config_dir", lambda: tmp_path)
+        backend = KeyringBackend(_keyring=FakeKeyring())
+        value = Credentials("https://one.example", "a" * 4000, "r" * 4000, "2099-01-01T00:00:00+00:00")
+        backend.save(value)
+        assert backend.get(value.api_url) == value
+        assert backend.list_urls() == [value.api_url]
+        backend.clear(value.api_url)
+        assert backend.get(value.api_url) is None
+        assert backend.list_urls() == []
+
     def test_get_returns_none_for_unknown_url(self, fake_kr):
         backend, _ = fake_kr
         assert backend.get("http://never-saved") is None
