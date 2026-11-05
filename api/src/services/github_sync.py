@@ -47,6 +47,7 @@ from src.services.git_repo_manager import (
     merge_in_progress,
 )
 from src.services.github_sync_entity_metadata import extract_entity_metadata
+from src.services.legacy_entity_files import remove_legacy_entity_files
 
 if TYPE_CHECKING:
     from src.models.contracts.github import (
@@ -1086,6 +1087,8 @@ class GitHubSyncService:
             if filename not in files and path.exists():
                 path.unlink()
 
+        remove_legacy_entity_files(work_dir)
+
     async def _reindex_registered_workflows(self, work_dir) -> int:
         """Re-run WorkflowIndexer on all registered workflow .py files."""
         from src.services.file_storage.indexers.workflow import WorkflowIndexer
@@ -1509,15 +1512,13 @@ class GitHubSyncService:
                     except Exception as e:
                         logger.warning(f"Failed to discard {path}: {e}")
 
-                # S3 sync up so other containers see the reverted files, and
-                # keep source search in step with what storage now holds
+                # Keep executable source current as soon as storage changes;
+                # fallible search-index maintenance must not leave stale code.
                 await self.repo_manager.sync_up(work_dir)
-                await self._update_file_index(work_dir)
-                await self.db.commit()
-
-                # Refresh Redis module cache so editor + workers see reverted .py content
                 from src.core.module_cache import refresh_modules_from_directory
                 await refresh_modules_from_directory(work_dir)
+                await self._update_file_index(work_dir)
+                await self.db.commit()
 
                 logger.info(f"Discarded {len(discarded)} file(s)")
                 return DiscardResult(success=True, discarded=discarded)

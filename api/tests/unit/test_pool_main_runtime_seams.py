@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+from src.services import work_dispatch
 from src.services.memory_requests import MIB, MemoryBudget
 from src.worker import pool_main
 from src.worker.pool_main import PoolWorker
@@ -100,3 +101,23 @@ async def test_an_api_hosted_worker_owns_its_runtime_and_consumers(monkeypatch) 
     assert worker.admission._under_pressure() is False
     assert calls[-1] == "pressure"
     close_db.assert_not_awaited()
+
+
+async def test_pool_wake_listener_routes_each_family_to_its_claim_loop(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+    """Workflow acceptance does not wake package, service, or platform claims."""
+    received: dict[str, asyncio.Event] = {}
+
+    async def listen(_redis_url: str, wakes: dict[str, asyncio.Event]) -> None:
+        received.update(wakes)
+
+    monkeypatch.setattr(work_dispatch, "listen_for_pool_wake", listen)
+    worker = PoolWorker()
+
+    await worker._wake_listener()
+
+    assert {family for family, event in received.items() if event is worker._wake} == set(
+        work_dispatch.DISPATCH_WAKE_FAMILIES
+    )
+    assert received[work_dispatch.WAKE_PLATFORM_JOB] is worker._platform_wake
+    assert received[work_dispatch.WAKE_SERVICE] is worker._service_wake
+    assert received[work_dispatch.WAKE_PACKAGE] is worker._package_wake

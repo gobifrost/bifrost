@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, waitFor } from "@/test-utils";
 import { OAuth } from "./OAuth";
+import { LoginPolicy } from "./oauth/PreferredSignIn";
+
+vi.mock("@/components/users/SsoExclusions", () => ({
+	SsoExclusions: () => null,
+}));
 
 const refetch = vi.fn();
 const updateLoginPreference = vi.fn();
@@ -28,6 +33,8 @@ const configData = {
 	login_preference: {
 		auto_redirect_to_sso: false,
 		default_sso_provider: null,
+		password_login_enabled: true,
+		passkey_login_enabled: true,
 	},
 };
 
@@ -72,8 +79,61 @@ describe("OAuth settings", () => {
 				body: {
 					auto_redirect_to_sso: true,
 					default_sso_provider: "microsoft",
+					password_login_enabled: true,
+					passkey_login_enabled: true,
 				},
 			});
 		});
+	});
+});
+
+describe("Login policy card", () => {
+	it("saves password and passkey restrictions through the login preference mutation", async () => {
+		const { user } = renderWithProviders(<OAuth />);
+
+		await user.click(
+			screen.getByRole("switch", { name: /password sign-in/i }),
+		);
+		await user.click(
+			screen.getByRole("switch", { name: /passkey sign-in/i }),
+		);
+		await user.click(
+			screen.getByRole("button", { name: /save login policy/i }),
+		);
+
+		await waitFor(() => {
+			expect(updateLoginPreference).toHaveBeenCalledWith({
+				body: {
+					auto_redirect_to_sso: false,
+					default_sso_provider: null,
+					password_login_enabled: false,
+					passkey_login_enabled: false,
+				},
+			});
+		});
+	});
+
+	it("disables the policy switches when no provider is configured", () => {
+		renderWithProviders(
+			<LoginPolicy
+				passwordLoginEnabled
+				passkeyLoginEnabled
+				hasProviders={false}
+				pending={false}
+				failed={false}
+				onChange={() => undefined}
+				onSave={() => undefined}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("switch", { name: /password sign-in/i }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("switch", { name: /passkey sign-in/i }),
+		).toBeDisabled();
+		expect(
+			screen.getByRole("button", { name: /save login policy/i }),
+		).toBeDisabled();
 	});
 });

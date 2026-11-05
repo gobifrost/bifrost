@@ -14,6 +14,8 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.app_sdk_upgrade_settings import AppSdkUpgradeSettingsService
+from shared.models import AppSdkUpgradeSettings, AppSdkUpgradeSettingsUpdate
 from src.core.auth import Context, CurrentActiveUser
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
@@ -99,6 +101,43 @@ async def _authorize_global_route(
     )
 
 router = APIRouter(prefix="/api/maintenance", tags=["Maintenance"], dependencies=[Depends(_authorize_global_route)])
+
+
+@router.get(
+    "/app-sdk-upgrades/settings",
+    response_model=AppSdkUpgradeSettings,
+    summary="Get automatic App SDK upgrade settings",
+)
+async def get_app_sdk_upgrade_settings(
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> AppSdkUpgradeSettings:
+    return await AppSdkUpgradeSettingsService(db).get_settings()
+
+
+@router.put(
+    "/app-sdk-upgrades/settings",
+    response_model=AppSdkUpgradeSettings,
+    summary="Update automatic App SDK upgrade settings",
+)
+async def update_app_sdk_upgrade_settings(
+    body: AppSdkUpgradeSettingsUpdate,
+    user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> AppSdkUpgradeSettings:
+    service = AppSdkUpgradeSettingsService(db)
+    before = await service.get_settings()
+    after = await service.update_settings(
+        AppSdkUpgradeSettings(enabled=body.enabled), updated_by=user.email
+    )
+    await emit_audit(
+        db,
+        "settings.app_sdk_upgrades.update",
+        resource_type="system_config",
+        details={"before": before.model_dump(), "after": after.model_dump()},
+    )
+    await db.commit()
+    return after
 
 
 @router.get(

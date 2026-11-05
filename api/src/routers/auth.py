@@ -25,16 +25,16 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.device_auth import decide_device_login
-from shared.models import BrowserImpersonationTokenResponse, DeviceAuthorizeRequest
+from shared.app_connections import decide_app_connection, preview_mcp_connection, require_browser_app_approver
+from shared.models import (
+    AppConnectionDecision, AppConnectionDetails, AppConnectionResult,
+    BrowserImpersonationTokenResponse, DeviceAuthorizeRequest,
+)
 from src.core.cache import get_shared_redis
 from src.core.cache.keys import (
     device_code_key,
     device_user_code_index_key,
-    refresh_token_jti_key,
-    user_refresh_tokens_pattern,
     TTL_DEVICE_CODE,
-    TTL_REFRESH_TOKEN,
 )
 from src.models import (
     AuthStatusResponse,
@@ -60,6 +60,11 @@ from src.core.principal import UserPrincipal
 from src.core.rate_limit import auth_limiter, device_token_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
 from src.services.audit_context import ActorContext, current_actor
+from src.services.oauth_config_service import (
+    PASSWORD_SSO_ONLY_DETAIL,
+    PASSKEY_SSO_ONLY_DETAIL,
+    OAuthConfigService,
+)
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
@@ -73,91 +78,28 @@ from shared.browser_impersonation import (
 from src.services.authorization.impersonation import RunAsError
 from src.services.authorization.tokens import TokenSubjectUnavailable, redeem_run_refresh_token
 from src.core.security import (
-    create_access_token,
     create_mfa_token,
-    create_refresh_token,
     decode_mfa_token,
     decode_token,
-    generate_csrf_token,
     get_password_hash,
     verify_password,
 )
 from src.repositories.users import UserRepository
-from src.services.user_provisioning import ensure_user_provisioned, get_user_roles
-from shared.external_access import (
-    resolve_provider_org_claim,
+from src.services.user_provisioning import ensure_user_provisioned
+from shared.auth_cookies import clear_auth_cookies, set_auth_cookies
+from shared.human_sessions import (
+    HumanSessionUnavailable,
+    has_live_refresh_token_jti,
+    issue_human_session,
+    revoke_all_human_sessions,
+    revoke_human_session,
+    rotate_human_session,
 )
 from shared.identities import is_identity, refuse_identity_sign_in
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-# =============================================================================
-# Cookie Configuration
-# =============================================================================
-
-def set_auth_cookies(response: Response, access_token: str, refresh_token: str):
-    """
-    Set HttpOnly authentication cookies and CSRF token.
-
-    Cookies are secure, SameSite=Lax, and HttpOnly for XSS protection.
-    This provides automatic auth for browser clients while still allowing
-    service-to-service auth via Authorization header.
-
-    Also sets a CSRF token cookie that JavaScript can read and send as a header.
-    """
-    settings = get_settings()
-    # A new login or refresh starts an ordinary session. Never leave an old
-    # browser-wide impersonation marker able to override it.
-    clear_browser_impersonation_cookie(response)
-
-    # Determine if we're in production (HTTPS)
-    # Only use secure cookies in production - dev and testing use HTTP
-    secure = settings.is_production
-
-    # Access token cookie (short-lived)
-    response.set_cookie(
-        key="access_token",
-        value=access_token,
-        httponly=True,
-        secure=secure,
-        samesite="lax",
-        max_age=30 * 60,  # 30 minutes (matches JWT expiry)
-        path="/",
-    )
-
-    # Refresh token cookie (long-lived)
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=secure,
-        samesite="lax",
-        max_age=7 * 24 * 60 * 60,  # 7 days (matches JWT expiry)
-        path="/",
-    )
-
-    # CSRF token cookie (readable by JavaScript for X-CSRF-Token header)
-    csrf_token = generate_csrf_token()
-    response.set_cookie(
-        key="csrf_token",
-        value=csrf_token,
-        httponly=False,  # JS needs to read this
-        secure=secure,
-        samesite="strict",  # Stricter for CSRF protection
-        max_age=30 * 60,  # Match access token expiry
-        path="/",
-    )
-
-
-def clear_auth_cookies(response: Response):
-    """Clear authentication cookies on logout."""
-    response.delete_cookie(key="access_token", path="/")
-    response.delete_cookie(key="refresh_token", path="/")
-    response.delete_cookie(key="csrf_token", path="/")
-    clear_browser_impersonation_cookie(response)
 
 
 def set_browser_impersonation_cookie(response: Response, token: str) -> None:
@@ -178,72 +120,6 @@ def set_browser_impersonation_cookie(response: Response, token: str) -> None:
 def clear_browser_impersonation_cookie(response: Response) -> None:
     """Clear an active, expired, or revoked impersonation marker."""
     response.delete_cookie(key=IMPERSONATION_COOKIE_NAME, path="/")
-
-
-# =============================================================================
-# Refresh Token JTI Management
-# =============================================================================
-
-
-async def store_refresh_token_jti(user_id: str, jti: str) -> None:
-    """
-    Store a refresh token JTI in Redis for validation/revocation.
-
-    Args:
-        user_id: User ID the token belongs to
-        jti: JWT ID to store
-    """
-    r = await get_shared_redis()
-    key = refresh_token_jti_key(user_id, jti)
-    await r.setex(key, TTL_REFRESH_TOKEN, "1")
-
-
-async def validate_and_revoke_refresh_token_jti(user_id: str, jti: str) -> bool:
-    """
-    Validate a refresh token JTI exists and revoke it (single use).
-
-    Args:
-        user_id: User ID the token belongs to
-        jti: JWT ID to validate
-
-    Returns:
-        True if JTI was valid and has been revoked, False if invalid
-    """
-    r = await get_shared_redis()
-    key = refresh_token_jti_key(user_id, jti)
-
-    # Atomically check and delete
-    result = await r.delete(key)
-    return result > 0
-
-
-async def has_live_refresh_token_jti(user_id: str, jti: str) -> bool:
-    """Check a refresh session without rotating or revoking it."""
-    r = await get_shared_redis()
-    return bool(await r.exists(refresh_token_jti_key(user_id, jti)))
-
-
-async def revoke_all_user_refresh_tokens(user_id: str) -> int:
-    """
-    Revoke all refresh tokens for a user.
-
-    Args:
-        user_id: User ID to revoke tokens for
-
-    Returns:
-        Number of tokens revoked
-    """
-    r = await get_shared_redis()
-    pattern = user_refresh_tokens_pattern(user_id)
-
-    # Find all keys matching pattern
-    keys = []
-    async for key in r.scan_iter(match=pattern):
-        keys.append(key)
-
-    if keys:
-        return await r.delete(*keys)
-    return 0
 
 
 # =============================================================================
@@ -348,6 +224,11 @@ async def _refuse_login(
     )
 
 
+async def _password_allowed_for(db: AsyncSession, user=None) -> bool:
+    """Whether password login/creation is allowed under the SSO-only policy."""
+    return await OAuthConfigService(db).is_password_allowed_for(user)
+
+
 # =============================================================================
 # Endpoints
 # =============================================================================
@@ -396,17 +277,25 @@ async def login(
     if not user:
         await _refuse_login(db, email=form_data.username, reason="user_not_found")
     if is_identity(user):
-        await _refuse_login(db, email=user.email, reason="identity", user=user, detail="Invalid credentials")
+        await _refuse_login(db, email=user.email, reason="identity", user=user)
     if not user.hashed_password:
         await _refuse_login(
             db,
             email=user.email,
             reason="no_password",
             user=user,
-            detail="Account does not have password authentication enabled",
         )
     if not verify_password(form_data.password, user.hashed_password):
         await _refuse_login(db, email=user.email, reason="wrong_password", user=user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
     if not user.is_active:
         await _refuse_login(
             db,
@@ -650,6 +539,15 @@ async def mfa_initial_verify(
             detail="User not found or inactive",
         )
     refuse_identity_sign_in(user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
 
     mfa_service = MFAService(db)
 
@@ -667,35 +565,16 @@ async def mfa_initial_verify(
         extra={"user_id": str(user.id)}
     )
 
-    # Generate tokens for auto-login after MFA enrollment
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-    }
-
-    access_token = create_access_token(data=token_data)
-    refresh_token_str, jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store JTI in Redis for revocation support
-    await store_refresh_token_jti(str(user.id), jti)
+    tokens = await issue_human_session(user.id)
 
     # Set cookies for browser clients
-    set_auth_cookies(response, access_token, refresh_token_str)
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
 
     return MFAEnrollVerifyResponse(
         success=True,
         recovery_codes=recovery_codes,
-        access_token=access_token,
-        refresh_token=refresh_token_str,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 
@@ -751,6 +630,15 @@ async def verify_mfa_login(
             detail="User not found or inactive",
         )
     refuse_identity_sign_in(user)
+    if not await _password_allowed_for(db, user):
+        await _refuse_login(
+            db,
+            email=user.email,
+            reason="sso_only_password_disabled",
+            user=user,
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
+        )
 
     mfa_service = MFAService(db)
 
@@ -817,32 +705,11 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
     user.last_login = datetime.now(timezone.utc)
     await db.commit()
 
-    # Get user roles from database
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    # Build JWT claims with user info
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-    }
-
-    # Generate tokens
-    access_token = create_access_token(data=token_data)
-    refresh_token_str, jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store JTI in Redis for revocation support
-    await store_refresh_token_jti(str(user.id), jti)
+    tokens = await issue_human_session(user.id)
 
     # Set cookies for browser clients
     if response:
-        set_auth_cookies(response, access_token, refresh_token_str)
+        set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
 
     logger.info(
         f"User logged in: {user.email}",
@@ -879,8 +746,8 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
     )
 
     return LoginResponse(
-        access_token=access_token,
-        refresh_token=refresh_token_str,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 
@@ -909,7 +776,7 @@ async def start_browser_impersonation(
     if (
         not isinstance(refresh_jti, str)
         or refresh_payload.get("sub") != str(current_user.user_id)
-        or not await has_live_refresh_token_jti(str(current_user.user_id), refresh_jti)
+        or not await has_live_refresh_token_jti(db, current_user.user_id, refresh_jti)
     ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1074,86 +941,21 @@ async def refresh_token(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Decode with type validation
-    payload = decode_token(refresh_token_value, expected_type="refresh")
-
-    if not payload:
+    try:
+        tokens = await rotate_human_session(refresh_token_value)
+    except HumanSessionUnavailable:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    user_id = payload.get("sub")
-    jti = payload.get("jti")
-
-    if not user_id:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Validate JTI exists and revoke it (single use - rotation)
-    if not jti:
-        # Legacy token without JTI - reject
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid refresh token format",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    jti_valid = await validate_and_revoke_refresh_token_jti(user_id, jti)
-    if not jti_valid:
-        # JTI not found - token was already used or revoked
-        logger.warning(f"Refresh token reuse attempt for user {log_safe(user_id)}, JTI {log_safe(jti)}")
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Refresh token has been revoked or already used",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    # Verify user still exists and is active
-    user_repo = UserRepository(db)
-    user = await user_repo.get_by_id(UUID(user_id))
-
-    if not user or not user.is_active:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found or inactive",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-    refuse_identity_sign_in(user)
-
-    # Get fresh user roles from database
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    # Build JWT claims with fresh user info
-    new_token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-    }
-
-    # Generate new tokens with rotation
-    access_token = create_access_token(data=new_token_data)
-    new_refresh_token, new_jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store new JTI in Redis
-    await store_refresh_token_jti(str(user.id), new_jti)
 
     # Set cookies for browser clients
-    set_auth_cookies(response, access_token, new_refresh_token)
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
 
     return Token(
-        access_token=access_token,
-        refresh_token=new_refresh_token,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 
@@ -1211,8 +1013,8 @@ async def logout(
     """
     Logout current user and revoke refresh token.
 
-    Clears authentication cookies and revokes the current refresh token.
-    The access token will remain valid until expiry (30 minutes max).
+    Clears authentication cookies and revokes the current durable session.
+    Its epoch bump refuses prior access credentials on their next operation.
 
     For API clients using Bearer auth, the refresh_token should be passed
     in the request body. For browser clients using cookies, the token is
@@ -1227,7 +1029,7 @@ async def logout(
     Returns:
         Logout confirmation
     """
-    # Get refresh token from body (API clients) or cookie (browser clients)
+    session_id = current_user.auth_session_id
     refresh_token = None
     if body and body.refresh_token:
         refresh_token = body.refresh_token
@@ -1236,16 +1038,22 @@ async def logout(
 
     if refresh_token:
         payload = decode_token(refresh_token, expected_type="refresh")
-        if payload and payload.get("jti"):
-            await validate_and_revoke_refresh_token_jti(
-                str(current_user.user_id),
-                payload["jti"]
-            )
+        raw_session_id = payload.get("sid") if payload else None
+        if payload and payload.get("sub") == str(current_user.user_id) and isinstance(raw_session_id, str):
+            try:
+                session_id = UUID(raw_session_id)
+            except ValueError:
+                # A malformed refresh SID cannot replace the validated access
+                # token's session. Logout still revokes that proven family.
+                pass
+
+    if session_id is not None:
+        await revoke_human_session(current_user.user_id, session_id)
 
     # Clear cookies
     if is_browser_impersonation(current_user):
         await revoke_browser_impersonation(current_user)
-    clear_auth_cookies(response)
+    clear_auth_cookies(response, request.cookies)
 
     logger.info(f"User logged out: {current_user.email}")
     await emit_audit(
@@ -1261,6 +1069,7 @@ async def logout(
 
 @router.post("/revoke-all", response_model=RevokeAllResponse)
 async def revoke_all_sessions(
+    request: Request,
     response: Response,
     current_user: CurrentActiveUser,
 ) -> RevokeAllResponse:
@@ -1272,8 +1081,8 @@ async def revoke_all_sessions(
     - User wants to sign out everywhere
     - Password has been changed
 
-    Note: Access tokens will remain valid until expiry (30 minutes max).
-    For immediate revocation, consider also changing the password.
+    Session revocation and the authority-epoch bump commit atomically, so
+    existing access tokens are refused before their next protected operation.
 
     Args:
         response: FastAPI response (to clear current cookies)
@@ -1282,10 +1091,10 @@ async def revoke_all_sessions(
     Returns:
         Number of sessions revoked
     """
-    count = await revoke_all_user_refresh_tokens(str(current_user.user_id))
+    count = await revoke_all_human_sessions(current_user.user_id)
 
     # Clear cookies for current session
-    clear_auth_cookies(response)
+    clear_auth_cookies(response, request.cookies)
 
     logger.info(
         f"User revoked all sessions: {current_user.email}",
@@ -1351,7 +1160,7 @@ async def admin_revoke_user_sessions(
     require_unprotected(caller, target_user.id in await privileged_user_ids(db, [target_user.id]), target_user.organization_id)
 
     # Revoke all sessions for target user
-    count = await revoke_all_user_refresh_tokens(revoke_data.user_id)
+    count = await revoke_all_human_sessions(target_user.id)
 
     logger.warning(
         f"Admin revoked all sessions for user: {log_safe(target_user.email)}",
@@ -1416,6 +1225,14 @@ async def register_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="User registration is disabled. Contact an administrator for access.",
+        )
+
+    # Resolve existing invitees or the same domain-based organization used by
+    # provisioning before applying the shared policy. Bootstrap stays reachable.
+    if not await OAuthConfigService(db).is_password_registration_allowed(user_data.email):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=PASSWORD_SSO_ONLY_DETAIL,
         )
 
     # Check if email already exists
@@ -1546,7 +1363,8 @@ async def get_auth_status(db: DbSession = None) -> AuthStatusResponse:
 
     return AuthStatusResponse(
         needs_setup=not has_users,
-        password_login_enabled=True,  # Always enabled for now
+        password_login_enabled=await oauth_config_service.is_password_allowed_for(),
+        passkey_login_enabled=await oauth_config_service.is_passkey_allowed_for(),
         mfa_required_for_password=settings.mfa_enabled,
         oauth_providers=oauth_providers,
         auto_redirect_to_sso=login_preference.auto_redirect_to_sso,
@@ -1752,11 +1570,14 @@ async def exchange_device_token(
             }
         )
 
+        access_payload = decode_token(login_response.access_token, expected_type="access")
+        if access_payload is None or not isinstance(access_payload.get("exp"), int):
+            raise RuntimeError("Freshly minted device access token has no valid expiry")
         return DeviceTokenResponse(
             access_token=login_response.access_token,
             refresh_token=login_response.refresh_token,
             token_type=login_response.token_type,
-            expires_in=1800,  # 30 minutes
+            expires_in=max(0, access_payload["exp"] - int(datetime.now(timezone.utc).timestamp())),
         )
 
     # Unknown status
@@ -1893,80 +1714,45 @@ async def setup_passkey_verify(
         extra={"user_id": str(user.id), "passkey_id": str(passkey.id)},
     )
 
-    # Generate tokens for immediate login
-    db_roles = await get_user_roles(db, user.id)
-    roles = ["authenticated", *db_roles]
-
-    token_data = {
-        "sub": str(user.id),
-        "email": user.email,
-        "name": user.name or user.email.split("@")[0],
-        "is_superuser": user.is_superuser,
-        "is_external": bool(user.is_external),
-        "is_provider_org": await resolve_provider_org_claim(db, user),
-        "org_id": str(user.organization_id) if user.organization_id else None,
-        "roles": roles,
-    }
-
-    access_token = create_access_token(data=token_data)
-    refresh_token_str, jti = create_refresh_token(data={"sub": str(user.id)})
-
-    # Store JTI in Redis for revocation support
-    await store_refresh_token_jti(str(user.id), jti)
+    tokens = await issue_human_session(user.id)
 
     # Set cookies for browser clients
-    set_auth_cookies(response, access_token, refresh_token_str)
+    set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
 
     return SetupPasskeyVerifyResponse(
         user_id=str(user.id),
         email=user.email,
-        access_token=access_token,
-        refresh_token=refresh_token_str,
+        access_token=tokens.access_token,
+        refresh_token=tokens.refresh_token,
     )
 
 
 @router.post("/device/authorize", response_model=DeviceAuthorizeResponse)
 async def authorize_device(
     authorize_request: DeviceAuthorizeRequest,
+    request: Request,
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
     """Approve a CLI login after explicit confirmation. The first decision is final."""
+    await require_browser_app_approver(request, current_user)
     return await _record_device_decision(authorize_request.user_code, True, current_user)
 
 
 @router.post("/device/deny", response_model=DeviceAuthorizeResponse)
 async def deny_device(
     deny_request: DeviceAuthorizeRequest,
+    request: Request,
     current_user: CurrentActiveUser,
 ) -> DeviceAuthorizeResponse:
     """Deny a CLI login without ever calling the approval endpoint."""
+    await require_browser_app_approver(request, current_user)
     return await _record_device_decision(deny_request.user_code, False, current_user)
 
 
 async def _record_device_decision(
     user_code: str, approved: bool, current_user: UserPrincipal,
 ) -> DeviceAuthorizeResponse:
-    if is_browser_impersonation(current_user):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Exit impersonation before authorizing a CLI login",
-        )
-
-    decision = await decide_device_login(
-        user_code,
-        str(current_user.user_id),
-        approved,
-    )
-    if decision == "expired":
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Invalid or expired user code",
-        )
-    if decision == "decided":
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This CLI login has already been approved or denied. Start a new login from your CLI.",
-        )
+    await decide_app_connection("cli", user_code, current_user, approved)
 
     logger.info(
         "CLI device login %s by user: %s",
@@ -1976,6 +1762,25 @@ async def _record_device_decision(
     )
 
     return DeviceAuthorizeResponse(success=True)
+
+
+@router.get("/app-connections/{request_id}", response_model=AppConnectionDetails)
+async def get_app_connection(request_id: str, request: Request, response: Response, current_user: CurrentActiveUser) -> AppConnectionDetails:
+    """Review one MCP connection; opening this endpoint never issues credentials."""
+    await require_browser_app_approver(request, current_user)
+    response.headers["Cache-Control"] = "no-store"
+    return await preview_mcp_connection(request_id, current_user)
+
+
+@router.post("/app-connections/{request_id}", response_model=AppConnectionResult)
+async def decide_app_connection_request(
+    request_id: str, decision: AppConnectionDecision, request: Request, current_user: CurrentActiveUser,
+) -> AppConnectionResult:
+    """Record a user-bound, explicit approval or denial before handing off to the app."""
+    await require_browser_app_approver(request, current_user)
+    return await decide_app_connection(
+        "mcp", request_id, current_user, decision.approved, decision.consent_token,
+    )
 
 
 # =============================================================================
@@ -2002,6 +1807,18 @@ async def register_from_invite(
     password was supplied) their hashed_password is set.
     """
     svc = UserInviteService(db)
+    if request.password is not None:
+        # Password variant only: resolve the invitee so platform admins keep
+        # the password path while regular invitees are refused under SSO-only.
+        try:
+            _, invited_user = await svc.get_valid_invite_user(token=request.token)
+        except InviteConsumeError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        if not await _password_allowed_for(db, invited_user):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=PASSWORD_SSO_ONLY_DETAIL,
+            )
     try:
         registered = await svc.consume(token=request.token, password=request.password)
     except InviteConsumeError as e:
@@ -2027,6 +1844,8 @@ async def register_from_invite_passkey_options(
     invite_svc = UserInviteService(db)
     try:
         _, invited_user = await invite_svc.get_valid_invite_user(token=request.token)
+        if not await OAuthConfigService(db).is_passkey_allowed_for(invited_user):
+            raise HTTPException(status_code=403, detail=PASSKEY_SSO_ONLY_DETAIL)
         options = await PasskeyService(db).generate_registration_options(invited_user.id)
     except (InviteConsumeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -2052,6 +1871,8 @@ async def register_from_invite_passkey_verify(
     invite_svc = UserInviteService(db)
     try:
         _, invited_user = await invite_svc.get_valid_invite_user(token=request.token)
+        if not await OAuthConfigService(db).is_passkey_allowed_for(invited_user):
+            raise HTTPException(status_code=403, detail=PASSKEY_SSO_ONLY_DETAIL)
         passkey_service = PasskeyService(db)
         await passkey_service.verify_registration(
             user_id=invited_user.id,

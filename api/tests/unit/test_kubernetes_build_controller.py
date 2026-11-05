@@ -515,10 +515,10 @@ def _loop_with_controller(monkeypatch, outcomes):  # type: ignore[no-untyped-def
     monkeypatch.setattr(manifest, "resolve_worker_job_spec", AsyncMock(return_value=SPEC))
     monkeypatch.setattr(module, "BUILD_POLL_SECONDS", 0.01)
     monkeypatch.setattr(module, "BUILD_SWEEP_SECONDS", 30)
-    woken: list[asyncio.Event] = []
+    woken: list[dict[str, asyncio.Event]] = []
 
-    async def listen(redis_url, *events):  # type: ignore[no-untyped-def]
-        woken.extend(events)
+    async def listen(redis_url, wakes):  # type: ignore[no-untyped-def]
+        woken.append(wakes)
         await asyncio.Event().wait()
 
     monkeypatch.setattr(module, "listen_for_pool_wake", listen)
@@ -560,7 +560,8 @@ async def test_an_idle_build_loop_waits_for_a_wake_up(monkeypatch):
         await asyncio.sleep(0.1)  # ten poll intervals
         assert len(passes) == 1
 
-        woken[0].set()
+        assert set(woken[0]) == {module.WAKE_PLATFORM_JOB}
+        woken[0][module.WAKE_PLATFORM_JOB].set()
         await _until(lambda: len(passes) == 2)
     finally:
         shutdown.set()

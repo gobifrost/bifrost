@@ -27,6 +27,7 @@ logger = logging.getLogger(__name__)
 
 COPY_OBJECT_LIMIT = 5 * 1024**3
 MIN_COPY_PART = 256 * 1024**2
+_STREAM_COPY_PART = 8 * 1024**2
 _MAX_PARTS = 10_000
 # System metadata a copy must carry over (MetadataDirective=REPLACE drops it).
 _COPIED_HEADERS = (
@@ -396,13 +397,16 @@ class S3StorageClient:
         multipart_threshold: int = COPY_OBJECT_LIMIT,
         part_size: int | None = None,
     ) -> None:
-        """Server-side copy of exactly the bytes ``source`` describes.
+        """Copy exactly the bytes ``source`` describes.
 
-        Every copy request carries ``CopySourceIfMatch=source.etag``. Objects
-        up to ``multipart_threshold`` use one ``CopyObject``; larger ones use
-        a multipart part copy whose completion refuses to overwrite an object
+        Every source read or copy carries the original source ETag condition.
+        Objects up to ``multipart_threshold`` use one ``CopyObject``; larger
+        ones use multipart publication whose completion refuses to overwrite an object
         that appeared at the destination (``IfNoneMatch="*"``) and which is
         aborted on any failure.
+
+        Explicit stream mode replaces large part-copy operations with ranged
+        conditional reads, retaining the same conditional multipart publication.
         """
         bucket = self.settings.s3_bucket
         copy_source = {"Bucket": bucket, "Key": source_key}
@@ -425,7 +429,9 @@ class S3StorageClient:
                     raise mapped from exc
                 return
 
-            size_per_part = part_size or max(MIN_COPY_PART, math.ceil(source.size / _MAX_PARTS))
+            copy_mode = self.settings.s3_multipart_copy_mode
+            minimum_part = _STREAM_COPY_PART if copy_mode == "stream" else MIN_COPY_PART
+            size_per_part = part_size or max(minimum_part, math.ceil(source.size / _MAX_PARTS))
             created = await s3.create_multipart_upload(
                 Bucket=bucket, Key=destination_key, Metadata=metadata, **source.headers
             )
@@ -435,21 +441,29 @@ class S3StorageClient:
                 for number, start in enumerate(range(0, source.size, size_per_part), start=1):
                     end = min(start + size_per_part, source.size) - 1
                     try:
-                        response = await s3.upload_part_copy(
-                            Bucket=bucket,
-                            Key=destination_key,
-                            UploadId=upload_id,
-                            PartNumber=number,
-                            CopySource=copy_source,
-                            CopySourceRange=f"bytes={start}-{end}",
-                            CopySourceIfMatch=source.etag,
-                        )
+                        if copy_mode == "stream":
+                            data = await self._read_copy_part(s3, source_key, source, start, end)
+                            response = await s3.upload_part(
+                                Bucket=bucket, Key=destination_key, UploadId=upload_id,
+                                PartNumber=number, Body=data,
+                            )
+                        else:
+                            response = await s3.upload_part_copy(
+                                Bucket=bucket,
+                                Key=destination_key,
+                                UploadId=upload_id,
+                                PartNumber=number,
+                                CopySource=copy_source,
+                                CopySourceRange=f"bytes={start}-{end}",
+                                CopySourceIfMatch=source.etag,
+                            )
                     except S3Error as exc:
                         mapped = _copy_error(exc)
                         if mapped is exc:
                             raise
                         raise mapped from exc
-                    parts.append({"PartNumber": number, "ETag": response["CopyPartResult"]["ETag"]})
+                    etag = response["ETag"] if copy_mode == "stream" else response["CopyPartResult"]["ETag"]
+                    parts.append({"PartNumber": number, "ETag": etag})
                 try:
                     await s3.complete_multipart_upload(
                         Bucket=bucket,
@@ -470,6 +484,38 @@ class S3StorageClient:
                 except Exception:
                     logger.warning("Could not abort multipart copy", exc_info=True)
                 raise
+
+    async def _read_copy_part(
+        self, s3: Any, source_key: str, source: ObjectHead, start: int, end: int,
+    ) -> bytes:
+        """Read only the pinned source version; reject ignored ranges/conditions."""
+        response = await s3.get_object(
+            Bucket=self.settings.s3_bucket, Key=source_key,
+            IfMatch=source.etag, Range=f"bytes={start}-{end}",
+        )
+        body = response["Body"]
+        try:
+            if response.get("ETag") != source.etag:
+                raise ObjectPreconditionFailed("source")
+            length = end - start + 1
+            if (
+                response.get("ResponseMetadata", {}).get("HTTPStatusCode") != 206
+                or response.get("ContentRange") != f"bytes {start}-{end}/{source.size}"
+                or response.get("ContentLength") != length
+            ):
+                raise ValueError("Object storage returned an unexpected source range")
+            data = await body.read(length + 1)
+            if len(data) != length:
+                raise ValueError("Object storage returned an incomplete source range")
+        except BaseException:
+            try:
+                await body.close()
+            except Exception:
+                logger.warning("Could not close failed source range", exc_info=True)
+            raise
+        else:
+            await body.close()
+            return data
 
     async def delete_object_strict(self, key: str) -> None:
         """DeleteObject that raises on any failure (unlike ``delete_raw_from_s3``)."""

@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 from uuid import UUID
 
 import yaml
-from sqlalchemy import select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
@@ -1842,10 +1842,21 @@ class ManifestResolver:
         )
 
         # Delete configs not in manifest (skip integration-schema-linked configs —
-        # those are user-set values managed by IntegrationConfigSchema cascade)
+        # those are user-set values managed by IntegrationConfigSchema cascade).
+        # The workspace manifest omits configs attached to non-exportable
+        # Integrations, so those rows cannot represent a user deletion from Git.
+        exported_integration_ids = select(Integration.id).where(
+            *export_criteria(Integration)
+        )
         cfg_q = select(
             Config.id, Config.organization_id, Config.key
-        ).where(Config.config_schema_id.is_(None))
+        ).where(
+            Config.config_schema_id.is_(None),
+            or_(
+                Config.integration_id.is_(None),
+                Config.integration_id.in_(exported_integration_ids),
+            ),
+        )
         if present_config_uuids:
             cfg_q = cfg_q.where(Config.id.notin_(present_config_uuids))
         if lock_rows:

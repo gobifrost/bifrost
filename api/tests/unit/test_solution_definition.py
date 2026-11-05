@@ -106,6 +106,41 @@ def test_solution_reader_keeps_app_repo_path_transport(tmp_path) -> None:
     assert install_app["repo_path"] == "apps/dashboard"
 
 
+def test_solution_app_reader_parses_only_apps_with_canonical_transport(tmp_path) -> None:
+    from bifrost.definition_validation import DefinitionValidationError
+    from bifrost.solution_definition import read_solution_apps, read_solution_definition
+
+    _solution_workspace(
+        tmp_path,
+        "apps.yaml",
+        """apps:
+  dashboard:
+    repo_path: apps/dashboard
+    app_model: standalone_v2
+    dist_files: {index.html: '<main></main>'}
+""",
+    )
+    (tmp_path / ".bifrost" / "agents.yaml").write_text(
+        """agents:
+  legacy:
+    name: Legacy
+    llm_model: legacy-model
+"""
+    )
+
+    assert read_solution_apps(tmp_path) == [{
+        "id": "dashboard",
+        "path": "apps/dashboard",
+        "slug": "dashboard",
+        "name": "dashboard",
+        "app_model": "standalone_v2",
+        "repo_path": "apps/dashboard",
+        "dist_files": {"index.html": "<main></main>"},
+    }]
+    with pytest.raises(DefinitionValidationError, match="llm_model"):
+        read_solution_definition(tmp_path)
+
+
 def test_solution_reader_keeps_workflow_source_transport(tmp_path) -> None:
     from bifrost.solution_definition import read_solution_definition
 

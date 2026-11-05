@@ -25,7 +25,7 @@ import secrets
 from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Select, and_, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -34,7 +34,7 @@ from shared.run_lineage import unattended_lineage
 from src.services.memory_requests import workflow_request_sql
 from src.models.orm.services import _SERVICE_LIVE_STATES, ServiceAttempt, ServiceDefinition, ServiceLog
 from src.models.orm.workflows import Workflow
-from src.services.work_dispatch import wake_pool_workers_after_commit
+from src.services.work_dispatch import WAKE_SERVICE, wake_pool_workers_after_commit
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +104,7 @@ async def ensure_definition_for_workflow(
     """
     existing = await get_definition_for_workflow(db, workflow.id)
     if existing is not None:
+        await sync_service_organization(db, workflow)
         return existing
     definition = ServiceDefinition(
         id=uuid4(),
@@ -118,13 +119,30 @@ async def ensure_definition_for_workflow(
     )
     db.add(definition)
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     logger.info(
         "Created service definition for workflow %s (%s)",
         workflow.name,
         definition.id,
     )
     return definition
+
+
+async def sync_service_organization(db: AsyncSession, workflow: Workflow) -> None:
+    """Keep service authority aligned with its source, only between attempts."""
+    definition = await db.scalar(
+        select(ServiceDefinition)
+        .where(ServiceDefinition.workflow_id == workflow.id)
+        .with_for_update()
+    )
+    if definition is None or definition.organization_id == workflow.organization_id:
+        return
+    if await get_live_attempt_for_update(db, definition.id) is not None:
+        raise ServiceConflictError("Stop the service before changing its organization.")
+    definition.organization_id = workflow.organization_id
+    definition.updated_at = _now()
+    await db.flush()
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
 
 
 async def sync_definition_for_registration(
@@ -280,7 +298,7 @@ async def set_enabled(
         if definition.blocked_reason == "disabled":
             definition.blocked_reason = None
             definition.restart_eligible_at = None
-        wake_pool_workers_after_commit(db)
+        wake_pool_workers_after_commit(db, WAKE_SERVICE)
     definition.updated_at = _now()
     await db.flush()
     return definition
@@ -297,7 +315,7 @@ async def start_service(db: AsyncSession, definition: ServiceDefinition) -> Serv
     definition.restart_eligible_at = None
     definition.updated_at = _now()
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     return definition
 
 
@@ -324,7 +342,7 @@ async def restart_service(db: AsyncSession, definition: ServiceDefinition) -> Se
     await _request_attempt_stop(db, definition.id)
     definition.updated_at = _now()
     await db.flush()
-    wake_pool_workers_after_commit(db)
+    wake_pool_workers_after_commit(db, WAKE_SERVICE)
     return definition
 
 
@@ -621,6 +639,40 @@ def _backoff_delay_seconds(
     return delay / 2 + random.uniform(0, delay / 2) if delay > 0 else 0.0
 
 
+def pending_service_statement(now: datetime) -> Select[tuple[ServiceDefinition]]:
+    """Shared launch eligibility for capacity planning and fenced claiming.
+
+    Memory fit and row locking belong to the claimant. Capacity planning sees
+    the same pending definitions without claiming them or changing their state.
+    """
+    live_exists = (
+        select(ServiceAttempt.id)
+        .where(
+            ServiceAttempt.service_id == ServiceDefinition.id,
+            ServiceAttempt.state.in_(_SERVICE_LIVE_STATES),
+        )
+        .exists()
+    )
+    return (
+        select(ServiceDefinition)
+        .join(Workflow, Workflow.id == ServiceDefinition.workflow_id)
+        .where(
+            Workflow.type == "service",
+            Workflow.is_active.is_(True),
+            ServiceDefinition.enabled.is_(True),
+            ServiceDefinition.organization_id.is_not(None),
+            ServiceDefinition.organization_id == Workflow.organization_id,
+            ServiceDefinition.desired_state == "running",
+            ServiceDefinition.blocked_reason.is_(None),
+            (
+                ServiceDefinition.restart_eligible_at.is_(None)
+                | (ServiceDefinition.restart_eligible_at <= now)
+            ),
+            ~live_exists,
+        )
+    )
+
+
 async def claim_eligible_service(
     db: AsyncSession,
     *,
@@ -643,36 +695,9 @@ async def claim_eligible_service(
     if not await fence_remote_owner(db):
         return None
     now = now or _now()
-    live_exists = (
-        select(ServiceAttempt.id)
-        .where(
-            ServiceAttempt.service_id == ServiceDefinition.id,
-            ServiceAttempt.state.in_(_SERVICE_LIVE_STATES),
-        )
-        .exists()
-    )
     result = await db.execute(
-        select(ServiceDefinition)
-        # Launch safety: the source row must still exist, still be a service,
-        # and still be active. Indexer type-changes, deactivation, and removal
-        # all converge here even if their own parking calls are missed.
-        # Services are always org-scoped (service tokens require org_id):
-        # org-less definitions are never eligible.
-        .join(Workflow, Workflow.id == ServiceDefinition.workflow_id)
-        .where(
-            Workflow.type == "service",
-            Workflow.is_active.is_(True),
-            ServiceDefinition.enabled.is_(True),
-            ServiceDefinition.organization_id.is_not(None),
-            ServiceDefinition.desired_state == "running",
-            ServiceDefinition.blocked_reason.is_(None),
-            workflow_request_sql(Workflow) <= fits_bytes,
-            (
-                ServiceDefinition.restart_eligible_at.is_(None)
-                | (ServiceDefinition.restart_eligible_at <= now)
-            ),
-            ~live_exists,
-        )
+        pending_service_statement(now)
+        .where(workflow_request_sql(Workflow) <= fits_bytes)
         .order_by(
             ServiceDefinition.restart_eligible_at.asc().nulls_first(),
             ServiceDefinition.updated_at.asc(),

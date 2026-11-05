@@ -1,0 +1,14 @@
+{
+  "key": "pr:1158",
+  "classification": "highlight",
+  "entry_ids": [
+    "a978b8c0-cde0-4b05-bf6d-7cb333ed914a"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1158",
+      "Independent Astra implementation and Product Updates copy review approved on 2026-10-31. General Writing and Humanizer applied. Optional New highlight; existing Apps need no action to keep their current behavior. The one-time migration and subsequent reload behavior passed focused worker and browser checks. /apps route verified."
+    ]
+  }
+}

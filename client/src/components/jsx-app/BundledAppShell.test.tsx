@@ -84,6 +84,7 @@ function mockManifestOk(
 		migrated: boolean;
 		app_model: string;
 		runtime_contract: "mount-v1" | null;
+		sdk_binding_api_major: number | null;
 	}> = {},
 ) {
 	mockAuthFetch.mockResolvedValueOnce({
@@ -261,6 +262,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			entry: "assets/main-prepared.js",
 			base_url: "/api/applications/app-prepared/dist",
 			runtime_contract: "mount-v1",
+			sdk_binding_api_major: 1,
 		});
 		const { BundledAppShell, prepareAppBundle } =
 			await import("./BundledAppShell");
@@ -288,7 +290,12 @@ describe("BundledAppShell — app_model render branch", () => {
 			await screen.findByTestId("solution-v2-app-root"),
 		).toBeInTheDocument();
 		expect(mockAuthFetch).toHaveBeenCalledTimes(1);
-		expect(mockStandaloneV2App).toHaveBeenCalledWith(expect.objectContaining({ solutionId: "solution-prepared" }));
+		expect(mockStandaloneV2App).toHaveBeenCalledWith(
+			expect.objectContaining({
+				solutionId: "solution-prepared",
+				sdkBindingApiMajor: 1,
+			}),
+		);
 	});
 
 	it("mounts the standalone v2 app same-document (no iframe) and injects auth", async () => {
@@ -297,6 +304,7 @@ describe("BundledAppShell — app_model render branch", () => {
 			entry: "assets/main-abc.js",
 			base_url: "/api/applications/app-1/dist",
 			runtime_contract: "mount-v1",
+			sdk_binding_api_major: 1,
 		});
 		// The host token the shell injects for the app.
 		localStorage.setItem("bifrost_access_token", "tok-xyz");
@@ -316,6 +324,7 @@ describe("BundledAppShell — app_model render branch", () => {
 				appSlug: "my-app",
 				entry: "assets/main-abc.js",
 				runtimeContract: "mount-v1",
+				sdkBindingApiMajor: 1,
 			}),
 		);
 

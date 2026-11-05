@@ -934,7 +934,7 @@ class ManifestFiles(BaseModel):
     @field_validator("locations", mode="before")
     @classmethod
     def normalize_locations(cls, value: list[str]) -> list[str]:
-        from shared.file_paths import validate_location_name
+        from bifrost.file_locations import validate_location_name
 
         if not isinstance(value, list):
             raise ValueError("locations must be a list")
@@ -986,8 +986,8 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
     id: str = Field(description="Custom Claim UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(description="Claim name, unique per org", **classify(FieldClass.CONTENT, match_key=True))
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
-    # Null = global (unattached workspace content). Install and git-sync
-    # manifests always carry an org UUID; only the workspace projection clears it.
+    # Null = global. Git sync preserves scope; Solution install stamps the
+    # destination organization rather than importing the source scope.
     organization_id: str | None = Field(default=None, description="Org UUID (null = global)", **classify(FieldClass.ENVIRONMENT, match_key=True))
     type: Literal["list", "scalar"] = Field(default="list", description="list | scalar", **classify(FieldClass.CONTENT))
     query: ClaimQuery = Field(description="Source table query that resolves the claim", **classify(FieldClass.CONTENT))
@@ -999,7 +999,7 @@ class ManifestCustomClaim(EntityCodec, BaseModel):
             id=str(claim.id),
             name=claim.name,
             description=claim.description,
-            organization_id=str(claim.organization_id),
+            organization_id=str(claim.organization_id) if claim.organization_id else None,
             type=claim.type,  # type: ignore[arg-type]
             query=ClaimQuery.model_validate(claim.query),
         )

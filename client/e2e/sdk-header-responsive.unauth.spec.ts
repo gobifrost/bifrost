@@ -2,7 +2,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import react from "@vitejs/plugin-react";
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 import { build } from "vite";
 
 // No platform jobs: build the real SDK component with production React. React

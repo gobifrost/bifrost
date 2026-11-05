@@ -1,16 +1,17 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import {
-	test,
-	expect,
-	request as playwrightRequest,
 	type Page,
 	type APIRequestContext,
 	type APIResponse,
 	type Response,
+	type BrowserContext,
 } from "@playwright/test";
+// Keep the member page in an independent real MFA session per test.
+import { test, expect } from "./fixtures/api-fixture";
+import {
+	createFreshApiContext,
+	knownUserCredentials,
+} from "./fixtures/human-auth";
 
-const API_URL = process.env.TEST_API_URL || "http://api:8000";
 const UNIQUE = `${Date.now()}_${Math.floor(Math.random() * 10_000)}`;
 const WORKFLOW_PATH = `e2e_member_form_${UNIQUE}.py`;
 const WORKFLOW_FN = `e2e_member_form_${UNIQUE}`;
@@ -170,23 +171,18 @@ test.describe("Form Acceptance for Org Users", () => {
 	let assignedFormId: string;
 	let forbiddenFormId: string;
 	let memberUserId: string;
+	let adminContext: BrowserContext;
 
-	test.beforeAll(async () => {
-		const credentials = JSON.parse(
-			readFileSync(resolve("e2e/.auth/credentials.json"), "utf8"),
-		) as {
-			platform_admin: { accessToken: string };
-			org1_user: { userId: string; organizationId: string };
-		};
-		memberUserId = credentials.org1_user.userId;
-		const memberOrganizationId = credentials.org1_user.organizationId;
-
-		adminApi = await playwrightRequest.newContext({
-			baseURL: API_URL,
-			extraHTTPHeaders: {
-				Authorization: `Bearer ${credentials.platform_admin.accessToken}`,
-			},
-		});
+	test.beforeAll(async ({ browser }) => {
+		const member = knownUserCredentials("org1_user");
+		memberUserId = member.userId;
+		if (!member.organizationId) {
+			throw new Error("Seeded org user has no organization");
+		}
+		const memberOrganizationId = member.organizationId;
+		const freshAdmin = await createFreshApiContext(browser, "platform_admin");
+		adminContext = freshAdmin.context;
+		adminApi = freshAdmin.api;
 
 		const write = await adminApi.put("/api/files/editor/content", {
 			data: {
@@ -348,7 +344,7 @@ test.describe("Form Acceptance for Org Users", () => {
 				`/api/files/editor?path=${encodeURIComponent(WORKFLOW_PATH)}`,
 			),
 		);
-		await adminApi.dispose();
+		await adminContext.close();
 	});
 
 	test(

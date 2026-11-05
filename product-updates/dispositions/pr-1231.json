@@ -1,0 +1,15 @@
+{
+  "key": "pr:1231",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal job-recovery repair; no new capability or customer action requiring an announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1231",
+      "Jack approved repair and merge on 2026-11-03. Reviewed the shared recovery path and 48 passing focused tests; routine internal repair omitted under his release visibility policy.",
+      "Verified contribution by MTG-Thomas from MTG-Thomas/bifrost-upstream into gobifrost/bifrost; original commits and contributor credit retained.",
+      "Security review: no authorization, tenant-boundary, secret-handling, or security-disclosure change. Existing lease fencing, cancellation, and retry limits retained."
+    ]
+  }
+}

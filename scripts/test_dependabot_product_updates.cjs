@@ -76,13 +76,12 @@ test('a pre-split ledger, a mismatched file, or another PR\'s file fails closed'
     f => { f.contents['product-updates/dispositions.json'].items = {}; },
     f => { f.contents['product-updates/dispositions.json'].schema_version = 2; },
     f => { f.contents['product-updates/dispositions/pr-920.json'] = { key: 'pr:921', classification: 'omit' }; },
-    f => f.files.push({ filename: 'product-updates/dispositions/pr-921.json', status: 'added' }),
   ]) {
     const f = fixture(); mutate(f); await assert.rejects(f.run('')); assert.deepEqual(f.writes, []);
   }
 });
-test('rejects human authors, forks, wrong branches, and unrelated changes before any write', async () => {
-  for (const mutate of [f => f.pr.user.login = 'human', f => f.pr.user.type = 'User', f => f.pr.head.repo.full_name = 'other/fork', f => f.pr.head.ref = 'feature', f => f.pr.base.ref = 'release', f => f.files.push({ filename: 'api/src/main.py', status: 'modified' }), f => f.files[0].status = 'renamed', f => f.files.splice(0)]) {
+test('rejects human authors, forks, and wrong branches before any write', async () => {
+  for (const mutate of [f => f.pr.user.login = 'human', f => f.pr.user.type = 'User', f => f.pr.head.repo.full_name = 'other/fork', f => f.pr.head.ref = 'feature', f => f.pr.base.ref = 'release']) {
     const f = fixture(); mutate(f); await assert.rejects(f.run('')); assert.deepEqual(f.writes, []);
   }
 });
@@ -101,7 +100,8 @@ test('workflow changes must only update the same fully pinned action', async () 
   await f.run(''); assert.equal(f.writes.length, 4);
   for (const bad of [undefined, '+        run: echo unsafe', patch.replace('actions/checkout@' + 'b'.repeat(40), 'other/action@' + 'b'.repeat(40)), patch.replace('b'.repeat(40), 'main')]) {
     const badFixture = fixture(); badFixture.files.splice(0, 1, { filename: '.github/workflows/ci.yml', status: 'modified', patch: bad });
-    await assert.rejects(badFixture.run(''), /outside dependency maintenance/); assert.deepEqual(badFixture.writes, []);
+    assert.deepEqual(await badFixture.run(''), { changed: false, manualReview: true });
+    assert.deepEqual(badFixture.writes, []);
   }
 });
 
@@ -119,4 +119,30 @@ test('Dependabot automation accepts bot PR follow-ups regardless of event sender
   assert.doesNotMatch(workflow, /github\.actor/);
   assert.match(workflow, /uses: dependabot\/fetch-metadata@[a-f0-9]{40}/);
   assert.doesNotMatch(workflow, /skip-(?:commit-)?verification:\s*true/);
+});
+
+
+test('source repairs and non-maintenance diffs require manual review without any write', async () => {
+  for (const mutate of [
+    f => f.files.push({ filename: 'api/src/main.py', status: 'modified' }),
+    f => f.files[0].status = 'renamed',
+    f => f.files.splice(0),
+    f => f.files.push({ filename: 'product-updates/dispositions/pr-921.json', status: 'added' }),
+  ]) {
+    for (const existing of [false, true]) {
+      const f = fixture();
+      mutate(f);
+      if (existing) f.contents['product-updates/dispositions/pr-920.json'] = {
+        key: 'pr:920', classification: 'omit', review: { status: 'approved' },
+      };
+      assert.deepEqual(await f.run('OPEN'), { changed: false, manualReview: true });
+      assert.deepEqual(f.writes, []);
+    }
+  }
+});
+
+test('manual review prevents automatic merge even for otherwise eligible updates', () => {
+  const workflow = fs.readFileSync(path.join(__dirname, '..', '.github', 'workflows', 'dependabot-auto-merge.yml'), 'utf8');
+  assert.match(workflow, /if: steps\.eligible\.outputs\.merge == 'true' && steps\.disposition\.outputs\.manual-review != 'true'/);
+  assert.match(workflow, /core\.setOutput\("manual-review", result\.manualReview === true\)/);
 });

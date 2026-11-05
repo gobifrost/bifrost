@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
 from typing import Any
+from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 import pytest
@@ -26,6 +28,42 @@ from src.services.mcp_server.tools._http_bridge import BRIDGE_REFRESH_BUDGET, re
 from tests.unit.authorization.committed_runs import committed_world
 
 _BUMP = text("SELECT authz_epoch_bump_once()")
+
+
+async def test_live_external_mcp_credential_is_forwarded_without_a_new_session(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request.headers["Authorization"])
+        return httpx.Response(200, json={})
+
+    issue = AsyncMock()
+    monkeypatch.setattr(tokens, "issue_access_token", issue)
+    monkeypatch.setattr(_http_bridge, "_live_access_token", lambda: "original.jwt")
+    monkeypatch.setattr(_http_bridge, "_build_in_process_transport", lambda: httpx.MockTransport(respond))
+    async with rest_client(MCPContext(user_id=uuid4(), org_id=uuid4())) as client:
+        assert (await client.post("/mutation")).status_code == 200
+    assert seen == ["Bearer original.jwt"]
+    issue.assert_not_awaited()
+
+
+async def test_internal_human_bridge_uses_database_facts_and_shared_refresh(
+    async_engine: AsyncEngine, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    api = _Api(async_engine)
+    monkeypatch.setattr(_http_bridge, "_live_access_token", lambda: None)
+    monkeypatch.setattr(_http_bridge, "_build_in_process_transport", lambda: httpx.ASGITransport(app=api.app))
+    async with committed_world(async_engine) as world:
+        org = await world.organization()
+        human = await world.person(org)
+        await world.session.commit()
+        # Copied context privilege flags must not enter the access token.
+        context = MCPContext(user_id=human.id, org_id=uuid4(), is_platform_admin=True)
+        async with rest_client(context) as client:
+            await client.post("/mutate")
+            response = await client.get("/probe")
+    assert response.status_code == 200 and response.json() == {"user": str(human.id)}
+    assert api.handled == ["mutate", "probe"]
 
 
 async def _bump(engine: AsyncEngine) -> None:

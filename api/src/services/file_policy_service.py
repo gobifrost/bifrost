@@ -49,9 +49,9 @@ class FilePolicyEvalCache:
 
     principals: dict[int, tuple[Any, Any]] = field(default_factory=dict)
     policy_rows: dict[tuple[Any, ...], list[FilePolicy]] = field(default_factory=dict)
-    resolved: dict[tuple[UUID | None, UUID], tuple[FilePolicies, bool]] = field(
-        default_factory=dict
-    )
+    resolved: dict[
+        tuple[UUID | None, UUID | None, UUID], tuple[FilePolicies, bool]
+    ] = field(default_factory=dict)
     preresolved: set[tuple[int, UUID]] = field(default_factory=set)
     metadata: dict[tuple[Any, ...], FileMetadata | None] = field(default_factory=dict)
 
@@ -147,19 +147,15 @@ class FilePolicyService:
         path in ``upsert_metadata`` — so the row is found even though
         ``organization_id`` is the install's org UUID, not the install UUID itself.
         Non-solution deletes match by ``(organization_id, location, path)``
-        unchanged."""
-        if solution_id is not None:
-            stmt = delete(FileMetadata).where(
-                FileMetadata.solution_id == solution_id,
-                FileMetadata.location == location,
-                FileMetadata.path == path,
+        and exclude Solution rows, which may share that address."""
+        stmt = delete(FileMetadata).where(
+            *self._scoped_row_filter(
+                organization_id=organization_id,
+                solution_id=solution_id,
+                location=location,
+                path=path,
             )
-        else:
-            stmt = delete(FileMetadata).where(
-                FileMetadata.organization_id == organization_id,
-                FileMetadata.location == location,
-                FileMetadata.path == path,
-            )
+        )
         await self.db.execute(stmt)
         await self.db.flush()
 
@@ -492,11 +488,13 @@ class FilePolicyService:
         if policy_row is None:
             return FilePolicyDecision(False, user, empty_policies)
 
-        resolved_key = (organization_id, policy_row.id)
+        resolved_key = (organization_id, solution_id, policy_row.id)
         if cache is not None and resolved_key in cache.resolved:
             policies, usable = cache.resolved[resolved_key]
         else:
-            policies, usable = await self._resolved_policies(policy_row, organization_id)
+            policies, usable = await self._resolved_policies(
+                policy_row, organization_id, solution_id
+            )
             if cache is not None:
                 cache.resolved[resolved_key] = (policies, usable)
         if not usable:
@@ -560,7 +558,10 @@ class FilePolicyService:
         return principal
 
     async def _resolved_policies(
-        self, policy_row: FilePolicy, organization_id: UUID | None
+        self,
+        policy_row: FilePolicy,
+        organization_id: UUID | None,
+        solution_id: UUID | None = None,
     ) -> tuple[FilePolicies, bool]:
         """Validated, ref-resolved policies for a row, and whether they can grant.
 
@@ -578,7 +579,12 @@ class FilePolicyService:
 
         rule_repo = PolicyRuleRepository(self.db, org_id=organization_id)
         try:
-            await resolve_policy_refs(policies, repo=rule_repo, action_domain="file")
+            await resolve_policy_refs(
+                policies,
+                repo=rule_repo,
+                action_domain="file",
+                solution_id=solution_id,
+            )
         except (PolicyRuleNotFound, PolicyRuleDomainMismatch) as exc:
             logger.warning(
                 "unresolvable file policy ref; denying file access: %s",

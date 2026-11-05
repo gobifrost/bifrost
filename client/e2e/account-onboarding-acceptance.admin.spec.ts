@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { BrowserContext, Page } from "@playwright/test";
+import type { BrowserContext, Page } from "./fixtures/api-fixture";
 import { test, expect } from "./fixtures/api-fixture";
 import { generateTOTP } from "./setup/totp";
 

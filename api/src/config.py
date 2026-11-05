@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, computed_field
+from pydantic import AliasChoices, Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -29,6 +29,9 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
+    worker_capacity_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
+
     # ==========================================================================
     # Environment
     # ==========================================================================
@@ -40,6 +43,11 @@ class Settings(BaseSettings):
     debug: bool = Field(
         default=False,
         description="Enable debug mode"
+    )
+
+    usage_reporting_enabled: bool = Field(
+        default=True,
+        description="Send pseudonymous daily aggregate usage reports from production installations",
     )
 
     product_updates_bundle_path: Path = Field(
@@ -62,12 +70,20 @@ class Settings(BaseSettings):
 
     database_pool_size: int = Field(
         default=5,
-        description="Database connection pool size"
+        description=(
+            "Base main-pool connection allowance. For bounded settings, the "
+            "main pool retains this plus database_max_overflow for reuse; "
+            "connections open lazily. Zero preserves SQLAlchemy's unlimited pool."
+        )
     )
 
     database_max_overflow: int = Field(
         default=10,
-        description="Max overflow connections beyond pool size"
+        description=(
+            "Additional main-pool connection allowance, retained for reuse "
+            "within the same total connection ceiling. -1 preserves "
+            "SQLAlchemy's unlimited overflow."
+        )
     )
 
     database_dispatch_pool_size: int = Field(
@@ -294,6 +310,11 @@ class Settings(BaseSettings):
     # ==========================================================================
     # S3 Storage (for horizontal scaling)
     # ==========================================================================
+    s3_multipart_copy_mode: Literal["server", "stream"] = Field(
+        default="server",
+        description="Large-copy strategy: server-side part copy, or conditional ranged reads and uploads for providers without conditional UploadPartCopy"
+    )
+
     s3_bucket: str | None = Field(
         default=None,
         description="S3 bucket name for workspace storage (required when S3 is configured)"

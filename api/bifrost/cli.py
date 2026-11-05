@@ -44,6 +44,7 @@ from packaging.version import InvalidVersion, Version
 import bifrost.credentials as credentials
 from bifrost._workspace_lock import WorkspaceLock, WorkspaceLockError
 from bifrost.client import BifrostClient
+from bifrost.windows_credentials import CredentialStorageError
 from bifrost.ignore_patterns import (
     DEFAULT_IGNORE_PATTERNS as _CANONICAL_IGNORE_PATTERNS,
 )
@@ -428,8 +429,6 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
                 # Success - we have tokens
                 if "access_token" in poll_data:
-                    print(" OK")
-
                     # Calculate expiry time
                     expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in", 1800))
 
@@ -440,6 +439,8 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                         refresh_token=poll_data["refresh_token"],
                         expires_at=expires_at.isoformat(),
                     )
+
+                    print(" OK")
 
                     # Get user info
                     try:
@@ -1074,12 +1075,16 @@ Examples:
             expires_at = datetime.now(timezone.utc) + timedelta(
                 seconds=data.get("expires_in") or 1800
             )
-            credentials.save_credentials(
-                api_url=api_url,
-                access_token=data["access_token"],
-                refresh_token=data["refresh_token"],
-                expires_at=expires_at.isoformat(),
-            )
+            try:
+                credentials.save_credentials(
+                    api_url=api_url,
+                    access_token=data["access_token"],
+                    refresh_token=data["refresh_token"],
+                    expires_at=expires_at.isoformat(),
+                )
+            except CredentialStorageError as exc:
+                print(f"Login failed: {exc}", file=sys.stderr)
+                return 1
 
             # The exact-directory .env selects the URL only. Tokens stay in
             # the global credential store keyed by that URL.

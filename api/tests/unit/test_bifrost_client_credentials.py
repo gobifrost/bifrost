@@ -846,10 +846,9 @@ async def test_client_token_update_is_shared_with_async_and_sync_transports(
     assert client._sync_http.headers["Authorization"] == "Bearer fresh-access-token"
     # The open async client is updated in place, so a challenged request
     # replays on the client it was sent with.
-    assert client._http is async_http
+    assert client._clients_for_loop().http is async_http
     assert async_http.headers["Authorization"] == "Bearer fresh-access-token"
-    await async_http.aclose()
-    client._sync_http.close()
+    await client.close()
 
 
 def test_sync_context_refreshes_expired_token_and_retries(

@@ -1,17 +1,18 @@
-import { readFileSync } from "node:fs";
 import { createHmac } from "node:crypto";
-import { resolve } from "node:path";
 import {
-	test,
-	expect,
-	request as playwrightRequest,
 	type APIRequestContext,
+	type Browser,
+	type BrowserContext,
 	type Locator,
 } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
+import {
+	createFreshApiContext,
+	createFreshBrowserContext,
+} from "./fixtures/human-auth";
 import { registerAndSetupMFA } from "./setup/auth-helpers";
 import type { TestUser } from "./fixtures/users";
 
-const API_URL = process.env.TEST_API_URL || "http://api:8000";
 const BIFROST_URL = process.env.TEST_BASE_URL || "http://client:80";
 const ALLOWED_ORIGIN =
 	process.env.TEST_ALLOWED_ORIGIN || "http://allowed-origin";
@@ -70,8 +71,9 @@ test.describe.serial("Public form iframe", () => {
 	let scrollFormId: string;
 	let scrollPublicKey: string;
 	let secretsReaderId: string | undefined;
+	let apiContext: BrowserContext;
 
-	const createSecretsReaderApi = async () => {
+	const createSecretsReaderApi = async (browser: Browser) => {
 		const secretsReader: TestUser = {
 			key: "hmac_secrets_reader",
 			email: `hmac-secrets-reader-${UNIQUE}@example.com`,
@@ -118,24 +120,13 @@ test.describe.serial("Public form iframe", () => {
 		);
 		await expectOk(grant);
 
-		return playwrightRequest.newContext({
-			baseURL: API_URL,
-			extraHTTPHeaders: {
-				Authorization: `Bearer ${credentials.accessToken}`,
-			},
-		});
+		return createFreshApiContext(browser, credentials);
 	};
 
-	test.beforeAll(async () => {
-		const credentials = JSON.parse(
-			readFileSync(resolve("e2e/.auth/credentials.json"), "utf8"),
-		) as { platform_admin: { accessToken: string } };
-		api = await playwrightRequest.newContext({
-			baseURL: API_URL,
-			extraHTTPHeaders: {
-				Authorization: `Bearer ${credentials.platform_admin.accessToken}`,
-			},
-		});
+	test.beforeAll(async ({ browser }) => {
+		const freshAdmin = await createFreshApiContext(browser, "platform_admin");
+		apiContext = freshAdmin.context;
+		api = freshAdmin.api;
 
 		for (const [path, content, functionName] of [
 			[PROVIDER_PATH, PROVIDER_SOURCE, PROVIDER_FN],
@@ -287,17 +278,14 @@ test.describe.serial("Public form iframe", () => {
 		await api.delete(
 			`/api/files/editor?path=${encodeURIComponent(SUBMIT_PATH)}`,
 		);
-		await api.dispose();
+		await apiContext.close();
 	});
 
 	test(
 		"publishes in the UI and submits from an allowed second origin",
 		{ tag: "@smoke" },
 		async ({ browser, page }) => {
-			const admin = await browser.newContext({
-				baseURL: BIFROST_URL,
-				storageState: "e2e/.auth/platform_admin.json",
-			});
+			const admin = await createFreshBrowserContext(browser, "platform_admin");
 			const adminPage = await admin.newPage();
 			await adminPage.goto(`/forms/${formId}/edit`);
 			await adminPage.getByTitle("Share Form").click();
@@ -574,9 +562,11 @@ test.describe.serial("Public form iframe", () => {
 	});
 
 	test("shows only the signed session's execution result after an HMAC submission", async ({
+		browser,
 		page,
 	}) => {
-		const secretsReaderApi = await createSecretsReaderApi();
+		const secretsReader = await createSecretsReaderApi(browser);
+		const secretsReaderApi = secretsReader.api;
 		try {
 			const hmacSecret = await secretsReaderApi.post(
 				`/api/forms/${formId}/embed-secrets`,
@@ -652,7 +642,7 @@ test.describe.serial("Public form iframe", () => {
 				frame.getByText("Your form was submitted.", { exact: true }),
 			).toHaveCount(0);
 		} finally {
-			await secretsReaderApi.dispose();
+				await secretsReader.context.close();
 		}
 	});
 

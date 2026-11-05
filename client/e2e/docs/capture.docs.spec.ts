@@ -18,10 +18,10 @@
  * Filtering: set DOCS_CAPTURE_IDS to a comma-separated list of entry IDs
  * to limit the run. Empty/unset means "every entry."
  */
-import { test, expect } from "@playwright/test";
+import { test, expect } from "../fixtures/api-fixture";
+import { createFreshBrowserContext } from "../fixtures/human-auth";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { ensureAuthenticated } from "../fixtures/auth-fixture";
 import {
   loadManifest,
   selectEntries,
@@ -90,7 +90,7 @@ function loadFixture(fixturePath: string): unknown {
 }
 
 async function runActions(
-  page: import("@playwright/test").Page,
+  page: import("../fixtures/api-fixture").Page,
   entryId: string,
   actions: ActionSpec[],
 ) {
@@ -127,7 +127,7 @@ async function runActions(
 }
 
 async function applyMocks(
-  page: import("@playwright/test").Page,
+  page: import("../fixtures/api-fixture").Page,
   mocks: MockSpec[],
 ) {
   for (const mock of mocks) {
@@ -207,17 +207,10 @@ if (!fs.existsSync(manifestPath)) {
         const ctx =
           authAs === "unauthenticated"
             ? await browser.newContext({ viewport })
-            : (
-                await ensureAuthenticated(
-                  browser,
-                  authAs as "platform_admin" | "org1_user" | "org2_user",
-                )
-              ).context;
-        if (authAs !== "unauthenticated") {
-          // ensureAuthenticated returns a context with default viewport;
-          // we want the manifest's viewport.
-          await ctx.setExtraHTTPHeaders({});
-        }
+            : await createFreshBrowserContext(
+                browser,
+                authAs as "platform_admin" | "org1_user" | "org2_user",
+              );
 
         const page = await ctx.newPage();
         await page.setViewportSize(viewport);

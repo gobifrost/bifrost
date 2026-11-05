@@ -10,9 +10,9 @@ from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
-    RetryPromptPart,
     TextPart,
     ToolCallPart,
+    ToolReturnPart,
     ToolSearchReturnPart,
 )
 from pydantic_ai.models.function import FunctionModel
@@ -259,7 +259,8 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
             assert "load_capability" in names
             assert not names & {qualified, archive_qualified, nested_qualified}
             assert any(
-                isinstance(part, RetryPromptPart)
+                isinstance(part, ToolReturnPart)
+                and part.outcome == "retried"
                 and part.tool_call_id == "unknown-load"
                 and "No capability found" in str(part.content)
                 for message in messages
@@ -361,7 +362,8 @@ async def test_guessed_action_name_is_corrected_before_discovery_and_effect():
             )])
         if requests == 2:
             assert any(
-                isinstance(part, RetryPromptPart)
+                isinstance(part, ToolReturnPart)
+                and part.outcome == "retried"
                 and part.tool_call_id == "guessed-action"
                 and "halopsa_halopsa_submit_triage" in str(part.content)
                 for message in messages

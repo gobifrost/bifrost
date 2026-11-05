@@ -1,0 +1,18 @@
+{
+  "key": "pr:1180",
+  "classification": "highlight",
+  "entry_ids": [
+    "e1d92810-89a7-40b2-9df1-a0b8482d734c"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1180",
+      "Astra and root reviewed this exact notice and agent prompt on 2026-11-02: config-value caching only; no new settings; unchanged default peak with ten more retained idle sessions/API; conditional duplicate-ad-hoc-name upgrade action; non-destructive migration and read-only preparation with explicit data-change/upgrade confirmation. Final source review, 52 live cases including both migration rehearsals, focused unit coverage, and API Pyright/Ruff passed. Production read-only preflight found zero duplicate groups."
+    ]
+  }
+}

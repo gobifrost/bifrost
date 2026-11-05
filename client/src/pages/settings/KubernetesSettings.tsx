@@ -14,10 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsToggleRow } from "@/components/shared/SettingsToggleRow";
 import { SettingsLoadError } from "@/components/shared/SettingsLoadError";
-import { KubernetesIcon } from "@/components/icons/KubernetesIcon";
 import { formatDateShort } from "@/lib/utils";
 import {
 	KubernetesRequestError,
+	getKubernetesStatus,
 	getKubernetesExecution,
 	updateKubernetesExecution,
 	updateKubernetesPolicy,
@@ -300,6 +300,7 @@ function ConcurrencyInput({
 }
 
 export function KubernetesSettings() {
+	const [kubernetesAvailable, setKubernetesAvailable] = useState(false);
 	const [settings, setSettings] =
 		useState<KubernetesExecutionSettings | null>(null);
 	const [draft, setDraft] = useState<ScalingDraft | null>(null);
@@ -320,9 +321,10 @@ export function KubernetesSettings() {
 
 	useEffect(() => {
 		let active = true;
-		getKubernetesExecution()
-			.then((loaded) => {
+		Promise.all([getKubernetesExecution(), getKubernetesStatus()])
+			.then(([loaded, status]) => {
 				if (!active) return;
+				setKubernetesAvailable(status.configured);
 				setSettings(loaded);
 				setDraft(scalingDraft(loaded.policy));
 				setPodsDraft(String(loaded.policy.max_isolated_pods));
@@ -451,7 +453,7 @@ export function KubernetesSettings() {
 		podsDraft !== String(settings.policy.max_isolated_pods);
 
 	const saveMaxPods = async () => {
-		if (busy || !podsDirty) return;
+		if (busy || !kubernetesAvailable || !podsDirty) return;
 		const value = parseWholeNumber(podsDraft);
 		if (value === null) {
 			setPodsError("Enter a whole number.");
@@ -470,7 +472,7 @@ export function KubernetesSettings() {
 	};
 
 	const toggleIsolation = async (enabled: boolean) => {
-		if (busy) return;
+		if (busy || !kubernetesAvailable) return;
 		const result = await savePolicy(
 			"isolation",
 			{ isolated_jobs_enabled: enabled },
@@ -508,14 +510,16 @@ export function KubernetesSettings() {
 		}
 	};
 
-	const handleToggle = (job: KubernetesExecutionJobType, next: boolean) =>
-		saveJobType(
+	const handleToggle = (job: KubernetesExecutionJobType, next: boolean) => {
+		if (!kubernetesAvailable) return;
+		return saveJobType(
 			job,
 			{ enabled: next },
 			next
 				? `${job.title} will run in isolated pods`
 				: `${job.title} will run on workers`,
 		);
+	};
 
 	const handleConcurrency = (
 		job: KubernetesExecutionJobType,
@@ -542,13 +546,13 @@ export function KubernetesSettings() {
 					Scaling & Isolation
 				</h2>
 				<p className="mt-1 text-sm text-muted-foreground">
-					How Bifrost runs work in this Kubernetes cluster. Changes
+					How Bifrost scales workers and runs jobs. Changes
 					apply without a restart.
 				</p>
 			</div>
 
 			{loadError && (
-				<SettingsLoadError name="Kubernetes settings" onRetry={retry} />
+				<SettingsLoadError name="worker settings" onRetry={retry} />
 			)}
 
 			{settings && (
@@ -558,7 +562,7 @@ export function KubernetesSettings() {
 			<Card>
 				<CardHeader>
 					<div className="flex items-center gap-2">
-						<KubernetesIcon className="h-5 w-5" />
+						<Boxes aria-hidden="true" className="h-5 w-5" />
 						<CardTitle>Scaling</CardTitle>
 					</div>
 					<CardDescription>
@@ -639,19 +643,24 @@ export function KubernetesSettings() {
 						<CardTitle>Isolated Jobs</CardTitle>
 					</div>
 					<CardDescription>
-						Run build jobs in their own pod. Without isolation, they
+						Run build jobs in their own Kubernetes pod. Without isolation, they
 						run on workers, and the pool scales up to make room.
 					</CardDescription>
 				</CardHeader>
 				{settings && (
 					<CardContent className="space-y-6">
+						{!kubernetesAvailable && (
+							<p role="status" className="text-sm text-muted-foreground">
+								Kubernetes isolation is unavailable in this deployment. Worker scaling and job concurrency remain configurable.
+							</p>
+						)}
 						<div className="space-y-2">
 							<SettingsToggleRow
 								id="k8s-isolated-jobs"
 								label="Isolate Build Jobs"
 								description="When turned off, queued jobs move to a worker and pods already running finish."
 								checked={settings.policy.isolated_jobs_enabled}
-								disabled={busy}
+								disabled={busy || !kubernetesAvailable}
 								busy={
 									saving === "isolation"
 										? "saving"
@@ -673,7 +682,7 @@ export function KubernetesSettings() {
 							help="The most isolated pods that run at once."
 							value={podsDraft}
 							error={podsError ?? undefined}
-							disabled={busy}
+							disabled={busy || !kubernetesAvailable}
 							provenance={provenance}
 							field="max_isolated_pods"
 							onChange={(value) => {
@@ -687,7 +696,7 @@ export function KubernetesSettings() {
 									type="button"
 									variant="outline"
 									className="min-h-11"
-									disabled={busy || !podsDirty}
+									disabled={busy || !kubernetesAvailable || !podsDirty}
 									onClick={() => void saveMaxPods()}
 								>
 									{saving === "max_isolated_pods" && (
@@ -719,7 +728,7 @@ export function KubernetesSettings() {
 										label={job.title}
 										description={job.description}
 										checked={job.enabled}
-										disabled={busy}
+										disabled={busy || !kubernetesAvailable}
 										busy={
 											saving === job.job_type
 												? "saving"

@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
-import type { BrowserContext, Locator, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "./fixtures/api-fixture";
 
 const suffix = randomUUID().slice(0, 8);
 const agentName = `Navigation Agent ${suffix}`;

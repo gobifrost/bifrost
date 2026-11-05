@@ -407,6 +407,32 @@ class TestExecuteAuthDecisions:
             _stop_patches(patches)
         assert mocks[0].call_args.kwargs["context"].org_id == str(target.id)
 
+    async def test_explicit_global_scope_does_not_use_callers_home(self, db_session):
+        home = await _seed_org(db_session)
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            await execute_sdk_workflow(
+                db_session, _admin(home.id),
+                _request(workflow_id=str(workflow.id), input_data={}, org_id="global"),
+                caller_org_id=home.id,
+            )
+        finally:
+            _stop_patches(patches)
+        assert mocks[0].call_args.kwargs["context"].org_id is None
+
+    async def test_explicit_global_scope_still_requires_global_authority(self, db_session):
+        home = await _seed_org(db_session)
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        with pytest.raises(SdkWorkflowExecutionError) as error:
+            await execute_sdk_workflow(
+                db_session, _user(home.id),
+                _request(workflow_id=str(workflow.id), input_data={}, org_id="global"),
+                caller_org_id=home.id,
+            )
+        assert error.value.status_code == 403
+
     async def test_unknown_workflow_is_404_with_scope_detail(self, db_session):
         org = await _seed_org(db_session)
         principal = _admin(org.id)

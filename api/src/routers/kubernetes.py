@@ -13,6 +13,7 @@ from src.models.contracts.kubernetes import (
     KubernetesStatus,
 )
 from src.services.kubernetes_execution import KubernetesExecutionService
+from src.services.worker_pool.external_client import CapacityProviderUnavailable
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
 
@@ -107,6 +108,11 @@ async def update_kubernetes_policy(
             request.model_dump(exclude_unset=True),
             updated_by=current_user.email,
         )
+    except CapacityProviderUnavailable as exc:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=str(exc),
+        ) from exc
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,

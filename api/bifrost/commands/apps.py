@@ -475,6 +475,7 @@ def _app_sdk_status(app: dict[str, Any]) -> dict[str, Any]:
         "sdk_package_version": app.get("sdk_package_version"),
         "sdk_fingerprint": app.get("sdk_fingerprint"),
         "sdk_contract_version": app.get("sdk_contract_version"),
+        "sdk_binding_api_major": app.get("sdk_binding_api_major"),
         "sdk_built_at": app.get("sdk_built_at"),
         "sdk_status": app.get("sdk_status"),
         "sdk_source_available": app.get("sdk_source_available"),

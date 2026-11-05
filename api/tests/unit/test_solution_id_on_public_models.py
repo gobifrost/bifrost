@@ -101,6 +101,7 @@ class _FakeAppRow:
         self.sdk_package_version = "v1.0.0"
         self.sdk_fingerprint = "current-fp"
         self.sdk_contract_version = 1
+        self.sdk_binding_api_major = None
         self.sdk_built_at = datetime(2026, 9, 12, tzinfo=timezone.utc)
 
 
@@ -158,6 +159,7 @@ def test_application_to_public_populates_sdk_fields(monkeypatch) -> None:
     assert app.sdk_package_version == "v1.0.0"
     assert app.sdk_fingerprint == "current-fp"
     assert app.sdk_contract_version == 1
+    assert app.sdk_binding_api_major is None
     assert app.sdk_built_at == app_row.sdk_built_at
     assert app.sdk_status == "current"
     assert app.sdk_source_available is True

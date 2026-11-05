@@ -11,7 +11,7 @@ from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from typing import Any, AsyncGenerator
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 
 import pytest
@@ -19,6 +19,7 @@ import pytest_asyncio
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from shared.version import get_version
 from src.config import get_settings
 from src.core.cache.redis_client import get_redis
 from src.models.enums import ExecutionStatus
@@ -49,6 +50,8 @@ from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_ma
 GIB = 1024 * MIB
 
 SETTINGS = SimpleNamespace(
+    worker_capacity_url=None,
+    worker_capacity_token=None,
     kubernetes_job_namespace="test",
     kubernetes_job_image="api:test",
     kubernetes_job_configmap="config",
@@ -166,10 +169,21 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
     wake = AsyncMock()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     monkeypatch.setattr(workflow_dispatch, "get_redis_client", AsyncMock)
-    monkeypatch.setattr("src.services.execution.queue_tracker.publish_queue_positions", AsyncMock())
+    queue_refresh = Mock()
+    monkeypatch.setattr(
+        "src.services.execution.queue_tracker.request_queue_position_refresh", queue_refresh
+    )
+    live_updates = AsyncMock()
+    monkeypatch.setattr("src.core.pubsub.publish_execution_update", live_updates)
     await _delete_policy(async_session_factory)
     await _store_policy(async_session_factory, POLICY)
-    yield SimpleNamespace(sessions=async_session_factory, wake=wake, context=context)
+    yield SimpleNamespace(
+        sessions=async_session_factory,
+        wake=wake,
+        context=context,
+        queue_refresh=queue_refresh,
+        live_updates=live_updates,
+    )
     await _delete_policy(async_session_factory)
 
 
@@ -179,9 +193,10 @@ async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
     async with sessions() as session:
         await session.execute(delete(WorkDispatch))
         await session.execute(delete(ExecutionWorker))
-        # Queued platform jobs count as launch demand; the stack's scheduler
-        # enqueues some (model catalog, Solution updates) during the reset.
-        await session.execute(delete(PlatformJob).where(PlatformJob.status == "queued"))
+        # The isolated unit harness stops executors after startup. Clear both
+        # queued demand and active jobs whose concurrency slots survived that
+        # stop, so each case owns the complete platform-job admission state.
+        await session.execute(delete(PlatformJob))
         await session.commit()
     # What a worker controller last published it can launch, and which
     # controllers are live.
@@ -265,7 +280,7 @@ async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
             )
         ).scalar_one()
     assert dispatch.assigned_worker_id is None
-    db.wake.assert_awaited_once()
+    db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
     # An unclaimed dispatch stays put until its claim deadline.
     async with db.sessions() as session:
         await session.execute(
@@ -280,9 +295,9 @@ async def test_accepted_runs_are_claimable_and_wake_the_executors(db) -> None:
 async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
     worker = await _job_worker(db.sessions)
 
-    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0", version=claims.get_version()) is None
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=claims.get_version()) == 2
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2", version=claims.get_version()) is None
+    assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0", version=get_version()) is None
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=get_version()) == 2
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2", version=get_version()) is None
 
 
 async def test_an_admitted_worker_records_the_build_its_pod_reports(db) -> None:
@@ -347,6 +362,17 @@ async def test_unsupported_handler_versions_wait_for_a_compatible_worker(db) -> 
             )
         ).scalar_one()
     assert dispatch.assigned_worker_id is None
+
+
+@pytest.mark.parametrize("reported_version", ["1.0.0-remote-build", None])
+async def test_static_worker_persists_its_reported_build(db, reported_version) -> None:
+    worker_id = await claims.register_static_worker(
+        hostname="remote-worker", version=reported_version,
+    )
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.version == reported_version
 
 
 async def test_a_static_executor_offers_nothing_until_its_pool_is_up(db) -> None:
@@ -539,6 +565,8 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert claim is not None and claim.claimed is not None
     assert claim.memory_request_bytes == 200 * MIB
     db.wake.reset_mock()
+    db.queue_refresh.reset_mock()
+    db.live_updates.reset_mock()
 
     await workflow_dispatch.release_workflow_run(
         worker_id=first, message=claim.message, payload=claim.claimed,
@@ -561,7 +589,9 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert [(entry.execution_id, entry.queued_at) for entry in queued] == [
         (UUID(execution_id), claim.queued_at)
     ]
-    db.wake.assert_awaited_once()
+    db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
+    db.queue_refresh.assert_called_once_with()
+    db.live_updates.assert_awaited_once_with(UUID(execution_id), ExecutionStatus.PENDING.value)
     second = await _static_executor("second")
     again = await _claim(second)
     assert again is not None and again.claimed is not None
@@ -600,7 +630,7 @@ async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeyp
     await liveness.end_silent_static_executors()
     monkeypatch.setattr(work_dispatch, "wake_pool_workers", wake)
     await work_dispatch.reconcile_work_dispatches()
-    wake.assert_awaited_once_with()  # the released run is offered to idle executors at once
+    wake.assert_awaited_once_with(work_dispatch.WAKE_AGENT_RUN)  # the released run is offered to idle executors at once
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -676,6 +706,33 @@ async def test_ended_executors_are_pruned(db) -> None:
 
     async with db.sessions() as session:
         assert await session.get(ExecutionWorker, old.id) is None
+
+
+@pytest.mark.parametrize("state", ["lost", "retired"])
+async def test_external_cleanup_record_survives_retention_until_deletion_confirmed(db, state) -> None:
+    worker = await _job_worker(db.sessions, state=state)
+    now = datetime.now(timezone.utc)
+    async with db.sessions() as session:
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker.id).values(
+            form="external", capacity_scope="test", capacity_resource_uid="physical-resource",
+            ended_at=now - timedelta(days=30),
+        ))
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        retained = await session.get(ExecutionWorker, worker.id)
+        assert retained is not None
+        assert retained.capacity_resource_uid == "physical-resource"
+        assert retained.capacity_resource_deleted_at is None
+        retained.capacity_resource_deleted_at = now
+        await session.commit()
+
+    await maintenance.prune_execution_workers()
+
+    async with db.sessions() as session:
+        assert await session.get(ExecutionWorker, worker.id) is None
 
 
 async def test_a_silent_static_executor_is_lost_and_its_runs_end(db) -> None:
@@ -880,7 +937,7 @@ async def test_no_executor_is_lost_until_the_database_was_reachable_long_enough(
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=get_version())
     async with db.sessions() as session:
         await session.execute(
             update(ExecutionWorker).values(heartbeat_at=datetime.now(timezone.utc) - timedelta(minutes=5))
@@ -906,7 +963,7 @@ async def test_a_ready_worker_is_evictable_only_while_idle(db, monkeypatch) -> N
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
     cluster.pods[job_uid] = [{"metadata": {"name": "worker-pod"}}]
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=get_version())
     safe = controller.SAFE_TO_EVICT
 
     async def reserved(memory: int) -> None:
@@ -1042,7 +1099,7 @@ async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
     await pool.reconcile_worker(worker_id, warm)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=get_version())
 
     assert not await claims.begin_idle_drain(worker_id)
     # An admin lowers Warm workers: the running idle worker drains.
@@ -1075,7 +1132,7 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=get_version())
     claim = await _claim(worker_id)
     assert claim is not None
     async with db.sessions() as session:
@@ -1227,6 +1284,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
                 memory_pressured=False,
                 memory_budget_bytes=GIB,
                 memory_reserved_bytes=64 * MIB,
+                active_handler_counts={"agent.summarize": 1},
             )
             is None
         )
@@ -1245,6 +1303,7 @@ async def test_stale_remote_owner_cannot_control_its_replaced_worker(db) -> None
     assert worker.state == "ready"
     assert worker.active_runs == 0
     assert worker.runs_handled == 0
+    assert worker.active_handler_counts is None
     assert dispatch is None
 
 
@@ -1315,7 +1374,7 @@ async def test_stale_remote_owner_cannot_admit_a_starting_worker(db) -> None:
         )
     )
     with remote_owner_context(stale):
-        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod", version=claims.get_version()) is None
+        assert await claims.admit_worker(worker_id, job_uid="job", pod_uid="pod", version=get_version()) is None
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
@@ -1351,7 +1410,7 @@ async def _lose_running_job_worker(db, *, oom: bool) -> tuple[UUID, UUID]:  # ty
     await pool.reconcile_worker(worker_id, POLICY)
     async with db.sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=claims.get_version())
+    await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid="pod", version=get_version())
     await _report_budget(worker_id, 546 * MIB)
     claim = await _claim(worker_id)
     assert claim is not None
@@ -1457,7 +1516,7 @@ async def test_a_claim_whose_reply_was_lost_is_released(db, monkeypatch) -> None
     assert (lost.status, lost.error_message) == (ExecutionStatus.FAILED, recovery.CLAIM_NOT_STARTED)
     assert started.status == ExecutionStatus.RUNNING
     assert agent_dispatch.assigned_worker_id is None
-    wake.assert_awaited_once_with()  # idle executors look for the released run now
+    wake.assert_awaited_once_with(work_dispatch.WAKE_AGENT_RUN)  # idle executors look for the released run now
 
 
 # --- sizing by memory -----------------------------------------------------------
@@ -1902,12 +1961,25 @@ async def test_a_too_large_export_fails_its_backup_and_clears_its_options(
             await session.commit()
 
 
-async def test_a_platform_job_waiting_for_memory_launches_a_worker(db) -> None:
+@pytest.mark.parametrize("startup_state", ["running", "cancel_requested"])
+async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_state) -> None:
     from src.models.orm.platform_jobs import PlatformJob
     from src.services.platform_jobs import WAITING_FOR_MEMORY
 
+    startup = PlatformJob(
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example", requested_by_name="Contoso User",
+        title="Startup Reindex", status=startup_state,
+    )
+    async with db.sessions() as session:
+        session.add(startup)
+        await session.commit()
+    # Model a startup job left active when the unit harness stops executors.
+    # Resetting the fixture must release its global concurrency slot.
+    await _clear_pool_state(db.sessions)
+
     waiting = PlatformJob(
-        job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
     )
@@ -2032,7 +2104,7 @@ async def _admit(sessions, worker_id: UUID, *, pool_up: bool = True) -> None:  #
     """Admit a launched Job's pod; ``pool_up``: its pool started and it reported its budget."""
     async with sessions() as session:
         job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=claims.get_version()) is not None
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=get_version()) is not None
     if pool_up:
         await _report_budget(worker_id, GIB)
 
@@ -2179,6 +2251,8 @@ def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> No
     assert not live.outdated(job(launched_by=live_id)), "its launcher is live: never a loop"
     assert not live.outdated(job(state="starting")), "its build is unknown until admitted"
     assert not live.outdated(job(form="static")), "static executors roll with their Deployment"
+    assert not live.outdated(job(form="external", version="2.0", launched_by=live_id)), "current provider build stays ready"
+    assert not live.outdated(job(form="external", state="starting", launched_by=live_id)), "unadmitted resources do not rotate"
 
 
 async def test_live_controllers_expire_and_withdraw(db) -> None:  # type: ignore[no-untyped-def]

@@ -27,6 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.policies.probe import make_seed_admin_bypass
@@ -143,7 +144,16 @@ async def create_sdk_table(
         access=make_seed_admin_bypass(),
     )
     session.add(table)
-    await session.commit()
+    try:
+        await session.commit()
+    except IntegrityError as exc:
+        # The precheck makes ordinary duplicates cheap, while the partial
+        # unique indexes decide two cold-start creates that passed it in
+        # separate sessions. Roll back before returning the same 409 contract.
+        await session.rollback()
+        if not tables_repo_module.is_ad_hoc_table_name_conflict(exc):
+            raise
+        raise SDKTableMetadataError(409, f"Table '{name}' already exists") from exc
     await session.refresh(table)
 
     logger.info(f"CLI created table '{log_safe(name)}' for user {actor_email}")

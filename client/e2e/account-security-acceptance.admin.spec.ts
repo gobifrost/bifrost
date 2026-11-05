@@ -13,7 +13,7 @@ import type {
 	APIResponse,
 	BrowserContext,
 	Page,
-} from "@playwright/test";
+} from "./fixtures/api-fixture";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 import { generateTOTP } from "./setup/totp";
 

@@ -1,3 +1,4 @@
+import { AGENT_PROMPT_MAX_LENGTH } from "@/lib/agent-prompt";
 import { AgentMCPConnectionsPanel } from "./AgentMCPConnectionsPanel";
 import { SettingsResourceNotice } from "./SettingsResourceNotice";
 /**
@@ -96,7 +97,10 @@ const CHANNELS: { value: AgentChannel; label: string }[] = [
 const formSchema = z.object({
 	name: z.string().min(1, "Name is required").max(100),
 	description: z.string().max(500).optional(),
-	system_prompt: z.string().min(1, "System prompt is required"),
+	system_prompt: z
+		.string()
+		.min(1, "System prompt is required")
+		.max(AGENT_PROMPT_MAX_LENGTH),
 	channels: z.array(z.enum(["chat", "voice", "teams", "slack"])),
 	access_level: z.enum([
 		"private",

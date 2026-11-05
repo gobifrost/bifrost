@@ -8,6 +8,7 @@ For API schemas (Create/Update/Public), see schemas.py
 """
 
 from src.models.orm.agent_prompt_history import AgentPromptHistory
+from src.models.orm.oauth_clients import OAuthClientRegistration
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
@@ -31,6 +32,7 @@ from src.models.orm.scheduler_diagnostics import (
 )
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.form_publications import FormPublication
+from src.models.orm.human_sessions import HumanAuthSession
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
@@ -81,6 +83,7 @@ from src.models.orm.services import ServiceAttempt, ServiceDefinition, ServiceLo
 from src.models.orm.worker_metric import WorkerMetric
 
 __all__ = [
+    "OAuthClientRegistration",
     "HomeCollection",
     "HomeResourcePreference",
     # Base
@@ -121,6 +124,7 @@ __all__ = [
     "UserRole",
     "UserRoleBoundary",
     "UserInvite",
+    "HumanAuthSession",
     "ProductUpdateReceipt",
     # Agent Runs
     "AgentRun",

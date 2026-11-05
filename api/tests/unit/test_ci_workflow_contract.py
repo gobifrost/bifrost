@@ -91,6 +91,7 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
         "test-e2e",
         "test-client-unit",
         "test-client-smoke",
+        "windows-credentials",
         "build-dev-api-candidate",
         "build-dev-client-candidate",
     }
@@ -145,7 +146,7 @@ def test_critical_browser_smoke_strengthens_only_exact_candidate_events() -> Non
 
     compose = yaml.safe_load(TEST_COMPOSE.read_text())
     client = compose["services"]["client"]
-    assert client["image"] == "bifrost-test-client-e2e:latest"
+    assert client["image"] == "bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}"
     assert client["build"]["dockerfile"] == "Dockerfile"
     assert client["build"]["target"] == "production"
     assert "volumes" not in client
@@ -359,3 +360,18 @@ def test_nightly_owns_full_browser_slow_and_clean_build_discovery() -> None:
     test_script = TEST_SCRIPT.read_text()
     assert "client_e2e --grep @smoke" in test_script
     assert "--project=docs" not in test_script.split("client_nightly()", 1)[1].split("}", 1)[0]
+
+
+def test_windows_storage_runs_native_checks_and_blocks_the_shared_gate() -> None:
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    windows = jobs["windows-credentials"]
+    assert windows["runs-on"] == "windows-2025"
+    assert windows["if"] == "github.event_name != 'push' || github.ref != 'refs/heads/main'"
+    commands = "\n".join(step.get("run", "") for step in windows["steps"])
+    assert "--require-hashes -r requirements-windows-credentials.lock" in commands
+    assert "test_windows_credentials.py" in commands
+    assert "python scripts/windows_credential_smoke.py" in commands
+    source = "\n".join(step.get("run", "") for step in jobs["test-e2e-gate"]["steps"])
+    # Native checks must gate even the fast PR path, before its early exit.
+    assert source.index("needs.windows-credentials.result") < source.index("pull_request")
+    assert 'needs.windows-credentials.result }}" != "success"' in source

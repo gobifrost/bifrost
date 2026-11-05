@@ -21,6 +21,7 @@ from src.core.cache.invalidation import (
     invalidate_role_users,
     upsert_config,
 )
+from src.core.cache.keys import TTL_EXECUTION_LOGS
 
 
 class TestConfigInvalidation:
@@ -35,21 +36,21 @@ class TestConfigInvalidation:
 
     @pytest.mark.asyncio
     async def test_invalidate_config_with_specific_key(self, mock_redis):
-        """invalidate_config deletes hash and specific key."""
+        """An org write advances only that org's config generation."""
         with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
             await invalidate_config("org-123", "api_key")
 
-            # Should delete both the hash and the specific key
-            assert mock_redis.delete.call_count == 2
+        mock_redis.incr.assert_awaited_once_with("bifrost:org:org-123:config_version")
+        mock_redis.delete.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_invalidate_config_all_keys(self, mock_redis):
-        """invalidate_config with no key deletes only the hash."""
+        """An org-wide invalidation advances the generation without a key delete."""
         with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
             await invalidate_config("org-456", key=None)
 
-            # Should only delete the hash
-            assert mock_redis.delete.call_count == 1
+        mock_redis.incr.assert_awaited_once_with("bifrost:org:org-456:config_version")
+        mock_redis.delete.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_invalidate_config_global_scope(self, mock_redis):
@@ -57,7 +58,8 @@ class TestConfigInvalidation:
         with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
             await invalidate_config(None, "global_setting")
 
-            assert mock_redis.delete.call_count == 2
+        mock_redis.delete.assert_awaited_once()
+        mock_redis.incr.assert_awaited_once_with("bifrost:config:global_version")
 
     @pytest.mark.asyncio
     async def test_invalidate_config_handles_error(self, mock_redis):
@@ -74,7 +76,8 @@ class TestConfigInvalidation:
         with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
             await invalidate_all_config("org-999")
 
-            mock_redis.delete.assert_called_once()
+        mock_redis.incr.assert_awaited_once_with("bifrost:org:org-999:config_version")
+        mock_redis.delete.assert_not_awaited()
 
 
 class TestConfigInvalidationCorrectness:
@@ -106,18 +109,18 @@ class TestConfigInvalidationCorrectness:
         return mock_r
 
     @pytest.mark.asyncio
-    async def test_org_upsert_deletes_not_hsets(self, mock_redis):
-        """Regression: org-scoped writes must DELETE the merged hash,
-        never HSET into it. HSET would create a partial hash where
-        global fallback values are silently hidden on the next read.
+    async def test_org_upsert_advances_its_generation_without_hset(self, mock_redis):
+        """Regression: org writes must not HSET a partial merged view.
+
+        Advancing the org generation also closes the race where an old reader
+        finishes its database scan after the write has committed.
         """
         with patch(
             "src.core.cache.invalidation.get_shared_redis", return_value=mock_redis
         ):
             await upsert_config("org-123", "api_key", "encrypted-value", "secret")
 
-        # The merged hash key must be DELETED — never HSET.
-        mock_redis.delete.assert_called()
+        mock_redis.incr.assert_awaited_once_with("bifrost:org:org-123:config_version")
         mock_redis.hset.assert_not_called()
 
     @pytest.mark.asyncio
@@ -131,10 +134,10 @@ class TestConfigInvalidationCorrectness:
         ):
             await upsert_config(None, "global_setting", "value", "string")
 
-        # Global hash gets HSET (no merge concern at global scope).
-        mock_redis.hset.assert_called()
-        # AND the version is INCR'd to invalidate every org's merged cache.
-        mock_redis.incr.assert_called_once()
+        # Every complete view is rebuilt by readers; the write only advances
+        # the shared generation to invalidate global and org views together.
+        mock_redis.hset.assert_not_called()
+        mock_redis.incr.assert_awaited_once()
         # The version key name must be the canonical one.
         assert (
             mock_redis.incr.call_args.args[0]
@@ -142,16 +145,15 @@ class TestConfigInvalidationCorrectness:
         )
 
     @pytest.mark.asyncio
-    async def test_org_invalidate_does_not_bump_version(self, mock_redis):
-        """Org-scoped invalidation must NOT bump the global version —
-        otherwise every other org's cache is invalidated by mistake.
+    async def test_org_invalidate_does_not_bump_global_version(self, mock_redis):
+        """Org invalidation advances only its own generation.
         """
         with patch(
             "src.core.cache.invalidation.get_shared_redis", return_value=mock_redis
         ):
             await invalidate_config("org-abc", "some_key")
 
-        mock_redis.incr.assert_not_called()
+        mock_redis.incr.assert_awaited_once_with("bifrost:org:org-abc:config_version")
 
     @pytest.mark.asyncio
     async def test_global_invalidate_bumps_version(self, mock_redis):
@@ -163,7 +165,7 @@ class TestConfigInvalidationCorrectness:
         ):
             await invalidate_config(None, "some_key")
 
-        mock_redis.incr.assert_called_once()
+        mock_redis.incr.assert_awaited_once()
 
 
 class TestFormInvalidation:
@@ -343,6 +345,36 @@ class TestExecutionCleanup:
         with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
             await cleanup_execution_cache("exec-123")
 
+            mock_redis.delete.assert_awaited_once_with(
+                "bifrost:exec:exec-123:active",
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_execution_cache_bounds_preserved_logs(self, mock_redis):
+        """Preserved log streams retain a hard expiry after completion."""
+        with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
+            await cleanup_execution_cache("exec-123")
+
+            mock_redis.expire.assert_awaited_once_with(
+                "bifrost:logs:exec-123", TTL_EXECUTION_LOGS
+            )
+            mock_redis.delete.assert_awaited_once_with(
+                "bifrost:exec:exec-123:active",
+            )
+
+    @pytest.mark.asyncio
+    async def test_cleanup_execution_cache_deletes_state_when_log_expiry_fails(
+        self, mock_redis
+    ):
+        """Expiry failure does not strand active execution state."""
+        mock_redis.expire.side_effect = Exception("Redis error")
+
+        with patch("src.core.cache.invalidation.get_shared_redis", return_value=mock_redis):
+            await cleanup_execution_cache("exec-123")
+
+            mock_redis.expire.assert_awaited_once_with(
+                "bifrost:logs:exec-123", TTL_EXECUTION_LOGS
+            )
             mock_redis.delete.assert_awaited_once_with(
                 "bifrost:exec:exec-123:active",
             )

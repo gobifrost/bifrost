@@ -139,16 +139,11 @@ async def sync_catalog(
         # reads. ``outputSchema`` describes a successful structured-content
         # payload and is optional; absent or non-dict values remain absent
         # rather than being inferred.
-        input_schema = (
-            tool.inputSchema
-            if isinstance(tool.inputSchema, dict)
-            else (tool.inputSchema.model_dump() if tool.inputSchema is not None else {})
-        )
-        schema = {"inputSchema": deepcopy(input_schema)}
+        schema = {"inputSchema": deepcopy(tool.input_schema)}
         description = getattr(tool, "description", None)
         if isinstance(description, str):
             schema["description"] = description
-        output_schema = getattr(tool, "outputSchema", None)
+        output_schema = getattr(tool, "output_schema", None)
         if isinstance(output_schema, dict):
             schema["outputSchema"] = deepcopy(output_schema)
 

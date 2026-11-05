@@ -239,6 +239,24 @@ function ProposalBubble({
 }
 
 function DryRunBubble({ msg }: { msg: DryRunTurn }) {
+	if (msg.evaluation_failed) {
+		return (
+			<ChatBubble
+				kind="assistant"
+				slots={
+					<ChatBubbleSlot
+						title="Evaluation Failed"
+						titleTone="yellow"
+					>
+						<p>{msg.after}</p>
+					</ChatBubbleSlot>
+				}
+			>
+				The evaluator could not assess this prompt. No behavior
+				prediction is available.
+			</ChatBubble>
+		);
+	}
 	const passed = msg.predicted === "up";
 	return (
 		<ChatBubble

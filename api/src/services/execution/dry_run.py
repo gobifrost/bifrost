@@ -13,6 +13,7 @@ confused with the agent's own reasoning.
 """
 import json
 import logging
+import math
 from dataclasses import dataclass
 from uuid import UUID
 
@@ -53,6 +54,78 @@ class DryRunResult:
     reasoning: str
     alternative_action: str | None
     confidence: float
+    evaluation_failed: bool = False
+
+
+def _evaluation_failure(reason: str) -> DryRunResult:
+    """Fail-closed result: never report "same decision" when we could not parse one."""
+    return DryRunResult(
+        would_still_decide_same=False,
+        reasoning=reason[:500],
+        alternative_action=None,
+        confidence=0.0,
+        evaluation_failed=True,
+    )
+
+
+def parse_evaluator_output(content: str | None) -> DryRunResult:
+    """Parse raw evaluator text into a :class:`DryRunResult`.
+
+    Tolerates markdown fences and leading prose, then strictly validates the
+    JSON object shape. Anything irreparable returns a result with
+    ``evaluation_failed=True`` instead of a masked success verdict.
+    """
+    if not content or not content.strip():
+        return _evaluation_failure("Unable to evaluate (model returned empty output)")
+
+    text = content.strip()
+    if text.startswith("```"):
+        end = text.rfind("```")
+        inner = text[3:end] if end > 3 else text[3:]
+        first_nl = inner.find("\n")
+        if first_nl != -1 and inner[:first_nl].strip().isalpha():
+            inner = inner[first_nl + 1 :]
+        text = inner.strip()
+
+    start = text.find("{")
+    if start < 0:
+        return _evaluation_failure(
+            "Unable to evaluate (model did not return a JSON object)"
+        )
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+    except json.JSONDecodeError:
+        return _evaluation_failure(
+            "Unable to evaluate (model returned invalid JSON)"
+        )
+
+    if not isinstance(parsed, dict):
+        return _evaluation_failure(
+            "Unable to evaluate (model did not return a JSON object)"
+        )
+
+    same = parsed.get("would_still_decide_same")
+    reasoning = parsed.get("reasoning")
+    alt = parsed.get("alternative_action")
+    conf = parsed.get("confidence")
+    if (
+        type(same) is not bool
+        or not isinstance(reasoning, str)
+        or (alt is not None and not isinstance(alt, str))
+        or isinstance(conf, bool)
+        or not isinstance(conf, (int, float))
+        or not math.isfinite(conf)
+    ):
+        return _evaluation_failure(
+            "Unable to evaluate (model returned a malformed verdict)"
+        )
+
+    return DryRunResult(
+        would_still_decide_same=same,
+        reasoning=reasoning[:500],
+        alternative_action=str(alt)[:500] if alt else None,
+        confidence=max(0.0, min(1.0, float(conf))),
+    )
 
 
 async def evaluate_against_prompt(
@@ -124,24 +197,13 @@ async def evaluate_against_prompt(
         messages=messages, model=resolved_model, max_tokens=600
     )
 
-    try:
-        parsed = json.loads(response.content or "")
-    except json.JSONDecodeError:
-        logger.warning("Dry-run returned invalid JSON for run %s", log_safe(run_id))
-        parsed = {
-            "would_still_decide_same": True,
-            "reasoning": "Unable to evaluate (model returned invalid JSON)",
-            "alternative_action": None,
-            "confidence": 0.0,
-        }
-
-    if not isinstance(parsed, dict):
-        parsed = {
-            "would_still_decide_same": True,
-            "reasoning": "Unable to evaluate (model did not return a JSON object)",
-            "alternative_action": None,
-            "confidence": 0.0,
-        }
+    result = parse_evaluator_output(response.content)
+    if result.evaluation_failed:
+        logger.warning(
+            "Dry-run evaluator output unparseable for run %s: %s",
+            log_safe(run_id),
+            log_safe(result.reasoning),
+        )
 
     # Phase 3: persist AIUsage row
     async with session_factory() as db:
@@ -162,20 +224,4 @@ async def evaluate_against_prompt(
         )
         await db.commit()
 
-    conf_raw = parsed.get("confidence")
-    try:
-        conf_f = (
-            max(0.0, min(1.0, float(conf_raw))) if conf_raw is not None else 0.0
-        )
-    except (TypeError, ValueError):
-        conf_f = 0.0
-
-    alt = parsed.get("alternative_action")
-    alt_str = str(alt)[:500] if alt else None
-
-    return DryRunResult(
-        would_still_decide_same=bool(parsed.get("would_still_decide_same", True)),
-        reasoning=str(parsed.get("reasoning") or "")[:500],
-        alternative_action=alt_str,
-        confidence=conf_f,
-    )
+    return result

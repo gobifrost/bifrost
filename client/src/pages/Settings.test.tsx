@@ -1,6 +1,6 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import userEvent from "@testing-library/user-event";
-import { renderWithProviders, screen, waitFor } from "@/test-utils";
+import { renderWithProviders, screen } from "@/test-utils";
 import { Settings } from "./Settings";
 
 vi.mock("@/pages/settings/WorkflowKeys", () => ({
@@ -48,17 +48,7 @@ vi.mock("@/pages/settings/KubernetesSettings", () => ({
 	KubernetesSettings: () => <h2>Kubernetes Panel</h2>,
 }));
 
-const kubernetesStatusMock = vi.fn();
-
-vi.mock("@/services/kubernetes", () => ({
-	getKubernetesStatus: (...args: unknown[]) => kubernetesStatusMock(...args),
-}));
-
 describe("Settings", () => {
-	beforeEach(() => {
-		kubernetesStatusMock.mockReset();
-		kubernetesStatusMock.mockResolvedValue({ configured: false });
-	});
 	it("retains a visited panel draft and hides inactive controls", async () => {
 		const user = userEvent.setup();
 		renderWithProviders(<Settings />, {
@@ -189,15 +179,14 @@ describe("Settings", () => {
 		expect(screen.getByRole("button", { name: /^github$/i })).toBeVisible();
 	});
 
-	it("shows the Kubernetes section only when the deployment configures it", async () => {
+	it("opens worker settings without a Kubernetes availability gate", async () => {
 		const user = userEvent.setup();
-		kubernetesStatusMock.mockResolvedValue({ configured: true });
 		renderWithProviders(<Settings />, {
 			initialEntries: ["/settings/ai"],
 		});
 
 		await user.click(
-			await screen.findByRole("button", { name: /^kubernetes$/i }),
+			await screen.findByRole("button", { name: /^workers$/i }),
 		);
 		await user.click(
 			screen.getByRole("button", { name: /^scaling & isolation$/i }),
@@ -207,8 +196,7 @@ describe("Settings", () => {
 		).toBeVisible();
 	});
 
-	it("opens a link straight to the Kubernetes tab", async () => {
-		kubernetesStatusMock.mockResolvedValue({ configured: true });
+	it("keeps existing direct links to worker settings usable", async () => {
 		renderWithProviders(<Settings />, {
 			initialEntries: ["/settings/kubernetes-executions"],
 		});
@@ -216,69 +204,5 @@ describe("Settings", () => {
 		expect(
 			await screen.findByRole("heading", { name: /kubernetes panel/i }),
 		).toBeVisible();
-		await waitFor(() => expect(kubernetesStatusMock).toHaveBeenCalled());
-		expect(
-			screen.getByRole("heading", { name: /kubernetes panel/i }),
-		).toBeVisible();
-	});
-
-	it("waits for the status check before opening a Kubernetes link", async () => {
-		let answer: (status: { configured: boolean }) => void = () => {};
-		kubernetesStatusMock.mockReturnValue(
-			new Promise((resolve) => {
-				answer = resolve;
-			}),
-		);
-		renderWithProviders(<Settings />, {
-			initialEntries: ["/settings/kubernetes-executions"],
-		});
-
-		const pending = await screen.findByRole("status");
-		expect(pending).toHaveTextContent(/checking kubernetes/i);
-		expect(pending).toBeVisible();
-		expect(
-			screen.queryByRole("heading", { name: /kubernetes panel/i }),
-		).not.toBeInTheDocument();
-
-		answer({ configured: false });
-
-		expect(
-			await screen.findByRole("heading", { name: /models panel/i }),
-		).toBeVisible();
-		expect(
-			screen.queryByRole("heading", { name: /kubernetes panel/i }),
-		).not.toBeInTheDocument();
-		expect(screen.queryByText(/checking kubernetes/i)).not.toBeInTheDocument();
-	});
-
-	it("leaves a Kubernetes link on deployments without it", async () => {
-		kubernetesStatusMock.mockResolvedValue({ configured: false });
-		renderWithProviders(<Settings />, {
-			initialEntries: ["/settings/kubernetes-executions"],
-		});
-
-		await waitFor(() =>
-			expect(
-				screen.queryByRole("heading", { name: /kubernetes panel/i }),
-			).not.toBeInTheDocument(),
-		);
-		expect(
-			screen.getByRole("button", { name: /^models$/i }),
-		).toBeInTheDocument();
-	});
-
-	it("hides the Kubernetes section on deployments without it", async () => {
-		kubernetesStatusMock.mockResolvedValue({
-			configured: false,
-			backend: "local",
-		});
-		renderWithProviders(<Settings />, {
-			initialEntries: ["/settings/ai"],
-		});
-
-		await screen.findByRole("button", { name: /^models$/i });
-		expect(
-			screen.queryByRole("button", { name: /^kubernetes$/i }),
-		).not.toBeInTheDocument();
 	});
 });

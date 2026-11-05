@@ -149,6 +149,78 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
 
 
 @pytest.mark.asyncio
+async def test_failed_bootstrap_exits_without_reusing_an_authenticated_identity() -> None:
+    socket = Mock()
+    launcher = _launcher(socket)
+    launcher.hello = AsyncMock()
+    launcher.start = AsyncMock(side_effect=RuntimeError("agent template database unavailable"))
+    launcher.stop = AsyncMock()
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield socket
+
+    with (
+        patch("websockets.asyncio.client.connect", new=connect),
+        patch("src.worker.remote.launcher.Launcher", return_value=launcher) as factory,
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=launcher.identity),
+        patch("src.worker.remote.launcher._receive_control_commands", new=AsyncMock()) as receive,
+        patch("src.worker.remote.launcher.asyncio.sleep", new=AsyncMock(side_effect=AssertionError("bootstrap must not retry"))),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+        patch.dict("os.environ", {"BIFROST_SECRET_KEY": "test-secret"}),
+    ):
+        assert await run_launcher() == 1
+
+    factory.assert_called_once()
+    launcher.hello.assert_awaited_once()
+    launcher.stop.assert_awaited_once()
+    receive.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_lost_initial_welcome_preserves_the_hello_sequence() -> None:
+    first = Mock(send=AsyncMock(), recv=AsyncMock(side_effect=ConnectionError("welcome lost")))
+    second = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
+        "event": "welcome", "session_generation": 2,
+    })))
+    launcher = _launcher(first)
+    launcher.start, launcher.stop, launcher.send = (AsyncMock() for _ in range(3))
+    launcher.inventory = Mock(return_value={})
+    sockets = iter((first, second))
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        try:
+            socket = next(sockets)
+        except StopIteration:
+            raise asyncio.CancelledError("unexpected third connection") from None
+        yield socket
+
+    async def receive(*_args):
+        launcher.retired.set()
+        return None
+
+    with (
+        patch("websockets.asyncio.client.connect", new=connect),
+        patch("src.worker.remote.launcher.Launcher", return_value=launcher) as factory,
+        patch("src.worker.remote.launcher.load_launcher_identity", return_value=launcher.identity),
+        patch("src.worker.remote.launcher._receive_control_commands", new=receive),
+        patch("src.worker.remote.launcher.asyncio.sleep", new=AsyncMock()),
+        patch.object(asyncio.get_running_loop(), "add_signal_handler"),
+        patch.dict("os.environ", {"BIFROST_SECRET_KEY": "test-secret"}),
+    ):
+        assert await run_launcher() == 0
+
+    factory.assert_called_once()
+    launcher.start.assert_awaited_once()
+    launcher.stop.assert_awaited_once()
+    first_hello = json.loads(first.send.await_args.args[0])["hello"]
+    second_hello = json.loads(second.send.await_args.args[0])["hello"]
+    assert (first_hello["hello_sequence"], second_hello["hello_sequence"]) == (1, 2)
+    assert first_hello["nonce"] != second_hello["nonce"]
+
+
+@pytest.mark.asyncio
 async def test_monitor_waits_for_intentional_template_replacement() -> None:
     launcher = _launcher(Mock())
     launcher.template = Mock(is_alive=Mock(return_value=False))
@@ -512,10 +584,17 @@ async def test_launcher_loads_both_templates_before_measuring_its_baseline(agent
 
 
 @pytest.mark.asyncio
-async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(agent_templates) -> None:
+@pytest.mark.parametrize("handler", ["agent.run", "agent.summarize", "agent.summarize_backfill"])
+async def test_agent_task_forks_from_the_agent_template_and_reports_agent_exit(agent_templates, handler) -> None:
     socket = Mock(send=AsyncMock())
     launcher = _agent_launcher(socket)
     command = _agent_run_command()
+    summary = handler != "agent.run"
+    extra = {"handler": handler, "worker_id": str(launcher.identity.incarnation_id)} if summary else {}
+    if summary:
+        command["action"] = "agent_summary"
+        command["payload"].update(extra)
+        command["payload"]["message"]["claim_id"] = str(uuid4())
 
     await launcher.command(command, generation=1)
 
@@ -523,10 +602,11 @@ async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(ag
     assert template is agent_templates[0] and template.profile == "agent" and template.starts == 1
     route_id, work_recv, result_send = template.forks[0]
     assert route_id == "agent-route"
-    assert work_recv.recv() == {"message": command["payload"]["message"]}
+    assert work_recv.recv() == {"message": command["payload"]["message"], **extra}
     assert _sent(socket)[0] == {"reply": "cmd-agent-route", "result": {"pid": os.getpid()}}
     assert launcher.inventory()["routes"] == [{
-        "route_id": "agent-route", "kind": "agent_run", "subject_id": "run-1",
+        "route_id": "agent-route", "kind": "agent_summary" if summary else "agent_run", "subject_id": "run-1",
+        **({"handler": handler, "claim_id": command["payload"]["message"]["claim_id"]} if summary else {}),
         "pid": os.getpid(), "memory_request_bytes": 32 * 1024 * 1024,
     }]
 
@@ -539,7 +619,8 @@ async def test_agent_run_forks_from_the_agent_template_and_reports_agent_exit(ag
         "error_type": None, "error": None,
     }
     assert list(launcher.pending_terminal_inventory.values()) == [{
-        "event_id": exit_event["_event_id"], "route_id": "agent-route", "kind": "agent_run",
+        "event_id": exit_event["_event_id"], "route_id": "agent-route", "kind": "agent_summary" if summary else "agent_run",
+        **({"handler": handler, "claim_id": command["payload"]["message"]["claim_id"]} if summary else {}),
         "subject_id": "run-1", "memory_request_bytes": 32 * 1024 * 1024,
     }]
     assert launcher.children == {}

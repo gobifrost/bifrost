@@ -77,7 +77,7 @@ AUTHZ_FACTS: tuple[FactTable, ...] = (
         "users",
         insert=False,
         update=frozenset(
-            {"id", "email", "name", "organization_id", "base_role_id", "is_external", "identity_kind", "is_active"}
+            {"id", "email", "name", "organization_id", "base_role_id", "is_external", "identity_kind", "is_active", "is_system"}
         ),
         delete=True,
     ),

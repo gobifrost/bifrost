@@ -225,6 +225,7 @@ async def test_deploy_atomically_activates_then_removes_old_artifact(
             package_version="1.2.3",
             fingerprint="current-fp",
             contract_version=7,
+            binding_api_major=None,
         ),
     )
     monkeypatch.setattr(

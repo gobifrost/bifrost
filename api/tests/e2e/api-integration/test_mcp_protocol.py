@@ -30,8 +30,9 @@ class TestMCPProtocol:
     """Test MCP JSON-RPC 2.0 protocol endpoint."""
 
     @pytest.fixture(autouse=True, scope="class")
-    def _ensure_agent_with_tools(self, platform_admin):
+    def _ensure_agent_with_tools(self, platform_admin, human_minter):
         """Create an agent with system tools so MCP tools/list returns results."""
+        human_minter(platform_admin)
         headers = platform_admin.headers
 
         resp = requests.post(
@@ -56,10 +57,17 @@ class TestMCPProtocol:
 
         yield
 
+        human_minter(platform_admin)
         requests.delete(
             f"{TEST_API_URL}/api/agents/{agent_id}",
-            headers=headers,
+            headers=platform_admin.headers,
         )
+
+    @pytest.fixture(autouse=True)
+    def _refresh_human_credentials(self, platform_admin, org1_user, human_minter):
+        """Direct HTTP MCP calls do not receive SDK challenge refreshes."""
+        human_minter(platform_admin)
+        human_minter(org1_user)
 
     def test_mcp_requires_auth(self):
         """POST /mcp without auth should return 401."""
@@ -120,7 +128,8 @@ class TestMCPProtocol:
         assert "protocolVersion" in result
         assert "bifrost_search_capabilities" in result["instructions"]
 
-    def test_mcp_list_tools(self, platform_admin):
+    @pytest.mark.parametrize("modern", [False, True], ids=["existing-client", "current-client"])
+    def test_mcp_list_tools(self, platform_admin, modern):
         """Should be able to list available tools.
 
         Note: The MCP server uses stateless_http=True mode, which means each request
@@ -128,15 +137,23 @@ class TestMCPProtocol:
         after initialize without needing to track session state.
         """
         headers = mcp_headers(platform_admin.headers)
+        if modern:
+            headers["MCP-Protocol-Version"] = "2026-07-28"
+            headers["MCP-Method"] = "server/discover"
 
-        # First initialize (required by MCP protocol before other methods)
+        modern_params = {"_meta": {
+            "io.modelcontextprotocol/protocolVersion": "2026-07-28",
+            "io.modelcontextprotocol/clientCapabilities": {},
+        }}
+
+        # Existing clients initialize; current clients discover with per-request metadata.
         init_response = requests.post(
             f"{TEST_API_URL}/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": 1,
-                "method": "initialize",
-                "params": {
+                "method": "server/discover" if modern else "initialize",
+                "params": modern_params if modern else {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
                     "clientInfo": {"name": "test", "version": "1.0"},
@@ -144,17 +161,19 @@ class TestMCPProtocol:
             },
             headers=headers,
         )
-        assert init_response.status_code == 200
+        assert init_response.status_code == 200, init_response.text
 
         # In stateless mode, no session ID is needed - each request is independent
         # Just call tools/list directly
+        if modern:
+            headers["MCP-Method"] = "tools/list"
         response = requests.post(
             f"{TEST_API_URL}/mcp",
             json={
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/list",
-                "params": {},
+                "params": modern_params if modern else {},
             },
             headers=headers,
         )

@@ -19,7 +19,7 @@ import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Mapping
 from uuid import UUID, uuid4
 
 from sqlalchemy import delete, event, func, select
@@ -119,22 +119,35 @@ def stage_dispatch(
     return dispatch
 
 
-async def hand_off() -> None:
+WAKE_WORKFLOW = "workflow_execution"
+WAKE_AGENT_RUN = "agent_run"
+WAKE_AGENT_SUMMARY = "agent_summary"
+WAKE_PLATFORM_JOB = "platform_job"
+WAKE_SERVICE = "service"
+WAKE_PACKAGE = "package"
+DISPATCH_WAKE_FAMILIES = frozenset((WAKE_WORKFLOW, WAKE_AGENT_RUN, WAKE_AGENT_SUMMARY))
+
+
+async def hand_off(family: str) -> None:
     """Fast-path hand-off after commit.
 
     The dispatch is already claimable; the hint only saves executors their
     poll interval.
     """
-    await wake_pool_workers()
+    await wake_pool_workers(family)
 
 
 POOL_WAKE_CHANNEL = "bifrost:pool:wake"
 WAKE_RECONNECT_SECONDS = 5.0
 
 
-async def listen_for_pool_wake(redis_url: str, *events: asyncio.Event) -> None:
-    """Set ``events`` on every pool wake-up until cancelled. Wake-ups are
-    hints: a dropped connection reconnects, and listeners sweep meanwhile."""
+async def listen_for_pool_wake(redis_url: str, wakes: Mapping[str, asyncio.Event]) -> None:
+    """Set only the subscribed family's event for a pool wake-up.
+
+    Wake-ups are hints: a dropped connection reconnects, and listeners sweep
+    meanwhile. Callers may route several related families to one event when
+    their loop reads all of them, without waking unrelated claim loops.
+    """
     import redis.asyncio as aioredis
 
     while True:
@@ -144,7 +157,11 @@ async def listen_for_pool_wake(redis_url: str, *events: asyncio.Event) -> None:
             await pubsub.subscribe(POOL_WAKE_CHANNEL)
             async for message in pubsub.listen():
                 if message.get("type") == "message":
-                    for event in events:
+                    family = message.get("data")
+                    if isinstance(family, bytes):
+                        family = family.decode()
+                    event = wakes.get(family)
+                    if event is not None:
                         event.set()
         except asyncio.CancelledError:
             raise
@@ -179,25 +196,25 @@ async def wait_for_next_pass(
 _wakes: set[asyncio.Task[None]] = set()
 
 
-def wake_pool_workers_after_commit(db: AsyncSession) -> None:
+def wake_pool_workers_after_commit(db: AsyncSession, family: str) -> None:
     """Wake idle executors once ``db`` commits: a hint sent before the commit
     would find nothing to claim (executors also sweep every 15 s)."""
 
     def publish(_session: Any) -> None:
-        task = asyncio.get_running_loop().create_task(wake_pool_workers())
+        task = asyncio.get_running_loop().create_task(wake_pool_workers(family))
         _wakes.add(task)
         task.add_done_callback(_wakes.discard)
 
     event.listen(db.sync_session, "after_commit", publish, once=True)
 
 
-async def wake_pool_workers() -> None:
-    """Best-effort nudge to pool workers; never authority over claims."""
+async def wake_pool_workers(family: str) -> None:
+    """Best-effort nudge for one work family; never authority over claims."""
     from src.core.cache.redis_client import get_shared_redis
 
     try:
         redis = await get_shared_redis()
-        await redis.publish(POOL_WAKE_CHANNEL, "1")
+        await redis.publish(POOL_WAKE_CHANNEL, family)
     except Exception:
         logger.debug("Could not wake pool workers", exc_info=True)
 
@@ -245,7 +262,7 @@ async def _reconcile_one(
         failure = await _settle_pool_dispatch(db, family, row, largest)
         released = held_by is not None and row.assigned_worker_id is None
     if released:
-        await wake_pool_workers()
+        await wake_pool_workers(family_name)
     if failure is not None:
         await family.report_failed(subject_id, *failure)
 
@@ -287,8 +304,8 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
     largest budget of an executor live now or within ``RECENTLY_LIVE`` (one
     restarting or rolling over counts), or what the worker controller can
     launch. Only executors supporting this handler count. A physical worker
-    launch adds workflow and agent-run capacity, never the API's summary
-    capacity. None while no compatible executor has reported (an outage is
+    launch adds capacity for every advertised remote handler, including live
+    and backfill summaries. None while no compatible executor has reported (an outage is
     not too-large work).
     """
     from src.core.cache.redis_client import get_redis
@@ -354,6 +371,13 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
 
 __all__ = [
     "DispatchFamily",
+    "DISPATCH_WAKE_FAMILIES",
+    "WAKE_AGENT_RUN",
+    "WAKE_AGENT_SUMMARY",
+    "WAKE_PACKAGE",
+    "WAKE_PLATFORM_JOB",
+    "WAKE_SERVICE",
+    "WAKE_WORKFLOW",
     "listen_for_pool_wake",
     "wake_pool_workers_after_commit",
     "wait_for_next_pass",

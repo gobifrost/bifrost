@@ -245,6 +245,10 @@ def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
         )
         assert step_count > 0
         assert usage_count == 2
+        summary_worker = asyncio.run(_agent_run_worker(
+            async_session_factory, run_id, family="agent_summary",
+        ))
+        assert summary_worker.remote_launcher_id is not None, "summary must execute on a physical launcher"
         print("TRUSTED_DISPATCH_BENCHMARK " + json.dumps({
             **stage_timings,
             "enqueue_to_summary_seconds": round(time.perf_counter() - submitted_at, 3),
@@ -266,7 +270,7 @@ def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
         )
 
 
-async def _agent_run_worker(async_session_factory, run_id: UUID) -> ExecutionWorker:
+async def _agent_run_worker(async_session_factory, run_id: UUID, *, family: str = "agent_run") -> ExecutionWorker:
     """The worker row that claimed the run's ``agent.run`` dispatch."""
     async with async_session_factory() as session:
         worker = await session.scalar(
@@ -274,7 +278,7 @@ async def _agent_run_worker(async_session_factory, run_id: UUID) -> ExecutionWor
             .join(ExecutionWorkerClaim, ExecutionWorkerClaim.worker_id == ExecutionWorker.id)
             .where(
                 ExecutionWorkerClaim.subject_id == run_id,
-                ExecutionWorkerClaim.family == "agent_run",
+                ExecutionWorkerClaim.family == family,
             )
         )
         assert worker is not None, f"run {run_id} has no agent_run claim"

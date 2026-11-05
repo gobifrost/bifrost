@@ -294,15 +294,16 @@ class CompiledSolutionAppDeployment:
 def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | None":
     """Accept the complete stamp emitted after a CLI-installed SDK build.
 
-    Generic prebuilt bundles have no trusted build provenance and intentionally
-    remain unknown. The CLI records this only after reading the exact SDK package
-    npm installed for its local Vite build.
+    Generic prebuilt bundles without this stamp remain unknown. This is the
+    privileged deploy author's attestation, not independent inspection of the
+    JavaScript. The CLI emits it from the exact installed SDK package.
     """
     if not isinstance(value, dict):
         return None
     package_version = value.get("package_version")
     fingerprint = value.get("fingerprint")
     contract_version = value.get("contract_version")
+    binding_api_major = value.get("binding_api_major")
     if (
         not isinstance(package_version, str)
         or not package_version
@@ -310,6 +311,7 @@ def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | No
         or not fingerprint
         or not isinstance(contract_version, int)
         or isinstance(contract_version, bool)
+        or (binding_api_major is not None and (type(binding_api_major) is not int or binding_api_major < 1))
     ):
         return None
     from src.services.application_sdk_status import CurrentApplicationSdkMetadata
@@ -318,6 +320,7 @@ def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | No
         package_version=package_version,
         fingerprint=fingerprint,
         contract_version=contract_version,
+        binding_api_major=binding_api_major,
     )
 
 
@@ -964,10 +967,6 @@ class SolutionDeployer:
                 content_hash = await _measure(
                     "runtime_source_s3", lambda: storage.write(rel_path, body)
                 )
-                await _measure(
-                    "file_index",
-                    lambda: index.index_solution(sid, rel_path, body, content_hash),
-                )
                 storage_key = storage._key(rel_path)  # _solutions/{id}/<rel>
                 # Write-through so the next execution reads the new bytes, not the
                 # 24h-TTL cache. Only .py files are import-cached.
@@ -976,18 +975,22 @@ class SolutionDeployer:
                         "redis_module_cache",
                         lambda: set_module(storage_key, content, content_hash),
                     )
+                await _measure(
+                    "file_index",
+                    lambda: index.index_solution(sid, rel_path, body, content_hash),
+                )
 
             # Remove files dropped from the bundle (full replace of source).
             for rel_path in prior - new_rel:
                 await _measure("runtime_source_s3", lambda: storage.delete(rel_path))
-                await _measure(
-                    "file_index", lambda: index.unindex_solution(sid, rel_path)
-                )
                 if rel_path.endswith(".py"):
                     await _measure(
                         "redis_module_cache",
                         lambda: invalidate_module(storage._key(rel_path)),
                     )
+                await _measure(
+                    "file_index", lambda: index.unindex_solution(sid, rel_path)
+                )
             await self.db.flush()
         finally:
             if self._instrumentation is not None:
@@ -1619,6 +1622,7 @@ class SolutionDeployer:
                     "sdk_package_version": meta.package_version if meta else None,
                     "sdk_fingerprint": meta.fingerprint if meta else None,
                     "sdk_contract_version": meta.contract_version if meta else None,
+                    "sdk_binding_api_major": meta.binding_api_major if meta else None,
                     "sdk_built_at": now if meta else None,
                 }
                 result = await db.execute(

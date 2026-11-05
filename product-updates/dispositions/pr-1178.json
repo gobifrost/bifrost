@@ -1,0 +1,14 @@
+{
+  "entry_ids": [],
+  "classification": "other",
+  "key": "pr:1178",
+  "summary": "Execution views stop retaining obsolete listeners after navigation.",
+  "category": "fix",
+  "review": {
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1178",
+      "Maintainer review verified deferred connection completion, effect cleanup, stale scope, and retained stream state. 84 focused frontend tests, TypeScript, ESLint, and Product Updates validation passed. The concise fix summary matches the reviewed behavior. Jack approved review publication and auto-merge on 2026-11-02. Thomas Bray remains the original author; his commits are preserved."
+    ],
+    "status": "approved"
+  }
+}

@@ -31,6 +31,9 @@ async def _admin(db, seeded_user, *, secrets=False) -> tuple[ExecutionContext, U
 
 
 async def test_delete_solution_removes_source_artifact(db_session, monkeypatch, seed_user) -> None:
+    from src.core.module_cache import get_module, set_module
+    from src.services.solutions.storage import SolutionStorage
+
     sol = Solution(
         id=uuid.uuid4(),
         slug=f"src-artifact-{uuid.uuid4().hex[:8]}",
@@ -42,6 +45,11 @@ async def test_delete_solution_removes_source_artifact(db_session, monkeypatch, 
     artifact = SolutionSourceArtifactStorage(sol.id)
     await artifact.write(b"PK\x05\x06" + b"\x00" * 18)
     assert await artifact.read() is not None
+    storage = SolutionStorage(sol.id)
+    source_path = "workflows/removed.py"
+    source = "VALUE = 1\n"
+    content_hash = await storage.write(source_path, source.encode())
+    await set_module(storage._key(source_path), source, content_hash)
 
     @asynccontextmanager
     async def _unlocked(_solution_id):
@@ -53,3 +61,4 @@ async def test_delete_solution_removes_source_artifact(db_session, monkeypatch, 
     await delete_solution(sol.id, ctx, user, confirm=sol.slug)
 
     assert await artifact.read() is None
+    assert await get_module(storage._key(source_path)) is None

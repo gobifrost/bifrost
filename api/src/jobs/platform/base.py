@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from typing import Any, Awaitable, Callable
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Awaitable, Callable, Mapping
 from uuid import UUID
 
 from pydantic import BaseModel
@@ -134,12 +135,37 @@ class PlatformJobDefinition:
     # leave these unset.
     display_name: str | None = None
     description: str | None = None
+    historical_payload_models: Mapping[int, type[BaseModel]] = field(
+        default_factory=dict
+    )
+
+    def __post_init__(self) -> None:
+        if any(
+            version < 1 or version >= self.payload_version
+            for version in self.historical_payload_models
+        ):
+            raise ValueError(
+                "Historical platform-job payload versions must be positive and older "
+                "than the current payload version."
+            )
+        object.__setattr__(
+            self,
+            "historical_payload_models",
+            MappingProxyType(dict(self.historical_payload_models)),
+        )
+
+    def payload_model_for_version(self, version: int) -> type[BaseModel] | None:
+        if version == self.payload_version:
+            return self.payload_model
+        return self.historical_payload_models.get(version)
 
 
 def define_platform_job(
     job_type: str,
     payload_model: type[BaseModel],
     handler: PlatformJobHandler,
+    *,
+    historical_payload_models: Mapping[int, type[BaseModel]] | None = None,
 ) -> PlatformJobDefinition:
     """Materialize a handler definition from the immutable metadata catalog."""
     metadata = get_platform_job_metadata(job_type)
@@ -151,6 +177,7 @@ def define_platform_job(
         payload_model=payload_model,
         handler=handler,
         policy=metadata.policy,
+        historical_payload_models=historical_payload_models or {},
         encrypt_payload=metadata.encrypt_payload,
         display_name=metadata.display_name,
         description=metadata.description,

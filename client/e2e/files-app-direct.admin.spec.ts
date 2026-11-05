@@ -13,18 +13,12 @@
 
 import { test, expect, publishAppAndWait } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
-import type { Browser, Page } from "@playwright/test";
-import * as fs from "fs";
-import * as path from "path";
-import { fileURLToPath } from "url";
+import type { Browser, Page } from "./fixtures/api-fixture";
 import {
-	getAuthStatePath,
-	getCredentialsPath,
-	type UserCredentials,
-} from "./fixtures/users";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+	createFreshBrowserContext,
+	knownUserCredentials,
+	type HumanAuthUser,
+} from "./fixtures/human-auth";
 
 const UNIQUE = `${Date.now()}-${Math.floor(Math.random() * 10000)}`;
 const APP_SLUG = `e2e-files-direct-${UNIQUE}`;
@@ -105,16 +99,6 @@ export default function Home() {
 }
 `;
 
-function loadCredentials(): Record<string, UserCredentials> {
-	const credPath = path.resolve(__dirname, getCredentialsPath());
-	if (!fs.existsSync(credPath)) {
-		throw new Error(
-			`Credentials file not found at ${credPath}. Run setup first.`,
-		);
-	}
-	return JSON.parse(fs.readFileSync(credPath, "utf-8"));
-}
-
 function writeBody(filePath: string, content: string) {
 	return {
 		path: filePath,
@@ -154,14 +138,11 @@ async function putPolicy(
 async function openAppPage(
 	browser: Browser,
 	baseURL: string,
-	userKey: string,
+	userKey: HumanAuthUser,
 ): Promise<Page> {
-	const context = await browser.newContext({
-		baseURL,
-		storageState: path.resolve(__dirname, getAuthStatePath(userKey)),
-	});
+	const context = await createFreshBrowserContext(browser, userKey);
 	const page = await context.newPage();
-	await page.goto(`/apps/${APP_SLUG}`);
+	await page.goto(new URL(`/apps/${APP_SLUG}`, baseURL).toString());
 	return page;
 }
 
@@ -171,10 +152,10 @@ test.describe("Files — App Direct SDK", () => {
 	let org1Id: string;
 
 	test.beforeAll(async ({ api }) => {
-			const creds = loadCredentials();
-			org1UserId = creds.org1_user.userId;
-			expect(creds.org1_user.organizationId).toBeTruthy();
-			org1Id = creds.org1_user.organizationId!;
+			const org1User = knownUserCredentials("org1_user");
+			org1UserId = org1User.userId;
+			expect(org1User.organizationId).toBeTruthy();
+			org1Id = org1User.organizationId!;
 
 		const createApp = await api.post("/api/applications", {
 			data: {

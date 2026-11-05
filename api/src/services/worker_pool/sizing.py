@@ -30,7 +30,7 @@ from typing import TYPE_CHECKING, Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.execution_workers import MANAGED_WORKER_FORMS, ExecutionWorker
 from src.services.memory_requests import (
     JOB_BASELINE_ESTIMATE_BYTES,
     MIB,
@@ -57,7 +57,7 @@ def job_baseline(workers: Any, standard_limit: int, threshold: float) -> int:
     reported = [
         int(launch_limit(worker, standard_limit) * threshold) - worker.memory_budget_bytes
         for worker in workers
-        if worker.form == "job" and worker.memory_budget_bytes is not None
+        if worker.form in MANAGED_WORKER_FORMS and worker.memory_budget_bytes is not None
     ]
     return max(reported, default=JOB_BASELINE_ESTIMATE_BYTES)
 

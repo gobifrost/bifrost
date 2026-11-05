@@ -13,7 +13,7 @@
  * non-admin Home by the absent platform-admin navigation instead.
  */
 
-import { test, expect } from "@playwright/test";
+import { test, expect } from "./fixtures/api-fixture";
 
 test.describe("Org user denied route recovery", () => {
 	test("denies /config in place, then returns to a non-admin Home", async ({

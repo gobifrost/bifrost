@@ -11,6 +11,8 @@ from uuid import uuid4
 
 from sqlalchemy import Update
 
+from src.models.orm.services import ServiceDefinition
+
 
 SAMPLE_SERVICE = '''
 from bifrost import service
@@ -159,12 +161,17 @@ def _mock_db_with_existing(existing):
     mock_result.scalar_one_or_none.return_value = existing
     mock_result.scalar_one.return_value = existing
     mock_db.execute.return_value = mock_result
+    mock_db.scalar.return_value = ServiceDefinition(
+        id=uuid4(), workflow_id=existing.id, organization_id=existing.organization_id,
+    )
     return mock_db
 
 
 def _existing_workflow_row():
     row = MagicMock()
     row.id = uuid4()
+    row.organization_id = None
+    row.solution_id = None
     row.is_active = True
     row.endpoint_enabled = False
     row.name = "Telegram Bridge"
@@ -353,6 +360,8 @@ async def telegram_bridge():
 def _service_row(existing_type="service"):
     row = MagicMock()
     row.id = uuid4()
+    row.organization_id = None
+    row.solution_id = None
     row.is_active = True
     row.endpoint_enabled = False
     row.name = "Telegram Bridge"
@@ -386,10 +395,13 @@ async def test_indexer_ensures_definition_and_stamps_revision():
     from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
     row = _service_row("service")
-    definition = MagicMock()
-    definition.current_revision = "old"
+    definition = ServiceDefinition(
+        id=uuid4(), workflow_id=row.id, organization_id=row.organization_id,
+        current_revision="old",
+    )
 
     mock_db = AsyncMock()
+    mock_db.scalar.return_value = definition
     mock_db.execute = AsyncMock(
         side_effect=[
             _result(scalar_one_or_none=row),  # workflow lookup
@@ -419,6 +431,7 @@ async def test_indexer_creates_missing_definition(monkeypatch):
 
     row = _service_row("service")
     mock_db = AsyncMock()
+    mock_db.add = MagicMock()
     mock_db.execute = AsyncMock(
         side_effect=[
             _result(scalar_one_or_none=row),
@@ -433,7 +446,9 @@ async def test_indexer_creates_missing_definition(monkeypatch):
 
     added = [call[0][0] for call in mock_db.add.call_args_list]
     assert any(isinstance(a, ServiceDefinition) for a in added)
-    wake.assert_called_once_with(mock_db)
+    from src.services.work_dispatch import WAKE_SERVICE
+
+    wake.assert_called_once_with(mock_db, WAKE_SERVICE)
 
 
 @pytest.mark.asyncio

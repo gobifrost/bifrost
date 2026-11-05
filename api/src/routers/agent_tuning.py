@@ -129,8 +129,9 @@ async def dry_run_tuning_session(
                 would_still_decide_same=same,
                 reasoning=reasoning,
                 confidence=confidence,
+                evaluation_failed=failed,
             )
-            for run_id, same, reasoning, confidence in raw
+            for run_id, same, reasoning, confidence, failed in raw
         ]
     )
 

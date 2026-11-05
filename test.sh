@@ -79,6 +79,9 @@ mkdir -p "$LOG_DIR"
 # e2e tests stage file:// git repos here). Creating it host-side first means Docker
 # binds an existing host-owned dir instead of auto-creating a root-owned mountpoint.
 mkdir -p "$LOG_DIR/solution-repo-fixtures"
+# Keep replica-local Git caches separate, but reachable by isolation fixtures.
+mkdir -p "$LOG_DIR/solution-repo-fixtures/git-checkouts/worker"
+mkdir -p "$LOG_DIR/solution-repo-fixtures/git-checkouts/scheduler"
 mkdir -p "$SCRIPT_DIR/client/playwright-results"
 chmod 777 "$SCRIPT_DIR/client/playwright-results" 2>/dev/null || true
 export LOG_DIR
@@ -150,6 +153,19 @@ reset_state() {
     # fixture volumes remain intact. Remove anonymous dependency volumes with
     # the containers so repeated resets do not leave their contents on disk.
     docker compose -f "$COMPOSE_FILE" rm -sfv api worker scheduler > /dev/null
+
+    # These test-visible bind mounts outlive container recreation. Clear their
+    # contents as the container uid, including on hosts whose uid is not 1000.
+    docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner python -c '
+import shutil
+from pathlib import Path
+for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdir():
+    for entry in checkout.iterdir():
+        if entry.is_dir() and not entry.is_symlink():
+            shutil.rmtree(entry)
+        else:
+            entry.unlink()
+'
 
     docker compose -f "$COMPOSE_FILE" exec -T postgres psql -U bifrost -d postgres -c \
         "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = 'bifrost_test' AND pid <> pg_backend_pid();" \
@@ -506,10 +522,9 @@ start_test_client() {
     # startup out of stack_up so backend-only lanes never build or boot a
     # client they do not use. Both product and documentation browser projects
     # call this helper before starting the Playwright runner.
-    # The client service uses the shared bifrost-test-client-e2e:latest tag.
-    # Always rebuild it here, even when BIFROST_SKIP_BUILD=1 asks backend lanes
-    # to reuse cached API/test-runner images, so one worktree cannot silently
-    # run browser tests against another worktree's previously tagged client.
+    # Browser images use the same per-worktree tag as the API, so concurrent
+    # worktrees cannot replace the frontend between this build and startup.
+    # Rebuild here even when backend images are being reused.
     docker compose -f "$COMPOSE_FILE" build client
     # reset_state stops and starts the API, which can change its container IP.
     # Nginx resolves the `api` upstream when it starts, so retaining a client

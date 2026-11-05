@@ -77,6 +77,9 @@ class Application(Base):
     sdk_package_version: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sdk_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     sdk_contract_version: Mapped[int | None] = mapped_column(nullable=True)
+    # Null identifies SDK code compiled into the App. Hosted bindings select a
+    # public SDK API major; the implementation itself follows the instance.
+    sdk_binding_api_major: Mapped[int | None] = mapped_column(nullable=True)
     sdk_built_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )

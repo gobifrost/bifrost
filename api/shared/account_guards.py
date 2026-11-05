@@ -51,6 +51,15 @@ async def refuse_last_active_platform_admin_removal(
             UserORM.identity_kind.is_(None),
         )
     )
+    from shared.sso_policy import validate_recovery_admin
+    from src.services.oauth_config_service import OAuthConfigService, OAuthLoginPreferenceError
+
+    try:
+        await validate_recovery_admin(
+            session, await OAuthConfigService(session).get_login_preference(), removing
+        )
+    except OAuthLoginPreferenceError as exc:
+        raise AccountGuardError(str(exc)) from None
     active_people = set(rows.scalars())
     if active_people & removing and active_people <= removing:
         raise AccountGuardError(LAST_ACTIVE_PLATFORM_ADMIN_MESSAGE)

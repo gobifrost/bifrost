@@ -748,7 +748,10 @@ def _run_agent_child(
     from src.jobs.agent_run_child import run_agent_message
 
     try:
-        asyncio.run(run_agent_message(work_item["message"]))
+        asyncio.run(run_agent_message(
+            work_item["message"], handler=work_item.get("handler", "agent.run"),
+            worker_id=work_item.get("worker_id"),
+        ))
         reply: dict[str, Any] = {"ok": True}
     # A run that exits or is cancelled still reports how it ended.
     except (Exception, SystemExit, asyncio.CancelledError) as e:
@@ -813,6 +816,10 @@ class TemplateProcess:
                 argv,
                 pass_fds=(child_conn.fileno(),),
                 close_fds=True,
+                # Edge credentials belong only to the physical launcher, never
+                # to either template profile or the user-code children it forks.
+                env={name: value for name, value in os.environ.items()
+                     if name != "BIFROST_WORKER_CONTROL_HEADERS"},
             )
             child_conn.close()
             parent_conn.send_bytes(authkey)

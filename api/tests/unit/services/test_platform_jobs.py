@@ -115,7 +115,7 @@ async def test_enqueue_wakes_executors_only_once_the_job_is_committed(
 
         await session.commit()
         await asyncio.sleep(0)
-        wake.assert_awaited_once_with()
+        wake.assert_awaited_once_with(work_dispatch.WAKE_PLATFORM_JOB)
 
         await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
         await session.commit()
@@ -519,11 +519,16 @@ async def test_requires_action_projects_result_to_public_job_and_notification(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("system_owned", [False, True])
 async def test_notification_is_one_projection_of_durable_job(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    system_owned: bool,
 ) -> None:
     job = await _enqueue(db_session)
+    if system_owned:
+        job.requested_by_user_id = "system"
+        await db_session.flush()
     notification_id = uuid4()
     notifications = MagicMock()
     notifications.create_notification = AsyncMock(
@@ -540,6 +545,7 @@ async def test_notification_is_one_projection_of_durable_job(
 
     assert first == second == notification_id
     notifications.create_notification.assert_awaited_once()
+    assert notifications.create_notification.await_args.kwargs["for_admins"] is system_owned
     request = notifications.create_notification.await_args.kwargs["request"]
     assert request.metadata == {
         "job_id": str(job.id),

@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures/api-fixture";
 
 test("changes the run history window and previews a run from Maintenance", async ({
 	page,
