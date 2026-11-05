@@ -8,6 +8,7 @@ For API schemas (Create/Update/Public), see schemas.py
 """
 
 from src.models.orm.agent_prompt_history import AgentPromptHistory
+from src.models.orm.oauth_clients import OAuthClientRegistration
 from src.models.orm.agent_run_flag_conversations import AgentRunFlagConversation
 from src.models.orm.agent_run_verdict_history import AgentRunVerdictHistory
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
@@ -20,6 +21,9 @@ from src.models.orm.artifacts import Artifact
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.scheduler_leases import SchedulerLease
+from src.models.orm.work_dispatches import WorkDispatch
+from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
+from src.models.orm.package_changes import PackageChange
 from src.models.orm.scheduler_diagnostics import (
     SchedulerReplica,
     SchedulerTaskRun,
@@ -28,10 +32,12 @@ from src.models.orm.scheduler_diagnostics import (
 )
 from src.models.orm.form_embed_secrets import FormEmbedSecret
 from src.models.orm.form_publications import FormPublication
+from src.models.orm.human_sessions import HumanAuthSession
 from src.models.orm.app_roles import AppRole
 from src.models.orm.applications import Application
 from src.models.orm.audit import AuditLog
 from src.models.orm.audit_archive import AuditArchiveSegment
+from src.models.orm.authz import AuthzProtocolState, AuthzVersion
 from src.models.orm.base import Base
 from src.models.orm.branding import GlobalBranding
 from src.models.orm.config import Config, SystemConfig
@@ -77,6 +83,7 @@ from src.models.orm.services import ServiceAttempt, ServiceDefinition, ServiceLo
 from src.models.orm.worker_metric import WorkerMetric
 
 __all__ = [
+    "OAuthClientRegistration",
     "HomeCollection",
     "HomeResourcePreference",
     # Base
@@ -98,6 +105,12 @@ __all__ = [
     "PlatformJob",
     "PlatformJobMemoryProfile",
     "SchedulerLease",
+    "AuthzVersion",
+    "AuthzProtocolState",
+    "WorkDispatch",
+    "ExecutionWorker",
+    "ExecutionWorkerClaim",
+    "PackageChange",
     "SchedulerReplica",
     "SchedulerTaskRun",
     "SchedulerTaskState",
@@ -111,6 +124,7 @@ __all__ = [
     "UserRole",
     "UserRoleBoundary",
     "UserInvite",
+    "HumanAuthSession",
     "ProductUpdateReceipt",
     # Agent Runs
     "AgentRun",

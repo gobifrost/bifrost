@@ -84,15 +84,15 @@ def _normalize_call_tool_result(result: CallToolResult) -> dict[str, Any]:
     content_blocks: list[dict[str, Any]] = []
     for block in result.content:
         try:
-            content_blocks.append(block.model_dump())
+            content_blocks.append(block.model_dump(by_alias=True))
         except AttributeError:
             # Defensive: a future SDK may yield a non-Pydantic content type
             content_blocks.append({"type": "unknown", "value": str(block)})
 
     return {
         "content": content_blocks,
-        "structured_content": result.structuredContent,
-        "is_error": bool(result.isError),
+        "structured_content": result.structured_content,
+        "is_error": bool(result.is_error),
     }
 
 

@@ -105,6 +105,10 @@ Event publishing operations (async).
 
 **`files.list(directory: str = '', location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> list[str]`**
 
+**`files.move(source: str, destination: str, location: str, on_conflict: Literal['error', 'rename'] = 'error', scope: str | None = None, timeout_seconds: float = 14400, poll_interval_seconds: float = 2) -> str`**
+
+**`files.move_many(items: list[dict[str, str]], location: str, on_conflict: Literal['error', 'rename'] = 'error', scope: str | None = None, timeout_seconds: float = 14400, poll_interval_seconds: float = 2) -> list[dict]`**
+
 **`files.read(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None, solution: str | None = None) -> str`**
 
 **`files.read_bytes(path: str, location: str = 'workspace', mode: Mode = 'cloud', scope: str | None = None) -> bytes`**

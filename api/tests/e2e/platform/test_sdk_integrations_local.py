@@ -5,20 +5,22 @@ the three read operations — against the same seeded integration the
 external HTTP endpoint serves, proving parity (org mapping, merged
 config, entity-ID lookup, missing-entity nulls, denial) end to end:
 
-- the workflow records that the worker injected its engine socket, so the
-  fixed operations ride the shared client's worker-local HTTP transport;
+- the workflow confirms the default physical worker has no UDS, so the
+  fixed operations use scoped shared API HTTP;
 - the same values served over external HTTP ``/api/sdk/integrations/*``
   match, including the cross-org denial.
 
-The zero-HTTP proof for the migrated operations lives in the unit and
-forked-child socket tests (``test_worker_sdk_http.py``,
-``test_worker_sdk_http_fork.py``), where the child's network API is
-unreachable yet the integration calls succeed over the worker socket.
+The default physical worker has no UDS; these operations use scoped shared API
+HTTP while the test verifies their persisted state over external HTTP.
 """
 
 import uuid
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete
+
+from src.models.orm.integrations import Integration
 
 from tests.e2e.conftest import execute_workflow_sync, write_and_register
 
@@ -38,8 +40,8 @@ def live_integ_keys():
     }
 
 
-@pytest.fixture(scope="module")
-def live_integration(e2e_client, platform_admin, org1, live_integ_keys):
+@pytest_asyncio.fixture(scope="module", loop_scope="module")
+async def live_integration(e2e_client, platform_admin, org1, live_integ_keys, async_session_factory):
     """Seed one integration with an org1 mapping + config override."""
     create = e2e_client.post(
         "/api/integrations",
@@ -62,9 +64,10 @@ def live_integration(e2e_client, platform_admin, org1, live_integ_keys):
 
     yield {"integration_id": integration_id}
 
-    e2e_client.delete(
-        f"/api/integrations/{integration_id}", headers=platform_admin.headers
-    )
+    # REST deletion is soft; remove fixture-owned configs and mappings too.
+    async with async_session_factory() as db:
+        await db.execute(delete(Integration).where(Integration.id == uuid.UUID(integration_id)))
+        await db.commit()
 
 
 @pytest.fixture(scope="module")
@@ -152,9 +155,8 @@ class TestSdkIntegrationsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its engine socket, so the fixed operations ran
-        # over the shared client's worker-local transport.
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["entity_id"] == live_integ_keys["entity"]
         assert out["region"] == "eu-live"
         assert out["oauth_none"] is True

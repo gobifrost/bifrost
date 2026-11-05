@@ -1,0 +1,14 @@
+{
+  "key": "pr:1110",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "On Kubernetes, the cluster drops the extra node a deploy adds once the worker on it is idle, without interrupting any running job.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1110",
+      "Jack chose idle-only autoscaler eviction on 2026-10-28 after a deploy left production on an extra node."
+    ]
+  }
+}

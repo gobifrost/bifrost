@@ -6,10 +6,8 @@ and ``executions.get`` (own running execution, a foreign row, and a
 missing id) — proving parity with the same values served over external
 HTTP ``/api/workflows`` and ``/api/executions``:
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated calls rode the shared client transport (the
-  zero-HTTP proof lives in the unit and forked-child socket tests, where
-  the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the same rows re-read over external HTTP match (summaries, detail,
   continuation tokens, 404 on missing);
 - the engine child's superuser visibility matches the HTTP engine path:
@@ -46,9 +44,6 @@ from bifrost.client import get_engine_socket_path
 @workflow(name="{name}", description="Local execution reads E2E")
 async def {name}(foreign_id: str):
     from bifrost._context import get_execution_context
-    # The engine injected its private socket; the zero-HTTP proof lives in
-    # the unit and forked-child socket tests where the child's network API
-    # is dead by environment.
     used_socket = get_engine_socket_path() is not None
     _wf_list = await workflows.list()
     saw_self = any(_w.name == "{name}" for _w in _wf_list)
@@ -131,10 +126,8 @@ class TestSdkExecutionReadsLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The engine injected its socket; the zero-HTTP proof is in the
-        # unit and forked-child socket tests where the child's network API
-        # is dead.
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["saw_self"] is True, out
         # Filtered + keyset-paged list agrees with itself across pages.
         assert out["page1_count"] == 1, out

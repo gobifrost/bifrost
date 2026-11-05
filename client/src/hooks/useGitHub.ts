@@ -1,3 +1,4 @@
+import { getErrorMessage } from "@/lib/api-error";
 import { generateUUID } from "@/lib/uuid";
 /**
  * GitHub Integration hooks using openapi-react-query pattern
@@ -400,7 +401,7 @@ export async function validateGitHubToken(token: string) {
 	});
 
 	if (response.error) {
-		throw new Error("Failed to validate token");
+		throw new Error(getErrorMessage(response.error, "Failed to validate token"));
 	}
 
 	return response.data;

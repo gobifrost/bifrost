@@ -1,0 +1,1905 @@
+{
+  "upstream": {
+    "commit": "321814b6c13f72cff82161e7eb20312574ac9b7a",
+    "source": "https://github.com/cloudflare/agents/blob/321814b6c13f72cff82161e7eb20312574ac9b7a/packages/codemode/src/connectors/search.ts",
+    "sha256": "15ef317d630b3df60e6cc48bb879d835d2a4e968214f0b4096265504364981e0",
+    "generation": "Executed unmodified pinned searchConnectors using Node TypeScript stripping; MIT notice in LICENSES/cloudflare-codemode-MIT.txt."
+  },
+  "descriptions": [
+    {
+      "name": "github",
+      "descriptors": {
+        "listIssues": {
+          "description": "List open repository issues"
+        },
+        "createIssue": {
+          "description": "Create a new repository issue"
+        },
+        "getRepository": {
+          "description": "Retrieve repository details"
+        }
+      }
+    },
+    {
+      "name": "linear",
+      "descriptors": {
+        "searchIssues": {
+          "description": "Search tracked issues"
+        },
+        "list_projects": {
+          "description": "List project details"
+        }
+      }
+    },
+    {
+      "name": "sharepoint",
+      "descriptors": {
+        "getPermissions": {
+          "description": "List anonymous sharing links on folders"
+        },
+        "listFiles": {
+          "description": "List files in a document library"
+        },
+        "get_file": {
+          "description": "Read file content"
+        }
+      }
+    },
+    {
+      "name": "audit",
+      "descriptors": {
+        "readRecord00": {
+          "description": "Read audit record history"
+        },
+        "readRecord01": {
+          "description": "Read audit record history"
+        },
+        "readRecord02": {
+          "description": "Read audit record history"
+        },
+        "readRecord03": {
+          "description": "Read audit record history"
+        },
+        "readRecord04": {
+          "description": "Read audit record history"
+        },
+        "readRecord05": {
+          "description": "Read audit record history"
+        },
+        "readRecord06": {
+          "description": "Read audit record history"
+        },
+        "readRecord07": {
+          "description": "Read audit record history"
+        },
+        "readRecord08": {
+          "description": "Read audit record history"
+        },
+        "readRecord09": {
+          "description": "Read audit record history"
+        },
+        "readRecord10": {
+          "description": "Read audit record history"
+        },
+        "readRecord11": {
+          "description": "Read audit record history"
+        },
+        "readRecord12": {
+          "description": "Read audit record history"
+        },
+        "readRecord13": {
+          "description": "Read audit record history"
+        },
+        "readRecord14": {
+          "description": "Read audit record history"
+        },
+        "readRecord15": {
+          "description": "Read audit record history"
+        },
+        "readRecord16": {
+          "description": "Read audit record history"
+        },
+        "readRecord17": {
+          "description": "Read audit record history"
+        },
+        "readRecord18": {
+          "description": "Read audit record history"
+        },
+        "readRecord19": {
+          "description": "Read audit record history"
+        },
+        "readRecord20": {
+          "description": "Read audit record history"
+        },
+        "readRecord21": {
+          "description": "Read audit record history"
+        },
+        "readRecord22": {
+          "description": "Read audit record history"
+        },
+        "readRecord23": {
+          "description": "Read audit record history"
+        },
+        "readRecord24": {
+          "description": "Read audit record history"
+        },
+        "readRecord25": {
+          "description": "Read audit record history"
+        },
+        "readRecord26": {
+          "description": "Read audit record history"
+        },
+        "readRecord27": {
+          "description": "Read audit record history"
+        },
+        "readRecord28": {
+          "description": "Read audit record history"
+        },
+        "readRecord29": {
+          "description": "Read audit record history"
+        },
+        "readRecord30": {
+          "description": "Read audit record history"
+        },
+        "readRecord31": {
+          "description": "Read audit record history"
+        },
+        "readRecord32": {
+          "description": "Read audit record history"
+        },
+        "readRecord33": {
+          "description": "Read audit record history"
+        },
+        "readRecord34": {
+          "description": "Read audit record history"
+        },
+        "readRecord35": {
+          "description": "Read audit record history"
+        },
+        "readRecord36": {
+          "description": "Read audit record history"
+        },
+        "readRecord37": {
+          "description": "Read audit record history"
+        },
+        "readRecord38": {
+          "description": "Read audit record history"
+        },
+        "readRecord39": {
+          "description": "Read audit record history"
+        },
+        "readRecord40": {
+          "description": "Read audit record history"
+        },
+        "readRecord41": {
+          "description": "Read audit record history"
+        },
+        "readRecord42": {
+          "description": "Read audit record history"
+        },
+        "readRecord43": {
+          "description": "Read audit record history"
+        },
+        "readRecord44": {
+          "description": "Read audit record history"
+        },
+        "readRecord45": {
+          "description": "Read audit record history"
+        },
+        "readRecord46": {
+          "description": "Read audit record history"
+        },
+        "readRecord47": {
+          "description": "Read audit record history"
+        },
+        "readRecord48": {
+          "description": "Read audit record history"
+        },
+        "readRecord49": {
+          "description": "Read audit record history"
+        },
+        "readRecord50": {
+          "description": "Read audit record history"
+        },
+        "readRecord51": {
+          "description": "Read audit record history"
+        },
+        "readRecord52": {
+          "description": "Read audit record history"
+        },
+        "readRecord53": {
+          "description": "Read audit record history"
+        },
+        "readRecord54": {
+          "description": "Read audit record history"
+        }
+      }
+    },
+    {
+      "name": "records",
+      "descriptors": {
+        "readRecord": {
+          "description": "Read record"
+        },
+        "listRecords": {
+          "description": "List record history"
+        },
+        "refresh": {
+          "description": "Refresh cached entries"
+        }
+      }
+    },
+    {
+      "name": "phrases",
+      "descriptors": {
+        "repeat": {
+          "description": "record record record record"
+        }
+      }
+    }
+  ],
+  "cases": [
+    {
+      "query": "",
+      "expected": {
+        "results": [],
+        "total": 0,
+        "truncated": false
+      }
+    },
+    {
+      "query": "   ",
+      "expected": {
+        "results": [],
+        "total": 0,
+        "truncated": false
+      }
+    },
+    {
+      "query": "___",
+      "expected": {
+        "results": [],
+        "total": 0,
+        "truncated": false
+      }
+    },
+    {
+      "query": "github",
+      "expected": {
+        "results": [
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 333
+          },
+          {
+            "path": "github.getRepository",
+            "connector": "github",
+            "method": "getRepository",
+            "description": "Retrieve repository details",
+            "kind": "method",
+            "score": 333
+          },
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 333
+          }
+        ],
+        "total": 3,
+        "truncated": false
+      }
+    },
+    {
+      "query": "github.listIssues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 517
+          },
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 149
+          }
+        ],
+        "total": 2,
+        "truncated": false
+      }
+    },
+    {
+      "query": "github issues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 221
+          },
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 167
+          }
+        ],
+        "total": 2,
+        "truncated": false
+      }
+    },
+    {
+      "query": "listIssues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 481
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "list_issues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 481
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "list/issues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 481
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "list:issues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 481
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "list-issues",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 481
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "issue",
+      "expected": {
+        "results": [
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 295
+          },
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 241
+          },
+          {
+            "path": "linear.searchIssues",
+            "connector": "linear",
+            "method": "searchIssues",
+            "description": "Search tracked issues",
+            "kind": "method",
+            "score": 241
+          }
+        ],
+        "total": 3,
+        "truncated": false
+      }
+    },
+    {
+      "query": "issu",
+      "expected": {
+        "results": [
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 241
+          },
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 241
+          },
+          {
+            "path": "linear.searchIssues",
+            "connector": "linear",
+            "method": "searchIssues",
+            "description": "Search tracked issues",
+            "kind": "method",
+            "score": 241
+          }
+        ],
+        "total": 3,
+        "truncated": false
+      }
+    },
+    {
+      "query": "issues nonexistent",
+      "expected": {
+        "results": [],
+        "total": 0,
+        "truncated": false
+      }
+    },
+    {
+      "query": "repository issues nonexistent",
+      "expected": {
+        "results": [
+          {
+            "path": "github.listIssues",
+            "connector": "github",
+            "method": "listIssues",
+            "description": "List open repository issues",
+            "kind": "method",
+            "score": 135
+          },
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 81
+          }
+        ],
+        "total": 2,
+        "truncated": false
+      }
+    },
+    {
+      "query": "repository issues nonexistent absent missing",
+      "expected": {
+        "results": [
+          {
+            "path": "github.createIssue",
+            "connector": "github",
+            "method": "createIssue",
+            "description": "Create a new repository issue",
+            "kind": "method",
+            "score": 90
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "anonymous sharing",
+      "expected": {
+        "results": [
+          {
+            "path": "sharepoint.getPermissions",
+            "connector": "sharepoint",
+            "method": "getPermissions",
+            "description": "List anonymous sharing links on folders",
+            "kind": "method",
+            "score": 95
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "sharing link folder",
+      "expected": {
+        "results": [
+          {
+            "path": "sharepoint.getPermissions",
+            "connector": "sharepoint",
+            "method": "getPermissions",
+            "description": "List anonymous sharing links on folders",
+            "kind": "method",
+            "score": 65
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "get file",
+      "expected": {
+        "results": [
+          {
+            "path": "sharepoint.get_file",
+            "connector": "sharepoint",
+            "method": "get_file",
+            "description": "Read file content",
+            "kind": "method",
+            "score": 461
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "getPermissions",
+      "expected": {
+        "results": [
+          {
+            "path": "sharepoint.getPermissions",
+            "connector": "sharepoint",
+            "method": "getPermissions",
+            "description": "List anonymous sharing links on folders",
+            "kind": "method",
+            "score": 441
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "audit record",
+      "expected": {
+        "results": [
+          {
+            "path": "audit.readRecord00",
+            "connector": "audit",
+            "method": "readRecord00",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord01",
+            "connector": "audit",
+            "method": "readRecord01",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord02",
+            "connector": "audit",
+            "method": "readRecord02",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord03",
+            "connector": "audit",
+            "method": "readRecord03",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord04",
+            "connector": "audit",
+            "method": "readRecord04",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord05",
+            "connector": "audit",
+            "method": "readRecord05",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord06",
+            "connector": "audit",
+            "method": "readRecord06",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord07",
+            "connector": "audit",
+            "method": "readRecord07",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord08",
+            "connector": "audit",
+            "method": "readRecord08",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord09",
+            "connector": "audit",
+            "method": "readRecord09",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord10",
+            "connector": "audit",
+            "method": "readRecord10",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord11",
+            "connector": "audit",
+            "method": "readRecord11",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord12",
+            "connector": "audit",
+            "method": "readRecord12",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord13",
+            "connector": "audit",
+            "method": "readRecord13",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord14",
+            "connector": "audit",
+            "method": "readRecord14",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord15",
+            "connector": "audit",
+            "method": "readRecord15",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord16",
+            "connector": "audit",
+            "method": "readRecord16",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord17",
+            "connector": "audit",
+            "method": "readRecord17",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord18",
+            "connector": "audit",
+            "method": "readRecord18",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord19",
+            "connector": "audit",
+            "method": "readRecord19",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord20",
+            "connector": "audit",
+            "method": "readRecord20",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord21",
+            "connector": "audit",
+            "method": "readRecord21",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord22",
+            "connector": "audit",
+            "method": "readRecord22",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord23",
+            "connector": "audit",
+            "method": "readRecord23",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord24",
+            "connector": "audit",
+            "method": "readRecord24",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord25",
+            "connector": "audit",
+            "method": "readRecord25",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord26",
+            "connector": "audit",
+            "method": "readRecord26",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord27",
+            "connector": "audit",
+            "method": "readRecord27",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord28",
+            "connector": "audit",
+            "method": "readRecord28",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord29",
+            "connector": "audit",
+            "method": "readRecord29",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord30",
+            "connector": "audit",
+            "method": "readRecord30",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord31",
+            "connector": "audit",
+            "method": "readRecord31",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord32",
+            "connector": "audit",
+            "method": "readRecord32",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord33",
+            "connector": "audit",
+            "method": "readRecord33",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord34",
+            "connector": "audit",
+            "method": "readRecord34",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord35",
+            "connector": "audit",
+            "method": "readRecord35",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord36",
+            "connector": "audit",
+            "method": "readRecord36",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord37",
+            "connector": "audit",
+            "method": "readRecord37",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord38",
+            "connector": "audit",
+            "method": "readRecord38",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord39",
+            "connector": "audit",
+            "method": "readRecord39",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord40",
+            "connector": "audit",
+            "method": "readRecord40",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord41",
+            "connector": "audit",
+            "method": "readRecord41",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord42",
+            "connector": "audit",
+            "method": "readRecord42",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord43",
+            "connector": "audit",
+            "method": "readRecord43",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord44",
+            "connector": "audit",
+            "method": "readRecord44",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord45",
+            "connector": "audit",
+            "method": "readRecord45",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord46",
+            "connector": "audit",
+            "method": "readRecord46",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord47",
+            "connector": "audit",
+            "method": "readRecord47",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord48",
+            "connector": "audit",
+            "method": "readRecord48",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          },
+          {
+            "path": "audit.readRecord49",
+            "connector": "audit",
+            "method": "readRecord49",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 227
+          }
+        ],
+        "total": 55,
+        "truncated": true
+      }
+    },
+    {
+      "query": "record",
+      "expected": {
+        "results": [
+          {
+            "path": "records.readRecord",
+            "connector": "records",
+            "method": "readRecord",
+            "description": "Read record",
+            "kind": "method",
+            "score": 419
+          },
+          {
+            "path": "records.listRecords",
+            "connector": "records",
+            "method": "listRecords",
+            "description": "List record history",
+            "kind": "method",
+            "score": 375
+          },
+          {
+            "path": "audit.readRecord00",
+            "connector": "audit",
+            "method": "readRecord00",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord01",
+            "connector": "audit",
+            "method": "readRecord01",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord02",
+            "connector": "audit",
+            "method": "readRecord02",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord03",
+            "connector": "audit",
+            "method": "readRecord03",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord04",
+            "connector": "audit",
+            "method": "readRecord04",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord05",
+            "connector": "audit",
+            "method": "readRecord05",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord06",
+            "connector": "audit",
+            "method": "readRecord06",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord07",
+            "connector": "audit",
+            "method": "readRecord07",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord08",
+            "connector": "audit",
+            "method": "readRecord08",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord09",
+            "connector": "audit",
+            "method": "readRecord09",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord10",
+            "connector": "audit",
+            "method": "readRecord10",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord11",
+            "connector": "audit",
+            "method": "readRecord11",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord12",
+            "connector": "audit",
+            "method": "readRecord12",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord13",
+            "connector": "audit",
+            "method": "readRecord13",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord14",
+            "connector": "audit",
+            "method": "readRecord14",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord15",
+            "connector": "audit",
+            "method": "readRecord15",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord16",
+            "connector": "audit",
+            "method": "readRecord16",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord17",
+            "connector": "audit",
+            "method": "readRecord17",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord18",
+            "connector": "audit",
+            "method": "readRecord18",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord19",
+            "connector": "audit",
+            "method": "readRecord19",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord20",
+            "connector": "audit",
+            "method": "readRecord20",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord21",
+            "connector": "audit",
+            "method": "readRecord21",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord22",
+            "connector": "audit",
+            "method": "readRecord22",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord23",
+            "connector": "audit",
+            "method": "readRecord23",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord24",
+            "connector": "audit",
+            "method": "readRecord24",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord25",
+            "connector": "audit",
+            "method": "readRecord25",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord26",
+            "connector": "audit",
+            "method": "readRecord26",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord27",
+            "connector": "audit",
+            "method": "readRecord27",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord28",
+            "connector": "audit",
+            "method": "readRecord28",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord29",
+            "connector": "audit",
+            "method": "readRecord29",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord30",
+            "connector": "audit",
+            "method": "readRecord30",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord31",
+            "connector": "audit",
+            "method": "readRecord31",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord32",
+            "connector": "audit",
+            "method": "readRecord32",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord33",
+            "connector": "audit",
+            "method": "readRecord33",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord34",
+            "connector": "audit",
+            "method": "readRecord34",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord35",
+            "connector": "audit",
+            "method": "readRecord35",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord36",
+            "connector": "audit",
+            "method": "readRecord36",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord37",
+            "connector": "audit",
+            "method": "readRecord37",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord38",
+            "connector": "audit",
+            "method": "readRecord38",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord39",
+            "connector": "audit",
+            "method": "readRecord39",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord40",
+            "connector": "audit",
+            "method": "readRecord40",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord41",
+            "connector": "audit",
+            "method": "readRecord41",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord42",
+            "connector": "audit",
+            "method": "readRecord42",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord43",
+            "connector": "audit",
+            "method": "readRecord43",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord44",
+            "connector": "audit",
+            "method": "readRecord44",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord45",
+            "connector": "audit",
+            "method": "readRecord45",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord46",
+            "connector": "audit",
+            "method": "readRecord46",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          },
+          {
+            "path": "audit.readRecord47",
+            "connector": "audit",
+            "method": "readRecord47",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 251
+          }
+        ],
+        "total": 59,
+        "truncated": true
+      }
+    },
+    {
+      "query": "record record",
+      "expected": {
+        "results": [
+          {
+            "path": "phrases.repeat",
+            "connector": "phrases",
+            "method": "repeat",
+            "description": "record record record record",
+            "kind": "method",
+            "score": 90
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "readRecord00",
+      "expected": {
+        "results": [
+          {
+            "path": "audit.readRecord00",
+            "connector": "audit",
+            "method": "readRecord00",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 471
+          },
+          {
+            "path": "records.readRecord",
+            "connector": "records",
+            "method": "readRecord",
+            "description": "Read record",
+            "kind": "method",
+            "score": 195
+          },
+          {
+            "path": "audit.readRecord01",
+            "connector": "audit",
+            "method": "readRecord01",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord02",
+            "connector": "audit",
+            "method": "readRecord02",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord03",
+            "connector": "audit",
+            "method": "readRecord03",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord04",
+            "connector": "audit",
+            "method": "readRecord04",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord05",
+            "connector": "audit",
+            "method": "readRecord05",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord06",
+            "connector": "audit",
+            "method": "readRecord06",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord07",
+            "connector": "audit",
+            "method": "readRecord07",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord08",
+            "connector": "audit",
+            "method": "readRecord08",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord09",
+            "connector": "audit",
+            "method": "readRecord09",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord10",
+            "connector": "audit",
+            "method": "readRecord10",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord11",
+            "connector": "audit",
+            "method": "readRecord11",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord12",
+            "connector": "audit",
+            "method": "readRecord12",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord13",
+            "connector": "audit",
+            "method": "readRecord13",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord14",
+            "connector": "audit",
+            "method": "readRecord14",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord15",
+            "connector": "audit",
+            "method": "readRecord15",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord16",
+            "connector": "audit",
+            "method": "readRecord16",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord17",
+            "connector": "audit",
+            "method": "readRecord17",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord18",
+            "connector": "audit",
+            "method": "readRecord18",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord19",
+            "connector": "audit",
+            "method": "readRecord19",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord20",
+            "connector": "audit",
+            "method": "readRecord20",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord21",
+            "connector": "audit",
+            "method": "readRecord21",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord22",
+            "connector": "audit",
+            "method": "readRecord22",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord23",
+            "connector": "audit",
+            "method": "readRecord23",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord24",
+            "connector": "audit",
+            "method": "readRecord24",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord25",
+            "connector": "audit",
+            "method": "readRecord25",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord26",
+            "connector": "audit",
+            "method": "readRecord26",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord27",
+            "connector": "audit",
+            "method": "readRecord27",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord28",
+            "connector": "audit",
+            "method": "readRecord28",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord29",
+            "connector": "audit",
+            "method": "readRecord29",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord30",
+            "connector": "audit",
+            "method": "readRecord30",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord31",
+            "connector": "audit",
+            "method": "readRecord31",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord32",
+            "connector": "audit",
+            "method": "readRecord32",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord33",
+            "connector": "audit",
+            "method": "readRecord33",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord34",
+            "connector": "audit",
+            "method": "readRecord34",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord35",
+            "connector": "audit",
+            "method": "readRecord35",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord36",
+            "connector": "audit",
+            "method": "readRecord36",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord37",
+            "connector": "audit",
+            "method": "readRecord37",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord38",
+            "connector": "audit",
+            "method": "readRecord38",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord39",
+            "connector": "audit",
+            "method": "readRecord39",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord40",
+            "connector": "audit",
+            "method": "readRecord40",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord41",
+            "connector": "audit",
+            "method": "readRecord41",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord42",
+            "connector": "audit",
+            "method": "readRecord42",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord43",
+            "connector": "audit",
+            "method": "readRecord43",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord44",
+            "connector": "audit",
+            "method": "readRecord44",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord45",
+            "connector": "audit",
+            "method": "readRecord45",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord46",
+            "connector": "audit",
+            "method": "readRecord46",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord47",
+            "connector": "audit",
+            "method": "readRecord47",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          },
+          {
+            "path": "audit.readRecord48",
+            "connector": "audit",
+            "method": "readRecord48",
+            "description": "Read audit record history",
+            "kind": "method",
+            "score": 151
+          }
+        ],
+        "total": 56,
+        "truncated": true
+      }
+    },
+    {
+      "query": "cached",
+      "expected": {
+        "results": [
+          {
+            "path": "records.refresh",
+            "connector": "records",
+            "method": "refresh",
+            "description": "Refresh cached entries",
+            "kind": "method",
+            "score": 75
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    },
+    {
+      "query": "unmatchedtext",
+      "expected": {
+        "results": [],
+        "total": 0,
+        "truncated": false
+      }
+    },
+    {
+      "query": "record record record record",
+      "expected": {
+        "results": [
+          {
+            "path": "phrases.repeat",
+            "connector": "phrases",
+            "method": "repeat",
+            "description": "record record record record",
+            "kind": "method",
+            "score": 153
+          }
+        ],
+        "total": 1,
+        "truncated": false
+      }
+    }
+  ]
+}

@@ -11,7 +11,7 @@
  */
 
 import { test, expect } from "./fixtures/api-fixture";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 
 function makeRun(
 	agentId: string,

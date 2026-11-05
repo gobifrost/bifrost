@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, query_expression, relationship
 
 from src.models.orm.base import Base
 
@@ -42,12 +42,16 @@ class AIProviderConnection(Base):
         onupdate=lambda: datetime.now(timezone.utc),
     )
 
-    profiles: Mapped[list["AIModelProfile"]] = relationship(back_populates="connection", lazy="selectin")
+    # Reverse collections belong to management queries. Resolving one runtime
+    # profile or embedding config must not hydrate every consumer of its provider.
+    profiles: Mapped[list["AIModelProfile"]] = relationship(back_populates="connection", lazy="raise")
     embedding_config: Mapped["AIEmbeddingConfig | None"] = relationship(
         back_populates="connection",
-        lazy="selectin",
+        lazy="raise",
         uselist=False,
     )
+    # Management responses need counts, not hydrated reverse collections.
+    profile_count: Mapped[int | None] = query_expression()
 
     __table_args__ = (
         CheckConstraint(
@@ -96,16 +100,15 @@ class AIModelProfile(Base):
         nullable=True,
         default=None,
     )
-    # Unidirectional on purpose: dependents are queried explicitly (see
-    # AIModelService._failover_dependents). selectin (not joined): a
-    # self-referential joined eager load proved unreliable to populate
-    # across request lifecycles, while the PK follow-up query is exact.
+    # Runtime chains follow IDs explicitly. Management queries load the one
+    # referenced name they display without recursively loading a profile graph.
     failover_profile: Mapped["AIModelProfile | None"] = relationship(
         remote_side="AIModelProfile.id",
-        lazy="selectin",
+        lazy="raise",
     )
-    assignments: Mapped[list["AIModelAssignment"]] = relationship(back_populates="profile", lazy="selectin")
-    agents: Mapped[list["Agent"]] = relationship(back_populates="llm_profile", lazy="selectin")
+    assignments: Mapped[list["AIModelAssignment"]] = relationship(back_populates="profile", lazy="raise")
+    agents: Mapped[list["Agent"]] = relationship(back_populates="llm_profile", lazy="raise")
+    referenced_agent_count: Mapped[int | None] = query_expression()
 
     __table_args__ = (
         CheckConstraint(

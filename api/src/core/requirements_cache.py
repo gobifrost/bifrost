@@ -8,15 +8,15 @@ installed packages survive container restarts.
 Persistence Flow:
 1. User installs package via /api/packages/install
 2. API handler appends package to requirements, saves to S3 + Redis cache
-3. API broadcasts "recycle_workers" to all workers
-4. Workers recycle processes; ProcessPoolManager calls install_requirements() at pool startup
+3. API records the package change; every executor applies it and recycles
+4. ProcessPoolManager calls install_requirements() at pool startup
 5. pip install runs from requirements.txt (shared filesystem, all workers inherit)
 
 Read path: Redis cache → S3 fallback (re-caches on hit)
 Source of truth: S3 (_repo/requirements.txt) via RepoStorage
 
 Related Files:
-- api/src/routers/packages.py - Saves requirements + broadcasts recycle
+- api/src/routers/packages.py - Saves requirements + records the change
 - api/scripts/init_container.py - Warms cache on container startup
 - api/src/services/execution/simple_worker.py - Installs on worker startup
 
@@ -81,7 +81,7 @@ def get_requirements_sync() -> str | None:
 
     Lookup order:
     1. Redis cache (fast path)
-    2. Direct S3 via botocore while the privileged setup helper still has
+    2. Direct S3 via the parent-only CRT transport while the privileged setup helper still has
        storage credentials (re-caches on hit)
     3. None (not found)
 
@@ -124,7 +124,7 @@ def get_requirements_sync() -> str | None:
 
 
 def _read_requirements_from_s3(get_client_fn: Any) -> str | None:
-    """Read _repo/requirements.txt from S3 using a sync botocore client."""
+    """Read _repo/requirements.txt from S3 using the synchronous CRT transport."""
     bucket = os.environ.get("BIFROST_S3_BUCKET")
     if not bucket:
         return None

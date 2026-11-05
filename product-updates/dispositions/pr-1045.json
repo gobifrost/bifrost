@@ -1,0 +1,10 @@
+{
+  "key": "pr:1045",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Fixes a regression in #1044 (new executors declared lost while starting) before any release carried it.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1045"]
+  }
+}

@@ -6,6 +6,7 @@ These are stored in the system_configs table with category='oauth_sso'.
 """
 
 from typing import Literal
+from uuid import UUID
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -42,6 +43,21 @@ class OAuthLoginPreference(BaseModel):
     default_sso_provider: OAuthSSOProvider | None = Field(
         default=None,
         description="Configured SSO provider used for the preferred redirect",
+    )
+    password_login_enabled: bool = Field(
+        default=True,
+        description="Whether password login is available to accounts without an SSO exclusion",
+    )
+    passkey_login_enabled: bool = Field(
+        default=True,
+        description="Whether passkey login/enrollment is available to accounts without an SSO exclusion",
+    )
+
+    excluded_user_ids: list[UUID] | None = Field(
+        default=None, description="Users exempt from login restrictions; null safely exempts platform admins"
+    )
+    excluded_organization_ids: list[UUID] = Field(
+        default_factory=list, description="Organizations exempt from login restrictions"
     )
 
     @model_validator(mode="after")

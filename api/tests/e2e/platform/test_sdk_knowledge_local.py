@@ -4,10 +4,8 @@ Exercises the full path — workflow code in a forked worker child calling the
 fixed ``bifrost.knowledge`` methods — and verifies the same values over
 external HTTP, proving parity end to end:
 
-- the workflow records that the engine injected the worker's private socket,
-  so the migrated calls rode the shared client transport rather than the
-  network API (the zero-HTTP proof lives in the unit and forked-child socket
-  tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the live run exercises the methods that need no embedding provider
   (``get``/``delete``/``delete_namespace``/``list_namespaces``) so no paid
   provider call is made. The embedding-backed methods (``store``/
@@ -107,10 +105,8 @@ class TestSdkKnowledgeLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The engine injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["missing_is_none"] is True
         assert out["deleted"] is False
         assert out["cleared"] == 0

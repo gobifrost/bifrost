@@ -11,12 +11,14 @@ This module provides:
 - refresh_workflow_endpoint(): Update a single workflow's route (for live updates)
 """
 
+import json
 import logging
 from typing import Any
 
-from fastapi import FastAPI, Header, Request
+from fastapi import FastAPI, Header, Request, Response
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.routing import Route
 
 from src.models import Workflow
 from src.services.tool_schema import parameter_json_schema
@@ -214,7 +216,7 @@ def register_workflow_endpoint(app: FastAPI, workflow: Workflow) -> None:
 
     # Check if route already exists and remove it
     path = f"/api/endpoints/{workflow_name}"
-    app.routes = [r for r in app.routes if getattr(r, "path", None) != path]
+    app.router.routes = [r for r in app.routes if getattr(r, "path", None) != path]
 
     # Create the route handler
     # We use api_route to support multiple methods
@@ -257,7 +259,7 @@ def _update_openapi_schema(app: FastAPI, workflow: Workflow) -> None:
         workflow: Workflow with parameter definitions
     """
     # Force regeneration of OpenAPI schema on next request
-    app.openapi_schema = None
+    _invalidate_openapi_cache(app)
 
     # Store workflow schemas for custom openapi() override
     if not hasattr(app, "_workflow_schemas"):
@@ -324,17 +326,134 @@ def remove_workflow_endpoint(app: FastAPI, workflow_name: str) -> None:
     """
     path = f"/api/endpoints/{workflow_name}"
     original_count = len(app.routes)
-    app.routes = [r for r in app.routes if getattr(r, "path", None) != path]
+    app.router.routes = [r for r in app.routes if getattr(r, "path", None) != path]
 
     if len(app.routes) < original_count:
         # Force regeneration of OpenAPI schema
-        app.openapi_schema = None
+        _invalidate_openapi_cache(app)
 
         # Remove from workflow schemas
         if hasattr(app, "_workflow_schemas"):
             app._workflow_schemas.pop(workflow_name, None)
 
         logger.info(f"Removed endpoint: /api/endpoints/{workflow_name}")
+
+
+def _invalidate_openapi_cache(app: FastAPI) -> None:
+    """Clear the generated schema and its encoded HTTP representation."""
+    app.openapi_schema = None
+    app._openapi_response_body = None
+
+
+def _encode_openapi_schema(openapi_schema: dict[str, Any]) -> bytes:
+    """Encode JSON exactly as Starlette's JSONResponse does."""
+    return json.dumps(
+        openapi_schema,
+        ensure_ascii=False,
+        allow_nan=False,
+        indent=None,
+        separators=(",", ":"),
+    ).encode("utf-8")
+
+
+def _add_workflow_openapi_details(app: FastAPI, openapi_schema: dict[str, Any]) -> None:
+    """Add Bifrost workflow metadata to a generated OpenAPI schema."""
+    # Add security scheme for API key
+    if "components" not in openapi_schema:
+        openapi_schema["components"] = {}
+    if "securitySchemes" not in openapi_schema["components"]:
+        openapi_schema["components"]["securitySchemes"] = {}
+
+    openapi_schema["components"]["securitySchemes"]["BifrostApiKey"] = {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-Bifrost-Key",
+        "description": "Workflow API key for endpoint access",
+    }
+
+    # Add EndpointExecuteResponse schema if not present
+    if "schemas" not in openapi_schema["components"]:
+        openapi_schema["components"]["schemas"] = {}
+
+    if "EndpointExecuteResponse" not in openapi_schema["components"]["schemas"]:
+        openapi_schema["components"]["schemas"]["EndpointExecuteResponse"] = {
+            "type": "object",
+            "properties": {
+                "execution_id": {"type": "string", "description": "Unique execution ID"},
+                "status": {"type": "string", "description": "Execution status"},
+                "message": {"type": "string", "nullable": True, "description": "Optional message"},
+                "result": {"description": "Workflow result data"},
+                "error": {"type": "string", "nullable": True, "description": "Error message if failed"},
+                "duration_ms": {"type": "integer", "nullable": True, "description": "Execution duration in milliseconds"},
+            },
+            "required": ["execution_id", "status"],
+        }
+
+    # Inject workflow-specific schemas
+    if hasattr(app, "_workflow_schemas"):
+        for workflow_name, schema in app._workflow_schemas.items():
+            path_key = f"/api/endpoints/{workflow_name}"
+            if path_key in openapi_schema.get("paths", {}):
+                # Merge our detailed schema with the auto-generated one
+                for method, operation in schema.items():
+                    if method in openapi_schema["paths"][path_key]:
+                        # Update parameters
+                        if "parameters" in operation:
+                            openapi_schema["paths"][path_key][method]["parameters"] = operation["parameters"]
+                        # Update request body
+                        if "requestBody" in operation:
+                            openapi_schema["paths"][path_key][method]["requestBody"] = operation["requestBody"]
+                        # Update security
+                        if "security" in operation:
+                            openapi_schema["paths"][path_key][method]["security"] = operation["security"]
+
+
+def _get_openapi_response_body(app: FastAPI) -> bytes:
+    """Build and cache the canonical OpenAPI response without retaining its dict."""
+    response_body = getattr(app, "_openapi_response_body", None)
+    if response_body is not None:
+        return response_body
+
+    try:
+        openapi_schema = app._original_openapi()
+        _add_workflow_openapi_details(app, openapi_schema)
+        response_body = _encode_openapi_schema(openapi_schema)
+    finally:
+        app.openapi_schema = None
+
+    app._openapi_response_body = response_body
+    return response_body
+
+
+def _replace_openapi_route(app: FastAPI) -> None:
+    """Serve the cached bytes from FastAPI's existing OpenAPI route."""
+    if app.openapi_url is None:
+        return
+
+    async def openapi(request: Request) -> Response:
+        response_body = _get_openapi_response_body(app)
+        root_path = request.scope.get("root_path", "").rstrip("/")
+        if root_path and app.root_path_in_servers:
+            openapi_schema = json.loads(response_body)
+            server_urls = {server.get("url") for server in openapi_schema.get("servers", [])}
+            if root_path not in server_urls:
+                openapi_schema = dict(openapi_schema)
+                openapi_schema["servers"] = [{"url": root_path}] + openapi_schema.get("servers", [])
+                response_body = _encode_openapi_schema(openapi_schema)
+        return Response(content=response_body, media_type="application/json")
+
+    for index, route in enumerate(app.router.routes):
+        if getattr(route, "path", None) == app.openapi_url and route.name == "openapi":
+            app.router.routes[index] = Route(
+                app.openapi_url,
+                openapi,
+                methods=["GET"],
+                name="openapi",
+                include_in_schema=False,
+            )
+            return
+
+    raise RuntimeError("FastAPI did not install an OpenAPI route")
 
 
 def _install_custom_openapi(app: FastAPI) -> None:
@@ -344,65 +463,15 @@ def _install_custom_openapi(app: FastAPI) -> None:
     This overrides the default openapi() method to inject proper parameter
     schemas for each workflow endpoint.
     """
-    original_openapi = app.openapi
+    if getattr(app, "_openapi_response_cache_installed", False):
+        return
+
+    app._original_openapi = app.openapi
 
     def custom_openapi():
-        if app.openapi_schema:
-            return app.openapi_schema
-
-        # Generate base schema
-        openapi_schema = original_openapi()
-
-        # Add security scheme for API key
-        if "components" not in openapi_schema:
-            openapi_schema["components"] = {}
-        if "securitySchemes" not in openapi_schema["components"]:
-            openapi_schema["components"]["securitySchemes"] = {}
-
-        openapi_schema["components"]["securitySchemes"]["BifrostApiKey"] = {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-Bifrost-Key",
-            "description": "Workflow API key for endpoint access",
-        }
-
-        # Add EndpointExecuteResponse schema if not present
-        if "schemas" not in openapi_schema["components"]:
-            openapi_schema["components"]["schemas"] = {}
-
-        if "EndpointExecuteResponse" not in openapi_schema["components"]["schemas"]:
-            openapi_schema["components"]["schemas"]["EndpointExecuteResponse"] = {
-                "type": "object",
-                "properties": {
-                    "execution_id": {"type": "string", "description": "Unique execution ID"},
-                    "status": {"type": "string", "description": "Execution status"},
-                    "message": {"type": "string", "nullable": True, "description": "Optional message"},
-                    "result": {"description": "Workflow result data"},
-                    "error": {"type": "string", "nullable": True, "description": "Error message if failed"},
-                    "duration_ms": {"type": "integer", "nullable": True, "description": "Execution duration in milliseconds"},
-                },
-                "required": ["execution_id", "status"],
-            }
-
-        # Inject workflow-specific schemas
-        if hasattr(app, "_workflow_schemas"):
-            for workflow_name, schema in app._workflow_schemas.items():
-                path_key = f"/api/endpoints/{workflow_name}"
-                if path_key in openapi_schema.get("paths", {}):
-                    # Merge our detailed schema with the auto-generated one
-                    for method, operation in schema.items():
-                        if method in openapi_schema["paths"][path_key]:
-                            # Update parameters
-                            if "parameters" in operation:
-                                openapi_schema["paths"][path_key][method]["parameters"] = operation["parameters"]
-                            # Update request body
-                            if "requestBody" in operation:
-                                openapi_schema["paths"][path_key][method]["requestBody"] = operation["requestBody"]
-                            # Update security
-                            if "security" in operation:
-                                openapi_schema["paths"][path_key][method]["security"] = operation["security"]
-
-        app.openapi_schema = openapi_schema
-        return app.openapi_schema
+        return json.loads(_get_openapi_response_body(app))
 
     app.openapi = custom_openapi
+    app._openapi_response_cache_installed = True
+    _invalidate_openapi_cache(app)
+    _replace_openapi_route(app)

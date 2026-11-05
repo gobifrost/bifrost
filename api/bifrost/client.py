@@ -9,6 +9,7 @@ Supports two modes:
 
 import asyncio
 import logging
+import os
 import sys
 import threading
 import time
@@ -20,6 +21,10 @@ from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Optional
 
 import httpx
+
+from bifrost._device_auth import device_login_prompt
+from bifrost._refreshing import RefreshingAsyncClient, RefreshingClient, refresh_extensions
+from bifrost._tls import shared_ssl_context
 
 from .credentials import (
     clear_credentials,
@@ -222,6 +227,7 @@ class _ConnectionRefreshCoordinator:
         self.lock = threading.Lock()
         self.latest_access_token: str | None = None
         self.latest_refresh_token: str | None = None
+        self.rejected_credential_generation: tuple[str, str, str] | None = None
 
 
 _refresh_coordinators: dict[str, _ConnectionRefreshCoordinator] = {}
@@ -244,17 +250,27 @@ def _reset_refresh_coordinators_for_tests() -> None:
         _refresh_coordinators.clear()
 
 
-async def _acquire_refresh_lock(lock: threading.Lock) -> None:
-    """Acquire a thread lock without leaking it when the waiter is cancelled."""
-    acquire_task = asyncio.create_task(asyncio.to_thread(lock.acquire))
-    try:
-        await asyncio.shield(acquire_task)
-    except asyncio.CancelledError:
-        # to_thread keeps running after cancellation. Wait until it owns the lock,
-        # release it, then preserve cancellation for the request task.
-        if await acquire_task:
-            lock.release()
-        raise
+# A fork must not retain another process's refresh locks or implicit identity.
+# Explicitly held clients rebuild their transports lazily in the child below.
+_process_clients_lock = threading.Lock()
+
+
+def _reset_client_state_after_fork() -> None:
+    global _thread_local, _injected_client, _refresh_coordinators, _local_dev_client
+    global _refresh_coordinators_lock, _process_clients_lock, _engine_socket_path
+    # A new variable also clears values held in inherited Tasks' copied Contexts.
+    _local_dev_client = ContextVar("bifrost_local_dev_client", default=None)
+    _engine_socket_path = None
+    _thread_local = threading.local()
+    _injected_client = None
+    _refresh_coordinators = {}
+    _refresh_coordinators_lock = threading.Lock()
+    _process_clients_lock = threading.Lock()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reset_client_state_after_fork)
+
 
 # Preserve non-auth project context without merging auth fields from different
 # sources into one synthetic os.environ tuple.
@@ -271,11 +287,46 @@ async def refresh_connection_access_token(
     lock so the coordinator works across threads and event loops. After waiting,
     a caller re-reads stored credentials and reuses a token already installed by
     another caller instead of rotating the same refresh token twice.
+
+    The locked refresh runs entirely on a worker thread (see
+    :func:`_refresh_blocking`), so it never needs the caller's event loop to
+    finish: a synchronous SDK call made on that loop while this refresh is in
+    flight waits for it and then adopts its token.
+    """
+    token = await asyncio.to_thread(_refresh_blocking, api_url, observed_access_token)
+    _register_refreshed(token)
+    return token
+
+
+def _register_refreshed(token: str | None) -> None:
+    """Register a refreshed or adopted access token for output redaction in
+    the caller's execution context (kept until one exists, see
+    ``bifrost._context.register_secret``)."""
+    if token is not None:
+        from bifrost._context import register_secret
+
+        register_secret(token)
+
+
+def _refresh_blocking(api_url: str, observed_access_token: str | None) -> str | None:
+    """Hold the connection's refresh lock and refresh on this thread.
+
+    Everything done under the lock, the refresh request included, runs on
+    this thread (with its own short-lived event loop), so releasing the lock
+    never waits on another thread's event loop.
     """
     normalized_url = api_url.rstrip("/")
     coordinator = _refresh_coordinator(normalized_url)
+    with coordinator.lock:
+        return asyncio.run(_refresh_locked(normalized_url, coordinator, observed_access_token))
+
+
+async def _refresh_locked(
+    normalized_url: str,
+    coordinator: _ConnectionRefreshCoordinator,
+    observed_access_token: str | None,
+) -> str | None:
     credential_source = "unknown"
-    await _acquire_refresh_lock(coordinator.lock)
     try:
         resolved = resolve_credentials(normalized_url)
         if resolved is None:
@@ -289,18 +340,30 @@ async def refresh_connection_access_token(
 
         stored_access_token = creds.access_token
         stored_refresh_token = creds.refresh_token
-        process_backed = resolved.source == "process"
+        credential_generation = (
+            credential_source,
+            stored_access_token,
+            stored_refresh_token,
+        )
+
+        # A revoked refresh token is a terminal condition for precisely this
+        # source and generation. Re-read the source on every caller so a
+        # separate login can replace it, but never send the same rejected
+        # generation back to /auth/refresh or log another warning for it.
+        if coordinator.rejected_credential_generation == credential_generation:
+            return None
+        coordinator.rejected_credential_generation = None
 
         if coordinator.latest_access_token is not None:
-            if observed_access_token != coordinator.latest_access_token:
-                return coordinator.latest_access_token
             if (
-                not process_backed
-                and stored_access_token != coordinator.latest_access_token
+                stored_access_token != coordinator.latest_access_token
+                or stored_refresh_token != coordinator.latest_refresh_token
             ):
                 coordinator.latest_access_token = stored_access_token
                 coordinator.latest_refresh_token = stored_refresh_token
                 return stored_access_token
+            if observed_access_token != coordinator.latest_access_token:
+                return coordinator.latest_access_token
         elif observed_access_token is not None and stored_access_token != observed_access_token:
             coordinator.latest_access_token = stored_access_token
             coordinator.latest_refresh_token = stored_refresh_token
@@ -314,6 +377,24 @@ async def refresh_connection_access_token(
                 json={"refresh_token": refresh_token},
             )
         if response.status_code != 200:
+            if response.status_code == 401:
+                # Another process may have completed a refresh while this one
+                # was in flight. Adopt its persisted generation without a
+                # second network attempt; otherwise remember this rejection.
+                coordinator.rejected_credential_generation = credential_generation
+                replacement = resolve_credentials(normalized_url)
+                if replacement is not None:
+                    replacement_creds = replacement.credentials
+                    replacement_generation = (
+                        replacement.source,
+                        replacement_creds.access_token,
+                        replacement_creds.refresh_token,
+                    )
+                    if replacement_generation != credential_generation:
+                        coordinator.latest_access_token = replacement_creds.access_token
+                        coordinator.latest_refresh_token = replacement_creds.refresh_token
+                        coordinator.rejected_credential_generation = None
+                        return replacement_creds.access_token
             logger.warning(
                 "Bifrost token refresh failed for %s using %s credentials: HTTP %s",
                 normalized_url,
@@ -328,6 +409,11 @@ async def refresh_connection_access_token(
             seconds=data.get("expires_in", 1800)
         )
         new_refresh_token = str(data["refresh_token"])
+        # This thread completes even if its awaiting caller is cancelled. Make
+        # the new value safe to emit before publishing it to process
+        # credentials, while the caller still registers adopted values in its
+        # own context after the await.
+        _register_refreshed(access_token)
         saved = save_refreshed_credentials(
             resolved,
             stored_access_token,
@@ -354,8 +440,6 @@ async def refresh_connection_access_token(
             type(exc).__name__,
         )
         return None
-    finally:
-        coordinator.lock.release()
 
 
 async def refresh_tokens(
@@ -397,12 +481,19 @@ def _refresh_connection_access_token_sync(
     api_url: str,
     observed_access_token: str,
 ) -> str | None:
+    """Synchronous counterpart of :func:`refresh_connection_access_token`.
+
+    On a thread that runs an event loop, the refresh runs on a helper thread
+    while this one waits. A refresh already in flight on that loop holds the
+    lock only on its own worker thread, so the wait ends when that refresh
+    does, and this call adopts its token.
+    """
     try:
         asyncio.get_running_loop()
     except RuntimeError:
-        return asyncio.run(
-            refresh_connection_access_token(api_url, observed_access_token)
-        )
+        token = asyncio.run(refresh_connection_access_token(api_url, observed_access_token))
+        _register_refreshed(token)
+        return token
 
     result: str | None = None
     error: Exception | None = None
@@ -422,6 +513,8 @@ def _refresh_connection_access_token_sync(
 
     if error is not None:
         raise error
+    # The helper thread has no execution context; register here.
+    _register_refreshed(result)
     return result
 
 
@@ -467,9 +560,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             interval = data.get("interval", 5)
 
             # Step 2: Display instructions
-            full_url = f"{api_url}{verification_url}"
-            print(f"\nOpening browser to {full_url}")
-            print(f"Enter this code: {user_code}\n")
+            full_url = device_login_prompt(api_url, verification_url, user_code)
 
             # Step 3: Open browser
             if auto_open:
@@ -516,8 +607,6 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
                 # Success - we have tokens
                 if "access_token" in poll_data:
-                    print(" OK")
-
                     # Calculate expiry time
                     expires_at = datetime.now(timezone.utc) + timedelta(seconds=poll_data.get("expires_in", 1800))
 
@@ -528,6 +617,8 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                         refresh_token=poll_data["refresh_token"],
                         expires_at=expires_at.isoformat(),
                     )
+
+                    print(" OK")
 
                     # Get user info
                     try:
@@ -568,6 +659,18 @@ def logout() -> bool:
         return False
 
 
+class _LoopClients:
+    """Pools owned by one asyncio loop, including retired socket transports."""
+
+    def __init__(self) -> None:
+        self.http: httpx.AsyncClient | None = None
+        self.engine_http: httpx.AsyncClient | None = None
+        self.engine_path: str | None = None
+        self.clients: list[httpx.AsyncClient] = []
+        self.cleanup: asyncio.Task[None] | None = None
+        self.started = asyncio.Event()
+
+
 class BifrostClient:
     """
     HTTP client for Bifrost API.
@@ -588,74 +691,100 @@ class BifrostClient:
         self.api_url = api_url.rstrip("/")
         self._access_token = access_token
         self._solution_dev_session: SolutionDevSession | None = None
-        # Async client is created lazily per event loop to handle thread workers
-        # that create new event loops via asyncio.run() on each execution
-        self._http: httpx.AsyncClient | None = None
-        self._http_loop: asyncio.AbstractEventLoop | None = None
-        self._sync_http = httpx.Client(
+        self._reset_transport_state()
+
+    def _reset_transport_state(self) -> None:
+        # Inherited HTTPX transports can contain locks and sockets owned by
+        # vanished parent threads. Never use or close them through HTTPX in
+        # the child; build this process's pools with the same explicit identity.
+        self._loop_clients: dict[asyncio.AbstractEventLoop, _LoopClients] = {}
+        self._clients_lock = threading.RLock()
+        self._sync_http = RefreshingClient(
+            refresh=self._refresh_access_token_sync,
             base_url=self.api_url,
-            # X-Bifrost-Surface is self-reported audit attribution only (see
-            # src.core.request_actor.resolve_self_reported_surface); never
-            # sent on the engine-local clients below.
+            verify=shared_ssl_context(),
+            # Self-reported audit attribution only; never sent over the
+            # engine-local transports below.
             headers={
-                "Authorization": f"Bearer {access_token}",
+                "Authorization": f"Bearer {self._access_token}",
                 "X-Bifrost-Surface": "cli",
             },
             timeout=30.0,
         )
-        # Engine-local Unix-socket transport, built lazily from the trusted
-        # worker injection and kept separate from the network clients above.
-        # Only :meth:`engine_request` / :meth:`engine_request_sync` use these;
-        # the recorded socket path lets a client rebuild if the injection
-        # changes.
-        self._engine_http: httpx.AsyncClient | None = None
-        self._engine_http_loop: asyncio.AbstractEventLoop | None = None
-        self._engine_http_path: str | None = None
         self._engine_sync_http: httpx.Client | None = None
         self._engine_sync_http_path: str | None = None
         self._context: dict[str, Any] | None = None
+        self._process_id = os.getpid()
+
+    def _ensure_process(self) -> None:
+        if self._process_id != os.getpid():
+            # This module lock is replaced by the after-fork hook. Acquiring
+            # the inherited per-client lock here could deadlock the child.
+            with _process_clients_lock:
+                if self._process_id != os.getpid():
+                    self._reset_transport_state()
+
+    def _clients_for_loop(self) -> _LoopClients:
+        self._ensure_process()
+        loop = asyncio.get_running_loop()
+        with self._clients_lock:
+            clients = self._loop_clients.get(loop)
+            if clients is None:
+                clients = _LoopClients()
+                self._loop_clients[loop] = clients
+                clients.cleanup = loop.create_task(
+                    self._close_when_loop_stops(loop, clients, os.getpid()),
+                    name="bifrost-sdk-client-cleanup",
+                )
+            return clients
+
+    async def _close_when_loop_stops(
+        self, loop: asyncio.AbstractEventLoop, clients: _LoopClients, owner_pid: int
+    ) -> None:
+        # asyncio.run / Runner cancel pending tasks before closing the loop.
+        # Closing here also works for loops in ordinary Python worker threads.
+        if owner_pid != os.getpid():
+            return
+        clients.started.set()
+        try:
+            await asyncio.Future()
+        except asyncio.CancelledError:
+            # Cancellation is the shutdown signal; release owned pools below.
+            pass
+        finally:
+            if owner_pid == os.getpid():
+                try:
+                    for http in clients.clients:
+                        await http.aclose()
+                finally:
+                    with self._clients_lock:
+                        if self._loop_clients.get(loop) is clients:
+                            del self._loop_clients[loop]
 
     def _get_async_client(self) -> httpx.AsyncClient:
-        """
-        Get httpx.AsyncClient, creating fresh one if needed for current event loop.
-
-        Thread workers use asyncio.run() which creates/destroys event loops per execution.
-        httpx.AsyncClient is bound to the event loop that created it, so we need to
-        create a new client when the event loop changes.
-        """
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop - create client anyway, it will bind when first used
-            current_loop = None
-
-        # Check if we need a new client (no client, or different event loop)
-        if self._http is None or (current_loop is not None and self._http_loop != current_loop):
-            # Old client (if any) will be garbage-collected; httpx handles
-            # transport cleanup at GC time. Can't await aclose() from a sync
-            # method, so this is the best we can do.
-
-            # Create new client bound to current event loop
-            self._http = httpx.AsyncClient(
-                base_url=self.api_url,
-                headers={
-                    "Authorization": f"Bearer {self._access_token}",
-                    "X-Bifrost-Surface": "cli",
-                },
-                timeout=30.0,
-            )
-            self._http_loop = current_loop
-
-        return self._http
+        """Reuse the network pool belonging to the current running loop."""
+        clients = self._clients_for_loop()
+        with self._clients_lock:
+            if clients.http is None or clients.http.is_closed:
+                clients.http = RefreshingAsyncClient(
+                    refresh=self.refresh_access_token,
+                    base_url=self.api_url,
+                    verify=shared_ssl_context(),
+                    headers={
+                        "Authorization": f"Bearer {self._access_token}",
+                        "X-Bifrost-Surface": "cli",
+                    },
+                    timeout=30.0,
+                )
+                clients.clients.append(clients.http)
+            return clients.http
 
     def _get_engine_async_client(self) -> httpx.AsyncClient:
-        """Async HTTPX client bound to the trusted worker Unix socket.
+        """Reuse the current loop's pool for the trusted worker Unix socket.
 
-        Built lazily and cached per event loop (and per injected socket path),
-        exactly like :meth:`_get_async_client`, so concurrent async SDK calls
-        and streaming share one connection pool instead of constructing a new
-        client per request. Raises when no socket is injected: an opted-in
-        local request never silently falls back to the network API.
+        An opted-in local request never falls back to the network API. Socket
+        replacements stay owned until loop teardown so an in-flight stream
+        using the prior injection can finish safely.
         """
         socket_path = _engine_socket_path
         if socket_path is None:
@@ -663,25 +792,25 @@ class BifrostClient:
                 "engine socket transport is not installed; refusing to send "
                 "an engine-local request without the trusted worker injection"
             )
-        try:
-            current_loop = asyncio.get_running_loop()
-        except RuntimeError:
-            # No running loop - create client anyway, it will bind when first used
-            current_loop = None
-        if (
-            self._engine_http is None
-            or self._engine_http_path != socket_path
-            or (current_loop is not None and self._engine_http_loop != current_loop)
-        ):
-            self._engine_http = httpx.AsyncClient(
-                base_url=_ENGINE_SOCKET_BASE_URL,
-                transport=httpx.AsyncHTTPTransport(uds=socket_path),
-                headers={"Authorization": f"Bearer {self._access_token}"},
-                timeout=30.0,
-            )
-            self._engine_http_loop = current_loop
-            self._engine_http_path = socket_path
-        return self._engine_http
+        clients = self._clients_for_loop()
+        with self._clients_lock:
+            if (
+                clients.engine_http is None
+                or clients.engine_http.is_closed
+                or clients.engine_path != socket_path
+            ):
+                clients.engine_http = RefreshingAsyncClient(
+                    refresh=self.refresh_access_token,
+                    base_url=_ENGINE_SOCKET_BASE_URL,
+                    transport=httpx.AsyncHTTPTransport(
+                        uds=socket_path, verify=shared_ssl_context()
+                    ),
+                    headers={"Authorization": f"Bearer {self._access_token}"},
+                    timeout=30.0,
+                )
+                clients.engine_path = socket_path
+                clients.clients.append(clients.engine_http)
+            return clients.engine_http
 
     def _get_engine_sync_client(self) -> httpx.Client:
         """Synchronous HTTPX client bound to the trusted worker Unix socket.
@@ -690,6 +819,7 @@ class BifrostClient:
         module import and client context reads). Raises when no socket is
         injected so an opted-in local request never falls back to the network.
         """
+        self._ensure_process()
         socket_path = _engine_socket_path
         if socket_path is None:
             raise RuntimeError(
@@ -699,9 +829,10 @@ class BifrostClient:
         if self._engine_sync_http is None or self._engine_sync_http_path != socket_path:
             if self._engine_sync_http is not None:
                 self._engine_sync_http.close()
-            self._engine_sync_http = httpx.Client(
+            self._engine_sync_http = RefreshingClient(
+                refresh=self._refresh_access_token_sync,
                 base_url=_ENGINE_SOCKET_BASE_URL,
-                transport=httpx.HTTPTransport(uds=socket_path),
+                transport=httpx.HTTPTransport(uds=socket_path, verify=shared_ssl_context()),
                 headers={"Authorization": f"Bearer {self._access_token}"},
                 timeout=30.0,
             )
@@ -722,6 +853,7 @@ class BifrostClient:
 
     def _sync_http_for(self, *, engine_local: bool) -> httpx.Client:
         """Synchronous counterpart to :meth:`_async_http_for`."""
+        self._ensure_process()
         if engine_local and _engine_socket_path is not None:
             return self._get_engine_sync_client()
         return self._sync_http
@@ -884,25 +1016,29 @@ class BifrostClient:
         return self.context.get("default_parameters", {})
 
     def install_access_token(self, access_token: str) -> None:
-        """Install one access token across every transport owned by this client."""
-        if access_token == self._access_token:
-            return
-        self._access_token = access_token
-        # Force a new async client on the next request. An in-flight request may
-        # still finish on the old client, but its retry resolves a fresh one.
-        self._http = None
-        self._http_loop = None
-        self._sync_http.headers["Authorization"] = f"Bearer {access_token}"
-        # Engine-local clients carry the same bearer token; drop them rather
-        # than mutate so an in-flight local request cannot observe a
-        # half-updated header. They rebuild lazily from the new token.
-        self._engine_http = None
-        self._engine_http_loop = None
-        self._engine_http_path = None
-        if self._engine_sync_http is not None:
-            self._engine_sync_http.close()
-            self._engine_sync_http = None
-            self._engine_sync_http_path = None
+        """Install one access token across every transport owned by this client.
+
+        The clients stay open: a challenged request replays on the client it
+        was sent with, and HTTPX copies a client's headers into each request
+        when it is built, so an in-flight request never sees a half-updated
+        header. Inside a run the new token is registered for output
+        redaction, like the token the run started with.
+        """
+        self._ensure_process()
+        with self._clients_lock:
+            if access_token == self._access_token:
+                return
+            self._access_token = access_token
+            bearer = f"Bearer {access_token}"
+            transports = [self._sync_http, self._engine_sync_http]
+            for clients in self._loop_clients.values():
+                transports.extend(clients.clients)
+            for http in transports:
+                if http is not None:
+                    http.headers["Authorization"] = bearer
+        from bifrost._context import register_secret
+
+        register_secret(access_token)
 
     async def refresh_access_token(
         self, observed_access_token: str | None = None
@@ -914,36 +1050,38 @@ class BifrostClient:
             self.install_access_token(token)
         return token
 
+    def _refresh_access_token_sync(
+        self, observed_access_token: str | None = None
+    ) -> str | None:
+        """Synchronous counterpart of :meth:`refresh_access_token`."""
+        observed = observed_access_token or self._access_token
+        token = _refresh_connection_access_token_sync(self.api_url, observed)
+        if token is not None:
+            self.install_access_token(token)
+        return token
+
     async def _refresh_and_update(
         self, observed_access_token: str | None = None
     ) -> bool:
         """Backward-compatible boolean wrapper used by CLI request loops."""
         return await self.refresh_access_token(observed_access_token) is not None
 
-    def _refresh_and_update_sync(
-        self, observed_access_token: str | None = None
-    ) -> bool:
-        """Synchronous counterpart used by context and legacy SDK requests."""
-        observed = observed_access_token or self._access_token
-        token = _refresh_connection_access_token_sync(self.api_url, observed)
-        if token is None:
-            return False
-        self.install_access_token(token)
-        return True
-
     def _request_with_refresh_sync(
         self, method: str, path: str, *, engine_local: bool = False, **kwargs
     ) -> httpx.Response:
-        """Make a synchronous request, refreshing on 401 and retrying once.
+        """Make a synchronous request, refreshing only on the API's challenge.
 
         ``engine_local=True`` sends the request over the trusted worker Unix
         socket when one is injected. A local attempt never falls back to the
-        network API, and no network token refresh is attempted for it: the
-        child's engine token is handed to the process and is not refreshable
-        from the child.
+        network API. The refresh itself always goes to the API's
+        ``/auth/refresh`` with this process's credentials.
+
+        The call's refresh budget (see :mod:`bifrost._refreshing`) is shared
+        by every transient-retry attempt.
         """
         retry_transient = kwargs.pop("retry_transient", False)
         use_engine = engine_local and _engine_socket_path is not None
+        extensions = refresh_extensions(kwargs.pop("extensions", None))
 
         def _send() -> httpx.Response:
             request_kwargs = dict(kwargs)
@@ -953,34 +1091,27 @@ class BifrostClient:
                     **request_kwargs.get("headers", {}), **session.headers_sync()
                 }
             http = self._sync_http_for(engine_local=engine_local)
-            observed_access_token = self._access_token
-            response = http.request(method.upper(), path, **request_kwargs)
-            if (
-                not use_engine
-                and response.status_code == 401
-                and self._refresh_and_update_sync(observed_access_token)
-            ):
-                response = self._sync_http.request(method.upper(), path, **request_kwargs)
-            return response
+            return http.request(method.upper(), path, extensions=extensions, **request_kwargs)
 
         return _send_sync_with_retry(method, _send, retry_transient=retry_transient)
 
     async def _request_with_refresh(
         self, method: str, path: str, *, engine_local: bool = False, **kwargs
     ) -> httpx.Response:
-        """Make an HTTP request, refreshing token on 401 and retrying once.
+        """Make an HTTP request, refreshing only on the API's challenge.
 
         ``engine_local=True`` sends the request over the trusted worker Unix
         socket when one is injected (see
         :meth:`_request_with_refresh_sync` for the no-fallback contract).
 
         Wrapped with :func:`_send_with_retry` so idempotent methods (or callers passing
-        ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys. The 401-refresh-retry
-        fires inside each attempt, so a refresh-then-5xx still benefits from
-        the outer retry.
+        ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys. The challenge-driven
+        refresh happens inside each attempt and every attempt shares the
+        call's refresh budget.
         """
         retry_transient = kwargs.pop("retry_transient", False)
         use_engine = engine_local and _engine_socket_path is not None
+        extensions = refresh_extensions(kwargs.pop("extensions", None))
 
         async def _send() -> httpx.Response:
             request_kwargs = dict(kwargs)
@@ -990,16 +1121,7 @@ class BifrostClient:
                     **request_kwargs.get("headers", {}), **await session.headers()
                 }
             http = self._async_http_for(engine_local=engine_local)
-            observed_access_token = self._access_token
-            response = await getattr(http, method)(path, **request_kwargs)
-            if (
-                not use_engine
-                and response.status_code == 401
-                and await self._refresh_and_update(observed_access_token)
-            ):
-                http = self._get_async_client()
-                response = await getattr(http, method)(path, **request_kwargs)
-            return response
+            return await getattr(http, method)(path, extensions=extensions, **request_kwargs)
 
         return await _send_with_retry(method, _send, retry_transient=retry_transient)
 
@@ -1011,9 +1133,8 @@ class BifrostClient:
         Single engine-local entry point for SDK facades: it resolves the
         transport once (the worker Unix socket when the engine injected one,
         the ordinary network client otherwise) and is otherwise identical to
-        :meth:`request` in retry, error, and public-exception behavior. A local
-        attempt never falls back to the network API and does not attempt a
-        network token refresh.
+        :meth:`request` in retry, refresh, error, and public-exception
+        behavior. A local attempt never falls back to the network API.
         """
         return await self._request_with_refresh(
             method.lower(), path, engine_local=True, **kwargs
@@ -1050,7 +1171,7 @@ class BifrostClient:
         return await self._request_with_refresh("delete", path, **kwargs)
 
     async def request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        """Make an arbitrary-method HTTP request with token refresh.
+        """Make an arbitrary-method HTTP request with challenge-driven refresh.
 
         Needed for verbs whose shortcut method on ``httpx.AsyncClient`` does
         not accept a body (DELETE) but whose REST endpoint expects one.
@@ -1059,6 +1180,7 @@ class BifrostClient:
         ``retry_transient=True``) retry transient 502/503/504 and transport errors during rolling API deploys.
         """
         retry_transient = kwargs.pop("retry_transient", False)
+        extensions = refresh_extensions(kwargs.pop("extensions", None))
 
         async def _send() -> httpx.Response:
             request_kwargs = dict(kwargs)
@@ -1068,13 +1190,7 @@ class BifrostClient:
                     **request_kwargs.get("headers", {}), **await session.headers()
                 }
             http = self._get_async_client()
-            observed_access_token = self._access_token
-            response = await http.request(method.upper(), path, **request_kwargs)
-            if response.status_code == 401:
-                if await self._refresh_and_update(observed_access_token):
-                    http = self._get_async_client()
-                    response = await http.request(method.upper(), path, **request_kwargs)
-            return response
+            return await http.request(method.upper(), path, extensions=extensions, **request_kwargs)
 
         return await _send_with_retry(method, _send, retry_transient=retry_transient)
 
@@ -1086,7 +1202,11 @@ class BifrostClient:
             async with client.stream("POST", "/path", json={...}) as response:
                 async for line in response.aiter_lines():
                     process(line)
+
+        A refresh challenge is answered on the status line, before the
+        response is returned; a returned stream is never replayed.
         """
+        kwargs["extensions"] = refresh_extensions(kwargs.get("extensions"))
         if self._solution_dev_session is not None:
             return self._dev_stream(method, path, **kwargs)
         return self._get_async_client().stream(method, path, **kwargs)
@@ -1113,7 +1233,11 @@ class BifrostClient:
         bound is 30 seconds on either transport. No SDK-level stream or
         channel deadline is added here; a slow provider that keeps sending
         within that gap runs to completion.
+
+        Refresh behaves as in :meth:`stream`: only before the response is
+        returned.
         """
+        kwargs["extensions"] = refresh_extensions(kwargs.get("extensions"))
         if _engine_socket_path is None and self._solution_dev_session is not None:
             return self._dev_stream(method, path, **kwargs)
         http = self._async_http_for(engine_local=True)
@@ -1132,11 +1256,20 @@ class BifrostClient:
         return self._request_with_refresh_sync("POST", path, **kwargs)
 
     async def close(self):
-        """Close HTTP clients."""
-        if self._http is not None:
-            await self._http.aclose()
-        if self._engine_http is not None:
-            await self._engine_http.aclose()
+        """Close this loop's async pools and the synchronous transports.
+
+        Other running loops own their pools until their Runner shuts down;
+        closing those sockets from this loop would violate HTTPX ownership.
+        """
+        self._ensure_process()
+        with self._clients_lock:
+            clients = self._loop_clients.get(asyncio.get_running_loop())
+        if clients is not None and clients.cleanup is not None:
+            # Let the owner start before cancellation so its finally always
+            # runs, even if a client was constructed without sending a request.
+            await clients.started.wait()
+            clients.cleanup.cancel()
+            await asyncio.shield(clients.cleanup)
         self._sync_http.close()
         if self._engine_sync_http is not None:
             self._engine_sync_http.close()

@@ -59,30 +59,6 @@ services:
       timeout: 5s
       retries: 10
 
-  # RabbitMQ Message Broker (Test)
-  rabbitmq:
-    image: rabbitmq:3.13-management-alpine
-    # Run as uid 100 so .erlang.cookie is created owned by rabbitmq, not root.
-    # Docker >= 24 creates the mount point 0755 root:root; the root entrypoint
-    # then writes the cookie root-owned 0400 and the uid-100 server can't read
-    # it ("Error when reading /var/lib/rabbitmq/.erlang.cookie: eacces").
-    # Setting the user fixes the root cause without depending on tmpfs mode
-    # bits — important because Docker Desktop/WSL2 does not honour tmpfs
-    # uid/gid/mode under `docker compose` (only under `docker run`).
-    user: rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: bifrost
-      RABBITMQ_DEFAULT_PASS: bifrost_test
-    # No ports exposed - all access via Docker network.
-    # Ephemeral storage so test runs never inherit broker state.
-    tmpfs:
-      - /var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 5s
-      timeout: 10s
-      retries: 10
-
   # Redis (Test)
   redis:
     image: redis:7-alpine
@@ -112,7 +88,7 @@ services:
 
   # Init Container (Test) - Runs migrations and warms module cache before API/workers start
   init:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -137,7 +113,7 @@ services:
 
   # FastAPI Application (Test) - Only started for E2E tests
   api:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -145,8 +121,8 @@ services:
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # Browser-facing callbacks use the Playwright loopback client proxy.
@@ -163,6 +139,8 @@ services:
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
       EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     # No ports exposed - all access via Docker network (test-runner connects to api:8000)
     volumes:
       - ./api/src:/app/src
@@ -187,10 +165,10 @@ services:
       # by the uid-1000 test-runner, so chown-ing just this subdir to 1000 is a
       # no-op and never touches the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     depends_on:
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -198,6 +176,8 @@ services:
         condition: service_started
       init:
         condition: service_completed_successfully
+      scheduler-fixtures:
+        condition: service_healthy
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8000/health/ready"]
       interval: 5s
@@ -212,7 +192,7 @@ services:
   # Note: Discovery service has been removed - workflow/form extraction
   # now happens at write time in FileStorageService
   worker:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -220,8 +200,8 @@ services:
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # Exercise the same claim/beat transitions without production idle intervals.
@@ -233,14 +213,18 @@ services:
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
-      # Lower concurrency for E2E queue position testing (10 executions, 3 concurrent = 7 queued)
-      BIFROST_MAX_CONCURRENCY: ${BIFROST_MAX_CONCURRENCY:-3}
+      # Executors run Git sync platform jobs too.
+      GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
+      GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
       # Worker needs minimal DB connections — Redis-first pattern for agent runs
       BIFROST_DATABASE_POOL_SIZE: "1"
       BIFROST_DATABASE_MAX_OVERFLOW: "2"
       # C1.5: Parity with production hardening
       PIP_NO_CACHE_DIR: "1"
       HOME: /home/bifrost
+      EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -251,6 +235,12 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/bifrost:/app/bifrost:ro
+      # The same as the scheduler: both are executors and run any work.
+      - test-mounts:/mounts
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/worker:/tmp/git
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
       interval: 10s
@@ -262,11 +252,11 @@ services:
         condition: service_completed_successfully
       pgbouncer:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       seaweedfs:
         condition: service_started
       api:
+        condition: service_healthy
+      scheduler-fixtures:
         condition: service_healthy
     # C1.5: Run as bifrost uid. user: "1000:1000" bypasses gosu so cap_drop: ALL works.
     user: "1000:1000"
@@ -279,7 +269,7 @@ services:
   # Scheduler (Test) - Only started for E2E tests. Every replica is a durable
   # platform-job runner; the trigger leader is elected in PostgreSQL.
   scheduler:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -287,8 +277,8 @@ services:
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # S3-compatible object storage
@@ -300,6 +290,12 @@ services:
       # GitHub E2E test configuration
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
       GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
+      # The same executor tuning as the worker service.
+      BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
+      BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
+      EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
+      SSL_CERT_FILE: /fixture-tls/trust.pem
+      GIT_CONFIG_GLOBAL: /fixture-gitconfig
     volumes:
       - ./api/src:/app/src
       - /app/src/services/app_compiler/node_modules  # preserve npm deps from image
@@ -316,6 +312,9 @@ services:
       # server-side. Same safety shape as the api mount: only the
       # uid-1000-created fixture subdir, never the LOG_DIR root.
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
+      - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures/git-checkouts/scheduler:/tmp/git
+      - thin-provider-tls:/fixture-tls:ro
+      - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
       interval: 10s
@@ -326,8 +325,6 @@ services:
       init:
         condition: service_completed_successfully
       pgbouncer:
-        condition: service_healthy
-      rabbitmq:
         condition: service_healthy
       redis:
         condition: service_healthy
@@ -345,24 +342,28 @@ services:
       - e2e  # Only start in E2E mode
 
   scheduler-fixtures:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
-    command: ["python", "/app/scripts/scheduler_fixture_server.py"]
+    # One shared provider fixture: HTTP OAuth/embeddings/MCP and the local TLS
+    # video endpoint used by the full platform-job suite.
+    command: ["python", "-m", "scripts.thin_provider_fixture"]
     volumes:
       - ./api/scripts:/app/scripts:ro
+      - thin-provider-tls:/fixture-tls
+    networks:
+      default:
+        aliases: [fixture.openrouter.ai]
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "python", "-c", "import ssl,urllib.request; urllib.request.urlopen('http://localhost:8080/health'); urllib.request.urlopen('https://fixture.openrouter.ai:8443/health', context=ssl.create_default_context(cafile='/fixture-tls/trust.pem'))"]
       interval: 2s
       timeout: 2s
       retries: 20
-    profiles:
-      - e2e
 
   # Test Runner - Executes pytest inside container with all dependencies
   test-runner:
-    image: bifrost-test-api-dev:latest
+    image: bifrost-test-api-dev:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -370,7 +371,6 @@ services:
       # Database via PgBouncer (matches production architecture)
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_test@pgbouncer:5432/bifrost_test
-      BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_test@rabbitmq:5672/
       BIFROST_REDIS_URL: redis://redis:6379/0
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
@@ -418,6 +418,8 @@ services:
       - ./api/pytest.ini:/app/pytest.ini:ro
       - ./api/pyproject.toml:/app/pyproject.toml:ro
       - ./api/pyrightconfig.json:/app/pyrightconfig.json:ro
+      - ./api/entrypoint.sh:/app/entrypoint.sh:ro
+      - ./api/scripts/api-allocator.sh:/usr/local/bin/api-allocator.sh:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
       - ./api/Dockerfile:/app/api/Dockerfile:ro
       - ./.github/workflows:/app/.github/workflows:ro  # CI topology contract tests
@@ -430,6 +432,9 @@ services:
                                       # tests/unit/test_compose_test_harness.py
                                       # asserts the api service never re-binds
                                       # the host LOG_DIR root over /tmp/bifrost.
+      - ./docker-compose.yml:/app/docker-compose.yml:ro  # Production deployment contract.
+      - ./docker-compose.dev.yml:/app/docker-compose.dev.yml:ro  # Development deployment contract.
+      - ./docker-compose.debug.yml:/app/docker-compose.debug.yml:ro  # Isolated debug deployment contract.
       - ./client/src:/client/src:ro  # Read-only — the drift test in
                                       # tests/unit/test_platform_names_match_runtime.py
                                       # parses app-code-runtime.ts to detect new platform exports.
@@ -451,8 +456,6 @@ services:
     depends_on:
       pgbouncer:
         condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
       redis:
         condition: service_healthy
       seaweedfs:
@@ -473,7 +476,7 @@ services:
   # production client before this runner executes TypeScript, ESLint, and the
   # complete Vitest suite against the same source snapshot.
   client-check-runner:
-    image: bifrost-test-client-check:latest
+    image: bifrost-test-client-check:${BIFROST_TEST_IMAGE_TAG:-latest}
     environment:
       # Respect Vitest's worker override on shared development hosts while
       # retaining the configured default when no override is supplied.
@@ -489,6 +492,10 @@ services:
     # repository root, which resolves to / inside /app.
     volumes:
       - ./docs/generated:/docs/generated:ro
+      # Source auth tests share the browser helper. Production build contexts
+      # exclude e2e/, so supply this test-only dependency to verification only.
+      - ./client/e2e/fixtures:/app/e2e/fixtures:ro
+      - ./client/e2e/setup:/app/e2e/setup:ro
     profiles:
       - client-check
 
@@ -502,7 +509,7 @@ services:
   # in the real client image. A Vite dev server made full-suite timing depend
   # on cold, on-demand module transforms and never tested the production build.
   client:
-    image: bifrost-test-client-e2e:latest
+    image: bifrost-test-client-e2e:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile
@@ -528,7 +535,7 @@ services:
   # Playwright E2E test runner
   # Runs browser tests against the client service
   playwright-runner:
-    image: bifrost-test-playwright:latest
+    image: bifrost-test-playwright:${BIFROST_TEST_IMAGE_TAG:-latest}
     build:
       context: ./client
       dockerfile: Dockerfile.playwright
@@ -542,6 +549,8 @@ services:
       CI: "true"
     volumes:
       - ./client/e2e:/app/e2e
+      # The migration pilot's happy path installs its actual portable source.
+      - ./examples/rewst-migration:/app/examples/rewst-migration:ro
       # SDK browser fixtures compile the current source with production React.
       - ./client/src/lib/app-sdk:/app/src/lib/app-sdk:ro
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro
@@ -559,3 +568,8 @@ services:
 # Named volumes for test data - ephemeral within test session
 volumes:
   test-mounts:  # File storage for uploads, branding, etc.
+  thin-provider-tls:
+    driver_opts:
+      type: tmpfs
+      device: tmpfs
+      o: uid=1000,gid=1000,mode=0755

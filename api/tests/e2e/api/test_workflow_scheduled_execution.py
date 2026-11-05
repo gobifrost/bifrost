@@ -147,7 +147,7 @@ async def test_schedule_skips_queue(
     """A scheduled request must not produce a queued or running execution.
 
     The API under test runs in a separate process (Docker), so we cannot
-    monkeypatch publish_message in-process. Instead we verify the post-condition:
+    observe its dispatch in-process. Instead we verify the post-condition:
     the Execution row is SCHEDULED, has no started_at, and does not transition
     within a short poll window (which would happen if it had been queued).
     """
@@ -170,7 +170,7 @@ async def test_schedule_skips_queue(
     cleanup_scheduled_rows.append(exec_id)
 
     # Give the worker a beat to pick up anything that might have been queued
-    # by mistake. If the row had been published to RabbitMQ, the worker would
+    # by mistake. If the row had been dispatched, an executor would
     # flip status to RUNNING/SUCCESS/FAILED and set started_at.
     import asyncio
     await asyncio.sleep(2.0)

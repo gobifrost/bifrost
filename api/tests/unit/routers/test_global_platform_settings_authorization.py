@@ -28,6 +28,7 @@ from src.services.authorization.evaluator import GLOBAL
         ("src.routers.ai_models", "_authorize_platform_setting", "AI_CONNECTIONS_CREATE_OPERATION"),
         ("src.routers.roi_settings", "_authorize_platform_setting", "ROI_SETTINGS_GET_OPERATION"),
         ("src.routers.kubernetes", "_authorize_platform_setting", "KUBERNETES_EXECUTION_UPDATE_OPERATION"),
+        ("src.routers.kubernetes", "_authorize_platform_setting", "KUBERNETES_POLICY_UPDATE_OPERATION"),
         ("src.routers.platform.workers", "_authorize_platform_operation", "WORKERS_LIST_OPERATION"),
         ("src.routers.platform.workers", "_authorize_platform_operation", "PLATFORM_QUEUE_OPERATION"),
     ],

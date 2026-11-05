@@ -114,12 +114,14 @@ export function ExecutionDrawer({
 					)}
 				</div>
 				{executionId && (
-					<ExecutionDetails
-						executionId={executionId}
-						embedded
-						actionsContainer={actionsContainer}
-						onExecutionChange={onExecutionChange}
-					/>
+					<div className="min-w-0 p-4">
+						<ExecutionDetails
+							executionId={executionId}
+							embedded
+							actionsContainer={actionsContainer}
+							onExecutionChange={onExecutionChange}
+						/>
+					</div>
 				)}
 			</SheetContent>
 		</Sheet>

@@ -1,251 +1,167 @@
-"""
-Queue position tracking for workflow executions.
+"""Canonical queue snapshots for pending workflow executions.
 
-Uses a Redis sorted set to track pending executions and provide
-queue position visibility. Updates are event-driven - positions
-are recalculated and published when the queue changes.
+``WorkDispatch`` is the durable queue authority.  A workflow remains visible
+while its pending execution and unclaimed dispatch row both exist; positions
+are ordered by the dispatch timestamp retained across a hand-back.
 """
 
-import json
+from __future__ import annotations
+
+import asyncio
 import logging
-import time
+from contextvars import Context
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING
+from uuid import UUID
 
-import redis.asyncio as aioredis
+from sqlalchemy import Select, func, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.config import get_settings
+from src.core.database import get_db_context
+from src.models.enums import ExecutionStatus
+from src.models.orm.executions import Execution
+from src.models.orm.work_dispatches import WorkDispatch
 
 logger = logging.getLogger(__name__)
 
-# Redis key for the queue sorted set
-QUEUE_KEY = "bifrost:queue:pending"
+if TYPE_CHECKING:
+    from src.core.pubsub import ConnectionManager
+
+# Advisory UI freshness, not installation-specific capacity configuration.
+QUEUE_POSITION_REFRESH_INTERVAL_S = 1.0
+QUEUE_POSITION_CHANNEL = "queue:positions"
 
 
-async def _get_redis() -> aioredis.Redis:
-    """Create a Redis client scoped to the caller's event loop."""
-    settings = get_settings()
-    return aioredis.from_url(
-        settings.redis_url,
-        decode_responses=True,
-        socket_timeout=5.0,
-        socket_connect_timeout=5.0,
+@dataclass(frozen=True)
+class QueuedExecution:
+    """One durable workflow queue entry and its original queue timestamp."""
+
+    execution_id: UUID
+    queued_at: datetime
+
+
+def _queued_dispatches() -> Select[tuple[UUID, datetime]]:
+    from src.services.execution.workflow_dispatch import FAMILY
+
+    return (
+        select(WorkDispatch.subject_id, WorkDispatch.created_at)
+        .join(Execution, Execution.id == WorkDispatch.subject_id)
+        .where(
+            WorkDispatch.family == FAMILY,
+            Execution.status == ExecutionStatus.PENDING,
+            WorkDispatch.payload["sync"].as_boolean().is_not(True),
+        )
+        .order_by(WorkDispatch.created_at.asc(), WorkDispatch.id.asc())
     )
 
 
-async def _close_redis(r: aioredis.Redis) -> None:
-    close = getattr(r, "aclose", None)
-    if close is not None:
-        await close()
+async def get_queued_executions(db: AsyncSession) -> list[QueuedExecution]:
+    """Return all asynchronously pending workflow dispatches in queue order."""
+    rows = await db.execute(_queued_dispatches())
+    return [
+        QueuedExecution(execution_id=execution_id, queued_at=queued_at)
+        for execution_id, queued_at in rows
+    ]
 
 
-async def add_to_queue(execution_id: str) -> int:
+async def get_queue_positions(db: AsyncSession, execution_ids: set[UUID]) -> dict[UUID, int]:
+    """Rank the canonical queue, returning only executions someone is watching.
+
+    Filter outside the window so unwatched entries still count toward position.
+    The full queue never needs to be materialized in Python for a UI refresh.
     """
-    Add execution to queue tracking and publish position updates.
+    if not execution_ids:
+        return {}
+    ranked = _queued_dispatches().order_by(None).add_columns(
+        func.row_number().over(
+            order_by=(WorkDispatch.created_at.asc(), WorkDispatch.id.asc()),
+        ).label("position")
+    ).subquery()
+    rows = await db.execute(
+        select(ranked.c.subject_id, ranked.c.position).where(ranked.c.subject_id.in_(execution_ids))
+    )
+    return {execution_id: int(position) for execution_id, position in rows}
 
-    Args:
-        execution_id: Unique execution ID
 
-    Returns:
-        Position in queue (1-based)
+async def refresh_queue_positions(manager: ConnectionManager) -> None:
+    """Deliver queue metadata locally through the existing authorization guard."""
+    watched: set[UUID] = set()
+    for channel, sockets in tuple(manager.connections.items()):
+        if sockets and channel.startswith("execution:"):
+            try:
+                watched.add(UUID(channel.split(":", 1)[1]))
+            except ValueError:
+                continue
+    if not watched:
+        return
+    async with get_db_context() as db:
+        positions = await get_queue_positions(db, watched)
+
+    for execution_id, position in positions.items():
+        await manager._send_local(
+            f"execution:{execution_id}",
+            {
+                "type": "execution_queue_update",
+                "executionId": str(execution_id),
+                "queuePosition": position,
+                "waitReason": "queued",
+            },
+        )
+
+
+class QueuePositionRefresher:
+    """One coalesced, lifespan-owned advisory refresh per API process.
+
+    Requests do no I/O. Producers announce at most once per interval through the
+    existing Redis transport; each API then serves only its own authorized UI
+    subscriptions. Durable dispatch and execution status never wait on this.
     """
-    r = await _get_redis()
-    try:
-        timestamp = time.time()
 
-        # Add to sorted set with timestamp as score
-        await r.zadd(QUEUE_KEY, {execution_id: timestamp})
+    def __init__(self, manager: ConnectionManager) -> None:
+        self.manager = manager
+        self._dirty = False
+        self._announce = False
+        self._task: asyncio.Task[None] | None = None
 
-        # Get position (0-based rank + 1 for 1-based position)
-        rank = await r.zrank(QUEUE_KEY, execution_id)
-        position = (rank + 1) if rank is not None else 1
-    finally:
-        await _close_redis(r)
-
-    logger.debug(f"Added execution {execution_id} to queue at position {position}")
-
-    # Publish updated positions to all queued executions
-    await publish_all_queue_positions()
-
-    return position
-
-
-async def remove_from_queue(execution_id: str) -> None:
-    """
-    Remove execution from queue tracking and publish position updates.
-
-    Called when execution starts running or is cancelled before starting.
-
-    Args:
-        execution_id: Execution ID to remove
-    """
-    r = await _get_redis()
-    try:
-        # Remove from sorted set
-        removed = await r.zrem(QUEUE_KEY, execution_id)
-    finally:
-        await _close_redis(r)
-
-    if removed:
-        logger.debug(f"Removed execution {execution_id} from queue")
-        # Publish updated positions to remaining queued executions
-        await publish_all_queue_positions()
-
-
-async def get_queue_position(execution_id: str) -> int | None:
-    """
-    Get current queue position for an execution.
-
-    Args:
-        execution_id: Execution ID
-
-    Returns:
-        Position (1-based) or None if not in queue
-    """
-    r = await _get_redis()
-    try:
-        rank = await r.zrank(QUEUE_KEY, execution_id)
-    finally:
-        await _close_redis(r)
-
-    if rank is not None:
-        return rank + 1  # Convert 0-based to 1-based
-    return None
-
-
-async def get_queue_depth() -> int:
-    """
-    Get total number of executions in queue.
-
-    Returns:
-        Queue depth (number of pending executions)
-    """
-    r = await _get_redis()
-    try:
-        return await r.zcard(QUEUE_KEY)
-    finally:
-        await _close_redis(r)
-
-
-async def get_all_queue_positions() -> list[tuple[str, int]]:
-    """
-    Get all execution IDs with their positions.
-
-    Returns:
-        List of (execution_id, position) tuples, ordered by position
-    """
-    r = await _get_redis()
-    try:
-        # Get all members in order (lowest score = earliest = position 1)
-        members = await r.zrange(QUEUE_KEY, 0, -1)
-    finally:
-        await _close_redis(r)
-
-    # Return as list of (execution_id, 1-based position) tuples
-    return [(member, idx + 1) for idx, member in enumerate(members)]
-
-
-async def publish_all_queue_positions() -> None:
-    """
-    Publish current queue position to all queued executions.
-
-    Called after any queue mutation (add/remove) to update
-    all waiting clients with their new positions.
-    """
-    from src.core.pubsub import publish_execution_update
-
-    positions = await get_all_queue_positions()
-
-    for exec_id, position in positions:
-        try:
-            await publish_execution_update(
-                exec_id,
-                "Pending",
-                {
-                    "queuePosition": position,
-                    "waitReason": "queued",
-                }
+    def request(self, *, announce: bool = False) -> None:
+        self._dirty = True
+        self._announce |= announce
+        if self._task is None:
+            # UI work must not inherit a run's credentials or remote-owner fence.
+            self._task = asyncio.create_task(
+                self._run(), name="queue-position-refresh", context=Context(),
             )
-        except Exception as e:
-            # Don't let one failed publish stop others
-            logger.warning(f"Failed to publish queue position for {exec_id}: {e}")
 
+    async def _wait_interval(self) -> None:
+        await asyncio.sleep(QUEUE_POSITION_REFRESH_INTERVAL_S)
 
-async def cleanup_stale_entries(max_age_seconds: int = 600) -> int:
-    """
-    Remove stale entries from queue (safety cleanup).
-
-    Entries older than max_age_seconds are removed. This handles
-    edge cases where executions were orphaned without proper cleanup.
-
-    Args:
-        max_age_seconds: Maximum age for queue entries (default 10 min)
-
-    Returns:
-        Number of entries removed
-    """
-    r = await _get_redis()
-    try:
-        cutoff = time.time() - max_age_seconds
-
-        # Remove entries with score (timestamp) less than cutoff
-        removed = await r.zremrangebyscore(QUEUE_KEY, "-inf", cutoff)
-    finally:
-        await _close_redis(r)
-
-    if removed:
-        logger.info(f"Cleaned up {removed} stale queue entries")
-        await publish_all_queue_positions()
-
-    return removed
-
-
-async def get_all_pending_executions() -> list[dict]:
-    """
-    Get all pending executions with metadata for heartbeat reporting.
-
-    Returns:
-        List of dicts with execution_id, workflow_id, workflow_name,
-        organization_name, and queued_at for each pending execution.
-    """
-    r = await _get_redis()
-    try:
-        # Get execution IDs from sorted set
-        exec_ids = await r.zrange(QUEUE_KEY, 0, -1)
-
-        items = []
-        for exec_id in exec_ids:
-            # Get execution context from Redis (stored when queued)
-            context = await r.get(f"bifrost:exec:{exec_id}:context")
-            if context:
+    async def _run(self) -> None:
+        try:
+            while self._dirty:
+                await self._wait_interval()
+                self._dirty = False
+                announce, self._announce = self._announce, False
                 try:
-                    data = json.loads(context)
-                    items.append({
-                        "execution_id": exec_id,
-                        "workflow_id": data.get("workflow_id"),
-                        "workflow_name": data.get("name"),
-                        "organization_name": data.get("organization", {}).get("name")
-                        if isinstance(data.get("organization"), dict)
-                        else None,
-                        "queued_at": data.get("queued_at"),
-                    })
-                except json.JSONDecodeError:
-                    # Invalid context, include execution_id only
-                    items.append({
-                        "execution_id": exec_id,
-                        "workflow_id": None,
-                        "workflow_name": None,
-                        "organization_name": None,
-                        "queued_at": None,
-                    })
-            else:
-                # No context found, include execution_id only
-                items.append({
-                    "execution_id": exec_id,
-                    "workflow_id": None,
-                    "workflow_name": None,
-                    "organization_name": None,
-                    "queued_at": None,
-                })
-    finally:
-        await _close_redis(r)
+                    if announce:
+                        await self.manager.broadcast(
+                            QUEUE_POSITION_CHANNEL, {"type": "queue_positions_changed"},
+                        )
+                    await refresh_queue_positions(self.manager)
+                except Exception:
+                    logger.warning("Could not refresh queue positions", exc_info=True)
+        finally:
+            self._task = None
 
-    return items
+    async def close(self) -> None:
+        if self._task is not None:
+            self._task.cancel()
+            await asyncio.gather(self._task, return_exceptions=True)
+        self._dirty = self._announce = False
+
+
+def request_queue_position_refresh() -> None:
+    """Record a committed queue change without delaying workflow dispatch."""
+    from src.core.pubsub import manager
+
+    manager.request_queue_position_refresh(announce=True)

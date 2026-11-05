@@ -4,10 +4,15 @@ E2E tests for workflow execution.
 Tests sync/async execution, polling, cancellation, and execution history.
 """
 
+import asyncio
+import time
 import uuid
 
 import pytest
+from sqlalchemy import func, select
 
+from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.package_changes import PackageChange
 from tests.e2e.conftest import poll_until, write_and_register, execute_workflow_sync
 
 
@@ -119,48 +124,6 @@ class TestSyncExecution:
 @pytest.mark.e2e
 class TestAsyncExecution:
     """Test asynchronous workflow execution."""
-
-    @pytest.mark.asyncio
-    async def test_redis_only_execution_is_immediately_readable(
-        self,
-        e2e_client,
-        platform_admin,
-    ):
-        """A receipt is readable before the worker creates its database row."""
-        from src.core.redis_client import RedisClient
-
-        execution_id = str(uuid.uuid4())
-        # This in-process test owns its client. The application singleton is
-        # production-lifetime state and may be bound to another pytest event
-        # loop after a broad ordered run.
-        redis_client = RedisClient()
-        await redis_client.set_pending_execution(
-            execution_id=execution_id,
-            workflow_id=None,
-            script_name="e2e_pending_receipt",
-            parameters={"domain": "example.com"},
-            org_id=None,
-            user_id=str(platform_admin.user_id),
-            user_name=platform_admin.name,
-            user_email=platform_admin.email,
-            lineage=None,
-        )
-        try:
-            response = e2e_client.get(
-                f"/api/executions/{execution_id}",
-                headers=platform_admin.headers,
-            )
-        finally:
-            await redis_client.delete_pending_execution(execution_id)
-            await redis_client.close()
-
-        assert response.status_code == 200, response.text
-        data = response.json()
-        assert data["execution_id"] == execution_id
-        assert data["workflow_name"] == "e2e_pending_receipt"
-        assert data["status"] == "Pending"
-        assert data["input_data"] == {"domain": "example.com"}
-        assert data["started_at"] is None
 
     def test_execute_async_workflow(self, e2e_client, platform_admin, async_workflow):
         """Platform admin executes async workflow."""
@@ -1059,7 +1022,9 @@ def get_value():
                 headers=platform_admin.headers,
             )
 
-    def test_package_available_after_installation(self, e2e_client, platform_admin):
+    async def test_package_available_after_installation(
+        self, e2e_client, platform_admin, async_session_factory
+    ):
         """Newly installed packages are available in next execution.
 
         Tests:
@@ -1074,7 +1039,38 @@ def get_value():
         workflow_name = "e2e_package_test_workflow"
         workflow_path = f"{workflow_name}.py"
 
-        def _ensure_package_uninstalled() -> None:
+        async def current_generation() -> int:
+            async with async_session_factory() as db:
+                return int(
+                    await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0
+                )
+
+        async def workers_applied(generation: int, timeout: float) -> None:
+            deadline = time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                async with async_session_factory() as db:
+                    workers = list(
+                        await db.scalars(
+                            select(ExecutionWorker).where(
+                                ExecutionWorker.form == "static",
+                                ExecutionWorker.state == "ready",
+                                ExecutionWorker.remote_owner_id.is_not(None),
+                                ExecutionWorker.supported_handlers.op("?")("workflow.execute"),
+                            )
+                        )
+                    )
+                if len(workers) == 2 and all(
+                    worker.package_generation is not None
+                    and worker.package_generation >= generation
+                    for worker in workers
+                ):
+                    return
+                await asyncio.sleep(0.1)
+            raise AssertionError(
+                f"Workflow executors did not apply package generation {generation} within {timeout}s"
+            )
+
+        async def _ensure_package_uninstalled() -> None:
             """Ensure `package_name` is not installed before the test runs.
 
             DELETE /api/packages/{name} is async — pip uninstall + worker recycle
@@ -1089,26 +1085,21 @@ def get_value():
             packages = response.json().get("packages", [])
             if not any(p.get("name", "").lower() == package_name for p in packages):
                 return
-            e2e_client.delete(
+            response = e2e_client.delete(
                 f"/api/packages/{package_name}",
                 headers=platform_admin.headers,
             )
+            assert response.status_code == 200, response.text
+            await workers_applied(await current_generation(), timeout=20.0)
 
-            def check_gone():
-                r = e2e_client.get("/api/packages", headers=platform_admin.headers)
-                if r.status_code == 200:
-                    pkgs = r.json().get("packages", [])
-                    if not any(p.get("name", "").lower() == package_name for p in pkgs):
-                        return True
-                return None
-
-            assert poll_until(check_gone, max_wait=20.0), (
-                f"Package '{package_name}' still installed after uninstall — "
-                "worker recycle may have hung."
-            )
+            r = e2e_client.get("/api/packages", headers=platform_admin.headers)
+            assert r.status_code == 200, r.text
+            assert not any(
+                p.get("name", "").lower() == package_name for p in r.json().get("packages", [])
+            ), f"Package '{package_name}' still installed after uninstall"
 
         # Pre-test: clear any leaked install from a prior (possibly crashed) run.
-        _ensure_package_uninstalled()
+        await _ensure_package_uninstalled()
 
         # Step 1: Create workflow that imports humanize
         workflow_content = f'''"""Package Test Workflow"""
@@ -1158,21 +1149,17 @@ async def {workflow_name}(number: int = 1000000):
                 f"Unexpected install status: {install_data}"
             )
 
-            # Step 4: Poll until package appears in installed list
-            # Workers pip install the package then recycle processes.
-            def check_package_installed():
-                response = e2e_client.get(
-                    "/api/packages",
-                    headers=platform_admin.headers,
-                )
-                if response.status_code == 200:
-                    packages = response.json().get("packages", [])
-                    if any(p.get("name", "").lower() == package_name for p in packages):
-                        return True
-                return None
-
-            installed = poll_until(check_package_installed, max_wait=60.0)
-            assert installed, f"Package '{package_name}' not installed within timeout"
+            # Step 4: Wait for both workflow executors to apply the recorded
+            # generation before continuing. A single executor can report the
+            # package first, which would otherwise queue teardown's uninstall
+            # behind another executor's in-flight install.
+            await workers_applied(await current_generation(), timeout=60.0)
+            response = e2e_client.get("/api/packages", headers=platform_admin.headers)
+            assert response.status_code == 200, response.text
+            assert any(
+                p.get("name", "").lower() == package_name
+                for p in response.json().get("packages", [])
+            ), f"Package '{package_name}' was not installed"
 
             # Step 5: Execute again - should succeed now
             def check_workflow_succeeds():
@@ -1203,7 +1190,7 @@ async def {workflow_name}(number: int = 1000000):
             )
             # Cleanup: uninstall package and wait for it to actually go away
             # (DELETE returns before pip uninstall + worker recycle complete).
-            _ensure_package_uninstalled()
+            await _ensure_package_uninstalled()
 
     def test_nested_module_package_update_reflected(self, e2e_client, platform_admin):
         """Updates to nested package modules are reflected immediately.

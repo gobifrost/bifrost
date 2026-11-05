@@ -21,7 +21,10 @@ test.describe("Editor source search (admin)", () => {
 			await page.goto("/");
 			await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
 			const dialog = page.getByRole("dialog", { name: "Code editor" });
-			await dialog.getByRole("button", { name: "Search" }).click();
+			// Exact: the seeded folder's tree row also contains "search".
+			await dialog
+				.getByRole("button", { name: "Search", exact: true })
+				.click();
 			await dialog
 				.getByRole("textbox", { name: "Search file contents" })
 				.fill(token);

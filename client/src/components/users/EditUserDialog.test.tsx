@@ -298,3 +298,6 @@ it("keeps a pending save open", async () => {
 		).toBeEnabled(),
 	);
 });
+
+// This suite isolates profile edits; shared policy behavior has sibling coverage.
+vi.mock("./SsoExclusions", () => ({ UserSsoExclusion: () => null }));

@@ -111,6 +111,13 @@ export const wireSurface = {
     // when a provider transport is installed (cookie auth same-origin).
     connectPath: "/ws/connect",
     authQueryParam: "token",
+    // Human expiry/epoch refusal ends the old socket before delivery. Recover
+    // through HTTP refresh and reconnect; never reuse that socket's authority.
+    authenticationClose: {
+      code: 4001,
+      reason: "Authentication refresh required",
+      recovery: ["host-auth-refresh", "reconnect", "resubscribe"],
+    },
     // Outbound subscribe frame (shared shape across table/file/execution
     // subscriptions).
     subscribeFrame: {

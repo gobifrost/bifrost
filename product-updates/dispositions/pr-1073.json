@@ -1,0 +1,14 @@
+{
+  "key": "pr:1073",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduced repeated database work when workflows and agents authenticate SDK calls.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1073",
+      "Jack authorized local iteration, verified performance repairs, normal merge gates, deployment and safe production comparisons. The 20-call database control, current-state revocation/deletion regression, 111 focused unit tests and 16 integration checks support this bounded query reduction."
+    ]
+  }
+}

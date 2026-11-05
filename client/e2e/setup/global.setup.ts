@@ -5,11 +5,7 @@
  * This file runs once before all tests to:
  * 1. Create test users via API (platform_admin, org1_user, org2_user)
  * 2. Set up MFA for each user
- * 3. Authenticate each user in the browser
- * 4. Save browser storage state for reuse
- *
- * The saved storage state allows tests to start authenticated without
- * going through the login flow each time.
+ * 3. Authenticate the platform admin in a browser to seed local AI defaults
  */
 
 import { test as setup } from "@playwright/test";
@@ -19,9 +15,7 @@ import { fileURLToPath } from "url";
 import { createTestUsers, authenticateInBrowser } from "./auth-helpers";
 import { seedLocalAIDefaults } from "./ai-fixtures";
 import {
-	USERS,
 	AUTH_STATE_DIR,
-	getAuthStatePath,
 	getCredentialsPath,
 } from "../fixtures/users";
 
@@ -69,46 +63,14 @@ setup(
 			console.log(`\nSaved credentials to ${credentialsPath}`);
 		}
 
-		// Authenticate each user in browser and save storage state
-		console.log("\n=== Authenticating users in browser ===\n");
-
-		for (const userKey of Object.keys(USERS)) {
-			const userCredentials =
-				credentials[userKey as keyof typeof credentials];
-
-			// Skip org entries (they're not users)
-			if (!userCredentials || !("email" in userCredentials)) {
-				continue;
-			}
-
-			console.log(
-				`Authenticating ${userKey} (${userCredentials.email})...`,
-			);
-
-			// Create new browser context for this user
-			const context = await browser.newContext();
-			const page = await context.newPage();
-
-			try {
-				// Authenticate in browser
-				await authenticateInBrowser(page, userCredentials);
-				if (userKey === "platform_admin")
-					await seedLocalAIDefaults(context);
-
-				// Save storage state
-				const statePath = path.resolve(
-					__dirname,
-					"..",
-					getAuthStatePath(userKey),
-				);
-				await context.storageState({ path: statePath });
-				console.log(`  Saved auth state to ${statePath}`);
-			} catch (error) {
-				console.error(`  Failed to authenticate ${userKey}:`, error);
-				throw error;
-			} finally {
-				await context.close();
-			}
+		console.log("\n=== Seeding Local AI Defaults ===\n");
+		const context = await browser.newContext();
+		const page = await context.newPage();
+		try {
+			await authenticateInBrowser(page, credentials.platform_admin);
+			await seedLocalAIDefaults(context);
+		} finally {
+			await context.close();
 		}
 
 		console.log("\n=== Global Setup Complete ===\n");

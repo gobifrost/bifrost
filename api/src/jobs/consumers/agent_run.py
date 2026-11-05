@@ -1,4 +1,4 @@
-"""RabbitMQ consumer for autonomous agent runs."""
+"""Runs the agent-run dispatches an executor claimed from PostgreSQL."""
 
 from __future__ import annotations
 
@@ -11,35 +11,40 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import NoResultFound
 from sqlalchemy.orm import selectinload
 
-from src.config import get_settings
 from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
+from src.core.database_retry import RetryBudget, run_with_database_retry
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
-from src.jobs.rabbitmq import BaseConsumer
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
-from src.models.orm.agents import Agent, Conversation
+from src.models.orm.agents import Agent, Conversation, Message
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
+from src.services.ai_behavior_service import AgentExecutionMode, AIBehaviorService
+from src.services.conversation_messages import add_conversation_message
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
+    from src.models.orm.work_dispatches import WorkDispatch
     from src.services.authorization.enforce import Caller
     from src.services.execution.autonomous_agent_executor import ActingUser
 
 logger = logging.getLogger(__name__)
 
-QUEUE_NAME = "agent-runs"
 REDIS_PREFIX = "bifrost:agent_run"
 DEFAULT_RUN_TIMEOUT = 1800  # 30 minutes
 CANCEL_CHECK_INTERVAL = 2  # seconds between cancel flag checks
 RUN_AS_INACTIVE_ERROR = "The user this run acts as is no longer active"
 ACTING_USER_UNAVAILABLE_ERROR = "Agent run actor is unavailable"
+TERMINAL_AGENT_RUN_STATUSES = frozenset(
+    {"completed", "failed", "budget_exceeded", "timeout", "cancelled"}
+)
 
 
 async def _publish_sync_result(run_id: str, result: dict) -> None:
@@ -117,7 +122,7 @@ async def _load_run_as(
     """The run's Run As user from the database; None when it can no longer act.
 
     The identity comes from the ``agent_runs`` and ``users`` rows only, never
-    from the Redis run context. Its organization is the run's.
+    from the run's dispatch context. Its organization is the run's.
     """
     from src.services.authorization.explain import load_run_as_target
     from src.services.execution.autonomous_agent_executor import ActingUser
@@ -175,13 +180,8 @@ async def _generate_conversation_title(
     return None
 
 
-class AgentRunConsumer(BaseConsumer):
+class AgentRunConsumer:
     def __init__(self):
-        settings = get_settings()
-        super().__init__(
-            queue_name=QUEUE_NAME,
-            prefetch_count=settings.max_concurrency,
-        )
         self._session_factory = get_session_factory()
 
     async def process_message(self, body: dict) -> None:
@@ -195,39 +195,22 @@ class AgentRunConsumer(BaseConsumer):
 
         logger.info(f"Processing agent run {run_id} (agent={agent_id}, trigger={trigger_type})")
 
-        # Read full context from Redis
-        redis_key = f"{REDIS_PREFIX}:{run_id}:context"
-        async with get_redis() as redis:
-            context_raw = await redis.get(redis_key)
-
-        if not context_raw:
-            logger.error(f"Agent run {run_id}: context not found in Redis")
-            async with self._session_factory() as db:
-                queued_run = await db.get(AgentRun, UUID(run_id))
-                if queued_run is not None and queued_run.status == "queued":
-                    queued_run.status = "failed"
-                    queued_run.error = "Agent run context was unavailable"
-                    queued_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-            if sync:
-                await _publish_sync_result(
-                    run_id,
-                    {
-                        "output": None,
-                        "status": "failed",
-                        "error": "Agent run context was unavailable",
-                    },
-                )
-            return
-
-        context = json.loads(context_raw)
+        # The dispatch carries the context in PostgreSQL; it is taken with
+        # the claim below.
+        dispatch_id = UUID(body["dispatch_id"])
+        context: dict | None = None
 
         start_time = time.time()
+        # Every write that records this run's outcome shares one retry budget,
+        # so a result write that outlasts an outage does not hand the failure
+        # write a second full budget.
+        terminal_budget = RetryBudget()
         agent_run: AgentRun | None = None
         agent: Agent | None = None
         executor = None
         acting: ActingUser | None = None
         runtime_caller: Caller | None = None
+        agent_execution_mode: AgentExecutionMode | None = None
 
         try:
             # Atomically claim the durable queued row and load the agent.
@@ -244,27 +227,20 @@ class AgentRunConsumer(BaseConsumer):
                 if agent_run is None:
                     logger.error(f"Agent run {run_id}: queued record not found")
                     return
+                from src.services.work_dispatch import take_dispatch_payload
+
+                context = await take_dispatch_payload(db, dispatch_id)
                 if agent_run.status != "queued":
+                    # A duplicate delivery or a cancelled run; any dispatch
+                    # left behind is dropped by the reconciler.
                     logger.info(
                         "Agent run %s: skipping message for status %s",
                         run_id,
                         agent_run.status,
                     )
                     return
-                if context.get("cancelled"):
-                    logger.info(
-                        f"Agent run {run_id}: pre-cancelled, skipping execution"
-                    )
-                    agent_run.status = "cancelled"
-                    agent_run.completed_at = datetime.now(timezone.utc)
-                    await db.commit()
-                    if sync:
-                        await _publish_sync_result(
-                            run_id,
-                            {"output": None, "status": "cancelled", "error": None},
-                        )
-                    return
-
+                if context is None:
+                    raise RuntimeError(f"Queued agent run {run_id} has no dispatch")
                 loaded_actor = await _load_acting_user(db, agent_run.acting_user_id)
                 if loaded_actor is None:
                     logger.info("Agent run %s: its persisted actor is unavailable", run_id)
@@ -286,6 +262,10 @@ class AgentRunConsumer(BaseConsumer):
 
                 is_chat_trigger = trigger_type == "chat" or context.get("trigger_type") == "chat"
                 if is_chat_trigger:
+                    agent_execution_mode = await AIBehaviorService(
+                        db
+                    ).resolve_agent_run_execution_mode(agent_run)
+                    assert agent_execution_mode is not None
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
                     await db.commit()
@@ -323,6 +303,8 @@ class AgentRunConsumer(BaseConsumer):
                         caller=chat_caller,
                         sync=sync,
                         start_time=start_time,
+                        terminal_budget=terminal_budget,
+                        agent_execution_mode=agent_execution_mode,
                     )
                     return
 
@@ -396,6 +378,9 @@ class AgentRunConsumer(BaseConsumer):
                         return
 
                 agent_run.status = "running"
+                agent_execution_mode = await AIBehaviorService(
+                    db
+                ).resolve_agent_run_execution_mode(agent_run)
                 agent_run.budget_max_iterations = agent.max_iterations
                 agent_run.budget_max_tokens = agent.max_token_budget
                 agent_run.started_at = datetime.now(timezone.utc)
@@ -441,6 +426,7 @@ class AgentRunConsumer(BaseConsumer):
                     run_user_id=agent_run.run_user_id,
                     run_as=run_as,
                     acting=acting,
+                    agent_execution_mode=agent_execution_mode,
                 ))
 
                 # Cancel watcher: polls Redis flag, force-cancels task if stuck
@@ -486,8 +472,10 @@ class AgentRunConsumer(BaseConsumer):
 
             # Update run record and flush buffered steps (brief DB session)
             duration_ms = int((time.time() - start_time) * 1000)
-            consumer_applied_result = False
-            async with self._session_factory() as db:
+
+            async def _write_result(
+                db: AsyncSession,
+            ) -> tuple[AgentRun, WorkDispatch | None] | None:
                 # Re-fetch the AgentRun in this session to update it, but only
                 # if it is still live. A scheduler may have already terminalized
                 # the row; in that case we must not overwrite the final status.
@@ -497,9 +485,16 @@ class AgentRunConsumer(BaseConsumer):
                     with_for_update={"of": AgentRun},
                 )
                 if run_obj is None:
-                    logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
-                    return
-                if run_obj.status == "running":
+                    return None
+                if executor and await executor.is_flushed(db):
+                    # An earlier attempt committed; only its acknowledgement
+                    # was lost. Its summary dispatch, if any, is the
+                    # reconciler's to hand off.
+                    return run_obj, None
+                consumer_applied_result = False
+                # A cancel requested after the executor finished does not
+                # undo the outcome it produced; the chat writer does the same.
+                if run_obj.status in ("running", "cancelling"):
                     run_obj.status = run_result.get("status", "completed")
                     run_obj.output = (
                         run_result.get("output")
@@ -534,11 +529,28 @@ class AgentRunConsumer(BaseConsumer):
                 if executor:
                     await executor.flush_to_db(db)
 
-                await db.commit()
+                # A completed run's summary is requested with its result, so
+                # it is never stranded; failures and cancellations are not
+                # summarized (the UI offers regenerate from any state).
+                summary = None
+                if consumer_applied_result and run_obj.status == "completed":
+                    from src.services.execution.summary_dispatch import stage_summary
 
-                # Re-read for publish (need agent relationship)
-                if run_obj:
-                    agent_run = run_obj
+                    summary = await stage_summary(db, run_obj.id)
+
+                await db.commit()
+                return run_obj, summary
+
+            written = await run_with_database_retry(
+                self._session_factory,
+                _write_result,
+                description=f"agent run {run_id} final update",
+                budget=terminal_budget,
+            )
+            if written is None:
+                logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
+                return
+            agent_run, summary = written
 
             # Clean up Redis Stream now that steps are committed to DB. Its TTL
             # bounds the leak if this best-effort delete cannot reach Redis.
@@ -551,19 +563,9 @@ class AgentRunConsumer(BaseConsumer):
 
             await publish_agent_run_update(agent_run, agent.name)
 
-            # Enqueue post-run summarization for completed runs only.
-            # Failures/timeouts/cancellations don't get summarized; the UI
-            # exposes a regenerate button to retry from any state.
-            # Errors here MUST NOT crash the run — summary_status stays
-            # 'pending' and the UI offers a regenerate path.
-            if consumer_applied_result and agent_run.status == "completed":
-                try:
-                    from src.services.execution.run_summarizer import enqueue_summarize
-                    await enqueue_summarize(UUID(run_id))
-                except Exception:
-                    logger.exception(
-                        f"Failed to enqueue summarizer for run {run_id}"
-                    )
+            from src.services.execution.summary_dispatch import hand_off_summary
+
+            await hand_off_summary(summary)
 
             # Update event delivery status if triggered by event
             if context.get("event_delivery_id"):
@@ -592,81 +594,151 @@ class AgentRunConsumer(BaseConsumer):
 
         except Exception as e:
             logger.exception(f"Agent run {run_id} failed: {e}")
-            if agent_run is not None:
-                try:
-                    async with self._session_factory() as db:
-                        run_obj = await db.get(
-                            AgentRun,
-                            UUID(run_id),
-                            with_for_update={"of": AgentRun},
-                        )
-                        if run_obj:
-                            if run_obj.status == "running":
-                                run_obj.status = "failed"
-                                run_obj.error = str(e)
-                                run_obj.duration_ms = int(
-                                    (time.time() - start_time) * 1000
-                                )
-                                run_obj.completed_at = datetime.now(timezone.utc)
-                            else:
-                                logger.info(
-                                    "Agent run %s: failure update skipped because current status is %s",
-                                    run_id,
-                                    run_obj.status,
-                                )
+            # Callers hear of the failure only once it is stored. If it cannot
+            # be stored, nothing new is announced: the row is still live, and
+            # the stale-run sweep ends it and announces that. A failure before
+            # the run was claimed has no row to store.
+            terminal_outcome_available = False
+            failure_error = str(e)
 
-                            # Still flush any buffered steps on failure
-                            if executor:
-                                await executor.flush_to_db(db)
-
-                            await db.commit()
-                            agent_run = run_obj
-                except Exception:
-                    logger.exception(f"Failed to update agent_run {run_id} after error")
-
-                # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
-                try:
-                    async with get_redis() as r:
-                        await r.delete(agent_run_steps_stream_key(run_id))
-                except Exception as cleanup_err:
-                    # Stream cleanup is best-effort; write-time TTL bounds a leak.
-                    logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
-
-                if trigger_type == "chat" or context.get("trigger_type") == "chat":
-                    chat_conversation_id = (
-                        context.get("input", {}).get("conversation_id")
-                        or context.get("conversation_id")
-                        or (agent_run.conversation_id if agent_run else None)
+            async def _write_failure(db: AsyncSession) -> AgentRun | None:
+                run_obj = await db.get(
+                    AgentRun,
+                    UUID(run_id),
+                    with_for_update={"of": AgentRun},
+                )
+                if run_obj is None:
+                    return None
+                if executor and await executor.is_flushed(db):
+                    # An earlier attempt committed; only its acknowledgement
+                    # was lost.
+                    return run_obj
+                if run_obj.status in ("queued", "running", "cancelling"):
+                    # The worker owns a claimed dispatch. A pre-claim error
+                    # cannot be left queued because its assignment will not
+                    # be retried by the healthy worker pool.
+                    run_obj.status = (
+                        "cancelled" if run_obj.status == "cancelling" else "failed"
                     )
-                    if chat_conversation_id is not None:
-                        try:
-                            await publish_chat_run_event(
-                                conversation_id=UUID(str(chat_conversation_id)),
-                                run_id=run_id,
-                                kind="error",
-                                status="failed",
-                                payload=ChatStreamChunk(
-                                    type="error",
-                                    error=str(e),
-                                    run_status="failed",
-                                ),
-                            )
-                        except Exception as pub_err:
-                            logger.debug(
-                                "failed to publish terminal chat error for %s: %s",
-                                run_id,
-                                pub_err,
-                            )
+                    run_obj.error = failure_error
+                    run_obj.duration_ms = int((time.time() - start_time) * 1000)
+                    run_obj.completed_at = datetime.now(timezone.utc)
+                else:
+                    logger.info(
+                        "Agent run %s: failure update skipped because current status is %s",
+                        run_id,
+                        run_obj.status,
+                    )
 
+                # Still flush any buffered steps on failure.
+                if executor:
+                    await executor.flush_to_db(db)
+
+                await db.commit()
+                return run_obj
+
+            try:
+                failed_run = await run_with_database_retry(
+                    self._session_factory,
+                    _write_failure,
+                    description=f"agent run {run_id} failure update",
+                    budget=terminal_budget,
+                )
+                if failed_run is not None:
+                    agent_run = failed_run
+                    terminal_outcome_available = (
+                        agent_run.status in TERMINAL_AGENT_RUN_STATUSES
+                    )
+            except Exception:
+                logger.exception(f"Failed to update agent_run {run_id} after error")
+
+            # Clean up Redis Stream on failure too; write-time TTL bounds a leak.
+            try:
+                async with get_redis() as r:
+                    await r.delete(agent_run_steps_stream_key(run_id))
+            except Exception as cleanup_err:
+                # Stream cleanup is best-effort; write-time TTL bounds a leak.
+                logger.debug(f"failed to delete agent_run steps stream for {run_id}: {cleanup_err}")
+
+            # The failure may precede the claim that loads the context.
+            known = context or {}
+            if terminal_outcome_available and (
+                trigger_type == "chat" or known.get("trigger_type") == "chat"
+            ):
+                chat_conversation_id = (
+                    (known.get("input") or {}).get("conversation_id")
+                    or known.get("conversation_id")
+                    or (agent_run.conversation_id if agent_run else None)
+                )
+                if chat_conversation_id is not None:
+                    try:
+                        if agent_run.status == "completed":
+                            output = (
+                                agent_run.output
+                                if isinstance(agent_run.output, dict)
+                                else {}
+                            )
+                            content = output.get("text")
+                            kind = "done"
+                            status = "completed"
+                            payload = ChatStreamChunk(
+                                type="done",
+                                content=content if isinstance(content, str) else None,
+                                finish_reason=(
+                                    output.get("finish_reason")
+                                    if isinstance(output.get("finish_reason"), str)
+                                    else None
+                                ),
+                                incomplete=(
+                                    output.get("incomplete")
+                                    if isinstance(output.get("incomplete"), bool)
+                                    else None
+                                ),
+                                run_status="completed",
+                            )
+                        elif agent_run.status == "cancelled":
+                            kind = "cancelled"
+                            status = "cancelled"
+                            payload = ChatStreamChunk(
+                                type="cancelled",
+                                error=agent_run.error,
+                                run_status="cancelled",
+                            )
+                        else:
+                            # A sweep may have ended the run while this
+                            # worker was recovering. Its stored outcome,
+                            # including timeout, is authoritative.
+                            kind = "error"
+                            status = agent_run.status
+                            payload = ChatStreamChunk(
+                                type="error",
+                                error=agent_run.error,
+                                run_status=agent_run.status,
+                            )
+                        await publish_chat_run_event(
+                            conversation_id=UUID(str(chat_conversation_id)),
+                            run_id=run_id,
+                            kind=kind,
+                            status=status,
+                            payload=payload,
+                        )
+                    except Exception as pub_err:
+                        logger.debug(
+                            "failed to publish terminal chat status for %s: %s",
+                            run_id,
+                            pub_err,
+                        )
+
+            if terminal_outcome_available:
                 try:
                     await publish_agent_run_update(
                         agent_run, agent.name if agent else "Unknown"
                     )
                 except Exception as pub_err:
-                    # Pubsub notify is a UI hint; the DB row already reflects the failure
-                    logger.debug(f"failed to publish agent_run failure update for {run_id}: {pub_err}")
+                    # Pubsub notify is a UI hint; the DB row already reflects the terminal outcome.
+                    logger.debug(f"failed to publish agent_run terminal update for {run_id}: {pub_err}")
 
-            if sync:
+            if sync and terminal_outcome_available:
                 await _publish_sync_result(
                     run_id,
                     {
@@ -676,13 +748,6 @@ class AgentRunConsumer(BaseConsumer):
                     },
                 )
 
-        finally:
-            try:
-                async with get_redis() as r:
-                    await r.delete(f"{REDIS_PREFIX}:{run_id}:context")
-            except Exception as e:
-                # Context key has a TTL; leaking one for a few minutes is harmless
-                logger.debug(f"failed to delete agent_run context key for {run_id}: {e}")
 
     async def _process_chat_run(
         self,
@@ -694,6 +759,8 @@ class AgentRunConsumer(BaseConsumer):
         caller: Caller,
         sync: bool,
         start_time: float,
+        terminal_budget: RetryBudget,
+        agent_execution_mode: AgentExecutionMode = "delegated",
     ) -> None:
         input_data = context.get("input") or {}
         conversation_id_raw = (
@@ -811,6 +878,7 @@ class AgentRunConsumer(BaseConsumer):
                             model_profile_id=model_profile_id,
                             user_message_id=persisted_user_message_id,
                             run_user_id=agent_run.run_user_id,
+                            agent_execution_mode=agent_execution_mode,
                         ):
                             await publish_chat_run_event(
                                 conversation_id=conversation.id,
@@ -867,19 +935,15 @@ class AgentRunConsumer(BaseConsumer):
                 else:
                     output = {"text": final_content, "partial": True}
 
-                async with self._session_factory() as db:
+                async def _write_terminal(db: AsyncSession) -> AgentRun | None:
                     run_obj = await db.get(
                         AgentRun,
                         UUID(run_id),
                         with_for_update={"of": AgentRun},
                     )
                     if run_obj is None:
-                        logger.info(
-                            "Chat run %s: final update skipped because row disappeared",
-                            run_id,
-                        )
-                        return
-                    elif run_obj.status in {"running", "cancelling"}:
+                        return None
+                    if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = terminal_status
                         run_obj.output = output
                         run_obj.iterations_used = iterations_used
@@ -901,7 +965,21 @@ class AgentRunConsumer(BaseConsumer):
                             run_id,
                             run_obj.status,
                         )
-                    agent_run_ref = run_obj
+                    return run_obj
+
+                written = await run_with_database_retry(
+                    self._session_factory,
+                    _write_terminal,
+                    description=f"chat run {run_id} final update",
+                    budget=terminal_budget,
+                )
+                if written is None:
+                    logger.info(
+                        "Chat run %s: final update skipped because row disappeared",
+                        run_id,
+                    )
+                    return
+                agent_run_ref = written
 
                 await publish_agent_run_update(
                     agent_run_ref,
@@ -952,13 +1030,6 @@ class AgentRunConsumer(BaseConsumer):
                     )
             except asyncio.CancelledError:
                 duration_ms = int((time.time() - start_time) * 1000)
-                if streamed_content and assistant_message_id is not None:
-                    await executor._save_message(
-                        conversation_id=conversation.id,
-                        role=MessageRole.ASSISTANT,
-                        content=streamed_content,
-                        message_id=UUID(assistant_message_id),
-                    )
 
                 usage = executor._active_usage
                 if usage is not None:
@@ -982,26 +1053,43 @@ class AgentRunConsumer(BaseConsumer):
                     duration_ms=duration_ms,
                     error=interrupted_error,
                 )
-                await publish_chat_run_event(
-                    conversation_id=conversation.id,
-                    run_id=run_id,
-                    kind=interrupted_kind,
-                    status=interrupted_status,
-                    payload=interrupted_payload,
-                )
 
-                async with self._session_factory() as db:
+                async def _write_interrupted(db: AsyncSession) -> AgentRun | None:
                     run_obj = await db.get(
                         AgentRun,
                         UUID(run_id),
                         with_for_update={"of": AgentRun},
                     )
                     if run_obj is None:
-                        logger.info(
-                            "Chat run %s: cancel update skipped because row disappeared",
-                            run_id,
-                        )
-                        return
+                        return None
+                    # The partial answer commits with the terminal status, so
+                    # it can never land after a later turn's messages. Its id
+                    # tells a retry whether an earlier attempt committed it.
+                    # Locks: this run's row (above), then the conversation's;
+                    # a cascading delete can take them in the opposite order,
+                    # and the retry handles the deadlock PostgreSQL reports.
+                    if (
+                        streamed_content
+                        and assistant_message_id is not None
+                        and await db.get(Message, UUID(assistant_message_id)) is None
+                    ):
+                        try:
+                            await add_conversation_message(
+                                db,
+                                Message(
+                                    id=UUID(assistant_message_id),
+                                    conversation_id=conversation.id,
+                                    role=MessageRole.ASSISTANT,
+                                    content=streamed_content,
+                                ),
+                            )
+                        except NoResultFound:
+                            # The conversation was deleted; there is nowhere to
+                            # keep the answer, and the run's output still has it.
+                            logger.info(
+                                "Chat run %s: partial answer dropped because its conversation is gone",
+                                run_id,
+                            )
                     if run_obj.status in {"running", "cancelling"}:
                         run_obj.status = interrupted_status
                         run_obj.output = {
@@ -1019,8 +1107,32 @@ class AgentRunConsumer(BaseConsumer):
                                 **(run_obj.run_metadata or {}),
                                 "failover_path": json.dumps(executor._active_failover_path),
                             }
-                        await db.commit()
-                    agent_run_ref = run_obj
+                    await db.commit()
+                    return run_obj
+
+                written = await run_with_database_retry(
+                    self._session_factory,
+                    _write_interrupted,
+                    description=f"chat run {run_id} interrupted update",
+                    budget=terminal_budget,
+                )
+                if written is None:
+                    logger.info(
+                        "Chat run %s: cancel update skipped because row disappeared",
+                        run_id,
+                    )
+                    return
+                agent_run_ref = written
+
+                # Only now, with the partial answer stored, may the client
+                # treat the run as over and send its next message.
+                await publish_chat_run_event(
+                    conversation_id=conversation.id,
+                    run_id=run_id,
+                    kind=interrupted_kind,
+                    status=interrupted_status,
+                    payload=interrupted_payload,
+                )
 
                 await publish_agent_run_update(
                     agent_run_ref,
@@ -1082,34 +1194,27 @@ class AgentRunConsumer(BaseConsumer):
         error_message: str | None = None,
     ) -> None:
         """Update EventDelivery status after agent run completes."""
-        from src.models.orm.events import EventDelivery
         from src.models.enums import EventDeliveryStatus
         from src.repositories.events import EventDeliveryRepository
 
         try:
-            result = await db.execute(
-                select(EventDelivery).where(
-                    EventDelivery.id == UUID(event_delivery_id)
-                )
-            )
-            delivery = result.scalar_one_or_none()
-            if not delivery:
-                return
-
             # Map agent run status to delivery status
             if run_status == "completed":
-                delivery.status = EventDeliveryStatus.SUCCESS
+                delivery_status = EventDeliveryStatus.SUCCESS
             else:
-                delivery.status = EventDeliveryStatus.FAILED
-                delivery.error_message = error_message
+                delivery_status = EventDeliveryStatus.FAILED
 
-            delivery.agent_run_id = UUID(agent_run_id)
-            delivery.completed_at = datetime.now(timezone.utc)
-            delivery.attempt_count += 1
-            await db.flush()
+            delivery_repo = EventDeliveryRepository(db)
+            delivery = await delivery_repo.complete_from_agent_run(
+                UUID(event_delivery_id),
+                UUID(agent_run_id),
+                delivery_status,
+                error_message,
+            )
+            if delivery is None:
+                return
 
             # Update parent event status
-            delivery_repo = EventDeliveryRepository(db)
             await delivery_repo.update_event_status(delivery.event_id)
 
             await db.commit()

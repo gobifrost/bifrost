@@ -301,6 +301,40 @@ async def timeout_bounds_workflow() -> str:
                 headers=platform_admin.headers,
             )
 
+    def test_a_declared_memory_request_is_set_and_cleared(self, e2e_client, platform_admin):
+        """memory_request_mib overrides the learned value; null returns to it."""
+        content = '''from bifrost import workflow
+
+@workflow(name="memory_request_workflow", description="Memory request")
+async def memory_request_workflow() -> str:
+    return "ok"
+'''
+        workflow = write_and_register(
+            e2e_client, platform_admin.headers,
+            "memory_request_workflow.py", content, "memory_request_workflow",
+        )
+        try:
+            response = e2e_client.patch(
+                f"/api/workflows/{workflow['id']}",
+                headers=platform_admin.headers,
+                json={"memory_request_mib": 512},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["memory_request_mib"] == 512
+
+            response = e2e_client.patch(
+                f"/api/workflows/{workflow['id']}",
+                headers=platform_admin.headers,
+                json={"memory_request_mib": None},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["memory_request_mib"] is None
+        finally:
+            e2e_client.delete(
+                "/api/files/editor?path=memory_request_workflow.py",
+                headers=platform_admin.headers,
+            )
+
     def test_workflow_id_stable_across_updates(self, e2e_client, platform_admin):
         """Workflow ID remains stable across code updates."""
         workflow_content = '''"""Stable ID Test"""

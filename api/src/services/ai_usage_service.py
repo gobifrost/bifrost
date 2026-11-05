@@ -22,6 +22,7 @@ from uuid import UUID
 
 import redis.asyncio as redis
 from sqlalchemy import func, select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
@@ -160,6 +161,10 @@ async def record_ai_usage(
             f"tokens={input_tokens}/{output_tokens}, cost={cost}"
         )
 
+    except DBAPIError:
+        # A database error has already ended the caller's transaction; the
+        # caller must see it (a retrying caller decides whether to retry).
+        raise
     except Exception as e:
         logger.error(f"Failed to record AI usage: {e}", exc_info=True)
         # Don't re-raise - AI usage recording should not block the main flow
@@ -275,6 +280,9 @@ async def get_cached_pricing(
 
         return None, None, None, None
 
+    except DBAPIError:
+        # A database error has already ended the caller's transaction.
+        raise
     except Exception as e:
         logger.warning(f"Failed to get pricing from DB: {e}")
         return None, None, None, None

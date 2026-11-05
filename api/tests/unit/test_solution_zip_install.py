@@ -8,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from bifrost.definition_validation import DefinitionValidationError
 from src.services.solutions.zip_install import (
     BadExportPassword,
     PreviewResult,
@@ -202,6 +203,48 @@ async def test_install_zip_rejects_missing_module_before_persisting(db_session) 
         )
 
     await db_session.rollback()
+    rows = (await db_session.execute(
+        select(Solution).where(Solution.slug == "zip-demo")
+    )).scalars().all()
+    assert rows == []
+
+
+def test_preview_rejects_invalid_decorator_in_unregistered_helper() -> None:
+    archive = _make_workspace_zip(extra={
+        "helpers/rejected.py": (
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def rejected(): pass\n"
+        ),
+    })
+
+    with pytest.raises(DefinitionValidationError, match="helpers/rejected.py.*timeout_seconds"):
+        preview_zip(archive)
+
+
+@pytest.mark.e2e
+async def test_install_zip_rejects_invalid_decorator_before_persisting(db_session) -> None:
+    from sqlalchemy import select
+
+    from src.models.orm.solutions import Solution
+
+    archive = _make_workspace_zip(extra={
+        "helpers/rejected.py": (
+            "from bifrost import workflow\n"
+            "@workflow(timeout_seconds=30)\n"
+            "def rejected(): pass\n"
+        ),
+    })
+
+    with pytest.raises(DefinitionValidationError, match="helpers/rejected.py.*timeout_seconds"):
+        await install_zip(
+            db_session,
+            archive,
+            organization_id=None,
+            config_values={},
+            deployer_email="dev@gobifrost.com",
+        )
+
     rows = (await db_session.execute(
         select(Solution).where(Solution.slug == "zip-demo")
     )).scalars().all()

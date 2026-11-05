@@ -495,10 +495,21 @@ async def load_run_as_target(db: AsyncSession, user_id: UUID) -> RunAsTarget | N
     )
 
 
-async def load_powers(db: AsyncSession, workflow_id: UUID | None) -> Powers:
-    """The workflow's mode and grants; the platform default for no workflow."""
-    workflow = None if workflow_id is None else await db.get(Workflow, workflow_id, populate_existing=True)
+async def load_powers_for_workflow(
+    db: AsyncSession, workflow: Workflow | None
+) -> Powers:
+    """The supplied workflow's mode and grants; the platform default without one."""
     if workflow is None:
         return Powers(await get_default_workflow_permission_mode(db), ())
     mode, grants = await load_workflow_permissions(db, workflow)
     return Powers(mode, tuple(grants))
+
+
+async def load_powers(db: AsyncSession, workflow_id: UUID | None) -> Powers:
+    """The workflow's mode and grants; the platform default for no workflow."""
+    workflow = (
+        None
+        if workflow_id is None
+        else await db.get(Workflow, workflow_id, populate_existing=True)
+    )
+    return await load_powers_for_workflow(db, workflow)

@@ -123,6 +123,8 @@ function CheckboxField({
 }
 
 interface FormRendererProps {
+	orgId?: string;
+	onBusyChange?: (busy: boolean) => void;
 	form: Form;
 	/** Show developer context panel (platform admin only) */
 	devMode?: boolean;
@@ -174,6 +176,8 @@ function providerCacheKey(field: FormField): string {
  */
 function FormRendererInner({
 	form,
+	orgId,
+	onBusyChange,
 	devMode,
 	onDevModeChange,
 	onExecutionStart,
@@ -196,7 +200,7 @@ function FormRendererInner({
 	} = useFormContext();
 
 	// Execute launch workflow if configured
-	const startup = useLaunchWorkflow({ form });
+	const startup = useLaunchWorkflow({ form, orgId });
 
 	// Get typed fields array - memoized to prevent unnecessary re-renders
 	const fields = useMemo(
@@ -252,6 +256,16 @@ function FormRendererInner({
 	const [uploadingFields, setUploadingFields] = useState<Set<string>>(
 		new Set(),
 	);
+	useEffect(() => {
+		onBusyChange?.(
+			isNavigating || submitForm.isPending || uploadingFields.size > 0,
+		);
+	}, [
+		isNavigating,
+		submitForm.isPending,
+		uploadingFields.size,
+		onBusyChange,
+	]);
 
 	// Deferred execution: null = run now, non-null = scheduled.
 	const [schedule, setSchedule] = useState<Schedule | null>(null);
@@ -413,6 +427,7 @@ function FormRendererInner({
 							form.id,
 							field.name,
 							inputs || undefined,
+							orgId,
 						),
 					};
 					optionRequests.current[cacheKey] = request;
@@ -499,7 +514,7 @@ function FormRendererInner({
 				}),
 			);
 		},
-		[fields, evaluateDataProviderInputs, form.id],
+		[fields, evaluateDataProviderInputs, form.id, orgId],
 	);
 
 	// Reload when evaluated context changes, including asynchronously loaded startup data.
@@ -781,7 +796,10 @@ function FormRendererInner({
 		setIsNavigating(true);
 		try {
 			const result = await submitForm.mutateAsync({
-				params: { path: { form_id: form.id } },
+				params: {
+					path: { form_id: form.id },
+					...(orgId ? { query: { org_id: orgId } } : {}),
+				},
 				body: {
 					form_data: data,
 					startup_handle: startupHandle,
@@ -1387,6 +1405,7 @@ function FormRendererInner({
 				return (
 					<FileUploadField
 						formId={form.id}
+						orgId={orgId}
 						fieldName={field.name}
 						label={field.label ?? null}
 						required={field.required ?? false}
@@ -1834,6 +1853,8 @@ function FormRendererInner({
  */
 export function FormRenderer({
 	form,
+	orgId,
+	onBusyChange,
 	devMode,
 	onDevModeChange,
 	onExecutionStart,
@@ -1850,9 +1871,15 @@ export function FormRenderer({
 	);
 
 	return (
-		<FormContextProvider form={form} queryParams={queryParams}>
+		<FormContextProvider
+			key={`${form.id}:${orgId ?? "default"}`}
+			form={form}
+			queryParams={queryParams}
+		>
 			<FormRendererInner
 				form={form}
+				orgId={orgId}
+				onBusyChange={onBusyChange}
 				devMode={devMode}
 				onDevModeChange={onDevModeChange}
 				onExecutionStart={onExecutionStart}

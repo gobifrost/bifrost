@@ -1,0 +1,14 @@
+{
+  "key": "pr:1087",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Keep idle worker control subscriptions connected and identify dependencies that fail readiness checks.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1087",
+      "Codex and Astra reviewed this routine reliability fix under the user\u2019s authorization to repair and deploy production issues. Readiness responses and reconnect error reporting are preserved; no customer upgrade action is required."
+    ]
+  }
+}

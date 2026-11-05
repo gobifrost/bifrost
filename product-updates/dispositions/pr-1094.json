@@ -1,0 +1,14 @@
+{
+  "key": "pr:1094",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "CLI sign-in fills in your device code and asks you to confirm the account and access before connecting.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1094",
+      "Jack reviewed the CLI prompt and browser captures and authorized merge on 2026-10-27. Codex reviewed the concise summary against the confirmed behavior; no customer upgrade action or vulnerability disclosure is required."
+    ]
+  }
+}

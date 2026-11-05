@@ -11,9 +11,11 @@ from __future__ import annotations
 
 import pathlib
 
+import pytest
 import yaml
 
 from bifrost.commands.solution import _collect_python_files
+from bifrost.definition_validation import DefinitionValidationError
 
 
 def _write(p: pathlib.Path, body: str) -> None:
@@ -69,3 +71,16 @@ def test_excludes_app_source_dirs(tmp_path: pathlib.Path) -> None:
     assert "functions/hello.py" in files
     assert "apps/dash/scripts/build.py" not in files
     assert not any(k.startswith("apps/dash/") for k in files)
+
+
+def test_rejects_invalid_decorator_in_unregistered_helper(tmp_path: pathlib.Path) -> None:
+    _write(tmp_path / "bifrost.solution.yaml", "slug: s\nname: S\nscope: org\n")
+    _write(
+        tmp_path / "helpers/rejected.py",
+        "from bifrost import workflow\n"
+        "@workflow(timeout_seconds=30)\n"
+        "def rejected(): pass\n",
+    )
+
+    with pytest.raises(DefinitionValidationError, match="timeout_seconds"):
+        _collect_python_files(tmp_path)

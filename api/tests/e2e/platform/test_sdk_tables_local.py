@@ -5,10 +5,8 @@ the table definitions and reads — against the same tables the external
 HTTP endpoints serve, proving parity (filters, pagination, create/list/
 delete, missing-entity results) end to end:
 
-- the workflow records that the engine injected the worker's private
-  socket, so the migrated calls rode the shared client transport rather
-  than the network API (the zero-HTTP proof lives in the unit and
-  forked-child socket tests, where the child's network API is dead);
+- the workflow confirms the default physical worker has no UDS, so the
+  migrated calls use scoped shared API HTTP;
 - the same values served over external HTTP match.
 
 A second, service-context path registers a live ``@service`` doing the same
@@ -194,8 +192,7 @@ async def {name}():
     )
     deleted_batch = await tables.delete_batch("{table}", ["w-bulk-a", "ghost"])
     total = await tables.count("{table}")
-    # ~24 MiB in one batch: the socket carries realistic large payloads with
-    # no base64 channel wrapper and no frame-size ceiling.
+    # ~24 MiB in one batch exercises realistic scoped shared API HTTP payloads.
     _blob = "y" * (1024 * 1024)
     large = await tables.bulk_upsert(
         "{table}",
@@ -254,10 +251,8 @@ class TestSdkTablesLocalLiveE2E:
         )
         assert result["status"] == "Success", result
         out = result["result"]
-        # The worker injected its private socket, so the migrated calls rode
-        # the shared client transport (zero-HTTP proof is in the unit and
-        # forked-child tests).
-        assert out["used_socket"] is True
+        # The default physical worker uses scoped shared API HTTP, without a UDS.
+        assert out["used_socket"] is False
         assert out["doc_id"] == "row-a"
         assert out["doc_n"] == 1
         assert out["filtered_ids"] == ["row-c"]
@@ -335,7 +330,7 @@ class TestSdkTablesWritesLocalLiveE2E:
         assert out["deleted_batch_ids"] == ["w-bulk-a"]
         assert out["deleted_batch_count"] == 1
         assert out["total"] == 3
-        # ~24 MiB batch over the real worker socket.
+        # ~24 MiB batch through scoped shared API HTTP.
         assert out["large_count"] == 24
         assert out["total_with_large"] == 27
 
@@ -397,7 +392,7 @@ from bifrost import service, tables
 
 @service
 async def {function_name}() -> None:
-    """Read the seeded table with HTTP disabled, log the outcome, park."""
+    """Read the seeded table through scoped shared API HTTP, log the outcome, park."""
     await service.ready()
     from bifrost.client import get_engine_socket_path
     used_socket = get_engine_socket_path() is not None
@@ -509,7 +504,7 @@ class TestSdkTablesLocalLiveService:
                 break
             await asyncio.sleep(2.0)
         assert payload is not None, "service never logged its table outcome"
-        assert payload["used_socket"] is True
+        assert payload["used_socket"] is False
         assert payload["query_total"] == 0
         assert payload["query_docs"] == 0
         assert payload["doc_id"] is None

@@ -6,7 +6,6 @@ metadata:
 spec:
   template:
     spec:
-      automountServiceAccountToken: false
       containers:
         - name: api
           envFrom:

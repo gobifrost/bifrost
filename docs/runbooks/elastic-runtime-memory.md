@@ -37,7 +37,7 @@ Measure only selected stages:
 ```bash
 python3 api/scripts/elastic_runtime_memory.py \
   --stage python \
-  --stage worker-app-import \
+  --stage executor-import \
   --stage construct-worker-consumers \
   --stage scheduler-import \
   --stage selected-platform-job \
@@ -76,18 +76,17 @@ secret-bearing settings or environments.
 | `python` | Python interpreter after stdlib diagnostic startup. |
 | `config` | Bifrost configuration imported and settings loaded. |
 | `database` | Database layer imported and SQLAlchemy mappers configured. |
-| `rabbitmq` | RabbitMQ transport module imported. |
 | `workflow-consumer-import` | Workflow execution consumer class imported. |
-| `worker-app-import` | Full worker app module imported. |
-| `construct-worker-consumers` | All worker consumer instances constructed without starting IO. |
+| `executor-import` | Executor module imported. |
+| `construct-worker-consumers` | The executor's run handlers constructed without starting IO. |
 | `scheduler-import` | PlatformJob scheduler module imported. |
 | `platform-registry` | PlatformJob registry imported. |
 | `selected-platform-job` | Selected PlatformJob definition resolved. |
 | `application-sdk-update-module` | `application.sdk_update` handler module imported directly. |
 
-`construct-worker-consumers` intentionally constructs the existing worker
-consumers but does not call `start()`. It should not connect to RabbitMQ, start
-the workflow template process, or install dependencies.
+`construct-worker-consumers` intentionally constructs the executor's run
+handlers but does not start the executor. It should not claim work, start the
+workflow template process, or install dependencies.
 
 `selected-platform-job` resolves the registered definition for the requested job
 type. For `application.sdk_update`, this measures import and definition cost
@@ -147,9 +146,8 @@ python3 api/scripts/elastic_runtime_memory.py \
   --stage python \
   --stage config \
   --stage database \
-  --stage rabbitmq \
   --stage workflow-consumer-import \
-  --stage worker-app-import \
+  --stage executor-import \
   --stage construct-worker-consumers
 ```
 
@@ -167,7 +165,7 @@ python3 api/scripts/elastic_runtime_memory.py \
 
 ## Limitations
 
-- The diagnostic does not start RabbitMQ consumers, scheduler loops, workflow
+- The diagnostic does not start executors, scheduler loops, workflow
   template processes, or PlatformJob runners.
 - It does not measure live execution memory, SDK build memory, queue drain
   behavior, cancellation, retries, Kubernetes scheduling, or image pull time.

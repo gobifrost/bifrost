@@ -50,7 +50,6 @@ export function PromptDiffViewer({
 				oldValue={before}
 				newValue={after}
 				splitView={split}
-				hideLineNumbers={!split}
 				compareMethod={DiffMethod.WORDS}
 				useDarkTheme={false}
 				styles={{

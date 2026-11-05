@@ -407,6 +407,32 @@ class TestExecuteAuthDecisions:
             _stop_patches(patches)
         assert mocks[0].call_args.kwargs["context"].org_id == str(target.id)
 
+    async def test_explicit_global_scope_does_not_use_callers_home(self, db_session):
+        home = await _seed_org(db_session)
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            await execute_sdk_workflow(
+                db_session, _admin(home.id),
+                _request(workflow_id=str(workflow.id), input_data={}, org_id="global"),
+                caller_org_id=home.id,
+            )
+        finally:
+            _stop_patches(patches)
+        assert mocks[0].call_args.kwargs["context"].org_id is None
+
+    async def test_explicit_global_scope_still_requires_global_authority(self, db_session):
+        home = await _seed_org(db_session)
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        with pytest.raises(SdkWorkflowExecutionError) as error:
+            await execute_sdk_workflow(
+                db_session, _user(home.id),
+                _request(workflow_id=str(workflow.id), input_data={}, org_id="global"),
+                caller_org_id=home.id,
+            )
+        assert error.value.status_code == 403
+
     async def test_unknown_workflow_is_404_with_scope_detail(self, db_session):
         org = await _seed_org(db_session)
         principal = _admin(org.id)
@@ -704,13 +730,15 @@ class TestExecuteRunAs:
         assert dispatched["lineage"] == expected_lineage
         assert calls == [(principal, target.id)]
 
-    async def test_agent_runtime_keeps_origin_for_a_nested_workflow(self, db_session):
+    async def test_agent_runtime_keeps_origin_for_a_nested_workflow(self, db_session, monkeypatch):
         from src.services.authorization.explain import RunUser
         from src.services.authorization.runtime import RuntimeAuthority
 
         org = await _seed_org(db_session)
         principal = _user(org.id)
         agent_id = uuid4()
+        from shared.execution_provenance import ExecutionProvenance
+        monkeypatch.setattr("src.services.authorization.runtime.load_execution_provenance", AsyncMock(return_value=ExecutionProvenance("agent", agent_id)))
         authority_context = AuthorizationContext(
             user_id=principal.user_id,
             home_organization_id=org.id,
@@ -728,8 +756,6 @@ class TestExecuteRunAs:
             workflow_id=None,
             started_by_user_id=None,
             root_execution_id=None,
-            execution_origin="agent",
-            agent_id=agent_id,
         )
         workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
 
@@ -742,7 +768,7 @@ class TestExecuteRunAs:
         assert context.agent_id == str(agent_id)
 
     async def test_agent_runtime_sdk_dispatch_preserves_provenance_at_the_queue_boundary(
-        self, db_session
+        self, db_session, monkeypatch
     ):
         """The SDK execution path must serialize agent provenance for the worker."""
         from src.services.authorization.explain import RunUser
@@ -751,6 +777,8 @@ class TestExecuteRunAs:
         org = await _seed_org(db_session)
         principal = _user(org.id)
         agent_id = uuid4()
+        from shared.execution_provenance import ExecutionProvenance
+        monkeypatch.setattr("src.services.authorization.runtime.load_execution_provenance", AsyncMock(return_value=ExecutionProvenance("agent", agent_id)))
         authority_context = AuthorizationContext(
             user_id=principal.user_id,
             home_organization_id=org.id,
@@ -768,19 +796,10 @@ class TestExecuteRunAs:
             workflow_id=None,
             started_by_user_id=None,
             root_execution_id=None,
-            execution_origin="agent",
-            agent_id=agent_id,
         )
         workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
-        redis = AsyncMock()
-
         with (
-            patch(
-                "src.services.execution.async_executor.get_redis_client",
-                return_value=redis,
-            ),
-            patch("src.services.execution.async_executor.add_to_queue", new=AsyncMock()),
-            patch("src.services.execution.async_executor.publish_message", new=AsyncMock()),
+            patch("src.services.execution.async_executor._accept", new=AsyncMock()) as accept,
             patch("src.core.pubsub.publish_execution_update", new=AsyncMock()),
             patch("src.core.pubsub.publish_history_update", new=AsyncMock()),
         ):
@@ -791,7 +810,7 @@ class TestExecuteRunAs:
                 caller_org_id=org.id,
             )
 
-        pending = redis.set_pending_execution.await_args.kwargs
+        pending = accept.await_args.args[0]
         assert pending["is_agent"] is True
         assert pending["execution_origin"] == "agent"
         assert pending["agent_id"] == str(agent_id)

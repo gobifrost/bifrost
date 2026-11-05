@@ -1,0 +1,14 @@
+{
+  "key": "pr:1022",
+  "classification": "highlight",
+  "entry_ids": [
+    "985fcef5-bbbe-4e98-a057-d22510c8a0df"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1022",
+      "Product review: copy drafted with the PR at the author's request; maintainer copy review pending in the PR."
+    ]
+  }
+}

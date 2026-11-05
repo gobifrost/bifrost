@@ -77,6 +77,7 @@ async def admit_kubernetes_platform_job(
             lease_token=lease_token,
             timeout_seconds=job.timeout_seconds,
             hard_memory_ratio=definition.policy.hard_memory_ratio,
+            memory_required_bytes=job.memory_required_bytes,
             job_type=job.job_type,
         )
         await db.commit()

@@ -149,3 +149,38 @@ async def test_push_only_drops_pull_items_before_auto_accept(tmp_path, monkeypat
     assert not (tmp_path / "remote.py").exists()
     out = capsys.readouterr().out
     assert "to pull" not in out
+
+
+@pytest.mark.asyncio
+async def test_push_prechecks_all_selected_python_before_any_write(tmp_path, monkeypatch):
+    (tmp_path / "valid.py").write_text(
+        "from bifrost import workflow\n@workflow(name='valid')\ndef run(): pass\n"
+    )
+    (tmp_path / "invalid.py").write_text(
+        "from bifrost import workflow\n@workflow(timeout_seconds=1)\ndef run(): pass\n"
+    )
+    monkeypatch.setattr(cli, "_resolve_is_tty", lambda: False)
+
+    class FakeResponse:
+        status_code = 200
+
+        @staticmethod
+        def json():
+            return {"files_metadata": []}
+
+    class FakeClient:
+        def __init__(self):
+            self.writes = []
+
+        async def post(self, url, **kwargs):
+            if url == "/api/files/list":
+                return FakeResponse()
+            if url == "/api/files/write":
+                self.writes.append(kwargs["json"]["path"])
+            raise AssertionError(f"unexpected request: {url}")
+
+    client = FakeClient()
+    result = await cli._sync_files(str(tmp_path), client=client, one_way=True)
+
+    assert result == 1
+    assert client.writes == []

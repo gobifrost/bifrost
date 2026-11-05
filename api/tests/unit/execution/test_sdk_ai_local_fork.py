@@ -126,7 +126,7 @@ class TestForkedAISocket:
         self, async_session_factory, monkeypatch
     ):
         """A real forked child completes + reads model info over the socket."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.orm.ai_usage import AIUsage
         from src.models.orm.organizations import Organization as OrganizationModel
         from tests.helpers.live_execution import (
@@ -183,7 +183,7 @@ class TestForkedAISocket:
             ),
         )
 
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=execution_id,
             timeout_seconds=120,
         )

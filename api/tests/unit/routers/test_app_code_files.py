@@ -251,16 +251,12 @@ class TestGetV2DistAsset:
         return app_id
 
     async def test_missing_key_returns_404(self, monkeypatch):
-        """The not-found type read_dist actually raises (botocore ClientError
-        with Code=NoSuchKey, from get_object) still maps to 404."""
-        from botocore.exceptions import ClientError
+        """The transport's missing-key error maps to 404."""
+        from src.core.s3_transport import S3NoSuchKey
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        not_found = ClientError(
-            {"Error": {"Code": "NoSuchKey", "Message": "The specified key does not exist."}},
-            "GetObject",
-        )
+        not_found = S3NoSuchKey("NoSuchKey", 404, "The specified key does not exist.")
         app_id = self._setup(monkeypatch, not_found)
 
         with pytest.raises(HTTPException) as exc_info:
@@ -281,19 +277,17 @@ class TestGetV2DistAsset:
         assert any("dist asset read failed" in r.message for r in caplog.records)
 
     async def test_non_notfound_client_error_is_logged_and_reraised(self, monkeypatch, caplog):
-        """A ClientError that is NOT NoSuchKey (e.g. AccessDenied) is a real
+        """A transport error that is NOT NoSuchKey (e.g. AccessDenied) is a real
         storage error, not a missing asset."""
-        from botocore.exceptions import ClientError
+        from src.core.s3_transport import S3Error
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        denied = ClientError(
-            {"Error": {"Code": "AccessDenied", "Message": "denied"}}, "GetObject"
-        )
+        denied = S3Error("AccessDenied", 403, "denied")
         app_id = self._setup(monkeypatch, denied)
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
-            with pytest.raises(ClientError):
+            with pytest.raises(S3Error):
                 await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
 

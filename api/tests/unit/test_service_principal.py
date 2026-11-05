@@ -1,9 +1,9 @@
-"""Service principal detection (mint_service_token consumers)."""
+"""Service principal detection (service-attempt token consumers)."""
 
 from uuid import UUID
 
 from src.core.principal import UserPrincipal
-from src.core.security import mint_service_token
+from tests.helpers.runtime_tokens import legacy_service_token
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.explain import RunUser
 from src.services.authorization.runtime import RuntimeAuthority, RuntimeKind
@@ -31,7 +31,7 @@ def _principal_for(token: str) -> UserPrincipal:
 
 
 def _service_token():
-    token, _ = mint_service_token(
+    token, _ = legacy_service_token(
         service_id="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         attempt_id="11111111-1111-4111-8111-111111111111",
     )

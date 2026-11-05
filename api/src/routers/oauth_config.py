@@ -47,7 +47,9 @@ def _get_callback_url(request: Request) -> str:
     """Get the OAuth callback URL based on the request origin."""
     # Use X-Forwarded headers if behind a proxy, otherwise use request base URL
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
-    host = request.headers.get("x-forwarded-host", request.headers.get("host", "localhost"))
+    host = request.headers.get(
+        "x-forwarded-host", request.headers.get("host", "localhost")
+    )
     return f"{proto}://{host}/auth/oauth/callback"
 
 
@@ -72,7 +74,7 @@ async def list_oauth_configs(
     await _authorize_oauth_settings(ctx, user, write=False)
     service = OAuthConfigService(db)
     providers = await service.get_all_provider_configs()
-    login_preference = await service.get_login_preference()
+    login_preference = await service.get_login_preference_for_settings()
     callback_url = _get_callback_url(request)
 
     return OAuthConfigListResponse(
@@ -108,6 +110,14 @@ async def set_oauth_login_preference(
             detail=str(exc),
         ) from exc
 
+    from src.services.audit import emit_audit
+
+    await emit_audit(
+        db,
+        "settings.oauth.login_policy.update",
+        resource_type="settings",
+        details=result.model_dump(mode="json"),
+    )
     await db.commit()
     return result
 

@@ -250,14 +250,11 @@ async def test_connected_install_lifecycle(e2e_client, platform_admin, db_sessio
     ).status_code == 404
 
 
-async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platform_admin):
+async def test_install_from_repo_rejects_invalid_manifest_before_creating_install(e2e_client, platform_admin):
     slug = f"fromrepo-{uuid.uuid4().hex[:8]}"
-    # First repo: descriptor is valid (clone/parse/flush succeed) but a malformed
-    # .bifrost/forms.yaml makes the bundle read inside deploy_from_workspace raise.
+    # Definition validation runs before the async install job is created, so the
+    # malformed table cannot create an install row that later needs rollback.
     bad = _make_fixture_repo(slug=slug, broken_manifest=True)
-    # Clone + create succeed synchronously (202); the deploy fails INSIDE the job,
-    # which deletes the just-created row and marks the job failed (mapped to 409 by
-    # wait_for_install).
     resp = wait_for_install(
         e2e_client,
         e2e_client.post(
@@ -267,10 +264,11 @@ async def test_install_from_repo_rolls_back_on_deploy_failure(e2e_client, platfo
         ),
         platform_admin.headers,
     )
-    assert resp.status_code == 409, resp.text
-    assert "manifest invalid" in resp.text
+    assert resp.status_code == 422, resp.text
+    assert "policies" in resp.text
+    assert "columns" in resp.text
 
-    # The failed job deleted its newly-created install row.
+    # Preflight leaves no install row behind.
     listing = e2e_client.get("/api/solutions", headers=platform_admin.headers)
     assert listing.status_code == 200, listing.text
     assert not [s for s in listing.json()["solutions"] if s["slug"] == slug]

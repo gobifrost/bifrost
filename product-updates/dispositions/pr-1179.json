@@ -1,0 +1,14 @@
+{
+  "entry_ids": [],
+  "classification": "other",
+  "key": "pr:1179",
+  "summary": "Chat restoration errors no longer mark accepted runs failed.",
+  "category": "fix",
+  "review": {
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1179",
+      "Maintainer review verified accepted submissions, restoration retry, navigation, and replay ownership. 50 focused frontend tests, TypeScript, ESLint, and Product Updates validation passed. The concise fix summary matches the reviewed behavior. Jack approved review publication and auto-merge on 2026-11-02. Thomas Bray remains the original author; his commits are preserved."
+    ],
+    "status": "approved"
+  }
+}

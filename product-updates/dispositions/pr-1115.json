@@ -1,0 +1,16 @@
+{
+  "key": "pr:1115",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Concurrent table-document merges preserve changes to different fields instead of silently overwriting an earlier writer.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1115",
+      "https://github.com/gobifrost/bifrost/pull/1109",
+      "https://github.com/gobifrost/bifrost/pull/1109#pullrequestreview-5687638332",
+      "Maintainer approved the persistence repair and this Other/Fixed summary on 2026-10-28 after manual policy and concurrency review, 153 focused tests, and API lint/type checks."
+    ]
+  }
+}

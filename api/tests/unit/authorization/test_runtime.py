@@ -6,22 +6,25 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, event, inspect
+from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.sdk_users import set_platform_admin
 from src.core.constants import SYSTEM_USER_UUID
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
-from src.models.enums import ExecutionStatus
-from src.models.orm.agents import Agent
+from src.models.enums import AgentAccessLevel, ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
+from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
 from src.models.orm.organizations import Organization
 from src.models.orm.services import ServiceAttempt, ServiceDefinition
+from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
 from src.services.authorization.runtime import RuntimeIdentityError, load_runtime_authority
+from src.services.authorization.runtime_auth import load_runtime_principal
 
 
 async def _organization(session: AsyncSession, name: str) -> Organization:
@@ -161,8 +164,9 @@ async def test_workflow_runtime_retains_agent_origin_for_nested_workflows(
 
     authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
 
-    assert authority.execution_origin == "agent"
-    assert authority.agent_id == execution.agent_id
+    from src.services.authorization.runtime import load_execution_provenance
+    provenance = await load_execution_provenance(db_session, authority)
+    assert (provenance.origin, provenance.agent_id) == ("agent", execution.agent_id)
 
 
 @pytest.mark.asyncio
@@ -186,8 +190,9 @@ async def test_workflow_runtime_treats_malformed_durable_agent_provenance_as_unk
 
     authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
 
-    assert authority.execution_origin == "unknown"
-    assert authority.agent_id is None
+    from src.services.authorization.runtime import load_execution_provenance
+    provenance = await load_execution_provenance(db_session, authority)
+    assert (provenance.origin, provenance.agent_id) == ("unknown", None)
 
 
 @pytest.mark.asyncio
@@ -300,6 +305,108 @@ async def test_runtime_reloads_run_user_roles_on_each_call(db_session: AsyncSess
 
     assert elevated.run_user.is_platform_admin is True
     assert revoked.run_user.is_platform_admin is False
+
+
+@pytest.mark.asyncio
+async def test_same_user_runtime_principal_reuses_current_authority_and_refreshes_next_call(
+    db_session: AsyncSession,
+) -> None:
+    """A same-user execution checks current authority once per request."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    workflow = await _workflow(db_session, organization.id, permission_mode="full")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    await set_platform_admin(db_session, user, True, assigned_by="runtime-test")
+
+    payload = {"credential_kind": "workflow_execution", "sub": str(execution.id)}
+    initial = await load_runtime_principal(db_session, payload)
+    assert initial is not None
+    assert initial.is_superuser is True
+
+    statements: list[str] = []
+
+    def count_statement(conn, cursor, statement, parameters, context, executemany) -> None:
+        statements.append(statement)
+
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", count_statement)
+    try:
+        warmed = await load_runtime_principal(db_session, payload)
+    finally:
+        event.remove(engine, "before_cursor_execute", count_statement)
+
+    assert warmed is not None
+    assert warmed.is_superuser is True
+    assert len(statements) <= 8
+
+    # The reuse is request-scoped: the next call must still observe revocation
+    # and deletion from durable state.
+    other_admin = await _person(db_session, organization, "remaining-admin")
+    await set_platform_admin(db_session, other_admin, True, assigned_by="runtime-test")
+    await set_platform_admin(db_session, user, False, assigned_by="runtime-test")
+    revoked = await load_runtime_principal(db_session, payload)
+    assert revoked is not None
+    assert revoked.is_superuser is False
+
+    await db_session.delete(user)
+    await db_session.flush()
+    assert await load_runtime_principal(db_session, payload) is None
+
+
+@pytest.mark.asyncio
+async def test_workflow_runtime_authority_defers_unneeded_execution_payloads(
+    db_session: AsyncSession,
+) -> None:
+    """Authority reads only current authority fields, not historical run payloads."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    workflow = await _workflow(db_session, organization.id, permission_mode="full")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.parameters = {"payload": "x" * 250_000}
+    execution.result = {"result": "y" * 250_000}
+    execution.variables = {"variables": "z" * 250_000}
+    execution.execution_context = {"context": "a" * 250_000}
+    execution.error_message = "b" * 250_000
+    await db_session.flush()
+
+    execution_id = execution.id
+    root_execution_id = execution.root_execution_id
+    db_session.expire(execution)
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution_id)
+
+    assert (authority.credential_id, authority.acting_user_id, authority.run_user.user_id) == (
+        execution_id,
+        user.id,
+        user.id,
+    )
+    assert (authority.workflow_id, authority.organization_id, authority.root_execution_id) == (
+        workflow.id,
+        organization.id,
+        root_execution_id,
+    )
+    assert authority.powers is not None and authority.powers.mode is WorkflowPermissionMode.FULL
+    assert {"parameters", "result", "variables", "execution_context", "error_message"} <= inspect(
+        execution
+    ).unloaded
+    with pytest.raises(InvalidRequestError):
+        _ = execution.parameters
 
 
 @pytest.mark.asyncio
@@ -417,9 +524,11 @@ async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
     assert run_as_authority.powers is None
     assert run_as_authority.workflow_id is None
     assert run_as_authority.service_id is None
-    assert caller_authority.execution_origin == "agent"
-    assert caller_authority.agent_id == agent.id
-    assert unattended_authority.execution_origin == "unknown"
+    from src.services.authorization.runtime import load_execution_provenance
+    provenance = await load_execution_provenance(db_session, caller_authority)
+    assert (provenance.origin, provenance.agent_id) == ("agent", agent.id)
+    unattended = await load_execution_provenance(db_session, unattended_authority)
+    assert unattended.origin == "unknown"
 
 
 @pytest.mark.asyncio
@@ -468,3 +577,159 @@ async def test_agent_runtime_refuses_a_deleted_pinned_actor(db_session: AsyncSes
 
     with pytest.raises(RuntimeIdentityError):
         await load_runtime_authority(db_session, "agent_run", run.id)
+
+
+async def _solution(session: AsyncSession, organization: Organization, status: str) -> Solution:
+    solution = Solution(
+        slug=f"runtime-{uuid4().hex[:8]}", name="Runtime", organization_id=organization.id, status=status
+    )
+    session.add(solution)
+    await session.flush()
+    return solution
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("status", "active"), [("active", True), ("inactive", False)])
+async def test_workflow_runtime_reports_whether_its_own_solution_is_active(
+    db_session: AsyncSession, status: str, active: bool
+) -> None:
+    contoso = await _organization(db_session, "Contoso")
+    user = await _person(db_session, contoso, "solution-user")
+    solution = await _solution(db_session, contoso, status)
+    workflow = await _workflow(db_session, contoso.id, solution_id=solution.id)
+    execution = await _execution(
+        db_session, workflow=workflow, run_user=user, actor=user, organization_id=contoso.id,
+        started_by_user_id=user.id, root_execution_id=uuid4(),
+    )
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
+
+    assert authority.solution_id == solution.id
+    assert authority.solution_active is active
+
+
+@pytest.mark.asyncio
+async def test_a_run_outside_any_solution_has_no_solution_state(db_session: AsyncSession) -> None:
+    contoso = await _organization(db_session, "Contoso")
+    user = await _person(db_session, contoso, "plain-user")
+    workflow = await _workflow(db_session, contoso.id)
+    execution = await _execution(
+        db_session, workflow=workflow, run_user=user, actor=user, organization_id=contoso.id,
+        started_by_user_id=user.id, root_execution_id=uuid4(),
+    )
+
+    authority = await load_runtime_authority(db_session, "workflow_execution", execution.id)
+
+    assert authority.solution_id is None
+    assert authority.solution_active is None
+
+
+@pytest.mark.asyncio
+async def test_service_and_agent_runtimes_report_their_solution_state(db_session: AsyncSession) -> None:
+    contoso = await _organization(db_session, "Contoso")
+    user = await _person(db_session, contoso, "solution-user")
+    inactive = await _solution(db_session, contoso, "inactive")
+    active = await _solution(db_session, contoso, "active")
+    workflow = await _workflow(db_session, contoso.id, solution_id=inactive.id)
+    definition = ServiceDefinition(workflow_id=workflow.id, organization_id=contoso.id, created_by="runtime-test")
+    agent = Agent(
+        name=f"runtime_agent_{uuid4().hex[:8]}", description="Runtime", system_prompt="Runtime", channels=["chat"],
+        access_level=AgentAccessLevel.ROLE_BASED, organization_id=contoso.id, is_active=True,
+        knowledge_sources=[], system_tools=[], created_by="runtime-test", solution_id=active.id,
+    )
+    db_session.add_all([definition, agent])
+    await db_session.flush()
+    attempt = ServiceAttempt(
+        service_id=definition.id, run_user_id=user.id, lease_token="solution-lease",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1), state="running",
+    )
+    run = AgentRun(
+        trigger_type="chat", status="running", org_id=contoso.id, run_user_id=user.id,
+        acting_user_id=user.id, agent_id=agent.id,
+    )
+    db_session.add_all([attempt, run])
+    await db_session.flush()
+
+    service = await load_runtime_authority(db_session, "service_attempt", attempt.id, service_id=definition.id)
+    agent_run = await load_runtime_authority(db_session, "agent_run", run.id)
+
+    assert (service.solution_id, service.solution_active) == (inactive.id, False)
+    assert (agent_run.solution_id, agent_run.solution_active) == (active.id, True)
+
+
+@pytest.mark.asyncio
+async def test_service_and_agent_authority_reads_leave_the_callers_objects_usable(
+    db_session: AsyncSession,
+) -> None:
+    """The service claim and agent-run consumers hold these objects in the
+    session they pass in and keep reading them afterwards."""
+    contoso = await _organization(db_session, "Contoso")
+    user = await _person(db_session, contoso, "holder")
+    workflow = await _workflow(db_session, contoso.id)
+    definition = ServiceDefinition(
+        workflow_id=workflow.id, organization_id=contoso.id, created_by="runtime-test", graceful_shutdown_seconds=17
+    )
+    db_session.add(definition)
+    await db_session.flush()
+    attempt = ServiceAttempt(
+        service_id=definition.id, run_user_id=user.id, lease_token="held-lease", revision="r1",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1), state="running",
+    )
+    run = AgentRun(
+        trigger_type="chat", status="running", org_id=contoso.id, run_user_id=user.id,
+        acting_user_id=user.id, input={"message": "held"},
+    )
+    db_session.add_all([attempt, run])
+    await db_session.flush()
+
+    await load_runtime_authority(db_session, "service_attempt", attempt.id, service_id=definition.id)
+    await load_runtime_authority(db_session, "agent_run", run.id)
+
+    assert (attempt.lease_token, attempt.revision) == ("held-lease", "r1")
+    assert definition.graceful_shutdown_seconds == 17
+    assert workflow.name.startswith("runtime_")
+    assert (run.trigger_type, run.input) == ("chat", {"message": "held"})
+
+
+@pytest.mark.asyncio
+async def test_service_and_agent_authority_read_only_authority_columns(db_session: AsyncSession) -> None:
+    contoso = await _organization(db_session, "Contoso")
+    user = await _person(db_session, contoso, "narrow")
+    workflow = await _workflow(db_session, contoso.id)
+    definition = ServiceDefinition(workflow_id=workflow.id, organization_id=contoso.id, created_by="runtime-test")
+    db_session.add(definition)
+    await db_session.flush()
+    attempt = ServiceAttempt(
+        service_id=definition.id, run_user_id=user.id, lease_token="narrow-lease",
+        lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1), state="running",
+    )
+    run = AgentRun(trigger_type="chat", status="running", org_id=contoso.id, run_user_id=user.id, acting_user_id=user.id)
+    db_session.add_all([attempt, run])
+    await db_session.flush()
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany) -> None:
+        statements.append(statement)
+
+    engine = db_session.get_bind()
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        await load_runtime_authority(db_session, "service_attempt", attempt.id, service_id=definition.id)
+        await load_runtime_authority(db_session, "agent_run", run.id)
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    sql = "\n".join(statements)
+    for unread in (
+        "service_attempts.lease_token",
+        "service_attempts.revision",
+        "service_definitions.graceful_shutdown_seconds",
+        "service_definitions.current_revision",
+        "workflows.name",
+        "workflows.description",
+        "agent_runs.input",
+        "agent_runs.output",
+        "agents.system_prompt",
+        "workflow_permission_grants.created_by",
+    ):
+        assert unread not in sql

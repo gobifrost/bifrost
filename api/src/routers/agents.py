@@ -452,7 +452,6 @@ async def create_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -561,7 +560,6 @@ async def update_agent(
             selectinload(Agent.roles),
             selectinload(Agent.owner),
             selectinload(Agent.mcp_connections),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )
@@ -763,7 +761,6 @@ async def update_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
             selectinload(Agent.mcp_connections),
         )
         .where(Agent.id == agent_id)
@@ -772,6 +769,10 @@ async def update_agent(
 
     # Sync agent roles to referenced workflows (tools) - additive
     await sync_agent_roles_to_workflows(db, agent, assigned_by=user.email)
+
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("agent", str(agent_id))
 
     return _agent_to_public(agent)
 
@@ -797,6 +798,10 @@ async def delete_agent(
     await db.execute(delete(Agent).where(Agent.id == agent_id))
     await db.flush()
 
+    from src.services.repo_sync_writer import RepoSyncWriter
+
+    await RepoSyncWriter(db).delete_legacy_entity_file("agent", str(agent_id))
+
 
 @router.post("/{agent_id}/promote")
 async def promote_agent(
@@ -813,7 +818,6 @@ async def promote_agent(
             selectinload(Agent.delegated_agents),
             selectinload(Agent.roles),
             selectinload(Agent.owner),
-            selectinload(Agent.llm_profile),
         )
         .where(Agent.id == agent_id)
     )

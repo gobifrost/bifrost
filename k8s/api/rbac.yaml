@@ -1,0 +1,49 @@
+# The API runs the on-demand worker controller (and, with the builds overlay,
+# the build-Job controller): it creates, starts and removes worker Jobs and
+# reads their pods. Nothing else in the base manifests holds a token.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: bifrost-api
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-api
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: bifrost
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: bifrost-worker-controller
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-worker-controller
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: bifrost
+rules:
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "create", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["pods"]
+    # patch: marks idle workers safe for the cluster autoscaler to evict.
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: bifrost-worker-controller
+  namespace: bifrost
+  labels:
+    app.kubernetes.io/name: bifrost-worker-controller
+    app.kubernetes.io/component: api
+    app.kubernetes.io/part-of: bifrost
+subjects:
+  - kind: ServiceAccount
+    name: bifrost-api
+    namespace: bifrost
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: bifrost-worker-controller

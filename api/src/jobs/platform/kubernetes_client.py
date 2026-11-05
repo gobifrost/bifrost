@@ -6,7 +6,7 @@ import hashlib
 import os
 import ssl
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 from uuid import UUID
 
@@ -15,9 +15,13 @@ import httpx
 from src.config import get_settings
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 
+if TYPE_CHECKING:
+    from src.services.worker_pool.manifest import WorkerJobSpec
+
 SERVICE_ACCOUNT_ROOT = Path("/var/run/secrets/kubernetes.io/serviceaccount")
 SERVICE_ACCOUNT_TOKEN_PATH = SERVICE_ACCOUNT_ROOT / "token"
 SERVICE_ACCOUNT_CA_PATH = SERVICE_ACCOUNT_ROOT / "ca.crt"
+SERVICE_ACCOUNT_NAMESPACE_PATH = SERVICE_ACCOUNT_ROOT / "namespace"
 
 JOB_TTL_SECONDS = 3600
 JOB_DEADLINE_BUFFER_SECONDS = 60
@@ -39,20 +43,37 @@ class KubernetesApiError(RuntimeError):
         self.status_code = status_code
 
 
-def _required_setting(settings: Any, name: str) -> Any:
-    value = getattr(settings, name, None)
-    if value is None or value == "":
-        raise KubernetesConfigurationError(f"Missing required setting: {name}")
-    return value
+def in_cluster_namespace() -> str | None:
+    """The namespace of this pod's service account, when running in a cluster."""
+    try:
+        return SERVICE_ACCOUNT_NAMESPACE_PATH.read_text().strip() or None
+    except OSError:
+        return None
 
 
-def _validate_required_settings(settings: Any) -> str:
-    namespace = str(_required_setting(settings, "kubernetes_build_namespace"))
-    _required_setting(settings, "kubernetes_build_image")
-    _required_setting(settings, "kubernetes_build_configmap")
-    _required_setting(settings, "kubernetes_build_secret")
-    _required_setting(settings, "kubernetes_build_service_account")
-    return namespace
+def memory_resources(
+    limit_bytes: int, *, sized: bool, standard_request_mib: int
+) -> tuple[str, str]:
+    """A worker Job container's memory request and limit
+    (``worker_pool.sizing``). A sized Job requests its whole limit; a
+    standard one the deployment's request, which must fit."""
+    limit_mib = limit_bytes // 2**20
+    if sized:
+        return f"{limit_mib}Mi", f"{limit_mib}Mi"
+    if standard_request_mib > limit_mib:
+        raise KubernetesConfigurationError(
+            "pool_worker_memory_request_mib must not exceed Worker memory"
+        )
+    return f"{standard_request_mib}Mi", f"{limit_mib}Mi"
+
+
+def oom_killed(pods: list[dict[str, Any]]) -> bool:
+    """Whether Kubernetes stopped any of these pods' containers for memory."""
+    return any(
+        container.get("state", {}).get("terminated", {}).get("reason") == "OOMKilled"
+        for pod in pods
+        for container in pod.get("status", {}).get("containerStatuses", [])
+    )
 
 
 def _lease_token_fingerprint(lease_token: UUID) -> str:
@@ -97,29 +118,27 @@ def _service_host_url(host: str, port: str) -> str:
 
 def build_job_manifest(
     claim: ClaimedPlatformJob,
-    settings: Any | None = None,
+    settings: Any,
+    spec: WorkerJobSpec,
+    *,
+    memory_request_bytes: int,
+    memory_limit_bytes: int,
 ) -> dict[str, Any]:
-    """Render the suspended Kubernetes Job for one claimed platform build."""
+    """Render the suspended Kubernetes Job for one claimed platform build.
 
-    settings = settings or get_settings()
-    namespace = _required_setting(settings, "kubernetes_build_namespace")
-    image = _required_setting(settings, "kubernetes_build_image")
-    configmap = _required_setting(settings, "kubernetes_build_configmap")
-    secret = _required_setting(settings, "kubernetes_build_secret")
-    service_account = _required_setting(settings, "kubernetes_build_service_account")
-    memory_request_mib = int(settings.kubernetes_build_memory_request_mib)
-    memory_limit_mib = int(settings.kubernetes_build_memory_limit_mib)
-    if memory_request_mib > memory_limit_mib:
-        raise KubernetesConfigurationError(
-            "kubernetes_build_memory_request_mib must not exceed "
-            "kubernetes_build_memory_limit_mib"
-        )
-    cpu_request = str(settings.kubernetes_build_cpu_request)
-    cpu_limit = str(settings.kubernetes_build_cpu_limit)
-    pending_timeout = int(settings.kubernetes_build_pending_timeout_seconds)
+    The pod runs as ``spec`` says, the identity worker Jobs use: the Job
+    identity settings when set, else a copy of the controller's own pod.
+    Its memory request and limit are what its claim recorded: a standard
+    pod requests the worker memory request, a sized pod its whole limit
+    (``worker_pool.sizing``).
+    """
 
-    memory_request = f"{memory_request_mib}Mi"
-    memory_limit = f"{memory_limit_mib}Mi"
+    memory_request = f"{memory_request_bytes // 2**20}Mi"
+    memory_limit = f"{memory_limit_bytes // 2**20}Mi"
+    cpu_request = str(settings.kubernetes_job_cpu_request)
+    cpu_limit = str(settings.kubernetes_job_cpu_limit)
+    pending_timeout = int(settings.kubernetes_job_pending_timeout_seconds)
+
     name = _job_name(claim)
     labels = {
         "app.kubernetes.io/name": "bifrost-platform-job",
@@ -134,7 +153,7 @@ def build_job_manifest(
         "kind": "Job",
         "metadata": {
             "name": name,
-            "namespace": namespace,
+            "namespace": spec.namespace,
             "labels": labels,
         },
         "spec": {
@@ -150,7 +169,7 @@ def build_job_manifest(
                 "metadata": {"labels": labels},
                 "spec": {
                     "restartPolicy": "Never",
-                    "serviceAccountName": service_account,
+                    "serviceAccountName": spec.service_account,
                     "automountServiceAccountToken": False,
                     "securityContext": {
                         "runAsNonRoot": True,
@@ -161,8 +180,8 @@ def build_job_manifest(
                     "containers": [
                         {
                             "name": "runner",
-                            "image": image,
-                            "imagePullPolicy": "IfNotPresent",
+                            "image": spec.image,
+                            "imagePullPolicy": spec.image_pull_policy,
                             "command": [
                                 "python",
                                 "-m",
@@ -170,10 +189,7 @@ def build_job_manifest(
                                 str(claim.id),
                                 str(claim.lease_token),
                             ],
-                            "envFrom": [
-                                {"configMapRef": {"name": configmap}},
-                                {"secretRef": {"name": secret}},
-                            ],
+                            "envFrom": [dict(source) for source in spec.env_from],
                             "env": [
                                 {
                                     "name": "BIFROST_KUBERNETES_JOB_UID",
@@ -219,11 +235,54 @@ class KubernetesJobClient:
         self,
         settings: Any | None = None,
         http_client: httpx.AsyncClient | None = None,
+        *,
+        namespace: str | None = None,
     ) -> None:
+        """``namespace`` defaults to the Job namespace setting, then this pod's."""
         self.settings = settings or get_settings()
-        self.namespace = _validate_required_settings(self.settings)
+        resolved = (
+            namespace
+            or getattr(self.settings, "kubernetes_job_namespace", None)
+            or in_cluster_namespace()
+        )
+        if not resolved:
+            raise KubernetesConfigurationError("No Kubernetes namespace is configured")
+        self.namespace = str(resolved)
         self._owned_client = http_client is None
         self._client = http_client or self._create_http_client()
+
+    async def allows(self, verb: str, resource: str, group: str = "") -> bool:
+        """Whether this service account may ``verb`` ``resource`` in its namespace."""
+        review = {
+            "apiVersion": "authorization.k8s.io/v1",
+            "kind": "SelfSubjectAccessReview",
+            "spec": {
+                "resourceAttributes": {
+                    "namespace": self.namespace,
+                    "verb": verb,
+                    "group": group,
+                    "resource": resource,
+                }
+            },
+        }
+        response = await self._request(
+            "POST",
+            "/apis/authorization.k8s.io/v1/selfsubjectaccessreviews",
+            expected={201},
+            json=review,
+        )
+        return bool(response.json().get("status", {}).get("allowed"))
+
+    async def own_container(self) -> dict[str, Any] | None:
+        """This pod's first container (the process's own image and environment)."""
+        name = os.environ.get("HOSTNAME")
+        if not name:
+            return None
+        response = await self._request(
+            "GET", f"{self._pod_path()}/{quote(name, safe='')}", expected={200}
+        )
+        containers = response.json().get("spec", {}).get("containers") or []
+        return containers[0] if containers else None
 
     def _create_http_client(self) -> httpx.AsyncClient:
         host = os.environ.get("KUBERNETES_SERVICE_HOST")
@@ -337,6 +396,16 @@ class KubernetesJobClient:
         if not isinstance(items, list):
             raise KubernetesApiError("GET", self._pod_path(), response.status_code)
         return items
+
+    async def annotate_pod(self, name: str, annotations: dict[str, str]) -> None:
+        """Merge ``annotations`` into a pod's metadata; a pod already gone is ignored."""
+        await self._request(
+            "PATCH",
+            f"{self._pod_path()}/{quote(name, safe='')}",
+            expected={200, 404},
+            headers={"Content-Type": "application/merge-patch+json"},
+            json={"metadata": {"annotations": annotations}},
+        )
 
     async def close(self) -> None:
         if self._owned_client:

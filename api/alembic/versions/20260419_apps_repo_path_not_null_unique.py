@@ -40,7 +40,7 @@ def upgrade() -> None:
         )
     ).fetchall()
     if dup_check:
-        formatted = ", ".join(f"'{row[0]}' ({row[1]}x)" for row in dup_check)
+        formatted = ", ".join(f"{row[0]!r} ({row[1]}x)" for row in dup_check)
         raise RuntimeError(
             f"Cannot enforce unique repo_path — duplicates found: {formatted}. "
             "Resolve manually before retrying this migration."

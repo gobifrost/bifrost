@@ -7,6 +7,7 @@ must stamp it, and the migration must stamp rows already in cancelling.
 
 from __future__ import annotations
 
+import asyncio
 import importlib.util
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
@@ -16,15 +17,18 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+from redis import exceptions as redis_exceptions
 from sqlalchemy import select, text
 
 from src.core.principal import UserPrincipal
+from src.jobs.consumers.agent_run import AgentRunConsumer
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Conversation
 from src.routers import agent_runs as agent_runs_router
 from src.services import chat_runs
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
+from src.services.execution.agent_run_service import CancelRequest, request_agent_run_cancel
 
 pytestmark = pytest.mark.asyncio
 
@@ -125,6 +129,117 @@ async def test_chat_run_cancel_records_cancel_request(
     assert reloaded.status == "cancelling"
     assert reloaded.cancel_requested_at is not None
     assert reloaded.cancel_requested_at >= before
+
+
+class FlakyRedis:
+    """Redis whose first write fails; ``setex`` and ``get`` as in redis.asyncio."""
+
+    def __init__(self) -> None:
+        self.values: dict[str, str] = {}
+        self.failures = 1
+
+    async def setex(self, name: str, time: int, value: str) -> bool:
+        if self.failures:
+            self.failures -= 1
+            raise redis_exceptions.ConnectionError("Connection reset by peer")
+        self.values[name] = value
+        return True
+
+    async def get(self, name: str) -> str | None:
+        return self.values.get(name)
+
+
+class FlakyRedisClient:
+    """``RedisClient.set_agent_run_cancel_flag`` over :class:`FlakyRedis`."""
+
+    def __init__(self, redis: FlakyRedis) -> None:
+        self._redis = redis
+
+    async def set_agent_run_cancel_flag(self, run_id: str) -> None:
+        await self._redis.setex(f"bifrost:agent_run:{run_id}:cancel", 3600, "1")
+
+
+async def _watcher_stops_the_run(run_id, redis: FlakyRedis) -> None:
+    """The consumer's cancel watcher, watching a stand-in for the run's task."""
+    work = asyncio.create_task(asyncio.Event().wait())
+    await AgentRunConsumer._cancel_watcher(str(run_id), work, redis)
+    with pytest.raises(asyncio.CancelledError):
+        await work
+
+
+async def test_agent_run_cancel_signals_again_after_a_failed_signal(
+    db_session, async_session_factory, seed_user, monkeypatch
+) -> None:
+    redis = FlakyRedis()
+    monkeypatch.setattr(agent_runs_router, "get_redis_client", lambda: FlakyRedisClient(redis))
+    monkeypatch.setattr("src.core.pubsub.publish_agent_run_update", AsyncMock())
+    run = _running_run(trigger_type="api", caller_user_id=str(seed_user.id))
+    db_session.add(run)
+    await db_session.commit()
+
+    with pytest.raises(redis_exceptions.ConnectionError):
+        await agent_runs_router.cancel_agent_run(
+            run_id=run.id, db=db_session, user=_principal(seed_user)
+        )
+    first = await _load_run(async_session_factory, run.id)
+    assert first.status == "cancelling"
+    assert redis.values == {}
+
+    async with async_session_factory() as retry_db:
+        response = await agent_runs_router.cancel_agent_run(
+            run_id=run.id, db=retry_db, user=_principal(seed_user)
+        )
+
+    assert response == {"run_id": str(run.id), "status": "cancelling"}
+    again = await _load_run(async_session_factory, run.id)
+    assert again.cancel_requested_at == first.cancel_requested_at
+    await _watcher_stops_the_run(run.id, redis)
+
+
+async def test_chat_run_cancel_signals_again_after_a_failed_signal(
+    db_session, async_session_factory, seed_user, monkeypatch
+) -> None:
+    redis = FlakyRedis()
+
+    @asynccontextmanager
+    async def _get_redis():
+        yield redis
+
+    monkeypatch.setattr(chat_runs, "get_redis", _get_redis)
+    monkeypatch.setattr(chat_runs, "publish_chat_run_event", AsyncMock())
+    conversation = Conversation(id=uuid4(), user_id=seed_user.id, title="Cancel me")
+    run = _running_run(trigger_type="chat", conversation_id=conversation.id)
+    db_session.add_all([conversation, run])
+    await db_session.commit()
+
+    with pytest.raises(redis_exceptions.ConnectionError):
+        await chat_runs.cancel_chat_run(db_session, _caller(seed_user), run.id)
+    first = await _load_run(async_session_factory, run.id)
+    assert first.status == "cancelling"
+    assert redis.values == {}
+
+    async with async_session_factory() as retry_db:
+        response = await chat_runs.cancel_chat_run(retry_db, _caller(seed_user), run.id)
+
+    assert response.status == "cancelling"
+    again = await _load_run(async_session_factory, run.id)
+    assert again.cancel_requested_at == first.cancel_requested_at
+    await _watcher_stops_the_run(run.id, redis)
+
+
+async def test_a_cancel_never_revives_a_run_that_ended(db_session, async_session_factory) -> None:
+    run = _running_run(trigger_type="api")
+    run.status = "completed"
+    db_session.add(run)
+    await db_session.commit()
+
+    async with async_session_factory() as db:
+        cancel = await request_agent_run_cancel(db, run.id)
+
+    assert cancel == CancelRequest(status="completed", accepted=False)
+    reloaded = await _load_run(async_session_factory, run.id)
+    assert reloaded.status == "completed"
+    assert reloaded.cancel_requested_at is None
 
 
 async def test_migration_backfills_only_cancelling_runs(db_session) -> None:

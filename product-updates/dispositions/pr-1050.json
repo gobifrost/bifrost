@@ -1,0 +1,10 @@
+{
+  "key": "pr:1050",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal handoff notes; no product change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1050"]
+  }
+}

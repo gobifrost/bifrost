@@ -16,7 +16,7 @@ The upstream proxy injects the current CLI token (Authorization), the bound
 install org (X-Bifrost-Org), and the bound install id (``?solution=`` /
 ``solution_id``) so data-plane calls run under the same install scope as
 deployed. The proxy renews JWT-shaped access tokens before expiry and still
-refreshes reactively on an upstream 401.
+refreshes reactively only on the upstream refresh-required challenge.
 
 WebSockets cannot carry the injected Authorization header. For platform
 realtime sockets, the proxy replaces the bundle's static `token` query param
@@ -32,6 +32,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import html
+import hmac
 import json
 import re
 import time
@@ -73,8 +74,8 @@ class _UpstreamAuthorityError(ValueError):
 
 
 DEV_AUTH_EXPIRED_DETAIL = (
-    "The local preview could not renew your CLI credentials yet. It will keep "
-    "trying automatically; run `bifrost login` only if your refresh session has expired."
+    "The local preview could not renew your CLI credentials. Run `bifrost login` "
+    "to recover this preview."
 )
 _AUTH_REFRESH_LEEWAY_SECONDS = 60.0
 _AUTH_REFRESH_POLL_SECONDS = 30.0
@@ -159,6 +160,7 @@ def build_dev_app(cfg: DevProxyConfig, host, vite_url: str) -> web.Application:
     app[_LOCAL_EXECUTION_CONTEXT] = _execution_context.get()
 
     app.router.add_get(_DEV_SESSION_PATH, _dev_session_handler)
+    app.router.add_post(f"{_DEV_SESSION_PATH}/refresh", _dev_session_refresh_handler)
     app.router.add_post("/api/workflows/execute", _execute_handler)
     app.router.add_route("*", "/ws/{tail:.*}", _ws_handler)
     app.router.add_route("*", "/api/{tail:.*}", _api_proxy_handler)
@@ -250,13 +252,22 @@ async def _refresh_cli_token(
     return True
 
 
+async def _recover_expired_cli_token(cfg: DevProxyConfig) -> bool:
+    """Recover a known-expired preview from its current credential source."""
+    if not cfg.auth_expired:
+        return True
+    return await _refresh_cli_token(cfg, cfg.token)
+
+
 async def _proactive_auth_refresh_loop(app: web.Application) -> None:
     """Renew an active preview token before its JWT expiry.
 
     The shared client refresh coordinator serializes this with any reactive
     HTTP refresh. A transient early failure does not poison the preview while
     the current token remains valid; the loop retries and only marks auth as
-    expired after the actual exp time passes.
+    expired after the actual exp time passes. Once expired, each 30-second
+    poll re-reads local credentials; a terminal 401 remains cached by the
+    coordinator, so the poll does not repeat the rejected upstream refresh.
     """
     cfg: DevProxyConfig = app[_CFG]
     while True:
@@ -283,7 +294,11 @@ async def _proactive_auth_refresh_loop(app: web.Application) -> None:
         )
         if refreshed and cfg.token != observed_access_token:
             continue
-        await asyncio.sleep(_AUTH_REFRESH_RETRY_SECONDS)
+        await asyncio.sleep(
+            _AUTH_REFRESH_POLL_SECONDS
+            if cfg.auth_expired
+            else _AUTH_REFRESH_RETRY_SECONDS
+        )
 
 
 async def _proactive_auth_refresh_context(app: web.Application):
@@ -303,11 +318,15 @@ async def _authed_upstream_request(
     drop_headers: set[str] | None = None,
     **kwargs,
 ) -> httpx.Response | None:
-    """Upstream request with injected auth, retried once after a token refresh.
+    """Upstream request with injected auth and a bounded challenge-only replay.
 
     ``drop_headers`` removes headers (lowercase names) after ``_auth_headers``
     builds them — the workflow-execute fallback must not carry ``X-Bifrost-App``
     (an install-scope signal) while every other route keeps it.
+
+    Once a preview is known expired, recover its local credential source before
+    forwarding another request. The shared refresh coordinator suppresses a
+    terminal rejected generation while allowing a new login to be adopted.
     """
     cfg: DevProxyConfig = request.app[_CFG]
     http: httpx.AsyncClient = request.app[_HTTP]
@@ -322,25 +341,22 @@ async def _authed_upstream_request(
             headers = {k: v for k, v in headers.items() if k.lower() not in drop_headers}
         return headers
 
-    observed_access_token = cfg.token
-    try:
-        headers = await _headers()
-    except BifrostAPIError as exc:
-        return exc.response
-    resp = await http.request(method, url, headers=headers, **kwargs)
-    if resp.status_code != 401:
-        return resp
-    if not await _refresh_cli_token(cfg, observed_access_token):
+    if not await _recover_expired_cli_token(cfg):
         return None
-    try:
-        headers = await _headers()
-    except BifrostAPIError as exc:
-        return exc.response
-    retry = await http.request(method, url, headers=headers, **kwargs)
-    if retry.status_code == 401:
-        cfg.auth_expired = True
-        return None
-    return retry
+    from bifrost._refreshing import RefreshBudget, is_refresh_challenge
+
+    budget = RefreshBudget()
+    while True:
+        observed_access_token = cfg.token
+        try:
+            headers = await _headers()
+        except BifrostAPIError as exc:
+            return exc.response
+        response = await http.request(method, url, headers=headers, **kwargs)
+        if not is_refresh_challenge(response) or not budget.take():
+            return response
+        if not await _refresh_cli_token(cfg, observed_access_token):
+            return None
 
 
 def _dev_auth_expired_json_response() -> web.Response:
@@ -362,11 +378,41 @@ async def _dev_session_handler(request: web.Request) -> web.Response:
     )
 
 
+async def _dev_session_refresh_handler(request: web.Request) -> web.Response:
+    """Acknowledge CLI renewal without returning a bearer to the browser."""
+    cfg: DevProxyConfig = request.app[_CFG]
+    if not hmac.compare_digest(request.headers.get("X-Bifrost-Dev-Session", "").encode(), cfg.session_id.encode()):
+        return web.Response(status=403, headers={"Cache-Control": "no-store"})
+    if not await _refresh_cli_token(cfg, cfg.token):
+        response = _dev_auth_expired_json_response()
+        response.headers["Cache-Control"] = "no-store"
+        return response
+    return web.Response(status=204, headers={"Cache-Control": "no-store"})
+
+
 def _dev_recovery_script(session_id: str) -> str:
     encoded_session_id = json.dumps(session_id)
     return f"""<script data-bifrost-dev-recovery>
 (() => {{
   const sessionId = {encoded_session_id};
+  let refreshPromise = null;
+  globalThis.__BIFROST_PLATFORM_AUTH_V1__ = {{
+    getAccessToken: () => null,
+    canRefreshAccessToken: () => true,
+    refreshAccessToken: () => {{
+      if (!refreshPromise) {{
+        refreshPromise = fetch("{_DEV_SESSION_PATH}/refresh", {{
+          method: "POST",
+          cache: "no-store",
+          headers: {{ "X-Bifrost-Dev-Session": sessionId }},
+        }}).then(response => response.status === 204)
+          .catch(() => false)
+          .finally(() => {{ refreshPromise = null; }});
+      }}
+      return refreshPromise;
+    }},
+    handleAuthenticationFailure: () => window.location.reload(),
+  }};
   const checkSession = async () => {{
     try {{
       const response = await fetch("{_DEV_SESSION_PATH}", {{ cache: "no-store" }});
@@ -433,9 +479,6 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>{escaped_product_name} Dev Auth Expired</title>
-    <script>
-      window.setTimeout(() => window.location.reload(), 3000);
-    </script>
     <script>
       try {{
         if ((localStorage.getItem("theme") || "dark") === "dark") {{
@@ -650,8 +693,8 @@ async def _dev_auth_expired_page_response(request: web.Request) -> web.Response:
           <div class="actions">
             <h2>What you can do:</h2>
             <ul>
-              <li>• This page retries automatically; no CLI restart is needed</li>
-              <li>• If it does not recover, run <code>bifrost login</code> in another terminal</li>
+              <li>• Run <code>bifrost login</code> in another terminal</li>
+              <li>• Then select Try Again to recover this preview</li>
               <li>• Keep <code>bifrost solution start</code> running on this origin</li>
             </ul>
           </div>
@@ -691,7 +734,12 @@ def _with_cli_token(rel_url: yarl.URL, token: str) -> yarl.URL:
     return rel_url.update_query(token=token)
 
 
-async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketResponse:
+async def _ws_proxy(
+    request: web.Request,
+    target_ws_url: str,
+    *,
+    mark_auth_expired_on_401: bool = False,
+) -> web.WebSocketResponse:
     requested = [
         p.strip()
         for p in request.headers.get("Sec-WebSocket-Protocol", "").split(",")
@@ -739,23 +787,43 @@ async def _ws_proxy(request: web.Request, target_ws_url: str) -> web.WebSocketRe
             # that result unread emits "Task exception was never retrieved"
             # during an otherwise clean `app start` / `solution start` stop.
             await asyncio.gather(*done, *pending, return_exceptions=True)
+            # The browser SDK owns bounded auth recovery on 4001. Preserve
+            # that signal instead of turning every upstream close into 1000.
+            close_code = ws_client.close_code or 1000
+            if close_code in {1005, 1006, 1015}:
+                close_code = 1011
             await ws_client.close()
-            await ws_server.close()
+            await ws_server.close(code=close_code)
+    except aiohttp.WSServerHandshakeError as exc:
+        if not mark_auth_expired_on_401 or exc.status != 401:
+            raise
+        request.app[_CFG].auth_expired = True
+        await ws_server.close(
+            code=4001,
+            message=b"authentication expired",
+        )
     finally:
         await session.close()
     return ws_server
 
 
-async def _ws_handler(request: web.Request) -> web.WebSocketResponse:
-    """Bridge realtime (/ws/...) sockets to the dev API."""
+async def _api_ws_proxy(request: web.Request) -> web.StreamResponse:
+    """Bridge an API realtime socket after recovering a known-expired preview."""
     cfg: DevProxyConfig = request.app[_CFG]
+    if not await _recover_expired_cli_token(cfg):
+        return _dev_auth_expired_json_response()
     target = _ws_scheme(
         _join_upstream(
             cfg.upstream_url,
             _with_cli_token(request.rel_url, cfg.token),
         )
     )
-    return await _ws_proxy(request, target)
+    return await _ws_proxy(request, target, mark_auth_expired_on_401=True)
+
+
+async def _ws_handler(request: web.Request) -> web.StreamResponse:
+    """Bridge realtime (/ws/...) sockets to the dev API."""
+    return await _api_ws_proxy(request)
 
 
 def _is_uuid(ref: str) -> bool:
@@ -928,13 +996,7 @@ async def _execute_handler(request: web.Request) -> web.Response:
 async def _api_proxy_handler(request: web.Request) -> web.StreamResponse:
     cfg: DevProxyConfig = request.app[_CFG]
     if _is_ws_upgrade(request):
-        target = _ws_scheme(
-            _join_upstream(
-                cfg.upstream_url,
-                _with_cli_token(request.rel_url, cfg.token),
-            )
-        )
-        return await _ws_proxy(request, target)
+        return await _api_ws_proxy(request)
     data = await request.read()
     try:
         resp = await _authed_upstream_request(

@@ -1,6 +1,12 @@
 """Shared Pydantic AI runtime primitives for every Bifrost agent surface."""
 
 from src.services.agent_runtime.budgets import AgentRunBudget, build_runtime_capabilities
+from src.services.agent_runtime.composition import (
+    AgentComposition,
+    AgentCompositionError,
+    ResolvedToolCall,
+    build_agent_composition,
+)
 from src.services.agent_runtime.empty_output import (
     EMPTY_OUTPUT_FALLBACK_MAX_TOKENS,
     EMPTY_OUTPUT_MAX_FALLBACKS,
@@ -34,6 +40,8 @@ from src.services.agent_runtime.usage import provider_reported_cost, reasoning_t
 
 __all__ = [
     "AgentRunBudget",
+    "AgentComposition",
+    "AgentCompositionError",
     "AgentRunCancelled",
     "BifrostToolset",
     "ChainModel",
@@ -48,6 +56,7 @@ __all__ = [
     "ToolEventHandler",
     "bound_tool_result_for_model",
     "build_chain_model",
+    "build_agent_composition",
     "build_runtime_capabilities",
     "agent_model_settings",
     "agent_model_settings_for_chain",
@@ -59,5 +68,6 @@ __all__ = [
     "provider_name_for_config",
     "provider_reported_cost",
     "reasoning_tokens",
+    "ResolvedToolCall",
     "response_fingerprint",
 ]

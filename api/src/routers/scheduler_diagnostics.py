@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, status
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.database import AsyncSession, get_db
@@ -30,6 +30,8 @@ from src.models.orm.scheduler_diagnostics import (
     SystemDiagnosticLog,
 )
 from src.models.orm.scheduler_leases import SchedulerLease
+from src.models.orm.work_dispatches import WorkDispatch
+from src.services.platform_jobs import WAITING_FOR_MEMORY
 from src.scheduler.leadership import TRIGGER_LEASE_NAME
 from src.scheduler.registry import SCHEDULED_TASKS, SCHEDULED_TASKS_BY_ID
 from src.services.scheduler_diagnostics import (
@@ -117,7 +119,7 @@ async def get_scheduler_diagnostics(
             id=row.id,
             hostname=row.hostname,
             pid=row.pid,
-            job_slots=row.job_slots,
+            runs_platform_jobs=row.job_slots > 0,
             is_leader=row.id == leader_owner,
             online=row.last_heartbeat_at >= online_cutoff,
             started_at=row.started_at,
@@ -129,7 +131,11 @@ async def get_scheduler_diagnostics(
         )
         for row in replica_rows
     ]
-    online_replicas = [replica for replica in replicas if replica.online]
+    # Capacity describes platform-job execution. API control replicas run
+    # none and stay in the replica list, but not in these figures.
+    online_replicas = [
+        replica for replica in replicas if replica.online and replica.runs_platform_jobs
+    ]
 
     state_rows = {
         row.task_id: row
@@ -191,6 +197,13 @@ async def get_scheduler_diagnostics(
         oldest_queued_seconds = max(
             0.0, (now - min(created_at for created_at, _ in queued_rows)).total_seconds()
         )
+    runs_waiting, oldest_run = (
+        await ctx.db.execute(
+            select(func.count(WorkDispatch.id), func.min(WorkDispatch.created_at)).where(
+                WorkDispatch.assigned_worker_id.is_(None)
+            )
+        )
+    ).one()
     utilization = [
         100 * replica.memory_current_bytes / replica.memory_limit_bytes
         for replica in online_replicas
@@ -200,14 +213,17 @@ async def get_scheduler_diagnostics(
     ]
     capacity = SchedulerCapacityStatus(
         replicas_online=len(online_replicas),
-        slots_total=sum(replica.job_slots for replica in online_replicas),
-        slots_running=sum(replica.active_platform_jobs for replica in online_replicas),
+        platform_jobs_running=sum(replica.active_platform_jobs for replica in online_replicas),
         jobs_queued=len(queued_rows),
         jobs_waiting_for_memory=sum(
-            1 for _, phase in queued_rows if phase == "Waiting for scheduler memory"
+            1 for _, phase in queued_rows if phase == WAITING_FOR_MEMORY
         ),
         oldest_queued_seconds=oldest_queued_seconds,
         max_memory_utilization_percent=max(utilization) if utilization else None,
+        runs_waiting=runs_waiting,
+        oldest_waiting_run_seconds=(
+            None if oldest_run is None else max(0.0, (now - oldest_run).total_seconds())
+        ),
     )
 
     return SchedulerDiagnosticsResponse(

@@ -271,7 +271,7 @@ class TestForkedAIStream:
         self, async_session_factory, monkeypatch
     ):
         """A real child streams AI over the socket with HTTP disabled."""
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.core.principal import UserPrincipal
         from src.models.orm.audit import AuditLog
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -291,7 +291,7 @@ class TestForkedAIStream:
             seed.add(organization)
             await seed.commit()
             org_id = str(organization.id)
-        engine_token, _ = mint_engine_token(
+        engine_token, _ = legacy_engine_token(
             execution_id=execution_id,
             timeout_seconds=120,
         )

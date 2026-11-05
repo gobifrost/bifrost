@@ -19,14 +19,13 @@ from sqlalchemy import delete, update
 
 from src.models.contracts.artifacts import ModelCapabilities
 from src.core.principal import UserPrincipal
-from src.models.contracts.agents import ChatRequest
 from src.models.enums import AgentAccessLevel
 from src.models.orm.agents import Agent
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
-from src.routers.chat import send_message
 from src.services.llm.base import LLMConfig
 from src.services.llm.pydantic_client import PydanticAIClient
+from tests.e2e.fixtures.chat_turn import chat_turn_in_process
 
 
 pytestmark = pytest.mark.asyncio
@@ -73,6 +72,7 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
     org1_user,
     db_session,
     test_agent_with_tools,
+    platform_admin,
 ):
     agent_data = test_agent_with_tools["agent"]
     workflow = test_agent_with_tools["workflow"]
@@ -90,6 +90,32 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
         .values(organization_id=None)
     )
     await db_session.commit()
+    # Extend the existing single worker job to prove both the child context
+    # and the authenticated SDK endpoint retain the agent's durable origin.
+    from tests.e2e.conftest import write_and_register
+
+    write_and_register(
+        e2e_client,
+        platform_admin.headers,
+        workflow["file_path"],
+        f'''from bifrost import workflow, context, api
+
+@workflow(name={workflow["name"]!r}, is_tool=True)
+async def {workflow["name"]}(query: str) -> str:
+    response = await api.get("/api/sdk/context")
+    response.raise_for_status()
+    remote = response.json()
+    assert context.execution_origin == "agent"
+    assert context.is_agent is True
+    assert context.agent_id == {agent_data["id"]!r}
+    assert remote["execution_origin"] == context.execution_origin
+    assert remote["agent_id"] == context.agent_id
+    assert remote["original_user_id"] == context.original_user_id
+    assert remote["original_user_is_platform_admin"] is False
+    return f"result: {{query}}"
+''',
+        workflow["name"],
+    )
     conversation_response = e2e_client.post(
         "/api/chat/conversations",
         json={
@@ -143,14 +169,11 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
                 organization_id=org1_user.organization_id,
                 is_superuser=org1_user.is_superuser,
             )
-            response = await send_message(
-                conversation_id=conversation_id,
-                request=ChatRequest(message="Run the workflow tool."),
-                db=db_session,
-                user=principal,
+            reply = await chat_turn_in_process(
+                db_session, principal, conversation_id, "Run the workflow tool."
             )
 
-        assert response.content == "Workflow tool completed."
+        assert reply == "Workflow tool completed."
         messages_response = e2e_client.get(
             f"/api/chat/conversations/{conversation_id}/messages",
             headers=org1_user.headers,
@@ -169,6 +192,8 @@ async def test_chat_handler_executes_global_agent_workflow_in_caller_org(
         execution = await db_session.get(Execution, UUID(execution_id))
         assert execution is not None
         assert execution.organization_id == org1_user.organization_id
+        assert execution.execution_origin == "agent"
+        assert str(execution.agent_id) == agent_data["id"]
     finally:
         if execution_id is not None:
             await db_session.execute(

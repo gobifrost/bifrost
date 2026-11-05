@@ -12,10 +12,12 @@ import { ApplicationUpdateScreen } from "@/components/ApplicationUpdateScreen";
 import { AppLoadingSkeleton } from "./AppLoadingSkeleton";
 import { BundleLoadFailure } from "./BundleFeedback";
 import { getAppLoadErrorMessage } from "./app-load-error";
+import { useAuth } from "@/contexts/AuthContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
 import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
 import { ImpersonationBanner } from "@/components/layout/ImpersonationBanner";
+import { preloadHostedSdkFactory } from "@/lib/app-sdk/hosted-loader";
 
 export interface BifrostAppBootstrap {
 	/** Router basename so app URLs live below /apps/{slug}. */
@@ -227,6 +229,7 @@ interface StandaloneV2AppProps {
 	baseUrl: string;
 	appOrgId: string | null;
 	runtimeContract: StandaloneV2RuntimeContract;
+	sdkBindingApiMajor?: number | null;
 }
 
 interface StandaloneAssets {
@@ -234,6 +237,7 @@ interface StandaloneAssets {
 	css: string | null;
 	baseUrl: string;
 	runtimeContract: StandaloneV2RuntimeContract;
+	sdkBindingApiMajor: number | null;
 }
 
 interface StandaloneBundleManifest {
@@ -242,6 +246,7 @@ interface StandaloneBundleManifest {
 	base_url: string;
 	app_model?: "inline_v1" | "standalone_v2";
 	runtime_contract?: StandaloneV2RuntimeContract;
+	sdk_binding_api_major?: number | null;
 }
 
 function StandaloneV2Frame({ children }: { children: ReactNode }) {
@@ -261,14 +266,16 @@ export function StandaloneV2App({
 	entry,
 	css,
 	baseUrl,
+	appOrgId,
 	runtimeContract,
+	sdkBindingApiMajor = null,
 }: StandaloneV2AppProps) {
 	const containerRef = useRef<HTMLDivElement>(null);
 	const [loadError, setLoadError] = useState<string | null>(null);
 	const [isRecovering, setIsRecovering] = useState(false);
 	const sourceAssets = useMemo<StandaloneAssets>(
-		() => ({ entry, css, baseUrl, runtimeContract }),
-		[entry, css, baseUrl, runtimeContract],
+		() => ({ entry, css, baseUrl, runtimeContract, sdkBindingApiMajor }),
+		[entry, css, baseUrl, runtimeContract, sdkBindingApiMajor],
 	);
 	const sourceKey = useMemo(
 		() => JSON.stringify({ appId, solutionId, isPreview, assets: sourceAssets }),
@@ -283,6 +290,7 @@ export function StandaloneV2App({
 	const assets = recovery?.sourceKey === sourceKey ? recovery.assets : sourceAssets;
 	const recoveryAttempts = useRef(new Set<string>());
 	const { scope } = useOrgScope();
+	const { isPlatformAdmin } = useAuth();
 
 	const token = getActiveToken();
 	const isAuthenticated = Boolean(token);
@@ -306,9 +314,13 @@ export function StandaloneV2App({
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
 			: `/apps/${appSlug}`;
-		// Visibility/deployment scope is separate from runtime data scope. All
-		// Apps run against the user's currently selected organization.
-		const orgScope = scope.type === "organization" ? scope.orgId : null;
+		// Visibility/deployment scope is separate from runtime data scope.
+		// Platform admins use an App's owning organization when present;
+		// global Apps and other users use their selected organization.
+		const selectedOrg = scope.type === "organization" ? scope.orgId : null;
+		const orgScope = isPlatformAdmin
+			? (appOrgId ?? selectedOrg)
+			: selectedOrg;
 		const entryUrl = new URL(
 			`${assets.baseUrl}/${assets.entry}`,
 			window.location.origin,
@@ -351,6 +363,17 @@ export function StandaloneV2App({
 			},
 			theme: document.documentElement.classList.contains("dark") ? "dark" : "light",
 		};
+		const hostedSdkReady = (() => {
+			if (assets.sdkBindingApiMajor === null) return Promise.resolve();
+			if (assets.sdkBindingApiMajor !== 1) {
+				return Promise.reject(
+					new Error(
+						"This application requires a Bifrost SDK binding version this server does not support. Reload after the application is updated.",
+					),
+				);
+			}
+			return preloadHostedSdkFactory(bootstrap.baseUrl).then(() => undefined);
+		})();
 
 		const reportError = async (value: unknown) => {
 			if (cancelled) return;
@@ -394,6 +417,7 @@ export function StandaloneV2App({
 					css: manifest.css,
 					baseUrl: manifest.base_url,
 					runtimeContract: manifest.runtime_contract ?? null,
+					sdkBindingApiMajor: manifest.sdk_binding_api_major ?? null,
 				};
 				if (JSON.stringify(refreshed) === failedAssetKey) {
 					throw value instanceof Error
@@ -429,7 +453,8 @@ export function StandaloneV2App({
 
 		let legacyBootstrap: LegacyBifrostAppBootstrap | null = null;
 		if (assets.runtimeContract === "mount-v1") {
-			Promise.all([loadMountModule(entryUrl), stylesheetReady])
+			hostedSdkReady
+				.then(() => Promise.all([loadMountModule(entryUrl), stylesheetReady]))
 				.then(([appModule]) => mountModule(appModule))
 				.catch((error: unknown) => void reportError(error));
 		} else {
@@ -441,7 +466,7 @@ export function StandaloneV2App({
 				},
 			};
 			const bootstrapForLoad = legacyBootstrap;
-			stylesheetReady
+			Promise.all([hostedSdkReady, stylesheetReady])
 				.then(() => loadLegacyOrUnmarkedModule(entryUrl, bootstrapForLoad))
 				.then((result) => {
 					if (cancelled) return;
@@ -483,7 +508,7 @@ export function StandaloneV2App({
 			}
 			mountEl.replaceChildren();
 		};
-	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, isAuthenticated]);
+	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, appOrgId, isPlatformAdmin, isAuthenticated]);
 
 	if (!isAuthenticated) {
 		return (

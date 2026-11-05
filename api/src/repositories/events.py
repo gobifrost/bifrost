@@ -12,10 +12,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Sequence
 from uuid import UUID
 
-from sqlalchemy import case, func, select
+from sqlalchemy import Select, case, func, select
 from sqlalchemy.orm import joinedload, selectinload
 
-from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus
+from src.models.enums import (
+    LIVE_EXECUTION_STATUSES,
+    EventDeliveryStatus,
+    EventSourceType,
+    EventStatus,
+)
+from src.models.orm.agent_runs import AgentRun
+from src.models.orm.executions import Execution
 from src.models.orm.events import (
     Event,
     EventDelivery,
@@ -481,6 +488,68 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
         await self.session.refresh(delivery)
         return delivery
 
+    async def _complete_owned_delivery(
+        self,
+        statement: Select[tuple[EventDelivery]],
+        status: EventDeliveryStatus,
+        error_message: str | None,
+    ) -> EventDelivery | None:
+        """Persist one canonical run outcome while holding its delivery row."""
+        result = await self.session.execute(
+            statement.options(
+                joinedload(EventDelivery.event),
+                joinedload(EventDelivery.subscription),
+            )
+            .execution_options(populate_existing=True)
+            .with_for_update(of=EventDelivery)
+        )
+        delivery = result.unique().scalar_one_or_none()
+        if delivery is None:
+            return None
+
+        # A retried delivery points at a new run, and therefore does not match
+        # this query. Repeated callbacks for the current run are no-ops once
+        # that same terminal outcome has been recorded.
+        if delivery.status == status and delivery.attempt_count > 0:
+            return None
+
+        delivery.status = status
+        delivery.completed_at = datetime.now(timezone.utc)
+        delivery.attempt_count += 1
+        delivery.error_message = error_message
+        await self.session.flush()
+        return delivery
+
+    async def complete_from_execution(
+        self,
+        execution_id: UUID,
+        status: EventDeliveryStatus,
+        error_message: str | None = None,
+    ) -> EventDelivery | None:
+        """Record an execution outcome if it still owns its delivery."""
+        return await self._complete_owned_delivery(
+            select(EventDelivery).where(EventDelivery.execution_id == execution_id),
+            status,
+            error_message,
+        )
+
+    async def complete_from_agent_run(
+        self,
+        delivery_id: UUID,
+        agent_run_id: UUID,
+        status: EventDeliveryStatus,
+        error_message: str | None = None,
+    ) -> EventDelivery | None:
+        """Record an agent outcome if it still owns its delivery."""
+        return await self._complete_owned_delivery(
+            select(EventDelivery).where(
+                EventDelivery.id == delivery_id,
+                EventDelivery.agent_run_id == agent_run_id,
+            ),
+            status,
+            error_message,
+        )
+
     async def get_pending_for_retry(self, limit: int = 100) -> Sequence[EventDelivery]:
         """Get failed deliveries pending retry (for future use)."""
         result = await self.session.execute(
@@ -535,12 +604,12 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
 
     async def get_stuck_deliveries(self, timeout_minutes: int) -> Sequence[EventDelivery]:
         """
-        Get deliveries stuck in PENDING or QUEUED status past timeout.
+        Get unowned deliveries stuck in PENDING or QUEUED status past timeout.
 
         A delivery is considered stuck if it's been in PENDING or QUEUED status
-        for longer than timeout_minutes without completing. This catches:
-        - PENDING: Processor crashed before queueing to RabbitMQ
-        - QUEUED: Worker crashed or message was lost
+        for longer than timeout_minutes without an active run. This catches:
+        - PENDING: Processor crashed before staging the run
+        - QUEUED: The run is missing or its terminal callback was missed
 
         Args:
             timeout_minutes: Minutes after which a delivery is considered stuck
@@ -549,12 +618,30 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
             List of stuck EventDelivery records
         """
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=timeout_minutes)
+        active_execution = (
+            select(Execution.id)
+            .where(
+                Execution.id == EventDelivery.execution_id,
+                Execution.status.in_(LIVE_EXECUTION_STATUSES),
+            )
+            .exists()
+        )
+        active_agent_run = (
+            select(AgentRun.id)
+            .where(
+                AgentRun.id == EventDelivery.agent_run_id,
+                AgentRun.status.in_(("queued", "running", "cancelling")),
+            )
+            .exists()
+        )
 
         result = await self.session.execute(
             select(EventDelivery)
             .options(
                 joinedload(EventDelivery.event),
                 joinedload(EventDelivery.workflow),
+                joinedload(EventDelivery.execution),
+                joinedload(EventDelivery.agent_run),
             )
             .where(
                 EventDelivery.status.in_([
@@ -569,5 +656,10 @@ class EventDeliveryRepository(BaseRepository[EventDelivery]):
                 )
                 < cutoff
             )
+            .where(~active_execution, ~active_agent_run)
+            # The cleanup transaction owns the delivery while it reconciles a
+            # terminal callback or times out an unowned delivery. Locking only
+            # this table is valid with the eager relationship joins above.
+            .with_for_update(of=EventDelivery, skip_locked=True)
         )
         return result.unique().scalars().all()

@@ -20,10 +20,10 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 171,
+        "cli": 173,
         "manifest": 16,
         "mcp": 94,
-        "rest": 685,
+        "rest": 697,
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():
@@ -31,6 +31,19 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         for row in rows:
             assert row["status"]
             assert row["reason"]
+
+
+@pytest.mark.parametrize("method", ["GET", "POST"])
+def test_app_consent_is_authentication_transport(method: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(
+        row for row in inventory["uncataloged"]["rest"]
+        if row["path"] == "/auth/app-connections/{request_id}" and row["method"] == method
+    )
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Reviews or records the user's app authentication decision; owns no entity state."
+    )
 
 
 def test_solution_dev_context_is_authentication_transport() -> None:
@@ -44,6 +57,18 @@ def test_solution_dev_context_is_authentication_transport() -> None:
     assert row["status"] == "transport_only"
     assert row["reason"] == (
         "Issues user-bound context for local Solution development; owns no entity state."
+    )
+
+
+@pytest.mark.parametrize("path", ["/auth/device/authorize", "/auth/device/deny"])
+def test_device_decisions_are_authentication_transport(path: str) -> None:
+    inventory = build_operation_inventory(app, REPO_ROOT)
+    row = next(row for row in inventory["uncataloged"]["rest"] if row["path"] == path)
+
+    assert row["method"] == "POST"
+    assert row["status"] == "transport_only"
+    assert row["reason"] == (
+        "Records the user's decision for CLI authentication; owns no entity state."
     )
 
 

@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { cn } from "@/lib/utils";
 import { Outlet, useLocation } from "react-router-dom";
 import { Header } from "./Header";
@@ -88,9 +89,20 @@ export function PageShell({ padded = false }: { padded?: boolean }) {
 						)}
 					>
 						<RouteErrorBoundary>
-							<RouteReadyReveal key={routeRevealKey}>
-								<Outlet />
-							</RouteReadyReveal>
+							{/* A page still loading keeps the sidebar, header and an open
+							    mobile drawer; without this the app-level boundary replaces them. */}
+							<Suspense
+								fallback={
+									<PageLoader
+										message="Loading page…"
+										size="sm"
+									/>
+								}
+							>
+								<RouteReadyReveal key={routeRevealKey}>
+									<Outlet />
+								</RouteReadyReveal>
+							</Suspense>
 						</RouteErrorBoundary>
 					</main>
 				</div>

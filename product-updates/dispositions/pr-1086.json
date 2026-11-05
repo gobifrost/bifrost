@@ -1,0 +1,15 @@
+{
+  "key": "pr:1086",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Developer settings now links to the current external SDK documentation.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/issues/1085",
+      "https://github.com/gobifrost/bifrost/pull/1086",
+      "Reviewed the URL-only repair against the reported destination; replacement URL returned HTTP 200."
+    ]
+  }
+}

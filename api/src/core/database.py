@@ -67,9 +67,46 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
     return cleaned_url, connect_args
 
 
+def create_pool_engine(url: str, *, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
+    """An engine for one of the process's connection pools.
+
+    There is no pre-ping. After a database or pooler restart, the first
+    statement on a broken connection fails and SQLAlchemy invalidates the
+    pool, so later checkouts reconnect. Connections already checked out when
+    that happens are not repaired: each can still fail once, and every engine
+    in every process detects the restart on its own. Pre-ping instead spent a
+    round trip and a rollback on every checkout to hide those failures.
+
+    This assumes the pooler does not close idle client connections on its
+    own (PgBouncer ``client_idle_timeout``, disabled by default). A timeout
+    shorter than ``pool_recycle`` would fail the first statement on every
+    connection that sat idle that long.
+    """
+    db_url, connect_args = _prepare_asyncpg_url(url)
+    return create_async_engine(
+        db_url,
+        echo=echo,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_pre_ping=False,
+        pool_timeout=pool_timeout,
+        pool_recycle=1800,  # Recycle connections every 30 min
+        connect_args=connect_args,
+    )
+
+
 # Global engine and session factory (initialized on startup)
 _engine: AsyncEngine | None = None
 _async_session_factory: async_sessionmaker[AsyncSession] | None = None
+# Work acceptance runs while a request usually still holds a connection from
+# the main pool. Its own small pool means a burst of requests can never wait
+# on each other for a second connection.
+_dispatch_engine: AsyncEngine | None = None
+_dispatch_session_factory: async_sessionmaker[AsyncSession] | None = None
+# An executor's heartbeat has its own connection: a heartbeat that waited
+# behind the runs' queries could make a busy, healthy executor look lost.
+_liveness_engine: AsyncEngine | None = None
+_liveness_session_factory: async_sessionmaker[AsyncSession] | None = None
 
 
 def get_engine(settings: Settings | None = None) -> AsyncEngine:
@@ -88,18 +125,21 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
         if settings is None:
             settings = get_settings()
 
-        # Convert sslmode parameter for asyncpg compatibility
-        db_url, connect_args = _prepare_asyncpg_url(settings.database_url)
+        pool_size = settings.database_pool_size
+        max_overflow = settings.database_max_overflow
+        # Retain the existing bounded connection allowance after a burst.
+        # QueuePool discards returned overflow connections, which otherwise
+        # repeats connection setup on this process's main request/claim path.
+        # Preserve SQLAlchemy's unlimited sentinels (size 0, overflow -1).
+        if pool_size > 0 and max_overflow >= 0:
+            pool_size, max_overflow = pool_size + max_overflow, 0
 
-        _engine = create_async_engine(
-            db_url,
-            echo=settings.debug,
-            pool_size=settings.database_pool_size,
-            max_overflow=settings.database_max_overflow,
-            pool_pre_ping=True,  # Verify connections before use
+        _engine = create_pool_engine(
+            settings.database_url,
+            pool_size=pool_size,
+            max_overflow=max_overflow,
             pool_timeout=30,  # Fail fast when pool is exhausted
-            pool_recycle=1800,  # Recycle connections every 30 min
-            connect_args=connect_args,
+            echo=settings.debug,
         )
 
     return _engine
@@ -195,6 +235,72 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
             raise
 
 
+def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _dispatch_engine, _dispatch_session_factory
+
+    if _dispatch_session_factory is None:
+        settings = get_settings()
+        _dispatch_engine = create_pool_engine(
+            settings.database_url,
+            pool_size=settings.database_dispatch_pool_size,
+            max_overflow=settings.database_dispatch_max_overflow,
+            pool_timeout=30,
+            echo=settings.debug,
+        )
+        _dispatch_session_factory = async_sessionmaker(
+            _dispatch_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    return _dispatch_session_factory
+
+
+@asynccontextmanager
+async def get_dispatch_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """Session for accepting work from inside a request (separate pool)."""
+    async with _get_dispatch_session_factory()() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
+def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _liveness_engine, _liveness_session_factory
+
+    if _liveness_session_factory is None:
+        settings = get_settings()
+        _liveness_engine = create_pool_engine(
+            settings.database_url,
+            pool_size=1,
+            max_overflow=0,
+            pool_timeout=10,
+            echo=settings.debug,
+        )
+        _liveness_session_factory = async_sessionmaker(
+            _liveness_engine,
+            class_=AsyncSession,
+            expire_on_commit=False,
+            autoflush=False,
+        )
+    return _liveness_session_factory
+
+
+@asynccontextmanager
+async def get_liveness_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """Session for an executor's heartbeat (its own single connection)."""
+    async with _get_liveness_session_factory()() as session:
+        try:
+            yield session
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            raise
+
+
 async def init_db() -> None:
     """
     Initialize database connection and verify connectivity.
@@ -214,12 +320,21 @@ async def close_db() -> None:
 
     Called on application shutdown.
     """
-    global _engine, _async_session_factory
+    global _engine, _async_session_factory, _dispatch_engine, _dispatch_session_factory
+    global _liveness_engine, _liveness_session_factory
 
     if _engine is not None:
         await _engine.dispose()
         _engine = None
         _async_session_factory = None
+    if _dispatch_engine is not None:
+        await _dispatch_engine.dispose()
+        _dispatch_engine = None
+        _dispatch_session_factory = None
+    if _liveness_engine is not None:
+        await _liveness_engine.dispose()
+        _liveness_engine = None
+        _liveness_session_factory = None
 
 
 def reset_db_state() -> None:
@@ -229,6 +344,11 @@ def reset_db_state() -> None:
     Clears the engine and session factory so they are recreated
     with fresh settings on next access.
     """
-    global _engine, _async_session_factory
+    global _engine, _async_session_factory, _dispatch_engine, _dispatch_session_factory
+    global _liveness_engine, _liveness_session_factory
     _engine = None
     _async_session_factory = None
+    _dispatch_engine = None
+    _dispatch_session_factory = None
+    _liveness_engine = None
+    _liveness_session_factory = None

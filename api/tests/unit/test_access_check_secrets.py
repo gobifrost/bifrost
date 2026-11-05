@@ -32,8 +32,11 @@ async def test_a_config_secret_read_is_noted_without_its_value(collector, monkey
         def __init__(self, *args, **kwargs):
             pass
 
-        async def merged_for_sdk(self, external: bool = False):
-            return {"api_key": {"value": encrypt_secret("s3cret"), "type": "secret"}, "plain": {"value": "x"}}
+        async def get_for_sdk(self, key: str, external: bool = False):
+            return {
+                "api_key": {"value": encrypt_secret("s3cret"), "type": "secret"},
+                "plain": {"value": "x"},
+            }.get(key)
 
     monkeypatch.setattr(config_repo_module, "ConfigRepository", FakeRepo)
 
@@ -55,8 +58,8 @@ async def test_config_metadata_redacts_a_secret_without_decrypting(monkeypatch) 
         def __init__(self, *args, **kwargs):
             pass
 
-        async def merged_for_sdk(self, external: bool = False):
-            return {"api_key": {"value": encrypt_secret("s3cret"), "type": "secret"}}
+        async def get_for_sdk(self, key: str, external: bool = False):
+            return {"api_key": {"value": encrypt_secret("s3cret"), "type": "secret"}}.get(key)
 
     caller = Caller(UserPrincipal(user_id=uuid4(), email="reader@contoso.example", organization_id=org), None)
     monkeypatch.setattr(config_repo_module, "ConfigRepository", FakeRepo)

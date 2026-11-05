@@ -1,0 +1,13 @@
+{
+  "key": "pr:1146",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal authorization plumbing with no customer-visible behaviour: an authority-version table and triggers, a run refresh branch on /auth/refresh that nothing calls yet, and a refresh-required challenge header on an expired token that is already refused; the operator procedure lives in docs/runbooks/authz-epoch.md.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1146",
+      "Program authorization: Jack approved the token program (spec docs/superpowers/specs/2026-10-27-access-token-claims-design.md, amended 2026-10-30) and its PR1a merge unit (plan docs/plans/2026-10-30-token-pr1-implementation-plan.md revision 6)."
+    ]
+  }
+}

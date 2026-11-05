@@ -15,7 +15,7 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 
 import react from "@vitejs/plugin-react";
-import type { Page } from "@playwright/test";
+import type { Page } from "./fixtures/api-fixture";
 import { build } from "vite";
 
 import { expect, test } from "./fixtures/api-fixture";
@@ -200,18 +200,15 @@ test.describe("Apps v2 code splitting", () => {
 		const solutionId = (await solution.json()).id;
 
 		try {
-			const deploy = await page
-				.context()
-				.request.post(`/api/solutions/${solutionId}/deploy`, {
-					headers: await api.csrfHeader(),
-					multipart: {
-						file: {
-							name: "solution.zip",
-							mimeType: "application/zip",
-							buffer: workspaceZip(appId, built.distFiles),
-						},
+			const deploy = await api.post(`/api/solutions/${solutionId}/deploy`, {
+				multipart: {
+					file: {
+						name: "solution.zip",
+						mimeType: "application/zip",
+						buffer: workspaceZip(appId, built.distFiles),
 					},
-				});
+				},
+			});
 			expect(deploy.status(), await deploy.text()).toBe(202);
 			const jobId = (await deploy.json()).deploy_job_id;
 			await expect
@@ -327,18 +324,15 @@ test.describe("Apps v2 code splitting", () => {
 		const solutionId = (await solution.json()).id;
 
 		const deploy = async (distFiles: Record<string, string>) => {
-			const response = await page
-				.context()
-				.request.post(`/api/solutions/${solutionId}/deploy`, {
-					headers: await api.csrfHeader(),
-					multipart: {
-						file: {
-							name: "solution.zip",
-							mimeType: "application/zip",
-							buffer: workspaceZip(appId, distFiles),
-						},
+			const response = await api.post(`/api/solutions/${solutionId}/deploy`, {
+				multipart: {
+					file: {
+						name: "solution.zip",
+						mimeType: "application/zip",
+						buffer: workspaceZip(appId, distFiles),
 					},
-				});
+				},
+			});
 			expect(response.status(), await response.text()).toBe(202);
 			const jobId = (await response.json()).deploy_job_id;
 			await expect
@@ -434,7 +428,10 @@ test.describe("Apps v2 code splitting", () => {
 				)
 				.toBe("rgb(219, 234, 254)");
 
-			expect(staleEntryFailures).toBe(1);
+			// The shell's modulepreload and the module script each request the
+			// stale entry once (a failed preload is not cached). Recovery then
+			// reads the manifest once and never requests the stale entry again.
+			expect(staleEntryFailures).toBe(2);
 			expect(manifestRequests).toBe(2);
 			expect(documentLoads).toBe(1);
 			await page.screenshot({

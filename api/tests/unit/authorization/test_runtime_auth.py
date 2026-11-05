@@ -14,6 +14,7 @@ from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.explain import Powers, RunUser
 from src.services.authorization.runtime import RuntimeAuthority
 from src.services.authorization.runtime_auth import (
+    is_legacy_runtime_payload,
     is_runtime_credential_payload,
     load_runtime_principal,
 )
@@ -22,9 +23,18 @@ from src.services.authorization.runtime_auth import (
 class _Db:
     def __init__(self, rows: dict[tuple[type, object], object]) -> None:
         self.rows = rows
+        self.load_options: list[tuple[type, object, object]] = []
 
-    async def get(self, model: type, identity: object, *, populate_existing: bool = False) -> object | None:
+    async def get(
+        self,
+        model: type,
+        identity: object,
+        *,
+        options: object = (),
+        populate_existing: bool = False,
+    ) -> object | None:
         assert populate_existing
+        self.load_options.append((model, identity, options))
         return self.rows.get((model, identity))
 
 
@@ -34,16 +44,38 @@ def test_legacy_runtime_claims_are_runtime_credentials_and_cannot_fall_through()
     assert is_runtime_credential_payload({"sub": str(uuid4()), "email": "person@example.test"}) is False
 
 
+def test_only_a_runtime_payload_without_ver_is_bridged() -> None:
+    legacy = {"sub": str(uuid4()), "credential_kind": "workflow_execution"}
+    assert is_legacy_runtime_payload(legacy) is True
+    assert is_legacy_runtime_payload({"engine_execution_id": str(uuid4())}) is True
+    assert is_legacy_runtime_payload({**legacy, "ver": 1}) is False
+    assert is_legacy_runtime_payload({**legacy, "ver": None}) is False
+    assert is_legacy_runtime_payload({"sub": str(uuid4()), "email": "person@example.test"}) is False
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("actor_admin", [False, True])
-async def test_runtime_principal_uses_database_authority_not_spoofed_token_claims(monkeypatch: pytest.MonkeyPatch, actor_admin: bool) -> None:
+async def test_a_legacy_runtime_payload_is_resolved_from_the_database_not_its_claims(
+    monkeypatch: pytest.MonkeyPatch, actor_admin: bool
+) -> None:
+    """The legacy bridge (and in-process callers): authority comes from the
+    database, never from the payload. Claims minted by ``issue_access_token``
+    are authority only through the validator (``test_validator.py``: one
+    statement; a tampered token is refused)."""
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
 
     run_user_id = uuid4()
     actor_id = uuid4()
     execution_id = uuid4()
-    actor = SimpleNamespace(id=actor_id, email="actor@example.test", name="Actor", organization_id=None, is_external=True)
+    actor = SimpleNamespace(
+        id=actor_id,
+        email="actor@example.test",
+        name="Actor",
+        organization_id=None,
+        is_external=True,
+        organization=None,
+    )
     run_user = SimpleNamespace(id=run_user_id, organization_id=None)
     context = AuthorizationContext(
         user_id=run_user_id,
@@ -92,6 +124,7 @@ async def test_runtime_principal_uses_database_authority_not_spoofed_token_claim
     assert principal.engine_solution_id is None
     assert principal.runtime_authority is authority
     assert principal.engine_execution_id == str(execution_id)
+    assert [model for model, _, _ in db.load_options] == [User, User]
     from src.services.authorization.enforce import Caller, allows_permission
 
     caller = Caller(principal, context)

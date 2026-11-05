@@ -11,15 +11,6 @@ REPO_ROOT = Path(__file__).resolve().parents[3]
 LOCAL_K8S_DIR = REPO_ROOT / "k8s" / "local"
 SCRIPT = REPO_ROOT / "scripts" / "kubernetes" / "local-kind.sh"
 
-EXPECTED_WORKER_QUEUES = {
-    "workflow-executions": "1",
-    "agent-runs": "1",
-    "agent-summarization": "1",
-    "agent-summarization-backfill": "5",
-    "agent-tuning-chat": "1",
-}
-
-
 def _load_documents() -> list[dict[str, Any]]:
     docs: list[dict[str, Any]] = []
     for path in sorted(LOCAL_K8S_DIR.glob("*.yaml")):
@@ -57,40 +48,18 @@ def _doc(kind: str, name: str) -> dict[str, Any]:
     raise AssertionError(f"{kind}/{name} not found")
 
 
-def test_worker_scaledobject_tracks_all_queue_consumers() -> None:
-    scaled_object = _doc("ScaledObject", "bifrost-worker")
-
-    assert scaled_object["spec"]["scaleTargetRef"]["name"] == "bifrost-worker"
-    assert scaled_object["spec"]["minReplicaCount"] == 1
-    assert scaled_object["spec"]["maxReplicaCount"] == 4
-    assert (
-        scaled_object["spec"]["advanced"]["horizontalPodAutoscalerConfig"]["behavior"][
-            "scaleDown"
-        ]["selectPolicy"]
-        == "Disabled"
-    )
-    assert scaled_object["metadata"]["annotations"]["autoscaling.keda.sh/paused-scale-in"] == "true"
-
-    triggers = {
-        trigger["metadata"]["queueName"]: trigger
-        for trigger in scaled_object["spec"]["triggers"]
-    }
-    assert set(triggers) == set(EXPECTED_WORKER_QUEUES)
-
-    for queue_name, target_depth in EXPECTED_WORKER_QUEUES.items():
-        trigger = triggers[queue_name]
-        assert trigger["type"] == "rabbitmq"
-        assert trigger["metadata"]["mode"] == "QueueLength"
-        assert trigger["metadata"]["value"] == target_depth
-        assert trigger["authenticationRef"]["name"] == "bifrost-rabbitmq"
-
-
-def test_local_pods_do_not_mount_service_account_tokens() -> None:
+def test_only_the_api_mounts_a_service_account_token() -> None:
+    """The API runs the worker controller (api-rbac.yaml); nothing else may."""
     for workload in _workloads():
-        assert _pod_spec(workload).get("automountServiceAccountToken") is False, (
-            workload["kind"],
-            workload["metadata"]["name"],
-        )
+        spec = _pod_spec(workload)
+        if workload["metadata"]["name"] == "bifrost-api":
+            assert spec["serviceAccountName"] == "bifrost-api"
+            assert spec["automountServiceAccountToken"] is True
+        else:
+            assert spec.get("automountServiceAccountToken") is False, (
+                workload["kind"],
+                workload["metadata"]["name"],
+            )
 
 
 def test_local_manifests_do_not_bind_host_ports_or_node_ports() -> None:
@@ -124,17 +93,17 @@ def test_every_local_container_has_cpu_and_memory_limits() -> None:
             assert limits.get("memory"), (workload["metadata"]["name"], container["name"])
 
 
-def test_worker_scaling_is_owned_by_keda_scaledobject() -> None:
+def test_static_executors_have_fixed_replicas_and_no_autoscaler() -> None:
     worker = _doc("Deployment", "bifrost-worker")
-    assert "replicas" not in worker["spec"]  # Reapplying manifests must not reset HPA-owned capacity.
+    assert worker["spec"]["replicas"] == 1  # Extra capacity comes from worker Jobs.
     worker_container = _containers(worker)[0]
     readiness = worker_container["readinessProbe"]["exec"]["command"]
-    assert "bifrost:pool:" in readiness[-1]
-    assert "HOSTNAME" in readiness[-1]
+    assert readiness == ["python", "-m", "src.worker.health", "--ready"]
 
     autoscaling_kinds = {
         "HorizontalPodAutoscaler",
         "VerticalPodAutoscaler",
+        "ScaledObject",
     }
     assert all(doc.get("kind") not in autoscaling_kinds for doc in _load_documents())
 
@@ -145,10 +114,7 @@ def test_spike_environment_and_secret_free_status_contracts() -> None:
     assert config["data"]["BIFROST_KUBERNETES_SPIKE"] == "1"
 
     secret = _doc("Secret", "bifrost-local-secrets")
-    assert (
-        secret["stringData"]["BIFROST_RABBITMQ_URL"]
-        == "amqp://bifrost:bifrost_dev@rabbitmq.bifrost-local.svc.cluster.local:5672/"
-    )
+    assert not any("RABBITMQ" in key for key in secret["stringData"])
 
     script = SCRIPT.read_text()
     assert "umask 077" in script
@@ -160,10 +126,8 @@ def test_spike_environment_and_secret_free_status_contracts() -> None:
     assert "kubectl_local patch deployment/bifrost" not in script
     assert "trap 'collect_on_failure $?'" in script
     assert "collect || true" in script
-    assert 'experiment) shift; exec python3 "${ROOT_DIR}/scripts/kubernetes/spike.py" "$@" ;;' in script
-    assert "deployment/keda-metrics-apiserver" in script
-    assert "deployment/keda-admission" in script
-    assert "condition=Ready=True scaledobject/bifrost-worker" in script
+    assert "keda" not in script.lower()
+    assert "rabbitmq" not in script.lower()
     assert "dev@gobifrost.com / password" not in script
 
 
@@ -207,9 +171,8 @@ def test_runtime_renderer_sets_image_and_quoted_revision_on_all_deployments(tmp_
         assert template["spec"]["containers"][0]["image"] == image
 
 
-def test_local_readme_documents_supported_entrypoints_and_keda_ownership() -> None:
+def test_local_readme_documents_supported_entrypoints_and_worker_jobs() -> None:
     readme = (LOCAL_K8S_DIR / "README.md").read_text()
     assert "./test.sh kubernetes up" in readme
-    assert "scripts/kubernetes/local-kind.sh experiment --help" in readme
-    assert "autoscaling.keda.sh/paused-replicas" in readme
-    assert "KEDA owns worker replica count" in readme
+    assert "app.kubernetes.io/name=bifrost-pool-worker" in readme
+    assert "keda" not in readme.lower()

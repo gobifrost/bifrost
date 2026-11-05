@@ -9,7 +9,7 @@ counts rather than the global results["events_created"] counter, except
 for skipped_overlap which is source-specific enough to be trustworthy.
 """
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -18,6 +18,7 @@ from sqlalchemy import select
 
 from src.models.enums import EventDeliveryStatus, EventSourceType, EventStatus, ScheduleOverlapPolicy
 from src.models.orm.events import Event, EventDelivery, EventSource, EventSubscription, ScheduleSource
+from src.models.orm.scheduler_diagnostics import SchedulerTaskState
 
 PATH_DB_CTX = "src.jobs.schedulers.cron_scheduler.get_db_context"
 # EventSubscriptionRepository is imported at module level in cron_scheduler
@@ -54,6 +55,29 @@ class _CommitTrackingSession:
     async def commit(self):
         self.commit_count += 1
         await self._session.commit()
+
+
+def _queued(count: int, on_hand_off=None):  # type: ignore[no-untyped-def]
+    """A queued batch of ``count`` runs, as queue_event_deliveries returns."""
+    from src.services.events.processor import QueuedDeliveries
+
+    async def hand_off() -> None:
+        if on_hand_off is not None:
+            on_hand_off()
+
+    return QueuedDeliveries(hand_offs=[hand_off for _ in range(count)])
+
+
+@pytest.fixture(autouse=True)
+async def _no_schedule_left_running(db_session):
+    """Tests commit every-minute schedules; disable them afterwards so a later
+    test that crosses a minute boundary does not see them fire again."""
+    yield
+    from sqlalchemy import update
+
+    await db_session.rollback()
+    await db_session.execute(update(ScheduleSource).values(enabled=False))
+    await db_session.commit()
 
 
 def _make_source_and_subscription(
@@ -177,10 +201,12 @@ async def test_schedule_evaluates_cron_in_configured_timezone(db_session):
 def test_scheduler_resolves_legacy_indianapolis_alias():
     from src.jobs.schedulers.cron_scheduler import _latest_due_run_utc
 
+    now = datetime(2026, 7, 22, 13, 0, 30, tzinfo=timezone.utc)
     due = _latest_due_run_utc(
         "0 9 * * *",
-        datetime(2026, 7, 22, 13, 0, 30, tzinfo=timezone.utc),
+        now,
         "America/Indianapolis",
+        now - timedelta(seconds=60),
     )
 
     assert due == datetime(2026, 7, 22, 13, 0, tzinfo=timezone.utc)
@@ -470,7 +496,7 @@ async def test_schedule_creates_delivery_for_agent_subscription(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
-    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=_queued(1))
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 
@@ -489,8 +515,8 @@ async def test_schedule_creates_delivery_for_agent_subscription(db_session):
 
 
 @pytest.mark.asyncio
-async def test_schedule_commits_agent_delivery_before_queueing(db_session):
-    """AgentRun uses a separate transaction, so its delivery FK must be durable first."""
+async def test_schedule_commits_runs_with_their_deliveries_then_hands_them_off(db_session):
+    """A source's event, deliveries and runs commit together, then go to workers."""
     from src.models.orm.agents import Agent
 
     agent = Agent(
@@ -508,14 +534,15 @@ async def test_schedule_commits_agent_delivery_before_queueing(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
+    commits_at: dict[str, int] = {}
 
-    async def assert_delivery_is_committed(_event_id):
-        assert tracking_session.commit_count >= 1
-        return 1
+    async def queue(_event_id):  # type: ignore[no-untyped-def]
+        commits_at["queue"] = tracking_session.commit_count
+        return _queued(
+            1, on_hand_off=lambda: commits_at.setdefault("hand_off", tracking_session.commit_count)
+        )
 
-    mock_processor.queue_event_deliveries = AsyncMock(
-        side_effect=assert_delivery_is_committed
-    )
+    mock_processor.queue_event_deliveries = AsyncMock(side_effect=queue)
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 
@@ -530,6 +557,8 @@ async def test_schedule_commits_agent_delivery_before_queueing(db_session):
     mock_processor.queue_event_deliveries.assert_awaited_once()
     assert results["errors"] == []
     assert results["deliveries_queued"] == 1
+    # Queued before the source's commit; handed off only after it.
+    assert commits_at["hand_off"] == commits_at["queue"] + 1
 
 
 @pytest.mark.asyncio
@@ -554,7 +583,7 @@ async def test_schedule_creates_delivery_for_workflow_subscription(db_session):
     mock_sub_repo = AsyncMock()
     mock_sub_repo.get_active_for_event = AsyncMock(return_value=[sub])
     mock_processor = AsyncMock()
-    mock_processor.queue_event_deliveries = AsyncMock(return_value=1)
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=_queued(1))
 
     from src.jobs.schedulers.cron_scheduler import process_schedule_sources
 
@@ -569,3 +598,170 @@ async def test_schedule_creates_delivery_for_workflow_subscription(db_session):
     deliveries = await _deliveries_for_source(db_session, source.id)
     assert len(deliveries) == 1
     assert deliveries[0].workflow_id == sub.workflow_id
+
+
+# --- Occurrence identity across trigger-leader failover ----------------------
+
+
+def _frozen_at(moment: datetime) -> type[datetime]:
+    class Frozen(datetime):
+        @classmethod
+        def now(cls, tz=None):  # type: ignore[override]
+            value = cls.fromtimestamp(moment.timestamp(), tz=timezone.utc)
+            return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+
+    return Frozen
+
+
+async def _scan(db_session, moment: datetime) -> dict:
+    from src.jobs.schedulers.cron_scheduler import process_schedule_sources
+
+    mock_sub_repo = AsyncMock()
+    mock_sub_repo.get_active_for_event = AsyncMock(return_value=[])
+    mock_processor = AsyncMock()
+    mock_processor.queue_event_deliveries = AsyncMock(return_value=0)
+    with (
+        patch(PATH_DB_CTX, return_value=_DbCtx(db_session)),
+        patch(PATH_IS_VALID, return_value=True),
+        patch(PATH_SUB_REPO, return_value=mock_sub_repo),
+        patch(PATH_PROCESSOR, return_value=mock_processor),
+        patch("src.jobs.schedulers.cron_scheduler.datetime", _frozen_at(moment)),
+    ):
+        return await process_schedule_sources()
+
+
+@pytest.fixture
+async def processor_cursor(db_session):
+    """The schedule_processor task state a trigger leader publishes."""
+    from sqlalchemy import delete
+
+    await db_session.execute(
+        delete(SchedulerTaskState).where(SchedulerTaskState.task_id == "schedule_processor")
+    )
+    state = SchedulerTaskState(
+        task_id="schedule_processor",
+        name="Process Schedule Sources",
+        schedule="Every minute",
+        execution_mode="leader",
+    )
+    db_session.add(state)
+    await db_session.commit()
+    yield state
+    await db_session.execute(
+        delete(SchedulerTaskState).where(SchedulerTaskState.task_id == "schedule_processor")
+    )
+    await db_session.commit()
+
+
+async def _add_source(db_session, cron: str, tz: str = "UTC"):
+    source, ss, sub = _make_source_and_subscription(cron=cron)
+    ss.timezone = tz
+    db_session.add_all([source, ss, sub])
+    await db_session.commit()
+    return source
+
+
+@pytest.mark.asyncio
+async def test_overlapping_leaders_fire_one_occurrence_once(db_session, processor_cursor):
+    source = await _add_source(db_session, "0 * * * *")
+    moment = datetime(2026, 3, 2, 10, 0, 20, tzinfo=timezone.utc)
+
+    first = await _scan(db_session, moment)
+    second = await _scan(db_session, moment + timedelta(seconds=5))
+
+    events = await _events_for_source(db_session, source.id)
+    assert len(events) == 1
+    assert events[0].occurrence_key == (
+        f"schedule:{source.id}:2026-03-02T10:00:00+00:00"
+    )
+    assert first.get("duplicates_skipped", 0) == 0
+    assert second["duplicates_skipped"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_successor_leader_fires_occurrence_missed_during_failover(
+    db_session, processor_cursor
+):
+    source = await _add_source(db_session, "0 * * * *")
+    # The previous leader last scanned at 09:59:50 and then stopped; the
+    # successor's first scan is at 10:02:30, after the 10:00 occurrence.
+    processor_cursor.cursor_at = datetime(2026, 3, 2, 9, 59, 50, tzinfo=timezone.utc)
+    await db_session.commit()
+
+    moment = datetime(2026, 3, 2, 10, 2, 30, tzinfo=timezone.utc)
+    await _scan(db_session, moment)
+
+    events = await _events_for_source(db_session, source.id)
+    assert [event.received_at for event in events] == [
+        datetime(2026, 3, 2, 10, 0, tzinfo=timezone.utc)
+    ]
+    await db_session.refresh(processor_cursor)
+    assert processor_cursor.cursor_at == moment
+
+    # The next scan neither repeats nor rewinds the occurrence.
+    await _scan(db_session, moment + timedelta(minutes=1))
+    assert len(await _events_for_source(db_session, source.id)) == 1
+
+
+@pytest.mark.asyncio
+async def test_without_a_recorded_scan_the_window_is_one_cadence(
+    db_session, processor_cursor
+):
+    source = await _add_source(db_session, "0 * * * *")
+
+    await _scan(db_session, datetime(2026, 3, 2, 10, 2, 30, tzinfo=timezone.utc))
+
+    assert await _events_for_source(db_session, source.id) == []
+
+
+@pytest.mark.asyncio
+async def test_catch_up_is_bounded(db_session, processor_cursor):
+    source = await _add_source(db_session, "30 * * * *")
+    processor_cursor.cursor_at = datetime(2026, 3, 2, 8, 0, tzinfo=timezone.utc)
+    await db_session.commit()
+
+    # 09:30 is outside MAX_CATCH_UP of a 10:00:30 scan; it does not replay.
+    await _scan(db_session, datetime(2026, 3, 2, 10, 0, 30, tzinfo=timezone.utc))
+
+    assert await _events_for_source(db_session, source.id) == []
+
+
+@pytest.mark.asyncio
+async def test_dst_repeated_wall_clock_hour_fires_distinct_instants(
+    db_session, processor_cursor
+):
+    """01:30 occurs twice in New York on 2026-11-01; each instant is keyed in UTC."""
+    source = await _add_source(db_session, "30 * * * *", "America/New_York")
+
+    for moment in (
+        datetime(2026, 11, 1, 5, 30, 20, tzinfo=timezone.utc),  # 01:30 EDT
+        datetime(2026, 11, 1, 5, 30, 40, tzinfo=timezone.utc),  # same instant, rescanned
+        datetime(2026, 11, 1, 6, 30, 20, tzinfo=timezone.utc),  # 01:30 EST
+    ):
+        await _scan(db_session, moment)
+
+    events = await _events_for_source(db_session, source.id)
+    assert sorted(event.received_at for event in events) == [
+        datetime(2026, 11, 1, 5, 30, tzinfo=timezone.utc),
+        datetime(2026, 11, 1, 6, 30, tzinfo=timezone.utc),
+    ]
+    assert len({event.occurrence_key for event in events}) == 2
+
+
+@pytest.mark.asyncio
+async def test_occurrence_fired_by_an_older_leader_is_not_repeated(
+    db_session, processor_cursor
+):
+    """Mixed versions: an older image fires without an occurrence key."""
+    source = await _add_source(db_session, "5 * * * *")
+    processor_cursor.cursor_at = datetime(2026, 3, 2, 12, 1, tzinfo=timezone.utc)
+    legacy = _make_event(source.id)
+    legacy.received_at = datetime(2026, 3, 2, 12, 5, tzinfo=timezone.utc)
+    db_session.add(legacy)
+    await db_session.commit()
+
+    result = await _scan(db_session, datetime(2026, 3, 2, 12, 8, 10, tzinfo=timezone.utc))
+
+    events = await _events_for_source(db_session, source.id)
+    assert [event.id for event in events] == [legacy.id]
+    assert result["duplicates_skipped"] >= 1

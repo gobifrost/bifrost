@@ -1,5 +1,5 @@
 import type { components } from "@/lib/v1";
-import { getBifrostTransport } from "./transport";
+import { getBifrostTransport, getPlatformAuth } from "./transport";
 
 type Expr = components["schemas"]["Expr"];
 
@@ -47,7 +47,10 @@ export function buildWsUrl(): string {
   const proto = base.protocol === "https:" ? "wss:" : "ws:";
   const url = new URL("/ws/connect", `${proto}//${base.host}`);
 	const token = t.getToken?.() ?? t.token;
-	if (token) url.searchParams.set("token", token);
+	// A same-origin app uses the browser's session cookie. Only a configured
+	// provider transport needs its bearer in the WebSocket URL because the
+	// browser API cannot attach Authorization to a cross-origin handshake.
+	if (t.baseUrl && token) url.searchParams.set("token", token);
   return url.toString();
 }
 
@@ -143,6 +146,21 @@ export function createReconnectingSubscription({
       notifySocketDown();
 
       if (NON_RETRYABLE_CLOSE_CODES.has(event.code)) {
+        if (event.code === 4001) {
+          const auth = getPlatformAuth();
+          if (auth?.canRefreshAccessToken()) {
+            void (async () => {
+              const refreshed = await auth.refreshAccessToken();
+              if (stopped) return;
+              if (!refreshed) {
+                auth.handleAuthenticationFailure();
+                return;
+              }
+              connect();
+            })();
+            return;
+          }
+        }
         console.warn(`[bifrost-sdk] ${label} closed`, event.code);
         return;
       }

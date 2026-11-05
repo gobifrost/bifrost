@@ -12,8 +12,8 @@ Authentication:
 
 Architecture:
     - API never executes workflow code directly
-    - Sync execution: Queue to RabbitMQ, wait on Redis BLPOP for result
-    - Async execution: Queue to RabbitMQ, return immediately
+    - Sync execution: accept the run, wait on Redis BLPOP for the result
+    - Async execution: accept the run, return immediately
 """
 
 import logging
@@ -290,34 +290,15 @@ async def _execute_sync(
 
     Instead of executing workflow directly (which would block and require
     filesystem access), we:
-    1. Store pending execution in Redis
-    2. Queue to RabbitMQ with sync=True
-    3. Wait for result via Redis BLPOP
-    4. Return result to caller
+    1. Accept the run durably and queue it with sync=True
+    2. Wait for result via Redis BLPOP
+    3. Return result to caller
 
     This allows the API to stay lightweight without filesystem access.
-    Worker will write to PostgreSQL when it starts execution.
     """
     from src.services.execution.async_executor import enqueue_workflow_execution
 
     execution_id = context.execution_id
-
-    # Store pending execution in Redis
-    redis_client = get_redis_client()
-    await redis_client.set_pending_execution(
-        execution_id=execution_id,
-        workflow_id=workflow_id,
-        parameters=input_data,
-        org_id=context.org_id,
-        user_id=context.user_id,
-        user_name=context.name or "API Key",
-        user_email=context.email or "",
-        form_id=None,
-        api_key_id=api_key_id,
-        sync=True,
-        is_platform_admin=context.is_platform_admin,
-        lineage=lineage.bound(execution_id),
-    )
 
     # Queue execution with sync=True
     await enqueue_workflow_execution(
@@ -335,9 +316,11 @@ async def _execute_sync(
     logger.info(f"Queued sync workflow execution: {log_safe(workflow_name)} ({execution_id})")
 
     # Wait for result from Redis
-    result = await redis_client.wait_for_result(
+    from src.services.execution.service import sync_wait_seconds
+
+    result = await get_redis_client().wait_for_result(
         execution_id=execution_id,
-        timeout_seconds=timeout_seconds,
+        timeout_seconds=sync_wait_seconds(timeout_seconds),
     )
 
     if result is None:

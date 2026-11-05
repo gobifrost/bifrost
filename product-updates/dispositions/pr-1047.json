@@ -1,0 +1,14 @@
+{
+  "key": "pr:1047",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Activates the existing approved Automatic CodeMode announcement after source PR #1046; cumulative inventory metadata only, no additional product behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1047",
+      "https://github.com/gobifrost/bifrost/pull/1046",
+      "Existing approved entry UUID and prose retained; canonical validation and prepared-bundle inclusion verified."
+    ]
+  }
+}

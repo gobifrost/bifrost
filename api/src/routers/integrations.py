@@ -2317,21 +2317,7 @@ async def test_integration_connection(
     start_time = time.time()
 
     try:
-        # Store pending execution in Redis
         redis_client = get_redis_client()
-        await redis_client.set_pending_execution(
-            execution_id=execution_id,
-            workflow_id=None,  # Inline code, no workflow
-            script_name=script_name,
-            parameters={},
-            org_id=shared_ctx.org_id,
-            user_id=shared_ctx.user_id,
-            user_name=shared_ctx.name,
-            user_email=shared_ctx.email,
-            form_id=None,
-            lineage=lineage.bound(execution_id) if lineage else None,
-        )
-
         # Queue with sync=True to wait for result
         await enqueue_code_execution(
             context=shared_ctx,

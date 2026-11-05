@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
+from shared.file_paths import SCOPE_SKIP, scope_to_org_id
 from .models import (
     WriteResult,
     WorkflowIdConflictInfo,
@@ -33,33 +34,6 @@ from .folder_ops import FolderOperationsService
 from .indexers import WorkflowIndexer
 
 logger = logging.getLogger(__name__)
-
-# Sentinel — returned by _scope_to_org_id to signal "no metadata to write".
-_SCOPE_SKIP = object()
-
-
-def _scope_to_org_id(location: str, scope: str | None) -> "UUID | None | object":
-    """Coerce a storage-scope string to the org UUID for FileMetadata writes.
-
-    Returns:
-        ``None``       — global (org IS NULL)
-        ``UUID(scope)`` — org-scoped write
-        ``_SCOPE_SKIP`` — caller should skip metadata write (missing scope)
-
-    This is the NON-solution path.  Solution writes use their own path so
-    the install UUID never ends up in organization_id (C2).
-    """
-    if location == "workspace":
-        return None
-    if scope is None:
-        return _SCOPE_SKIP
-    if scope == "global":
-        return None
-    try:
-        return UUID(scope)
-    except ValueError:
-        return _SCOPE_SKIP
-
 
 class FileStorageService:
     """
@@ -254,8 +228,8 @@ class FileStorageService:
         if solution_id is not None:
             organization_id = org_id
         else:
-            organization_id = _scope_to_org_id(location, scope)
-            if organization_id is _SCOPE_SKIP:
+            organization_id = scope_to_org_id(location, scope)
+            if organization_id is SCOPE_SKIP:
                 return
 
         service = FilePolicyService(self.db)
@@ -300,8 +274,8 @@ class FileStorageService:
         if solution_id is not None:
             organization_id = org_id
         else:
-            organization_id = _scope_to_org_id(location, scope)
-            if organization_id is _SCOPE_SKIP:
+            organization_id = scope_to_org_id(location, scope)
+            if organization_id is SCOPE_SKIP:
                 return
 
         service = FilePolicyService(self.db)

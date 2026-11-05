@@ -7,7 +7,8 @@
 
 import { randomUUID } from "node:crypto";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
-import { loginUserViaAPI, registerAndSetupMFA } from "./setup/auth-helpers";
+import { createFreshBrowserContext } from "./fixtures/human-auth";
+import { registerAndSetupMFA } from "./setup/auth-helpers";
 import type { TestUser, UserCredentials } from "./fixtures/users";
 
 const suffix = randomUUID().slice(0, 8);
@@ -160,113 +161,99 @@ test.describe("Integration permissions", () => {
 	});
 
 	test("shows the home name and read-only integration test scope", async ({
-		page,
-		context,
+		browser,
 	}, testInfo) => {
-		const session = await loginUserViaAPI(readerCredentials);
-		await page.goto("/");
-		const origin = new URL(page.url()).origin;
-		await context.addCookies([
-			{
-				name: "access_token",
-				value: session.accessToken,
-				url: origin,
-				httpOnly: true,
-			},
-			{
-				name: "refresh_token",
-				value: session.refreshToken,
-				url: origin,
-				httpOnly: true,
-			},
-		]);
-		await page.evaluate((accessToken) => {
-			localStorage.clear();
-			localStorage.setItem("bifrost_access_token", accessToken);
-		}, session.accessToken);
-
-		await page.goto("/apps");
-		await expect(page.getByText(appName, { exact: true })).toBeVisible();
-		await expect(
-			page.getByText(homeOrganizationName, { exact: true }),
-		).toBeVisible();
-		await page.screenshot({
-			path: testInfo.outputPath("reader-home-app-list.png"),
-			fullPage: true,
-			animations: "disabled",
-		});
-
-		await page.goto("/integrations");
-		await expect(
-			page.getByRole("link", { name: integrationName, exact: true }),
-		).toBeVisible();
-		await expect(
-			page.getByRole("button", {
-				name: "Create Integration",
-				exact: true,
-			}),
-		).toHaveCount(0);
-		await expect(
-			page.getByRole("button", {
-				name: `${integrationName} actions`,
-				exact: true,
-			}),
-		).toHaveCount(0);
-
-		await page
-			.getByRole("link", { name: integrationName, exact: true })
-			.click();
-		await expect(page).toHaveURL(
-			new RegExp(`/integrations/${integrationId}$`),
+		const context = await createFreshBrowserContext(
+			browser,
+			readerCredentials,
 		);
-		await expect(
-			page.getByRole("button", { name: "Test Connection", exact: true }),
-		).toBeVisible();
-		await expect(
-			page.getByRole("button", { name: "Generate SDK", exact: true }),
-		).toHaveCount(0);
-		await expect(
-			page.getByRole("button", { name: "Edit", exact: true }),
-		).toHaveCount(0);
-		await expect(
-			page.getByRole("button", {
-				name: "Configure default values",
-				exact: true,
-			}),
-		).toHaveCount(0);
+		const page = await context.newPage();
+		try {
+			await page.goto("/apps");
+			await expect(page.getByText(appName, { exact: true })).toBeVisible();
+			await expect(
+				page.getByText(homeOrganizationName, { exact: true }),
+			).toBeVisible();
+			await page.screenshot({
+				path: testInfo.outputPath("reader-home-app-list.png"),
+				fullPage: true,
+				animations: "disabled",
+			});
 
-		await page
-			.getByRole("button", { name: "Test Connection", exact: true })
-			.click();
-		const dialog = page.getByRole("dialog", {
-			name: "Test Integration Connection",
-			exact: true,
-		});
-		await expect(dialog).toBeVisible();
-		const organizationSelect = dialog.getByRole("combobox", {
-			name: "Organization scope",
-		});
-		await expect(organizationSelect).toContainText(
-			customerOrganizationName,
-		);
-		await organizationSelect.click();
-		await expect(
-			page.getByRole("option").filter({
-				has: page.getByText(customerOrganizationName, { exact: true }),
-			}),
-		).toBeVisible();
-		await expect(page.getByRole("option", { name: /^Global/ })).toHaveCount(
-			0,
-		);
-		await expect(
-			page.getByRole("option").filter({
-				has: page.getByText(homeOrganizationName, { exact: true }),
-			}),
-		).toHaveCount(0);
-		await page.screenshot({
-			path: testInfo.outputPath("reader-integration-test-scope.png"),
-			fullPage: true,
-			animations: "disabled",
-		});
+			await page.goto("/integrations");
+			await expect(
+				page.getByRole("link", { name: integrationName, exact: true }),
+			).toBeVisible();
+			await expect(
+				page.getByRole("button", {
+					name: "Create Integration",
+					exact: true,
+				}),
+			).toHaveCount(0);
+			await expect(
+				page.getByRole("button", {
+					name: `${integrationName} actions`,
+					exact: true,
+				}),
+			).toHaveCount(0);
+
+			await page
+				.getByRole("link", { name: integrationName, exact: true })
+				.click();
+			await expect(page).toHaveURL(
+				new RegExp(`/integrations/${integrationId}$`),
+			);
+			await expect(
+				page.getByRole("button", { name: "Test Connection", exact: true }),
+			).toBeVisible();
+			await expect(
+				page.getByRole("button", { name: "Generate SDK", exact: true }),
+			).toHaveCount(0);
+			await expect(
+				page.getByRole("button", { name: "Edit", exact: true }),
+			).toHaveCount(0);
+			await expect(
+				page.getByRole("button", {
+					name: "Configure default values",
+					exact: true,
+				}),
+			).toHaveCount(0);
+
+			await page
+				.getByRole("button", { name: "Test Connection", exact: true })
+				.click();
+			const dialog = page.getByRole("dialog", {
+				name: "Test Integration Connection",
+				exact: true,
+			});
+			await expect(dialog).toBeVisible();
+			const organizationSelect = dialog.getByRole("combobox", {
+				name: "Organization scope",
+			});
+			await expect(organizationSelect).toContainText(
+				customerOrganizationName,
+			);
+			await organizationSelect.click();
+			await expect(
+				page.getByRole("option").filter({
+					has: page.getByText(customerOrganizationName, { exact: true }),
+				}),
+			).toBeVisible();
+			await expect(page.getByRole("option", { name: /^Global/ })).toHaveCount(
+				0,
+			);
+			await expect(
+				page.getByRole("option").filter({
+					has: page.getByText(homeOrganizationName, { exact: true }),
+				}),
+			).toHaveCount(0);
+			await page.screenshot({
+				path: testInfo.outputPath("reader-integration-test-scope.png"),
+				fullPage: true,
+				animations: "disabled",
+			});
+		} finally {
+			await context.close();
+		}
 	});
 });

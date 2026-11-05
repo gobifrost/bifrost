@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Compare last-commit timestamps between bifrost and gobifrost.
+# Compare last-commit timestamps between bifrost and public-docs.
 # Print drift summary and list user-facing files changed since docs were last updated.
 #
 # Used by the bifrost-release skill (Step 3 dev push, Step 1b full release) to
@@ -13,7 +13,7 @@
 set -euo pipefail
 
 BIFROST_REPO="${BIFROST_REPO:-$HOME/GitHub/bifrost}"
-DOCS_REPO="${DOCS_REPO:-$HOME/GitHub/gobifrost}"
+DOCS_REPO="${DOCS_REPO:-$HOME/GitHub/public-docs}"
 
 # User-facing surface area. Add to this list when introducing new dirs that
 # affect what's visible in docs/screenshots. Patterns are anchored regex
@@ -35,7 +35,7 @@ fi
 
 if [ ! -d "$DOCS_REPO/.git" ]; then
     echo "warn: docs repo not found at $DOCS_REPO" >&2
-    echo "      clone it: git clone git@github.com:gobifrost/website.git $DOCS_REPO" >&2
+    echo "      clone it: git clone git@github.com:gobifrost/public-docs.git $DOCS_REPO" >&2
     exit 2
 fi
 

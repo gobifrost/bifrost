@@ -1,0 +1,18 @@
+{
+  "key": "pr:1191",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine live-table ordering and pagination repair; no new capability or customer action requiring an in-app announcement.",
+  "security_review": {
+    "status": "not_required"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1191",
+      "Jack explicitly authorized merging the reviewed fix on 2026-11-03, with routine fixes excluded from in-app Product Updates.",
+      "Verified incoming contribution by mlspivey from mlspivey/bifrost into gobifrost/bifrost; original contributor commits and authorship are retained.",
+      "Focused ordering and pagination review found no security-boundary change or required customer upgrade action. Known concurrent-edit and collation limitations remain documented in the PR."
+    ]
+  }
+}

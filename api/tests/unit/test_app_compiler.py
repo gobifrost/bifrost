@@ -1,5 +1,8 @@
+import json
+
 import pytest
 from src.services.app_compiler import AppCompilerService
+from src.services.node_subprocess import run_node_script
 
 
 @pytest.fixture
@@ -54,3 +57,48 @@ export default function Page() {
         results = await compiler.compile_batch(files)
         assert results[0].success is True
         assert results[1].success is False
+
+    @pytest.mark.asyncio
+    async def test_compile_typescript_modern_operators_with_legacy_react_scope(
+        self, compiler, tmp_path
+    ):
+        source = '''
+type Account = { name?: string };
+type Props = { account?: Account };
+
+export default function Page({ account }: Props) {
+  return <div>{account?.name ?? "Anonymous"}</div>;
+}
+'''
+        result = await compiler.compile_file(source, "pages/index.tsx")
+
+        assert result.success is True
+        assert "react/jsx-runtime" not in result.compiled
+
+        evaluator = tmp_path / "evaluate-compiled-page.js"
+        evaluator.write_text(
+            '''
+let input = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const { compiled } = JSON.parse(input);
+  const React = {
+    createElement(type, props, ...children) {
+      return { type, props: props || {}, children };
+    },
+  };
+  const Page = new Function("React", `${compiled}\\nreturn __defaultExport__;`)(React);
+  process.stdout.write(JSON.stringify(Page({})));
+});
+''',
+            encoding="utf-8",
+        )
+        returncode, stdout, stderr = await run_node_script(
+            evaluator, json.dumps({"compiled": result.compiled}).encode()
+        )
+
+        assert returncode == 0, stderr.decode()
+        rendered = json.loads(stdout)
+        assert rendered["type"] == "div"
+        assert rendered["children"] == ["Anonymous"]

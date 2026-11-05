@@ -30,7 +30,11 @@ import {
 
 import { setDefaultFileScope } from "./files";
 import { setBifrostTransport, setDefaultAppScope } from "./tables";
-import { getPlatformAuth } from "./transport";
+import {
+	getPlatformAuth,
+	isRefreshRequiredChallenge,
+	REQUEST_REPLAY_BUDGET,
+} from "./transport";
 
 export interface BifrostContextValue {
   /** Absolute base URL of the Bifrost API (no trailing slash). */
@@ -48,7 +52,7 @@ export interface BifrostContextValue {
   appId: string | null;
 	/** Owning Solution supplied by the platform host, or null for an unowned app. */
 	solutionId?: string | null;
-	/** `fetch` that joins `baseUrl`, follows token rotation, and retries one 401. */
+  /** `fetch` that joins `baseUrl`, follows token rotation, and recovers only auth challenges. */
   authedFetch: typeof fetch;
   /** Log the user out. No-op if the app did not supply `onLogout`. */
   logout: () => void;
@@ -209,32 +213,37 @@ export function BifrostProvider({
 				return baseFetch(joinUrl(baseUrl, input), { ...init, headers });
 			};
 
-			const attemptedToken = currentToken();
+			let attemptedToken = currentToken();
 			let response = await requestWithToken(attemptedToken);
 			const auth = getPlatformAuth();
 			if (
-				response.status !== 401 ||
+				!isRefreshRequiredChallenge(response) ||
 				!managesAuthorization ||
 				!auth?.canRefreshAccessToken()
 			) {
 				return response;
 			}
 
-			// The host may already have rotated the token while this request was
-			// in flight. Prefer that value before asking it to rotate again.
-			let freshToken = auth.getAccessToken();
-			if (!freshToken || freshToken === attemptedToken) {
-				const refreshed = await auth.refreshAccessToken();
-				freshToken = refreshed ? auth.getAccessToken() : null;
-			}
+			let remaining = REQUEST_REPLAY_BUDGET;
+			while (remaining > 0 && isRefreshRequiredChallenge(response)) {
+				remaining -= 1;
+				// The host may already have rotated the token while this request was
+				// in flight. Prefer that value before asking it to rotate again.
+				let freshToken = auth.getAccessToken();
+				if (!freshToken || freshToken === attemptedToken) {
+					const refreshed = await auth.refreshAccessToken();
+					freshToken = refreshed ? auth.getAccessToken() : null;
+				}
 
-			if (!freshToken) {
-				auth.handleAuthenticationFailure();
-				return response;
-			}
+				if (!freshToken) {
+					auth.handleAuthenticationFailure();
+					return response;
+				}
 
-			response = await requestWithToken(freshToken);
-			if (response.status === 401) auth.handleAuthenticationFailure();
+				attemptedToken = freshToken;
+				response = await requestWithToken(freshToken);
+			}
+			if (isRefreshRequiredChallenge(response)) auth.handleAuthenticationFailure();
 			return response;
 		};
 		return authenticatedFetch;

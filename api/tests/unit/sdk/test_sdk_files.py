@@ -1169,6 +1169,30 @@ class TestSdkSignedUrl:
         storage.generate_presigned_download_url.assert_not_awaited()
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["workflows/new.py", ".bifrost/workflows.yaml"])
+    async def test_signed_put_preserves_authorized_workspace_definition_uploads(
+        self, monkeypatch, path: str,
+    ) -> None:
+        _allow_write_policy(monkeypatch)
+        storage = _storage(monkeypatch)
+
+        result = await sdk_signed_url(
+            _mutation_caller(),
+            path=path,
+            location="workspace",
+            scope=None,
+            method="PUT",
+        )
+
+        assert result.path == f"_repo/{path}"
+        storage.generate_presigned_upload_url.assert_awaited_once_with(
+            path=f"_repo/{path}",
+            content_type="application/octet-stream",
+            expires_in=600,
+        )
+        storage.record_file_write_metadata.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_signed_put_denied_is_403_with_audit(self, monkeypatch) -> None:
         _deny_all_policies(monkeypatch)
         emit = AsyncMock()
@@ -1225,3 +1249,37 @@ class TestSdkSignedUrl:
                 method="PUT",
             )
         assert exc.value.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("target_org", [None, UUID("44444444-4444-4444-4444-444444444444")])
+async def test_cross_scope_file_round_trip_removes_metadata(monkeypatch, target_org):
+    """Storage and metadata must disappear together outside the caller's org."""
+    from src.services import file_policy_service
+
+    caller = _mutation_caller()
+    assert caller.org_id != target_org
+    target_scope = "global" if target_org is None else str(target_org)
+    monkeypatch.setattr("shared.sdk_files.resolve_effective_scope", AsyncMock(return_value=target_scope))
+    _, objects = _rw_backend(monkeypatch, files={})
+    _allow_write_policy(monkeypatch)
+    _publish(monkeypatch, [])
+    rows = {}
+
+    class Metadata:
+        async def upsert_metadata(self, **kwargs):
+            rows[(kwargs["organization_id"], kwargs["path"])] = kwargs
+
+        async def delete_metadata(self, **kwargs):
+            rows.pop((kwargs["organization_id"], kwargs["path"]), None)
+
+    metadata = Metadata()
+    monkeypatch.setattr(file_policy_service, "FilePolicyService", lambda _db: metadata)
+    # Keep the real write metadata service: it already derives scope correctly.
+    await sdk_write_file(caller, path="report.txt", content="new", binary=False,
+                         location="docs", scope=target_scope)
+    assert set(rows) == {(target_org, "report.txt")}
+    assert objects[("report.txt", target_scope)] == b"new"
+    await sdk_delete_file(caller, path="report.txt", location="docs", scope=target_scope)
+    assert objects == {}
+    assert rows == {}

@@ -262,6 +262,10 @@
             "additionalProperties": false
           }
         },
+        "agent_prompt": {
+          "type": "string",
+          "minLength": 1
+        },
         "review": {
           "$ref": "#/$defs/review"
         },
@@ -530,6 +534,10 @@
           "items": {
             "$ref": "#/$defs/bundleAsset"
           }
+        },
+        "agent_prompt": {
+          "type": "string",
+          "minLength": 1
         },
         "additional_areas": {
           "type": "array",

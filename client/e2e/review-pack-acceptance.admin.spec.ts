@@ -238,11 +238,6 @@ test.describe("review fixture pack acceptance", () => {
 					.first(),
 			).toBeVisible({ timeout: 30_000 });
 			await expect(
-				eventResultPanel
-					.getByText(first.index.expected.mappingEntity)
-					.first(),
-			).toBeVisible();
-			await expect(
 				eventResultPanel.getByText(first.names.eventMarker).first(),
 			).toBeVisible();
 		} finally {

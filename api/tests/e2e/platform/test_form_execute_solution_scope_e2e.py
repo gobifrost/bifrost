@@ -8,7 +8,7 @@ workflow must still reach it — the form's own access gate is authoritative.
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
 from src.models.orm.executions import Execution
 from src.models.orm.organizations import Organization
@@ -270,53 +270,59 @@ class TestCrossOrgFormExecuteAnchor:
             solution_id=sol.id, workflow_id=f"{path}::main", created_by="test",
         )
         db.add(form)
-        # The API process must see these rows. No cleanup: the entities are
-        # solution-managed (read-only — neither the API nor the ORM guard
-        # allows deleting them) and uniquely named, so leftovers are inert;
-        # the test stack resets state before each run.
+        # The API process must see these rows. Clean up the committed fixture
+        # below: the global decoy would otherwise become a Sync deletion candidate.
         await db.commit()
 
-        # Scheduled execute: the SCHEDULED row is inserted synchronously by the
-        # handler itself (no worker round-trip), so both the resolution anchor
-        # AND the execution's organization_id are observable deterministically.
-        r = e2e_client.post(
-            f"/api/forms/{form.id}/submissions",
-            headers=platform_admin.headers,
-            json={"form_data": {}, "delay_seconds": 3600},
-        )
-        assert r.status_code == 200, (
-            f"cross-org form execute failed: {r.status_code} {r.text}"
-        )
-        body = r.json()
-        assert body["workflow_id"] == str(own_wf.id), (
-            "cross-org caller resolved the wrong workflow (the global _repo/ "
-            f"decoy, not the install's own): got {body['workflow_id']}, "
-            f"expected {own_wf.id}"
-        )
-
-        # Lock the cross-org premise the decoy relies on: the session admin's
-        # home org must differ from the freshly created org B.
-        from src.models.orm.users import User
-
-        admin_org = (
-            await db.execute(
-                select(User.organization_id).where(User.email == platform_admin.email)
+        try:
+            # Scheduled execute: the SCHEDULED row is inserted synchronously by the
+            # handler itself (no worker round-trip), so both the resolution anchor
+            # AND the execution's organization_id are observable deterministically.
+            r = e2e_client.post(
+                f"/api/forms/{form.id}/submissions",
+                headers=platform_admin.headers,
+                json={"form_data": {}, "delay_seconds": 3600},
             )
-        ).scalar_one()
-        assert admin_org != org_b, "fixture admin unexpectedly homed in org B"
-
-        exec_row = (
-            await db.execute(
-                select(Execution).where(Execution.id == UUID(body["execution_id"]))
+            assert r.status_code == 200, (
+                f"cross-org form execute failed: {r.status_code} {r.text}"
             )
-        ).scalar_one()
-        # form_id propagation is the one thing the API response can't prove;
-        # workflow_id is already asserted via the response body above.
-        assert exec_row.form_id == form.id
-        assert exec_row.organization_id == org_b, (
-            f"execution stamped with caller org {exec_row.organization_id}, "
-            f"expected the form's org {org_b}"
-        )
+            body = r.json()
+            assert body["workflow_id"] == str(own_wf.id), (
+                "cross-org caller resolved the wrong workflow (the global _repo/ "
+                f"decoy, not the install's own): got {body['workflow_id']}, "
+                f"expected {own_wf.id}"
+            )
+
+            # Lock the cross-org premise the decoy relies on: the session admin's
+            # home org must differ from the freshly created org B.
+            from src.models.orm.users import User
+
+            admin_org = (
+                await db.execute(
+                    select(User.organization_id).where(User.email == platform_admin.email)
+                )
+            ).scalar_one()
+            assert admin_org != org_b, "fixture admin unexpectedly homed in org B"
+
+            exec_row = (
+                await db.execute(
+                    select(Execution).where(Execution.id == UUID(body["execution_id"]))
+                )
+            ).scalar_one()
+            # form_id propagation is the one thing the API response can't prove;
+            # workflow_id is already asserted via the response body above.
+            assert exec_row.form_id == form.id
+            assert exec_row.organization_id == org_b, (
+                f"execution stamped with caller org {exec_row.organization_id}, "
+                f"expected the form's org {org_b}"
+            )
+        finally:
+            await db.execute(delete(Execution).where(Execution.form_id == form.id))
+            await db.execute(delete(Form).where(Form.id == form.id))
+            await db.execute(delete(Workflow).where(Workflow.id.in_([own_wf.id, decoy_wf.id])))
+            await db.execute(delete(Solution).where(Solution.id == sol.id))
+            await db.execute(delete(Organization).where(Organization.id == org_b))
+            await db.commit()
 
     async def test_admin_cross_org_startup_resolves_install_launch_workflow(
         self, db_session, e2e_client, platform_admin
@@ -363,3 +369,132 @@ class TestCrossOrgFormExecuteAnchor:
             "cross-org caller could not resolve the install's own launch "
             f"workflow: {r.status_code} {r.text}"
         )
+
+
+@pytest.mark.e2e
+class TestGlobalFormOrganizationSelection:
+    async def test_global_form_runs_in_the_explicit_selected_organization(
+        self, db_session, e2e_client, platform_admin
+    ):
+        db = db_session
+        selected_org = (await _org(db)).id
+        workflow = Workflow(
+            id=uuid4(),
+            name="global-form-selection",
+            function_name="main",
+            path=f"workflows/global_form_selection_{uuid4().hex[:8]}.py",
+            type="workflow",
+            is_active=True,
+            organization_id=None,
+            solution_id=None,
+        )
+        form = Form(
+            id=uuid4(),
+            name="global-form-selection",
+            organization_id=None,
+            workflow_id=str(workflow.id),
+            created_by="test",
+        )
+        db.add_all([workflow, form])
+        await db.commit()
+
+        try:
+            runtime = e2e_client.get(
+                f"/api/forms/{form.id}/runtime", headers=platform_admin.headers
+            )
+            assert runtime.status_code == 200, runtime.text
+            assert runtime.json()["organization_id"] is None
+
+            response = e2e_client.post(
+                f"/api/forms/{form.id}/submissions",
+                params={"org_id": str(selected_org)},
+                headers=platform_admin.headers,
+                json={"form_data": {}, "delay_seconds": 3600},
+            )
+            assert response.status_code == 200, response.text
+
+            execution = (
+                await db.execute(
+                    select(Execution).where(
+                        Execution.id == UUID(response.json()["execution_id"])
+                    )
+                )
+            ).scalar_one()
+            assert execution.organization_id == selected_org
+        finally:
+            await db.execute(delete(Execution).where(Execution.form_id == form.id))
+            await db.execute(delete(Form).where(Form.id == form.id))
+            await db.execute(delete(Workflow).where(Workflow.id == workflow.id))
+            await db.execute(
+                delete(Organization).where(Organization.id == selected_org)
+            )
+            await db.commit()
+
+
+@pytest.mark.e2e
+async def test_user_can_discover_and_submit_a_form_with_access_only_in_selected_org(
+    db_session, e2e_client, org1_user
+):
+    from src.models.orm.forms import FormRole
+    from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
+
+    db = db_session
+    selected_org = await _org(db)
+    workflow = Workflow(
+        id=uuid4(), name=f"cross-org-form-{uuid4().hex[:8]}", function_name="main",
+        path=f"workflows/cross_org_form_{uuid4().hex[:8]}.py", type="workflow",
+        is_active=True, organization_id=None,
+    )
+    role = Role(id=uuid4(), name=f"Selected form access {uuid4().hex[:8]}", created_by="test")
+    base_role = Role(id=uuid4(), name=f"No home permissions {uuid4().hex[:8]}", created_by="test")
+    user = await db.get(User, org1_user.user_id)
+    assert user is not None
+    original_base_role_id = user.base_role_id
+    headers = org1_user.headers
+    form = Form(
+        id=uuid4(), name="Selected-organization form", organization_id=None,
+        workflow_id=str(workflow.id), access_level="role_based", created_by="test",
+    )
+    db.add_all([workflow, role, base_role, form])
+    await db.flush()
+    user.base_role_id = base_role.id
+    db.add_all([
+        RolePermission(role_id=role.id, permission="forms.readbasic"),
+        RolePermission(role_id=role.id, permission="workflows.execute"),
+        RolePermission(role_id=role.id, permission="organizations.read"),
+        UserRole(user_id=user.id, role_id=role.id, assigned_by="test"),
+        FormRole(form_id=form.id, role_id=role.id, assigned_by="test"),
+    ])
+    await db.flush()
+    db.add(UserRoleBoundary(
+        user_id=user.id, role_id=role.id,
+        kind="organization", organization_id=selected_org.id,
+    ))
+    await db.commit()
+    try:
+        default_runtime = e2e_client.get(f"/api/forms/{form.id}/runtime", headers=headers)
+        assert default_runtime.status_code == 403, default_runtime.text
+        runtime = e2e_client.get(
+            f"/api/forms/{form.id}/runtime", headers=headers,
+            params={"org_id": str(selected_org.id)},
+        )
+        assert runtime.status_code == 200, runtime.text
+        assert "organization_id" in runtime.json()
+        assert runtime.json()["organization_id"] is None
+        submission = e2e_client.post(
+            f"/api/forms/{form.id}/submissions", headers=headers,
+            params={"org_id": str(selected_org.id)},
+            json={"form_data": {}, "delay_seconds": 3600},
+        )
+        assert submission.status_code == 200, submission.text
+        execution = await db.get(Execution, UUID(submission.json()["execution_id"]))
+        assert execution is not None and execution.organization_id == selected_org.id
+    finally:
+        await db.execute(delete(Execution).where(Execution.form_id == form.id))
+        await db.execute(delete(Form).where(Form.id == form.id))
+        await db.execute(delete(Workflow).where(Workflow.id == workflow.id))
+        user.base_role_id = original_base_role_id
+        await db.flush()
+        await db.execute(delete(Role).where(Role.id.in_([role.id, base_role.id])))
+        await db.execute(delete(Organization).where(Organization.id == selected_org.id))
+        await db.commit()

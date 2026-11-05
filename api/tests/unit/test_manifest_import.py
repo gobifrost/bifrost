@@ -9,8 +9,10 @@ import pytest
 from pydantic import ValidationError
 
 from bifrost.manifest import (
+    Manifest,
     ManifestPolicy,
     ManifestTable,
+    ManifestWorkflow,
 )
 from src.models.contracts.policies import TablePolicies
 
@@ -167,6 +169,35 @@ class TestManifestImportPolicyValidationContract:
         assert mtable.policies is not None
         # No exception parsing the manifest. The gate must run at write time.
         assert mtable.policies[0].when == {"has_role": "support"}
+
+
+@pytest.mark.asyncio
+async def test_plan_import_rejects_decorator_settings_before_database_operations(
+    db_session, tmp_path
+) -> None:
+    """Manifest workflow source is checked before the resolver can write any ops."""
+    from uuid import uuid4
+
+    from bifrost.definition_validation import DefinitionValidationError
+    from src.services.manifest_import import ManifestResolver
+
+    workflow_id = uuid4()
+    source_path = "workflows/unsupported_decorator.py"
+    source_file = tmp_path / source_path
+    source_file.parent.mkdir()
+    source_file.write_text(
+        "from bifrost import workflow\n"
+        "@workflow(timeout_seconds=30)\n"
+        "def unsupported_decorator(): pass\n"
+    )
+    manifest = Manifest(workflows={
+        str(workflow_id): ManifestWorkflow(
+            id=str(workflow_id), path=source_path, function_name="unsupported_decorator",
+        )
+    })
+
+    with pytest.raises(DefinitionValidationError, match="timeout_seconds"):
+        await ManifestResolver(db_session).plan_import(manifest, work_dir=tmp_path)
 
 
 class TestWorkflowRunIdentity:

@@ -1,0 +1,13 @@
+{
+  "key": "pr:1143",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal database-efficiency and probe-behaviour change: pooled connections no longer carry per-pool application names, and the API readiness probe stops re-checking shared dependencies after it passes once; no customer-facing workflow.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1143",
+      "Program authorization: Jack (2026-10-29) approved the readiness direction (check dependencies at startup, then readiness means started) as part of the idle-churn program."
+    ]
+  }
+}

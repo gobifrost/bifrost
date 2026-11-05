@@ -1,0 +1,14 @@
+{
+  "key": "pr:1062",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "The sidebar and header stay in place while a page loads, instead of the whole workspace flashing to a loading screen.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1062",
+      "Found by the merge-queue browser smoke on #1061 (2026-10-24); Claude drafted this summary."
+    ]
+  }
+}

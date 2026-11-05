@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -74,3 +75,29 @@ async def test_mfa_enrollment_and_recovery_routes_reject_a_support_session(
         "Exit impersonation before managing MFA credentials",
     )
     load_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_password_change_rejects_a_support_session_before_database_or_hash_effects(
+    support_user: UserPrincipal,
+) -> None:
+    from src.models import PasswordChange
+    from src.routers import profile
+
+    db = AsyncMock()
+    query_result = MagicMock()
+    query_result.scalar_one_or_none.return_value = SimpleNamespace(hashed_password=None)
+    db.execute.return_value = query_result
+
+    with patch("src.routers.profile.get_password_hash") as get_password_hash:
+        with pytest.raises(HTTPException) as error:
+            await profile.change_password(
+                PasswordChange(new_password="New-password-42!"), support_user, db
+            )
+
+    assert (error.value.status_code, error.value.detail) == (
+        403,
+        "Exit impersonation before changing password",
+    )
+    db.execute.assert_not_awaited()
+    get_password_hash.assert_not_called()

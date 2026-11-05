@@ -265,12 +265,14 @@ async function ensureMapping(
 	return mapping!;
 }
 
+// A webhook delivery runs unattended as the Global Default Identity, whose
+// reach is Global only, so it cannot read the review organization's mapping.
+// The form workflow, run by the signed-in admin, proves the mapping read.
 function eventWorkflowSource(
 	workflowName: string,
-	integrationName: string,
 	resultMarker: string,
 ): string {
-	return `from bifrost import workflow, integrations\n\n@workflow(name="${workflowName}")\nasync def ${workflowName}(event_type: str = "", marker: str = "", _event: dict | None = None) -> dict:\n    mappings = await integrations.list_mappings("${integrationName}", scope="global")\n    return {\n        "event_type": event_type,\n        "marker": marker,\n        "result_marker": "${resultMarker}",\n        "mapping_entity_ids": [mapping.entity_id for mapping in (mappings or [])],\n        "event_id": (_event or {}).get("id"),\n    }\n`;
+	return `from bifrost import workflow\n\n@workflow(name="${workflowName}")\nasync def ${workflowName}(event_type: str = "", marker: str = "", _event: dict | None = None) -> dict:\n    return {\n        "event_type": event_type,\n        "marker": marker,\n        "result_marker": "${resultMarker}",\n        "event_id": (_event or {}).get("id"),\n    }\n`;
 }
 
 function formWorkflowSource(
@@ -596,11 +598,7 @@ export async function ensureReviewPack(
 			api,
 			`e2e_review_event_${identifier}.py`,
 			names.eventWorkflow,
-			eventWorkflowSource(
-				names.eventWorkflow,
-				names.integration,
-				eventResultMarker,
-			),
+			eventWorkflowSource(names.eventWorkflow, eventResultMarker),
 		);
 		const formWorkflow = await ensureWorkflow(
 			api,

@@ -45,6 +45,11 @@ export interface QueueUpdateData {
 	requiredMemoryMb?: number;
 }
 
+export interface QueuePositionUpdate {
+	queuePosition: number;
+	waitReason: WaitReason;
+}
+
 interface ExecutionStreamStore {
 	// Track multiple concurrent execution streams by ID
 	streams: Record<string, ExecutionStreamState>;
@@ -60,6 +65,10 @@ interface ExecutionStreamStore {
 		executionId: string,
 		status: ExecutionStatus,
 		queueData?: QueueUpdateData,
+	) => void;
+	updateQueuePosition: (
+		executionId: string,
+		queueUpdate: QueuePositionUpdate,
 	) => void;
 	setConnectionStatus: (executionId: string, isConnected: boolean) => void;
 	completeExecution: (
@@ -220,6 +229,37 @@ export const useExecutionStreamStore = create<ExecutionStreamStore>((set) => ({
 							? undefined
 							: (queueData?.requiredMemoryMb ??
 								stream.requiredMemoryMb),
+					},
+				},
+			};
+		});
+	},
+
+	updateQueuePosition: (executionId, queueUpdate) => {
+		set((state) => {
+			const stream = state.streams[executionId];
+			if (!stream) {
+				console.warn(
+					`[ExecutionStreamStore] Stream ${executionId} not found for updateQueuePosition`,
+				);
+				return state;
+			}
+
+			const initializePending =
+				!stream.hasReceivedUpdate && stream.status === "Running";
+			if (stream.status !== "Pending" && !initializePending) {
+				return state;
+			}
+
+			return {
+				streams: {
+					...state.streams,
+					[executionId]: {
+						...stream,
+						...(initializePending ? { status: "Pending" as const } : {}),
+						hasReceivedUpdate: true,
+						queuePosition: queueUpdate.queuePosition,
+						waitReason: queueUpdate.waitReason,
 					},
 				},
 			};

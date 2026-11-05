@@ -50,6 +50,8 @@ def _normalize_tool_name(name: str, category: str | None = None) -> str:
     name = re.sub(r"_+", "_", name)
     # Strip leading/trailing underscores
     name = name.strip("_")
+    if name.startswith(f"{prefix}_"):
+        return name
     return f"{prefix}_{name}"
 
 

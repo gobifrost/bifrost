@@ -78,8 +78,9 @@ class TestForkedFormsContextTransport:
     ):
         """A real forked child reads forms and context over the socket."""
         from src.core.principal import UserPrincipal
-        from src.core.security import mint_engine_token
+        from tests.helpers.runtime_tokens import legacy_engine_token
         from src.models.enums import ExecutionStatus, FormAccessLevel
+        from src.models.orm.audit import AuditLog
         from src.models.orm.executions import Execution
         from src.models.orm.forms import Form as FormModel
         from src.models.orm.organizations import Organization as OrganizationModel
@@ -98,6 +99,10 @@ class TestForkedFormsContextTransport:
         runtime_user = User(
             email=f"{stem}-actor@example.test",
             name="Fork Forms Runtime Actor",
+            # NULL-org users must be superuser
+            # (``ck_users_org_requires_superuser``); set_platform_admin below
+            # adds the assignment that makes it true.
+            is_superuser=True,
         )
         db_session.add(runtime_user)
         await db_session.flush()
@@ -186,7 +191,7 @@ class TestForkedFormsContextTransport:
             # Async fetch rides the local socket too.
             "_async_client = BifrostClient(_client.api_url, _client._access_token)",
             "_ctx_async = await _async_client._fetch_context()",
-            "_used_async_socket = _async_client._engine_http is not None",
+            "_used_async_socket = _async_client._clients_for_loop().engine_http is not None",
             "import os, sys",
             "result = {",
             "    'used_socket': _used_socket,",
@@ -215,7 +220,7 @@ class TestForkedFormsContextTransport:
         ]
         context = _context_for(
             _script_b64("\n".join(lines) + "\n"),
-            mint_engine_token(
+            legacy_engine_token(
                 execution_id=str(engine_execution_id),
                 timeout_seconds=120,
             )[0],
@@ -294,7 +299,18 @@ class TestForkedFormsContextTransport:
             await server.stop()
             async with async_session_factory() as session:
                 await session.execute(
+                    delete(AuditLog).where(AuditLog.execution_id == engine_execution_id)
+                )
+                await session.execute(
+                    delete(FormModel).where(
+                        FormModel.name.in_([global_name, org_name, inactive_name])
+                    )
+                )
+                await session.execute(
                     delete(Execution).where(Execution.id == engine_execution_id)
                 )
                 await session.execute(delete(User).where(User.id == runtime_user.id))
+                await session.execute(
+                    delete(OrganizationModel).where(OrganizationModel.id == org.id)
+                )
                 await session.commit()

@@ -8,9 +8,9 @@ workflow validation, execution tracking, and knowledge search.
 from uuid import uuid4
 
 import pytest
-from fastmcp.tools import ToolResult
 
 from src.services.mcp_server.server import MCPContext
+from src.services.mcp_server.tool_result import ToolResult
 
 
 def is_error_result(result: ToolResult) -> bool:

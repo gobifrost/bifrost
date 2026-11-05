@@ -7,6 +7,7 @@ supervisor (ready drain, stop mirror, credential rotation) with scoped I/O.
 
 import asyncio
 import json
+from io import StringIO
 import logging
 
 import pytest
@@ -114,8 +115,12 @@ def runtime_io(monkeypatch):
         transport.write_log,
     )
     monkeypatch.setattr(
-        "bifrost._service_runtime.install_service_credentials",
+        "bifrost._service_runtime.install_legacy_service_token",
         transport.installed_tokens.append,
+    )
+    monkeypatch.setattr(
+        "bifrost._service_runtime.install_service_credentials",
+        lambda access, refresh: transport.installed_tokens.append((access, refresh)),
     )
     return transport
 
@@ -181,6 +186,27 @@ async def test_exception_message_redacts_fetched_secrets():
     assert result.status == ExecutionStatus.FAILED
     assert "s3cr3t-service-token-value" not in (result.error_message or "")
     assert "s3cr3t-service-token-value" not in json.dumps(result.logs)
+
+
+async def test_exception_header_is_redacted_after_service_capture_closes():
+    @service
+    async def bridge():
+        raise RuntimeError("Set-Cookie: session=service-exception-secret; Path=/")
+
+    stream = StringIO()
+    console = logging.StreamHandler(stream)
+    console.setFormatter(logging.Formatter("[worker] %(levelname)s - %(message)s"))
+    root = logging.getLogger()
+    root.addHandler(console)
+    try:
+        result = await execute(_request(bridge))
+    finally:
+        root.removeHandler(console)
+
+    assert result.status == ExecutionStatus.FAILED
+    assert "service-exception-secret" not in (result.error_message or "")
+    assert "service-exception-secret" not in stream.getvalue()
+    assert "[REDACTED]" in (result.error_message or "")
 
 
 async def test_stop_control_unwinds_to_success(runtime_io):
@@ -316,3 +342,42 @@ async def test_supervisor_installs_fresher_rotation_token(runtime_io):
         clear_service_runtime()
     assert runtime_io.installed_tokens == ["rotated-token"]
     assert cfg.token_expires_at == "2026-09-20T08:30:00+00:00"
+
+
+async def test_a_claims_attempt_installs_its_refresh_token_and_is_never_rotated(runtime_io):
+    @service
+    async def bridge():
+        return None
+
+    cfg = _config()
+    cfg.refresh_token = "run-refresh-token"
+    result = await execute(_request(bridge, cfg))
+
+    assert result.status == ExecutionStatus.SUCCESS
+    assert runtime_io.installed_tokens[0] == ("initial-token", "run-refresh-token")
+    assert all(isinstance(installed, tuple) for installed in runtime_io.installed_tokens)
+
+
+async def test_a_claims_attempt_ignores_rotations_from_a_rolled_back_api(runtime_io):
+    """Rollback to an API that rotates every attempt: its legacy tokens never
+    replace the claims attempt's credentials."""
+    from bifrost._service_runtime import clear_service_runtime, install_service_runtime
+
+    cfg = _config(refresh_token="run-refresh-token")
+    stop = asyncio.Event()
+    install_service_runtime(stop)
+    runtime_io.responses.append(
+        {
+            "stop_requested": False,
+            "access_token": "legacy-rotated-token",
+            "token_expires_at": "2026-09-20T08:30:00+00:00",
+        }
+    )
+    runtime_io.stop_after_request = stop
+    try:
+        await _service_supervisor(cfg, stop)
+    finally:
+        clear_service_runtime()
+
+    assert runtime_io.installed_tokens == []
+    assert cfg.token_expires_at == "2026-09-20T08:15:00+00:00"

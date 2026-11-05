@@ -251,6 +251,18 @@ class DocumentRepository:
         result = await self.session.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_for_update(self, doc_id: str) -> Document | None:
+        """Read current state under a row lock held until transaction end."""
+        query = (
+            select(Document)
+            .where(Document.id == doc_id, Document.table_id == self.table.id)
+            .with_for_update()
+            # A prior read can retain a stale ORM identity even after lock wait.
+            .execution_options(populate_existing=True)
+        )
+        result = await self.session.execute(query)
+        return result.scalar_one_or_none()
+
     async def update(
         self,
         doc_id: str,
@@ -258,7 +270,7 @@ class DocumentRepository:
         updated_by: str | None,
     ) -> Document | None:
         """Update a document (partial update, merges with existing)."""
-        doc = await self.get(doc_id)
+        doc = await self.get_for_update(doc_id)
         if not doc:
             return None
 

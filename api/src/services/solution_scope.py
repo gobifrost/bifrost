@@ -7,6 +7,7 @@ from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import load_only, raiseload
 
 from src.core.auth import ExecutionContext
 from src.models.orm.applications import Application
@@ -189,7 +190,21 @@ class SolutionInboundDenied(Exception):
 
 
 async def get_active_solution(db: AsyncSession, solution_id: UUID) -> Solution | None:
-    solution = await db.get(Solution, solution_id)
+    """Load only the active-install fields used by runtime scope checks."""
+    solution = await db.get(
+        Solution,
+        solution_id,
+        options=(
+            load_only(
+                Solution.id,
+                Solution.status,
+                Solution.organization_id,
+                Solution.allow_outbound_access,
+                raiseload=True,
+            ),
+            raiseload("*"),
+        ),
+    )
     if solution is None or solution.status != "active":
         return None
     return solution

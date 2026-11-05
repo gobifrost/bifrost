@@ -300,9 +300,9 @@ async def test_execute_tool_routes_mcp_prefix_to_mcp_dispatch(
 ):
     """The tool-name dispatcher in _execute_tool routes the
     ``mcp__<uuid>__<tool>`` pattern to _execute_mcp_tool BEFORE falling
-    through to the workflow lookup. We assert this by patching
-    dispatch.invoke and confirming it ran for an agent with no MCP tools
-    in its workflow id_map."""
+    through to workflow dispatch. The exact live MCP catalog entry is present
+    in the id map, and the assertion confirms dispatch invokes the remote
+    tool rather than the workflow runner."""
     executor = AgentExecutor(mock_session_factory)
     connection_id = uuid4()
     caller = _caller()
@@ -317,6 +317,9 @@ async def test_execute_tool_routes_mcp_prefix_to_mcp_dispatch(
     agent.delegated_agents = []
     agent.id = uuid4()
     agent.mcp_connections = [SimpleNamespace(id=connection_id)]
+    executor._tool_workflow_id_map = {
+        f"{MCP_TOOL_PREFIX}{connection_id}__graph_search": connection_id,
+    }
 
     fake_envelope = {"content": [], "is_error": False}
 

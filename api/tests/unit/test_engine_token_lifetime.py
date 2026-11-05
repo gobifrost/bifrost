@@ -1,12 +1,14 @@
-"""Engine tokens must outlive the execution they are minted for."""
+"""Legacy-format engine tokens must outlive the execution they are minted for."""
 
 from datetime import datetime, timedelta, timezone
 
-from src.core.security import NO_TIMEOUT_TOKEN_SECONDS, decode_token, mint_engine_token
+from src.core.security import decode_token
+from src.services.authorization.tokens import LEGACY_NO_TIMEOUT_TOKEN_SECONDS as NO_TIMEOUT_TOKEN_SECONDS
+from tests.helpers.runtime_tokens import legacy_engine_token
 
 
 def _expiry(timeout_seconds: int) -> datetime:
-    token, expires_at = mint_engine_token(
+    token, expires_at = legacy_engine_token(
         execution_id="00000000-0000-0000-0000-000000000123",
         timeout_seconds=timeout_seconds,
     )

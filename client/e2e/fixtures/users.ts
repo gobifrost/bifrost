@@ -86,14 +86,8 @@ export const ORGANIZATIONS = {
 	},
 };
 
-/**
- * Auth state file paths (relative to e2e directory)
- */
+/** Directory holding persistent seeded-user credentials. */
 export const AUTH_STATE_DIR = ".auth";
-
-export function getAuthStatePath(userKey: string): string {
-	return `${AUTH_STATE_DIR}/${userKey}.json`;
-}
 
 export function getCredentialsPath(): string {
 	return `${AUTH_STATE_DIR}/credentials.json`;

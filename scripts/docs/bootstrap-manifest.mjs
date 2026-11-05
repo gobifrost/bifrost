@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 /**
- * Bootstrap a screenshots.yaml manifest for the gobifrost site.
+ * Bootstrap a screenshots.yaml manifest for public Bifrost product documentation.
  *
  * Inputs:
- *   --docs-repo <path>    path to gobifrost checkout
+ *   --docs-repo <path>    path to public-docs checkout
  *   --bifrost-repo <path> path to this bifrost checkout (defaults to script's repo)
  *   --force               overwrite existing screenshots.yaml
  *
@@ -15,6 +15,10 @@ import { readFileSync, writeFileSync, existsSync, readdirSync, statSync, renameS
 import { resolve, relative, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import * as yaml from "js-yaml";
+
+// js-yaml v5 defaults to YAML 1.2 CORE_SCHEMA, which treats `<<` as a plain
+// key. Add the legacy merge tag without changing ordinary YAML 1.2 scalars.
+const manifestSchema = yaml.CORE_SCHEMA.withTags(yaml.mergeTag);
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -69,7 +73,7 @@ function inventoryMdx(docsRepo) {
     let body = raw;
     if (fmMatch) {
       try {
-        frontmatter = yaml.load(fmMatch[1]) ?? {};
+        frontmatter = yaml.load(fmMatch[1], { schema: manifestSchema }) ?? {};
       } catch {
         frontmatter = {};
       }

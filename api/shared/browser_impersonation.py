@@ -15,7 +15,7 @@ from shared import access_checks
 from src.config import get_settings
 from shared.external_access import resolve_provider_org_claim
 from src.core.cache import get_shared_redis
-from src.core.cache.keys import browser_impersonation_session_key, refresh_token_jti_key
+from src.core.cache.keys import browser_impersonation_session_key
 from src.core.principal import UserPrincipal
 from src.core.security import create_access_token
 from src.models.orm.users import User
@@ -152,9 +152,9 @@ async def validate_browser_impersonation(db: AsyncSession, principal: UserPrinci
     initiator_refresh_jti = record.get("initiator_refresh_jti")
     if not isinstance(initiator_refresh_jti, str) or not initiator_refresh_jti:
         raise BrowserImpersonationError("Browser impersonation session is invalid")
-    if not await redis.exists(
-        refresh_token_jti_key(str(principal.impersonated_by_user_id), initiator_refresh_jti)
-    ):
+    from shared.human_sessions import has_live_refresh_token_jti
+
+    if not await has_live_refresh_token_jti(db, principal.impersonated_by_user_id, initiator_refresh_jti):
         raise BrowserImpersonationError("Browser impersonation operator session is no longer active")
 
     initiator = await db.get(User, principal.impersonated_by_user_id)

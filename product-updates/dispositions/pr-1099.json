@@ -1,0 +1,13 @@
+{
+  "key": "pr:1099",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal performance change to workflow variable capture; variables are still captured at the end of each run.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1099",
+      "Jack approved omitting this as an internal performance change on 2026-10-27."
+    ]
+  }
+}

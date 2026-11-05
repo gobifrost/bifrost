@@ -1,7 +1,7 @@
 """retain trusted execution origin for Guardian policy
 
 Revision ID: 20261020_execution_provenance
-Revises: 20261019_durable_impersonation
+Revises: 20261104_oauth_clients
 Create Date: 2026-10-20
 
 Existing rows intentionally remain NULL.  Their origin cannot be proven and
@@ -18,7 +18,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision: str = "20261020_execution_provenance"
-down_revision: str | None = "20261019_durable_impersonation"
+down_revision: str | None = "20261104_oauth_clients"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

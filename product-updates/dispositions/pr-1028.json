@@ -1,0 +1,14 @@
+{
+  "key": "pr:1028",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution installs and deploys show the npm or Vite error when an app build fails, instead of pointing to server logs.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1028",
+      "Jack approved this error-reporting change on 2026-10-22 and explicitly deferred the full-error viewer to a separate follow-up. On 2026-10-29 he authorized completing this PR through successful merge while preserving Will Spence's ownership and credit. General Writing and Humanizer review confirmed the concise summary still matches the verified behavior."
+    ]
+  }
+}

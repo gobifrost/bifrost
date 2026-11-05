@@ -211,7 +211,7 @@ async def insert_table_document(
     )
 
     if upsert and doc_id:
-        existing = await repo.get(doc_id)
+        existing = await repo.get_for_update(doc_id)
         if existing is not None:
             old_row = _row_from_doc(existing)
             new_row = _update_post_image_row(
@@ -324,12 +324,12 @@ async def update_table_document(
     """Partial-merge update of a document.
 
     The ``update`` policy must pass on both pre-image and merged post-image.
-    Missing rows raise :class:`TableWriteNotFound`, including a lost race
-    with a concurrent delete after fetch + access check.
+    Lock the current pre-image through policy evaluation, merge, and commit.
+    Missing rows raise :class:`TableWriteNotFound`.
     """
     repo = DocumentRepository(db, table)
     _, resolved_updated_by = await resolve_attribution(user, None, updated_by, db=db, organization_id=table.organization_id)
-    existing = await repo.get(doc_id)
+    existing = await repo.get_for_update(doc_id)
     if existing is None:
         raise TableWriteNotFound("Document not found")
     old_row = _row_from_doc(existing)

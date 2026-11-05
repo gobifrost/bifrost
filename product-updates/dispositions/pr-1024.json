@@ -1,0 +1,14 @@
+{
+  "key": "pr:1024",
+  "classification": "highlight",
+  "entry_ids": [
+    "250a294a-6072-4b82-a2c7-0027b3b5af65"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1024",
+      "Groups Automatic orchestration, CodeMode, and native runtime improvements in the existing Automatic feature UUID at maintainer request on 2026-10-24. Maintainer approved the revised canonical copy and measured claims with “Send it” on 2026-10-24."
+    ]
+  }
+}

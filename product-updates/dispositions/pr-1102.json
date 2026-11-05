@@ -1,0 +1,12 @@
+{
+  "key": "pr:1102",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal benchmark tooling and design documents; no product behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1102"
+    ]
+  }
+}

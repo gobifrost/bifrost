@@ -80,12 +80,12 @@ def registry(monkeypatch):
     }
     fake = MagicMock()
     fake.get.side_effect = lambda name: adapters.get(name or "generic")
-    monkeypatch.setattr("src.routers.events.get_adapter_registry", lambda: fake)
+    monkeypatch.setattr("src.services.webhooks.registry.get_adapter_registry", lambda: fake)
     monkeypatch.setattr(
         "src.routers.events._build_event_source_response",
         AsyncMock(return_value="response"),
     )
-    monkeypatch.setattr("src.routers.events.emit_audit", AsyncMock())
+    monkeypatch.setattr("src.services.audit.emit_audit", AsyncMock())
     monkeypatch.setattr(
         "src.routers.events._require_event_source",
         AsyncMock(return_value=admin_caller()),

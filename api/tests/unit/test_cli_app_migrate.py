@@ -68,6 +68,41 @@ def test_migrate_uses_independent_app_lifecycle(tmp_path: pathlib.Path) -> None:
     assert "bifrost solution" not in result.output
 
 
+def test_migrate_keeps_supported_user_hooks_without_jwt_guidance(
+    tmp_path: pathlib.Path,
+) -> None:
+    source = _v1_app(tmp_path)
+    (source / "pages" / "index.tsx").write_text(
+        'import { RequireRole, useAppState, useUser } from "bifrost";\n'
+        "export default function Home() { return null; }\n"
+    )
+    destination = tmp_path / "modern"
+
+    def create_project(root: pathlib.Path, **_kwargs):  # type: ignore[no-untyped-def]
+        _scaffold(root, "modern")
+        return {"id": A_ID}, "modern"
+
+    with (
+        mock.patch("bifrost.commands.app._create_project", side_effect=create_project),
+        mock.patch("subprocess.run") as run,
+    ):
+        run.return_value = mock.Mock(returncode=0, stdout=b"", stderr=b"")
+        result = CliRunner().invoke(
+            app_group,
+            ["migrate", str(source), str(destination), "--name", "Modern"],
+        )
+
+    assert result.exit_code == 0, result.output
+    migrated = (destination / "src" / "pages" / "index.tsx").read_text()
+    # Unsupported state hooks intentionally remain for a loud compile-time
+    # migration signal; supported identity helpers keep their SDK imports too.
+    assert 'import { RequireRole, useAppState, useUser } from "bifrost";' in migrated
+    assert "['useAppState']" in result.output
+    assert "useUser in v2" not in result.output
+    assert "ctx.token" not in result.output
+    assert "JWT" not in result.output
+
+
 def test_app_swap_slugs_resolves_refs_and_posts_atomic_cutover() -> None:
     captured: dict[str, object] = {"gets": []}
 

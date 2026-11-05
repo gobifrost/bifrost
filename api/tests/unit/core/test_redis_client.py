@@ -216,15 +216,12 @@ class TestRedisClientSingleton:
 
 
 
-@pytest.mark.asyncio
-async def test_set_pending_execution_stores_lineage():
-    from src.core.redis_client import RedisClient
+def test_pending_execution_record_carries_lineage():
+    from src.core.redis_client import pending_execution_record
 
-    client = RedisClient()
-    client._redis = AsyncMock()
     lineage = {"run_user_id": "u", "started_by_user_id": "u", "root_execution_id": "e1"}
 
-    await client.set_pending_execution(
+    record = pending_execution_record(
         execution_id="e1",
         workflow_id="wf",
         parameters={},
@@ -233,34 +230,12 @@ async def test_set_pending_execution_stores_lineage():
         user_name="n",
         user_email="",
         lineage=lineage,
-    )
-
-    _, _, payload = client._redis.setex.await_args.args
-    assert json.loads(payload)["lineage"] == lineage
-
-
-@pytest.mark.asyncio
-async def test_set_pending_execution_stores_execution_provenance():
-    from src.core.redis_client import RedisClient
-
-    client = RedisClient()
-    client._redis = AsyncMock()
-    agent_id = "00000000-0000-0000-0000-0000000000aa"
-
-    await client.set_pending_execution(
-        execution_id="e1",
-        workflow_id="wf",
-        parameters={},
-        org_id=None,
-        user_id="u",
-        user_name="n",
-        user_email="",
-        lineage=None,
         execution_origin="agent",
-        agent_id=agent_id,
+        agent_id="00000000-0000-0000-0000-0000000000aa",
+        is_agent=True,
     )
 
-    _, _, payload = client._redis.setex.await_args.args
-    stored = json.loads(payload)
-    assert stored["execution_origin"] == "agent"
-    assert stored["agent_id"] == agent_id
+    assert record.get("lineage") == lineage
+    assert record["execution_origin"] == "agent"
+    assert record["agent_id"] == "00000000-0000-0000-0000-0000000000aa"
+    assert record["is_agent"] is True

@@ -6,6 +6,7 @@ Tests for the profile management endpoints.
 
 
 from tests.e2e.fixtures.users import E2EUser
+from tests.e2e.fixtures.setup import _login_user
 
 
 class TestProfile:
@@ -145,28 +146,49 @@ class TestPasswordChange:
         """Test successful password change."""
         original_password = platform_admin.password
         new_password = "newpassword123456"
+        password_changed = False
 
-        # Change password
-        response = e2e_client.post(
-            "/api/profile/password",
-            headers=platform_admin.headers,
-            json={
-                "current_password": original_password,
-                "new_password": new_password,
-            },
-        )
-        assert response.status_code == 204
+        try:
+            response = e2e_client.post(
+                "/api/profile/password",
+                headers=platform_admin.headers,
+                json={
+                    "current_password": original_password,
+                    "new_password": new_password,
+                },
+            )
+            assert response.status_code == 204
+            password_changed = True
+            platform_admin.password = new_password
 
-        # Change it back
-        response = e2e_client.post(
-            "/api/profile/password",
-            headers=platform_admin.headers,
-            json={
-                "current_password": new_password,
-                "new_password": original_password,
-            },
-        )
-        assert response.status_code == 204
+            # Password changes revoke every human session. Get a new MFA-backed
+            # session before exercising the inverse change.
+            _login_user(platform_admin)
+            response = e2e_client.post(
+                "/api/profile/password",
+                headers=platform_admin.headers,
+                json={
+                    "current_password": new_password,
+                    "new_password": original_password,
+                },
+            )
+            assert response.status_code == 204
+            password_changed = False
+            platform_admin.password = original_password
+        finally:
+            if password_changed:
+                _login_user(platform_admin)
+                response = e2e_client.post(
+                    "/api/profile/password",
+                    headers=platform_admin.headers,
+                    json={
+                        "current_password": new_password,
+                        "new_password": original_password,
+                    },
+                )
+                assert response.status_code == 204
+                platform_admin.password = original_password
+            _login_user(platform_admin)
 
 
 class TestProfileAuth:

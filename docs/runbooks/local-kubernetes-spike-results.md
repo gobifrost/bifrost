@@ -1,5 +1,11 @@
 # Local Kubernetes Spike Results
 
+> Historical record. These results predate the unified runtime: Bifrost no
+> longer uses RabbitMQ or KEDA, and the `./test.sh kubernetes experiment`
+> harness they used has been removed. See the
+> [local Kubernetes spike runbook](./local-kubernetes-spike.md) for the current
+> harness.
+
 For the subsequent memory-reduction pass and corrected latency comparison, see
 [worker memory reduction results](worker-memory-reduction-results.md). Earlier
 inline timing measurements below included stale UI queue-tracking overhead.

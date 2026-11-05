@@ -15,10 +15,24 @@ const orgScopeState = vi.hoisted(() => ({
 	},
 }));
 
+const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
+
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
+const { mockPreloadHostedSdkFactory } = vi.hoisted(() => ({
+	mockPreloadHostedSdkFactory: vi.fn(),
+}));
 
 vi.mock("@/lib/api-client", () => ({
 	authFetch: (...args: unknown[]) => mockAuthFetch(...args),
+}));
+
+vi.mock("@/lib/app-sdk/hosted-loader", () => ({
+	preloadHostedSdkFactory: (...args: unknown[]) =>
+		mockPreloadHostedSdkFactory(...args),
+}));
+
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ isPlatformAdmin: authState.isPlatformAdmin }),
 }));
 
 vi.mock("@/hooks/useOrgScope", () => ({
@@ -39,6 +53,7 @@ function props(entry: string) {
 		baseUrl: "/api/applications/app-1/dist",
 		appOrgId: null as string | null,
 		runtimeContract: "mount-v1" as const,
+		sdkBindingApiMajor: null as number | null,
 	};
 }
 
@@ -94,9 +109,12 @@ beforeEach(() => {
 	localStorage.clear();
 	sessionStorage.clear();
 	orgScopeState.scope = { type: "global", orgId: null };
+	authState.isPlatformAdmin = false;
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
 	mockAuthFetch.mockReset();
+	mockPreloadHostedSdkFactory.mockReset();
+	mockPreloadHostedSdkFactory.mockResolvedValue(undefined);
 	vi.spyOn(console, "error").mockImplementation(() => {});
 	const appendChild = document.head.appendChild.bind(document.head);
 	vi.spyOn(document.head, "appendChild").mockImplementation(
@@ -123,6 +141,21 @@ afterEach(() => {
 });
 
 describe("StandaloneV2App", () => {
+	it("preloads a migrated app's hosted SDK before evaluating its entry", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		let releaseSdk!: () => void;
+		mockPreloadHostedSdkFactory.mockReturnValue(
+			new Promise<void>((resolve) => {
+				releaseSdk = resolve;
+			}),
+		);
+		render(<StandaloneV2App {...props("hosted-sdk")} sdkBindingApiMajor={1} />);
+
+		expect(mockPreloadHostedSdkFactory).toHaveBeenCalledWith(window.location.origin);
+		expect(appendedScripts).toHaveLength(0);
+		releaseSdk();
+		await waitFor(() => expect(moduleScript("hosted-sdk")).toBeDefined());
+	});
 	it("loads the immutable entry and stylesheet through canonical URLs", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		render(
@@ -236,6 +269,31 @@ describe("StandaloneV2App", () => {
 			appId: "app-1",
 			basename: "/apps/dash",
 		});
+	});
+
+	it("runs a platform admin against the App's own organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-app-org")} appOrgId="client-org" />);
+		await finishModuleLoad("admin-app-org", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "client-org" });
+	});
+
+	it("runs a platform admin against the selection when the App has no organization", async () => {
+		localStorage.setItem("bifrost_access_token", "tok-1");
+		authState.isPlatformAdmin = true;
+		orgScopeState.scope = { type: "organization", orgId: "selected-org" };
+		const mount = vi.fn<StandaloneV2Module["mount"]>(() => vi.fn());
+
+		render(<StandaloneV2App {...props("admin-global-app")} />);
+		await finishModuleLoad("admin-global-app", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+
+		expect(mount.mock.calls[0][1]).toMatchObject({ orgScope: "selected-org" });
 	});
 
 	it("remounts when the parent supplies a newer manifest", async () => {

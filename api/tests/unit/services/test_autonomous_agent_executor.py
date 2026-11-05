@@ -16,8 +16,9 @@ from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.repositories.knowledge import KnowledgeDocument
-from src.services.agent_runtime import AgentRunBudget
+from src.services.agent_runtime import AgentRunBudget, BifrostToolset
 from src.services.authorization.enforce import Caller
+from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
 from src.services.execution.agent_helpers import find_delegated_agent
 from src.services.execution.autonomous_agent_executor import (
     ActingUser,
@@ -196,7 +197,10 @@ def mock_runtime_config():
                 api_key="test-key",
             )
         ],
-    ) as mock_get_config:
+    ) as mock_get_config, patch(
+        "src.services.execution.autonomous_agent_executor.AIBehaviorService.get_agent_execution_mode",
+        new=AsyncMock(return_value="delegated"),
+    ):
         yield mock_get_config
 
 
@@ -258,7 +262,37 @@ def authorized_agent_runtime(mock_agent):
         None, fallback_organization_id=mock_agent.organization_id
     )
     child_caller = Caller(child_caller.principal, MagicMock())
+
+    async def fixed_composition(agent, **kwargs):
+        """These legacy lifecycle units isolate the newly shared catalog adapter.
+
+        Real composition and live graph authorization have their own focused
+        unit and DB/E2E coverage. Preserve this module's explicit tool scripts.
+        """
+        async def resolve(name, arguments):
+            return SimpleNamespace(
+                owner=agent, original_name=name, arguments=arguments,
+                workflow_ids=kwargs["entry_workflow_ids"],
+            )
+
+        def entry_toolset(execute, event_handler=None, toolset_id="test-entry"):
+            return BifrostToolset(
+                kwargs["entry_definitions"], execute,
+                event_handler=event_handler, toolset_id=toolset_id,
+            )
+
+        return SimpleNamespace(
+            entry_definitions=kwargs["entry_definitions"], instructions="",
+            resolve_call=resolve, provenance_for=lambda *_: {},
+            entry_toolset=entry_toolset,
+            capabilities=lambda *_: [],
+        )
+
     with (
+        patch(
+            "src.services.execution.autonomous_agent_executor.build_agent_composition",
+            new=AsyncMock(side_effect=fixed_composition),
+        ),
         patch(
             "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
             new=AsyncMock(side_effect=authorize),
@@ -279,6 +313,25 @@ def authorized_agent_runtime(mock_agent):
 
 
 class TestAutonomousAgentExecutor:
+    @pytest.mark.asyncio
+    async def test_revocation_during_composition_returns_failure_without_model_request(
+        self, mock_session, mock_agent, mock_runtime_config,
+    ):
+        mock_agent.delegated_agents = [SimpleNamespace(id=uuid4())]
+        with (
+            patch("src.services.execution.autonomous_agent_executor.resolve_agent_tools", new=AsyncMock(return_value=([], {}))),
+            patch("src.services.execution.autonomous_agent_executor.build_agent_composition", new=AsyncMock(side_effect=AgentRuntimeAuthorizationError("Agent revoked"))),
+            patch("src.services.agent_runtime.model_factory.create_agent_model") as create_model,
+        ):
+            result = await AutonomousAgentExecutor(mock_session).run(
+                agent=mock_agent, input_data={}, caller=_canonical_caller(None),
+                run_user_id=None, run_as=None, agent_execution_mode="automatic",
+            )
+        assert result["status"] == "failed"
+        assert result["error"] == "Agent revoked"
+        assert result["iterations_used"] == 0
+        create_model.assert_not_called()
+
     @pytest.mark.asyncio
     async def test_knowledge_search_deduplicates_evidence_across_queries(
         self,
@@ -441,9 +494,10 @@ class TestAutonomousAgentExecutor:
                 },
             ) as mock_child_run,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
-            ) as mock_enqueue_summarize,
+                return_value=None,
+            ) as mock_stage_summary,
         ):
             outcome = await executor.run_delegation(
                 parent_agent=mock_agent,
@@ -472,7 +526,8 @@ class TestAutonomousAgentExecutor:
         assert child_run.acting_user_id == UUID(caller["user_id"])
         assert child_run.status == "completed"
         assert child_run.completed_at is not None
-        mock_enqueue_summarize.assert_awaited_once_with(child_run.id)
+        mock_stage_summary.assert_awaited_once()
+        assert mock_stage_summary.await_args.args[1] == child_run.id
         mock_child_run.assert_awaited_once_with(
             agent=delegated,
             input_data={
@@ -486,6 +541,7 @@ class TestAutonomousAgentExecutor:
             run_user_id=run_user_id,
             run_as=None,
             acting=None,
+            agent_execution_mode="delegated",
         )
         child_payload = authorized_agent_runtime.load_child_principal.await_args.args[1]
         assert child_payload == {
@@ -596,7 +652,13 @@ class TestAutonomousAgentExecutor:
         async def system_tool(context, **_arguments):
             nonlocal captured_context
             captured_context = context
-            return "ok"
+            from mcp.types import ImageContent
+            from src.services.mcp_server.tool_result import ToolResult
+
+            return ToolResult(
+                content=[ImageContent(type="image", data="aGVsbG8=", mime_type="image/png")],
+                structured_content={"ok": True},
+            )
 
         mock_agent.knowledge_sources = ["current-agent-kb"]
         executor = AutonomousAgentExecutor(mock_session)
@@ -614,7 +676,7 @@ class TestAutonomousAgentExecutor:
             "src.services.mcp_server.server.get_system_tool_function",
             return_value=system_tool,
         ):
-            await executor._execute_system_tool(
+            result = await executor._execute_system_tool(
                 ToolCallRequest(
                     id="tc1",
                     name="specialist_system_tool",
@@ -633,6 +695,10 @@ class TestAutonomousAgentExecutor:
         assert captured_context.is_provider_org is False
         assert captured_context.accessible_namespaces == ["current-agent-kb"]
         assert captured_context.session is mock_session._mock_session
+
+        payload = json.loads(result)
+        assert payload["structured_content"] == {"ok": True}
+        assert payload["content"][0]["mimeType"] == "image/png"
 
     @pytest.mark.asyncio
     async def test_system_tool_refuses_missing_canonical_caller(
@@ -2381,6 +2447,9 @@ class TestRunAsActingUser:
         caller = _canonical_caller(caller_data)
         run_user_id = caller.principal.user_id
         run_as = _contoso_portal_user(contoso) if with_run_as else None
+        mock_agent.delegated_agents = [SimpleNamespace(
+            id=uuid4(), name="Contoso Specialist", is_active=True,
+        )]
         mock_resolve_tools.return_value = ([_tool("delegate_to_contoso_specialist")], {})
         mock_create_model.return_value = _calls_one_tool("delegate_to_contoso_specialist")
         run_id = str(uuid4())
@@ -2418,6 +2487,7 @@ class TestRunAsActingUser:
             ),
             run_user_id=run_user_id,
             run_as=run_as,
+            agent_execution_mode="delegated",
         )
 
     @pytest.mark.asyncio
@@ -2467,8 +2537,9 @@ class TestRunAsActingUser:
                 return_value={"output": "checked", "status": "completed"},
             ) as mock_child_run,
             patch(
-                "src.services.execution.run_summarizer.enqueue_summarize",
+                "src.services.execution.summary_dispatch.stage_summary",
                 new_callable=AsyncMock,
+                return_value=None,
             ),
         ):
             await executor.run_delegation(

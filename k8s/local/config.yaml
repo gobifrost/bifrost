@@ -20,10 +20,12 @@ data:
   BIFROST_WEBAUTHN_RP_ID: localhost
   BIFROST_WEBAUTHN_RP_NAME: Bifrost Local Kind
   BIFROST_WEBAUTHN_ORIGIN: http://localhost:8000
-  BIFROST_MAX_CONCURRENCY: "10"
-  BIFROST_DRAIN_DEADLINE_SECONDS: "300"
   BIFROST_DATABASE_POOL_SIZE: "5"
   BIFROST_DATABASE_MAX_OVERFLOW: "10"
+  # On-demand worker Jobs request little memory on a single-node Kind
+  # cluster. Their idle time is a Settings -> Kubernetes value: the drills
+  # shorten it for their run (scripts/kubernetes/pool_spike.py set_policy).
+  BIFROST_POOL_WORKER_MEMORY_REQUEST_MIB: "256"
 ---
 apiVersion: v1
 kind: Secret
@@ -33,12 +35,10 @@ metadata:
 type: Opaque
 stringData:
   POSTGRES_PASSWORD: bifrost_dev
-  RABBITMQ_PASSWORD: bifrost_dev
   SEAWEEDFS_SECRET_KEY: bifrost_dev
   BIFROST_SECRET_KEY: dev-secret-key-change-in-production-must-be-32-chars
   BIFROST_DEFAULT_USER_EMAIL: dev@gobifrost.com
   BIFROST_DEFAULT_USER_PASSWORD: password
   BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_dev@pgbouncer:5432/bifrost
   BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_dev@pgbouncer:5432/bifrost
-  BIFROST_RABBITMQ_URL: amqp://bifrost:bifrost_dev@rabbitmq.bifrost-local.svc.cluster.local:5672/
   BIFROST_S3_SECRET_KEY: bifrost_dev

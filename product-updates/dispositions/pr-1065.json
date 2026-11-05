@@ -1,0 +1,17 @@
+{
+  "key": "pr:1065",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal controller-drill qualification and completion of transport filtering covered by the approved hardening summary in pr:1064; activates that summary without a separate announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1065",
+      "Independent Codex reviews verified controller adoption assertions, bounded rollout observation, and the fresh-import transport logger boundary. Jack authorized autonomous verification, merge and deployment of these runtime follow-ups."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1065"
+  }
+}

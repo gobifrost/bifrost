@@ -111,7 +111,7 @@ async def global_integration(e2e_client, platform_admin, db_session, org1):
     from src.core.security import encrypt_secret
     from src.models.enums import ConfigType
     from src.models.orm import Config as ConfigModel
-    from src.models.orm import OAuthProvider
+    from src.models.orm import Integration, OAuthProvider
     from src.models.orm.oauth import OAuthToken
 
     uniq = uuid4().hex[:8]
@@ -183,16 +183,16 @@ async def global_integration(e2e_client, platform_admin, db_session, org1):
         "org_id": org1["id"],
     }
 
-    # Integration deletion is soft, so its provider and client-credentials
-    # token do not cascade away. Remove them explicitly: otherwise each
-    # function-scoped fixture invocation leaves another refreshable token for
-    # the live scheduler to sweep later in the E2E run.
+    # Remove the exact fixture, including config overrides. REST deletion is
+    # soft and would leave configs that later workspace Syncs try to delete.
+    # OAuth state is removed explicitly so the live scheduler cannot sweep it.
+    from sqlalchemy import delete
+
     await db_session.delete(token)
     await db_session.delete(provider)
+    await db_session.flush()
+    await db_session.execute(delete(Integration).where(Integration.id == integration_id))
     await db_session.commit()
-    e2e_client.delete(
-        f"/api/integrations/{integration_id}", headers=platform_admin.headers
-    )
 
 
 def _serialize(payload) -> str:
@@ -363,11 +363,11 @@ class TestExternalIntegrationsRefreshToken:
 
 
 @pytest.mark.asyncio
-async def test_global_integration_fixture_removes_refreshable_oauth_state(db_session):
-    """Repeated fixture use must not pollute the later live scheduler tests."""
+async def test_global_integration_fixture_removes_oauth_and_config_state(db_session):
+    """Repeated fixture use must not pollute later scheduler or Sync tests."""
     from sqlalchemy import func, select
 
-    from src.models.orm import OAuthProvider
+    from src.models.orm import Config, Integration, OAuthProvider
     from src.models.orm.oauth import OAuthToken
 
     leaked_tokens = await db_session.scalar(
@@ -377,3 +377,10 @@ async def test_global_integration_fixture_removes_refreshable_oauth_state(db_ses
         .where(OAuthProvider.provider_name.like("ext_integ_provider_%"))
     )
     assert leaked_tokens == 0
+    leaked_configs = await db_session.scalar(
+        select(func.count())
+        .select_from(Config)
+        .join(Integration, Config.integration_id == Integration.id)
+        .where(Integration.name.like("ext-integ-%"))
+    )
+    assert leaked_configs == 0

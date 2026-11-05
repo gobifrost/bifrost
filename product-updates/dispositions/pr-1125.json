@@ -1,0 +1,12 @@
+{
+  "key": "pr:1125",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Test-only fix for a retention E2E test that assumed one SCAN step covers Redis; no product behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1125"
+    ]
+  }
+}

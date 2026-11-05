@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, String, Text, func, text
+from sqlalchemy import BigInteger, DateTime, Enum as SQLAlchemyEnum, Float, ForeignKey, Index, Integer, Numeric, SmallInteger, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -60,6 +60,8 @@ class Execution(Base):
     cpu_total_seconds: Mapped[float | None] = mapped_column(Float, default=None)
     peak_cpu_cores: Mapped[float | None] = mapped_column(Float, default=None)
     peak_process_rss_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
+    # Peak RSS minus RSS at fork: the most memory the run itself added.
+    peak_memory_growth_bytes: Mapped[int | None] = mapped_column(BigInteger, default=None)
 
     # Economics - final values for this execution
     time_saved: Mapped[int] = mapped_column(Integer, default=0)  # Minutes saved
@@ -104,6 +106,10 @@ class Execution(Base):
     scheduled_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True
     )
+    # Format of the credentials minted for this run: 2 = access token plus
+    # run refresh token; NULL = the legacy single runtime token (older code
+    # does not know this column).
+    credential_version: Mapped[int | None] = mapped_column(SmallInteger, default=None)
 
     # Relationships
     executed_by_user: Mapped["User"] = relationship(back_populates="executions", foreign_keys=[executed_by])

@@ -10,8 +10,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.enums import ExecutionStatus
 from src.models.orm.executions import Execution
-from src.models.orm.users import User
-from src.services.durable_impersonation import pending_durable_impersonation
 
 
 RUN_USER_DELETED_ERROR = "The user for this run was deleted"
@@ -56,45 +54,3 @@ async def claim_pending_run_for_dispatch(session: AsyncSession, execution_id: UU
     return claimed is not None
 
 
-async def cancel_redis_queued_run_if_user_deleted(
-    session: AsyncSession,
-    *,
-    execution_id: UUID,
-    run_user_id: UUID,
-    workflow_name: str,
-    parameters: dict,
-    organization_id: UUID | None,
-    workflow_id: UUID | None,
-    form_id: UUID | None,
-    api_key_id: UUID | None,
-    executed_by_name: str,
-    impersonation_provenance: dict[str, str] | None = None,
-) -> bool:
-    """Persist cancellation for a Redis-only queued run whose user is gone.
-
-    Immediate async runs reach the worker before their first durable execution
-    row exists. A deleted user cannot be found through their lineage, so write
-    the terminal row without the now-invalid user foreign keys and prevent the
-    worker from minting a system execution token for it.
-    """
-    if await session.get(User, run_user_id) is not None:
-        return False
-
-    session.add(
-        Execution(
-            id=execution_id,
-            workflow_name=workflow_name,
-            workflow_id=workflow_id,
-            parameters=parameters,
-            organization_id=organization_id,
-            form_id=form_id,
-            api_key_id=api_key_id,
-            executed_by_name=executed_by_name,
-            status=ExecutionStatus.CANCELLED,
-            error_message=RUN_USER_DELETED_ERROR,
-            completed_at=datetime.now(timezone.utc),
-            **pending_durable_impersonation(impersonation_provenance).columns(),
-        )
-    )
-    await session.flush()
-    return True

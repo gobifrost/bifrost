@@ -5,7 +5,7 @@ Unified documentation MCP tool — returns the llms.txt content.
 import logging
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from src.services.mcp_server.tool_result import success_result
 

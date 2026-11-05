@@ -573,6 +573,24 @@ class FormRuntimeDefinition(BaseModel):
         }
 
 
+class AuthenticatedFormRuntimeDefinition(FormRuntimeDefinition):
+    """Execution scope metadata for signed-in callers, excluded from embeds."""
+
+    organization_id: UUID | None
+
+    @model_validator(mode="before")
+    @classmethod
+    def project_authenticated_scope(cls, data):
+        if isinstance(data, FormRuntimeDefinition):
+            return data.model_dump()
+        if isinstance(data, dict):
+            return data
+        return {
+            **FormRuntimeDefinition.project_runtime_fields(data),
+            "organization_id": data.organization_id,
+        }
+
+
 class FormFieldOptionsRequest(BaseModel):
     """Evaluated browser inputs for one configured provider-backed field."""
 

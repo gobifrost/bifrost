@@ -1,0 +1,14 @@
+{
+  "key": "pr:1093",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Concurrent synchronous workflow calls no longer hold database connections while waiting for execution results.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1093",
+      "Codex and Astra reviewed the shared request-session boundary under the user\u2019s authorization to fix, merge, and deploy. Real-PostgreSQL regression tests cover workflow sync/async, provider cache misses, and inline execution. Controlled local load reproduced 16 caller timeouts before the fix; the same load passed afterward, with all executions also succeeding at 32 and 64 callers. Pool sizes, resource limits, authorization, and admission pacing are unchanged."
+    ]
+  }
+}

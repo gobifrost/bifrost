@@ -3,10 +3,12 @@
 from dataclasses import dataclass
 from datetime import datetime
 
+import pytest
 
 from src.services.workflow_validation import (
     _convert_workflow_metadata_to_model,
     _extract_relative_path,
+    validate_workflow_file,
 )
 
 
@@ -46,6 +48,25 @@ class TestExtractRelativePath:
     def test_returns_none_for_empty_string(self):
         result = _extract_relative_path("")
         assert result is None
+
+
+class TestDecoratorAcceptanceBeforeImport:
+    @pytest.mark.asyncio
+    async def test_rejects_decorator_setting_before_creating_temp_module(self, monkeypatch):
+        import tempfile
+
+        def unexpected_tempfile(*args, **kwargs):
+            raise AssertionError("decorator validation must run before tempfile creation")
+
+        monkeypatch.setattr(tempfile, "NamedTemporaryFile", unexpected_tempfile)
+        result = await validate_workflow_file(
+            "workflows/example.py",
+            "from bifrost import workflow\n@workflow(timeout_seconds=1)\ndef run(): pass\n",
+        )
+
+        assert result.valid is False
+        assert result.issues[0].line == 2
+        assert "does not support 'timeout_seconds'" in result.issues[0].message
 
 
 class TestConvertWorkflowMetadataToModel:

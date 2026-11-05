@@ -1159,25 +1159,27 @@ def _bifrost_manifest(workspace: pathlib.Path, name: str) -> pathlib.Path | None
     return pathlib.Path(target)
 
 
-def _app_source_dirs(workspace: pathlib.Path) -> set[str]:
+def _app_source_dirs(workspace: pathlib.Path, *, definition=None) -> set[str]:
     """Relative (POSIX) app source dirs from .bifrost/apps.yaml, to exclude from
     the Python-source sweep (apps are bundled by _collect_apps)."""
-    root = os.path.realpath(workspace)
-    manifest = os.path.realpath(os.path.join(root, ".bifrost", "apps.yaml"))
-    if not manifest.startswith(root + os.sep):
-        return set()
-    manifest_path = pathlib.Path(manifest)
-    if not manifest_path.is_file():
-        return set()
-    data = yaml.safe_load(manifest_path.read_text()) or {}
-    out: set[str] = set()
-    for body in (data.get("apps", {}) or {}).values():
-        if isinstance(body, dict) and body.get("path"):
-            out.add(str(body["path"]).strip("/"))
-    return out
+    from bifrost.solution_definition import read_solution_definition
+
+    return {
+        str(body["path"]).strip("/")
+        for body in (definition or read_solution_definition(workspace)).entries("apps")
+        if body.get("path")
+    }
 
 
-def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
+def _validate_solution_python_files(python_files: dict[str, str]) -> None:
+    """Validate decorator settings in source that will enter a Solution bundle."""
+    from bifrost.decorator_validation import validate_python_decorators
+
+    for path, source in sorted(python_files.items()):
+        validate_python_decorators(source, path=path)
+
+
+def _collect_python_files(workspace: pathlib.Path, *, definition=None) -> dict[str, str]:
     """Collect installable Python source (relative path → text), layout-agnostic.
 
     Scans the whole solution root for ``.py``, excluding generated/dep/manifest
@@ -1186,7 +1188,7 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
     where the scaffold writes / where ``solution start`` resolves, else a workflow
     deploys with a row but no code (shakeout HIGH).
     """
-    app_dirs = _app_source_dirs(workspace)
+    app_dirs = _app_source_dirs(workspace, definition=definition)
     files: dict[str, str] = {}
     ws_root = os.path.realpath(workspace)
     for dirpath, _dirnames, filenames in os.walk(ws_root):
@@ -1206,17 +1208,20 @@ def _collect_python_files(workspace: pathlib.Path) -> dict[str, str]:
             rel_posix = pathlib.PurePath(rel).as_posix()
             if any(rel_posix == d or rel_posix.startswith(d + "/") for d in app_dirs):
                 continue
-            files[rel_posix] = pathlib.Path(py_real).read_text(encoding="utf-8")
+            source = pathlib.Path(py_real).read_text(encoding="utf-8")
+            # Validate before putting source into the candidate map so every
+            # publisher using this canonical collector refuses it before any
+            # remote write or deploy mutation.
+            _validate_solution_python_files({rel_posix: source})
+            files[rel_posix] = source
     return files
 
 
-def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
+def _collect_workflows(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read workflow entries from .bifrost/workflows.yaml (the descriptor indexes it)."""
-    wf_file = _bifrost_manifest(workspace, "workflows.yaml")
-    if wf_file is None or not wf_file.is_file():
-        return []
-    data = yaml.safe_load(wf_file.read_text()) or {}
-    raw = data.get("workflows", {})
+    from bifrost.solution_definition import read_solution_definition
+
+    raw = (definition or read_solution_definition(workspace)).entries("workflows")
     entries: list[dict] = []
     ws_root = os.path.realpath(workspace)
     # workflows.yaml is keyed by workflow UUID; the display name is body["name"].
@@ -1225,9 +1230,8 @@ def _collect_workflows(workspace: pathlib.Path) -> list[dict]:
     # category/tags as a full-replace, so dropping them here would silently reset
     # an exported workflow's endpoint + timeout on a disconnected redeploy (P2-e).
     # function_name/path are required by the deployer, so fail loudly if missing.
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
+    for body in raw:
+        key = body["id"]
         # Carry the workflow's source text so the server's deploy preflight can
         # compare the manifest name against the decorated @workflow(name=...) —
         # the value the execution engine actually matches on. Missing/unreadable
@@ -1283,75 +1287,36 @@ def _unregistered_workflow_files(
     )
 
 
-def _collect_tables(workspace: pathlib.Path) -> list[dict]:
+def _collect_tables(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read table SCHEMA/POLICIES from .bifrost/tables.yaml (keyed by UUID).
 
     Only structure is deployed — row data is runtime state and never carried in
     a bundle (criterion 11).
     """
-    tbl_file = _bifrost_manifest(workspace, "tables.yaml")
-    if tbl_file is None or not tbl_file.is_file():
-        return []
-    data = yaml.safe_load(tbl_file.read_text()) or {}
-    raw = data.get("tables", {})
-    entries: list[dict] = []
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
-        entry = {
-            "id": body.get("id", key),
-            "name": body.get("name") or key,
-            "description": body.get("description"),
-            "schema": body.get("schema"),
-        }
-        if "policies" in body:
-            entry["policies"] = body["policies"]
-        entries.append(entry)
-    return entries
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).install_entries("tables")
 
 
-def _collect_config_schemas(workspace: pathlib.Path) -> list[dict]:
+def _collect_config_schemas(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read config DECLARATIONS from .bifrost/configs.yaml (keyed by key/UUID).
 
     Declarations ONLY — there is no ``value`` field by design. Config values are
     instance-owned and supplied at install time; local dev reads them from .env.
     """
-    cfg_file = _bifrost_manifest(workspace, "configs.yaml")
-    if cfg_file is None or not cfg_file.is_file():
-        return []
-    data = yaml.safe_load(cfg_file.read_text()) or {}
-    raw = data.get("configs", {})
-    entries: list[dict] = []
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
-        entries.append({
-            "id": body.get("id", key),
-            "key": body.get("key") or key,
-            "type": body.get("type", "string"),
-            "required": bool(body.get("required", False)),
-            "description": body.get("description"),
-            "default": body.get("default"),
-            "position": int(body.get("position", 0)),
-        })
-    return entries
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).config_entries()
 
 
-def _collect_file_locations(workspace: pathlib.Path) -> list[str]:
+def _collect_file_locations(workspace: pathlib.Path, *, definition=None) -> list[str]:
     """Read solution runtime file-location declarations from .bifrost/files.yaml."""
-    files_file = _bifrost_manifest(workspace, "files.yaml")
-    if files_file is None or not files_file.is_file():
-        return []
-    from bifrost.manifest import ManifestFiles
+    from bifrost.solution_definition import read_solution_definition
 
-    data = yaml.safe_load(files_file.read_text()) or {}
-    raw = data.get("locations") or []
-    if not isinstance(raw, list):
-        raise ValueError(".bifrost/files.yaml locations must be a list")
-    return ManifestFiles(locations=raw).locations
+    return (definition or read_solution_definition(workspace)).manifest.files.locations
 
 
-def _collect_file_policies(workspace: pathlib.Path) -> list[dict]:
+def _collect_file_policies(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read solution-tier file policies from .bifrost/file-policies.yaml (keyed by UUID).
 
     Each entry is a portable ``{id, location, path, policies}`` dict written by
@@ -1359,25 +1324,12 @@ def _collect_file_policies(workspace: pathlib.Path) -> list[dict]:
     re-stamps ``solution_id`` to the target install and upserts by natural key
     ``(solution_id, location, path)``.
     """
-    fp_file = _bifrost_manifest(workspace, "file-policies.yaml")
-    if fp_file is None or not fp_file.is_file():
-        return []
-    data = yaml.safe_load(fp_file.read_text()) or {}
-    raw = data.get("file_policies", {})
-    entries: list[dict] = []
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
-        entries.append({
-            "id": body.get("id", key),
-            "location": body.get("location"),
-            "path": body.get("path", ""),
-            "policies": body.get("policies", []),
-        })
-    return entries
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).install_entries("file_policies")
 
 
-def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
+def _collect_connection_schemas(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read connection DECLARATIONS from .bifrost/connections.yaml (keyed by name).
 
     Each entry is a secret-scrubbed {integration_name, template, position} dict
@@ -1385,21 +1337,9 @@ def _collect_connection_schemas(workspace: pathlib.Path) -> list[dict]:
     server's deploy pre-creates an empty integration shell and persists a
     SolutionConnectionSchema row from each, so Setup surfaces the connection.
     """
-    conn_file = _bifrost_manifest(workspace, "connections.yaml")
-    if conn_file is None or not conn_file.is_file():
-        return []
-    data = yaml.safe_load(conn_file.read_text()) or {}
-    raw = data.get("connections", {})
-    entries: list[dict] = []
-    for name, body in raw.items():
-        if not isinstance(body, dict):
-            continue
-        entries.append({
-            "integration_name": body.get("integration_name") or name,
-            "template": body.get("template") or {},
-            "position": int(body.get("position", 0)),
-        })
-    return entries
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).connection_entries()
 
 
 def _collect_readme(workspace: pathlib.Path) -> str | None:
@@ -1410,55 +1350,30 @@ def _collect_readme(workspace: pathlib.Path) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
-def _collect_claims(workspace: pathlib.Path) -> list[dict]:
+def _collect_claims(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read Custom Claim definitions from .bifrost/claims.yaml (keyed by UUID)."""
-    claims_file = _bifrost_manifest(workspace, "claims.yaml")
-    if claims_file is None or not claims_file.is_file():
-        return []
-    data = yaml.safe_load(claims_file.read_text()) or {}
-    raw = data.get("claims", {})
-    entries: list[dict] = []
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
-        entries.append({
-            "id": body.get("id", key),
-            "name": body.get("name") or key,
-            "description": body.get("description"),
-            "type": body.get("type", "list"),
-            "query": body["query"],
-        })
-    return entries
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).install_entries("claims")
 
 
-def _collect_manifest_entities(workspace: pathlib.Path, filename: str, key: str) -> list[dict]:
-    """Pass through inline manifest entries (forms/agents) keyed by UUID.
+def _collect_forms(workspace: pathlib.Path, *, definition=None) -> list[dict]:
+    from bifrost.solution_definition import read_solution_definition
 
-    The form/agent inline content (fields, system_prompt, etc.) lives in the
-    manifest body; deploy stamps solution_id + scope and full-replaces.
-    """
-    f = _bifrost_manifest(workspace, filename)
-    if f is None or not f.is_file():
-        return []
-    data = yaml.safe_load(f.read_text()) or {}
-    entries: list[dict] = []
-    for map_key, body in (data.get(key, {}) or {}).items():
-        if isinstance(body, dict):
-            entries.append({**body, "id": body.get("id", map_key)})
-    return entries
+    return (definition or read_solution_definition(workspace)).entries("forms")
 
 
-def _collect_forms(workspace: pathlib.Path) -> list[dict]:
-    return _collect_manifest_entities(workspace, "forms.yaml", "forms")
+def _collect_agents(workspace: pathlib.Path, *, definition=None) -> list[dict]:
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).entries("agents")
 
 
-def _collect_agents(workspace: pathlib.Path) -> list[dict]:
-    return _collect_manifest_entities(workspace, "agents.yaml", "agents")
-
-
-def _collect_events(workspace: pathlib.Path) -> list[dict]:
+def _collect_events(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read event/schedule triggers from .bifrost/events.yaml (keyed by EventSource UUID)."""
-    return _collect_manifest_entities(workspace, "events.yaml", "events")
+    from bifrost.solution_definition import read_solution_definition
+
+    return (definition or read_solution_definition(workspace)).entries("events")
 
 
 # Text source files sent inline as UTF-8 in ``src_files``. Everything else in
@@ -1486,7 +1401,7 @@ _LOGO_CONTENT_TYPES = {
 }
 
 
-def _collect_apps(workspace: pathlib.Path) -> list[dict]:
+def _collect_apps(workspace: pathlib.Path, *, definition=None) -> list[dict]:
     """Read app entries from .bifrost/apps.yaml (keyed by UUID) + their source.
 
     Each app's source dir (``path``, e.g. ``apps/dash``) is read into
@@ -1496,16 +1411,13 @@ def _collect_apps(workspace: pathlib.Path) -> list[dict]:
     """
     import base64
 
-    apps_file = _bifrost_manifest(workspace, "apps.yaml")
-    if apps_file is None or not apps_file.is_file():
-        return []
-    data = yaml.safe_load(apps_file.read_text()) or {}
-    raw = data.get("apps", {})
+    from bifrost.solution_definition import read_solution_definition
+
+    raw = (definition or read_solution_definition(workspace)).entries("apps")
     entries: list[dict] = []
     ws_root = os.path.realpath(workspace)
-    for key, body in raw.items():
-        if not isinstance(body, dict):
-            continue
+    for body in raw:
+        key = body["id"]
         # ``body["path"]`` is manifest-controlled; confine the app dir to the
         # workspace (realpath + startswith — the recognized traversal barrier)
         # so a crafted ``path: ../../etc`` can't read outside the bundle.
@@ -1708,6 +1620,7 @@ def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int]
     package_version = package.get("version")
     fingerprint = stamp.get("fingerprint") if isinstance(stamp, dict) else None
     contract_version = stamp.get("contract") if isinstance(stamp, dict) else None
+    binding_api_major = stamp.get("binding_api_major") if isinstance(stamp, dict) else None
     if (
         not isinstance(package_version, str)
         or not package_version
@@ -1715,12 +1628,14 @@ def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int]
         or not fingerprint
         or not isinstance(contract_version, int)
         or isinstance(contract_version, bool)
+        or (binding_api_major is not None and (type(binding_api_major) is not int or binding_api_major < 1))
     ):
         return None
     return {
         "package_version": package_version,
         "fingerprint": fingerprint,
         "contract_version": contract_version,
+        **({"binding_api_major": binding_api_major} if binding_api_major is not None else {}),
     }
 
 
@@ -2363,6 +2278,37 @@ def summarize_bundle(python_files: dict, apps: list, vendored_count: int) -> Bun
     return BundleSummary(count, mb, warn, msg)
 
 
+def _workspace_deploy_entries(
+    workspace: pathlib.Path,
+    workspace_root: pathlib.Path,
+    ignore_spec,
+) -> dict[str, bytes]:
+    entries: dict[str, bytes] = {}
+    for path in workspace.rglob("*"):
+        rel = path.relative_to(workspace).as_posix()
+        # Check both spellings so ignored directory symlinks (for example an
+        # entire node_modules tree) remain ignored without dereferencing them.
+        if ignore_spec.match_file(rel) or ignore_spec.match_file(f"{rel}/"):
+            continue
+        if path.is_symlink():
+            raise click.ClickException(
+                f"refusing symlink in solution deploy workspace: {rel}"
+            )
+        try:
+            resolved = path.resolve(strict=True)
+        except OSError as exc:
+            raise click.ClickException(
+                f"solution deploy path is unavailable: {rel}"
+            ) from exc
+        if not resolved.is_relative_to(workspace_root):
+            raise click.ClickException(
+                f"refusing path outside solution deploy workspace: {rel}"
+            )
+        if resolved.is_file():
+            entries[rel] = resolved.read_bytes()
+    return entries
+
+
 def _build_deploy_zip(
     workspace: pathlib.Path,
     *,
@@ -2380,14 +2326,11 @@ def _build_deploy_zip(
     patterns = [p for p in DEFAULT_IGNORE_PATTERNS if p != ".bifrost/"]
     patterns.append(".bifrost/secrets.enc")
     ignore_spec = pathspec.GitIgnoreSpec.from_lines(patterns)
-    entries: dict[str, bytes] = {}
-    for path in workspace.rglob("*"):
-        if not path.is_file():
-            continue
-        rel = path.relative_to(workspace).as_posix()
-        if ignore_spec.match_file(rel):
-            continue
-        entries[rel] = path.read_bytes()
+    try:
+        workspace_root = workspace.resolve(strict=True)
+    except OSError as exc:
+        raise click.ClickException("solution workspace is unavailable") from exc
+    entries = _workspace_deploy_entries(workspace, workspace_root, ignore_spec)
 
     for rel, content in extra_text_files.items():
         rel_path = pathlib.PurePosixPath(rel)
@@ -2475,14 +2418,18 @@ def deploy_cmd(
             f"No {DESCRIPTOR_FILENAME} in {workspace} — not a Solution workspace. "
             f"Run `bifrost solution init` first."
         )
-    descriptor = load_descriptor(workspace)
+    from bifrost.solution_definition import read_solution_definition
 
     click.echo("Scanning solution files...")
-    python_files = _collect_python_files(workspace)
-    workflows = _collect_workflows(workspace)
-    apps = _collect_apps(workspace)
-    forms = _collect_forms(workspace)
-    agents = _collect_agents(workspace)
+    definition = read_solution_definition(workspace)
+    descriptor = definition.descriptor
+    if descriptor is None:  # guarded by is_solution_workspace above
+        raise click.ClickException(f"No {DESCRIPTOR_FILENAME} in {workspace}")
+    python_files = _collect_python_files(workspace, definition=definition)
+    workflows = _collect_workflows(workspace, definition=definition)
+    apps = _collect_apps(workspace, definition=definition)
+    forms = _collect_forms(workspace, definition=definition)
+    agents = _collect_agents(workspace, definition=definition)
     click.echo(
         f"  found {len(python_files)} python file(s), {len(workflows)} workflow(s), "
         f"{len(apps)} app(s), {len(forms)} form(s), {len(agents)} agent(s)."
@@ -2547,6 +2494,11 @@ def deploy_cmd(
                 bundle_python = {**python_files, **vendored}
             else:
                 click.echo("  no shared dependencies to vendor.")
+
+        # Vendored modules do not pass through the workspace collector. Validate
+        # the assembled map before app prebuild or artifact upload so server and
+        # local deployment accept the same Python candidate.
+        _validate_solution_python_files(bundle_python)
 
         source_apps = [
             app for app in apps if (app.get("src_files") or app.get("bin_files"))
@@ -3073,10 +3025,10 @@ def start_cmd(
                     "— see the npm output above."
                 )
 
-    async def _fetch_server_version() -> tuple[str | None, int | None]:
+    async def _fetch_server_version() -> tuple[str | None, int | None, int | None, list[int]]:
         resp = await client.get("/api/version")
         if resp.status_code != 200:
-            return None, None
+            return None, None, None, []
         data = resp.json()
         fp = data.get("sdk_fingerprint")
         fp = fp if isinstance(fp, str) else None
@@ -3086,21 +3038,28 @@ def start_cmd(
             fp = None
         contract = data.get("sdk_contract_version")
         contract = contract if isinstance(contract, int) else None
-        return fp, contract
+        major = data.get("sdk_binding_api_major")
+        major = major if type(major) is int else None
+        supported = data.get("sdk_supported_binding_api_majors", [])
+        supported = supported if isinstance(supported, list) and all(type(item) is int for item in supported) else []
+        return fp, contract, major, supported
 
     try:
-        server_fp, server_contract = asyncio.run(_fetch_server_version())
+        server_fp, server_contract, server_binding_major, supported_binding_majors = asyncio.run(_fetch_server_version())
     except Exception:
         # The staleness check must never block `start`: network errors, an
         # old server without this field, bad JSON, or anything else the
         # server does wrong all degrade to "no warning", not a crash.
-        server_fp, server_contract = None, None
+        server_fp, server_contract, server_binding_major, supported_binding_majors = None, None, None, []
 
     warning = sdk_staleness_warning(
         installed_sdk_fingerprint(chosen.app_dir),
         server_fp,
         installed_sdk_contract(chosen.app_dir),
         server_contract,
+        installed_binding_api_major=installed_sdk_binding_api_major(chosen.app_dir),
+        server_binding_api_major=server_binding_major,
+        supported_binding_api_majors=supported_binding_majors,
     )
     if warning is not None:
         message, severity = warning
@@ -3432,11 +3391,22 @@ def installed_sdk_fingerprint(app_dir: pathlib.Path) -> str | None:
     return fingerprint if isinstance(fingerprint, str) else None
 
 
+def installed_sdk_binding_api_major(app_dir: pathlib.Path) -> int | None:
+    """Read the public major from the installed binding, not a server wire version."""
+    metadata = _installed_sdk_build_metadata(app_dir)
+    value = metadata.get("binding_api_major") if metadata else None
+    return value if type(value) is int and value > 0 else None
+
+
 def sdk_staleness_warning(
     installed_fp: str | None,
     server_fp: str | None,
     installed_contract: int | None,
     server_contract: int | None,
+    *,
+    installed_binding_api_major: int | None = None,
+    server_binding_api_major: int | None = None,
+    supported_binding_api_majors: list[int] | None = None,
 ) -> tuple[str, str] | None:  # (message, severity: "warn"|"breaking") or None
     """Decide whether `solution start` should warn that the locally-installed
     web SDK is stale relative to the server. Pure/no-network — callers own
@@ -3452,6 +3422,16 @@ def sdk_staleness_warning(
         # server's own toolchain couldn't compute a fingerprint — no signal,
         # so stay silent rather than nag.
         return None
+    if installed_binding_api_major is not None:
+        if installed_binding_api_major not in (supported_binding_api_majors or []):
+            return (
+                f"This instance does not support App SDK major {installed_binding_api_major}. "
+                "Use a compatible instance or migrate the App's SDK major explicitly.",
+                "breaking",
+            )
+        if installed_binding_api_major != server_binding_api_major or installed_fp == server_fp:
+            return None
+        return ("App SDK binding update available. Run: bifrost solution sdk update", "warn")
     if installed_fp is not None and installed_fp == server_fp:
         return None  # nothing changed -> never prompts
 

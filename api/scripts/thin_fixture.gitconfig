@@ -1,0 +1,4 @@
+# Local repositories for the canonical platform-job integration suite.
+# Per-command HTTP credential configuration remains untouched.
+[url "file:///tmp/bifrost/solution-repo-fixtures/thin-github/thin-"]
+    insteadOf = https://github.com/thin-

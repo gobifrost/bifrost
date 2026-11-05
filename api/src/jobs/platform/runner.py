@@ -10,6 +10,7 @@ from uuid import UUID
 from pydantic import ValidationError
 from sqlalchemy import select
 
+from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.core.database import close_db, get_db_context, init_db
 from src.jobs.platform.base import (
     PlatformJobCancelled,
@@ -49,7 +50,8 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
                 error_message=f"No handler is registered for {job.job_type}.",
             )
             return False
-        if job.payload_version != definition.payload_version:
+        payload_model = definition.payload_model_for_version(job.payload_version)
+        if payload_model is None:
             await finish_platform_job(
                 job_id,
                 lease_token,
@@ -65,9 +67,7 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
         if job.encrypted_payload is not None:
             from src.core.security import decrypt_secret
 
-            payload_data = definition.payload_model.model_validate_json(
-                decrypt_secret(job.encrypted_payload)
-            ).model_dump(mode="json")
+            payload_data = decrypt_secret(job.encrypted_payload)
         context = PlatformJobContext(
             job_id=job.id,
             lease_token=lease_token,
@@ -99,7 +99,11 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
     )
 
     try:
-        payload = definition.payload_model.model_validate(payload_data)
+        payload = (
+            payload_model.model_validate_json(payload_data)
+            if job.encrypted_payload is not None
+            else payload_model.model_validate(payload_data)
+        )
         result = await definition.handler(context, payload)
         return await finish_platform_job(
             job_id,
@@ -138,16 +142,21 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             error_code="invalid_payload",
             error_message=str(exc),
         )
-    except Exception:
+    except Exception as exc:
         logger.exception(
             "Unhandled platform-job handler failure", extra={"job_id": str(job_id)}
         )
+        build_oom = isinstance(exc, MemoryError) and job.job_type in APP_BUILD_JOB_TYPES
         return await finish_platform_job(
             job_id,
             lease_token,
             status="failed",
-            error_code="handler_error",
-            error_message="Platform job failed unexpectedly; see server logs.",
+            error_code="memory_pressure" if build_oom else "handler_error",
+            error_message=(
+                app_build_memory_message()
+                if build_oom
+                else "Platform job failed unexpectedly; see server logs."
+            ),
             error_retryable=False,
         )
     finally:
@@ -169,4 +178,7 @@ async def _main(job_id: str, lease_token: str) -> int:
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         raise SystemExit("usage: platform.runner JOB_ID LEASE_TOKEN")
+    from src.services.execution.oom_priority import volunteer_for_oom_kill
+
+    volunteer_for_oom_kill()
     raise SystemExit(asyncio.run(_main(sys.argv[1], sys.argv[2])))

@@ -1,0 +1,15 @@
+{
+  "key": "pr:1040",
+  "classification": "highlight",
+  "entry_ids": [
+    "7eaa8252-735e-46b0-bc98-69ea95ffbf96"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1040",
+      "Claude drafted this summary on 2026-10-23 under Jack's standing authority for the #769 rollout (merge each stage once its gate passes). No customer action is required for an unchanged install; removing the leftover broker is optional cleanup.",
+      "Reclassified as a highlight of the runtime release notes; Jack approved on 2026-10-24."
+    ]
+  }
+}

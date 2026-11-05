@@ -1,0 +1,15 @@
+{
+  "key": "pr:1044",
+  "classification": "highlight",
+  "entry_ids": [
+    "56853509-1ca2-4e7f-8c7d-dc84c1521837"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1044",
+      "Claude drafted this summary on 2026-10-23 under Jack's authority to merge stage 6 once fully tested; Jack chose the admission rules in session on 2026-10-23. No customer action is required; removed capacity settings are ignored.",
+      "Reclassified as a highlight of the runtime release notes; Jack approved on 2026-10-24."
+    ]
+  }
+}

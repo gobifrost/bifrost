@@ -27,7 +27,7 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from fastmcp.tools import ToolResult
+from src.services.mcp_server.tool_result import ToolResult
 
 from src.services.mcp_server.tool_result import error_result, success_result
 from src.services.mcp_server.tools._http_bridge import call_rest, rest_client
@@ -253,6 +253,7 @@ async def bifrost_workflow_update(
     description: str | None = None,
     category: str | None = None,
     timeout_seconds: int | None = None,
+    memory_request_mib: int | None = None,
     tags: list[str] | None = None,
     endpoint_enabled: bool | None = None,
     public_endpoint: bool | None = None,
@@ -265,7 +266,8 @@ async def bifrost_workflow_update(
     (an empty list clears them); pair with ``clear_roles=True`` only when no
     list is provided. ``name`` is the MCP tool name; ``function_name`` is not
     changed by this tool. ``run_identity_id`` names the identity the workflow
-    runs as when no person starts it. Fields marked as UI/code-managed in
+    runs as when no person starts it. ``memory_request_mib`` declares the
+    memory a run requests from an executor instead of the learned value. Fields marked as UI/code-managed in
     :data:`bifrost.dto_flags.DTO_EXCLUDES` (``display_name``,
     ``tool_description``, ``time_saved``, ``value``, ``cache_ttl_seconds``,
     ``allowed_methods``, ``execution_mode``, ``disable_global_key``) are not
@@ -299,6 +301,7 @@ async def bifrost_workflow_update(
             "description": description,
             "category": category,
             "timeout_seconds": timeout_seconds,
+            "memory_request_mib": memory_request_mib,
             "tags": tags,
             "endpoint_enabled": endpoint_enabled,
             "public_endpoint": public_endpoint,

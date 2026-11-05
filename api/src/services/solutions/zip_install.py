@@ -27,7 +27,7 @@ import logging
 import os
 import tempfile
 import zipfile
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
@@ -296,10 +296,11 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         _collect_file_locations,
         _collect_file_policies,
         _collect_forms,
+        _collect_python_files,
         _collect_tables,
         _collect_workflows,
     )
-    from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
+    from bifrost.solution_definition import read_solution_definition
 
     slug: str | None = None
     name: str | None = None
@@ -309,8 +310,14 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
     scope: str | None = None
     version: str | None = None
     logo: str | None = None
-    if is_solution_workspace(workspace):
-        descriptor = load_descriptor(workspace)
+    definition = read_solution_definition(workspace)
+    # Use the canonical published-source selection during no-write preview so
+    # helper modules outside the workflow manifest receive the same acceptance
+    # check as a deploy bundle. The returned map is rebuilt later for deploy;
+    # PreviewResult deliberately carries only metadata.
+    _collect_python_files(workspace, definition=definition)
+    if definition.descriptor is not None:
+        descriptor = definition.descriptor
         slug, name = descriptor.slug, descriptor.name
         version = descriptor.version
         logo = descriptor.logo
@@ -325,17 +332,17 @@ def _parse_workspace(workspace: Path) -> PreviewResult:
         scope=scope,
         version=version,
         logo=logo,
-        workflows=_collect_workflows(workspace),
-        tables=_collect_tables(workspace),
-        apps=_collect_apps(workspace),
-        forms=_collect_forms(workspace),
-        agents=_collect_agents(workspace),
-        claims=_collect_claims(workspace),
-        config_schemas=_collect_config_schemas(workspace),
-        file_locations=_collect_file_locations(workspace),
-        file_policies=_collect_file_policies(workspace),
-        connection_schemas=_collect_connection_schemas(workspace),
-        events=_collect_events(workspace),
+        workflows=_collect_workflows(workspace, definition=definition),
+        tables=_collect_tables(workspace, definition=definition),
+        apps=_collect_apps(workspace, definition=definition),
+        forms=_collect_forms(workspace, definition=definition),
+        agents=_collect_agents(workspace, definition=definition),
+        claims=_collect_claims(workspace, definition=definition),
+        config_schemas=_collect_config_schemas(workspace, definition=definition),
+        file_locations=_collect_file_locations(workspace, definition=definition),
+        file_policies=_collect_file_policies(workspace, definition=definition),
+        connection_schemas=_collect_connection_schemas(workspace, definition=definition),
+        events=_collect_events(workspace, definition=definition),
         readme=_read_readme(workspace),
         requires_password=requires_password,
     )
@@ -369,6 +376,39 @@ def preview_zip_path(zip_path: Path) -> PreviewResult:
     with tempfile.TemporaryDirectory(prefix="bifrost-zip-preview-") as tmp:
         _safe_extract_path(zip_path, tmp)
         return _parse_workspace(Path(tmp))
+
+
+@dataclass(frozen=True)
+class _AppEntriesDefinition:
+    """Minimal definition shape consumed by the shared App source collector."""
+
+    apps: list[dict[str, Any]]
+
+    def entries(self, section: str) -> list[dict[str, Any]]:
+        if section != "apps":
+            raise ValueError(f"App-only definition cannot provide {section}")
+        return self.apps
+
+
+def extract_solution_app_sources_from_zip_path(
+    zip_path: Path,
+    *,
+    matches: Callable[[dict[str, Any]], bool],
+) -> list[dict[str, Any]]:
+    """Extract only matching App sources without parsing sibling entities.
+
+    The full preview/install path intentionally parses every Solution manifest.
+    SDK-only App rebuilds instead retain the same archive and App-source safety
+    gates while reading only the canonical ``apps.yaml`` section.
+    """
+    from bifrost.commands.solution import _collect_apps
+    from bifrost.solution_definition import read_solution_apps
+
+    with tempfile.TemporaryDirectory(prefix="bifrost-app-source-") as tmp:
+        workspace = Path(tmp)
+        _safe_extract_path(zip_path, tmp)
+        apps = [app for app in read_solution_apps(workspace) if matches(app)]
+        return _collect_apps(workspace, definition=_AppEntriesDefinition(apps))
 
 
 # Preview entity types ↔ SolutionUpgradeDiff sections (same attribute names).
@@ -447,6 +487,7 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
     import base64
 
     from bifrost.commands.solution import _LOGO_CONTENT_TYPES, _collect_python_files
+    from bifrost.solution_definition import read_solution_definition
 
     logo_b64: str | None = None
     logo_content_type: str | None = None
@@ -459,7 +500,9 @@ def _build_bundle(solution: Solution, preview: PreviewResult, workspace: Path) -
 
     return SolutionBundle(
         solution=solution,
-        python_files=_collect_python_files(workspace),
+        python_files=_collect_python_files(
+            workspace, definition=read_solution_definition(workspace)
+        ),
         workflows=preview.workflows,
         tables=preview.tables,
         apps=preview.apps,

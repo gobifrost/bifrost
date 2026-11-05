@@ -19,8 +19,22 @@ from websockets.asyncio.client import connect
 from websockets.exceptions import ConnectionClosedError
 
 from tests.e2e.conftest import write_and_register
+from tests.e2e.fixtures.setup import _login_user
+from tests.e2e.fixtures.users import E2EUser
 
 logger = logging.getLogger(__name__)
+
+
+@pytest.fixture
+def websocket_headers(e2e_client):
+    """Preflight a known fixture user through the HTTP refresh contract."""
+    def _headers(user: E2EUser) -> dict[str, str]:
+        response = e2e_client.get("/auth/me", headers=user.headers)
+        assert response.status_code == 200, response.text
+        assert user.access_token is not None
+        return {"Authorization": f"Bearer {user.access_token}"}
+
+    return _headers
 
 
 @pytest.mark.e2e
@@ -32,11 +46,12 @@ class TestWebSocketConnection:
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """Connect to WebSocket with valid JWT token in Authorization header."""
         ws_url = f"{e2e_ws_url}/ws/connect"
         # WebSocket auth uses Authorization header (not query params for security)
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Should receive connected message
@@ -51,6 +66,51 @@ class TestWebSocketConnection:
                 "Missing channels in connected message"
 
             logger.info(f"Connected successfully: {data}")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("path", ["input", "delivery"])
+    async def test_websocket_closes_before_input_or_delivery_after_epoch_change(
+        self,
+        async_session_factory,
+        e2e_ws_url,
+        platform_admin,
+        websocket_headers,
+        path,
+    ):
+        """An epoch change closes a live socket before inbound or outbound data."""
+        from sqlalchemy import text
+        from src.core.pubsub import publish_user_notification
+
+        ws_url = f"{e2e_ws_url}/ws/connect"
+        extra_headers = websocket_headers(platform_admin)
+
+        try:
+            async with connect(ws_url, additional_headers=extra_headers) as ws:
+                connected = json.loads(await ws.recv())
+                assert connected["type"] == "connected"
+
+                async with async_session_factory() as session:
+                    await session.execute(text("SELECT authz_epoch_bump_once()"))
+                    await session.commit()
+
+                if path == "input":
+                    await ws.send(json.dumps({
+                        "type": "subscribe",
+                        "channels": [f"user:{platform_admin.user_id}"],
+                    }))
+                else:
+                    await publish_user_notification(
+                        platform_admin.user_id,
+                        "info",
+                        "Epoch guard",
+                        "This notification must not reach the stale socket.",
+                    )
+                with pytest.raises(ConnectionClosedError) as closed:
+                    await ws.recv()
+                assert closed.value.rcvd is not None
+                assert closed.value.rcvd.code == 4001
+        finally:
+            _login_user(platform_admin)
 
     @pytest.mark.asyncio
     async def test_websocket_connect_invalid_token(self, e2e_ws_url):
@@ -109,10 +169,10 @@ class TestWebSocketMessaging:
     """Test WebSocket messaging patterns."""
 
     @pytest.mark.asyncio
-    async def test_websocket_ping_pong(self, e2e_ws_url, platform_admin):
+    async def test_websocket_ping_pong(self, e2e_ws_url, platform_admin, websocket_headers):
         """WebSocket ping/pong messaging works correctly."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message first
@@ -135,10 +195,10 @@ class TestWebSocketMessaging:
             logger.info(f"Received pong: {data}")
 
     @pytest.mark.asyncio
-    async def test_websocket_multiple_pings(self, e2e_ws_url, platform_admin):
+    async def test_websocket_multiple_pings(self, e2e_ws_url, platform_admin, websocket_headers):
         """Send multiple ping messages and receive corresponding pongs."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -202,6 +262,7 @@ async def e2e_ws_exec_workflow(message: str = "test"):
         e2e_client,
         platform_admin,
         execution_workflow,
+        websocket_headers,
     ):
         """Subscribe to execution channel and receive updates."""
         assert execution_workflow["id"], "execution workflow fixture returned no id"
@@ -226,7 +287,7 @@ async def e2e_ws_exec_workflow(message: str = "test"):
         assert execution_id, f"Execution response returned no id: {exec_data}"
 
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -261,10 +322,11 @@ async def e2e_ws_exec_workflow(message: str = "test"):
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """Subscribe to invalid channel format is handled gracefully."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -299,10 +361,11 @@ class TestWebSocketOrgUserAccess:
         self,
         e2e_ws_url,
         org1_user,
+        websocket_headers,
     ):
         """Organization user can connect to WebSocket."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {org1_user.access_token}"}
+        extra_headers = websocket_headers(org1_user)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Should receive connected message
@@ -321,10 +384,11 @@ class TestWebSocketOrgUserAccess:
         self,
         e2e_ws_url,
         org1_user,
+        websocket_headers,
     ):
         """Organization user can send ping/pong messages."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {org1_user.access_token}"}
+        extra_headers = websocket_headers(org1_user)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -347,10 +411,11 @@ class TestWebSocketOrgUserAccess:
         self,
         e2e_ws_url,
         org1_user,
+        websocket_headers,
     ):
         """Organization user is automatically subscribed to own user channel."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {org1_user.access_token}"}
+        extra_headers = websocket_headers(org1_user)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -376,10 +441,11 @@ class TestWebSocketEdgeCases:
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """WebSocket connection stays open without incoming messages."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -403,10 +469,11 @@ class TestWebSocketEdgeCases:
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """Sending invalid JSON message is handled gracefully."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -435,10 +502,11 @@ class TestWebSocketEdgeCases:
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """Sending unknown message type is handled gracefully."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             # Receive connected message
@@ -514,6 +582,7 @@ class TestServiceLogStreaming:
         e2e_ws_url,
         platform_admin,
         visible_service,
+        websocket_headers,
     ):
         """Subscribe service:{id} → published attempt lines arrive live."""
         from uuid import uuid4
@@ -523,7 +592,7 @@ class TestServiceLogStreaming:
         service_id = visible_service
         attempt_id = str(uuid4())
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -573,10 +642,11 @@ class TestServiceLogStreaming:
         self,
         e2e_ws_url,
         platform_admin,
+        websocket_headers,
     ):
         """Malformed service ids are rejected, not silently held."""
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {platform_admin.access_token}"}
+        extra_headers = websocket_headers(platform_admin)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=5)
@@ -597,11 +667,12 @@ class TestServiceLogStreaming:
         e2e_ws_url,
         org1_user,
         visible_service,
+        websocket_headers,
     ):
         """A person outside the service's scope cannot subscribe."""
 
         ws_url = f"{e2e_ws_url}/ws/connect"
-        extra_headers = {"Authorization": f"Bearer {org1_user.access_token}"}
+        extra_headers = websocket_headers(org1_user)
 
         async with connect(ws_url, additional_headers=extra_headers) as ws:
             msg = await asyncio.wait_for(ws.recv(), timeout=5)

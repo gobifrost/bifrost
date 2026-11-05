@@ -34,13 +34,20 @@ function relativeTime(value: string | null | undefined) {
 }
 
 function replicaRole(replica: SchedulerReplica) {
-	return replica.is_leader ? "Trigger Leader" : "Job Runner";
+	// Every API control replica reconciles work; only the leader runs triggers.
+	if (replica.is_leader) return "Trigger Leader";
+	return replica.runs_platform_jobs ? "Job Runner" : "Control";
 }
 
 function replicaWorkload(replica: SchedulerReplica) {
 	return replica.active_platform_jobs === 0
 		? "Idle"
 		: `${replica.active_platform_jobs} running`;
+}
+
+function replicaPlatformJobs(replica: SchedulerReplica) {
+	// API control replicas run none; executors admit them by memory.
+	return replica.runs_platform_jobs ? `${replica.active_platform_jobs}` : "—";
 }
 
 function replicaMemory(replica: SchedulerReplica) {
@@ -108,11 +115,9 @@ function ReplicaCard({ replica }: { replica: SchedulerReplica }) {
 					</div>
 					<div className="space-y-1">
 						<dt className="text-xs font-medium text-muted-foreground">
-							Slots
+							Platform Jobs
 						</dt>
-						<dd>
-							{replica.active_platform_jobs} / {replica.job_slots}
-						</dd>
+						<dd>{replicaPlatformJobs(replica)}</dd>
 					</div>
 					<div className="space-y-1">
 						<dt className="text-xs font-medium text-muted-foreground">
@@ -150,7 +155,7 @@ export function SchedulerReplicaList({
 						<DataTableHead>Role</DataTableHead>
 						<DataTableHead>Status</DataTableHead>
 						<DataTableHead>Memory</DataTableHead>
-						<DataTableHead>Slots</DataTableHead>
+						<DataTableHead>Platform Jobs</DataTableHead>
 						<DataTableHead>Workload</DataTableHead>
 					</DataTableRow>
 				</DataTableHeader>
@@ -185,8 +190,7 @@ export function SchedulerReplicaList({
 								{replicaMemory(replica)}
 							</DataTableCell>
 							<DataTableCell>
-								{replica.active_platform_jobs} /{" "}
-								{replica.job_slots}
+								{replicaPlatformJobs(replica)}
 							</DataTableCell>
 							<DataTableCell>
 								<ReplicaWorkloadBadge replica={replica} />

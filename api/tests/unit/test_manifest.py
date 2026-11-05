@@ -14,7 +14,7 @@ def sample_manifest():
     form_id = str(uuid4())
     return {
         "organizations": [{"id": org_id, "name": "TestOrg"}],
-        "roles": [{"id": role_id, "name": "admin", "organization_id": org_id}],
+        "roles": [{"id": role_id, "name": "admin"}],
         "workflows": {
             wf_id: {
                 "id": wf_id,
@@ -41,8 +41,6 @@ def sample_manifest():
         },
         "agents": {},
         "apps": {},
-        "_wf_id": wf_id,
-        "_form_id": form_id,
     }
 
 
@@ -52,7 +50,7 @@ def test_parse_manifest_from_yaml(sample_manifest):
 
     yaml_str = yaml.dump(sample_manifest, default_flow_style=False)
     manifest = parse_manifest(yaml_str)
-    wf_id = sample_manifest["_wf_id"]
+    wf_id = next(iter(sample_manifest["workflows"]))
     assert wf_id in manifest.workflows
     assert manifest.workflows[wf_id].name == "my_workflow"
     assert manifest.workflows[wf_id].path == "workflows/my_workflow.py"
@@ -70,7 +68,7 @@ def test_serialize_manifest(sample_manifest):
     # Should be valid YAML
     reparsed = yaml.safe_load(output)
     assert "workflows" in reparsed
-    wf_id = sample_manifest["_wf_id"]
+    wf_id = next(iter(sample_manifest["workflows"]))
     assert wf_id in reparsed["workflows"]
 
 
@@ -131,7 +129,7 @@ def test_validate_manifest_missing_org(sample_manifest):
     """Detect reference to non-existent organization."""
     from bifrost.manifest import parse_manifest, validate_manifest
 
-    wf_id = sample_manifest["_wf_id"]
+    wf_id = next(iter(sample_manifest["workflows"]))
     sample_manifest["workflows"][wf_id]["organization_id"] = str(uuid4())
     yaml_str = yaml.dump(sample_manifest, default_flow_style=False)
     manifest = parse_manifest(yaml_str)
@@ -322,7 +320,7 @@ def test_validate_manifest_missing_role(sample_manifest):
     """Detect reference to non-existent role."""
     from bifrost.manifest import parse_manifest, validate_manifest
 
-    wf_id = sample_manifest["_wf_id"]
+    wf_id = next(iter(sample_manifest["workflows"]))
     sample_manifest["workflows"][wf_id]["roles"] = [str(uuid4())]
     yaml_str = yaml.dump(sample_manifest, default_flow_style=False)
     manifest = parse_manifest(yaml_str)
@@ -405,7 +403,7 @@ class TestSerializeManifestDir:
         # Verify YAML content is correct
         wf_data = yaml.safe_load(files["workflows.yaml"])
         assert "workflows" in wf_data
-        wf_id = sample_manifest["_wf_id"]
+        wf_id = next(iter(sample_manifest["workflows"]))
         assert wf_id in wf_data["workflows"]
 
         org_data = yaml.safe_load(files["organizations.yaml"])

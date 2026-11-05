@@ -1,3 +1,4 @@
+import { ExecutionOrganizationSelect } from "@/components/execution/ExecutionOrganizationSelect";
 import {
 	PageWorkspace,
 	PageScrollArea,
@@ -42,6 +43,14 @@ export function ExecuteWorkflow() {
 		refetch,
 	} = useWorkflowsMetadata();
 	const executeWorkflow = useExecuteWorkflow();
+	const [organization, setOrganization] = useState<{
+		workflowId: string;
+		orgId?: string;
+	}>();
+	const orgId =
+		organization?.workflowId === workflowName
+			? organization?.orgId
+			: undefined;
 
 	// Track navigation state to keep button disabled through redirect
 	const [isNavigating, setIsNavigating] = useState(false);
@@ -81,6 +90,7 @@ export function ExecuteWorkflow() {
 		try {
 			const body: WorkflowExecutionRequest = {
 				workflow_id: workflow.id,
+				...(orgId ? { org_id: orgId } : {}),
 				input_data: parameters,
 				form_id: null,
 				transient: false,
@@ -216,6 +226,24 @@ export function ExecuteWorkflow() {
 										void handleExecute(paramValues);
 									}}
 								>
+									<div className="mb-6">
+										<ExecutionOrganizationSelect
+											value={orgId}
+											organizationId={
+												workflow.organization_id
+											}
+											disabled={
+												executeWorkflow.isPending ||
+												isNavigating
+											}
+											onChange={(orgId) =>
+												setOrganization({
+													workflowId: workflowName!,
+													orgId,
+												})
+											}
+										/>
+									</div>
 									<WorkflowParametersForm
 										parameters={workflow.parameters || []}
 										onExecute={handleExecute}

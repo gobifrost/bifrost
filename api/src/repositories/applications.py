@@ -87,7 +87,11 @@ class ApplicationRepository(OrgScopedRepository[Application]):
     async def get(
         self, *, include_solution_managed: bool = False, **filters: Any
     ) -> Application | None:
-        """Resolve an App ID against the row's real organization in Caller mode."""
+        """Resolve an App ID or slug against the row's real organization in Caller mode."""
+        if self.caller is not None and "slug" in filters and "id" not in filters:
+            return await self._get_by_slug_for_caller(
+                include_solution_managed=include_solution_managed, **filters
+            )
         if self.caller is None or "id" not in filters:
             return await super().get(
                 include_solution_managed=include_solution_managed, **filters
@@ -102,6 +106,50 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         if entity is None or not await self._can_access_entity(entity):
             return None
         return entity
+
+    async def _get_by_slug_for_caller(
+        self, *, include_solution_managed: bool, **filters: Any
+    ) -> Application | None:
+        """Resolve a slug across every org the caller can read, not only its home org.
+
+        The name cascade (home org, then global) never queries a row in another
+        org, so a caller whose reach covers a client org (a provider admin, or a
+        cross-org role grant) got a 404 opening that org's App by slug. Admission
+        is the same complete decision ID reads use (``_can_access_entity``) on
+        each row's real organization, so reach, named permission and sharing
+        still apply.
+
+        ``_repo/`` App slugs are globally unique. Solution installs may share a
+        slug across orgs, so when several readable rows match, prefer the
+        selected org (when the repository was built with one; the slug open
+        route does not pass one today), then the home org, then the global
+        row, then a stable pick by id.
+        """
+        query = select(Application)
+        for key, value in filters.items():
+            column = getattr(Application, key, None)
+            if column is not None:
+                query = query.where(column == value)
+        if not include_solution_managed:
+            query = query.where(Application.solution_id.is_(None))
+        rows = list((await self.session.execute(query)).scalars().all())
+        readable = [row for row in rows if await self._can_access_entity(row)]
+        if not readable:
+            return None
+
+        preferred: list[UUID | None] = []
+        if isinstance(self.selected_organization_id, UUID):
+            preferred.append(self.selected_organization_id)
+        if self.org_id is not None:
+            preferred.append(self.org_id)
+        preferred.append(None)
+
+        def rank(row: Application) -> tuple[int, str]:
+            org = row.organization_id
+            position = preferred.index(org) if org in preferred else len(preferred)
+            return (position, str(row.id))
+
+        return min(readable, key=rank)
 
     async def _can_access_entity(self, entity: Application) -> bool:
         """Use the same complete decision for lists and exact App reads."""
@@ -199,7 +247,11 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         return list(result.scalars().all())
 
     async def get_by_slug_global(self, slug: str) -> Application | None:
-        """Resolve an app by slug for an admin, disambiguating by the active org.
+        """Find any app with this slug, ignoring access, disambiguating by the active org.
+
+        Used as the slug-collision guard on create and rename. Caller-mode
+        opens by slug go through ``get`` (``_get_by_slug_for_caller``), which
+        applies the per-row access decision.
 
         Solution apps share a slug across orgs (criterion 9 — the same solution
         installed for two orgs), so a bare ``scalar_one_or_none`` over the slug

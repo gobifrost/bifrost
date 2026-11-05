@@ -1,0 +1,14 @@
+{
+  "key": "pr:1088",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Reduce repeated database work when workflows, services, and agents authenticate SDK requests.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1088",
+      "Codex and Astra reviewed this routine performance repair under the user's authorization to fix and deploy production issues. Fresh status, identity, role, and permission checks are preserved; no customer upgrade action is required."
+    ]
+  }
+}
