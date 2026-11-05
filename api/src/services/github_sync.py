@@ -133,6 +133,10 @@ class GitConnectDecisionError(SyncError):
     """A chosen connect strategy is unsafe or lacks required decisions."""
 
 
+class AppPreviewSyncError(SyncError):
+    """Preview publication failed after source storage was updated."""
+
+
 class _GitConnectPreviewRecord(BaseModel):
     token: str
     repository_url: str
@@ -1288,6 +1292,25 @@ class GitHubSyncService:
                     publication_plan.checkpoint_id
                 )
         except Exception as error:
+            from src.services.app_resource_limits import (
+                AppSourceCompilationError,
+                AppSourceLimitError,
+            )
+
+            if isinstance(error, (AppSourceLimitError, AppSourceCompilationError)):
+                logger.warning(
+                    "Workspace publication blocked by App source limits; source editing is required: %s",
+                    error,
+                )
+                return SyncResult(
+                    pull_success=True,
+                    pushed_commits=push_result.pushed_commits,
+                    commit_sha=push_result.commit_sha,
+                    entities_imported=entities_imported,
+                    entity_changes=all_entity_changes,
+                    error=str(error),
+                    retryable=False,
+                )
             logger.warning(
                 "Workspace publication failed after import; retaining local dirty state for retry: %s",
                 error,
@@ -1710,27 +1733,37 @@ class GitHubSyncService:
             return
 
         import asyncio
+        from src.services.app_resource_limits import AppSourceCompilationError, AppSourceLimitError
 
         app_storage = AppStorageService(self.repo_manager._settings)
 
+        semaphore = asyncio.Semaphore(2)
+
         async def _sync_one_app(mapp_id: str, source_dir: str) -> None:
-            try:
+            async with semaphore:
                 synced, compile_errors = await app_storage.sync_preview_compiled(
                     mapp_id, source_dir
                 )
-                logger.info(f"Synced {synced} compiled preview files for app {mapp_id}")
-                if compile_errors:
-                    logger.warning(
-                        f"Compile errors for app {mapp_id}: {compile_errors}"
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to sync preview for app {mapp_id}: {e}")
+            logger.info(f"Synced {synced} compiled preview files for app {mapp_id}")
+            if compile_errors:
+                raise AppSourceCompilationError(
+                    f"App {mapp_id} returned compilation errors: {compile_errors[:5]}"
+                )
 
-        # Process all apps concurrently
-        await asyncio.gather(*(
+        results = await asyncio.gather(*(
             _sync_one_app(mapp.id, mapp.path)
             for mapp in manifest.apps.values()
-        ))
+        ), return_exceptions=True)
+        for result in results:
+            if isinstance(result, (AppSourceLimitError, AppSourceCompilationError)):
+                raise result
+        failures = [result for result in results if isinstance(result, Exception)]
+        if failures:
+            first = failures[0]
+            raise AppPreviewSyncError(
+                "One or more app previews failed; successful peer previews remain "
+                f"published: {first}"
+            ) from first
 
     # -----------------------------------------------------------------
     # Reimport from repo (no git operations)
