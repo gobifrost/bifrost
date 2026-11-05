@@ -206,3 +206,31 @@ before freshness verification. The new rolling-upgrade test also needed an
 Awaitable annotation for Redis's union return stub; the runtime test passed and
 the corrected annotation passed final static checks. No failure was retried or
 suppressed without fixing its cause.
+
+### Merge-Queue Consent Fixture Repair
+
+Merge group `dc831bae8cf9ee378da5807ce91aeb87efda9d40` failed E2E shard
+2 (`126925612570`); aggregate E2E job `126933323828` reported that same failure.
+The first MCP approval test expected a signed-in browser but sent a spent
+refresh cookie. A prior authority change made its access token stale;
+challenge-driven access refresh rotated the fixture's refresh token while its
+explicit Cookie header retained the old token. The existing consent guard
+correctly rejected that spent cookie. This was test credential setup, not a
+reason to weaken the runtime guard or rerun the queue unchanged.
+
+The MCP browser-header fixture now uses the existing human minter before
+snapshotting the matching access/cookie pair. The approval cases deliberately
+advance authority state first, reproducing the exposing condition. A separate
+live check confirms that a spent refresh cookie remains rejected even when the
+access token is valid. All eight MCP consent E2E cases and API Pyright/Ruff
+passed under the shared heavy lease; owned services were stopped before release.
+
+```sh
+./test.sh tests/e2e/api/test_mcp_app_consent.py -q
+./test.sh quality api
+```
+
+Main `ad8f0f7a2` was integrated to reproduce the exact failed candidate. Its
+runtime source tree is unchanged by this repair; only the test file and this
+verification/disposition evidence differ. All other merge-group jobs had
+passed. Full combined checks remain the protected merge gate after this fix.

@@ -15,7 +15,8 @@
       "Security review: scoped module authorization remains authoritative; speculative results never populate the execution demand cache. No security disclosure or customer action identified.",
       "Maintainer approved the recommended narrowed cache/S3 scope in the owner thread: \"Proceed to merge as you see appropriate.\" Speculative batching and its API were removed; no measured validation slowdown was accepted.",
       "Final narrowed source verified against main 418d8ca97: 323 unit/contract checks, 19 live checks and 36 Git sync consumer checks passed; API Pyright/Ruff passed. No net API schema or UI changes. Full suites are delegated to protected checks.",
-      "Rolling-upgrade security/correctness review: retain the established generation namespace so older and newer writers invalidate each other. Bidirectional real-Redis invalidation and workspace/Solution create-update-delete-before-first-import checks passed. Git Discard also refreshes executable cache before fallible search maintenance."
+      "Rolling-upgrade security/correctness review: retain the established generation namespace so older and newer writers invalidate each other. Bidirectional real-Redis invalidation and workspace/Solution create-update-delete-before-first-import checks passed. Git Discard also refreshes executable cache before fallible search maintenance.",
+      "Merge-group E2E shard 2 and aggregate failure on dc831bae were traced to stale explicit test cookies after automatic access refresh. MCP test setup now uses the existing human minter; authority-change regression and spent-cookie rejection remain covered. Eight focused E2E checks and API Pyright/Ruff passed. Runtime auth/consent code is unchanged; details and job IDs are recorded in the benchmark verification ledger."
     ]
   },
   "reason": "Internal workflow startup caching and storage connection reuse; no new front-facing capability or required customer action."
