@@ -1,3 +1,4 @@
+import { AppConnectionApproval } from "@/components/auth/AppConnectionApproval";
 import { useApplicationName } from "@/lib/applicationName";
 /**
  * Device Authorization Page
@@ -327,67 +328,24 @@ function DeviceAuthorization() {
 						)}
 
 						{step === "confirm" && (
-							<div className="space-y-4" aria-busy={isSubmitting}>
-								<Alert role="note">
-									<AlertDescription>
-										Signed in as{" "}
-										<strong className="[overflow-wrap:anywhere]">
-											{user?.email}
-										</strong>
-									</AlertDescription>
-								</Alert>
-								<div className="space-y-2 text-center">
-									<p
-										className="font-mono text-3xl font-semibold tracking-[0.18em]"
-										aria-label={`Device code ${userCode}`}
-									>
-										{userCode}
-									</p>
-									<p className="text-sm text-muted-foreground">
-										Verify this matches your terminal. Only
-										connect if you started this CLI login.
-									</p>
-								</div>
-								<p className="text-sm text-muted-foreground">
-									The CLI can access data and perform actions
-									allowed by your account permissions. It
-									stores credentials on the computer running
-									the CLI to keep you signed in.
-								</p>
+							<div className="space-y-4">
+								<AppConnectionApproval
+									email={user?.email}
+									clientName="Bifrost CLI"
+									deviceCode={userCode}
+									pendingDecision={pendingDecision}
+									onDecision={handleDecision}
+									approveLabel="Connect CLI"
+								/>
 								{error && <ErrorAlert message={error} />}
-								<div className="space-y-2">
-									<Button
-										className="min-h-11 w-full"
-										aria-busy={pendingDecision === true}
-										onClick={() => handleDecision(true)}
-										disabled={isSubmitting}
-									>
-										{pendingDecision === true && (
-											<Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
-										)}
-										Connect CLI
-									</Button>
-									<Button
-										variant="outline"
-										className="min-h-11 w-full"
-										aria-busy={pendingDecision === false}
-										onClick={() => handleDecision(false)}
-										disabled={isSubmitting}
-									>
-										{pendingDecision === false && (
-											<Loader2 className="mr-2 h-4 w-4 animate-spin motion-reduce:animate-none" />
-										)}
-										Deny
-									</Button>
-									<Button
-										variant="ghost"
-										className="min-h-11 w-full"
-										onClick={handleEditCode}
-										disabled={isSubmitting}
-									>
-										Edit Code
-									</Button>
-								</div>
+								<Button
+									variant="ghost"
+									className="min-h-11 w-full"
+									onClick={handleEditCode}
+									disabled={isSubmitting}
+								>
+									Edit Code
+								</Button>
 								<AccountActions
 									onHome={() => navigate("/")}
 									onLogout={logout}

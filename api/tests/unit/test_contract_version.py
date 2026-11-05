@@ -406,9 +406,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    # The existing org_id string also accepts the additive Global scope marker.
-    # Only its description changes in the DTO; existing CLI shapes and minimum stay unchanged.
-    "4cef75fd6777f54b62915c610b78e72456afcac955ee201c18951695af77386f"
+    # App consent models and the Global org_id scope marker are additive.
+    # Existing CLI shapes and minimum version remain unchanged (2026-11-04).
+    "7dfcf4345ddc44ffc94aaf4445547640dd77ded3ab6a1fb57a50186c543d2b32"
 )
 
 
