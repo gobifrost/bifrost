@@ -10250,7 +10250,7 @@
     "cli": 173,
     "manifest": 16,
     "mcp": 94,
-    "rest": 697,
+    "rest": 702,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13168,6 +13168,41 @@
         "method": "GET",
         "operation_id": "",
         "path": "/api/mcp/run",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/mcp/run/branding",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/mcp/run/branding",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/mcp/run/branding/logo",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/mcp/run/branding/logo",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/mcp/run/branding/logo",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

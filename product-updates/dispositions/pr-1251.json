@@ -1,0 +1,13 @@
+{
+  "key": "pr:1251",
+  "classification": "highlight",
+  "entry_ids": [
+    "744485c0-ccc9-5a27-8ca1-38235b51a23e"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1251"
+    ]
+  }
+}
