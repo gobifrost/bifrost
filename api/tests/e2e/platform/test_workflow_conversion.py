@@ -10,19 +10,16 @@ its imported SDK call succeeds with the limited identity and persisted grants.
 
 from __future__ import annotations
 
-from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import func, select
 
-from src.jobs.platform import runner as platform_runner
 from src.models.contracts.workflow_permissions import (
     RequestedWorkflowPermissions,
     WorkflowPermissionGrantSpec,
     WorkflowPermissionMode,
 )
-from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_workflow_permission_requests import (
     SolutionWorkflowPermissionRequest,
 )
@@ -30,37 +27,30 @@ from src.models.orm.solutions import Solution
 from src.models.orm.users import User
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
+from src.services.artifacts import ArtifactService, ArtifactAccessError, artifact_ref
+from src.services.authorization.callers import load_human_caller
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SolutionStorage
 from src.services.workflow_permissions import load_workflow_permissions, request_digest
-from tests.e2e.conftest import execute_workflow_sync
+from tests.e2e.conftest import execute_workflow_sync, poll_until
 
 
 pytestmark = pytest.mark.e2e
 
 
-async def _run_queued_job(db_session, job_id: UUID) -> PlatformJob:
-    """Claim once in-process, using the production platform-job runner."""
-    job = await db_session.get(PlatformJob, job_id)
-    assert job is not None
-    assert job.status == "queued"
-    now = datetime.now(timezone.utc)
-    lease_token = uuid4()
-    job.status = "running"
-    job.phase = "Starting e2e conversion job"
-    job.attempt = 1
-    job.started_at = now
-    job.lease_owner = "e2e-workflow-conversion"
-    job.lease_token = lease_token
-    job.heartbeat_at = now
-    job.lease_expires_at = now + timedelta(minutes=5)
-    job.revision = (job.revision or 0) + 1
-    await db_session.commit()
+def _wait_for_job(e2e_client, headers, job_id: UUID) -> None:
+    """Observe the real worker through the shared job endpoint."""
+    def terminal_job():
+        response = e2e_client.get(f"/api/platform-jobs/{job_id}", headers=headers)
+        assert response.status_code == 200, response.text
+        job = response.json()
+        return job if job["status"] in {
+            "succeeded", "failed", "cancelled", "requires_action",
+        } else None
 
-    assert await platform_runner.run_claimed_platform_job(job_id, lease_token)
-    await db_session.refresh(job)
-    assert job.status == "succeeded", f"{job.error_code}: {job.error_message}"
-    return job
+    job = poll_until(terminal_job, max_wait=30.0, interval=0.2)
+    assert job is not None, f"Conversion job {job_id} did not complete"
+    assert job["status"] == "succeeded", job
 
 
 async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restricted_access(
@@ -127,6 +117,18 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         solution_workflow.id: solution_workflow.run_identity_id,
     }
     users_before_apply = await db_session.scalar(select(func.count()).select_from(User))
+    artifact_store = ArtifactService(db_session)
+    # Seed another user's output in the run user's existing organization.
+    # This is setup only, using the canonical authorized-job persistence path.
+    artifact = await artifact_store.store_trusted_job(
+        created_by_user_id=platform_admin.user_id,
+        organization_id=org1_user.organization_id,
+        filename=f"conversion-{suffix}.txt", content_type="text/plain",
+        content=b"conversion evidence",
+    )
+    await db_session.commit()
+    foreign_ref = artifact_ref(artifact).model_dump(mode="json")
+    solution_permissions = ["artifacts.read.all", "roles.read"]
     await storage.write(entry_path, source.encode())
     await storage.write(helper_path, helper_source.encode())
     solution_storage = SolutionStorage(solution.id)
@@ -136,9 +138,10 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
     await solution_storage.write(
         helper_path,
         (
-            "from bifrost import roles\n\n"
+            "from bifrost import roles, artifacts\n\n"
             "async def load_runtime_setting(client):\n"
-            "    return await roles.list()\n"
+            f"    content = await artifacts.read({foreign_ref!r})\n"
+            "    return {\"roles\": await roles.list(), \"text\": content.decode()}\n"
         ).encode(),
     )
 
@@ -174,7 +177,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             headers=org1_user.headers,
         )
         assert denied.status_code == 403, denied.text
-        await _run_queued_job(db_session, analysis_job_id)
+        _wait_for_job(e2e_client, platform_admin.headers, analysis_job_id)
 
         report_response = e2e_client.get(
             f"/api/workflow-conversions/{analysis_job_id}/report",
@@ -230,8 +233,8 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
                 for evidence in candidate["evidence"]
             )
             assert candidate["unknowns"] == []
-        assert solution_item["source_permissions"] == ["roles.read"]
-        assert solution_item["proposed_permissions"] == ["roles.read"]
+        assert solution_item["source_permissions"] == solution_permissions
+        assert solution_item["proposed_permissions"] == solution_permissions
         assert any(
             evidence["call"] == "bifrost.roles.list"
             for evidence in solution_item["evidence"]
@@ -257,7 +260,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             },
         )
         assert apply_response.status_code == 202, apply_response.text
-        await _run_queued_job(db_session, UUID(apply_response.json()["job_id"]))
+        _wait_for_job(e2e_client, platform_admin.headers, UUID(apply_response.json()["job_id"]))
 
         reopened = e2e_client.get(
             f"/api/workflow-conversions/{analysis_job_id}/report",
@@ -319,13 +322,13 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         ).scalar_one()
         expected_request = RequestedWorkflowPermissions(
             mode=WorkflowPermissionMode.RESTRICTED,
-            grants=[WorkflowPermissionGrantSpec(permission="roles.read")],
+            grants=[WorkflowPermissionGrantSpec(permission=p) for p in solution_permissions],
         )
         assert (
             solution_request.status,
             solution_request.requested_mode,
             solution_request.requested_grants,
-        ) == ("approved", "restricted", [{"permission": "roles.read"}])
+        ) == ("approved", "restricted", [{"permission": p} for p in solution_permissions])
         assert (
             solution_request.request_digest
             == solution_request.approved_digest
@@ -335,7 +338,7 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             db_session, solution_workflow
         )
         assert mode is WorkflowPermissionMode.RESTRICTED
-        assert [grant.permission for grant in effective_grants] == ["roles.read"]
+        assert [grant.permission for grant in effective_grants] == solution_permissions
 
         # A limited identity proves the declaration supplies the required
         # power; a Platform Admin would hide an omitted grant here.
@@ -355,13 +358,24 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             limited_user, converted, uuid4(), permission_entry("roles.read"),
         ).outcome == "failure"
 
+        # No historical run supplied the file-read grant. The source scan
+        # must discover it, and it must not change this user's direct access.
+        assert solution_item["observed_permissions"] == []
+        with pytest.raises(ArtifactAccessError):
+            await artifact_store.get_for_caller(
+                artifact.id, caller=await load_human_caller(db_session, org1_user.user_id),
+            )
+
         executed = execute_workflow_sync(
             e2e_client, org1_user.headers, str(solution_workflow.id), input_data={},
         )
         assert executed["status"] == "Success", (executed.get("error"), executed.get("error_message"), executed)
-        assert isinstance(executed["result"], list), executed
+        assert isinstance(executed["result"]["roles"], list), executed
+        assert executed["result"]["text"] == "conversion evidence", executed
     finally:
         await storage.delete(entry_path)
         await storage.delete(helper_path)
         await solution_storage.delete(entry_path)
         await solution_storage.delete(helper_path)
+        await artifact_store.delete(artifact)
+        await db_session.commit()

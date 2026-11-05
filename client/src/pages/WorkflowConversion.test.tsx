@@ -234,6 +234,64 @@ describe("WorkflowConversion", () => {
 		expect(screen.getByText(/Organization: org-synthetic/)).toBeVisible();
 	});
 
+	it("separates confirmed checks from permissions inferred from attempted calls", async () => {
+		useConversionJob.mockReturnValue({
+			job: { id: "job-evidence", status: "succeeded", revision: 1 },
+			report: {
+				job_id: "job-evidence",
+				total: 1,
+				offset: 0,
+				limit: 25,
+				items: [
+					{
+						workflow_id: "workflow-evidence",
+						workflow_name: "evidence_workflow",
+						source_fingerprint: "fingerprint",
+						status: "ready",
+						current_permission_mode: "full",
+						source_permissions: ["configs.read", "secrets.read"],
+						observed_permissions: ["configs.read"],
+						observed_operations: ["POST /api/sdk/config/get"],
+						proposed_permissions: ["configs.read", "secrets.read"],
+					},
+				],
+				summary: {
+					platform_cutover: false,
+					ready: 1,
+					needs_review: 0,
+					blocked: 0,
+					stale: 0,
+					already_declared: 0,
+				},
+			},
+			error: null,
+			loading: false,
+			refresh: vi.fn(),
+			setReport: vi.fn(),
+		});
+		const { user } = renderWithProviders(<WorkflowConversion />, {
+			initialEntries: ["/workflows/convert?job=job-evidence"],
+		});
+		await user.click(
+			screen.getByRole("button", { name: "Review evidence_workflow" }),
+		);
+		await user.click(screen.getByText("Permission inputs"));
+		expect(
+			screen.getByText("Confirmed Checks: configs.read"),
+		).toBeVisible();
+		expect(
+			screen.getByText("Attempted API Calls: POST /api/sdk/config/get"),
+		).toBeVisible();
+		expect(
+			screen.queryByText(/Confirmed Checks:.*secrets.read/),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByText(
+				/No confirmed checks does not mean no permissions are needed/,
+			),
+		).toBeVisible();
+	});
+
 	it("requires explicit confirmation before exposing platform cutover", () => {
 		useConversionJob.mockReturnValue({
 			job: {

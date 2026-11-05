@@ -13,7 +13,6 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import PurePosixPath
 from uuid import UUID, uuid4
 
-from botocore.exceptions import ClientError
 from fastapi import HTTPException, status
 from sqlalchemy import and_, delete, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -21,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.sdk_modules import ModuleSourceScope, resolve_module_name
 from shared.runtime_modules import RuntimeModuleInventory, read_runtime_modules
 from src.core.database import get_db_context
+from src.core.s3_transport import S3Error
 from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
     PlatformJobCancelled,
@@ -140,10 +140,10 @@ def _is_missing_source_error(exc: Exception) -> bool:
     """Recognize only storage providers' ordinary missing-object responses."""
     if isinstance(exc, FileNotFoundError):
         return True
-    if isinstance(exc, ClientError):
-        code = exc.response.get("Error", {}).get("Code")
+    if isinstance(exc, S3Error):
+        code = exc.code
         return code in {"NoSuchKey", "404", "NotFound", "Not Found"}
-    return type(exc).__name__ == "NoSuchKey"
+    return False
 
 
 async def _summary(db: AsyncSession, source_file) -> dict:
@@ -519,7 +519,7 @@ async def _report_for_workflow(
         )
     ).all()
     observed_operations = sorted(str(operation) for operation, count in usages if count)
-    observed_permissions, mapping_unknowns = _permissions_for_observed_operations(
+    operation_candidates, mapping_unknowns = _permissions_for_observed_operations(
         observed_operations
     )
     source_calls = sorted(set(str(call) for call in analysis.get("sdk_calls", [])))
@@ -556,12 +556,14 @@ async def _report_for_workflow(
     policies = await _policy_revision_snapshot(db, workflow)
     from shared.workflow_conversion_access import recorded_permission_requirements
 
-    observed_permissions = sorted(set(observed_permissions) | set(
-        await recorded_permission_requirements(
-            db, workflow.id, window_days=OBSERVATION_WINDOW_DAYS
-        )
-    ))
-    proposed_permissions = sorted(set(source_permissions) | set(observed_permissions))
+    observed_permissions = await recorded_permission_requirements(
+        db, workflow.id, window_days=OBSERVATION_WINDOW_DAYS
+    )
+    # Usage counts include failed attempts. Keep their mappings as conservative
+    # proposal candidates, distinct from successfully enforced permission checks.
+    proposed_permissions = sorted(
+        set(source_permissions) | set(operation_candidates) | set(observed_permissions)
+    )
     unknowns = list(
         dict.fromkeys(
             [
@@ -851,7 +853,7 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
                     source = await _source_for_workflow(workflow)
                 except UnicodeDecodeError:
                     report = await _blocked_report_for_source(db, workflow)
-                except (FileNotFoundError, ClientError) as exc:
+                except (FileNotFoundError, S3Error) as exc:
                     if not _is_missing_source_error(exc):
                         raise
                     report = await _blocked_report_for_source(db, workflow)

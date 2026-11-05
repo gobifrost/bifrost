@@ -568,3 +568,72 @@ async def test_cutover_accepts_only_persisted_review_of_unchanged_unknowns(
         fenced.assert_awaited_once_with(db, context)
         audit.assert_awaited_once()
         db.commit.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("confirmed", [False, True])
+async def test_report_distinguishes_attempted_route_candidates_from_confirmed_checks(
+    db_session, monkeypatch, confirmed,
+):
+    from datetime import date
+    from src.models.orm.audit import AuditLog
+    from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
+    from src.models.orm.workflows import Workflow
+
+    workflow = Workflow(
+        id=uuid4(), name="conversion-evidence", path="workflows/evidence.py",
+        function_name="run", permission_mode="full", is_active=True,
+    )
+    db_session.add(workflow)
+    await db_session.flush()
+    db_session.add(WorkflowOperationUsage(
+        workflow_id=workflow.id, operation_key="POST /api/sdk/config/get",
+        day=date.today(), count=1,
+    ))
+    if confirmed:
+        db_session.add(AuditLog(
+            action="access.check", outcome="success",
+            details={
+                "workflow_id": str(workflow.id), "enforced": True,
+                "trace": {"steps": [{
+                    "key": "permission", "status": "passed",
+                    "facts": {"permission": "configs.read"},
+                }]},
+            },
+        ))
+    await db_session.flush()
+    monkeypatch.setattr(conversion, "_authority_snapshot", AsyncMock(return_value=(
+        {"identity_is_active": True}, {"name": "Limited identity", "shared": False},
+    )))
+    monkeypatch.setattr(conversion, "_policy_revision_snapshot", AsyncMock(return_value={}))
+    source = "from bifrost import workflow\n@workflow()\nasync def run():\n    return None\n"
+    report = await conversion._report_for_workflow(
+        db_session, workflow,
+        source=SourceFile(
+            workflow.path, workflow.path, source,
+            hashlib.sha256(source.encode()).hexdigest(),
+        ),
+        module_inventory=RuntimeModuleInventory(frozenset(), True),
+    )
+    assert report["source_permissions"] == []
+    assert report["observed_operations"] == ["POST /api/sdk/config/get"]
+    assert report["proposed_permissions"] == ["configs.read", "secrets.read"]
+    assert report["observed_permissions"] == (["configs.read"] if confirmed else [])
+
+
+@pytest.mark.parametrize("code,status,missing", [
+    ("NoSuchKey", 404, True),
+    ("AccessDenied", 403, False),
+    ("InternalError", 500, False),
+])
+def test_storage_failure_classification_preserves_real_errors(code, status, missing):
+    from src.core.s3_transport import S3Error
+
+    assert conversion._is_missing_source_error(S3Error(code, status)) is missing
+
+
+def test_unknown_exception_named_like_a_missing_key_is_not_storage_evidence():
+    class NoSuchKey(Exception):
+        pass
+
+    assert not conversion._is_missing_source_error(NoSuchKey())

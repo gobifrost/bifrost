@@ -22,7 +22,10 @@ def test_sdk_method_names_map_to_actual_transport_permissions() -> None:
     permissions, unknowns = permissions_for_sdk_calls([
         "bifrost.organizations.create", "bifrost.organizations.list", "bifrost.ai.complete",
     ])
-    assert permissions == ["ai.execute", "organizations.read", "organizations.readwrite"]
+    # AI file inputs may read an ArtifactRef owned by another user.
+    assert permissions == [
+        "ai.execute", "artifacts.read.all", "organizations.read", "organizations.readwrite",
+    ]
     assert unknowns == []
 
 
@@ -108,7 +111,7 @@ def test_secret_and_personal_route_candidates_remain_available_without_review() 
     permissions, unknowns = permissions_for_sdk_calls(["bifrost.config.get", "bifrost.artifacts.list"])
     assert "configs.read" in permissions
     assert "secrets.read" in permissions
-    assert not any(permission.endswith(".all") for permission in permissions)
+    assert "artifacts.read.all" in permissions
     assert unknowns == []
     candidates = sdk_route_candidates(["bifrost.config.get", "bifrost.artifacts.list"])
     assert [candidate.permission for candidate in candidates] == [
@@ -126,6 +129,9 @@ def test_service_guards_supply_unconditional_and_conditional_sdk_candidates() ->
     assert [(candidate.call, candidate.permission, candidate.condition) for candidate in candidates] == [
         ("bifrost.config.get", "configs.read", "unconditional"),
         ("bifrost.config.get", "secrets.read", "conditional"),
+        # Global ID lookup additionally filters by permitted organizations;
+        # the named guard still runs unconditionally before that branch.
+        ("bifrost.integrations.get_mapping", "integrations.read", "conditional"),
         ("bifrost.integrations.get_mapping", "integrations.read", "unconditional"),
         ("bifrost.integrations.get_mapping", "secrets.read", "conditional"),
     ]
@@ -766,3 +772,20 @@ def test_sdk_clients_and_credentials_are_distinct_from_data_objects() -> None:
     assert not sdk_object_is_data("bifrost.OAuthCredentials")
     assert not sdk_object_is_data("bifrost.client.BifrostClient")
     assert not sdk_object_is_data("bifrost.ExecutionContext")
+
+
+@pytest.mark.parametrize("call", ["bifrost.artifacts.read", "bifrost.artifacts.get_download_url"])
+def test_unobserved_personal_resource_calls_include_the_named_widening_candidate(call):
+    permissions, unknowns = permissions_for_sdk_calls([call])
+    assert permissions == ["artifacts.read.all"]
+    assert unknowns == []
+    routes = sdk_route_candidates([call])
+    assert routes and all(route.access_class.value == "personal" for route in routes)
+
+
+def test_attempted_personal_resource_route_is_a_candidate_not_a_confirmed_check():
+    permissions, unknowns = permissions_for_recorded_operations([
+        "GET /api/sdk/artifacts/{artifact_id}/content",
+    ])
+    assert permissions == ["artifacts.read.all"]
+    assert unknowns == []

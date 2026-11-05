@@ -28,7 +28,7 @@ async def test_observed_permissions_follow_successful_decisions_and_not_route_de
         db_session.add(AuditLog(
             action="access.check",
             outcome=outcome,
-            details={"workflow_id": str(workflow_id), "trace": {"steps": steps}},
+            details={"workflow_id": str(workflow_id), "enforced": True, "trace": {"steps": steps}},
         ))
     await db_session.flush()
 
@@ -40,7 +40,10 @@ async def test_observed_permissions_follow_successful_decisions_and_not_route_de
 @pytest.mark.asyncio
 @pytest.mark.parametrize("compact", [False, True])
 @pytest.mark.parametrize("in_reach", [False, True])
-async def test_full_access_decisions_retain_observed_named_permission(db_session, compact, in_reach):
+@pytest.mark.parametrize("enforced", [False, True])
+async def test_full_access_decisions_retain_observed_named_permission(
+    db_session, compact, in_reach, enforced,
+):
     from shared.access_trace_storage import compact_access_check_details
     from src.models.contracts.workflow_permissions import WorkflowPermissionMode
     from src.models.orm.audit import AuditLog
@@ -59,8 +62,8 @@ async def test_full_access_decisions_retain_observed_named_permission(db_session
     )
     assert trace.outcome == ("success" if in_reach else "failure")
     details = {
-        "workflow_id": str(workflow_id), "enforced": True, "direct": False,
-        "trace": {**trace.as_dict(), "enforced": True},
+        "workflow_id": str(workflow_id), "enforced": enforced, "direct": False,
+        "trace": {**trace.as_dict(), "enforced": enforced},
         "inputs": {"operation": "executions.list", "target": str(org_id)},
     }
     if compact:
@@ -70,7 +73,7 @@ async def test_full_access_decisions_retain_observed_named_permission(db_session
 
     assert await recorded_permission_requirements(
         db_session, workflow_id, window_days=30,
-    ) == (["executions.read.all"] if in_reach else [])
+    ) == (["executions.read.all"] if in_reach and enforced else [])
 
 
 @pytest.mark.asyncio

@@ -20,7 +20,7 @@ from typing import Any, Awaitable, Callable
 
 from shared.workflow_conversion_sdk import sdk_call_contract, sdk_object_contract, sdk_object_is_data
 
-ANALYZER_VERSION = "26"
+ANALYZER_VERSION = "27"
 MAX_SOURCE_BYTES = 2_000_000
 MAX_AST_NODES = 256_000
 MAX_EVENTS_PER_SCOPE = 2_048
@@ -3367,6 +3367,19 @@ async def analyze_workflow(
                 or _is_installed_third_party(module)
                 or module.split(".")[0] in external_module_roots
             ):
+                sdk_inputs = (
+                    *argument_kinds,
+                    *(value for _, value in keyword_kinds),
+                    *(value for value in constructor_context.values() if isinstance(value, str)),
+                )
+                if any(
+                    value.startswith("sdk:")
+                    and not sdk_object_is_data(value[4:])
+                    for value in sdk_inputs
+                ):
+                    unknowns.add(
+                        f"{source_file.path}:{line}: SDK handle passed to external module: {module}"
+                    )
                 return
             prefix = "." * level
             unknowns.add(

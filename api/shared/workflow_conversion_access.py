@@ -32,7 +32,7 @@ async def recorded_permission_requirements(
     )
     permissions: set[str] = set()
     async for details in rows:
-        if not isinstance(details, dict):
+        if not isinstance(details, dict) or details.get("enforced") is not True:
             continue
         trace = details.get("trace") or {}
         candidates: set[str] = set()
@@ -47,8 +47,7 @@ async def recorded_permission_requirements(
             # decisions whose trace retained only the reason for admission.
             checked = (details.get("inputs") or {}).get("permission")
             if (
-                details.get("enforced") is True
-                and step.get("key") == "permission"
+                step.get("key") == "permission"
                 and isinstance(checked, str)
             ):
                 candidates.add(checked)

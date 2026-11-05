@@ -1992,7 +1992,6 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.enforce.user_reach": (1, "current_role_derivation"),
     "src.services.authorization.evaluator.decide": (1, "current_role_derivation"),
     "src.services.authorization.explain.RunUser.is_platform_admin": (1, "current_role_derivation"),
-    "src.services.authorization.enforce.Caller.is_platform_admin": (1, "current_role_derivation"),
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),

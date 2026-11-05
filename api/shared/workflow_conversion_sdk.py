@@ -10,7 +10,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Literal
 
-from src.models.contracts.access_list import AccessClass, AccessEntry
+from src.models.contracts.access_list import AccessClass, AccessEntry, InlineEffect
 from src.models.contracts.permissions import parse_permission
 from src.services.access_list import ACCESS_LIST
 
@@ -1456,6 +1456,17 @@ def _invocation_routes(
     return tuple(sorted(candidates)), not candidates
 
 
+def _named_route_permission(entry: AccessEntry) -> str | None:
+    # The catalog also names conditional powers for personal resources.
+    # These are possible requirements, not proof that every call needs them.
+    if (
+        entry.access_class == AccessClass.PERMISSION
+        or entry.inline_effect == InlineEffect.WIDENS_FOR_PERMISSION
+    ):
+        return entry.permission
+    return None
+
+
 def permissions_for_sdk_calls(
     calls: list[str], *, invocations: list[dict[str, Any]] | None = None,
 ) -> tuple[list[str], list[str]]:
@@ -1492,9 +1503,9 @@ def permissions_for_sdk_calls(
             entry = routes.get((method, path))
             if entry is None:
                 unknowns.add(f"No canonical access entry for {call}: {method} {path}")
-            elif entry.access_class == AccessClass.PERMISSION and entry.permission:
+            elif (permission := _named_route_permission(entry)) is not None:
                 if not _is_source_transport_route(entry):
-                    permissions.add(entry.permission)
+                    permissions.add(permission)
     permissions.update(_file_invocation_permissions(invocations))
     return sorted(permissions), sorted(unknowns)
 
@@ -1558,11 +1569,10 @@ def permissions_for_recorded_operations(operations: list[str]) -> tuple[list[str
         if entry is None:
             unknowns.add(f"No canonical permission mapping for observed operation {operation}")
         elif (
-            entry.access_class == AccessClass.PERMISSION
-            and entry.permission
+            (permission := _named_route_permission(entry)) is not None
             and not _is_source_transport_route(entry)
         ):
-            permissions.add(entry.permission)
+            permissions.add(permission)
         if entry is not None and entry.method is not None and entry.path is not None:
             metadata = route_metadata.get((entry.method, _normal_path(entry.path)))
             if metadata is not None:

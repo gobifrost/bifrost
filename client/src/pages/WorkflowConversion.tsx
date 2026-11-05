@@ -1015,8 +1015,17 @@ function Inspector({
 					{(item.source_permissions ?? []).join(", ") || "None"}
 				</p>
 				<p className="mt-1 text-muted-foreground">
-					Observed:{" "}
+					Confirmed Checks:{" "}
 					{(item.observed_permissions ?? []).join(", ") || "None"}
+				</p>
+				<p className="mt-1 text-muted-foreground [overflow-wrap:anywhere]">
+					Attempted API Calls:{" "}
+					{(item.observed_operations ?? []).join(", ") || "None"}
+				</p>
+				<p className="mt-2 text-muted-foreground">
+					Source and attempted calls suggest possible permissions.
+					Confirmed checks passed during actual enforcement. No
+					confirmed checks does not mean no permissions are needed.
 				</p>
 				{(item.warnings ?? []).map((warning) => (
 					<p key={warning} className="mt-1 text-[var(--bf-warning)]">

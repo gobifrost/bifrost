@@ -1013,14 +1013,16 @@ async def test_records_shipped_file_location_defaults_without_marking_them_dynam
 
 
 @pytest.mark.asyncio
-async def test_unresolved_installed_external_call_is_outside_sdk_inventory(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("arguments", ["", "config", "client=config", "config.get"])
+async def test_external_calls_only_claim_no_sdk_requirements_without_an_opaque_sdk_handle(
+    monkeypatch: pytest.MonkeyPatch, arguments: str,
 ) -> None:
     entry = _source(
         "workflows/run.py",
-        "from external_dependency import helper\n\n"
+        "from external_dependency import helper\n"
+        "from bifrost import config\n\n"
         "def run():\n"
-        "    helper()\n",
+        f"    helper({arguments})\n",
     )
     monkeypatch.setattr(
         "shared.workflow_conversion_analysis._is_installed_third_party",
@@ -1035,7 +1037,11 @@ async def test_unresolved_installed_external_call_is_outside_sdk_inventory(
 
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
-    assert result["unknowns"] == []
+    if arguments:
+        assert any("SDK handle passed to external module: external_dependency" in item
+                   for item in result["unknowns"])
+    else:
+        assert result["unknowns"] == []
 
 
 @pytest.mark.asyncio
