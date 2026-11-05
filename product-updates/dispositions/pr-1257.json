@@ -1,0 +1,26 @@
+{
+  "key": "pr:1257",
+  "classification": "highlight",
+  "entry_ids": [
+    "17a0d486-8ac1-4b9a-b36b-752c7d386808"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1257"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1257",
+      "https://github.com/gobifrost/bifrost/issues/1197",
+      "Source report and original candidate: Thomas Bray (@MTG-Thomas), https://github.com/Midtown-Technology-Group/bifrost/pull/1206; narrowed safeguard independently implemented, not a wholesale port of the direction/deletion rewrite.",
+      "Native Jack approval in the existing #1197 owner conversation on 2026-11-05: Okay. Let\u2019s do this and convert yesses to forces. Proceed and merge assuming this settles this thread.",
+      "Native Jack exact-public-wording approval on 2026-11-05: Send it. This follows the displayed title, behavior paragraph, source credit and release-only visibility proposal.",
+      "Copy review: approved title and behavior paragraph reproduced exactly; source attribution verified. Release-only CLI notice (in_app: false); no in-app announcement or new agent prompt.",
+      "Compatibility/breaking review: intentionally refuse unattended sync/pull/directory mirror/initial watch when no force or explicit environment opt-in is provided. Existing --yes/-y aliases, BIFROST_NONINTERACTIVE=1, interactive behavior, timestamp conflict selection and deletion defaults are preserved. Existing no-opt-in scripts must deliberately opt in after reviewing overwrite behavior. No API DTO, storage schema, authorization or installed-workflow definition change.",
+      "Safety review: terminal loss cancels rather than applying defaults; force reaches watch startup; refused startup does not start an observer. Explicitly consented sync retains existing overwrite behavior and does not guarantee concurrent-edit isolation. No observed incident or CVE is claimed.",
+      "Local evidence: 207 focused CLI/consumer/surface/appendix tests passed (zero failures/errors/skips); Dockerized pyright and ruff passed. Owned test stack was removed. Full suites remain the protected merge-queue gate."
+    ]
+  }
+}
