@@ -190,6 +190,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 #: Committed fingerprint of the contract surface above. If a code change flips
 #: the live fingerprint, this test fails — update this value, and raise the
 #: server's MIN_CLI_VERSION IF the change requires a new CLI. See module docstring.
+# Additive Solution build-lookup DTOs; existing CLI/SDK contracts are unchanged.
 # Additive Global scope marker on the existing string org_id field; its
 # description now documents that value. Existing CLI shapes and minimum version
 # are unchanged.
@@ -414,7 +415,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # SDK exact integration-mapping lookup (2026-11-03, #1016). ADDITIVE: new
     # find_mapping request/response DTOs plus the worker-socket route; existing
     # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
-    "3f31e01ea134c69d665817c42884640b2b8824389c25291641751d81745be199"
+    "ad35005174e825ece0aca2155e195db41b48edca29e74478c3bde96ccb5db75b"
 )
 
 

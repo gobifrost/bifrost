@@ -1516,6 +1516,8 @@ def _collect_apps(workspace: pathlib.Path, *, definition=None) -> list[dict]:
             # the exact SDK package npm installed. It is not portable manifest
             # content and is stripped from later exports.
             "prebuilt_sdk_metadata": body.get("prebuilt_sdk_metadata"),
+            "build_recipe": body.get("build_recipe"),
+            "reuse_deployment_id": body.get("reuse_deployment_id"),
         })
     return entries
 
@@ -1533,7 +1535,7 @@ def _safe_app_build_path(workdir: pathlib.Path, rel: str) -> pathlib.Path:
 def _materialize_local_app(
     workdir: pathlib.Path,
     app: dict,
-    api_url: str,
+    sdk_package: bytes,
 ) -> None:
     """Write one collected app to an isolated local build directory."""
     import base64
@@ -1575,10 +1577,11 @@ def _materialize_local_app(
         raise click.ClickException(
             f"app '{app.get('slug')}': dependencies must contain an object"
         )
+    (workdir / "bifrost-sdk.tgz").write_bytes(sdk_package)
     package["dependencies"] = {
         **package_dependencies,
         **manifest_dependencies,
-        "bifrost": f"{api_url.rstrip('/')}/api/sdk/download",
+        "bifrost": "file:./bifrost-sdk.tgz",
     }
     package_path.write_text(json.dumps(package, indent=2), encoding="utf-8")
 
@@ -1639,13 +1642,42 @@ def _installed_sdk_build_metadata(app_dir: pathlib.Path) -> dict[str, str | int]
     }
 
 
+def _app_build_files(app: dict) -> dict[str, bytes]:
+    import base64
+
+    files = {path: value.encode("utf-8") for path, value in (app.get("src_files") or {}).items()}
+    files.update({path: base64.b64decode(value, validate=True) for path, value in (app.get("bin_files") or {}).items()})
+    return files
+
+
+async def _lookup_local_builds(client, apps: list[dict], install_id: str) -> tuple[bytes, dict, dict]:
+    from bifrost.app_build_identity import build_identity, build_recipe
+
+    response = await client.get("/api/sdk/download")
+    response.raise_for_status()
+    sdk = response.content
+    recipe = await asyncio.to_thread(build_recipe, sdk, variant="cli-install-v1", environment=dict(os.environ))
+    candidates = [{
+        "app_id": str(app["id"]),
+        "fingerprint": build_identity(
+            uuid5(UUID(str(install_id)), str(UUID(str(app["id"])))), _app_build_files(app),
+            app.get("dependencies") or {}, recipe, package_name=app.get("slug") or "bifrost-app",
+        ),
+    } for app in apps]
+    response = await client.post(f"/api/solutions/{install_id}/app-builds/lookup", json={"apps": candidates})
+    response.raise_for_status()
+    return sdk, recipe, response.json()["matches"]
+
+
 def _prebuild_apps(
     workspace: pathlib.Path,
     apps: list[dict],
     *,
     install_id: str | UUID,
-    api_url: str,
-) -> dict[str, dict[str, dict[str, str]]]:
+    sdk_package: bytes,
+    recipe: dict,
+    reuse: dict[str, str] | None = None,
+) -> dict[str, dict[str, Any]]:
     """Compile source-backed apps locally and return manifest dist overlays.
 
     Source remains in the uploaded workspace. Only the generated ``dist`` is
@@ -1678,7 +1710,7 @@ def _prebuild_apps(
             "Node.js, then re-run `bifrost solution deploy`."
         )
 
-    built: dict[str, dict[str, dict[str, str]]] = {}
+    built: dict[str, dict[str, Any]] = {}
     for app in source_apps:
         app_id_text = str(app.get("id") or "")
         try:
@@ -1688,11 +1720,18 @@ def _prebuild_apps(
                 f"app '{app.get('slug')}': id must be a UUID, got {app_id_text!r}"
             ) from exc
         deployed_id = uuid5(install_uuid, str(manifest_id))
+        if reuse and app_id_text in reuse:
+            built[app_id_text] = {
+                "dist_files": {}, "bin_dist_files": {}, "build_recipe": recipe,
+                "reuse_deployment_id": reuse[app_id_text],
+            }
+            click.echo(f"Reusing app {app.get('slug') or app_id_text}...")
+            continue
         click.echo(f"Building app {app.get('slug') or app_id_text} locally...")
         try:
             with tempfile.TemporaryDirectory(prefix="bifrost-app-build-") as tmp:
                 workdir = pathlib.Path(tmp)
-                _materialize_local_app(workdir, app, api_url)
+                _materialize_local_app(workdir, app, sdk_package)
                 _run_local_vite_build(
                     workdir,
                     npm=npm,
@@ -1733,12 +1772,13 @@ def _prebuild_apps(
         }
         if sdk_metadata is not None:
             built[app_id_text]["prebuilt_sdk_metadata"] = sdk_metadata
+        built[app_id_text]["build_recipe"] = recipe
     return built
 
 
 def _apps_manifest_with_prebuilt_dist(
     workspace: pathlib.Path,
-    prebuilt: dict[str, dict[str, dict[str, str]]],
+    prebuilt: dict[str, dict[str, Any]],
 ) -> str:
     """Overlay local build output into the uploaded apps manifest only."""
     apps_file = _bifrost_manifest(workspace, "apps.yaml")
@@ -1761,6 +1801,12 @@ def _apps_manifest_with_prebuilt_dist(
         body["bin_dist_files"] = dist["bin_dist_files"]
         if "prebuilt_sdk_metadata" in dist:
             body["prebuilt_sdk_metadata"] = dist["prebuilt_sdk_metadata"]
+        if "build_recipe" in dist:
+            body["build_recipe"] = dist["build_recipe"]
+        if "reuse_deployment_id" in dist:
+            body["reuse_deployment_id"] = dist["reuse_deployment_id"]
+        else:
+            body.pop("reuse_deployment_id", None)
         remaining.discard(app_id)
     if remaining:
         raise click.ClickException(
@@ -2503,16 +2549,13 @@ def deploy_cmd(
         source_apps = [
             app for app in apps if (app.get("src_files") or app.get("bin_files"))
         ]
-        prebuilt = (
-            _prebuild_apps(
-                workspace,
-                source_apps,
-                install_id=target_id,
-                api_url=client.api_url,
+        prebuilt = {}
+        if source_apps:
+            sdk_package, recipe, reuse = await _lookup_local_builds(client, source_apps, str(target_id))
+            prebuilt = _prebuild_apps(
+                workspace, source_apps, install_id=target_id,
+                sdk_package=sdk_package, recipe=recipe, reuse=reuse,
             )
-            if source_apps
-            else {}
-        )
         extra_text_files = dict(vendored)
         if prebuilt:
             extra_text_files[".bifrost/apps.yaml"] = (

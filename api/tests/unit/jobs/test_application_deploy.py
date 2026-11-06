@@ -162,6 +162,8 @@ async def test_deploy_atomically_activates_then_removes_old_artifact(
             events.append(("delete_source", None))
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, application_id, source_files, _dependencies):
             events.append(("compile", application_id))
             assert "package.json" in source_files
@@ -290,6 +292,8 @@ async def test_failed_build_keeps_active_artifact_and_cleans_transient_state(
             deleted.append(("source", None))
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **_kwargs):
             raise RuntimeError("broken build")
 
@@ -357,6 +361,8 @@ async def test_memory_failed_build_surfaces_nonretryable_memory_pressure(
             pass
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **_kwargs):
             raise AppBuildMemoryError()
 
@@ -418,6 +424,8 @@ async def test_sdk_metadata_oom_surfaces_nonretryable_memory_pressure(
             pass
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args, **_kwargs):
             raise AssertionError("build must not start after SDK metadata OOM")
 
@@ -502,6 +510,8 @@ async def test_retained_source_failure_preserves_old_pointer_and_provenance_and_
             events.append(("delete_source", None))
 
     class Builder:
+        last_build_identity = None
+
         def compile_dist(self, *_args):
             return {"index.html": b"built"}
 

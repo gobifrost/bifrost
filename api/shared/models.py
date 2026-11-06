@@ -253,6 +253,21 @@ class WorkerCapacityResource(BaseModel):
     out_of_memory: bool = Field(default=False, strict=True)
 
 
+class SolutionAppBuildCandidate(BaseModel):
+    """Manifest app identity and a digest computed before local compilation."""
+
+    app_id: UUID
+    fingerprint: str = Field(pattern=r"^[0-9a-f]{64}$")
+
+
+class SolutionAppBuildLookup(BaseModel):
+    apps: list[SolutionAppBuildCandidate]
+
+
+class SolutionAppBuildMatches(BaseModel):
+    matches: dict[str, UUID]
+
+
 class MCPPackageBrandingUpdate(BaseModel):
     """Instance-wide identity for downloaded agent plugin packages."""
 

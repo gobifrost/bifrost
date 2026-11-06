@@ -289,6 +289,8 @@ class CompiledSolutionAppDeployment:
     dist: dict[str, bytes]
     sdk_metadata: CurrentApplicationSdkMetadata | None = None
     source_built: bool = False
+    build_identity: str | None = None
+    reused: bool = False
 
 
 def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | None":
@@ -1426,6 +1428,9 @@ class SolutionDeployer:
                 # prebuilt bundle lacks it and therefore remains SDK-unknown.
                 "prebuilt_sdk_metadata": mapp.get("prebuilt_sdk_metadata"),
                 "dependencies": mapp.get("dependencies") or {},
+                "build_recipe": mapp.get("build_recipe"),
+                "reuse_deployment_id": mapp.get("reuse_deployment_id"),
+                "slug": mapp.get("slug"),
             })
         return builds
 
@@ -1472,6 +1477,27 @@ class SolutionDeployer:
             for rel, b64 in (b.get("bin") or {}).items():
                 src_bytes[rel] = _b64.b64decode(b64)
             source_built = prebuilt_bytes is None
+            hint = b.get("reuse_deployment_id")
+            identity = None
+            if src_bytes and b.get("build_recipe"):
+                identity = await asyncio.to_thread(
+                    builder.attested_identity, b["app_id"], src_bytes, b["dependencies"], b["build_recipe"],
+                    package_name=b.get("slug") or "bifrost-app",
+                )
+            elif source_built:
+                identity = await asyncio.to_thread(builder.source_identity, b["app_id"], src_bytes, b["dependencies"])
+            old = b["expected_old_deployment_id"]
+            if hint and (str(old) != hint or identity is None):
+                raise SolutionDeployConflict("App build reuse became stale; re-run the deploy.")
+            if old is not None and identity is not None and await builder.can_reuse(b["app_id"], old, identity):
+                out.append(CompiledSolutionAppDeployment(
+                    app_id=b["app_id"], solution_id=b["solution_id"],
+                    deployment_id=old, expected_old_deployment_id=old,
+                    superseded_deployment_id=None, dist={}, build_identity=identity, reused=True,
+                ))
+                continue
+            if hint:
+                raise SolutionDeployConflict("App build reuse artifacts changed; re-run the deploy.")
             sdk_metadata = None
             # compile_dist is subprocess-bound (npm/vite) → run off the loop.
             dist = await asyncio.to_thread(
@@ -1499,6 +1525,7 @@ class SolutionDeployer:
                     dist=dist,
                     sdk_metadata=sdk_metadata,
                     source_built=source_built,
+                    build_identity=(builder.last_build_identity if source_built else identity),
                 )
             )
         return out
@@ -1516,10 +1543,14 @@ class SolutionDeployer:
         upload_started_at = perf_counter()
         try:
             for item in compiled:
+                if item.reused:
+                    continue
+                uploaded.append(item)
                 await builder.upload_deployment(
                     item.app_id, item.deployment_id, item.dist
                 )
-                uploaded.append(item)
+                if item.build_identity is not None:
+                    await builder.write_build_identity(item.app_id, item.deployment_id, item.build_identity, item.dist)
         except Exception:
             for item in uploaded:
                 try:
@@ -1543,6 +1574,8 @@ class SolutionDeployer:
             await self._activate_compiled_dists(compiled)
         except Exception:
             for item in compiled:
+                if item.reused:
+                    continue
                 try:
                     await builder.delete_deployment(item.app_id, item.deployment_id)
                 except Exception:  # noqa: BLE001 - best-effort cleanup before retry
@@ -1588,7 +1621,7 @@ class SolutionDeployer:
                         Application.id,
                         Application.solution_id,
                         Application.active_deployment_id,
-                    ).where(Application.id.in_(app_ids))
+                    ).where(Application.id.in_(app_ids)).order_by(Application.id).with_for_update()
                 )
             ).all()
             by_id = {row[0]: row for row in rows}
@@ -1615,6 +1648,8 @@ class SolutionDeployer:
 
             now = datetime.now(timezone.utc)
             for item in compiled:
+                if item.reused:
+                    continue
                 meta = item.sdk_metadata
                 values = {
                     "active_deployment_id": item.deployment_id,
