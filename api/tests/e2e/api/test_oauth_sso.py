@@ -122,7 +122,7 @@ async def _entra_callback(
     )
     token = OAuthTokens(
         access_token="provider-access-token",
-        id_token_claims={"tid": "work-tenant"},
+        id_token_claims={"tid": "work-tenant", "oid": provider_user_id},
     )
 
     monkeypatch.setattr(OAuthService, "exchange_code_for_tokens", AsyncMock(return_value=token))

@@ -21,20 +21,33 @@ from src.models.contracts.oauth_config import (
     OAUTH_CONFIG_CATEGORY,
     OAUTH_GOOGLE_CLIENT_ID,
     OAUTH_GOOGLE_CLIENT_SECRET,
+    OAUTH_GOOGLE_PRIVATE_KEY,
+    OAUTH_GOOGLE_PRIVATE_KEY_ALG,
+    OAUTH_GOOGLE_PRIVATE_KEY_KID,
+    OAUTH_GOOGLE_TOKEN_ENDPOINT_AUTH_METHOD,
     OAUTH_MICROSOFT_CLIENT_ID,
     OAUTH_MICROSOFT_CLIENT_SECRET,
+    OAUTH_MICROSOFT_PRIVATE_KEY,
+    OAUTH_MICROSOFT_PRIVATE_KEY_ALG,
+    OAUTH_MICROSOFT_PRIVATE_KEY_KID,
     OAUTH_MICROSOFT_TENANT_ID,
+    OAUTH_MICROSOFT_TOKEN_ENDPOINT_AUTH_METHOD,
     OAUTH_LOGIN_PREFERENCE,
     OAUTH_OIDC_CLIENT_ID,
     OAUTH_OIDC_CLIENT_SECRET,
     OAUTH_OIDC_DISCOVERY_URL,
     OAUTH_OIDC_DISPLAY_NAME,
+    OAUTH_OIDC_PRIVATE_KEY,
+    OAUTH_OIDC_PRIVATE_KEY_ALG,
+    OAUTH_OIDC_PRIVATE_KEY_KID,
+    OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD,
     GoogleOAuthConfigRequest,
     MicrosoftOAuthConfigRequest,
     OAuthConfigTestResponse,
     OAuthLoginPreference,
     OAuthProviderConfigResponse,
     OAuthSSOProvider,
+    OAuthTokenEndpointAuthMethod,
     OIDCConfigRequest,
 )
 from src.models.orm.config import SystemConfig
@@ -49,6 +62,40 @@ class OAuthLoginPreferenceError(ValueError):
 
 class OAuthProviderPreferenceConflict(ValueError):
     """Raised when deleting the provider used by an active preference."""
+
+
+class OAuthConfigValidationError(ValueError):
+    """Raised when a provider configuration cannot be saved as requested."""
+
+
+_TOKEN_ENDPOINT_AUTH_METHODS: tuple[OAuthTokenEndpointAuthMethod, ...] = (
+    "client_secret_post",
+    "client_secret_basic",
+    "private_key_jwt",
+)
+
+_PRIVATE_KEY_ALGS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
+
+_PROVIDER_AUTH_KEYS = {
+    "microsoft": (
+        OAUTH_MICROSOFT_TOKEN_ENDPOINT_AUTH_METHOD,
+        OAUTH_MICROSOFT_PRIVATE_KEY,
+        OAUTH_MICROSOFT_PRIVATE_KEY_KID,
+        OAUTH_MICROSOFT_PRIVATE_KEY_ALG,
+    ),
+    "google": (
+        OAUTH_GOOGLE_TOKEN_ENDPOINT_AUTH_METHOD,
+        OAUTH_GOOGLE_PRIVATE_KEY,
+        OAUTH_GOOGLE_PRIVATE_KEY_KID,
+        OAUTH_GOOGLE_PRIVATE_KEY_ALG,
+    ),
+    "oidc": (
+        OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD,
+        OAUTH_OIDC_PRIVATE_KEY,
+        OAUTH_OIDC_PRIVATE_KEY_KID,
+        OAUTH_OIDC_PRIVATE_KEY_ALG,
+    ),
+}
 
 
 #: Refusal details for SSO-only enforcement (routers share these so the
@@ -69,11 +116,21 @@ class OAuthProviderConfig:
     # OIDC-specific
     discovery_url: str | None = None
     display_name: str | None = None
+    # Token-endpoint client authentication
+    token_endpoint_auth_method: str = "client_secret_post"
+    private_key: str | None = None
+    private_key_kid: str | None = None
+    private_key_alg: str | None = None
 
     @property
     def is_complete(self) -> bool:
         """Check if all required fields are set."""
-        if not self.client_id or not self.client_secret:
+        if not self.client_id:
+            return False
+        if self.token_endpoint_auth_method == "private_key_jwt":
+            if not self.private_key:
+                return False
+        elif not self.client_secret:
             return False
         if self.provider == "microsoft":
             return True  # tenant_id defaults to 'common'
@@ -308,6 +365,65 @@ class OAuthConfigService:
     # Provider Configuration CRUD
     # =========================================================================
 
+    async def _get_client_auth_settings(
+        self, provider: OAuthSSOProvider
+    ) -> tuple[str, str | None, str | None, str | None]:
+        """Return (method, private key, kid, alg) for a provider."""
+        method_key, key_key, kid_key, alg_key = _PROVIDER_AUTH_KEYS[provider]
+        method = await self._get_config_value(method_key)
+        private_key = await self._get_secret_value(key_key)
+        kid = await self._get_config_value(kid_key)
+        alg = await self._get_config_value(alg_key)
+        return (
+            method or "client_secret_post",
+            private_key,
+            kid or None,
+            alg or "RS256",
+        )
+
+    async def _validate_and_extract_client_auth(
+        self, provider: OAuthSSOProvider, config: Any
+    ) -> tuple[str, str | None, str | None, str]:
+        """Validate the requested method at save time, before any login."""
+        method = config.token_endpoint_auth_method
+        if method not in _TOKEN_ENDPOINT_AUTH_METHODS:
+            raise OAuthConfigValidationError(
+                f"Unsupported token_endpoint_auth_method: {method}"
+            )
+        alg = config.private_key_alg or "RS256"
+        if alg not in _PRIVATE_KEY_ALGS:
+            raise OAuthConfigValidationError(
+                f"Unsupported private_key_alg: {alg}"
+            )
+        provided_key = config.private_key.strip() if config.private_key else None
+        _, existing_key, _, _ = await self._get_client_auth_settings(provider)
+        if method == "private_key_jwt" and not (provided_key or existing_key):
+            raise OAuthConfigValidationError(
+                "private_key_jwt requires a private key (PEM)"
+            )
+        return method, provided_key, (config.private_key_kid or None), alg
+
+    async def _store_client_auth(
+        self,
+        provider: OAuthSSOProvider,
+        method: str,
+        private_key: str | None,
+        kid: str | None,
+        alg: str,
+        updated_by: str,
+    ) -> None:
+        method_key, key_key, kid_key, alg_key = _PROVIDER_AUTH_KEYS[provider]
+        await self._set_config_value(method_key, method, updated_by=updated_by)
+        if private_key:
+            await self._set_config_value(
+                key_key, private_key, is_secret=True, updated_by=updated_by
+            )
+        if kid:
+            await self._set_config_value(kid_key, kid, updated_by=updated_by)
+        else:
+            await self._delete_config_keys([kid_key])
+        await self._set_config_value(alg_key, alg, updated_by=updated_by)
+
     async def get_provider_config(
         self, provider: OAuthSSOProvider
     ) -> OAuthProviderConfig | None:
@@ -320,28 +436,46 @@ class OAuthConfigService:
             client_id = await self._get_config_value(OAUTH_MICROSOFT_CLIENT_ID)
             client_secret = await self._get_secret_value(OAUTH_MICROSOFT_CLIENT_SECRET)
             tenant_id = await self._get_config_value(OAUTH_MICROSOFT_TENANT_ID)
+            method, private_key, kid, alg = await self._get_client_auth_settings(provider)
 
-            if not client_id or not client_secret:
+            if not client_id:
+                return None
+            if method == "private_key_jwt" and not private_key:
+                return None
+            if method != "private_key_jwt" and not client_secret:
                 return None
 
             return OAuthProviderConfig(
                 provider="microsoft",
                 client_id=client_id,
-                client_secret=client_secret,
+                client_secret=client_secret or "",
                 tenant_id=tenant_id or "common",
+                token_endpoint_auth_method=method,
+                private_key=private_key,
+                private_key_kid=kid,
+                private_key_alg=alg,
             )
 
         elif provider == "google":
             client_id = await self._get_config_value(OAUTH_GOOGLE_CLIENT_ID)
             client_secret = await self._get_secret_value(OAUTH_GOOGLE_CLIENT_SECRET)
+            method, private_key, kid, alg = await self._get_client_auth_settings(provider)
 
-            if not client_id or not client_secret:
+            if not client_id:
+                return None
+            if method == "private_key_jwt" and not private_key:
+                return None
+            if method != "private_key_jwt" and not client_secret:
                 return None
 
             return OAuthProviderConfig(
                 provider="google",
                 client_id=client_id,
-                client_secret=client_secret,
+                client_secret=client_secret or "",
+                token_endpoint_auth_method=method,
+                private_key=private_key,
+                private_key_kid=kid,
+                private_key_alg=alg,
             )
 
         elif provider == "oidc":
@@ -349,16 +483,25 @@ class OAuthConfigService:
             client_id = await self._get_config_value(OAUTH_OIDC_CLIENT_ID)
             client_secret = await self._get_secret_value(OAUTH_OIDC_CLIENT_SECRET)
             display_name = await self._get_config_value(OAUTH_OIDC_DISPLAY_NAME)
+            method, private_key, kid, alg = await self._get_client_auth_settings(provider)
 
-            if not discovery_url or not client_id or not client_secret:
+            if not discovery_url or not client_id:
+                return None
+            if method == "private_key_jwt" and not private_key:
+                return None
+            if method != "private_key_jwt" and not client_secret:
                 return None
 
             return OAuthProviderConfig(
                 provider="oidc",
                 client_id=client_id,
-                client_secret=client_secret,
+                client_secret=client_secret or "",
                 discovery_url=discovery_url,
                 display_name=display_name or "SSO",
+                token_endpoint_auth_method=method,
+                private_key=private_key,
+                private_key_kid=kid,
+                private_key_alg=alg,
             )
 
         return None
@@ -369,6 +512,9 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set Microsoft OAuth configuration."""
+        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
+            "microsoft", config
+        )
         await self._set_config_value(
             OAUTH_MICROSOFT_CLIENT_ID, config.client_id, updated_by=updated_by
         )
@@ -381,6 +527,9 @@ class OAuthConfigService:
         await self._set_config_value(
             OAUTH_MICROSOFT_TENANT_ID, config.tenant_id, updated_by=updated_by
         )
+        await self._store_client_auth(
+            "microsoft", method, private_key, kid, alg, updated_by
+        )
         logger.info(f"Microsoft OAuth config updated by {updated_by}")
 
     async def set_google_config(
@@ -389,6 +538,9 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set Google OAuth configuration."""
+        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
+            "google", config
+        )
         await self._set_config_value(
             OAUTH_GOOGLE_CLIENT_ID, config.client_id, updated_by=updated_by
         )
@@ -398,6 +550,7 @@ class OAuthConfigService:
             is_secret=True,
             updated_by=updated_by,
         )
+        await self._store_client_auth("google", method, private_key, kid, alg, updated_by)
         logger.info(f"Google OAuth config updated by {updated_by}")
 
     async def set_oidc_config(
@@ -406,6 +559,9 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set OIDC provider configuration."""
+        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
+            "oidc", config
+        )
         await self._set_config_value(
             OAUTH_OIDC_DISCOVERY_URL, config.discovery_url, updated_by=updated_by
         )
@@ -421,6 +577,7 @@ class OAuthConfigService:
         await self._set_config_value(
             OAUTH_OIDC_DISPLAY_NAME, config.display_name, updated_by=updated_by
         )
+        await self._store_client_auth("oidc", method, private_key, kid, alg, updated_by)
         logger.info(f"OIDC config updated by {updated_by}")
 
     async def delete_provider_config(
@@ -456,11 +613,13 @@ class OAuthConfigService:
                 OAUTH_MICROSOFT_CLIENT_ID,
                 OAUTH_MICROSOFT_CLIENT_SECRET,
                 OAUTH_MICROSOFT_TENANT_ID,
+                *_PROVIDER_AUTH_KEYS["microsoft"],
             ]
         elif provider == "google":
             keys = [
                 OAUTH_GOOGLE_CLIENT_ID,
                 OAUTH_GOOGLE_CLIENT_SECRET,
+                *_PROVIDER_AUTH_KEYS["google"],
             ]
         elif provider == "oidc":
             keys = [
@@ -468,6 +627,7 @@ class OAuthConfigService:
                 OAUTH_OIDC_CLIENT_ID,
                 OAUTH_OIDC_CLIENT_SECRET,
                 OAUTH_OIDC_DISPLAY_NAME,
+                *_PROVIDER_AUTH_KEYS["oidc"],
             ]
         else:
             return False
@@ -503,6 +663,10 @@ class OAuthConfigService:
                         configured=config.is_complete,
                         client_id=config.client_id,
                         client_secret_set=bool(config.client_secret),
+                        token_endpoint_auth_method=config.token_endpoint_auth_method,  # type: ignore[arg-type]
+                        private_key_set=bool(config.private_key),
+                        private_key_kid=config.private_key_kid,
+                        private_key_alg=config.private_key_alg,
                         tenant_id=config.tenant_id if provider == "microsoft" else None,
                         discovery_url=config.discovery_url
                         if provider == "oidc"

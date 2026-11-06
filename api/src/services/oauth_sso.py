@@ -16,12 +16,15 @@ import io
 import logging
 import secrets
 from collections.abc import Mapping
+from urllib.parse import parse_qsl, urlencode
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import httpx
+from authlib.oauth2.auth import ClientAuth
+from authlib.oauth2.rfc7523 import PrivateKeyJWT
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -180,6 +183,7 @@ class OAuthService:
                 "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/v1.0/me",
                 "scopes": ["openid", "email", "profile", "User.Read"],
+                **_client_auth_fields(config),
             }
 
         elif provider == "google":
@@ -193,6 +197,7 @@ class OAuthService:
                 "token_url": "https://oauth2.googleapis.com/token",
                 "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
                 "scopes": ["openid", "email", "profile"],
+                **_client_auth_fields(config),
             }
 
         elif provider == "oidc":
@@ -214,6 +219,7 @@ class OAuthService:
                 "userinfo_url": discovery.get("userinfo_endpoint"),
                 "scopes": ["openid", "email", "profile"],
                 "display_name": config.display_name or "SSO",
+                **_client_auth_fields(config),
             }
 
         else:
@@ -296,6 +302,7 @@ class OAuthService:
             optionally a refresh token
         """
         config = await self.get_provider_config(provider)
+        token_url = config["token_url"]
 
         data = {
             "client_id": config["client_id"],
@@ -304,16 +311,13 @@ class OAuthService:
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
         }
-
-        # Add client secret if configured
-        if config.get("client_secret"):
-            data["client_secret"] = config["client_secret"]
+        post_data, headers = _token_request_auth(config, token_url, data)
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                config["token_url"],
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                token_url,
+                data=post_data,
+                headers=headers,
             )
 
             if response.status_code != 200:
@@ -420,14 +424,34 @@ class OAuthService:
 
             user_data = response.json()
 
-        return self._parse_user_info(provider, user_data)
+        return self._parse_user_info(provider, user_data, tokens.id_token_claims)
 
-    def _parse_user_info(self, provider: str, data: dict) -> OAuthUserInfo:
-        """Extract a normalized OAuth identity without authorizing a new email link."""
+    def _parse_user_info(
+        self,
+        provider: str,
+        data: dict,
+        claims: Mapping[str, Any] | None = None,
+    ) -> OAuthUserInfo:
+        """Extract a normalized OAuth identity without authorizing a new email link.
+
+        For Microsoft the stored key stays the Graph ``id`` (the Entra ``oid``):
+        the id_token ``sub`` is pairwise and app-scoped, so switching to it would
+        re-key every existing account. The verified ``oid`` is instead
+        cross-checked against the Graph id. Google and generic OIDC require
+        userinfo ``sub`` to equal the id_token ``sub`` (OIDC Core 5.3.2), so the
+        verified claim is used after that equality check.
+        """
         if provider == "microsoft":
+            graph_id = _provider_user_id(data.get("id"))
+            if claims is not None:
+                verified_oid = _provider_user_id(claims.get("oid"))
+                if verified_oid != graph_id:
+                    raise OAuthError(
+                        "Microsoft returned an id_token that doesn't match the signed-in account"
+                    )
             return OAuthUserInfo(
                 provider=provider,
-                provider_user_id=_provider_user_id(data.get("id")),
+                provider_user_id=graph_id,
                 # Graph's `mail` is free text and never identifies a Bifrost user.
                 email=_normalized_email(data.get("userPrincipalName")),
                 name=data.get("displayName"),
@@ -438,9 +462,18 @@ class OAuthService:
                 raw_data=data,
             )
 
+        userinfo_sub = _provider_user_id(data.get("sub"))
+        provider_user_id = userinfo_sub
+        if claims is not None:
+            provider_user_id = _provider_user_id(claims.get("sub"))
+            if provider_user_id != userinfo_sub:
+                raise OAuthError(
+                    "The id_token subject does not match the userinfo subject"
+                )
+
         return OAuthUserInfo(
             provider=provider,
-            provider_user_id=_provider_user_id(data.get("sub")),
+            provider_user_id=provider_user_id,
             email=_normalized_email(data.get("email")),
             name=data.get("name"),
             picture=data.get("picture"),
@@ -622,6 +655,47 @@ class OAuthService:
             )
         )
         return result.scalar_one_or_none()
+
+
+def _client_auth_fields(config: Any) -> dict[str, Any]:
+    """Expose the provider's token-endpoint client authentication settings."""
+    return {
+        "token_endpoint_auth_method": config.token_endpoint_auth_method,
+        "private_key": config.private_key,
+        "private_key_kid": config.private_key_kid,
+        "private_key_alg": config.private_key_alg,
+    }
+
+
+def _token_request_auth(
+    config: dict[str, Any], token_url: str, data: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Attach client authentication using Authlib's own encoders/signers."""
+    method = config.get("token_endpoint_auth_method") or "client_secret_post"
+    client_id = config["client_id"]
+    client_secret = config.get("client_secret") or ""
+
+    if method == "private_key_jwt":
+        private_key = config.get("private_key")
+        if not private_key:
+            raise OAuthError("private_key_jwt requires a private key")
+        kid = config.get("private_key_kid")
+        assertion = PrivateKeyJWT(
+            token_endpoint=token_url,
+            headers={"kid": kid} if kid else None,
+            alg=config.get("private_key_alg") or "RS256",
+        )
+        client_auth = ClientAuth(client_id, private_key, assertion)
+    elif method in {"client_secret_post", "client_secret_basic"}:
+        client_auth = ClientAuth(client_id, client_secret, method)
+    else:
+        raise OAuthError(f"Unsupported token_endpoint_auth_method: {method}")
+
+    _uri, headers, body = client_auth.prepare("POST", token_url, {}, urlencode(data))
+    return (
+        dict(parse_qsl(body, keep_blank_values=True)),
+        {**headers, "Content-Type": "application/x-www-form-urlencoded"},
+    )
 
 
 def _microsoft_tenant_id(claims: Mapping[str, Any] | None) -> str:

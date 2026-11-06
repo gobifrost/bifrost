@@ -13,6 +13,11 @@ from pydantic import BaseModel, Field, model_validator
 # Supported OAuth SSO providers
 OAuthSSOProvider = Literal["microsoft", "google", "oidc"]
 
+# Client authentication methods supported for the token endpoint
+OAuthTokenEndpointAuthMethod = Literal[
+    "client_secret_post", "client_secret_basic", "private_key_jwt"
+]
+
 # Config key constants for each provider
 OAUTH_CONFIG_CATEGORY = "oauth_sso"
 OAUTH_LOGIN_PREFERENCE = "login_preference"
@@ -21,16 +26,28 @@ OAUTH_LOGIN_PREFERENCE = "login_preference"
 OAUTH_MICROSOFT_CLIENT_ID = "microsoft_client_id"
 OAUTH_MICROSOFT_CLIENT_SECRET = "microsoft_client_secret"
 OAUTH_MICROSOFT_TENANT_ID = "microsoft_tenant_id"
+OAUTH_MICROSOFT_TOKEN_ENDPOINT_AUTH_METHOD = "microsoft_token_endpoint_auth_method"
+OAUTH_MICROSOFT_PRIVATE_KEY = "microsoft_private_key"
+OAUTH_MICROSOFT_PRIVATE_KEY_KID = "microsoft_private_key_kid"
+OAUTH_MICROSOFT_PRIVATE_KEY_ALG = "microsoft_private_key_alg"
 
 # Google config keys
 OAUTH_GOOGLE_CLIENT_ID = "google_client_id"
 OAUTH_GOOGLE_CLIENT_SECRET = "google_client_secret"
+OAUTH_GOOGLE_TOKEN_ENDPOINT_AUTH_METHOD = "google_token_endpoint_auth_method"
+OAUTH_GOOGLE_PRIVATE_KEY = "google_private_key"
+OAUTH_GOOGLE_PRIVATE_KEY_KID = "google_private_key_kid"
+OAUTH_GOOGLE_PRIVATE_KEY_ALG = "google_private_key_alg"
 
 # OIDC config keys
 OAUTH_OIDC_DISCOVERY_URL = "oidc_discovery_url"
 OAUTH_OIDC_CLIENT_ID = "oidc_client_id"
 OAUTH_OIDC_CLIENT_SECRET = "oidc_client_secret"
 OAUTH_OIDC_DISPLAY_NAME = "oidc_display_name"
+OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "oidc_token_endpoint_auth_method"
+OAUTH_OIDC_PRIVATE_KEY = "oidc_private_key"
+OAUTH_OIDC_PRIVATE_KEY_KID = "oidc_private_key_kid"
+OAUTH_OIDC_PRIVATE_KEY_ALG = "oidc_private_key_alg"
 
 
 class OAuthLoginPreference(BaseModel):
@@ -69,7 +86,33 @@ class OAuthLoginPreference(BaseModel):
         return self
 
 
-class MicrosoftOAuthConfigRequest(BaseModel):
+class ClientAuthConfigRequest(BaseModel):
+    """Token-endpoint client authentication shared by every provider."""
+
+    token_endpoint_auth_method: OAuthTokenEndpointAuthMethod = Field(
+        default="client_secret_post",
+        description="How Bifrost authenticates to the token endpoint",
+    )
+    private_key: str | None = Field(
+        default=None,
+        description=(
+            "PEM private key for private_key_jwt. Write-only: it is encrypted "
+            "at rest and never returned."
+        ),
+    )
+    private_key_kid: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Optional JWT header kid for private_key_jwt",
+    )
+    private_key_alg: str = Field(
+        default="RS256",
+        pattern=r"^(RS256|RS384|RS512|ES256|ES384|ES512)$",
+        description="JWT signing algorithm for private_key_jwt",
+    )
+
+
+class MicrosoftOAuthConfigRequest(ClientAuthConfigRequest):
     """Request model for configuring Microsoft OAuth SSO."""
 
     client_id: str = Field(
@@ -92,7 +135,7 @@ class MicrosoftOAuthConfigRequest(BaseModel):
     )
 
 
-class GoogleOAuthConfigRequest(BaseModel):
+class GoogleOAuthConfigRequest(ClientAuthConfigRequest):
     """Request model for configuring Google OAuth SSO."""
 
     client_id: str = Field(
@@ -107,7 +150,7 @@ class GoogleOAuthConfigRequest(BaseModel):
     )
 
 
-class OIDCConfigRequest(BaseModel):
+class OIDCConfigRequest(ClientAuthConfigRequest):
     """Request model for configuring a generic OIDC provider."""
 
     discovery_url: str = Field(
@@ -152,6 +195,22 @@ class OAuthProviderConfigResponse(BaseModel):
     client_secret_set: bool = Field(
         default=False,
         description="Whether client secret is configured"
+    )
+    token_endpoint_auth_method: OAuthTokenEndpointAuthMethod = Field(
+        default="client_secret_post",
+        description="How Bifrost authenticates to the token endpoint",
+    )
+    private_key_set: bool = Field(
+        default=False,
+        description="Whether a private_key_jwt key is configured (key material is never returned)",
+    )
+    private_key_kid: str | None = Field(
+        default=None,
+        description="JWT header kid for private_key_jwt",
+    )
+    private_key_alg: str | None = Field(
+        default=None,
+        description="JWT signing algorithm for private_key_jwt",
     )
     # Provider-specific fields
     tenant_id: str | None = Field(

@@ -139,3 +139,48 @@ def test_oidc_trusts_a_missing_verification_claim_but_refuses_explicit_false():
             ),
             _tokens(),
         )
+
+
+def test_google_and_oidc_use_the_verified_subject_when_it_matches_userinfo():
+    service = _service()
+
+    google = service._parse_user_info(
+        "google",
+        {"sub": "g-1", "email": "kim@clientco.com"},
+        {"sub": "g-1"},
+    )
+    oidc = service._parse_user_info(
+        "oidc",
+        {"sub": "o-1", "email": "kim@clientco.com"},
+        {"sub": "o-1"},
+    )
+
+    assert google.provider_user_id == "g-1"
+    assert oidc.provider_user_id == "o-1"
+
+
+@pytest.mark.parametrize("provider", ["google", "oidc"])
+def test_subject_mismatch_between_id_token_and_userinfo_is_rejected(provider):
+    service = _service()
+
+    with pytest.raises(OAuthError, match="subject"):
+        service._parse_user_info(
+            provider,
+            {"sub": "userinfo-sub", "email": "kim@clientco.com"},
+            {"sub": "id-token-sub"},
+        )
+
+
+def test_microsoft_is_keyed_on_the_graph_id_and_cross_checked_with_oid():
+    service = _service()
+    data = _graph_me()
+
+    info = service._parse_user_info("microsoft", data, {"oid": data["id"]})
+
+    assert info.provider_user_id == data["id"]
+
+    with pytest.raises(OAuthError, match="doesn't match"):
+        service._parse_user_info("microsoft", data, {"oid": "different-oid"})
+
+    with pytest.raises(OAuthError, match="stable user ID"):
+        service._parse_user_info("microsoft", data, {"sub": "pairwise-sub"})

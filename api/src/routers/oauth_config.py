@@ -26,6 +26,7 @@ from src.models.contracts.oauth_config import (
 )
 from src.services.oauth_config_service import (
     OAuthConfigService,
+    OAuthConfigValidationError,
     OAuthLoginPreferenceError,
     OAuthProviderPreferenceConflict,
 )
@@ -145,6 +146,10 @@ async def get_oauth_config(
             configured=config.is_complete,
             client_id=config.client_id,
             client_secret_set=bool(config.client_secret),
+            token_endpoint_auth_method=config.token_endpoint_auth_method,  # type: ignore[arg-type]
+            private_key_set=bool(config.private_key),
+            private_key_kid=config.private_key_kid,
+            private_key_alg=config.private_key_alg,
             tenant_id=config.tenant_id if provider == "microsoft" else None,
             discovery_url=config.discovery_url if provider == "oidc" else None,
             display_name=config.display_name if provider == "oidc" else None,
@@ -193,7 +198,13 @@ async def set_microsoft_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_microsoft_config(config, updated_by=user.email)
+    try:
+        await service.set_microsoft_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -201,6 +212,10 @@ async def set_microsoft_config(
         configured=True,
         client_id=config.client_id,
         client_secret_set=True,
+        token_endpoint_auth_method=config.token_endpoint_auth_method,
+        private_key_set=bool(config.private_key),
+        private_key_kid=config.private_key_kid,
+        private_key_alg=config.private_key_alg,
         tenant_id=config.tenant_id,
     )
 
@@ -234,7 +249,13 @@ async def set_google_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_google_config(config, updated_by=user.email)
+    try:
+        await service.set_google_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -242,6 +263,10 @@ async def set_google_config(
         configured=True,
         client_id=config.client_id,
         client_secret_set=True,
+        token_endpoint_auth_method=config.token_endpoint_auth_method,
+        private_key_set=bool(config.private_key),
+        private_key_kid=config.private_key_kid,
+        private_key_alg=config.private_key_alg,
     )
 
 
@@ -277,7 +302,13 @@ async def set_oidc_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_oidc_config(config, updated_by=user.email)
+    try:
+        await service.set_oidc_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
     return OAuthProviderConfigResponse(
@@ -285,6 +316,10 @@ async def set_oidc_config(
         configured=True,
         client_id=config.client_id,
         client_secret_set=True,
+        token_endpoint_auth_method=config.token_endpoint_auth_method,
+        private_key_set=bool(config.private_key),
+        private_key_kid=config.private_key_kid,
+        private_key_alg=config.private_key_alg,
         discovery_url=config.discovery_url,
         display_name=config.display_name,
     )
@@ -347,7 +382,9 @@ async def test_oauth_config(
     - New credentials (if test_data provided) - useful before saving
 
     The test validates that the discovery endpoint is reachable and returns
-    valid OIDC configuration. It does NOT test the actual OAuth flow.
+    valid OIDC configuration. It does NOT test the actual OAuth flow or the
+    token-endpoint client authentication (client_secret_basic/post or
+    private_key_jwt); that remains a documented follow-up.
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
