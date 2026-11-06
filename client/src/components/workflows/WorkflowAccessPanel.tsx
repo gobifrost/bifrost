@@ -1,4 +1,5 @@
 import { useId, useState, type ReactNode } from "react";
+import { Link } from "react-router-dom";
 import {
 	AlertCircle,
 	Building2,
@@ -309,8 +310,9 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 	const workflowOrganizationId = workflow.organization_id ?? null;
 	const identitiesQuery = useWorkflowRunIdentities(workflow.id);
 	const recommendationsQuery = useWorkflowRecommendedAccess(workflow.id);
+	const authorization = useAuthorization();
 	const providerOrganizationId =
-		useAuthorization().authorization?.provider_organization_id;
+		authorization.authorization?.provider_organization_id;
 	const setRunIdentity = useSetWorkflowRunIdentity();
 	const createIdentity = useCreateIdentity();
 
@@ -525,6 +527,19 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						? "Full Access adds every permission, including Secrets, within the run user's organization reach."
 						: "Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach."}
 				</p>
+				{authorization.isPlatformAdmin && (
+					<Button
+						asChild
+						variant="outline"
+						className="min-h-11 sm:min-h-9"
+					>
+						<Link
+							to={`/workflows/convert?workflows=${encodeURIComponent(workflow.id)}`}
+						>
+							Review conversion proposal
+						</Link>
+					</Button>
+				)}
 			</Section>
 
 			<Section

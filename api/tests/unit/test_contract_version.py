@@ -408,6 +408,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
+    # Workflow conversion commands and report DTOs are additive; CLI compatibility is unchanged.
     # App consent models are additive; existing CLI minimum stays unchanged.
     # The existing org_id string also accepts the additive Global scope marker.
     # Only its description changes in the DTO; existing CLI shapes and minimum stay unchanged.
@@ -415,7 +416,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # SDK exact integration-mapping lookup (2026-11-03, #1016). ADDITIVE: new
     # find_mapping request/response DTOs plus the worker-socket route; existing
     # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
-    "ad35005174e825ece0aca2155e195db41b48edca29e74478c3bde96ccb5db75b"
+    "455f08e75558f49330b1a18f5179a27776d069b015d1e5941f4a52f09b256da6"
 )
 
 

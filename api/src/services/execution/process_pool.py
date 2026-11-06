@@ -48,6 +48,7 @@ import psutil
 import redis.asyncio as redis
 
 from shared.execution_context import validate_execution_context
+from shared.runtime_modules import MAX_RUNTIME_MODULE_ROOTS
 from shared.subprocess_env import package_tool_env
 from src.config import get_settings
 from src.core.cache.keys import TTL_ACTIVE_EXECUTION, active_execution_key
@@ -222,6 +223,70 @@ def _get_installed_packages() -> list[dict[str, str]]:
     except Exception as e:
         logger.warning(f"Failed to get installed packages: {e}")
     return []
+
+
+_MODULE_ROOT_PROBE = """
+import importlib.metadata
+import json
+import site
+import sys
+
+MAX_ROOTS = 512
+paths = list(dict.fromkeys([
+    *sys.path,
+    *site.getsitepackages(),
+    site.getusersitepackages(),
+]))
+roots = set()
+
+def add_root(root):
+    if root.isidentifier():
+        roots.add(root)
+        if len(roots) > MAX_ROOTS:
+            raise RuntimeError("too many import roots")
+
+for distribution in importlib.metadata.distributions(path=paths):
+    top_level = distribution.read_text("top_level.txt")
+    if top_level:
+        for line in top_level.splitlines():
+            add_root(line.strip())
+        continue
+    for file in distribution.files or ():
+        path = str(file).replace("\\\\", "/")
+        parts = path.split("/")
+        first = parts[0]
+        if len(parts) == 1 and first.endswith((".py", ".pyi", ".so", ".pyd")):
+            add_root(first.split(".", 1)[0])
+        elif len(parts) > 1 and parts[-1].endswith((".py", ".pyi", ".so", ".pyd")):
+            add_root(first)
+json.dump(sorted(roots), sys.stdout)
+"""
+
+
+def _get_installed_module_roots() -> dict[str, Any]:
+    """Discover installed top-level roots without importing package code."""
+    unavailable = {"status": "unavailable", "roots": []}
+    try:
+        result = subprocess.run(
+            [sys.executable, "-S", "-c", _MODULE_ROOT_PROBE],
+            capture_output=True,
+            text=True,
+            timeout=10,
+            env=package_tool_env(),
+        )
+        if result.returncode != 0:
+            raise RuntimeError(f"probe exited {result.returncode}")
+        roots = json.loads(result.stdout)
+        if (
+            not isinstance(roots, list)
+            or len(roots) > MAX_RUNTIME_MODULE_ROOTS
+            or not all(isinstance(root, str) and root.isidentifier() for root in roots)
+        ):
+            raise ValueError("probe returned invalid import roots")
+        return {"status": "available", "roots": sorted(set(roots))}
+    except Exception:  # noqa: BLE001 - telemetry must not block worker startup
+        logger.warning("Failed to get installed module roots")
+        return unavailable
 
 
 class ProcessState(Enum):
@@ -1864,10 +1929,10 @@ class ProcessPoolManager:
                             f"attempt was never reported — firing orphan callback"
                         )
                         await self._report_service_orphan(handle)
-                    else:
+                    elif execution := handle.current_execution:
                         logger.warning(
                             f"Process {process_id} is KILLED but execution "
-                            f"{handle.current_execution.execution_id[:8]}... was never reported — "
+                            f"{execution.execution_id[:8]}... was never reported — "
                             f"firing orphan callback"
                         )
                         await self._report_orphan(handle)
@@ -2219,7 +2284,10 @@ class ProcessPoolManager:
 
         # Get installed packages for API visibility. Off the event loop: pip
         # can take seconds, and the executor's heartbeat must keep running.
-        packages = await asyncio.to_thread(_get_installed_packages)
+        packages, module_roots = await asyncio.gather(
+            asyncio.to_thread(_get_installed_packages),
+            asyncio.to_thread(_get_installed_module_roots),
+        )
 
         # Store pool metadata in Redis hash
         await r.hset(  # type: ignore[misc]
@@ -2229,6 +2297,7 @@ class ProcessPoolManager:
                 "status": "online",
                 "hostname": os.environ.get("HOSTNAME", "unknown"),
                 "packages": json.dumps(packages),
+                "module_roots": json.dumps(module_roots),
             }
         )
         await r.expire(redis_key, self.registration_ttl_seconds)
@@ -2257,8 +2326,17 @@ class ProcessPoolManager:
         try:
             r = await self._get_redis()
             redis_key = f"bifrost:pool:{self.worker_id}"
-            packages = await asyncio.to_thread(_get_installed_packages)
-            await r.hset(redis_key, "packages", json.dumps(packages))  # type: ignore[misc]
+            packages, module_roots = await asyncio.gather(
+                asyncio.to_thread(_get_installed_packages),
+                asyncio.to_thread(_get_installed_module_roots),
+            )
+            await r.hset(  # type: ignore[misc]
+                redis_key,
+                mapping={
+                    "packages": json.dumps(packages),
+                    "module_roots": json.dumps(module_roots),
+                },
+            )
             logger.info(f"Updated packages in Redis: {len(packages)} packages")
         except Exception as e:
             logger.warning(f"Failed to update packages in Redis: {e}")

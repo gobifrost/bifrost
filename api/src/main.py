@@ -108,6 +108,7 @@ from src.routers.users import router as users_router
 from src.routers.version import router as version_router
 from src.routers.websocket import router as websocket_router
 from src.routers.workflow_keys import router as workflow_keys_router
+from src.routers.workflow_conversions import router as workflow_conversions_router
 from src.routers.workflows import router as workflows_router
 from src.worker.remote.host import (
     router as remote_control_router,
@@ -455,6 +456,7 @@ def create_app() -> FastAPI:
     app.include_router(permissions_router)
     app.include_router(executions_router)
     app.include_router(workflows_router)
+    app.include_router(workflow_conversions_router)
     app.include_router(forms_router)
     app.include_router(config_router)
     app.include_router(websocket_router)
