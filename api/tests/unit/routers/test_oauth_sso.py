@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import httpx
-import jwt
 import pytest
 from fastapi import FastAPI
 
@@ -23,7 +22,15 @@ from src.services.oauth_sso import (
 
 class _Redis:
     def __init__(self, state: str):
-        self.values = {oauth_state_key(state): json.dumps({"code_verifier": "verifier", "redirect_uri": "https://app.test/callback"})}
+        self.values = {
+            oauth_state_key(state): json.dumps(
+                {
+                    "code_verifier": "verifier",
+                    "redirect_uri": "https://app.test/callback",
+                    "nonce": "test-nonce",
+                }
+            )
+        }
 
     async def get(self, key):
         return self.values.get(key)
@@ -35,8 +42,8 @@ class _Redis:
         self.values[key] = value
 
 
-def _id_token(tenant_id: str) -> str:
-    return jwt.encode({"tid": tenant_id}, "test-signature-is-not-checked-at-sign-in", algorithm="HS256")
+def _id_token_claims(tenant_id: str) -> dict:
+    return {"tid": tenant_id}
 
 
 def _user(email: str = "kim@clientco.com") -> SimpleNamespace:
@@ -119,11 +126,11 @@ async def _callback(
     [
         (
             OAuthUserInfo("microsoft", "consumer-id", "changed@clientco.com", raw_data={"userPrincipalName": "changed@clientco.com"}),
-            OAuthTokens("access", id_token=_id_token(MICROSOFT_CONSUMER_TENANT_ID)),
+            OAuthTokens("access", id_token_claims=_id_token_claims(MICROSOFT_CONSUMER_TENANT_ID)),
         ),
         (
             OAuthUserInfo("microsoft", "guest-id", "", raw_data={"userPrincipalName": "guest#EXT#@clientco.onmicrosoft.com"}),
-            OAuthTokens("access", id_token=_id_token("tenant")),
+            OAuthTokens("access", id_token_claims=_id_token_claims("tenant")),
         ),
         (
             OAuthUserInfo("google", "third-party-id", "changed@clientco.com", raw_data={"email_verified": True}),
@@ -170,7 +177,7 @@ async def test_new_microsoft_link_uses_upn_and_never_graph_mail(monkeypatch):
     response, _, provision, photo = await _callback(
         monkeypatch,
         user_info=user_info,
-        tokens=OAuthTokens("access", id_token=_id_token("tenant")),
+        tokens=OAuthTokens("access", id_token_claims=_id_token_claims("tenant")),
         existing_user=None,
         provision_result=provisioned_user,
     )
@@ -254,7 +261,7 @@ async def test_microsoft_sign_in_loads_the_profile_photo(monkeypatch):
     response, _, _, photo = await _callback(
         monkeypatch,
         user_info=OAuthUserInfo("microsoft", "microsoft-id", "kim@clientco.com"),
-        tokens=OAuthTokens("graph-access-token", id_token=_id_token("tenant")),
+        tokens=OAuthTokens("graph-access-token", id_token_claims=_id_token_claims("tenant")),
         existing_user=user,
     )
 
@@ -269,7 +276,7 @@ async def test_profile_photo_errors_do_not_fail_microsoft_sign_in(monkeypatch):
     response, _, _, photo = await _callback(
         monkeypatch,
         user_info=OAuthUserInfo("microsoft", "microsoft-id", "kim@clientco.com"),
-        tokens=OAuthTokens("graph-access-token", id_token=_id_token("tenant")),
+        tokens=OAuthTokens("graph-access-token", id_token_claims=_id_token_claims("tenant")),
         existing_user=_user(),
         photo_side_effect=RuntimeError("graph down"),
     )

@@ -2,7 +2,6 @@
 
 from unittest.mock import MagicMock
 
-import jwt
 import pytest
 
 from src.services.oauth_sso import (
@@ -19,13 +18,15 @@ def _service() -> OAuthService:
     return OAuthService(MagicMock())
 
 
-def _id_token(tenant_id: str | None) -> str:
-    claims = {"oid": "user-oid", **({"tid": tenant_id} if tenant_id else {})}
-    return jwt.encode(claims, "signature-is-not-checked-on-sign-in", algorithm="HS256")
+def _id_token_claims(tenant_id: str | None) -> dict:
+    return {"oid": "user-oid", **({"tid": tenant_id} if tenant_id else {})}
 
 
 def _tokens(tenant_id: str | None = WORK_TENANT) -> OAuthTokens:
-    return OAuthTokens(access_token="access-token", id_token=_id_token(tenant_id))
+    return OAuthTokens(
+        access_token="access-token",
+        id_token_claims=_id_token_claims(tenant_id),
+    )
 
 
 def _graph_me(**overrides) -> dict:
@@ -89,7 +90,6 @@ def test_parse_normalizes_claims_without_authorizing_a_new_link():
         (_graph_me(), _tokens(MICROSOFT_CONSUMER_TENANT_ID), "Personal Microsoft accounts"),
         (_graph_me(userPrincipalName="kim_gmail.com#EXT#@clientco.onmicrosoft.com"), _tokens(), "Guest accounts"),
         (_graph_me(), OAuthTokens(access_token="access-token"), "didn't return an ID token"),
-        (_graph_me(), OAuthTokens(access_token="access-token", id_token="not-a-jwt"), "unreadable ID token"),
         (_graph_me(), _tokens(None), "ID token has no tenant"),
     ],
 )

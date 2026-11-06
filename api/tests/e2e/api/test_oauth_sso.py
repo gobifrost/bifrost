@@ -8,7 +8,6 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
-import jwt
 import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient as RealAsyncClient, Request as HttpRequest, Response as HttpResponse
@@ -91,7 +90,13 @@ async def _entra_callback(
     await redis.setex(
         state_key,
         600,
-        json.dumps({"code_verifier": "verifier", "redirect_uri": "https://app.test/callback"}),
+        json.dumps(
+            {
+                "code_verifier": "verifier",
+                "redirect_uri": "https://app.test/callback",
+                "nonce": "test-nonce",
+            }
+        ),
     )
 
     async def db_dependency():
@@ -116,7 +121,7 @@ async def _entra_callback(
     )
     token = OAuthTokens(
         access_token="provider-access-token",
-        id_token=jwt.encode({"tid": "work-tenant"}, "test-signature-is-not-checked-at-sign-in", algorithm="HS256"),
+        id_token_claims={"tid": "work-tenant"},
     )
 
     monkeypatch.setattr(OAuthService, "exchange_code_for_tokens", AsyncMock(return_value=token))
