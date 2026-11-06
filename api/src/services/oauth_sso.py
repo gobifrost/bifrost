@@ -444,7 +444,11 @@ class OAuthService:
         if provider == "microsoft":
             graph_id = _provider_user_id(data.get("id"))
             if claims is not None:
-                verified_oid = _provider_user_id(claims.get("oid"))
+                verified_oid = claims.get("oid")
+                if not isinstance(verified_oid, str) or not verified_oid.strip():
+                    raise OAuthError(
+                        "Microsoft's verified token did not contain the expected account identifier (oid)"
+                    )
                 if verified_oid != graph_id:
                     raise OAuthError(
                         "Microsoft returned an id_token that doesn't match the signed-in account"

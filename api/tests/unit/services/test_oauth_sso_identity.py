@@ -182,5 +182,5 @@ def test_microsoft_is_keyed_on_the_graph_id_and_cross_checked_with_oid():
     with pytest.raises(OAuthError, match="doesn't match"):
         service._parse_user_info("microsoft", data, {"oid": "different-oid"})
 
-    with pytest.raises(OAuthError, match="stable user ID"):
+    with pytest.raises(OAuthError, match="account identifier"):
         service._parse_user_info("microsoft", data, {"sub": "pairwise-sub"})

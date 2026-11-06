@@ -3,7 +3,7 @@
   "classification": "other",
   "entry_ids": [],
   "category": "hardening",
-  "summary": "SSO sign-in verifies the identity provider's id_token (signature, issuer, audience, expiry, nonce), binds it to the authorization request with a nonce, and derives identity from verified claims with a Microsoft oid/Graph-id cross-check so existing accounts are not re-keyed. OAuth token-endpoint client authentication is configurable per provider (client_secret_post, client_secret_basic, or private_key_jwt with an encrypted, write-only key).",
+  "summary": "SSO sign-in verifies the identity provider's id_token (signature, issuer, audience, expiry, nonce), binds it to the authorization request with a nonce, and derives identity from verified claims with a Microsoft oid/Graph-id cross-check so existing accounts are not re-keyed. OAuth token-endpoint client authentication is configurable per provider (client_secret_post, client_secret_basic, or private_key_jwt with an encrypted, write-only RSA key that is validated when saved and can be explicitly revoked); the settings test now also validates the configured client-auth credential locally.",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1265"
@@ -12,7 +12,7 @@
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1265",
-      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Focused unit and e2e SSO/OAuth tests pass (66) with real RS256 fixtures covering bad signature, wrong issuer, wrong audience, expired, nonce mismatch, unknown kid, client-auth request shapes and subject cross-checks."
+      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Focused unit and e2e SSO/OAuth tests pass (74) with real RS256 fixtures covering bad signature, wrong issuer, wrong audience, expired, nonce mismatch, unknown kid, client-auth request shapes, key validation/revocation and subject cross-checks."
     ]
   }
 }

@@ -18,6 +18,12 @@ OAuthTokenEndpointAuthMethod = Literal[
     "client_secret_post", "client_secret_basic", "private_key_jwt"
 ]
 
+# Authlib 1.9.5's PrivateKeyJWT signer is RSA-only, so EC algorithms (ES256/
+# ES384/ES512) are intentionally rejected. Supporting them needs joserfc or a
+# newer authlib signer and is a follow-up.
+OAUTH_PRIVATE_KEY_ALGS: tuple[str, ...] = ("RS256", "RS384", "RS512")
+_PRIVATE_KEY_ALG_PATTERN = "^(" + "|".join(OAUTH_PRIVATE_KEY_ALGS) + ")$"
+
 # Config key constants for each provider
 OAUTH_CONFIG_CATEGORY = "oauth_sso"
 OAUTH_LOGIN_PREFERENCE = "login_preference"
@@ -107,8 +113,18 @@ class ClientAuthConfigRequest(BaseModel):
     )
     private_key_alg: str = Field(
         default="RS256",
-        pattern=r"^(RS256|RS384|RS512|ES256|ES384|ES512)$",
-        description="JWT signing algorithm for private_key_jwt",
+        pattern=_PRIVATE_KEY_ALG_PATTERN,
+        description=(
+            "JWT signing algorithm for private_key_jwt (RSA only; EC is a "
+            "documented follow-up)"
+        ),
+    )
+    clear_private_key: bool = Field(
+        default=False,
+        description=(
+            "Remove the stored private key (and kid) without deleting the "
+            "provider. Cannot be combined with private_key."
+        ),
     )
 
 
@@ -120,10 +136,10 @@ class MicrosoftOAuthConfigRequest(ClientAuthConfigRequest):
         min_length=1,
         description="Azure AD Application (client) ID"
     )
-    client_secret: str = Field(
-        ...,
+    client_secret: str | None = Field(
+        default=None,
         min_length=1,
-        description="Azure AD client secret value"
+        description="Azure AD client secret value (required unless private_key_jwt)",
     )
     tenant_id: str = Field(
         default="common",
@@ -143,10 +159,10 @@ class GoogleOAuthConfigRequest(ClientAuthConfigRequest):
         min_length=1,
         description="Google OAuth 2.0 Client ID"
     )
-    client_secret: str = Field(
-        ...,
+    client_secret: str | None = Field(
+        default=None,
         min_length=1,
-        description="Google OAuth 2.0 Client secret"
+        description="Google OAuth 2.0 Client secret (required unless private_key_jwt)",
     )
 
 
@@ -164,10 +180,10 @@ class OIDCConfigRequest(ClientAuthConfigRequest):
         min_length=1,
         description="OIDC Client ID"
     )
-    client_secret: str = Field(
-        ...,
+    client_secret: str | None = Field(
+        default=None,
         min_length=1,
-        description="OIDC Client secret"
+        description="OIDC Client secret (required unless private_key_jwt)",
     )
     display_name: str = Field(
         default="SSO",

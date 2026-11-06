@@ -12,6 +12,9 @@ from typing import Any
 from uuid import UUID
 
 import httpx
+from cryptography.exceptions import UnsupportedAlgorithm
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -19,6 +22,7 @@ from src.core.log_safety import log_safe
 from src.core.security import decrypt_secret, encrypt_secret
 from src.models.contracts.oauth_config import (
     OAUTH_CONFIG_CATEGORY,
+    OAUTH_PRIVATE_KEY_ALGS,
     OAUTH_GOOGLE_CLIENT_ID,
     OAUTH_GOOGLE_CLIENT_SECRET,
     OAUTH_GOOGLE_PRIVATE_KEY,
@@ -74,7 +78,11 @@ _TOKEN_ENDPOINT_AUTH_METHODS: tuple[OAuthTokenEndpointAuthMethod, ...] = (
     "private_key_jwt",
 )
 
-_PRIVATE_KEY_ALGS = ("RS256", "RS384", "RS512", "ES256", "ES384", "ES512")
+_PROVIDER_SECRET_KEYS: dict[str, str] = {
+    "microsoft": OAUTH_MICROSOFT_CLIENT_SECRET,
+    "google": OAUTH_GOOGLE_CLIENT_SECRET,
+    "oidc": OAUTH_OIDC_CLIENT_SECRET,
+}
 
 _PROVIDER_AUTH_KEYS = {
     "microsoft": (
@@ -139,6 +147,31 @@ class OAuthProviderConfig:
         if self.provider == "oidc":
             return bool(self.discovery_url)
         return False
+
+
+def _validate_rsa_private_key(pem: str, alg: str) -> None:
+    """Reject unusable key material at save time.
+
+    Authlib 1.9.5's PrivateKeyJWT signer is RSA-only. EC algorithms are
+    intentionally unsupported until the signer moves to joserfc.
+    """
+    if alg not in OAUTH_PRIVATE_KEY_ALGS:
+        raise OAuthConfigValidationError(f"Unsupported private_key_alg: {alg}")
+    try:
+        key = serialization.load_pem_private_key(pem.encode(), password=None)
+    except TypeError as exc:
+        raise OAuthConfigValidationError(
+            "private key is password-protected; supply an unencrypted PEM"
+        ) from exc
+    except (ValueError, UnsupportedAlgorithm) as exc:
+        raise OAuthConfigValidationError(
+            "private key is not a valid PEM private key"
+        ) from exc
+    if not isinstance(key, RSAPrivateKey):
+        raise OAuthConfigValidationError(
+            "private_key_jwt currently supports RSA private keys only "
+            "(RS256/RS384/RS512); EC keys are a documented follow-up"
+        )
 
 
 class OAuthConfigService:
@@ -381,27 +414,58 @@ class OAuthConfigService:
             alg or "RS256",
         )
 
+    async def _validate_provider_secret(
+        self, provider: OAuthSSOProvider, config: Any
+    ) -> str | None:
+        """Return the secret to store, or None to leave the stored one as-is."""
+        if config.client_secret:
+            return config.client_secret.strip() or None
+        existing = await self._get_secret_value(_PROVIDER_SECRET_KEYS[provider])
+        if config.token_endpoint_auth_method in {
+            "client_secret_post",
+            "client_secret_basic",
+        } and not existing:
+            raise OAuthConfigValidationError(
+                "client_secret is required for client_secret_post/client_secret_basic"
+            )
+        return None
+
     async def _validate_and_extract_client_auth(
         self, provider: OAuthSSOProvider, config: Any
-    ) -> tuple[str, str | None, str | None, str]:
-        """Validate the requested method at save time, before any login."""
+    ) -> tuple[str, str | None, str | None, str, bool, bool]:
+        """Validate the requested method/key at save time, before any login.
+
+        Returns (method, key_to_store, kid, alg, clear_key, key_replaced).
+        ``kid`` is only meaningful when the key is replaced.
+        """
         method = config.token_endpoint_auth_method
         if method not in _TOKEN_ENDPOINT_AUTH_METHODS:
             raise OAuthConfigValidationError(
                 f"Unsupported token_endpoint_auth_method: {method}"
             )
         alg = config.private_key_alg or "RS256"
-        if alg not in _PRIVATE_KEY_ALGS:
-            raise OAuthConfigValidationError(
-                f"Unsupported private_key_alg: {alg}"
-            )
+        if alg not in OAUTH_PRIVATE_KEY_ALGS:
+            raise OAuthConfigValidationError(f"Unsupported private_key_alg: {alg}")
+
         provided_key = config.private_key.strip() if config.private_key else None
-        _, existing_key, _, _ = await self._get_client_auth_settings(provider)
-        if method == "private_key_jwt" and not (provided_key or existing_key):
+        clear_key = bool(config.clear_private_key)
+        if clear_key and provided_key:
+            raise OAuthConfigValidationError(
+                "Use either clear_private_key or private_key, not both"
+            )
+
+        _, existing_key, existing_kid, _ = await self._get_client_auth_settings(provider)
+        effective_key = None if clear_key else (provided_key or existing_key)
+        if effective_key:
+            _validate_rsa_private_key(effective_key, alg)
+        if method == "private_key_jwt" and not effective_key:
             raise OAuthConfigValidationError(
                 "private_key_jwt requires a private key (PEM)"
             )
-        return method, provided_key, (config.private_key_kid or None), alg
+
+        key_replaced = bool(provided_key)
+        kid = (config.private_key_kid or None) if key_replaced else existing_kid
+        return method, provided_key, kid, alg, clear_key, key_replaced
 
     async def _store_client_auth(
         self,
@@ -410,19 +474,26 @@ class OAuthConfigService:
         private_key: str | None,
         kid: str | None,
         alg: str,
+        clear_key: bool,
+        key_replaced: bool,
         updated_by: str,
     ) -> None:
         method_key, key_key, kid_key, alg_key = _PROVIDER_AUTH_KEYS[provider]
         await self._set_config_value(method_key, method, updated_by=updated_by)
-        if private_key:
+        await self._set_config_value(alg_key, alg, updated_by=updated_by)
+
+        if clear_key:
+            # Explicit revocation: remove the key and its kid, keep the provider.
+            await self._delete_config_keys([key_key, kid_key])
+        elif private_key and key_replaced:
             await self._set_config_value(
                 key_key, private_key, is_secret=True, updated_by=updated_by
             )
-        if kid:
-            await self._set_config_value(kid_key, kid, updated_by=updated_by)
-        else:
-            await self._delete_config_keys([kid_key])
-        await self._set_config_value(alg_key, alg, updated_by=updated_by)
+            if kid:
+                await self._set_config_value(kid_key, kid, updated_by=updated_by)
+            else:
+                await self._delete_config_keys([kid_key])
+        # Omitted private_key leaves both the stored key and kid untouched.
 
     async def get_provider_config(
         self, provider: OAuthSSOProvider
@@ -512,24 +583,22 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set Microsoft OAuth configuration."""
-        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
-            "microsoft", config
-        )
+        auth = await self._validate_and_extract_client_auth("microsoft", config)
+        secret = await self._validate_provider_secret("microsoft", config)
         await self._set_config_value(
             OAUTH_MICROSOFT_CLIENT_ID, config.client_id, updated_by=updated_by
         )
-        await self._set_config_value(
-            OAUTH_MICROSOFT_CLIENT_SECRET,
-            config.client_secret,
-            is_secret=True,
-            updated_by=updated_by,
-        )
+        if secret:
+            await self._set_config_value(
+                OAUTH_MICROSOFT_CLIENT_SECRET,
+                secret,
+                is_secret=True,
+                updated_by=updated_by,
+            )
         await self._set_config_value(
             OAUTH_MICROSOFT_TENANT_ID, config.tenant_id, updated_by=updated_by
         )
-        await self._store_client_auth(
-            "microsoft", method, private_key, kid, alg, updated_by
-        )
+        await self._store_client_auth("microsoft", *auth, updated_by)
         logger.info(f"Microsoft OAuth config updated by {updated_by}")
 
     async def set_google_config(
@@ -538,19 +607,19 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set Google OAuth configuration."""
-        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
-            "google", config
-        )
+        auth = await self._validate_and_extract_client_auth("google", config)
+        secret = await self._validate_provider_secret("google", config)
         await self._set_config_value(
             OAUTH_GOOGLE_CLIENT_ID, config.client_id, updated_by=updated_by
         )
-        await self._set_config_value(
-            OAUTH_GOOGLE_CLIENT_SECRET,
-            config.client_secret,
-            is_secret=True,
-            updated_by=updated_by,
-        )
-        await self._store_client_auth("google", method, private_key, kid, alg, updated_by)
+        if secret:
+            await self._set_config_value(
+                OAUTH_GOOGLE_CLIENT_SECRET,
+                secret,
+                is_secret=True,
+                updated_by=updated_by,
+            )
+        await self._store_client_auth("google", *auth, updated_by)
         logger.info(f"Google OAuth config updated by {updated_by}")
 
     async def set_oidc_config(
@@ -559,25 +628,25 @@ class OAuthConfigService:
         updated_by: str = "system",
     ) -> None:
         """Set OIDC provider configuration."""
-        method, private_key, kid, alg = await self._validate_and_extract_client_auth(
-            "oidc", config
-        )
+        auth = await self._validate_and_extract_client_auth("oidc", config)
+        secret = await self._validate_provider_secret("oidc", config)
         await self._set_config_value(
             OAUTH_OIDC_DISCOVERY_URL, config.discovery_url, updated_by=updated_by
         )
         await self._set_config_value(
             OAUTH_OIDC_CLIENT_ID, config.client_id, updated_by=updated_by
         )
-        await self._set_config_value(
-            OAUTH_OIDC_CLIENT_SECRET,
-            config.client_secret,
-            is_secret=True,
-            updated_by=updated_by,
-        )
+        if secret:
+            await self._set_config_value(
+                OAUTH_OIDC_CLIENT_SECRET,
+                secret,
+                is_secret=True,
+                updated_by=updated_by,
+            )
         await self._set_config_value(
             OAUTH_OIDC_DISPLAY_NAME, config.display_name, updated_by=updated_by
         )
-        await self._store_client_auth("oidc", method, private_key, kid, alg, updated_by)
+        await self._store_client_auth("oidc", *auth, updated_by)
         logger.info(f"OIDC config updated by {updated_by}")
 
     async def delete_provider_config(
@@ -865,27 +934,67 @@ class OAuthConfigService:
                 message=f"Network error fetching OIDC discovery: {e!s}",
             )
 
+    async def test_client_auth_configuration(
+        self, provider: OAuthSSOProvider, test_data: dict[str, Any] | None = None
+    ) -> str | None:
+        """Exercise the configured client auth locally; no network call.
+
+        Returns an error message, or None when the credential can be built.
+        """
+        from src.services.oauth_sso import _token_request_auth
+
+        test_data = test_data or {}
+        saved = await self.get_provider_config(provider)
+        config = {
+            "client_id": test_data.get("client_id")
+            or (saved.client_id if saved else None),
+            "client_secret": test_data.get("client_secret")
+            or (saved.client_secret if saved else None),
+            "token_endpoint_auth_method": (
+                saved.token_endpoint_auth_method if saved else "client_secret_post"
+            ),
+            "private_key": saved.private_key if saved else None,
+            "private_key_kid": saved.private_key_kid if saved else None,
+            "private_key_alg": saved.private_key_alg if saved else "RS256",
+        }
+        if not config["client_id"]:
+            return "client_id is required before testing client authentication"
+        try:
+            _token_request_auth(
+                config,
+                "https://example.invalid/token",
+                {
+                    "grant_type": "authorization_code",
+                    "code": "test",
+                    "redirect_uri": "https://example.invalid/callback",
+                    "code_verifier": "test",
+                },
+            )
+        except Exception as exc:
+            return f"Client authentication is not usable: {exc}"
+        return None
+
     async def test_provider_config(
         self,
         provider: OAuthSSOProvider,
         test_data: dict[str, Any] | None = None,
     ) -> OAuthConfigTestResponse:
-        """Test configuration for a specific provider."""
+        """Test discovery for a provider, then validate its client auth."""
         test_data = test_data or {}
 
         if provider == "microsoft":
-            return await self.test_microsoft_config(
+            result = await self.test_microsoft_config(
                 client_id=test_data.get("client_id"),
                 client_secret=test_data.get("client_secret"),
                 tenant_id=test_data.get("tenant_id"),
             )
         elif provider == "google":
-            return await self.test_google_config(
+            result = await self.test_google_config(
                 client_id=test_data.get("client_id"),
                 client_secret=test_data.get("client_secret"),
             )
         elif provider == "oidc":
-            return await self.test_oidc_config(
+            result = await self.test_oidc_config(
                 discovery_url=test_data.get("discovery_url"),
                 client_id=test_data.get("client_id"),
                 client_secret=test_data.get("client_secret"),
@@ -895,3 +1004,15 @@ class OAuthConfigService:
                 success=False,
                 message=f"Unknown provider: {provider}",
             )
+
+        if result.success:
+            client_auth_error = await self.test_client_auth_configuration(
+                provider, test_data
+            )
+            if client_auth_error:
+                return OAuthConfigTestResponse(
+                    success=False,
+                    message=client_auth_error,
+                    details=result.details,
+                )
+        return result

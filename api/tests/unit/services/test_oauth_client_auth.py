@@ -1,5 +1,6 @@
 """Token-request shape for each OAuth client authentication method."""
 
+import base64
 from unittest.mock import AsyncMock, MagicMock
 from urllib.parse import parse_qs
 
@@ -10,7 +11,11 @@ from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric import rsa
 
 from src.services import oauth_sso
-from src.services.oauth_sso import OAuthService
+from src.services.oauth_config_service import (
+    OAuthConfigValidationError,
+    _validate_rsa_private_key,
+)
+from src.services.oauth_sso import OAuthError, OAuthService
 
 _TOKEN_URL = "https://idp.test/token"
 _RealAsyncClient = httpx_module.AsyncClient
@@ -108,7 +113,10 @@ async def test_client_secret_basic_uses_the_authorization_header(monkeypatch):
 
     request = captured["request"]
     body = parse_qs(request.content.decode())
-    assert request.headers["authorization"].startswith("Basic ")
+    authorization = request.headers["authorization"]
+    assert authorization.startswith("Basic ")
+    decoded = base64.b64decode(authorization.removeprefix("Basic ")).decode()
+    assert decoded == "client-id:client-secret"
     assert "client_secret" not in body
 
 
@@ -148,11 +156,60 @@ async def test_private_key_jwt_sends_a_client_assertion_without_the_secret(monke
     )
     assert claims["iss"] == "client-id"
     assert claims["sub"] == "client-id"
+    assert claims["aud"] == _TOKEN_URL
+    assert claims["jti"]
+    assert isinstance(claims["iat"], int)
+    assert claims["exp"] > claims["iat"]
 
 
 @pytest.mark.asyncio
 async def test_private_key_jwt_requires_a_key():
     service = _service()
 
-    with pytest.raises(Exception, match="private_key_jwt requires a private key"):
+    with pytest.raises(OAuthError, match="private_key_jwt requires a private key"):
         await _exchange(service, "private_key_jwt")
+
+
+def _public_key_pem(private_key) -> str:
+    return private_key.public_key().public_bytes(
+        serialization.Encoding.PEM,
+        serialization.PublicFormat.SubjectPublicKeyInfo,
+    ).decode()
+
+
+def test_malformed_private_key_is_rejected():
+    with pytest.raises(OAuthConfigValidationError, match="not a valid PEM"):
+        _validate_rsa_private_key("not-a-pem", "RS256")
+
+
+def test_public_only_private_key_is_rejected():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+
+    with pytest.raises(OAuthConfigValidationError, match="not a valid PEM"):
+        _validate_rsa_private_key(_public_key_pem(key), "RS256")
+
+
+def test_password_protected_private_key_is_rejected():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.BestAvailableEncryption(b"password"),
+    ).decode()
+
+    with pytest.raises(OAuthConfigValidationError, match="password-protected"):
+        _validate_rsa_private_key(pem, "RS256")
+
+
+def test_ec_private_key_is_rejected_as_an_alg_mismatch():
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    pem = key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+
+    with pytest.raises(OAuthConfigValidationError, match="RSA private keys only"):
+        _validate_rsa_private_key(pem, "RS256")
