@@ -94,6 +94,10 @@ def configured_chat_model():
             "src.services.agent_executor.authorize_agentless_ai",
             new=AsyncMock(side_effect=lambda _session, caller: caller),
         ),
+        patch(
+            "src.services.agent_executor.authorize_chat_execution",
+            new=AsyncMock(side_effect=lambda _session, caller: caller),
+        ),
     ):
         yield
 
@@ -121,6 +125,31 @@ def caller() -> Caller:
 
 def _saved_message(*args, **kwargs):
     return MagicMock(id=kwargs.get("message_id") or uuid4())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_agent", [False, True])
+async def test_queued_chat_rechecks_access_before_model_or_agent_execution(
+    executor, conversation, caller, with_agent,
+):
+    from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
+
+    with (
+        patch(
+            "src.services.agent_executor.authorize_chat_execution",
+            new=AsyncMock(side_effect=AgentRuntimeAuthorizationError("Chat access revoked")),
+        ),
+        patch("src.services.agent_executor.authorize_agent_execution", new_callable=AsyncMock) as agent_auth,
+        patch("src.services.agent_executor.get_llm_client", new_callable=AsyncMock) as model,
+        pytest.raises(AgentRuntimeAuthorizationError, match="Chat access revoked"),
+    ):
+        await anext(executor.chat(
+            MagicMock() if with_agent else None, conversation, "Hello",
+            caller=caller, run_user_id=None,
+        ))
+
+    agent_auth.assert_not_awaited()
+    model.assert_not_awaited()
 
 
 @pytest.mark.asyncio

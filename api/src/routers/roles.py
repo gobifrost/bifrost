@@ -1059,10 +1059,11 @@ async def get_role_permissions(
 @router.put(
     "/{role_id}/permissions",
     response_model=RolePermissionsResponse,
-    summary="Set a role's identity permissions",
+    summary="Set a role's editable permissions",
     description=(
         "Replace the role's identity permissions (users, userlifecycle, organizations, "
-        "roleassignments, roles); its other permissions are kept. Builtin roles can't be changed."
+        "roleassignments, roles) and optionally its everyday runtime permissions; "
+        "other permissions are kept. Builtin roles can't be changed."
     ),
 )
 async def set_role_permissions(
@@ -1076,7 +1077,8 @@ async def set_role_permissions(
     caller = await authorize_operation(db, user, "PUT /api/roles/{role_id}/permissions", GLOBAL)
     try:
         return await replace_identity_permissions(
-            db, caller=caller, role_id=role_id, permissions=request.permissions
+            db, caller=caller, role_id=role_id, permissions=request.permissions,
+            runtime_permissions=request.runtime_permissions,
         )
     except RolePermissionError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None

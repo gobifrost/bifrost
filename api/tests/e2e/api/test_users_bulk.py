@@ -378,3 +378,51 @@ class TestBulkValidation:
             },
         )
         assert resp.status_code == 422, resp.text
+
+
+@pytest.mark.e2e
+class TestBulkSetBaseRole:
+    def test_changes_base_preserves_additional_and_reports_protected_identity(
+        self, e2e_client, platform_admin, org1
+    ):
+        user_id = _create_user(e2e_client, platform_admin, org1["id"], "baseRole")
+        base_role = _create_role(e2e_client, platform_admin, "Base")
+        additional_role = _create_role(e2e_client, platform_admin, "Additional")
+        try:
+            assigned = e2e_client.post(
+                f"/api/roles/{additional_role}/users", headers=platform_admin.headers,
+                json={"user_ids": [user_id]},
+            )
+            assert assigned.status_code == 204, assigned.text
+            identities = e2e_client.get(
+                "/api/identities", headers=platform_admin.headers,
+                params={"organization_id": org1["id"]},
+            )
+            assert identities.status_code == 200, identities.text
+            identity_id = next(i["id"] for i in identities.json() if i["identity_kind"] == "org_default")
+            before = e2e_client.get(
+                f"/api/users/{user_id}/role-assignments", headers=platform_admin.headers,
+            ).json()
+            result = e2e_client.patch(
+                "/api/users/bulk", headers=platform_admin.headers,
+                json={"user_ids": [user_id, identity_id], "operation": "set_base_role", "base_role_id": base_role},
+            )
+            assert result.status_code == 200, result.text
+            assert result.json()["succeeded"] == [user_id]
+            assert result.json()["failed"] == [{"user_id": identity_id, "reason": "A default identity's base role is fixed"}]
+            after = e2e_client.get(
+                f"/api/users/{user_id}/role-assignments", headers=platform_admin.headers,
+            ).json()
+            assert after["base_role"]["id"] == base_role
+            assert after["additional"] == before["additional"]
+        finally:
+            e2e_client.delete(f"/api/users/{user_id}", headers=platform_admin.headers)
+            for role_id in (base_role, additional_role):
+                e2e_client.delete(f"/api/roles/{role_id}", headers=platform_admin.headers)
+
+    def test_base_role_is_required(self, e2e_client, platform_admin):
+        result = e2e_client.patch(
+            "/api/users/bulk", headers=platform_admin.headers,
+            json={"user_ids": [str(uuid.uuid4())], "operation": "set_base_role"},
+        )
+        assert result.status_code == 422

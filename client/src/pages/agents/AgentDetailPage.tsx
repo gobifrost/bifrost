@@ -154,6 +154,7 @@ export function AgentDetailPage() {
 	}
 
 	const hasChat = (agent?.channels ?? []).includes("chat");
+	const canUseChat = authorization.meets({ permission: "chat.execute", at: "home" });
 	const isActive = agent?.is_active ?? true;
 	const canBackfillAgent = agent
 		? authorization.canAt(
@@ -325,7 +326,7 @@ export function AgentDetailPage() {
 					</div>
 					{!isCreate && agent ? (
 						<div className="flex w-full flex-wrap items-center gap-2 sm:w-auto">
-							{hasChat ? (
+							{hasChat && canUseChat ? (
 								<TooltipProvider>
 									<Tooltip>
 										<TooltipTrigger asChild>

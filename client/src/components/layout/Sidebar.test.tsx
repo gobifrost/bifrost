@@ -274,6 +274,10 @@ describe("Sidebar structure", () => {
 			],
 			["settings.read", "repository.read"],
 		);
+		state.authorization.grants.push({
+			permission: "chat.execute",
+			boundary: { kind: "home", organization_id: state.authorization.home_organization_id },
+		});
 
 		renderWithProviders(
 			<Sidebar

@@ -3127,10 +3127,11 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  access  Show a user's access, or check what it would allow.
-  create  Create a custom identity in --org, or Global.
-  list    List the people you may read, or with --identities the identities.
-  roles   Show and replace a user's roles.
+  access    Show a user's access, or check what it would allow.
+  create    Create a custom identity in --org, or Global.
+  defaults  Read or set the base role assigned to new users and custom...
+  list      List the people you may read, or with --identities the...
+  roles     Show and replace a user's roles.
 ```
 
 ### `users access`
@@ -3200,18 +3201,65 @@ Usage: users create [OPTIONS]
 
   Create a custom identity in --org, or Global.
 
-  The identity starts with the User base role and no additional roles; give it
-  roles with `bifrost users roles set`, then point a workflow at it with
-  `bifrost workflows update --run-as`.
+  The identity starts with the configured default base role and no additional
+  roles. Use --base-role to select a different base role, then point a
+  workflow at it with `bifrost workflows update --run-as`.
 
   Example:
 
     bifrost users create --identity --org Contoso --name "Contoso Nightly"
 
 Options:
-  --identity   Create an identity (the only thing created here).  [required]
-  --org TEXT   Organization UUID or name, or 'global'.  [required]
-  --name TEXT  The identity's name.  [required]
+  --identity        Create an identity (the only thing created here).
+                    [required]
+  --org TEXT        Organization UUID or name, or 'global'.  [required]
+  --name TEXT       The identity's name.  [required]
+  --base-role TEXT  Explicit base role UUID or name; omit for the configured
+                    default.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `users defaults`
+
+```
+Usage: users defaults [OPTIONS] COMMAND [ARGS]...
+
+  Read or set the base role assigned to new users and custom identities.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  get  Show the configured and effective default base role.
+  set  Choose a default for new accounts; existing accounts are unchanged.
+```
+
+#### `users defaults get`
+
+```
+Usage: users defaults get [OPTIONS]
+
+  Show the configured and effective default base role.
+
+Options:
+  --org TEXT  Organization UUID or name; omit for the instance default.
+  --json      Emit JSON instead of human-readable output.
+  --help      Show this message and exit.
+```
+
+#### `users defaults set`
+
+```
+Usage: users defaults set [OPTIONS]
+
+  Choose a default for new accounts; existing accounts are unchanged.
+
+Options:
+  --org TEXT   Organization UUID or name; omit for the instance default.
+  --role TEXT  Default base role UUID or name.
+  --inherit    Clear an org override, or reset the instance default to User.
   --json       Emit JSON instead of human-readable output.
   --help       Show this message and exit.
 ```

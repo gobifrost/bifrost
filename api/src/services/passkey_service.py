@@ -528,7 +528,7 @@ class PasskeyService:
 
         # Create user as Platform admin (first user)
         # is_superuser=True with org_id = platform admin in that org
-        from shared.builtin_roles import USER_ROLE_ID
+        from shared.base_role_defaults import resolve_base_role
         from shared.sdk_users import set_platform_admin, set_user_base_role
 
         user = User(
@@ -540,7 +540,8 @@ class PasskeyService:
             webauthn_user_id=base64url_to_bytes(setup_data["webauthn_user_id"]),
             organization_id=PROVIDER_ORG_ID,
         )
-        await set_user_base_role(self.db, user, USER_ROLE_ID)
+        role = await resolve_base_role(self.db, organization_id=PROVIDER_ORG_ID)
+        await set_user_base_role(self.db, user, role.id)
         self.db.add(user)
         await self.db.flush()  # Get user.id
         await set_platform_admin(self.db, user, True, assigned_by="system")

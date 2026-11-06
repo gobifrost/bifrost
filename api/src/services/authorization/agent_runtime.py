@@ -102,3 +102,17 @@ async def authorize_agentless_ai(
     except PermissionDenied as exc:
         raise AgentRuntimeAuthorizationError(str(exc)) from exc
     return refreshed
+
+
+async def authorize_chat_execution(db: AsyncSession, caller: Caller) -> Caller:
+    """Recheck Chat access when a queued conversation turn starts executing."""
+    refreshed = await refresh_caller(db, caller)
+    if refreshed.ctx is None:
+        raise AgentRuntimeAuthorizationError("Chat caller is unavailable")
+    try:
+        require_named_permission(
+            refreshed, "chat.execute", refreshed.ctx.home_organization_id
+        )
+    except PermissionDenied as exc:
+        raise AgentRuntimeAuthorizationError(str(exc)) from exc
+    return refreshed

@@ -914,6 +914,9 @@ async def can_access_conversation_current(user: UserPrincipal, conversation_id: 
         return bool(
             caller is not None and caller.ctx is not None and conversation is not None
             and conversation.is_active and conversation.user_id == caller.ctx.user_id
+            and allows_permission(
+                caller, "chat.execute", caller.ctx.home_organization_id
+            )
         )
 
 

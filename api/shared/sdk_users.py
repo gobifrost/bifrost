@@ -385,6 +385,7 @@ async def create_user(
     is_superuser: bool = False,
     is_external: bool = False,
     organization_id: UUID | None = None,
+    base_role_id: UUID | None = None,
 ) -> UserPublic:
     """Create a user, its invite, and the audit row.
 
@@ -406,10 +407,15 @@ async def create_user(
         GLOBAL,
         cross_org,
         require_operation,
+        require_permission,
         require_unprotected,
     )
     from src.services.user_invite_service import UserInviteService
-    from shared.builtin_roles import USER_ROLE_ID
+    from shared.base_role_defaults import (
+        BaseRoleDefaultError,
+        base_role_is_privileged,
+        resolve_base_role,
+    )
 
     refuse_reserved_email(email)
     if is_superuser or organization_id is None:
@@ -423,6 +429,22 @@ async def create_user(
         access_checks.note_power("privilegedaccess.readwrite", organization_id, subject="user:new")
         if is_external:
             raise UserServiceError(409, "External users cannot hold privileged roles")
+
+    try:
+        resolved_base_role = await resolve_base_role(
+            session,
+            organization_id=organization_id,
+            explicit_base_role_id=base_role_id,
+        )
+    except BaseRoleDefaultError as exc:
+        raise UserServiceError(exc.status_code, exc.detail) from None
+    if await base_role_is_privileged(session, resolved_base_role.id):
+        if is_external:
+            raise UserServiceError(409, "External users cannot hold privileged roles")
+        access_checks.note_power(
+            "privilegedaccess.readwrite", organization_id, subject="user:new.base_role"
+        )
+        require_permission(caller, "privilegedaccess.readwrite", organization_id)
 
     now = datetime.now(timezone.utc)
 
@@ -442,7 +464,7 @@ async def create_user(
         created_at=now,
         updated_at=now,
     )
-    await set_user_base_role(session, new_user, USER_ROLE_ID)
+    await set_user_base_role(session, new_user, resolved_base_role.id)
 
     session.add(new_user)
     await session.flush()
@@ -798,6 +820,7 @@ _BULK_PERMISSIONS = {
     "move_org": "userlifecycle.readwrite",
     "replace_roles": "roleassignments.readwrite",
     "set_active": "users.readwrite",
+    "set_base_role": "userlifecycle.readwrite",
 }
 BUILTIN_ROLE_BULK_MESSAGE = "Built-in roles are assigned from the user's role assignments, not in bulk"
 
@@ -893,10 +916,10 @@ async def bulk_update_users(
             continue
         # Identities take roles like anyone (built-in base roles stay put below);
         # moving or deactivating one is not a person's lifecycle.
-        if u.identity_kind is not None and request.operation != "replace_roles":
+        if u.identity_kind is not None and request.operation not in {"replace_roles", "set_base_role"}:
             fail(uid, IDENTITY_MANAGEMENT_MESSAGE)
             continue
-        if request.operation in ("replace_roles", "set_active") and uid == actor_id:
+        if request.operation in ("replace_roles", "set_base_role", "set_active") and uid == actor_id:
             if request.operation == "set_active" and request.is_active is False:
                 from shared.account_guards import refuse_last_active_platform_admin_removal
 
@@ -907,7 +930,7 @@ async def bulk_update_users(
             fail(
                 uid,
                 "Cannot change your own roles via bulk action"
-                if request.operation == "replace_roles"
+                if request.operation in {"replace_roles", "set_base_role"}
                 else "Cannot change your own active state",
             )
             continue
@@ -928,7 +951,21 @@ async def bulk_update_users(
                 continue
             access_checks.note_power("privilegedaccess.readwrite", u.organization_id, subject=f"user:{uid}")
 
-        if request.operation == "move_org":
+        if request.operation == "set_base_role":
+            from fastapi import HTTPException
+            from src.services.user_role_assignments import set_base_role_assignment
+
+            assert request.base_role_id is not None
+            try:
+                await set_base_role_assignment(
+                    session, caller, user_id=uid, base_role_id=request.base_role_id
+                )
+            except (RoleAssignmentError, HTTPException) as exc:
+                fail(uid, str(exc.detail))
+                continue
+            succeeded.append(uid)
+
+        elif request.operation == "move_org":
             target = request.organization_id  # may be None (= Global)
             if not allows_operation(caller, operation, org_target(target), permission=permission):
                 fail(uid, denial_message(permission))

@@ -119,9 +119,22 @@ vi.mock("@/components/forms/RolesMultiSelect", () => ({
 	},
 }));
 
+vi.mock("@/components/users/BaseRoleSelect", () => ({
+	BaseRoleSelect: ({
+		onChange,
+	}: {
+		onChange: (value: string | null) => void;
+	}) => (
+		<button type="button" onClick={() => onChange("base-role-1")}>
+			Choose Support Base Role
+		</button>
+	),
+}));
+
 import {
 	BulkMoveOrgDialog,
 	BulkReplaceRolesDialog,
+	BulkSetBaseRoleDialog,
 	BulkSetActiveDialog,
 	BulkResultDialog,
 } from "./BulkUserDialogs";
@@ -430,6 +443,40 @@ describe("BulkReplaceRolesDialog", () => {
 		]);
 		expect(onSuccess).toHaveBeenCalledOnce();
 		expect(onOpenChange).toHaveBeenCalledWith(false);
+	});
+});
+
+describe("BulkSetBaseRoleDialog", () => {
+	it("sets a selected base role without replacing additional roles", async () => {
+		const onSuccess = vi.fn();
+		const { user } = renderWithProviders(
+			<BulkSetBaseRoleDialog
+				open
+				onOpenChange={vi.fn()}
+				users={[makeUser()]}
+				onPartialFailure={vi.fn()}
+				onSuccess={onSuccess}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("button", { name: "Set Base Role" }),
+		).toBeDisabled();
+		await user.click(
+			screen.getByRole("button", { name: "Choose Support Base Role" }),
+		);
+		await user.click(screen.getByRole("button", { name: "Set Base Role" }));
+
+		await waitFor(() =>
+			expect(mockBulkMutate).toHaveBeenCalledWith({
+				body: {
+					user_ids: ["u-1"],
+					operation: "set_base_role",
+					base_role_id: "base-role-1",
+				},
+			}),
+		);
+		expect(onSuccess).toHaveBeenCalledOnce();
 	});
 });
 

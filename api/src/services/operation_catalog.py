@@ -137,6 +137,36 @@ _CONFIG_MANIFEST_EXCLUSION = (
 
 OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
     OperationDefinition(
+        operation_id="users.defaults.get",
+        summary="Read the default base role for newly provisioned accounts",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(method="GET", path="/api/base-role-defaults", response_model="BaseRoleDefaultsResponse"),
+        cli=CliOperationBinding(path=("users", "defaults", "get")),
+        mcp=McpOperationBinding(name="bifrost_base_role_default_get"),
+        action_scopes=("roleassignments.read", "settings.read", "organizations.read",),
+        authorization_resolver="Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        exclusions={
+            "native_builder": "Account provisioning defaults are platform administration.",
+            "manifest": "Account defaults are deployment-local authorization state.",
+            "sdk": "Account provisioning defaults are platform administration.",
+        },
+    ),
+    OperationDefinition(
+        operation_id="users.defaults.update",
+        summary="Set the default base role for newly provisioned accounts",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(method="PUT", path="/api/base-role-defaults", response_model="BaseRoleDefaultsResponse", request_model="BaseRoleDefaultsUpdate"),
+        cli=CliOperationBinding(path=("users", "defaults", "set")),
+        mcp=McpOperationBinding(name="bifrost_base_role_default_update"),
+        action_scopes=("settings.readwrite", "organizations.readwrite", "userlifecycle.readwrite",),
+        authorization_resolver="Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        exclusions={
+            "native_builder": "Account provisioning defaults are platform administration.",
+            "manifest": "Account defaults are deployment-local authorization state.",
+            "sdk": "Account provisioning defaults are platform administration.",
+        },
+    ),
+    OperationDefinition(
         operation_id="productupdates.get",
         summary="Get this build's Product Updates feed",
         target_kind=OperationTargetKind.PLATFORM,

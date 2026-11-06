@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { Building2, Power, PowerOff, Shield, X } from "lucide-react";
+import { Building2, KeyRound, Power, PowerOff, Shield, X } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -93,10 +93,12 @@ export interface UserBulkActionBarProps {
 	 * each user, and reports per-user failures). */
 	canMoveOrg: boolean;
 	canReplaceRoles: boolean;
+	canSetBaseRole: boolean;
 	canSetActive: boolean;
 	onClear: () => void;
 	onMoveOrg: () => void;
 	onReplaceRoles: () => void;
+	onSetBaseRole: () => void;
 	onDisable: () => void;
 	onEnable: () => void;
 }
@@ -114,10 +116,12 @@ export function UserBulkActionBar({
 	activeMix,
 	canMoveOrg,
 	canReplaceRoles,
+	canSetBaseRole,
 	canSetActive,
 	onClear,
 	onMoveOrg,
 	onReplaceRoles,
+	onSetBaseRole,
 	onDisable,
 	onEnable,
 }: UserBulkActionBarProps) {
@@ -138,6 +142,11 @@ export function UserBulkActionBar({
 			{canReplaceRoles && (
 				<BulkActionButton icon={Shield} onClick={onReplaceRoles}>
 					Replace Roles
+				</BulkActionButton>
+			)}
+			{canSetBaseRole && (
+				<BulkActionButton icon={KeyRound} onClick={onSetBaseRole}>
+					Set Base Role
 				</BulkActionButton>
 			)}
 			{showDisable && (

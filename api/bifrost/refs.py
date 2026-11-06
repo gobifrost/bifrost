@@ -108,7 +108,7 @@ async def _resolve_org(client: Any, value: str) -> tuple[str, list[dict[str, Any
 
 
 async def _resolve_role(client: Any, value: str) -> tuple[str, list[dict[str, Any]]]:
-    items = await _get_json(client, "/api/roles")
+    items = await _get_json(client, "/api/roles", params={"include_builtin": True})
     matches = [r for r in items if r.get("name") == value]
     candidates = [_candidate(r["name"], str(r["id"]), None) for r in matches]
     if len(matches) == 1:

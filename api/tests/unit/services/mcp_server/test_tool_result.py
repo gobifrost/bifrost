@@ -55,6 +55,12 @@ class TestDirectResult:
 
 
 class TestErrorResult:
+    def test_error_flag_survives_protocol_conversion(self):
+        result = error_result("Access denied", {"status": 403})
+
+        assert result.is_error is True
+        assert result.to_call_tool_result().is_error is True
+
     def test_creates_error_result(self):
         result = error_result("Something went wrong")
         assert isinstance(result, ToolResult)

@@ -1,6 +1,7 @@
 """Focused policy tests for Agent and AgentRun authorization."""
 
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest
@@ -16,6 +17,35 @@ from src.services.authorization.context import (
     RoleGrant,
 )
 from src.services.authorization.enforce import Caller
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("grant", ["home", "foreign", "revoked"])
+async def test_chat_execution_uses_current_home_organization_grant(grant):
+    from src.services.authorization.agent_runtime import (
+        AgentRuntimeAuthorizationError,
+        authorize_chat_execution,
+    )
+
+    home = uuid4()
+    stale = _caller(
+        original_user_id=uuid4(), home=home,
+        permissions=frozenset({"chat.execute"}), boundary=home,
+    )
+    refreshed = _caller(
+        original_user_id=stale.ctx.user_id, home=home,
+        permissions=frozenset({"chat.execute"}) if grant != "revoked" else frozenset(),
+        boundary=home if grant == "home" else uuid4(),
+    )
+    with patch(
+        "src.services.authorization.agent_runtime.refresh_caller",
+        new=AsyncMock(return_value=refreshed),
+    ):
+        if grant == "home":
+            assert await authorize_chat_execution(None, stale) is refreshed
+        else:
+            with pytest.raises(AgentRuntimeAuthorizationError):
+                await authorize_chat_execution(None, stale)
 
 
 def _caller(

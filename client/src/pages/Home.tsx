@@ -1,6 +1,6 @@
 import { useCollectionOrder } from "@/hooks/useCollectionOrder";
 import { isVisibleCollection } from "@/services/home";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { Link, useNavigate, useSearchParams } from "react-router-dom";
 import { useQueryClient } from "@tanstack/react-query";
 import { MessageSquare, Search } from "lucide-react";
@@ -34,7 +34,8 @@ const NO_RESOURCES: HomeResource[] = [];
 
 /** Home launches work using existing resource grants. Collections organize; they never authorize. */
 export function Home() {
-	const { canAnywhere } = useAuthorization();
+	const { canAnywhere, meets } = useAuthorization();
+	const canUseChat = meets({ permission: "chat.execute", at: "home" });
 	const navigate = useNavigate();
 	const [params, setParams] = useSearchParams();
 	const queryClient = useQueryClient();
@@ -61,7 +62,10 @@ export function Home() {
 		"/api/home/collections/{collection_id}",
 	);
 	const busy = create.isPending || update.isPending || remove.isPending;
-	const resources = home.data?.resources ?? NO_RESOURCES;
+	const resources = useMemo(
+		() => (home.data?.resources ?? NO_RESOURCES).filter((resource) => resource.kind !== "agent" || canUseChat),
+		[home.data?.resources, canUseChat],
+	);
 	const { collections, reorder } = useCollectionOrder(
 		(home.data?.collections ?? []).filter(isVisibleCollection),
 	);
@@ -160,6 +164,7 @@ export function Home() {
 	const visible = filtered.slice(page * 12, (page + 1) * 12);
 	const openResource = async (resource: HomeResource) => {
 		if (opening) return;
+		if (resource.kind === "agent" && !canUseChat) return;
 		setOpening(true);
 		try {
 			let href = resource.href;
@@ -260,14 +265,16 @@ export function Home() {
 					actionsClassName="flex-nowrap"
 					description="Apps, forms and agents, together."
 					actions={
-						<Button asChild>
-							<Link to="/chat" aria-label="New chat">
-								<MessageSquare className="size-4" />
-								<span className="hidden sm:inline">
-									New chat
-								</span>
-							</Link>
-						</Button>
+						canUseChat ? (
+							<Button asChild>
+								<Link to="/chat" aria-label="New chat">
+									<MessageSquare className="size-4" />
+									<span className="hidden sm:inline">
+										New chat
+									</span>
+								</Link>
+							</Button>
+						) : undefined
 					}
 				/>
 				<div className="flex flex-col gap-3">
