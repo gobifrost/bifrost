@@ -1956,6 +1956,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
     "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),
     "src.jobs.schedulers.deferred_execution_promoter._pending_record": (2, "actor_facts"),
+    "src.repositories.oauth.OAuthTokenRepository.get_exact_org_level_for_provider": (1, "internal_authorized_resource"),
     "src.repositories.oauth.OAuthTokenRepository.get_org_level_for_provider": (1, "internal_authorized_resource"),
     "src.repositories.org_scoped.OrgScopedRepository._authenticated_tier_grants": (1, "internal_authorized_resource"),
     "src.repositories.users.UserRepository.has_any_users": (1, "internal_authorized_resource"),

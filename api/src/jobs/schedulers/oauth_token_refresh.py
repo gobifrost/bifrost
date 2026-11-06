@@ -159,7 +159,7 @@ async def run_refresh_job(
                     db=db,
                     provider=provider,
                     token=token,
-                    org_id=None,  # scheduler refreshes globally; no org context
+                    org_id=token.organization_id,
                 )
                 token_refresh_data.append(td)
 
