@@ -1,0 +1,15 @@
+{
+  "key": "pr:1262",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal object-storage adapter and consumer refactor with compatibility coverage; S3 remains the shipped backend and requires no installation change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1262",
+      "Contributor editorial disposition under Thomas Bray's scoped landing instruction; this is not maintainer approval or a waiver of required code/security review.",
+      "The S3-only review tip passed 738 focused backend tests, API quality and a stricter storage type diagnostic; generated client types matched the served API, client typing/lint and 19 tests passed, and the production browser file-access journey passed.",
+      "No customer-facing backend selection, deployment, storage cutover or required upgrade action is introduced. Sensitive move, Git concurrency, source-import and signed-request paths remain subject to manual maintainer review."
+    ]
+  }
+}
