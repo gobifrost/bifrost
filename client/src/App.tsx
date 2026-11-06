@@ -107,6 +107,9 @@ const FormBuilder = lazyWithReload(() =>
 const Workflows = lazyWithReload(() =>
 	import("@/pages/Workflows").then((m) => ({ default: m.Workflows })),
 );
+const WorkflowConversion = lazyWithReload(() =>
+	import("@/pages/WorkflowConversion").then((m) => ({ default: m.WorkflowConversion })),
+);
 const ServiceDetail = lazyWithReload(() =>
 	import("@/pages/ServiceDetail").then((m) => ({
 		default: m.ServiceDetail,
@@ -434,6 +437,16 @@ const routeElements = (
 						}}
 					>
 						<Workflows />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="workflows/convert"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "workflows.readwrite" }}
+					>
+						<WorkflowConversion />
 					</ProtectedRoute>
 				}
 			/>

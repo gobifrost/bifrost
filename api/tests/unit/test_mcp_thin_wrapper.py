@@ -60,10 +60,17 @@ from src.services.mcp_server.tools import (  # noqa: E402
     roles as roles_mod,
     tables as tables_mod,
     workflow as workflow_mod,
+    workflow_conversion as workflow_conversion_mod,
 )
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
+    "workflow_conversion": {
+        "bifrost_workflow_conversion_create",
+        "bifrost_workflow_conversion_get",
+        "bifrost_workflow_conversion_update",
+        "bifrost_workflow_permission_default_update",
+    },
     "code_editor": {"bifrost_file_search"},
     "agents": {
         "bifrost_agent_list",
@@ -181,6 +188,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "workflow_conversion": workflow_conversion_mod,
     "agents": agents_mod,
     "code_editor": code_editor_mod,
     "roles": roles_mod,

@@ -1121,6 +1121,62 @@ async def test_hard_memory_pressure_stops_child_and_requeues_attempt(
     assert job.lease_token is None
 
 
+@pytest.mark.asyncio
+async def test_missing_heartbeat_republishes_durable_terminal_state_after_lease_clears(
+    db_session: AsyncSession,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    job = await _queued_job(db_session)
+    claim = await scheduler.claim_platform_job(fits_bytes=AMPLE)
+    assert claim is not None
+
+    # Model a runner that durably commits completion and clears its fence just
+    # before its own publication is interrupted.
+    job.status = "succeeded"
+    job.phase = "Completed"
+    job.result = {"completed": 1}
+    job.completed_at = datetime.now(timezone.utc)
+    job.lease_owner = None
+    job.lease_token = None
+    job.heartbeat_at = None
+    job.lease_expires_at = None
+    job.revision += 1
+    await db_session.commit()
+
+    class NeverExits:
+        pid = 999999
+        returncode = None
+
+        async def wait(self):
+            await asyncio.Future()
+
+    publish = AsyncMock()
+    monkeypatch.setattr(
+        scheduler.asyncio,
+        "create_subprocess_exec",
+        AsyncMock(return_value=NeverExits()),
+    )
+    # The runner may already have disconnected after durably clearing its
+    # lease. Publication must still repair the missed notification.
+    monkeypatch.setattr(
+        scheduler,
+        "_terminate_runner",
+        AsyncMock(side_effect=ConnectionError("Launcher disconnected")),
+    )
+    monkeypatch.setattr(scheduler, "_heartbeat", AsyncMock(return_value=None))
+    monkeypatch.setattr(scheduler, "publish_platform_job_update", publish)
+    monkeypatch.setattr(scheduler, "HEARTBEAT_INTERVAL_SECONDS", 0.001)
+
+    assert await scheduler.run_claimed_platform_job(claim)
+    publish.assert_awaited_once()
+    published = publish.await_args.args[0]
+    assert published.id == claim.id
+    assert published.status == "succeeded"
+    assert published.result == {"completed": 1}
+    assert published.revision == job.revision
+    assert published.lease_token is None
+
+
 @pytest.mark.parametrize("job_type", sorted(APP_BUILD_JOB_TYPES))
 @pytest.mark.parametrize("out_of_memory", [False, True])
 async def test_build_memory_failure_keeps_actionable_durable_error(

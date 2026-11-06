@@ -433,6 +433,14 @@ async def _heartbeat(
         return job.status
 
 
+async def _republish_current_platform_job(job_id: UUID) -> None:
+    """Re-emit durable state after a runner releases its fenced lease."""
+    async with get_db_context() as db:
+        job = await db.get(PlatformJob, job_id)
+    if job is not None:
+        await publish_platform_job_update(job)
+
+
 async def _terminate_runner(process: asyncio.subprocess.Process) -> None:
     if process.returncode is not None:
         return
@@ -593,7 +601,17 @@ async def run_claimed_platform_job(
                     memory_sample,
                 )
             if status is None:
-                await process.terminate()
+                try:
+                    await process.terminate()
+                except ConnectionError:
+                    # Losing the runner transport is expected once another
+                    # scheduler has fenced this lease. The durable row is the
+                    # authority, so still repair its missed notification.
+                    logger.info(
+                        "Platform-job runner disconnected after lease release",
+                        extra={"job_id": str(claim.id)},
+                    )
+                await _republish_current_platform_job(claim.id)
                 return True
             if status == "cancel_requested":
                 await process.terminate()

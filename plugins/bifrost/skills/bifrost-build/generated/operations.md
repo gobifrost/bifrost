@@ -34,6 +34,10 @@ caller's own items.
 | `apps.validate` | `bifrost apps validate` | `bifrost_app_validate` | `apps.readbasic` |
 | `apps.publish` | `bifrost apps publish` | `bifrost_app_publish` | `apps.publish` |
 | `platform.jobs.get` | `bifrost platform-jobs get` | `bifrost_platform_job_get` | `platformjobs.read.all` (only for other people's items) |
+| `workflows.conversions.create` | `bifrost workflows convert analyze` | `bifrost_workflow_conversion_create` | `settings.read` |
+| `workflows.conversions.get` | `bifrost workflows convert report` | `bifrost_workflow_conversion_get` | `settings.read` |
+| `workflows.conversions.update` | `bifrost workflows convert apply` | `bifrost_workflow_conversion_update` | `settings.readwrite` |
+| `workflows.permission_default.update` | `bifrost workflows convert cutover` | `bifrost_workflow_permission_default_update` | `settings.readwrite` |
 | `apps.replace` | `bifrost apps replace` | `bifrost_app_replace` | `apps.readwrite` |
 | `solutions.list` | — | `bifrost_solution_list` | `solutions.read` |
 | `solutions.get` | — | `bifrost_solution_get` | `solutions.read` |

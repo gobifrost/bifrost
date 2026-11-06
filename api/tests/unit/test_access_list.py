@@ -1978,6 +1978,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.routers.tables.create_table": (1, "internal_authorized_resource"),
     "src.routers.tables.update_table": (1, "internal_authorized_resource"),
     "src.routers.tables.validate_policies": (1, "internal_authorized_resource"),
+    # Conversion deliberately adds a current Platform Admin restriction to
+    # its named operation gate, both at enqueue and in the durable runner.
+    "src.routers.workflow_conversions._admin_caller": (1, "route"),
+    "shared.workflow_conversions._require_current_conversion_admin": (1, "route"),
     "src.routers.users.create_user": (2, "actor_facts"),
     "src.routers.users.get_user_forms": (2, "internal_authorized_resource"),
     "src.routers.users.update_user": (2, "actor_facts"),
@@ -2151,6 +2155,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1, "Reads the Redis source stream before staging durable log rows.",
     ),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
+    "shared.runtime_modules.read_runtime_modules": (
+        1,
+        "Worker-reported installed import roots for permission-scan diagnostics; never grants access or loads code.",
+    ),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
     "src.core.cache.keys.config_hash_key_versioned": (

@@ -13,7 +13,7 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
 
     metadata = list_platform_job_metadata()
 
-    assert len(metadata) == 23
+    assert len(metadata) == 26
     assert {item.job_type for item in metadata} == {
         "agent.summary_backfill",
         "application.deploy",
@@ -34,6 +34,9 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
         "solution.update_check",
         "chat.video_generation",
         "webhook.renew",
+        "workflow.permissions.analyze",
+        "workflow.permissions.apply",
+        "workflow.permissions.cutover",
         "workspace.bundle_import",
         "workspace.file_index_reconcile",
         "workspace.git",

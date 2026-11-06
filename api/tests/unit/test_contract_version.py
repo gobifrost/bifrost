@@ -410,7 +410,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
     # App consent models and the Global org_id scope marker are additive.
     # Existing CLI shapes and minimum version remain unchanged (2026-11-04).
-    "75afc691e5a280c496031031fd17f6bb2dbc9945c0cd31d400875dd9f56bf61b"
+    # Workflow conversion commands and their report DTOs are additive; existing
+    # CLI contracts remain compatible (2026-11-05).
+    "6132cb8847c6a0e81a44db348f4b5fb4eab6b22afead9dff4c13e73459eedd96"
 )
 
 

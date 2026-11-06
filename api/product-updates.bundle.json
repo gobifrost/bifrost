@@ -1,6 +1,137 @@
 {
-  "content_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1",
+  "content_ref": "10a642e24033df267f6df695e590272c1090aabc",
   "entries": [
+    {
+      "action_required": true,
+      "area": "Platform",
+      "assets": [],
+      "contributors": [],
+      "id": "c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4",
+      "in_app": true,
+      "markdown": "\nZero Trust Automation checks each run against the run user's current roles and organization reach. Full Access adds every permission within that reach; Declared Permissions adds only the workflow's configured permissions. A run identity records who acts, while agents and inline scripts add no workflow powers. Before upgrading, drain queued and active runs and update the API and workers together. Review runs refused for a missing run user or acting user before restarting them under a valid identity. Reapprove affected Solution permission requests.\n\n[Open Access Checks](/audit/access-checks)",
+      "published_at": "2026-10-17T09:58:24.247441Z",
+      "revision": 4,
+      "sources": [
+        {
+          "pr": 996,
+          "role": "implementation"
+        },
+        {
+          "pr": 998,
+          "role": "implementation"
+        }
+      ],
+      "title": "Zero Trust Automation Checks Roles and Reach",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Administration",
+      "assets": [],
+      "contributors": [],
+      "id": "fc05e97f-84df-4355-a3c3-81314fee7db5",
+      "in_app": true,
+      "markdown": "\nChanging privileged role permissions requires Read and Write Privileged Access. Administrators can read and dismiss admin notifications while personal notifications stay with their owner.\n\n[Open Roles](/roles)",
+      "published_at": "2026-10-17T04:23:59.833393Z",
+      "revision": 1,
+      "sources": [
+        {
+          "pr": 995,
+          "role": "implementation"
+        }
+      ],
+      "title": "Scope Role Edits and Notification Access",
+      "type": "Security"
+    },
+    {
+      "action_required": false,
+      "area": "Administration",
+      "assets": [
+        {
+          "alt": "Auditing with grouped checks and a compact record selector.",
+          "path": "assets/ac0cc537-02ca-4357-849f-3e8ece879782/access-checks.png",
+          "url": "/product-updates/assets/ac0cc537-02ca-4357-849f-3e8ece879782/e090e4f32adbe5fbebda1365303575f8e80f5c824ac67add8348411a47823a6d-access-checks.png"
+        }
+      ],
+      "contributors": [],
+      "id": "ac0cc537-02ca-4357-849f-3e8ece879782",
+      "in_app": true,
+      "markdown": "\nSwitch between Activity and Access Checks on the Auditing page. Group checks by time, then open a summary to inspect individual records and compare Then with Now. New installs retain audits for one year, including 30 days in the database.\n\n[Open Access Checks](/audit/access-checks)\n\n![Auditing with grouped checks and a compact record selector.](assets/ac0cc537-02ca-4357-849f-3e8ece879782/access-checks.png)",
+      "published_at": "2026-10-17T04:04:15Z",
+      "revision": 2,
+      "sources": [
+        {
+          "pr": 994,
+          "role": "implementation"
+        }
+      ],
+      "title": "Review Access Checks in One Place",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Agents",
+      "assets": [],
+      "contributors": [],
+      "id": "de613145-5d41-4f02-87dc-6e5c0fdee054",
+      "in_app": true,
+      "markdown": "\nAgents can now run as another user from the SDK with `run_as`, like workflows. Both need Impersonate Users in that user's organization instead of Platform Admin, and Platform Admins keep it. Run As shows on the agent run, and Access Checks records each impersonation.\n\n[Open Roles](/roles) \u00b7 [Open Access Checks](/audit/access-checks)",
+      "published_at": "2026-10-10T08:09:56Z",
+      "revision": 1,
+      "sources": [
+        {
+          "pr": 968,
+          "role": "implementation"
+        }
+      ],
+      "title": "Run Agents as Another User",
+      "type": "New"
+    },
+    {
+      "action_required": false,
+      "area": "Administration",
+      "assets": [],
+      "contributors": [],
+      "id": "a9042643-be28-46ff-9e58-2c6b9e5eb02a",
+      "in_app": true,
+      "markdown": "\nEvery admin-only power now has a named permission. Access Checks records, report-only, when someone uses one their roles don't grant. New: Run Agents, Use AI, Read AI Model Information, Impersonate Users, Read and Write Privileged Access, Read Basic views. Four are renamed. Nobody's access changes.\n\n[Open Access Checks](/audit/access-checks) \u00b7 [Open Roles](/roles)",
+      "published_at": "2026-10-09T19:51:09Z",
+      "revision": 1,
+      "sources": [
+        {
+          "pr": 967,
+          "role": "implementation"
+        }
+      ],
+      "title": "Named Permissions in Access Checks",
+      "type": "Improved"
+    },
+    {
+      "action_required": false,
+      "area": "Administration",
+      "assets": [
+        {
+          "alt": "A workflow's Access tab with Recommended Access",
+          "caption": "Recommended Access lists what the workflow's identity would also need, from its recorded runs.",
+          "path": "assets/293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8/recommended-access.png",
+          "url": "/product-updates/assets/293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8/81cbf3aeb3ef7d43ce0997add0fb7e284bc7b65f736e97e3f2b1f8f47619991b-recommended-access.png"
+        }
+      ],
+      "contributors": [],
+      "id": "293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8",
+      "in_app": true,
+      "markdown": "\nChoose the identity a workflow runs as when no one starts it, and grant it what its past runs needed. Test what anyone could do, and review checks that would be denied. Nothing is enforced yet.\n\n[Open Identities](/users/identities) \u00b7 [Open Access Checks](/audit/access-checks)\n\n![A workflow's Access tab with Recommended Access](assets/293d312e-a4b4-42b0-a7ee-85b4e8ab4ad8/recommended-access.png)",
+      "published_at": "2026-10-07T16:28:32Z",
+      "revision": 1,
+      "sources": [
+        {
+          "pr": 942,
+          "role": "implementation"
+        }
+      ],
+      "title": "Manage the Identities Workflows Run As",
+      "type": "New"
+    },
     {
       "action_required": false,
       "area": "Platform",
@@ -673,6 +804,61 @@
     {
       "category": "fix",
       "contributors": [],
+      "source": "pr:987",
+      "title": "Chat shows current context usage and cached input beside the model selector.",
+      "url": "https://github.com/gobifrost/bifrost/pull/987"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:971",
+      "title": "CLI browser login keeps waiting through temporary throttling and stops when its device code expires.",
+      "url": "https://github.com/gobifrost/bifrost/pull/971"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:972",
+      "title": "CLI workflow execution exits correctly when a run finishes before log streaming connects.",
+      "url": "https://github.com/gobifrost/bifrost/pull/972"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:989",
+      "title": "Dashboard charts keep working after opening and closing the code editor.",
+      "url": "https://github.com/gobifrost/bifrost/pull/989"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:957",
+      "title": "Deleted integration names can be reused as clean new connections without reviving their previous settings.",
+      "url": "https://github.com/gobifrost/bifrost/pull/957"
+    },
+    {
+      "category": "fix",
+      "contributors": [
+        {
+          "login": "pszatkowski",
+          "profile_url": "https://github.com/pszatkowski",
+          "source_pr": 974
+        }
+      ],
+      "source": "pr:974",
+      "title": "Deleting an integration now stops its OAuth token refreshes and the repeated refresh-failed alerts.",
+      "url": "https://github.com/gobifrost/bifrost/pull/974"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:991",
+      "title": "Event source events scroll on desktop, and the webhook URL is a compact copy button.",
+      "url": "https://github.com/gobifrost/bifrost/pull/991"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
       "source": "pr:866",
       "title": "Find global Solutions when working inside an organization.",
       "url": "https://github.com/gobifrost/bifrost/pull/866"
@@ -683,6 +869,26 @@
       "source": "pr:795",
       "title": "Include the latest README in Solution exports.",
       "url": "https://github.com/gobifrost/bifrost/pull/795"
+    },
+    {
+      "category": "fix",
+      "contributors": [
+        {
+          "login": "mlspivey",
+          "profile_url": "https://github.com/mlspivey",
+          "source_pr": 964
+        }
+      ],
+      "source": "pr:964",
+      "title": "Inline apps no longer lose table data or saves when the sign-in session lapses; they renew the session and retry.",
+      "url": "https://github.com/gobifrost/bifrost/pull/964"
+    },
+    {
+      "category": "hardening",
+      "contributors": [],
+      "source": "pr:992",
+      "title": "Keep an active human Platform Admin and prevent external accounts from holding privileged roles. Deleting a user cancels their unstarted workflow runs.",
+      "url": "https://github.com/gobifrost/bifrost/pull/992"
     },
     {
       "category": "fix",
@@ -710,6 +916,26 @@
       "source": "pr:818",
       "title": "Let embedded apps view the workflow runs they started.",
       "url": "https://github.com/gobifrost/bifrost/pull/818"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:993",
+      "title": "Local Solution previews use the signed-in user's permissions to access sealed install data. Unresolved table queries report an error instead of appearing empty.",
+      "url": "https://github.com/gobifrost/bifrost/pull/993"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:975",
+      "title": "MCP OAuth setup creates independent providers, and a migration removes credentials left behind by deleted integrations. API clients must use inline OAuth configuration instead of an existing provider ID; installations with shared MCP credentials must reconnect before upgrading.",
+      "url": "https://github.com/gobifrost/bifrost/pull/975"
+    },
+    {
+      "contributors": [],
+      "source": "pr:990",
+      "title": "Open the Bifrost YouTube channel from the header Help menu.",
+      "url": "https://github.com/gobifrost/bifrost/pull/990"
     },
     {
       "category": "hardening",
@@ -763,11 +989,60 @@
     {
       "category": "fix",
       "contributors": [],
+      "source": "pr:947",
+      "title": "Solution CLI prebuilds now retain the SDK provenance used to compile V2 Apps.",
+      "url": "https://github.com/gobifrost/bifrost/pull/947"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:984",
+      "title": "Solution deployments refresh source caches faster and report publication progress.",
+      "url": "https://github.com/gobifrost/bifrost/pull/984"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:983",
+      "title": "Solution deployments spend less time refreshing source caches.",
+      "url": "https://github.com/gobifrost/bifrost/pull/983"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:950",
+      "title": "Solution deploys and Git updates use isolated build capacity when it is enabled.",
+      "url": "https://github.com/gobifrost/bifrost/pull/950"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:959",
+      "title": "Solution details now show the same managed-entity counts as the Solution list.",
+      "url": "https://github.com/gobifrost/bifrost/pull/959"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:955",
+      "title": "Solution workflows can batch-write their global tables while preserving the executing organization.",
+      "url": "https://github.com/gobifrost/bifrost/pull/955"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
       "source": "pr:886",
       "title": "Stop app builds when they are cancelled.",
       "url": "https://github.com/gobifrost/bifrost/pull/886"
+    },
+    {
+      "category": "fix",
+      "contributors": [],
+      "source": "pr:945",
+      "title": "Webhook subscribers can verify provider signatures using the original request bytes, including queued deliveries and retries.",
+      "url": "https://github.com/gobifrost/bifrost/pull/945"
     }
   ],
   "schema_version": 1,
-  "target_ref": "e8295e7bf386d8d2223a639f70ab9c2f2dc2c5b1"
+  "target_ref": "10a642e24033df267f6df695e590272c1090aabc"
 }

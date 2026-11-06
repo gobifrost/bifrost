@@ -197,7 +197,10 @@ def _permission_step(
     run_user: RunUser, powers: Powers, target: UUID | None, entry: AccessEntry | None
 ) -> Step:
     if powers.mode is WorkflowPermissionMode.FULL:
-        return Step("permission", CANONICAL_TRACE_STEP_LABELS["permission"], "passed", "full")
+        return Step(
+            "permission", CANONICAL_TRACE_STEP_LABELS["permission"], "passed", "full",
+            {} if entry is None else {"permission": entry.permission},
+        )
     if entry is None:
         return Step(
             "permission",
