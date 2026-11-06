@@ -1594,7 +1594,16 @@ def _run_local_vite_build(
     base: str,
 ) -> None:
     """Install dependencies and compile one app with the local Node toolchain."""
+    from bifrost.app_lockfile import ReproducibleDependencyBuildError, refresh_sdk_lockfile
+
+    locked = (workdir / "package-lock.json").exists()
+    if locked:
+        try:
+            refresh_sdk_lockfile(workdir, npm=npm, timeout=_LOCAL_BUILD_STEP_TIMEOUT_SECONDS, env=dict(os.environ))
+        except ReproducibleDependencyBuildError as exc:
+            raise click.ClickException(str(exc)) from exc
     subprocess.run(  # noqa: S603 - executable resolved by shutil.which
+        [npm, "ci", "--no-audit", "--no-fund"] if locked else
         [npm, "install", "--no-audit", "--no-fund", "--package-lock=false"],
         cwd=str(workdir),
         check=True,
@@ -1602,8 +1611,11 @@ def _run_local_vite_build(
         text=True,
         timeout=_LOCAL_BUILD_STEP_TIMEOUT_SECONDS,
     )
+    vite = workdir / "node_modules" / ".bin" / ("vite.cmd" if os.name == "nt" else "vite")
+    if locked and not vite.is_file():
+        raise click.ClickException("Locked builds require Vite in package-lock.json; add Vite to the app dependencies and update the lockfile.")
     subprocess.run(  # noqa: S603 - executable resolved by shutil.which
-        [npx, "vite", "build", "--base", base],
+        ([str(vite)] if locked else [npx, "vite"]) + ["build", "--base", base],
         cwd=str(workdir),
         check=True,
         capture_output=True,
@@ -1656,7 +1668,7 @@ async def _lookup_local_builds(client, apps: list[dict], install_id: str) -> tup
     response = await client.get("/api/sdk/download")
     response.raise_for_status()
     sdk = response.content
-    recipe = await asyncio.to_thread(build_recipe, sdk, variant="cli-install-v1", environment=dict(os.environ))
+    recipe = await asyncio.to_thread(build_recipe, sdk, variant="cli-install-v2", environment=dict(os.environ))
     candidates = [{
         "app_id": str(app["id"]),
         "fingerprint": build_identity(

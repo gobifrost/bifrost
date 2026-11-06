@@ -15,7 +15,7 @@ INSTALL_ID = UUID("33333333-3333-3333-3333-333333333333")
 APP_ID = "11111111-1111-1111-1111-111111111111"
 
 
-def test_local_prebuild_ignores_stale_package_lock(tmp_path: Path, monkeypatch) -> None:
+def test_local_prebuild_without_lock_uses_install(tmp_path: Path, monkeypatch) -> None:
     calls: list[list[str]] = []
 
     def fake_run(argv, **kwargs):
@@ -212,3 +212,48 @@ async def test_cli_lookup_uses_install_scoped_input_digest(monkeypatch):
             return httpx.Response(200, json={"matches": {}}, request=httpx.Request("POST", "https://test/lookup"))
 
     assert await solution_command._lookup_local_builds(Client(), [app], str(INSTALL_ID)) == (b"sdk-snapshot", RECIPE, {})
+
+
+def test_local_locked_build_uses_ci_and_installed_vite(tmp_path: Path, monkeypatch) -> None:
+    import bifrost.app_lockfile as lockfile
+
+    (tmp_path / "package-lock.json").write_text("{}")
+    calls = []
+    monkeypatch.setattr(lockfile, "refresh_sdk_lockfile", lambda *args, **kwargs: calls.append("refresh"))
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[1] == "ci":
+            vite = tmp_path / "node_modules/.bin/vite"
+            vite.parent.mkdir(parents=True)
+            vite.write_text("vite")
+
+    monkeypatch.setattr(solution_command.subprocess, "run", run)
+    solution_command._run_local_vite_build(tmp_path, npm="npm", npx="npx", base="/app/")
+    assert calls == ["refresh", ["npm", "ci", "--no-audit", "--no-fund"],
+                     [str(tmp_path / "node_modules/.bin/vite"), "build", "--base", "/app/"]]
+
+
+def test_local_locked_build_rejects_invalid_lock(tmp_path: Path) -> None:
+    import click
+    import pytest
+
+    (tmp_path / "package-lock.json").write_text("invalid")
+    with pytest.raises(click.ClickException, match="valid package-lock.json"):
+        solution_command._run_local_vite_build(tmp_path, npm="npm", npx="npx", base="/")
+
+
+def test_local_locked_build_uses_windows_vite_shim(tmp_path: Path, monkeypatch) -> None:
+    import bifrost.app_lockfile as lockfile
+
+    (tmp_path / "package-lock.json").write_text("{}")
+    vite = tmp_path / "node_modules/.bin/vite.cmd"
+    vite.parent.mkdir(parents=True)
+    vite.write_text("vite")
+    calls = []
+    monkeypatch.setattr(lockfile, "refresh_sdk_lockfile", lambda *args, **kwargs: None)
+    monkeypatch.setattr(solution_command.subprocess, "run", lambda argv, **kwargs: calls.append(argv))
+    with monkeypatch.context() as context:
+        context.setattr(solution_command.os, "name", "nt")
+        solution_command._run_local_vite_build(tmp_path, npm="npm", npx="npx", base="/")
+    assert calls[-1] == [str(vite), "build", "--base", "/"]

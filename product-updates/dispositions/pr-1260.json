@@ -1,0 +1,14 @@
+{
+  "key": "pr:1260",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Solution app builds now honor shipped dependency lockfiles while updating Bifrost\u2019s SDK. Incompatible lockfiles fail clearly; apps without lockfiles keep existing behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1260",
+      "Jack approved this exact summary for the PR and product update with native \u201cSend it\u201d in the issue #1246 owner conversation. Focused CLI/server and SDK safeguard tests, real automatic SDK rebuild, and API quality passed."
+    ]
+  }
+}
