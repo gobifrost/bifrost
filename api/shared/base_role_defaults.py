@@ -78,14 +78,12 @@ async def get_default_base_role(
     session: AsyncSession, *, organization_id: UUID | None
 ) -> tuple[UUID | None, ResolvedBaseRole]:
     """Return the scope's stored value and the role a new account receives."""
-    if organization_id is None:
-        stored_id = await _global_default_role_id(session)
-    else:
-        organization = await _require_organization(session, organization_id)
-        stored_id = _organization_default_role_id(organization.settings)
     effective = await resolve_base_role(session, organization_id=organization_id)
     # The global response is always concrete, including the built-in fallback.
-    return (effective.id if organization_id is None else stored_id), effective
+    if organization_id is None:
+        return effective.id, effective
+    organization = await _require_organization(session, organization_id)
+    return _organization_default_role_id(organization.settings), effective
 
 
 async def set_default_base_role(
