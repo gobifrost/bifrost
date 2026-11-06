@@ -107,3 +107,13 @@ def test_build_recipe_covers_environment_and_effective_npm_config_without_values
 def test_unknown_recipe_is_rejected_without_type_error():
     with pytest.raises(ValueError, match="recipe"):
         build_identity(uuid4(), {}, {}, {**RECIPE, "variant": []})
+
+
+def test_lock_aware_recipes_do_not_reuse_unlocked_builds():
+    from bifrost.app_build_identity import build_identity
+
+    files = {"package-lock.json": b"{}"}
+    for old, new in [("cli-install-v1", "cli-install-v2"), ("server-install-v1", "server-install-v2")]:
+        old_recipe = {**RECIPE, "variant": old}
+        new_recipe = {**RECIPE, "variant": new}
+        assert build_identity("app", files, {}, old_recipe) != build_identity("app", files, {}, new_recipe)
