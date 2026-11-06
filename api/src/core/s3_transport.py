@@ -625,8 +625,8 @@ class S3Transport:
         await response.aclose()
         return result
 
-    async def delete_object(self, *, Bucket: str, Key: str) -> dict[str, Any]:
-        response = await self._request("DELETE", bucket=Bucket, key=Key)
+    async def delete_object(self, *, Bucket: str, Key: str, IfMatch: str | None = None) -> dict[str, Any]:
+        response = await self._request("DELETE", bucket=Bucket, key=Key, headers=_object_headers({"IfMatch": IfMatch}))
         result = self._response(response)
         await response.aclose()
         return result
@@ -732,8 +732,14 @@ class S3Transport:
             ET.SubElement(element, "PartNumber").text = str(part["PartNumber"])
             ET.SubElement(element, "ETag").text = part["ETag"]
         response = await self._request("POST", bucket=Bucket, key=Key, query=(("uploadId", UploadId),), headers=_object_headers(kwargs), body=ET.tostring(root, encoding="utf-8"), embedded_error=True)
+        payload = await response.aread()
+        result = self._response(response)
+        if payload:
+            etag = _xml_text(ET.fromstring(payload), "ETag")
+            if etag:
+                result["ETag"] = etag
         await response.aclose()
-        return {}
+        return result
 
     async def abort_multipart_upload(self, *, Bucket: str, Key: str, UploadId: str) -> dict[str, Any]:
         response = await self._request("DELETE", bucket=Bucket, key=Key, query=(("uploadId", UploadId),))

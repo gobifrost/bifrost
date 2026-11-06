@@ -13,6 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings
+from .object_storage import FileObjectStorage
 from src.models.orm.file_index import FileIndex
 
 logger = logging.getLogger(__name__)
@@ -39,7 +40,7 @@ class FolderOperationsService:
         self,
         db: AsyncSession,
         settings: Settings,
-        s3_client,
+        object_storage: FileObjectStorage,
         remove_metadata_fn,
         write_file_fn,
     ):
@@ -55,7 +56,7 @@ class FolderOperationsService:
         """
         self.db = db
         self.settings = settings
-        self._s3_client = s3_client
+        self._object_storage = object_storage
         self._remove_metadata = remove_metadata_fn
         self._write_file = write_file_fn
 

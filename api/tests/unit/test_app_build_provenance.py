@@ -6,7 +6,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.s3_transport import S3NoSuchKey
+from src.core.storage.contracts import StorageError
+from types import SimpleNamespace
 from src.services.solutions.app_build import SolutionAppBuilder
 from bifrost.app_build_identity import build_identity, sdk_identity
 from tests.unit.test_app_build_identity import RECIPE, _sdk
@@ -25,20 +26,21 @@ def storage(monkeypatch):
     objects = {}
     builder = SolutionAppBuilder()
 
-    class Client:
-        async def put_object(self, **kwargs):
-            objects[kwargs["Key"]] = kwargs["Body"]
+    class Store:
+        async def write(self, key, content):
+            objects[key] = content
 
-        async def get_object(self, **kwargs):
-            if kwargs["Key"] not in objects:
-                raise S3NoSuchKey("NoSuchKey", 404, "missing")
-            return {"Body": Body(objects[kwargs["Key"]])}
+        @asynccontextmanager
+        async def open_read(self, key):
+            if key not in objects:
+                raise StorageError("not_found", provider_code="fixture")
+            yield SimpleNamespace(body=Body(objects[key]))
 
     @asynccontextmanager
-    async def client():
-        yield Client()
+    async def store():
+        yield Store()
 
-    monkeypatch.setattr(builder, "_client", client)
+    monkeypatch.setattr(builder, "_get_store", store)
     return builder, objects
 
 

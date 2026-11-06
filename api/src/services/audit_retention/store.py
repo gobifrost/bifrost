@@ -1,6 +1,6 @@
 """Object storage for archived audit segments.
 
-A thin adapter over ``S3StorageClient``. Errors are never swallowed: the
+A scoped consumer of the shared storage provider. Errors are never swallowed: the
 archiver deletes Postgres rows and catalog rows only after storage calls
 succeed, so a hidden failure here would lose audit events.
 """
@@ -10,7 +10,8 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 from src.config import Settings
-from src.services.file_storage.s3_client import S3StorageClient
+from src.core.storage import object_pages, object_store, optional_read, storage_configured
+from src.core.storage.contracts import ContentProperties, ObjectStore, WriteOptions
 
 CONTENT_TYPE = "application/gzip"
 
@@ -21,32 +22,45 @@ class ArchiveStorageUnavailable(Exception):
 
 class AuditArchiveStore:
     def __init__(self, settings: Settings) -> None:
-        if not settings.s3_configured:
+        if not storage_configured(settings):
             raise ArchiveStorageUnavailable("object storage is not configured")
-        self._bucket = settings.s3_bucket
-        self._client = S3StorageClient(settings)
+        self._settings = settings
+
+    def _get_store(self) -> ObjectStore:
+        return object_store(self._settings)
 
     async def put(self, key: str, body: bytes) -> None:
-        async with self._client.get_client() as s3:
-            await s3.put_object(Bucket=self._bucket, Key=key, Body=body, ContentType=CONTENT_TYPE)
+        async with self._get_store() as store:
+            await store.write(key, body, options=WriteOptions(properties=ContentProperties(content_type=CONTENT_TYPE)))
 
     async def get(self, key: str) -> bytes:
-        return await self._client.read_uploaded_file(key)
+        async with self._get_store() as store:
+            async with optional_read(store, key) as read:
+                if read is None:
+                    raise FileNotFoundError(f"Audit archive not found: {key}")
+                return await read.body.read()
 
-    def iter_chunks(self, key: str) -> AsyncIterator[bytes]:
-        return self._client.iter_object_chunks(key)
+    async def iter_chunks(self, key: str) -> AsyncIterator[bytes]:
+        async with self._get_store() as store:
+            async with optional_read(store, key) as read:
+                if read is None:
+                    raise FileNotFoundError(f"Audit archive not found: {key}")
+                async for chunk in read.body.iter_chunks():
+                    yield chunk
 
     async def delete(self, key: str) -> None:
-        # DeleteObject succeeds for a missing key; every other error propagates.
-        async with self._client.get_client() as s3:
-            await s3.delete_object(Bucket=self._bucket, Key=key)
+        async with self._get_store() as store:
+            await store.delete(key)
 
     async def put_chunks(self, key: str, chunks: AsyncIterator[bytes]) -> tuple[str, int]:
-        return await self._client.put_object_from_chunks(key, chunks, content_type=CONTENT_TYPE)
+        async with self._get_store() as store:
+            result = await store.write_stream(key, chunks, options=WriteOptions(
+                properties=ContentProperties(content_type=CONTENT_TYPE),
+            ))
+            return result.sha256, result.size
 
     async def iter_keys(self, prefix: str) -> AsyncIterator[str]:
-        async with self._client.get_client() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
-                for item in page.get("Contents", []):
-                    yield item["Key"]
+        async with self._get_store() as store:
+            async for page in object_pages(store, prefix):
+                for item in page.objects:
+                    yield item.key

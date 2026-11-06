@@ -16,7 +16,8 @@ from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.core.storage import object_store, optional_read
+from src.core.storage.contracts import ContentProperties, ObjectStore, WriteOptions
 from src.services.git_repo_manager import STORAGE_BASELINE_FILE, WORKSPACE_CHECKPOINT_PREFIX
 
 if TYPE_CHECKING:
@@ -94,36 +95,24 @@ class GitWorkspaceState:
         self.settings = manager._settings
 
     async def fingerprint(self, root: Path) -> str:
-        # S3's existing AWS CLI checkpoint path follows links. Blob's canonical
-        # file mirror rejects them. Hash the bytes that each path actually saves.
         return await asyncio.to_thread(
-            tree_fingerprint, root, follow_links=True,
+            tree_fingerprint, root, follow_links=self.manager._mirror.follows_symlinks,
         )
 
-    def _client(self) -> S3Transport:
-        return S3Transport(
-            endpoint_url=self.settings.s3_endpoint_url,
-            access_key_id=self.settings.s3_access_key,
-            secret_access_key=self.settings.s3_secret_key,
-            region=self.settings.s3_region,
-        )
+    def _get_store(self) -> ObjectStore:
+        return object_store(self.settings)
 
     async def read(self) -> tuple[WorkspaceState | None, str | None]:
-        async with self._client() as client:
-            try:
-                response = await client.get_object(Bucket=self.settings.s3_bucket, Key=STATE_KEY)
-            except S3NoSuchKey:
-                return None, None
-            body = response["Body"]
-            try:
+        async with self._get_store() as store:
+            async with optional_read(store, STATE_KEY) as read:
+                if read is None:
+                    return None, None
                 raw = bytearray()
-                async for chunk in body.iter_chunks():
+                async for chunk in read.body.iter_chunks(4097):
                     raw.extend(chunk)
                     if len(raw) > 4096:
                         raise GitWorkspaceStateError("Durable Git workspace state is too large")
-                return WorkspaceState.parse(bytes(raw)), response["ETag"]
-            finally:
-                await body.close()
+                return WorkspaceState.parse(bytes(raw)), store.serialize_version(read.info.version)
 
     @staticmethod
     def _receipt_path(root: Path) -> Path:
@@ -240,14 +229,15 @@ class GitWorkspaceState:
         if await self.fingerprint(root) != fingerprint:
             raise GitWorkspaceStateError("Git workspace changed during checkpoint creation")
         state = WorkspaceState(checkpoint, baseline, fingerprint)
-        condition = {"IfMatch": etag} if etag is not None else {"IfNoneMatch": "*"}
         # Do not delete either checkpoint after an ambiguous PUT: its pointer
         # may already be committed. A later reader sees one complete snapshot.
-        async with self._client() as client:
-            response = await client.put_object(
-                Bucket=self.settings.s3_bucket, Key=STATE_KEY,
-                Body=json.dumps(asdict(state)).encode(), ContentType="application/json", **condition,
-            )
-        self.record(root, response["ETag"], fingerprint)
+        async with self._get_store() as store:
+            result = await store.write(STATE_KEY, json.dumps(asdict(state)).encode(), options=WriteOptions(
+                properties=ContentProperties(content_type="application/json"),
+                create_only=etag is None,
+                expected_version=store.restore_version(etag) if etag is not None else None,
+            ))
+            witness = store.serialize_version(result.version)
+        self.record(root, witness, fingerprint)
         if previous is not None:
             await self.manager.delete_workspace_checkpoint(previous.checkpoint)

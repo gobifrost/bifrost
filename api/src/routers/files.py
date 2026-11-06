@@ -235,7 +235,8 @@ class SignedUrlRequest(BaseModel):
 
 class SignedUrlResponse(BaseModel):
     """Response with presigned URL."""
-    url: str = Field(..., description="Presigned S3 URL")
+    url: str = Field(..., description="Signed object storage URL")
+    headers: dict[str, str] = Field(default_factory=dict, description="Required signed-request headers")
     path: str = Field(..., description="Full S3 path")
     expires_in: int = Field(default=600, description="URL expiration in seconds")
 
@@ -251,6 +252,7 @@ class SignedUrlBatchResult(BaseModel):
     resolved_path: str | None = Field(default=None, description="Resolved S3 path")
     method: Literal["PUT", "GET"]
     url: str | None = None
+    headers: dict[str, str] = Field(default_factory=dict)
     expires_in: int = 600
     error: str | None = None
     status_code: int = 200
@@ -755,6 +757,7 @@ async def _build_signed_url(
         raise HTTPException(status_code=e.status_code, detail=e.detail) from e
     return SignedUrlResponse(
         url=result.url,
+        headers=result.headers,
         path=result.path,
         expires_in=result.expires_in,
     )
@@ -1082,7 +1085,7 @@ async def _list_files_workspace_metadata(
             files_metadata=[
                 FileListMetadataItem(
                     path=path,
-                    etag=meta.etag,
+                    etag=meta.version,
                     last_modified=meta.last_modified.isoformat(),
                     updated_by=author_lookup.get(path),
                 )
@@ -1188,6 +1191,7 @@ async def get_signed_urls(
                     resolved_path=signed.path,
                     method=item.method,
                     url=signed.url,
+                    headers=signed.headers,
                     expires_in=signed.expires_in,
                     status_code=200,
                 )

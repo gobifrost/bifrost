@@ -53,7 +53,7 @@ from src.services.artifact_retention import ArtifactRetentionSettingsService
 from src.services.audit_retention.export import AuditQueryPayload, ReachSnapshot, export_key
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import AuditArchiveStore
-from src.services.file_storage.s3_client import S3StorageClient
+from src.services.file_storage.object_storage import FileObjectStorage
 from src.services.platform_jobs import enqueue_platform_job
 from src.services.repo_storage import RepoStorage
 from src.models.contracts.run_retention import RunRetentionSettings
@@ -102,19 +102,18 @@ async def _delete_job(async_session_factory, job_id: UUID) -> None:
 
 
 async def _put_s3(key: str, content: bytes) -> None:
-    storage = S3StorageClient(get_settings())
-    async with storage.get_client() as s3:
-        await s3.put_object(Bucket=get_settings().s3_bucket, Key=key, Body=content)
+    storage = FileObjectStorage(get_settings())
+    async with storage.get_store() as store:
+        await store.write(key, content)
 
 
 async def _object_exists(key: str) -> bool:
-    return await S3StorageClient(get_settings()).head_object(key) is not None
+    return await FileObjectStorage(get_settings()).head_object(key) is not None
 
 
 async def _delete_s3(key: str) -> None:
-    storage = S3StorageClient(get_settings())
-    async with storage.get_client() as s3:
-        await s3.delete_object(Bucket=get_settings().s3_bucket, Key=key)
+    storage = FileObjectStorage(get_settings())
+    await storage.delete_object_strict(key)
 
 
 async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_artifact(
@@ -312,7 +311,7 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
         assert job["result"]["results"] == [{"source": source, "destination": destination, "path": None,
                                             "renamed": False, "adopted": False, "status_code": 200, "error": None}]
         assert not await _object_exists(source_key)
-        assert await S3StorageClient(get_settings()).read_uploaded_file(destination_key) == b"physical runner move"
+        assert await FileObjectStorage(get_settings()).read_uploaded_file(destination_key) == b"physical runner move"
     finally:
         await _delete_s3(source_key)
         await _delete_s3(destination_key)

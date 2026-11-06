@@ -28,7 +28,7 @@ import base64
 import hashlib
 import json
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import cast
 from uuid import UUID
 
@@ -429,7 +429,7 @@ async def sdk_write_file(
             from shared.file_paths import resolve_s3_key
             from src.core.pubsub import publish_file_change
             from src.services.file_storage import FileStorageService
-            from src.services.file_storage.s3_client import S3StorageClient
+            from src.services.file_storage.object_storage import FileObjectStorage
 
             s3_path = resolve_s3_key(location, effective_scope, path)
             await FileStorageService(caller.db).record_file_write_metadata(
@@ -437,7 +437,7 @@ async def sdk_write_file(
                 scope=effective_scope,
                 path=path,
                 s3_path=s3_path,
-                content_type=S3StorageClient.guess_content_type(path),
+                content_type=FileObjectStorage.guess_content_type(path),
                 size_bytes=len(content_bytes),
                 sha256=hashlib.sha256(content_bytes).hexdigest(),
                 updated_by=updated_by,
@@ -592,6 +592,7 @@ class SignedUrlResult:
     url: str
     path: str
     expires_in: int
+    headers: dict[str, str] = field(default_factory=dict)
 
 
 async def sdk_signed_url(
@@ -674,9 +675,9 @@ async def sdk_signed_url(
                             solution_id=ctx_solution_id(caller, location),
                         )
                     s3_path = allowed_path
-                url = await FileStorageService(
+                request = await FileStorageService(
                     caller.db
-                ).generate_presigned_download_url(
+                ).generate_signed_download_request(
                     path=s3_path,
                     expires_in=expires_in,
                 )
@@ -707,12 +708,12 @@ async def sdk_signed_url(
                 content_type=content_type,
                 solution_id=solution_id,
             )
-            url = await FileStorageService(caller.db).generate_presigned_upload_url(
+            request = await FileStorageService(caller.db).generate_signed_upload_request(
                 path=s3_path,
                 content_type=content_type,
                 expires_in=expires_in,
             )
-        return SignedUrlResult(url=url, path=s3_path, expires_in=expires_in)
+        return SignedUrlResult(url=request.url, path=s3_path, expires_in=expires_in, headers=dict(request.headers))
     except FileServiceError:
         raise
 

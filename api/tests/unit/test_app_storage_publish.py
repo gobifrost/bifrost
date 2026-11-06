@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import json
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
+
+from src.core.storage.contracts import ContentProperties, ObjectInfo, ObjectPage, ObjectSummary, ObjectVersion
 from unittest.mock import AsyncMock
 
 import pytest
@@ -17,62 +20,49 @@ class _Body:
         return self.value
 
 
-class _S3Client:
+class _Store:
     def __init__(self, manifest: dict):
         self.manifest = manifest
         self.copy_calls: list[tuple[str, str]] = []
         self.delete_calls: list[list[str]] = []
 
-    async def list_objects_v2(self, *, Prefix: str, **_kwargs):  # noqa: N803
-        if Prefix.endswith("/preview/"):
-            names = [
-                "manifest.json",
-                "entry-new.js",
-                "chunk-new.js",
-                "entry-old.js",
-                "chunk-old.js",
-            ]
-        else:
-            names = ["manifest.json", "entry-old.js", "chunk-old.js"]
-        return {
-            "Contents": [{"Key": f"{Prefix}{name}"} for name in names],
-            "IsTruncated": False,
-        }
+    async def __aenter__(self):
+        return self
 
-    async def get_object(self, *, Key: str, **_kwargs):  # noqa: N803
-        assert Key.endswith("/preview/manifest.json")
-        return {"Body": _Body(json.dumps(self.manifest).encode())}
+    async def __aexit__(self, *_args):
+        return None
 
-    async def copy_object(
-        self,
-        *,
-        CopySource: dict,  # noqa: N803
-        Key: str,  # noqa: N803
-        **_kwargs,
-    ):
-        self.copy_calls.append((CopySource["Key"], Key))
+    async def list_page(self, prefix, **_kwargs):
+        names = (["manifest.json", "entry-new.js", "chunk-new.js", "entry-old.js", "chunk-old.js"]
+                 if prefix.endswith("/preview/") else ["manifest.json", "entry-old.js", "chunk-old.js"])
+        return ObjectPage(tuple(ObjectSummary(prefix + name, 1, ObjectVersion("snapshot"), None) for name in names), (), None)
 
-    async def delete_objects(self, *, Delete: dict, **_kwargs):  # noqa: N803
-        self.delete_calls.append([item["Key"] for item in Delete["Objects"]])
-
-
-def _storage(client: _S3Client) -> AppStorageService:
-    storage = object.__new__(AppStorageService)
-    storage._bucket = "test"
-    storage._settings = None
+    async def stat(self, key):
+        return ObjectInfo(key, 1, ObjectVersion("snapshot"), None, ContentProperties(), {}, None)
 
     @asynccontextmanager
-    async def _get_client():
-        yield client
+    async def open_read(self, key):
+        assert key.endswith("/preview/manifest.json")
+        yield SimpleNamespace(info=await self.stat(key), body=_Body(json.dumps(self.manifest).encode()))
 
-    storage._get_client = _get_client
+    async def copy(self, source, destination):
+        self.copy_calls.append((source.key, destination))
+
+    async def delete_many(self, keys):
+        self.delete_calls.append(list(keys))
+
+
+def _storage(client: _Store) -> AppStorageService:
+    storage = object.__new__(AppStorageService)
+    storage._settings = None
+    storage._get_store = lambda: client
     storage.invalidate_render_cache = AsyncMock()
     return storage
 
 
 @pytest.mark.asyncio
 async def test_publish_promotes_only_manifest_outputs_and_copies_manifest_last():
-    client = _S3Client(
+    client = _Store(
         {
             "entry": "entry-new.js",
             "outputs": ["entry-new.js", "chunk-new.js"],
@@ -113,7 +103,7 @@ async def _record(
 
 @pytest.mark.asyncio
 async def test_publish_rejects_manifest_missing_declared_output_before_copy():
-    client = _S3Client(
+    client = _Store(
         {
             "entry": "entry-new.js",
             "outputs": ["entry-new.js", "missing.js"],
@@ -130,13 +120,13 @@ async def test_publish_rejects_manifest_missing_declared_output_before_copy():
 
 @pytest.mark.asyncio
 async def test_cleanup_failure_does_not_turn_promoted_manifest_into_failed_publish():
-    client = _S3Client(
+    client = _Store(
         {
             "entry": "entry-new.js",
             "outputs": ["entry-new.js", "chunk-new.js"],
         }
     )
-    client.delete_objects = AsyncMock(side_effect=RuntimeError("cleanup unavailable"))
+    client.delete_many = AsyncMock(side_effect=RuntimeError("cleanup unavailable"))
     storage = _storage(client)
 
     published = await storage.publish("app-1")

@@ -19,6 +19,7 @@ selection, and signed PUT policy/presign.
 """
 
 from __future__ import annotations
+from src.core.storage.contracts import SignedRequest
 
 import base64
 import hashlib
@@ -539,11 +540,11 @@ def _storage(monkeypatch, events: list[str] | None = None) -> MagicMock:
         )
     else:
         storage.record_file_write_metadata = AsyncMock()
-    storage.generate_presigned_upload_url = AsyncMock(
-        return_value="https://s3/put-url"
+    storage.generate_signed_upload_request = AsyncMock(
+        return_value=SignedRequest("PUT", "https://s3/put-url", {"x-ms-blob-type": "BlockBlob"}, 600)
     )
-    storage.generate_presigned_download_url = AsyncMock(
-        return_value="https://s3/get-url"
+    storage.generate_signed_download_request = AsyncMock(
+        return_value=SignedRequest("GET", "https://s3/get-url", {"x-ms-blob-type": "BlockBlob"}, 600)
     )
     monkeypatch.setattr(
         "src.services.file_storage.FileStorageService", lambda db: storage
@@ -1008,11 +1009,11 @@ class TestSdkSignedUrl:
         assert result.url == "https://s3/get-url"
         assert result.path == resolve_s3_key("reports", str(ORG_ID), "file.pdf")
         assert result.expires_in == 600
-        storage.generate_presigned_download_url.assert_awaited_once_with(
+        storage.generate_signed_download_request.assert_awaited_once_with(
             path=resolve_s3_key("reports", str(ORG_ID), "file.pdf"),
             expires_in=600,
         )
-        storage.generate_presigned_upload_url.assert_not_awaited()
+        storage.generate_signed_upload_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_signed_get_multi_tier_prefers_first_existing_permitted(
@@ -1041,7 +1042,7 @@ class TestSdkSignedUrl:
             "global",
         ]
         assert result.path == resolve_s3_key("reports", "global", "file.pdf")
-        storage.generate_presigned_download_url.assert_awaited_once()
+        storage.generate_signed_download_request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_signed_get_missing_everywhere_presigns_first_allowed(
@@ -1065,7 +1066,7 @@ class TestSdkSignedUrl:
         assert result.path == resolve_s3_key(
             "reports", str(SOLUTION_ID), "new.pdf"
         )
-        storage.generate_presigned_download_url.assert_awaited_once_with(
+        storage.generate_signed_download_request.assert_awaited_once_with(
             path=resolve_s3_key("reports", str(SOLUTION_ID), "new.pdf"),
             expires_in=600,
         )
@@ -1099,7 +1100,7 @@ class TestSdkSignedUrl:
         )
 
         assert result.path == resolve_s3_key("reports", "global", "file.pdf")
-        storage.generate_presigned_download_url.assert_awaited_once()
+        storage.generate_signed_download_request.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_signed_get_all_denied_is_403_with_audit(
@@ -1158,15 +1159,16 @@ class TestSdkSignedUrl:
         )
 
         assert result.url == "https://s3/put-url"
+        assert result.headers == {"x-ms-blob-type": "BlockBlob"}
         assert result.path == resolve_s3_key("uploads", str(ORG_ID), "file.pdf")
         assert result.expires_in == 3600
-        storage.generate_presigned_upload_url.assert_awaited_once_with(
+        storage.generate_signed_upload_request.assert_awaited_once_with(
             path=resolve_s3_key("uploads", str(ORG_ID), "file.pdf"),
             content_type="application/pdf",
             expires_in=3600,
         )
         storage.record_file_write_metadata.assert_not_awaited()
-        storage.generate_presigned_download_url.assert_not_awaited()
+        storage.generate_signed_download_request.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("path", ["workflows/new.py", ".bifrost/workflows.yaml"])
@@ -1185,7 +1187,7 @@ class TestSdkSignedUrl:
         )
 
         assert result.path == f"_repo/{path}"
-        storage.generate_presigned_upload_url.assert_awaited_once_with(
+        storage.generate_signed_upload_request.assert_awaited_once_with(
             path=f"_repo/{path}",
             content_type="application/octet-stream",
             expires_in=600,

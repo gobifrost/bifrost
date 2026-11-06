@@ -38,7 +38,7 @@ from src.core.module_cache_contract import (
     module_resolution_cache_key as module_resolution_cache_key,
 )
 from src.core.redis_client import get_redis_client
-from src.core.s3_transport import S3Error
+from src.core.storage.contracts import StorageError
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SOLUTIONS_ROOT, SolutionStorage
 
@@ -86,8 +86,8 @@ async def get_module(path: str) -> CachedModule | None:
     # Redis miss — try S3 fallback
     try:
         content_bytes = await _read_module_from_storage(path)
-    except S3Error as exc:
-        if exc.code not in {"NoSuchKey", "404", "NotFound"}:
+    except StorageError as exc:
+        if exc.kind != "not_found":
             raise
         logger.debug(f"Module not in cache or S3: {log_safe(path)}")
         return None

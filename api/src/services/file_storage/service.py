@@ -15,6 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
+from src.core.storage import object_pages
+from src.core.storage.contracts import ContentProperties, SignedRequest, WriteOptions
 from shared.file_paths import SCOPE_SKIP, scope_to_org_id
 from .models import (
     WriteResult,
@@ -23,7 +25,7 @@ from .models import (
     PendingDeactivationInfo,
     AvailableReplacementInfo,
 )
-from .s3_client import S3StorageClient
+from .object_storage import FileObjectStorage
 from .entity_detector import detect_platform_entity_type
 from .ast_parser import ASTMetadataParser
 from .diagnostics import DiagnosticsService
@@ -55,7 +57,7 @@ class FileStorageService:
         self.settings = settings or get_settings()
 
         # Initialize S3 client wrapper
-        self._s3_storage = S3StorageClient(self.settings)
+        self._object_storage = FileObjectStorage(self.settings)
 
         # Initialize helper services
         self._ast_parser = ASTMetadataParser()
@@ -70,11 +72,11 @@ class FileStorageService:
         self._file_ops = FileOperationsService(
             db=db,
             settings=self.settings,
-            s3_client=self._s3_storage,
+            object_storage=self._object_storage,
             diagnostics=self._diagnostics,
             deactivation=self._deactivation,
-            file_hash_fn=S3StorageClient.compute_hash,
-            content_type_fn=S3StorageClient.guess_content_type,
+            file_hash_fn=FileObjectStorage.compute_hash,
+            content_type_fn=FileObjectStorage.guess_content_type,
             platform_entity_detector_fn=detect_platform_entity_type,
             extract_metadata_fn=self._extract_metadata_full,  # Full version for write ops
             remove_metadata_fn=self._remove_metadata,
@@ -83,7 +85,7 @@ class FileStorageService:
         self._folder_ops = FolderOperationsService(
             db=db,
             settings=self.settings,
-            s3_client=self._s3_storage,
+            object_storage=self._object_storage,
             remove_metadata_fn=self._remove_metadata,
             write_file_fn=self._file_ops.write_file,
         )
@@ -162,21 +164,14 @@ class FileStorageService:
         )
 
     # ========================================================================
-    # S3 Direct Operations (delegate to S3StorageClient)
+    # S3 Direct Operations (delegate to FileObjectStorage)
     # ========================================================================
 
-    async def generate_presigned_upload_url(
-        self,
-        path: str,
-        content_type: str,
-        expires_in: int = 600,
-    ) -> str:
-        """Generate a presigned PUT URL for direct S3 upload."""
-        return await self._s3_storage.generate_presigned_upload_url(
-            path=path,
-            content_type=content_type,
-            expires_in=expires_in,
-        )
+    async def generate_signed_upload_request(self, path: str, content_type: str, expires_in: int = 600) -> SignedRequest:
+        return await self._object_storage.generate_signed_upload_request(path, content_type, expires_in)
+
+    async def generate_signed_download_request(self, path: str, expires_in: int = 600) -> SignedRequest:
+        return await self._object_storage.generate_signed_download_request(path, expires_in)
 
     async def generate_presigned_download_url(
         self,
@@ -187,7 +182,7 @@ class FileStorageService:
         response_content_disposition: str | None = None,
     ) -> str:
         """Generate a presigned GET URL for direct S3 download."""
-        return await self._s3_storage.generate_presigned_download_url(
+        return await self._object_storage.generate_presigned_download_url(
             path=path,
             expires_in=expires_in,
             response_content_type=response_content_type,
@@ -294,7 +289,7 @@ class FileStorageService:
 
     async def read_uploaded_file(self, path: str) -> bytes:
         """Read a file from S3 (for uploaded files)."""
-        return await self._s3_storage.read_uploaded_file(path)
+        return await self._object_storage.read_uploaded_file(path)
 
     def iter_raw_s3_chunks(
         self,
@@ -303,17 +298,14 @@ class FileStorageService:
         chunk_size: int = 8 * 1024 * 1024,
     ) -> AsyncIterator[bytes]:
         """Yield raw S3 object bytes without loading the whole object."""
-        return self._s3_storage.iter_object_chunks(path, chunk_size=chunk_size)
+        return self._object_storage.iter_object_chunks(path, chunk_size=chunk_size)
 
     async def write_raw_to_s3(self, path: str, content: bytes) -> None:
         """Write content directly to S3 without workspace indexing."""
-        async with self._s3_storage.get_client() as s3:
-            await s3.put_object(
-                Bucket=self.settings.s3_bucket,
-                Key=path,
-                Body=content,
-                ContentType=S3StorageClient.guess_content_type(path),
-            )
+        async with self._object_storage.get_store() as store:
+            await store.write(path, content, options=WriteOptions(
+                properties=ContentProperties(content_type=FileObjectStorage.guess_content_type(path)),
+            ))
 
     async def write_raw_chunks_to_s3(
         self,
@@ -323,7 +315,7 @@ class FileStorageService:
         content_type: str | None = None,
     ) -> tuple[str, int]:
         """Write raw chunks directly to S3 and return ``(sha256, size)``."""
-        return await self._s3_storage.put_object_from_chunks(
+        return await self._object_storage.put_object_from_chunks(
             path,
             chunks,
             content_type=content_type,
@@ -331,43 +323,16 @@ class FileStorageService:
 
     async def delete_raw_from_s3(self, path: str) -> None:
         """Delete a file directly from S3 without workspace indexing."""
-        async with self._s3_storage.get_client() as s3:
-            try:
-                await s3.delete_object(
-                    Bucket=self.settings.s3_bucket,
-                    Key=path,
-                )
-            except Exception:
-                pass  # Ignore errors for idempotency
+        await self._object_storage.delete_object_strict(path)
 
     async def list_raw_s3(self, prefix: str) -> list[str]:
-        """List files in S3 with given prefix (raw, without indexing)."""
-        keys = []
-        async with self._s3_storage.get_client() as s3:
-            paginator = s3.get_paginator("list_objects_v2")
-            async for page in paginator.paginate(
-                Bucket=self.settings.s3_bucket,
-                Prefix=prefix,
-            ):
-                for obj in page.get("Contents", []):
-                    key = obj.get("Key")
-                    if key:
-                        keys.append(key)
-        return keys
+        """List raw object keys without workspace indexing."""
+        async with self._object_storage.get_store() as store:
+            return [item.key async for page in object_pages(store, prefix) for item in page.objects]
 
     async def file_exists(self, path: str) -> bool:
-        """Check if a file exists in S3."""
-        async with self._s3_storage.get_client() as s3:
-            try:
-                await s3.head_object(
-                    Bucket=self.settings.s3_bucket,
-                    Key=path,
-                )
-                return True
-            except s3.exceptions.NoSuchKey:
-                return False
-            except Exception:
-                return False
+        """Only confirmed object absence is missing; other failures propagate."""
+        return await self._object_storage.head_object(path) is not None
 
     # ========================================================================
     # Internal Helper Methods (used by sub-services)

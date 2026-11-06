@@ -68,9 +68,9 @@ class FileMovePayload(BaseModel):
 
 def _object_store() -> Any:
     from src.config import get_settings
-    from src.services.file_storage.s3_client import S3StorageClient
+    from src.services.file_storage.object_storage import FileObjectStorage
 
-    return S3StorageClient(get_settings())
+    return FileObjectStorage(get_settings())
 
 
 async def authorize_renamed_destination(payload: FileMovePayload, path: str) -> bool:

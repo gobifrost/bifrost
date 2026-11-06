@@ -41,7 +41,7 @@ class TestGetModuleSyncFromCache:
             patch(
                 "src.core.module_cache_sync._get_sync_redis"
             ) as mock_redis_factory,
-            patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+            patch("src.core.module_cache_sync._get_storage_module") as mock_s3,
         ):
             mock_redis = MagicMock()
             mock_redis.get.return_value = None
@@ -62,7 +62,7 @@ class TestGetModuleSyncFromCache:
             patch(
                 "src.core.module_cache_sync._get_sync_redis"
             ) as mock_redis_factory,
-            patch("src.core.module_cache_sync._get_s3_module") as mock_s3,
+            patch("src.core.module_cache_sync._get_storage_module") as mock_s3,
         ):
             mock_redis = MagicMock()
             mock_redis.get.return_value = None  # Redis miss

@@ -39,83 +39,10 @@ def manager(mock_settings):
     return GitRepoManager(settings=mock_settings)
 
 
-class TestBuildSyncCmd:
-    """Tests for _build_sync_cmd command construction."""
-
-    def test_basic_sync_down(self, manager):
-        cmd = manager._build_sync_cmd(
-            source="s3://bifrost-local/_repo/",
-            dest="/tmp/work",
-        )
-        assert cmd == [
-            "aws", "s3", "sync",
-            "s3://bifrost-local/_repo/",
-            "/tmp/work",
-            "--endpoint-url", "http://seaweedfs:8333",
-            "--only-show-errors",
-        ]
-
-    def test_sync_up_with_delete(self, manager):
-        cmd = manager._build_sync_cmd(
-            source="/tmp/work",
-            dest="s3://bifrost-local/_repo/",
-            delete=True,
-        )
-        assert cmd == [
-            "aws", "s3", "sync",
-            "/tmp/work",
-            "s3://bifrost-local/_repo/",
-            "--delete",
-            "--endpoint-url", "http://seaweedfs:8333",
-            "--only-show-errors",
-        ]
-
-    def test_no_endpoint_for_aws(self, mock_settings):
-        """When endpoint_url is None (real AWS), omit --endpoint-url."""
-        mock_settings.s3_endpoint_url = None
-        mgr = GitRepoManager(settings=mock_settings)
-        cmd = mgr._build_sync_cmd(
-            source="s3://prod-bucket/_repo/",
-            dest="/tmp/work",
-        )
-        assert "--endpoint-url" not in cmd
-        assert cmd == [
-            "aws", "s3", "sync",
-            "s3://prod-bucket/_repo/",
-            "/tmp/work",
-            "--only-show-errors",
-        ]
 
 
-class TestBuildEnv:
-    """Tests for _build_env environment variable construction."""
-
-    def test_sets_aws_credentials(self, manager):
-        env = manager._build_env()
-        assert env["AWS_ACCESS_KEY_ID"] == "bifrost"
-        assert env["AWS_SECRET_ACCESS_KEY"] == "bifrost123"
-        assert env["AWS_DEFAULT_REGION"] == "us-east-1"
-
-    def test_inherits_os_environ(self, manager):
-        """Should include existing env vars (PATH, etc.)."""
-        env = manager._build_env()
-        assert "PATH" in env
 
 
-class TestS3Uri:
-    """Tests for _s3_uri construction."""
-
-    def test_builds_uri_from_bucket(self, manager):
-        assert manager._s3_uri() == "s3://bifrost-local/_repo/"
-
-    def test_checkpoint_uri_is_uuid_scoped(self, manager):
-        checkpoint_id = str(uuid4())
-
-        assert manager._checkpoint_uri(checkpoint_id) == (
-            f"s3://bifrost-local/_workspace_sync_checkpoints/{checkpoint_id}/"
-        )
-        with pytest.raises(ValueError, match="Invalid workspace checkpoint ID"):
-            manager._checkpoint_uri("../../repo")
 
 
 class TestHasGitDir:
@@ -136,59 +63,11 @@ class TestHasGitDir:
             mock_exists.assert_awaited_once_with(".git/HEAD")
 
 
-class TestRunAwsCli:
-    """Tests for _run_aws_cli subprocess execution."""
-
-    @pytest.mark.asyncio
-    async def test_success(self, manager):
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(return_value=(b"", b""))
-        mock_process.returncode = 0
-
-        with patch("asyncio.create_subprocess_exec", return_value=mock_process) as mock_exec:
-            await manager._run_aws_cli(["aws", "s3", "sync", "src", "dst"])
-            mock_exec.assert_called_once()
-            # Verify env includes AWS credentials
-            call_kwargs = mock_exec.call_args
-            env = call_kwargs.kwargs["env"]
-            assert env["AWS_ACCESS_KEY_ID"] == "bifrost"
-
-    @pytest.mark.asyncio
-    async def test_failure_raises_runtime_error(self, manager):
-        mock_process = AsyncMock()
-        mock_process.communicate = AsyncMock(
-            return_value=(b"", b"fatal: bucket not found")
-        )
-        mock_process.returncode = 1
-
-        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
-            with pytest.raises(RuntimeError, match="aws s3 sync failed"):
-                await manager._run_aws_cli(["aws", "s3", "sync", "src", "dst"])
 
 
 class TestSyncDown:
     """Tests for sync_down operation."""
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("etag, expected_mtime", [
-        ("6654c734ccab8f440ff0825eb443dc7f", 100),  # MD5 of v1: unchanged
-        ("1b267619c4812cc46ee281747884ca50e", 0),  # MD5 of v2: same-size edit
-        ("opaque-multipart-2", 0),
-    ])
-    async def test_equal_stats_only_skip_verified_content(self, manager, tmp_path, etag, expected_mtime):
-        import os
-        from datetime import datetime, timezone
-
-        from src.services.repo_storage import S3FileMetadata
-
-        local = tmp_path / "note.txt"
-        local.write_bytes(b"v1")
-        os.utime(local, (100, 100))
-        metadata = S3FileMetadata(etag=etag, size=2, last_modified=datetime.fromtimestamp(100, timezone.utc))
-        with patch("src.services.repo_storage.RepoStorage.list_with_metadata", AsyncMock(return_value={"note.txt": metadata})):
-            await manager._invalidate_ambiguous_sync_timestamps(tmp_path)
-        assert local.stat().st_mtime == expected_mtime
-        assert local.read_bytes() == b"v1"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("restore", ["workspace", "checkpoint"])
@@ -201,7 +80,7 @@ class TestSyncDown:
         Repo.init(source, initial_branch="main")
         target = tmp_path / "fresh-worker"
 
-        async def download_files(_command):
+        async def download_files(_prefix, _target):
             for path in source.rglob("*"):
                 if path.is_file():
                     destination = target / path.relative_to(source)
@@ -210,7 +89,7 @@ class TestSyncDown:
             assert not (target / ".git" / "objects").exists()
             assert not (target / ".git" / "refs").exists()
 
-        with patch.object(manager, "_run_aws_cli", side_effect=download_files), \
+        with patch.object(manager._mirror, "download", side_effect=download_files), \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             if restore == "workspace":
                 await manager.sync_down(target)
@@ -222,24 +101,18 @@ class TestSyncDown:
         assert not restored.head.is_valid()
 
     @pytest.mark.asyncio
-    async def test_calls_aws_sync_with_correct_args(self, manager, tmp_path):
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
+    async def test_calls_selected_mirror_with_workspace_prefix(self, manager, tmp_path):
+        with patch.object(manager._mirror, "download", new_callable=AsyncMock) as mock_run, \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_down(tmp_path)
             mock_run.assert_awaited_once()
-            cmd = mock_run.call_args[0][0]
-            assert cmd[0:3] == ["aws", "s3", "sync"]
-            assert cmd[3] == "s3://bifrost-local/_repo/"
-            assert cmd[4] == str(tmp_path)
-            assert "--delete" in cmd
-            # Same-size S3 edits must still replace an older local copy.
-            assert "--exact-timestamps" in cmd
+            mock_run.assert_awaited_once_with("_repo/", tmp_path)
 
     @pytest.mark.asyncio
     async def test_creates_target_dir(self, manager):
         import tempfile
         target = Path(tempfile.mkdtemp()) / "subdir"
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+        with patch.object(manager._mirror, "download", new_callable=AsyncMock), \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_down(target)
             assert target.exists()
@@ -253,15 +126,11 @@ class TestSyncUp:
 
     @pytest.mark.asyncio
     async def test_calls_aws_sync_with_delete(self, manager, tmp_path):
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock) as mock_run, \
+        with patch.object(manager._mirror, "upload", new_callable=AsyncMock) as mock_run, \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_up(tmp_path)
             mock_run.assert_awaited_once()
-            cmd = mock_run.call_args[0][0]
-            assert cmd[0:3] == ["aws", "s3", "sync"]
-            assert cmd[3] == str(tmp_path)
-            assert cmd[4] == "s3://bifrost-local/_repo/"
-            assert "--delete" in cmd
+            mock_run.assert_awaited_once_with(tmp_path, "_repo/")
 
 
 class TestStorageBaseline:
@@ -269,20 +138,20 @@ class TestStorageBaseline:
 
     @pytest.mark.asyncio
     async def test_empty_worker_hydrates_before_checking_freshness(self, manager, tmp_path):
-        async def transfer(_cmd):
+        async def transfer(_prefix, _target):
             (tmp_path / ".git").mkdir()
 
-        with patch.object(manager, "_run_aws_cli", side_effect=transfer) as transfer_mock, \
+        with patch.object(manager._mirror, "download", side_effect=transfer) as transfer_mock, \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.ensure_storage_unchanged(tmp_path, "main")
             transfer_mock.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_empty_worker_rejects_write_during_hydration(self, manager, tmp_path):
-        async def transfer(_cmd):
+        async def transfer(_prefix, _target):
             (tmp_path / ".git").mkdir()
 
-        with patch.object(manager, "_run_aws_cli", side_effect=transfer), \
+        with patch.object(manager._mirror, "download", side_effect=transfer), \
              patch.object(manager, "_storage_fingerprint", AsyncMock(side_effect=["before", "after"])):
             with pytest.raises(WorkspaceStorageChanged, match="Run Fetch"):
                 await manager.ensure_storage_unchanged(tmp_path, "main")
@@ -299,7 +168,7 @@ class TestStorageBaseline:
 
     @pytest.mark.asyncio
     async def test_empty_worker_without_persisted_git_is_refused(self, manager, tmp_path):
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+        with patch.object(manager._mirror, "download", new_callable=AsyncMock), \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             with pytest.raises(WorkspaceStorageChanged, match="Run Fetch"):
                 await manager.ensure_storage_unchanged(tmp_path, "main")
@@ -312,7 +181,7 @@ class TestStorageBaseline:
         async def fingerprint():
             return next(fingerprints)
 
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+        with patch.object(manager._mirror, "download", new_callable=AsyncMock), \
              patch.object(manager, "_storage_fingerprint", side_effect=fingerprint):
             await manager.sync_down(tmp_path)
             # A write that landed during the transfer must not be trusted.
@@ -322,7 +191,7 @@ class TestStorageBaseline:
     @pytest.mark.asyncio
     async def test_sync_up_trusts_the_listing_taken_after_transfer(self, manager, tmp_path):
         (tmp_path / ".git").mkdir()
-        with patch.object(manager, "_run_aws_cli", new_callable=AsyncMock), \
+        with patch.object(manager._mirror, "upload", new_callable=AsyncMock), \
              patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")):
             await manager.sync_up(tmp_path)
             await manager.ensure_storage_unchanged(tmp_path, "main")
@@ -338,10 +207,10 @@ class TestStorageBaseline:
     async def test_failed_transfer_leaves_no_baseline(self, manager, tmp_path):
         (tmp_path / ".git").mkdir()
         with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")), \
-             patch.object(manager, "_run_aws_cli", AsyncMock(return_value=None)):
+             patch.object(manager._mirror, "upload", AsyncMock(return_value=None)):
             await manager.sync_up(tmp_path)
         with patch.object(manager, "_storage_fingerprint", AsyncMock(return_value="fp")), \
-             patch.object(manager, "_run_aws_cli", AsyncMock(side_effect=RuntimeError("boom"))):
+             patch.object(manager._mirror, "upload", AsyncMock(side_effect=RuntimeError("boom"))):
             with pytest.raises(RuntimeError):
                 await manager.sync_up(tmp_path)
             with pytest.raises(WorkspaceStorageChanged):
@@ -580,3 +449,34 @@ async def test_readonly_checkout_preserves_unacknowledged_local_work(
     assert (pending / "draft.txt").read_text() == "unacknowledged local work"
     assert state._receipt_path(pending).read_bytes() == receipt
     assert not views[0].parent.exists()  # includes the snapshot's sidecar receipt
+
+
+def test_checkpoint_prefix_is_uuid_scoped(manager):
+    checkpoint = str(uuid4())
+    assert manager._checkpoint_prefix(checkpoint) == f"_workspace_sync_checkpoints/{checkpoint}/"
+    with pytest.raises(ValueError, match="Invalid workspace checkpoint ID"):
+        manager._checkpoint_prefix("../../repo")
+
+
+def test_baseline_hash_uses_canonical_versions_without_stripping_opaque_bytes():
+    import hashlib
+    from src.services.git_repo_manager import workspace_version_fingerprint
+
+    assert workspace_version_fingerprint({"file": "canonical-v1"}) == hashlib.sha256(b"file\0canonical-v1\0").hexdigest()
+    token = '"opaque-token-is-not-an-http-header"'
+    assert workspace_version_fingerprint({"file": token}) == hashlib.sha256(b"file\0" + token.encode() + b"\0").hexdigest()
+
+
+async def test_sync_up_supplies_canonical_baseline_guard_before_provider_upload(manager, tmp_path):
+    from src.services.git_repo_manager import STORAGE_BASELINE_FILE, workspace_version_fingerprint
+    from src.core.storage.contracts import ObjectVersion
+    (tmp_path / ".git").mkdir()
+    original = {"file": "old-version"}
+    (tmp_path / ".git" / STORAGE_BASELINE_FILE).write_text(workspace_version_fingerprint(original))
+    async def changed_upload(source, prefix, *, validate_snapshot):
+        assert source == tmp_path and prefix == "_repo/"
+        validate_snapshot({"file": ObjectVersion("concurrent-writer")})
+    with patch.object(manager._mirror, "upload", side_effect=changed_upload):
+        with pytest.raises(WorkspaceStorageChanged, match="before upload"):
+            await manager.sync_up(tmp_path)
+    assert not (tmp_path / ".git" / STORAGE_BASELINE_FILE).exists()

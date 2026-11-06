@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.core.storage.contracts import StorageError
 from src.core.requirements_cache import (
     REQUIREMENTS_CACHE_TTL,
     REQUIREMENTS_KEY,
@@ -33,7 +34,7 @@ class TestGetRequirementsSync:
                 "src.core.module_cache_sync._get_sync_redis",
                 return_value=redis_client,
             ),
-            patch("src.core.requirements_cache._read_requirements_from_s3") as read_s3,
+            patch("src.core.requirements_cache._read_requirements_from_storage") as read_s3,
         ):
             assert get_requirements_sync() == "requests==2.32.0\n"
 
@@ -50,7 +51,7 @@ class TestGetRequirementsSync:
                 return_value=redis_client,
             ),
             patch(
-                "src.core.requirements_cache._read_requirements_from_s3",
+                "src.core.requirements_cache._read_requirements_from_storage",
                 return_value="requests==2.32.0\n",
             ) as read_s3,
         ):
@@ -77,7 +78,7 @@ class TestGetRequirementsSync:
                 return_value=redis_client,
             ),
             patch(
-                "src.core.requirements_cache._read_requirements_from_s3",
+                "src.core.requirements_cache._read_requirements_from_storage",
                 return_value=None,
             ) as read_s3,
         ):
@@ -136,7 +137,7 @@ class TestGetRequirements:
         mock_redis_client.get.return_value = None
         mock_redis_client.setex = AsyncMock()
         mock_repo = AsyncMock()
-        mock_repo.read.side_effect = Exception("NoSuchKey")
+        mock_repo.read.side_effect = StorageError("not_found", provider_code="NoSuchKey")
 
         with (
             patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client),
@@ -209,7 +210,7 @@ class TestWarmRequirementsCache:
     async def test_returns_false_when_not_found(self, mock_redis_client):
         """Test warm_requirements_cache returns False when requirements.txt not in S3."""
         mock_repo = AsyncMock()
-        mock_repo.read.side_effect = Exception("NoSuchKey")
+        mock_repo.read.side_effect = StorageError("not_found", provider_code="NoSuchKey")
 
         with (
             patch("src.core.requirements_cache.get_redis_client", return_value=mock_redis_client),
@@ -345,3 +346,30 @@ class TestKeyPatterns:
     def test_requirements_key(self):
         """Verify requirements key is correct."""
         assert REQUIREMENTS_KEY == "bifrost:requirements:content"
+
+
+@pytest.mark.parametrize("kind", ["permission_denied", "unavailable", "namespace_not_found"])
+async def test_requirements_warmup_does_not_report_storage_failures_as_absence(kind):
+    failure = StorageError(kind, provider_code="fixture")
+    repo = AsyncMock()
+    repo.read.side_effect = failure
+    with patch("src.services.repo_storage.RepoStorage", return_value=repo):
+        with pytest.raises(StorageError) as caught:
+            await warm_requirements_cache()
+    assert caught.value is failure
+
+
+@pytest.mark.parametrize("kind", ["permission_denied", "unavailable", "namespace_not_found"])
+def test_parent_requirements_read_preserves_storage_failure_category(kind):
+    redis_client = MagicMock()
+    redis_client.get.return_value = None
+    store = MagicMock()
+    failure = StorageError(kind, provider_code="fixture")
+    store.read.side_effect = failure
+    with patch("src.core.module_cache_sync._get_sync_redis", return_value=redis_client), patch(
+        "src.core.module_cache_sync._get_storage_client", return_value=store,
+    ):
+        with pytest.raises(StorageError) as caught:
+            get_requirements_sync()
+    assert caught.value is failure
+    redis_client.setex.assert_not_called()

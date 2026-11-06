@@ -248,7 +248,7 @@ class TestEngineSocketColdPath:
             ),
             patch.object(
                 mcs,
-                "_get_s3_module",
+                "_get_storage_module",
                 side_effect=AssertionError("S3 fallback must not run"),
             ),
         ):
@@ -281,7 +281,7 @@ class TestEngineSocketColdPath:
                 ),
                 patch.object(
                     mcs,
-                    "_get_s3_module",
+                    "_get_storage_module",
                     side_effect=AssertionError("S3 fallback must not run"),
                 ),
             ):
@@ -330,7 +330,7 @@ class TestEngineSocketColdPath:
             ),
             patch.object(
                 mcs,
-                "_get_s3_module",
+                "_get_storage_module",
                 side_effect=AssertionError("S3 fallback must not run"),
             ),
         ):
@@ -353,7 +353,7 @@ class TestEngineSocketColdPath:
             ),
             patch.object(
                 mcs,
-                "_get_s3_module",
+                "_get_storage_module",
                 side_effect=AssertionError("S3 fallback must not run"),
             ),
         ):

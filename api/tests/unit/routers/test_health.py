@@ -1,10 +1,10 @@
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
-from types import SimpleNamespace
 
 import pytest
 from fastapi import Response
 
+from src.config import Settings
 from src.routers import health
 
 
@@ -26,15 +26,17 @@ def fresh_process(monkeypatch):
 
 
 def _settings(s3_configured: bool = True):
-    return SimpleNamespace(
-        environment="test",
+    return Settings(
+        _env_file=None,
+        environment="testing",
         redis_url="redis://redis-secret@example:6379/0",
-        s3_configured=s3_configured,
         s3_bucket="bucket-secret" if s3_configured else None,
         s3_endpoint_url="http://object-store-secret:8333" if s3_configured else None,
         s3_access_key="access-secret" if s3_configured else None,
         s3_secret_key="secret-secret" if s3_configured else None,
         s3_region="us-east-1",
+        s3_public_endpoint_url=None,
+        s3_multipart_copy_mode="server",
     )
 
 
@@ -65,19 +67,19 @@ class FakeRedisClient:
         self.close_count += 1
 
 
-class FakeS3Client:
-    def __init__(self, head_bucket_error: Exception | None = None):
-        self.head_bucket_error = head_bucket_error
-        self.head_bucket_count = 0
+class FakeStorageClient:
+    def __init__(self, probe_error: Exception | None = None):
+        self.probe_error = probe_error
+        self.probe_count = 0
 
-    async def head_bucket(self, Bucket):
-        self.head_bucket_count += 1
-        if self.head_bucket_error:
-            raise self.head_bucket_error
+    async def probe(self):
+        self.probe_count += 1
+        if self.probe_error:
+            raise self.probe_error
 
 
-class FakeS3ClientContext:
-    def __init__(self, client: FakeS3Client):
+class FakeStorageContext:
+    def __init__(self, client: FakeStorageClient):
         self.client = client
         self.enter_count = 0
         self.exit_count = 0
@@ -91,9 +93,9 @@ class FakeS3ClientContext:
         return None
 
 
-class FakeS3Transport(FakeS3ClientContext):
-    def __init__(self, head_bucket_error: Exception | None = None):
-        super().__init__(FakeS3Client(head_bucket_error))
+class FakeStorageProvider(FakeStorageContext):
+    def __init__(self, probe_error: Exception | None = None):
+        super().__init__(FakeStorageClient(probe_error))
 
 
 @pytest.mark.asyncio
@@ -107,7 +109,7 @@ async def test_health_is_liveness_and_does_not_check_dependencies(monkeypatch):
     result = await health.health_check()
 
     assert result.status == "healthy"
-    assert result.environment == "test"
+    assert result.environment == "testing"
 
 
 @pytest.mark.asyncio
@@ -121,7 +123,7 @@ async def test_live_is_liveness_and_does_not_check_dependencies(monkeypatch):
     result = await health.live_health_check()
 
     assert result.status == "healthy"
-    assert result.environment == "test"
+    assert result.environment == "testing"
 
 
 @pytest.mark.asyncio
@@ -276,14 +278,14 @@ async def test_redis_check_reuses_cached_client(monkeypatch):
 @pytest.mark.asyncio
 async def test_s3_check_reuses_cached_client(monkeypatch):
     await health.close_health_check_clients()
-    clients: list[FakeS3Transport] = []
+    clients: list[FakeStorageProvider] = []
 
     def create_transport(*args, **kwargs):
-        client = FakeS3Transport()
+        client = FakeStorageProvider()
         clients.append(client)
         return client
 
-    monkeypatch.setattr(health, "S3Transport", create_transport)
+    monkeypatch.setattr(health, "object_store", create_transport)
 
     try:
         first_name, first_component = await health.check_s3(_settings())
@@ -297,21 +299,39 @@ async def test_s3_check_reuses_cached_client(monkeypatch):
     assert second_component == {"status": "healthy", "type": "s3"}
     assert len(clients) == 1
     assert clients[0].enter_count == 1
-    assert clients[0].client.head_bucket_count == 2
+    assert clients[0].client.probe_count == 2
     assert clients[0].exit_count == 1
+
+
+@pytest.mark.asyncio
+async def test_failed_storage_probe_discards_provider_before_next_health_request(monkeypatch):
+    await health.close_health_check_clients()
+    failed = FakeStorageProvider(RuntimeError("private provider detail"))
+    healthy = FakeStorageProvider()
+    providers = iter([failed, healthy])
+    monkeypatch.setattr(health, "object_store", lambda settings: next(providers))
+    try:
+        _, first = await health.check_s3(_settings())
+        assert first == {"status": "unhealthy", "type": "s3", "error": "RuntimeError"}
+        assert failed.exit_count == 1
+        _, second = await health.check_s3(_settings())
+        assert second == {"status": "healthy", "type": "s3"}
+    finally:
+        await health.close_health_check_clients()
+    assert healthy.exit_count == 1
 
 
 @pytest.mark.asyncio
 async def test_s3_check_closes_cached_client_when_settings_change(monkeypatch):
     await health.close_health_check_clients()
-    clients: list[FakeS3Transport] = []
+    clients: list[FakeStorageProvider] = []
 
     def create_transport(*args, **kwargs):
-        client = FakeS3Transport()
+        client = FakeStorageProvider()
         clients.append(client)
         return client
 
-    monkeypatch.setattr(health, "S3Transport", create_transport)
+    monkeypatch.setattr(health, "object_store", create_transport)
 
     try:
         await health.check_s3(_settings())

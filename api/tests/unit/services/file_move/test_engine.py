@@ -19,7 +19,7 @@ from src.services.file_storage.move import (
     MoveRequest,
     source_marker,
 )
-from src.services.file_storage.s3_client import ObjectPreconditionFailed
+from src.services.file_storage.object_storage import ObjectPreconditionFailed
 
 from .support import allow_rename, holds_move_copy, key_for, rows_at, seed_file
 
@@ -55,7 +55,7 @@ async def test_copy_carries_source_metadata_and_guards_with_source_etag(store, s
     await FileMover(store, solution_target, authorize_rename=allow_rename).move(MoveRequest("a/r.pdf", "b/r.pdf"), "error")
     [copy] = store.copies
     assert copy["metadata"]["owner"] == "x"
-    assert copy["source"].etag.startswith('"')
+    assert store.serialize_version(copy["source"].version).startswith('"')
 
 
 async def test_org_scoped_rows_move(store, org_target) -> None:

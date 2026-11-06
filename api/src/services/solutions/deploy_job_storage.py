@@ -8,7 +8,7 @@ from pathlib import Path
 from uuid import UUID
 
 from src.config import Settings, get_settings
-from src.services.file_storage.s3_client import S3StorageClient
+from src.services.file_storage.object_storage import FileObjectStorage
 
 DEPLOY_JOB_ARTIFACTS_ROOT = "_solution_deploy_jobs"
 CHUNK_SIZE = 8 * 1024 * 1024
@@ -22,8 +22,7 @@ class SolutionDeployJobStorage:
     def __init__(self, job_id: UUID | str, settings: Settings | None = None):
         self.job_id = str(job_id)
         self._settings = settings or get_settings()
-        self._storage = S3StorageClient(self._settings)
-        self._bucket = self._settings.s3_bucket or ""
+        self._storage = FileObjectStorage(self._settings)
         self.key = f"{DEPLOY_JOB_ARTIFACTS_ROOT}/{self.job_id}/input.zip"
 
     async def write_path(self, path: Path) -> tuple[str, int]:
@@ -62,5 +61,4 @@ class SolutionDeployJobStorage:
         return size
 
     async def delete(self) -> None:
-        async with self._storage.get_client() as s3:
-            await s3.delete_object(Bucket=self._bucket, Key=self.key)
+        await self._storage.delete_object_strict(self.key)
