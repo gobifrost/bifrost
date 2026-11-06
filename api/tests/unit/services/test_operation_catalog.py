@@ -1142,6 +1142,14 @@ WORKSPACE_FILE_OPERATIONS = {
 }
 
 CANONICAL_OPERATIONS = {
+    "users.defaults.get": (
+        "GET", "/api/base-role-defaults", ("users", "defaults", "get"),
+        "bifrost_base_role_default_get", False,
+    ),
+    "users.defaults.update": (
+        "PUT", "/api/base-role-defaults", ("users", "defaults", "set"),
+        "bifrost_base_role_default_update", False,
+    ),
     "workflows.conversions.create": (
         "POST",
         "/api/workflow-conversions",

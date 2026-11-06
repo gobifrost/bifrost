@@ -22,10 +22,10 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 177,
+        "cli": 179,
         "manifest": 16,
-        "mcp": 98,
-        "rest": 708,  # Main endpoints plus exact integration mapping lookup.
+        "mcp": 100,
+        "rest": 710,  # Includes global/org base-role-default read and update routes.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

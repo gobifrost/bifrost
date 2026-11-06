@@ -423,6 +423,7 @@ class TestUsersRouterBoundary:
             "is_superuser": False,
             "is_external": False,
             "organization_id": None,
+            "base_role_id": None,
         }
 
     async def test_get_maps_404(self):

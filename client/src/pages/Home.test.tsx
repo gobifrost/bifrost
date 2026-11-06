@@ -6,6 +6,7 @@ import { Home } from "./Home";
 
 const state = vi.hoisted(() => ({
 	canManageShared: false,
+	canUseChat: true,
 	home: {
 		data: undefined as
 			| { resources: HomeResource[]; collections: HomeCollection[] }
@@ -33,6 +34,7 @@ vi.mock("@/services/authorization", () => ({
 	useAuthorization: () => ({
 		canAnywhere: () => state.canManageShared,
 		canAt: () => state.canManageShared,
+		meets: () => state.canUseChat,
 	}),
 }));
 
@@ -170,6 +172,7 @@ function renderHome(initialEntries = ["/"]) {
 beforeEach(() => {
 	vi.clearAllMocks();
 	state.canManageShared = false;
+	state.canUseChat = true;
 	Object.assign(state.home, {
 		data: { resources, collections },
 		isLoading: false,
@@ -311,6 +314,7 @@ describe("Home", () => {
 	});
 
 	it("starts an agent conversation before navigating", async () => {
+		state.canManageShared = true;
 		const { user } = renderHome();
 
 		await user.click(
@@ -550,4 +554,12 @@ it("prioritizes matching titles over pinned description matches in search", () =
 			name: "Intake Form",
 		}),
 	).toBeVisible();
+});
+
+it("hides Chat shortcuts and agent launch cards when home Chat access is absent", () => {
+	state.canUseChat = false;
+	renderHome();
+	expect(screen.queryByRole("link", { name: "New chat" })).toBeNull();
+	expect(screen.queryByRole("button", { name: "Triage Agent" })).toBeNull();
+	expect(screen.getByRole("button", { name: "Dispatch Board" })).toBeVisible();
 });

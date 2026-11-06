@@ -75,6 +75,7 @@ USER_AFTER = {
     "settings.readbasic",
     "workflows.execute",
 }
+USER_AT_HEAD = USER_AFTER | {"chat.execute"}
 OPERATOR_BEFORE = {
     "agentruns.read",
     "agents.read",
@@ -270,7 +271,10 @@ def test_roles_and_grants_move_to_graph_names_and_back() -> None:
 
         _upgrade(database_url, "head")
         at_head = asyncio.run(_snapshot(database_url, ids))
-        assert at_head == after
+        assert at_head == {
+            **after,
+            "permissions": {**after["permissions"], "user": USER_AT_HEAD},
+        }
 
         _downgrade(database_url, PREVIOUS_REVISION)
         downgraded = asyncio.run(_snapshot(database_url, ids))

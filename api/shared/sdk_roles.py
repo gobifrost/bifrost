@@ -504,13 +504,19 @@ async def delete_role(
         assert_role_not_bound_to_solution_managed,
     )
 
-    result = await session.execute(select(RoleORM).where(RoleORM.id == role_id))
+    result = await session.execute(select(RoleORM).where(RoleORM.id == role_id).with_for_update())
     role = result.scalar_one_or_none()
 
     if not role:
         raise RoleServiceError(404, "Role not found")
     if role.is_builtin:
         raise RoleServiceError(409, "Builtin roles cannot be deleted")
+    from shared.base_role_defaults import BaseRoleDefaultError, refuse_referenced_default_base_role_deletion
+
+    try:
+        await refuse_referenced_default_base_role_deletion(session, role_id=role_id)
+    except BaseRoleDefaultError as exc:
+        raise RoleServiceError(exc.status_code, exc.detail) from None
     from src.models import User as UserORM
 
     base_users = await session.scalar(

@@ -333,6 +333,17 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Read and Use AI: members. Others only through an admin-assigned role at a specific boundary.",
         verbs={"execute": "Use AI"},
     ),
+    "chat": PermissionDomain(
+        title="Chat",
+        area="Automation",
+        description=(
+            "Personal Chat conversations, messages, attachments, runs, and "
+            "live updates. Using Chat is distinct from running an agent or "
+            "using the general AI SDK."
+        ),
+        who_should_hold="Members who may use their own Chat conversations. Others only through an admin-assigned role at a specific boundary.",
+        verbs={"execute": "Use Chat"},
+    ),
     "secrets": PermissionDomain(
         title="Secret Values",
         area="Integrations & Secrets",

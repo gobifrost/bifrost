@@ -17,13 +17,27 @@ from typing import Literal, cast
 from urllib.parse import quote
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, File, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.services.authorization.enforce import Caller, load_caller
+from src.services.authorization.enforce import (
+    Caller,
+    authorize_operation,
+    load_caller,
+    org_target,
+)
 from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
     authorize_agent_execution,
@@ -64,7 +78,29 @@ from src.services.chat_runs import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/chat", tags=["Chat"])
+
+async def _authorize_chat_route(
+    request: Request,
+    db: DbSession,
+    user: CurrentActiveUser,
+) -> None:
+    """Gate every Chat route at the original caller's home organization."""
+    caller = await load_caller(db, user)
+    if caller.ctx is None:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, "Chat caller is unavailable")
+    await authorize_operation(
+        db,
+        user,
+        f"{request.method} {request.scope['route'].path}",
+        org_target(caller.ctx.home_organization_id),
+    )
+
+
+router = APIRouter(
+    prefix="/api/chat",
+    tags=["Chat"],
+    dependencies=[Depends(_authorize_chat_route)],
+)
 
 
 async def _chat_caller(db: DbSession, user: CurrentActiveUser) -> tuple[Caller, UUID]:
@@ -85,7 +121,7 @@ def _chat_file_kind(
 @router.get("/model-profiles")
 async def get_model_profiles(db: DbSession, user: CurrentActiveUser) -> ChatModelProfilesResponse:
     """Return administrator-governed reusable model profiles available in Chat."""
-    del user
+    await _chat_caller(db, user)
     service = AIModelService(db)
     profiles, default_profile_id = await service.list_chat_profiles()
     return ChatModelProfilesResponse(

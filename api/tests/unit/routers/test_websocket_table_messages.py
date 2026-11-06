@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
 import uuid
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, call
@@ -227,6 +228,46 @@ async def test_genuine_delivery_denial_removes_subscription(monkeypatch):
             channel, {"type": "execution_status"}
         )
 
+        websocket.send_json.assert_not_awaited()
+        assert channel not in manager.connections
+    finally:
+        manager.connections.pop(channel, None)
+
+
+async def test_revoked_chat_permission_removes_owned_conversation_subscription(monkeypatch):
+    conversation_id = str(uuid.uuid4())
+    channel = f"chat:{conversation_id}"
+    websocket = _websocket_with_subscriptions()
+    user = _user()
+    home_organization_id = uuid.uuid4()
+    owner_id = uuid.uuid4()
+    caller = SimpleNamespace(
+        ctx=SimpleNamespace(
+            user_id=owner_id,
+            home_organization_id=home_organization_id,
+        )
+    )
+    db = AsyncMock()
+    db.get.return_value = SimpleNamespace(is_active=True, user_id=owner_id)
+
+    @asynccontextmanager
+    async def database():
+        yield db
+
+    manager.connections[channel] = {websocket}
+    allows_permission = MagicMock(return_value=False)
+    monkeypatch.setattr(ws_mod, "get_db_context", database)
+    monkeypatch.setattr(ws_mod, "_current_ws_caller", AsyncMock(return_value=caller))
+    monkeypatch.setattr(ws_mod, "allows_permission", allows_permission)
+
+    try:
+        await ws_mod._make_delivery_dispatcher(websocket, user)(
+            channel, {"type": "chat_chunk", "content": "must not deliver"}
+        )
+
+        allows_permission.assert_called_once_with(
+            caller, "chat.execute", home_organization_id
+        )
         websocket.send_json.assert_not_awaited()
         assert channel not in manager.connections
     finally:

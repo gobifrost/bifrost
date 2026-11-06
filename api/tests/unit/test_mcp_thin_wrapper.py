@@ -44,6 +44,7 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[2]))
 
 from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
+    base_role_defaults as base_role_defaults_mod,
     code_editor as code_editor_mod,
     claims as claims_mod,
     configs as configs_mod,
@@ -65,6 +66,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
 
 
 PARITY_HANDLERS: dict[str, set[str]] = {
+    "base_role_defaults": {"bifrost_base_role_default_get", "bifrost_base_role_default_update"},
     "workflow_conversion": {
         "bifrost_workflow_conversion_create",
         "bifrost_workflow_conversion_get",
@@ -188,6 +190,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
 
 
 MODULES = {
+    "base_role_defaults": base_role_defaults_mod,
     "workflow_conversion": workflow_conversion_mod,
     "agents": agents_mod,
     "code_editor": code_editor_mod,

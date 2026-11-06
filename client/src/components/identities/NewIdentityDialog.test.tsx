@@ -69,6 +69,9 @@ vi.mock("@/hooks/useOrganizations", () => ({
 }));
 
 const create = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
+vi.mock("@/hooks/useRoles", () => ({
+	useBaseRoles: () => ({ data: [], isLoading: false, isError: false }),
+}));
 vi.mock("@/services/identities", async (importOriginal) => ({
 	...(await importOriginal<typeof import("@/services/identities")>()),
 	useIdentities: () => ({ data: visible.identities }),

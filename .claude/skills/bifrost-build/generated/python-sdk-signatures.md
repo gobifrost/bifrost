@@ -235,7 +235,7 @@ Event publishing operations (async).
 
 
 
-**`users.create(email: str, name: str, is_superuser: bool = False, org_id: str | None = None, is_active: bool = True) -> UserPublic`**
+**`users.create(email: str, name: str, is_superuser: bool = False, org_id: str | None = None, is_active: bool = True, base_role_id: str | None = None) -> UserPublic`**
 
 **`users.delete(user_id: str) -> bool`**
 

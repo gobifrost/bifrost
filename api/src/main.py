@@ -56,6 +56,7 @@ from src.routers.health import close_health_check_clients
 from src.routers.health import router as health_router
 from src.routers.hooks import router as hooks_router
 from src.routers.identities import router as identities_router
+from src.routers.base_role_defaults import router as base_role_defaults_router
 from src.routers.integrations import router as integrations_router
 from src.routers.jobs import router as jobs_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
@@ -494,6 +495,7 @@ def create_app() -> FastAPI:
     app.include_router(maintenance_router)
     app.include_router(run_retention_router)
     app.include_router(identities_router)
+    app.include_router(base_role_defaults_router)
     app.include_router(roi_settings_router)
     app.include_router(roi_reports_router)
     app.include_router(usage_reports_router)

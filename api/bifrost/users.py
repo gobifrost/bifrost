@@ -96,6 +96,7 @@ class users:
         is_superuser: bool = False,
         org_id: str | None = None,
         is_active: bool = True,
+        base_role_id: str | None = None,
     ) -> UserPublic:
         """
         Create a new user.
@@ -108,6 +109,7 @@ class users:
             is_superuser: Whether user is a platform admin (default: False)
             org_id: Organization ID (required for non-superusers)
             is_active: Whether the user is active (default: True)
+            base_role_id: Explicit base role; omit to use the configured provisioning default.
 
         Returns:
             UserPublic: Created user object
@@ -134,6 +136,8 @@ class users:
         }
         if org_id:
             payload["organization_id"] = org_id
+        if base_role_id is not None:
+            payload["base_role_id"] = base_role_id
 
         response = await client.engine_request("POST", "/api/users", json=payload)
         raise_for_status_with_detail(response)

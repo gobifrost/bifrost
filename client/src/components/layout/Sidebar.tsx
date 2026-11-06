@@ -62,6 +62,7 @@ const navSections: NavSection[] = [
 				title: "Chat",
 				href: "/chat",
 				icon: MessageSquare,
+				requiresPermission: { permission: "chat.execute", at: "home" },
 			},
 			{
 				title: "History",
