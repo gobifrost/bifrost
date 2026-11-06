@@ -13,7 +13,7 @@ from __future__ import annotations
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from src.models.contracts.workflow_permissions import (
     RequestedWorkflowPermissions,
@@ -378,4 +378,10 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         await solution_storage.delete(entry_path)
         await solution_storage.delete(helper_path)
         await artifact_store.delete(artifact)
+        # RepoStorage removes bytes, not registered workflow records. Leaving
+        # these active makes a later workspace sync request delete approval.
+        await db_session.execute(
+            delete(Workflow).where(Workflow.id.in_(existing_identity_ids))
+        )
+        await db_session.execute(delete(Solution).where(Solution.id == solution.id))
         await db_session.commit()
