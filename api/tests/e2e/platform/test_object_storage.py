@@ -11,6 +11,21 @@ from src.core.storage.contracts import ContentProperties, StorageError, WriteOpt
 
 
 @pytest.mark.e2e
+async def test_signed_request_headers_are_in_the_served_api_schema():
+    """Keep client generation bound to the running API's signed-request DTOs."""
+    from pathlib import Path
+    import httpx
+
+    async with httpx.AsyncClient() as client:
+        response = await client.get("http://api:8000/openapi.json")
+        response.raise_for_status()
+    schemas = response.json()["components"]["schemas"]
+    for name in ("SignedUrlResponse", "SignedUrlBatchResult", "FileUploadResponse"):
+        assert "headers" in schemas[name]["properties"]
+    Path("/tmp/bifrost/signed-header-openapi.json").write_bytes(response.content)
+
+
+@pytest.mark.e2e
 async def test_configured_store_reads_metadata_and_refuses_stale_versions():
     settings = get_settings()
     key = f"tests/object-storage/{uuid4().hex}/source.bin"
