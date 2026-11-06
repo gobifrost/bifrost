@@ -55,11 +55,11 @@ test("impersonates every regular tab, reloads apps, and exits everywhere", async
 		]);
 		await page.evaluate(token => localStorage.setItem("bifrost_access_token", token), login.accessToken);
 		const originalToken = await page.evaluate(() => localStorage.getItem("bifrost_access_token"));
-		const operatorEmail = await page.evaluate(() => {
-			const token = localStorage.getItem("bifrost_access_token");
-			if (!token) throw new Error("Missing operator session");
-			return JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/"))).email as string;
+		const currentUser = await context.request.get("/auth/me", {
+			headers: { Authorization: `Bearer ${login.accessToken}` },
 		});
+		expect(currentUser.ok(), await currentUser.text()).toBe(true);
+		const operatorEmail = ((await currentUser.json()) as { email: string }).email;
 		await operatorTab.goto(`/apps/${slug}`);
 		await expect(operatorTab.getByRole("heading", { name: "Impersonation App" })).toBeVisible();
 		await expect(operatorTab.getByText(`Signed in as ${operatorEmail}`, { exact: true })).toBeVisible();

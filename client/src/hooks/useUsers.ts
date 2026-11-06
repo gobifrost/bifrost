@@ -139,7 +139,7 @@ export function useUserRoleAssignments(
 export function useReplaceUserRoleAssignments() {
 	const queryClient = useQueryClient();
 	return $api.useMutation("put", "/api/users/{user_id}/role-assignments", {
-		onSuccess: (data, variables) => {
+		onSuccess: async (data, variables) => {
 			queryClient.setQueryData(
 				[
 					"get",
@@ -161,7 +161,7 @@ export function useReplaceUserRoleAssignments() {
 				queryKey: ["get", "/api/roles/{role_id}/users"],
 			});
 			queryClient.invalidateQueries({ queryKey: USER_ACCESS_QUERY_KEY });
-			void invalidateAuthorization(queryClient);
+			await invalidateAuthorization(queryClient);
 		},
 	});
 }
@@ -235,8 +235,7 @@ export function useSignOutUserEverywhere() {
 export function useBulkUserOperation() {
 	const queryClient = useQueryClient();
 	return $api.useMutation("patch", "/api/users/bulk", {
-		onSuccess: () => {
-			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] });
-		},
+		onSuccess: () =>
+			queryClient.invalidateQueries({ queryKey: ["get", "/api/users"] }),
 	});
 }
