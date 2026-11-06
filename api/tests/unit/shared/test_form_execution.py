@@ -154,6 +154,7 @@ async def test_human_form_context_keeps_the_human_actor(monkeypatch):
         email="operator@fabrikam.example",
         is_superuser=False,
         verified_context=None,
+        runtime_authority=None,
     )
 
     context = await form_execution.create_form_execution_context(
@@ -293,3 +294,17 @@ async def test_global_form_provider_uses_the_selected_execution_organization(mon
         organization_id=selected_organization_id,
         is_platform_admin=False,
     )
+
+
+@pytest.mark.asyncio
+async def test_agent_submitting_a_form_keeps_agent_origin(monkeypatch):
+    user = UserPrincipal(user_id=uuid4(), email="form-agent@example.com", name="Agent Actor", organization_id=None)
+    agent_id = uuid4()
+    user.runtime_authority = SimpleNamespace(execution_origin="agent", agent_id=agent_id)
+    from shared.execution_provenance import ExecutionProvenance
+    monkeypatch.setattr(form_execution, "load_execution_provenance", AsyncMock(return_value=ExecutionProvenance("agent", agent_id)))
+    context = await form_execution.create_form_execution_context(
+        AsyncMock(), user=user, lineage=RunLineage(user.user_id, user.user_id, None),
+        execution_id=str(uuid4()), organization_id=None, is_platform_admin=False,
+    )
+    assert (context.execution_origin, context.agent_id, context.is_agent) == ("agent", str(agent_id), True)

@@ -185,7 +185,7 @@ def working_clone(tmp_path, bare_repo):
 
 
 @pytest_asyncio.fixture
-async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
+async def sync_service(db_session: AsyncSession, bare_repo, tmp_path, monkeypatch):
     """
     GitHubSyncService configured against the local bare repo.
 
@@ -207,8 +207,8 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     persistent_dir.mkdir()
 
     @asynccontextmanager
-    async def local_checkout():
-        """Simulates S3 sync down -> yield -> S3 sync up."""
+    async def local_checkout(*, reset_local_state=False, isolated=False):
+        """Simulate published checkout; this fixture always uses a temp copy."""
         import tempfile
         work_dir = Path(tempfile.mkdtemp(prefix="bifrost-test-repo-"))
         try:
@@ -235,7 +235,7 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
             shutil.rmtree(work_dir, ignore_errors=True)
 
     @asynccontextmanager
-    async def local_lock():
+    async def local_lock(*, readonly=False):
         """Simulates Redis lock -- just yields the persistent dir directly."""
         yield persistent_dir
 
@@ -264,6 +264,9 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     service.repo_manager.checkout = local_checkout  # type: ignore[assignment]
     service.repo_manager.checkout_readonly = local_checkout_readonly  # type: ignore[assignment]
     service.repo_manager.lock = local_lock  # type: ignore[assignment]
+    # These tests simulate storage locally; durable cross-executor publication
+    # is covered against real S3 by test_git_workspace_handoff.py.
+    service.repo_manager.workspace = local_lock  # type: ignore[assignment]
     service.repo_manager.sync_up = noop_sync_up  # type: ignore[assignment]
     service.repo_manager.checkpoint_workspace = checkpoint_workspace  # type: ignore[assignment]
     service.repo_manager.restore_workspace_checkpoint = restore_workspace_checkpoint  # type: ignore[assignment]
@@ -273,7 +276,7 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path):
     service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
-    grm_mod.PERSISTENT_WORK_DIR = persistent_dir
+    monkeypatch.setattr(grm_mod, "PERSISTENT_WORK_DIR", persistent_dir)
     service._persistent_dir = persistent_dir  # type: ignore[attr-defined]
 
     return service

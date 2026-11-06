@@ -31,6 +31,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+
+from shared.ai_http_retry import get_ai_provider_read
 from pydantic import SkipValidation, TypeAdapter
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from sqlalchemy import select
@@ -504,7 +506,9 @@ async def refresh_model_catalog(
     row = await session.get(AIModelCatalog, CATALOG_SOURCE)
     headers = {"If-None-Match": row.etag} if row and row.etag else {}
     async with httpx.AsyncClient(timeout=timeout_seconds, follow_redirects=True) as http:
-        response = await http.get(url, headers=headers)
+        response = await get_ai_provider_read(
+            http, url, headers=headers, provider="models.dev", surface="model_catalog"
+        )
     if response.status_code == 304 and row is not None:
         row.checked_at = now
         await session.flush()

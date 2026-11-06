@@ -100,7 +100,7 @@ async def _refresh_token_in_place(
     """
     try:
         td = await build_token_refresh_context(
-            db=db, provider=provider, token=token, org_id=None
+            db=db, provider=provider, token=token, org_id=token.organization_id
         )
         outcome = await refresh_oauth_token_http(td)
     except Exception:

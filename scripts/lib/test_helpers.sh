@@ -107,7 +107,7 @@ stack_is_up() {
     return 1
 }
 
-# Export per-service logs for a running stack to LOG_DIR.
+# Export per-service logs (including stopped/failed services) to LOG_DIR.
 # Args: <project> <compose-file>
 # No-op if LOG_DIR is empty or no services are running.
 export_logs() {
@@ -117,7 +117,7 @@ export_logs() {
     [ -z "$log_dir" ] && return 0
     mkdir -p "$log_dir"
     local services
-    services=$(docker compose -p "$project" -f "$compose_file" ps --services 2>/dev/null)
+    services=$(docker compose -p "$project" -f "$compose_file" --profile '*' ps --all --services 2>/dev/null)
     [ -z "$services" ] && return 0
     for svc in $services; do
         docker compose -p "$project" -f "$compose_file" logs --no-color --timestamps "$svc" > "$log_dir/$svc.log" 2>&1 || true

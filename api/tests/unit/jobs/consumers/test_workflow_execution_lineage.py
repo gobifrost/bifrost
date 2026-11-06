@@ -2,6 +2,9 @@
 
 from datetime import datetime, timezone
 from unittest.mock import AsyncMock, Mock, patch
+from contextlib import asynccontextmanager
+from types import SimpleNamespace
+from uuid import UUID
 
 import pytest
 
@@ -148,6 +151,31 @@ async def test_credentials_are_minted_for_the_route_chosen_first(
     assert mint.await_args.kwargs["protocol"] == route.protocol
     routed = consumer._pool.route_execution.await_args.kwargs
     assert routed["credential_route"] == route
+    assert routed["context"]["execution_origin"] == "agent"
+    assert routed["context"]["agent_id"] == "00000000-0000-0000-0000-0000000000bb"
+    assert routed["context"]["original_user_is_platform_admin"] is False
+    assert routed["context"]["original_user_id"] == RUN_USER_ID
     assert routed["context"]["engine_token"] == "access"
     assert routed["context"].get("engine_refresh_token") == refresh_token
     refresh.assert_called_once_with()
+
+
+@pytest.fixture(autouse=True)
+def current_runtime_authority():
+    @asynccontextmanager
+    async def database():
+        yield AsyncMock()
+
+    from shared.execution_provenance import ExecutionProvenance
+
+    authority = SimpleNamespace(
+        execution_origin="agent",
+        agent_id=UUID("00000000-0000-0000-0000-0000000000bb"),
+        run_user=SimpleNamespace(user_id=RUN_USER_ID, is_platform_admin=False),
+    )
+    with (
+        patch(f"{MODULE}.get_db_context", database),
+        patch("src.services.authorization.runtime.load_runtime_authority", new=AsyncMock(return_value=authority)),
+        patch("src.services.authorization.runtime.load_execution_provenance", new=AsyncMock(return_value=ExecutionProvenance("agent", authority.agent_id))),
+    ):
+        yield

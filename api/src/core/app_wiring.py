@@ -51,6 +51,22 @@ def register_exception_handlers(app: FastAPI) -> None:
         """Map shared authorization refusals to the same HTTP 403 as route guards."""
         return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
 
+    from src.services.app_compiler import AppCompilerInfrastructureError
+
+    @app.exception_handler(AppCompilerInfrastructureError)
+    async def app_compiler_unavailable_handler(
+        request: Request, exc: AppCompilerInfrastructureError
+    ) -> JSONResponse:
+        """Compiler process/protocol failures need a safe, actionable response."""
+        logger.warning("App compiler unavailable on %s: %s", request.url.path, exc)
+        return JSONResponse(
+            status_code=503,
+            content=ErrorResponse(
+                error="service_unavailable",
+                message="App compilation is temporarily unavailable. Retry the operation.",
+            ).model_dump(),
+        )
+
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
         request: Request, exc: RequestValidationError

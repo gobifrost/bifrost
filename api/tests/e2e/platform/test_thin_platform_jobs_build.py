@@ -22,6 +22,7 @@ from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solutions import Solution
 from src.services.github_config import delete_github_config, save_github_config
+from src.services.repo_storage import RepoStorage
 from tests.e2e.platform.thin_live_helpers import wait_for_job
 
 pytestmark = pytest.mark.e2e
@@ -335,9 +336,14 @@ async def test_thin_worker_executes_solution_artifact_jobs(
 
 
 async def test_thin_worker_executes_git_platform_jobs(
-    e2e_client, platform_admin, async_session_factory, request
+    e2e_client, platform_admin, async_session_factory, request, org1
 ) -> None:
-    """Two jobs prove Solution sync and workspace fetch using local Git remotes."""
+    """Four jobs prove Solution sync, fetch, commit and workspace publication.
+
+    The commit/sync transition must cross physical worker children: the remote
+    commit and object-storage manifest independently witness publication. All
+    remotes are test-owned local bare repositories, not GitHub repositories.
+    """
     headers = platform_admin.headers
     suffix = uuid.uuid4().hex[:8]
     git_solution_slug = f"thin-git-solution-{suffix}"
@@ -404,8 +410,41 @@ async def test_thin_worker_executes_git_platform_jobs(
             "workspace.git",
         )
         assert workspace_fetch["result"]["success"] is True
+        assert workspace_fetch["payload_version"] == 2
         assert workspace_fetch["result"]["remote_branch_exists"] is True
         assert workspace_fetch["result"]["commits_behind"] == 0
+
+        commit_response = e2e_client.post(
+            "/api/github/commit", headers=headers,
+            json={"message": "Thin worker workspace publication"},
+        )
+        assert commit_response.status_code == 202, commit_response.text
+        committed = wait_for_job(
+            e2e_client, headers, commit_response.json()["job_id"], "workspace.git"
+        )
+        assert committed["result"]["success"] is True
+        assert committed["payload_version"] == 2
+        assert committed["result"]["files_committed"] > 0
+        sync_response = e2e_client.post("/api/github/sync", headers=headers)
+        assert sync_response.status_code == 202, sync_response.text
+        published = wait_for_job(
+            e2e_client, headers, sync_response.json()["job_id"], "workspace.git"
+        )
+        assert published["result"]["success"] is True
+        assert published["payload_version"] == 2
+        assert published["result"]["push_success"] is True
+        bare = workspace_root / "workspace.git"
+        remote_head = subprocess.run(
+            ["git", "--git-dir", str(bare), "rev-parse", "main"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        assert remote_head == committed["result"]["commit_sha"]
+        manifest = subprocess.run(
+            ["git", "--git-dir", str(bare), "show", "main:.bifrost/organizations.yaml"],
+            check=True, capture_output=True,
+        ).stdout
+        assert str(org1["id"]).encode() in manifest
+        assert await RepoStorage().read(".bifrost/organizations.yaml") == manifest
     finally:
         async with async_session_factory() as db:
             await delete_github_config(db, None)

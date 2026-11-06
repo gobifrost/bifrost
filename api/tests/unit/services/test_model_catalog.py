@@ -2,6 +2,7 @@
 
 import gzip
 import json
+from unittest.mock import AsyncMock
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -236,6 +237,12 @@ async def empty_store(db_session, monkeypatch):
 
 def _mock_source(monkeypatch, handler) -> None:
     real_client = httpx.AsyncClient
+    from shared.ai_http_retry import get_ai_provider_read
+
+    async def read(*args, **kwargs):
+        return await get_ai_provider_read(*args, **kwargs, sleep=AsyncMock())
+
+    monkeypatch.setattr(model_catalog, "get_ai_provider_read", read)
 
     def client(**kwargs):
         return real_client(transport=httpx.MockTransport(handler), **kwargs)
@@ -250,6 +257,8 @@ async def test_refresh_stores_catalog_and_reuses_it_until_it_changes(empty_store
 
     def handler(request: httpx.Request) -> httpx.Response:
         calls.append(request.headers.get("if-none-match"))
+        if len(calls) == 1:
+            return httpx.Response(429)
         if request.headers.get("if-none-match") == '"v1"':
             return httpx.Response(304)
         return httpx.Response(200, json=_raw_catalog(), headers={"etag": '"v1"'})
@@ -259,7 +268,7 @@ async def test_refresh_stores_catalog_and_reuses_it_until_it_changes(empty_store
     assert first.changed is True
     second = await refresh_model_catalog(db_session)
     assert second.changed is False
-    assert calls == [None, '"v1"']
+    assert calls == [None, None, '"v1"']
 
     reset_catalog_cache()
     catalog = await get_model_catalog(db_session)

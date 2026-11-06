@@ -1,7 +1,10 @@
 import json
+from unittest.mock import AsyncMock, patch
 
 import pytest
-from src.services.app_compiler import AppCompilerService
+from src.services.app_compiler import AppCompilerInfrastructureError, AppCompilerService
+from src.services.app_resource_limits import AppSourceLimitError
+from src.services.node_subprocess import NodeScriptInputLimitError
 from src.services.node_subprocess import run_node_script
 
 
@@ -57,6 +60,39 @@ export default function Page() {
         results = await compiler.compile_batch(files)
         assert results[0].success is True
         assert results[1].success is False
+
+    @pytest.mark.asyncio
+    async def test_compile_batch_rejects_incomplete_protocol_response(self, compiler):
+        with patch(
+            "src.services.app_compiler.run_node_script",
+            new=AsyncMock(return_value=(0, b'{"results": []}', b"")),
+        ):
+            with pytest.raises(AppCompilerInfrastructureError, match="exactly one result"):
+                await compiler.compile_batch([
+                    {"path": "pages/index.tsx", "source": "export default () => null"}
+                ])
+
+    @pytest.mark.asyncio
+    async def test_compile_batch_treats_node_outage_as_infrastructure_failure(self, compiler):
+        with patch(
+            "src.services.app_compiler.run_node_script",
+            new=AsyncMock(side_effect=FileNotFoundError()),
+        ):
+            with pytest.raises(AppCompilerInfrastructureError, match="Node.js not available"):
+                await compiler.compile_batch([
+                    {"path": "pages/index.tsx", "source": "export default () => null"}
+                ])
+
+    @pytest.mark.asyncio
+    async def test_compile_batch_classifies_serialized_input_limit_as_source_error(self, compiler):
+        with patch(
+            "src.services.app_compiler.run_node_script",
+            new=AsyncMock(side_effect=NodeScriptInputLimitError("compiler input too large")),
+        ):
+            with pytest.raises(AppSourceLimitError, match="input too large"):
+                await compiler.compile_batch([
+                    {"path": "pages/index.tsx", "source": "export default () => null"}
+                ])
 
     @pytest.mark.asyncio
     async def test_compile_typescript_modern_operators_with_legacy_react_scope(

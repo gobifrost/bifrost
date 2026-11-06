@@ -113,9 +113,12 @@ def test_executor_git_caches_are_separate_and_accessible_to_isolation_fixtures()
     script = _find_repo_file("test.sh").read_text()
     for service in ("worker", "scheduler"):
         source = f"solution-repo-fixtures/git-checkouts/{service}"
-        assert f"${{LOG_DIR:-/tmp/bifrost}}/{source}:/tmp/git" in (
-            compose["services"][service]["volumes"]
-        )
+        executor = compose["services"][service]
+        # The external receipt lives beside the checkout. Mount their common
+        # parent, rather than only the tree at /tmp/git inside the executor.
+        assert executor["environment"]["BIFROST_GIT_WORK_DIR"] == f"/tmp/bifrost/{source}"
+        assert "${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures" in executor["volumes"]
+        assert not any(mount.endswith(":/tmp/git") for mount in executor["volumes"])
         assert f'mkdir -p "$LOG_DIR/{source}"' in script
     assert "${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost" in (
         compose["services"]["test-runner"]["volumes"]
@@ -133,7 +136,7 @@ def test_stack_up_reconciles_running_containers_with_current_compose_config():
     script = _find_repo_file("test.sh").read_text()
     already_running = script.split(
         'if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then', 1
-    )[1].split('echo "Stack already up."', 1)[0]
+    )[1].split('echo "Adopted existing stack;', 1)[0]
 
     assert (
         'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build'
@@ -326,15 +329,14 @@ def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
 
 
 def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():
-    """A CI clean boot may skip only the first otherwise-redundant reset."""
+    """A new command-owned stack skips only the first redundant reset."""
     script = _find_repo_file("test.sh").read_text()
     prepare = script.split("prepare_test_state() {", 1)[1].split("\n}", 1)[0]
     pytest_runner = script.split("run_pytest() {", 1)[1].split("\n}", 1)[0]
     browser_runner = script.split("client_e2e() {", 1)[1].split("\n}", 1)[0]
 
-    assert "BIFROST_TEST_USE_CLEAN_BOOT" in prepare
-    assert ".clean-boot-consumed" in prepare
-    assert "touch \"$boot_marker\"" in prepare
+    assert 'if [ "$TEST_STACK_CLEAN" = 1 ]; then' in prepare
+    assert "TEST_STACK_CLEAN=0" in prepare
     assert "reset_state" in prepare
     assert "prepare_test_state" in pytest_runner
     assert "prepare_test_state" in browser_runner
@@ -349,7 +351,8 @@ def test_pytest_runner_prevents_concurrent_or_orphaned_stack_mutation():
     assert 'runner_name="${COMPOSE_PROJECT_NAME}-pytest-runner"' in pytest_runner
     assert 'docker container inspect "$runner_name"' in pytest_runner
     assert '--name "$runner_name" test-runner' in pytest_runner
-    assert "trap cleanup_pytest_runner INT TERM" in pytest_runner
+    assert "trap cleanup_pytest_runner" not in pytest_runner
+    assert "stack_lifecycle_start stack_down" in script
     assert 'docker rm -f "$runner_name"' in pytest_runner
 
 

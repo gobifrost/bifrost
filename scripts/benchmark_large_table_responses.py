@@ -6,7 +6,6 @@ round, and fails when settled RSS or cgroup working set shows material monotonic
 growth after warmup.
 
 Usage:
-  ./test.sh stack up
   python scripts/benchmark_large_table_responses.py --label no-request-trim
 """
 
@@ -85,7 +84,8 @@ def _mib(value: float) -> float:
 
 def main() -> int:
     args = _parse_args()
-    container = memory_sampler._detect_container()
+    container = memory_sampler._worktree_container()
+    # The sampler follows this stable name while test.sh boots its own stack.
     args.trace_out.parent.mkdir(parents=True, exist_ok=True)
 
     sampler = subprocess.Popen(

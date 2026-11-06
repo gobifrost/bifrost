@@ -4,9 +4,8 @@ import logging
 from dataclasses import dataclass
 from urllib.parse import urlparse
 
+from shared.ai_http_retry import MAX_ATTEMPTS, RETRYABLE_STATUS_CODES
 from src.services.agent_runtime.retry_transport import (
-    MAX_ATTEMPTS,
-    RETRYABLE_STATUS_CODES,
     ai_retry_context,
     get_ai_retry_http_client,
 )

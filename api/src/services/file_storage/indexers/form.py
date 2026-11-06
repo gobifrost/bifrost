@@ -16,7 +16,7 @@ import yaml
 from pydantic import ValidationError
 
 from src.models import Form, FormField as FormFieldORM, Workflow
-from src.models.contracts.forms import FormField
+from src.models.contracts.forms import FormField, FormSchema
 
 logger = logging.getLogger(__name__)
 
@@ -89,10 +89,54 @@ class FormIndexer:
             logger.warning(f"Invalid YAML in form file: {path}")
             return False
 
+        if not isinstance(form_data, dict):
+            logger.warning(f"Invalid form document in {path}: expected a mapping")
+            return False
+
         name = form_data.get("name")
         if not name:
             logger.warning(f"Form file missing name: {path}")
             return False
+
+        # Treat an omitted schema as a metadata-only file update. Any
+        # explicitly supplied schema, however, is a complete replacement and
+        # must validate before this method resolves references or writes form
+        # metadata/field rows. That prevents a malformed replacement from
+        # partially updating a form or deleting its existing fields.
+        fields_data: list[dict] | None = None
+        if "form_schema" in form_data:
+            form_schema = form_data["form_schema"]
+            if not isinstance(form_schema, dict):
+                logger.warning(f"Invalid form schema in {path}: expected a mapping")
+                return False
+            if "fields" not in form_schema or not isinstance(form_schema["fields"], list):
+                logger.warning(f"Invalid form schema in {path}: fields must be a list")
+                return False
+            fields_data = form_schema["fields"]
+        elif "fields" in form_data:
+            if not isinstance(form_data["fields"], list):
+                logger.warning(f"Invalid form fields in {path}: expected a list")
+                return False
+            fields_data = form_data["fields"]
+
+        validated_fields: list[FormField] | None = None
+        if fields_data is not None:
+            normalized_fields: list[dict] = []
+            for field_data in fields_data:
+                if not isinstance(field_data, dict):
+                    logger.warning(f"Invalid field in {path}: expected a mapping")
+                    return False
+                normalized = dict(field_data)
+                if "default" in normalized and "default_value" not in normalized:
+                    normalized["default_value"] = normalized.pop("default")
+                normalized_fields.append(normalized)
+            try:
+                validated_fields = FormSchema.model_validate(
+                    {"fields": normalized_fields}
+                ).fields
+            except ValidationError as exc:
+                logger.warning(f"Invalid form schema in {path}: {exc}")
+                return False
 
         # Use ID from JSON if present (for API-created forms), otherwise generate and inject
         form_id_str = form_data.get("id")
@@ -181,40 +225,14 @@ class FormIndexer:
         )
         await self.db.execute(stmt)
 
-        # Sync form_schema (fields) if present
-        # Support both form_schema.fields (canonical) and flat fields (workspace shorthand)
-        form_schema = form_data.get("form_schema")
-        if form_schema and isinstance(form_schema, dict):
-            fields_data = form_schema.get("fields", [])
-        elif "fields" in form_data and isinstance(form_data["fields"], list):
-            # Flat fields format — normalize 'default' to 'default_value'
-            fields_data = []
-            for f in form_data["fields"]:
-                if isinstance(f, dict):
-                    fd = dict(f)
-                    if "default" in fd and "default_value" not in fd:
-                        fd["default_value"] = fd.pop("default")
-                    fields_data.append(fd)
-        else:
-            fields_data = None
-
-        if fields_data is not None and isinstance(fields_data, list):
-            # Delete existing fields
+        if validated_fields is not None:
+            # Delete existing fields only after the replacement schema has
+            # passed the full FormSchema contract.
             await self.db.execute(
                 delete(FormFieldORM).where(FormFieldORM.form_id == form_id)
             )
 
-            # Create new fields from schema using Pydantic validation
-            for position, field_dict in enumerate(fields_data):
-                if not isinstance(field_dict, dict) or not field_dict.get("name"):
-                    continue
-
-                try:
-                    form_field = FormField.model_validate(field_dict)
-                except ValidationError as e:
-                    logger.warning(f"Invalid field in {path}: {e}")
-                    continue
-
+            for position, form_field in enumerate(validated_fields):
                 field_orm = FormFieldORM(
                     form_id=form_id,
                     name=form_field.name,

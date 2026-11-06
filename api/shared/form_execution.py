@@ -7,6 +7,8 @@ from typing import Any
 from uuid import UUID
 
 from shared.run_lineage import RunLineage
+from shared.execution_provenance import ExecutionProvenance
+from src.services.authorization.runtime import load_execution_provenance
 from shared.scope_resolver import (
     UNSET,
     RequestedScope,
@@ -105,6 +107,12 @@ async def create_form_execution_context(
             is_function_key=False,
         )
     else:
+        runtime = user.runtime_authority
+        provenance = (
+            await load_execution_provenance(db, runtime)
+            if runtime is not None
+            else ExecutionProvenance("human")
+        )
         organization = (
             Organization(id=str(organization_id), name="", is_active=True)
             if organization_id
@@ -119,6 +127,9 @@ async def create_form_execution_context(
             is_platform_admin=is_platform_admin,
             is_function_key=False,
             execution_id=execution_id,
+            execution_origin=provenance.origin,
+            agent_id=str(provenance.agent_id) if provenance.agent_id else None,
+            is_agent=provenance.origin == "agent",
         )
     context.startup = startup
     context.form_inputs = form_inputs or {}

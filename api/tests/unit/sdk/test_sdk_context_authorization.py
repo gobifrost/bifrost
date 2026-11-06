@@ -29,6 +29,10 @@ async def test_bootstrap_actor_flags_cannot_grant_foreign_reach(db_session):
     assert error.value.status_code == 403
     result = await get_sdk_context(db_session, principal)
     assert result["organization"]["id"] == str(home.id)
+    assert result["execution_origin"] == "human"
+    assert result["agent_id"] is None
+    assert result["original_user_id"] == str(principal.user_id)
+    assert result["original_user_is_platform_admin"] is False
 
 
 async def test_bootstrap_named_role_placement_is_current_and_can_be_revoked(db_session):

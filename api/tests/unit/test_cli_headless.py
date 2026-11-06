@@ -47,11 +47,13 @@ def _run(args: list[str], cwd: str, env: dict[str, str] | None = None) -> subpro
 
 
 def test_sync_help_advertises_noninteractive(tmp_path: pathlib.Path) -> None:
-    """``bifrost sync --help`` documents a non-interactive escape (--yes/-y)."""
+    """Sync help uses --force for explicit unattended consent."""
     r = _run(["sync", "--help"], cwd=str(tmp_path))
     assert r.returncode == 0, r.stderr
     out = r.stdout.lower()
-    assert "--yes" in out or "-y" in out or "non-interactive" in out, r.stdout
+    assert "--force" in out, r.stdout
+    assert "bifrost sync --force" in out, r.stdout
+    assert "bifrost sync --yes" not in out, r.stdout
 
 
 def test_push_help_advertises_noninteractive(tmp_path: pathlib.Path) -> None:
@@ -59,23 +61,18 @@ def test_push_help_advertises_noninteractive(tmp_path: pathlib.Path) -> None:
     r = _run(["push", "--help"], cwd=str(tmp_path))
     assert r.returncode == 0, r.stderr
     out = r.stdout.lower()
-    assert "--yes" in out or "-y" in out or "non-interactive" in out, r.stdout
+    assert "--force" in out, r.stdout
 
 
-def test_yes_flag_is_accepted_by_sync_parser(tmp_path: pathlib.Path) -> None:
-    """``--yes`` is a recognized option (no "Unknown option" rejection).
+@pytest.mark.parametrize("flag", ["--force", "--yes", "-y"])
+def test_force_and_existing_aliases_are_accepted(flag: str) -> None:
+    from bifrost.cli import _parse_push_watch_args
 
-    We point sync at an empty dir against an unreachable API. The parser must
-    accept ``--yes`` (exit != "Unknown option"); whatever happens after
-    (auth/connection failure) is fine — we only assert the flag parsed.
-    """
-    r = _run(
-        ["sync", str(tmp_path), "--yes"],
-        cwd=str(tmp_path),
-        env={"BIFROST_API_URL": "http://127.0.0.1:1"},  # nothing listening
-    )
-    assert "Unknown option" not in r.stdout, r.stdout
-    assert "Unknown option" not in r.stderr, r.stderr
+    parsed = _parse_push_watch_args(["workflows", flag])
+
+    assert parsed is not None
+    assert parsed.force is True
+    assert parsed.local_path == "workflows"
 
 
 def test_noninteractive_env_var_is_honored(tmp_path: pathlib.Path) -> None:
@@ -99,7 +96,7 @@ def test_sync_use_tui_headless_decision(monkeypatch: pytest.MonkeyPatch) -> None
 
     # Unforced TTY → interactive.
     assert _sync_use_tui(force=False, is_tty=True) is True
-    # --yes/-y on a real TTY → headless (the bug Codex caught: progress TUI
+    # --force on a real TTY → headless (progress TUI
     # must not run here, or an error would block on Enter).
     assert _sync_use_tui(force=True, is_tty=True) is False
     # No TTY → headless regardless of force.

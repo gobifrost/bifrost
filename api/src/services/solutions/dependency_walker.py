@@ -17,7 +17,7 @@ guard. (Capture's own Python bundling closure is separate, in ``capture.py``
 
 References are found by static scanners (``ref_scanner``): Python module imports
 (AST) and string-literal entity refs (``tables.get``/``config.get``/
-``useWorkflow``/``useTable``). Computed refs are invisible — hence
+``useWorkflow``/``workflows.execute``/``useTable``). Computed refs are invisible — hence
 ``scan_is_static`` and the deselectable human-checked preview.
 """
 
@@ -52,12 +52,19 @@ from src.services.solutions.ref_scanner import (
 )
 
 
-def check_install_needs(python_files: dict[str, str]) -> list[UnmetNeed]:
+def check_install_needs(
+    python_files: dict[str, str], *, allow_outbound_access: bool = False
+) -> list[UnmetNeed]:
     """Module-closure check over a bundle's python_files. Every ``modules.x``
     import in the bundle must resolve to a file present in the bundle. Returns
     the unmet needs (empty => satisfied). This is the pure module-class core;
     the DB-aware cross-solution-dependency check is layered on by the caller.
+    When the target install allows outbound access, missing modules can resolve
+    from the shared repository at runtime and this bundled-module check does
+    not report them.
     """
+    if allow_outbound_access:
+        return []
     present = set(python_files.keys())
 
     def _resolves(module: str) -> bool:
@@ -198,10 +205,9 @@ class SolutionDependencyWalker:
                 if wf is not None:
                     _ref_workflow(wf)
 
-        # Drain the worklist: scan each workflow's source for tables/configs/
-        # modules. New workflows can't appear here (workflows don't reference
-        # other workflows in source), so this terminates after one sweep — but
-        # the loop form keeps it correct if that ever changes.
+        # Drain the worklist: scan each workflow's source for dependencies,
+        # including literal workflow dispatches. Those dispatches can add more
+        # workflows to the worklist, making the closure transitive.
         while wf_worklist - scanned_wf:
             wf_id = (wf_worklist - scanned_wf).pop()
             scanned_wf.add(wf_id)
@@ -213,6 +219,10 @@ class SolutionDependencyWalker:
                 continue
             if include_imports:
                 await self._collect_module_closure(src, seen_modules)
+            for ref in scan_workflow_refs(src):
+                target = self._resolve_workflow_ref(ref, wf_by_id, wf_by_pathfn)
+                if target is not None:
+                    _ref_workflow(target)
             for tname in scan_table_refs(src):
                 tbl = tbl_by_name.get(tname)
                 if tbl is not None:
@@ -270,13 +280,23 @@ class SolutionDependencyWalker:
         }
         out: list[OutsideReference] = []
 
-        # Workflows outside the closure that read a selected table/config.
+        # Workflows outside the closure that reference selected
+        # workflows/tables/configs.
         for wf_id, wf in wf_by_id.items():
             if wf_id in closure_workflows or not wf.path:
                 continue
             src = await self._read(wf.path)
             if src is None:
                 continue
+            for ref in scan_workflow_refs(src):
+                target = self._resolve_workflow_ref(ref, wf_by_id, wf_by_pathfn)
+                if target is not None and target.id in closure_workflows:
+                    out.append(OutsideReference(
+                        referencer_kind="workflow", referencer_ref=str(wf.id),
+                        referencer_name=wf.name,
+                        target_kind="workflow", target_ref=str(target.id),
+                        target_name=target.name,
+                    ))
             for tname in scan_table_refs(src):
                 if tname in selected_table_names:
                     tbl = tbl_by_name[tname]
@@ -489,9 +509,13 @@ class SolutionDependencyWalker:
 
     @staticmethod
     def _resolve_workflow_ref(ref: str, wf_by_id, wf_by_pathfn) -> Workflow | None:
-        """Resolve a workflow ref string (``path::fn`` OR bare name) to a row."""
+        """Resolve a workflow UUID, portable ``path::fn``, or bare name."""
         if "::" in ref:
             return wf_by_pathfn.get(ref)
+        try:
+            return wf_by_id.get(UUID(ref))
+        except ValueError:
+            pass
         # Bare name — match against the loose-universe name index.
         for wf in wf_by_id.values():
             if wf.name == ref:

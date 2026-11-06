@@ -22,6 +22,28 @@ describe("useWorkflowMutation", () => {
 		vi.clearAllMocks();
 	});
 
+	it.each([new TypeError("Failed to fetch"), "Connection lost"])(
+		"leaves loading and surfaces a rejected execute request (%s)",
+		async (cause) => {
+			(apiClient.POST as Mock).mockRejectedValue(cause);
+			const { result } = renderHook(() => useWorkflowMutation("workflow-1"));
+
+			await act(async () => {
+				await expect(result.current.execute()).rejects.toThrow(
+					cause instanceof Error ? cause.message : cause,
+				);
+			});
+
+			expect(result.current.isLoading).toBe(false);
+			expect(result.current.isError).toBe(true);
+			expect(result.current.errorMessage).toBe(
+				cause instanceof Error ? cause.message : cause,
+			);
+			expect(result.current.data).toBeNull();
+			expect(subscribeToExecution).not.toHaveBeenCalled();
+		},
+	);
+
 	it("surfaces the execute API error detail", async () => {
 		(apiClient.POST as Mock).mockResolvedValue({
 			data: undefined,

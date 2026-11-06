@@ -276,7 +276,13 @@ class TestSuccessfulExecutionCompletionOrder:
         metrics_context = MagicMock()
         metrics_context.__aenter__ = AsyncMock(return_value=metrics_session)
         metrics_context.__aexit__ = AsyncMock(return_value=None)
-        session_factory = MagicMock(side_effect=[durable_context, metrics_context])
+        broadcast_session = AsyncMock()
+        broadcast_context = MagicMock()
+        broadcast_context.__aenter__ = AsyncMock(return_value=broadcast_session)
+        broadcast_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = MagicMock(
+            side_effect=[durable_context, broadcast_context, metrics_context]
+        )
 
         with patch.object(WorkflowExecutionConsumer, "__init__", lambda self: None):
             consumer = WorkflowExecutionConsumer()
@@ -298,7 +304,13 @@ class TestSuccessfulExecutionCompletionOrder:
                 side_effect=lambda **_kwargs: call_order.append("completed_event")
             )
             stage_logs = AsyncMock(return_value=MagicMock(count=0))
+            acknowledge_logs = AsyncMock()
             recover_logs = AsyncMock()
+            event_delivery = MagicMock()
+            update_delivery = AsyncMock(return_value=event_delivery)
+            broadcast_delivery = AsyncMock(
+                side_effect=lambda *_args: call_order.append("delivery_broadcast")
+            )
 
             with (
                 patch(
@@ -321,6 +333,7 @@ class TestSuccessfulExecutionCompletionOrder:
                     ),
                 ),
                 patch("bifrost._logging.stage_logs_to_postgres", new=stage_logs),
+                patch("bifrost._logging.acknowledge_staged_logs", new=acknowledge_logs),
                 patch("bifrost._logging.recover_terminal_execution_logs", new=recover_logs),
                 patch(
                     "src.core.metrics.update_daily_metrics",
@@ -334,7 +347,11 @@ class TestSuccessfulExecutionCompletionOrder:
                 ),
                 patch(
                     "src.jobs.consumers.workflow_execution.publish_execution_update",
-                    new_callable=AsyncMock,
+                    new=AsyncMock(
+                        side_effect=lambda *_args, **_kwargs: call_order.append(
+                            "publish_execution"
+                        )
+                    ),
                 ),
                 patch(
                     "src.jobs.consumers.workflow_execution.publish_history_update",
@@ -347,7 +364,11 @@ class TestSuccessfulExecutionCompletionOrder:
                 ),
                 patch(
                     "src.services.events.processor.update_delivery_from_execution",
-                    new_callable=AsyncMock,
+                    new=update_delivery,
+                ),
+                patch(
+                    "src.services.events.processor.broadcast_delivery_update_after_commit",
+                    new=broadcast_delivery,
                 ),
             ):
                 await consumer._process_success(
@@ -362,6 +383,9 @@ class TestSuccessfulExecutionCompletionOrder:
                 )
 
         assert call_order.index("durable_commit") < call_order.index("push_result")
+        assert call_order.index("push_result") < call_order.index("publish_execution")
+        assert call_order.index("publish_execution") < call_order.index("delivery_broadcast")
+        broadcast_delivery.assert_awaited_once_with(broadcast_session, event_delivery)
         assert call_order.index("push_result") < call_order.index("completed_event")
         assert call_order.index("completed_event") < call_order.index("daily_metrics")
         assert completed_event.await_args.kwargs["trigger_event"] == {
@@ -759,15 +783,27 @@ class TestFailedExecutionCompletionOrder:
         """The non-event fast path must not weaken event completion tracking."""
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
+        call_order: list[str] = []
         session = AsyncMock()
+        session.commit.side_effect = lambda: call_order.append("durable_commit")
         context = MagicMock()
         context.__aenter__ = AsyncMock(return_value=session)
         context.__aexit__ = AsyncMock(return_value=None)
         metrics_context = MagicMock()
         metrics_context.__aenter__ = AsyncMock(return_value=AsyncMock())
         metrics_context.__aexit__ = AsyncMock(return_value=None)
-        session_factory = MagicMock(side_effect=[context, metrics_context])
-        update_delivery = AsyncMock()
+        broadcast_session = AsyncMock()
+        broadcast_context = MagicMock()
+        broadcast_context.__aenter__ = AsyncMock(return_value=broadcast_session)
+        broadcast_context.__aexit__ = AsyncMock(return_value=None)
+        session_factory = MagicMock(
+            side_effect=[context, broadcast_context, metrics_context]
+        )
+        event_delivery = MagicMock()
+        update_delivery = AsyncMock(return_value=event_delivery)
+        broadcast_delivery = AsyncMock(
+            side_effect=lambda *_args: call_order.append("delivery_broadcast")
+        )
         receipt = MagicMock(count=1)
         stage_logs = AsyncMock(return_value=receipt)
         recover_logs = AsyncMock()
@@ -800,6 +836,10 @@ class TestFailedExecutionCompletionOrder:
                     new=update_delivery,
                 ),
                 patch(
+                    "src.services.events.processor.broadcast_delivery_update_after_commit",
+                    new=broadcast_delivery,
+                ),
+                patch(
                     "bifrost._logging.stage_logs_to_postgres",
                     new=stage_logs,
                 ),
@@ -810,7 +850,11 @@ class TestFailedExecutionCompletionOrder:
                 ),
                 patch(
                     "src.jobs.consumers.workflow_execution.publish_execution_update",
-                    new_callable=AsyncMock,
+                    new=AsyncMock(
+                        side_effect=lambda *_args, **_kwargs: call_order.append(
+                            "publish_execution"
+                        )
+                    ),
                 ),
                 patch(
                     "src.jobs.consumers.workflow_execution.publish_history_update",
@@ -843,6 +887,9 @@ class TestFailedExecutionCompletionOrder:
             error_message="boom",
             session=session,
         )
+        assert call_order.index("durable_commit") < call_order.index("publish_execution")
+        assert call_order.index("publish_execution") < call_order.index("delivery_broadcast")
+        broadcast_delivery.assert_awaited_once_with(broadcast_session, event_delivery)
         stage_logs.assert_awaited_once_with(
             "00000000-0000-0000-0000-000000000004", session
         )

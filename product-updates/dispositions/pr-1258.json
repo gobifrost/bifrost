@@ -1,0 +1,23 @@
+{
+  "key": "pr:1258",
+  "classification": "other",
+  "category": "hardening",
+  "entry_ids": [],
+  "summary": "Editor deletion now rejects empty or ambiguous paths before storage access.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1258"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1258",
+      "https://github.com/gobifrost/bifrost/issues/1193",
+      "Source finding by MTG-Thomas: https://github.com/Midtown-Technology-Group/bifrost/pull/1194. This scoped upstream implementation does not port its parent PRs or close the umbrella issue.",
+      "Jack authorized implementation and verification, then protected merge completion and the exact public PR text in this private thread. The summary repeats the approved first sentence.",
+      "Manual boundary review traced the editor's raw query through recursive listing and RepoStorage's leading-slash removal. Validation now precedes storage construction; all operations use one canonical non-root target. Existing authorization remains first. Shared SDK, MCP, app and workflow single-file deletion and valid root listings retain their existing behavior.",
+      "At 2654399d8, 115 focused tests passed with no failures, errors or skips, including live API/storage root refusal, bounded folder deletion, sibling and manifest preservation, authorization refusal, and #1216 organization/Solution metadata isolation. Full API Pyright and Ruff passed. The protected merge queue remains the complete-suite gate.",
+      "Performance spot check in the Python 3.14 container: median validation cost 6.36 microseconds for a 15-character folder path and 10.24 microseconds for a 176-character nested path. The fix adds no database or storage calls."
+    ]
+  }
+}

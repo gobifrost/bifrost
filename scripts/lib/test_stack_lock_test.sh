@@ -9,7 +9,7 @@ mkdir -p "$(dirname "$lock_path")"
 exec {held_lock}>"$lock_path"
 owns_lock=0
 if flock -n "$held_lock"; then owns_lock=1; fi
-for command in 'client e2e' 'stack reset' 'unit' 'pre-pr'; do
+for command in 'client e2e' 'stack down' 'unit' 'pre-pr'; do
     read -r -a arguments <<< "$command"
     if output=$(bash "$repo_dir/test.sh" "${arguments[@]}" 2>&1); then
         echo "FAIL: $command acquired an already owned stack" >&2

@@ -476,9 +476,12 @@ def test_watch_aborts_when_initial_sync_fails(tmp_path):
     from bifrost.cli import _watch_and_push
 
     class _ListFails:
+        listed = False
+
         async def post(self, url: str, json: Any = None):
             # The initial sync's /api/files/list returns 403 → _sync_files aborts.
             if url == "/api/files/list":
+                self.listed = True
                 return SimpleNamespace(
                     status_code=403,
                     json=lambda: {"detail": "Forbidden"},
@@ -498,12 +501,15 @@ def test_watch_aborts_when_initial_sync_fails(tmp_path):
 
     # _watch_and_push does `from watchdog.observers import Observer` internally,
     # so patch it at the source module.
+    client = _ListFails()
     with patch("watchdog.observers.Observer", _boom_observer):
         rc = asyncio.run(
             _watch_and_push(
-                str(tmp_path), repo_prefix="", mirror=False, validate=False, client=_ListFails()
+                str(tmp_path), repo_prefix="", mirror=False, validate=False,
+                client=client, force=True,
             )
         )
 
     assert rc == 1, "watch must propagate the initial-sync abort code"
+    assert client.listed, "explicit force must reach the initial sync"
     assert observer_constructed["v"] is False

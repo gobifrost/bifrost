@@ -498,17 +498,24 @@ async def render_app(
         )
 
     # 2. Cache miss — read compiled files from S3
-    rel_paths = await app_storage.list_files(app_id_str, storage_mode)
-    if not rel_paths:
+    file_metadata = await app_storage.list_files_with_metadata(app_id_str, storage_mode)
+    if not file_metadata:
         return AppRenderResponse(files=[], total=0, dependencies=dependencies)
 
     # Filter out non-renderable files (app.yaml, .bifrost-lock, editor turds).
     # Only code (tsx/ts/jsx/js) and css are served to the runtime.
     renderable = [
-        p for p in rel_paths
+        p for p in file_metadata
         if p.endswith((".tsx", ".ts", ".jsx", ".js", ".mjs", ".css"))
         and ".tmp." not in p
     ]
+
+    from src.services.app_resource_limits import AppArtifactLimitError, validate_app_artifacts
+
+    try:
+        validate_app_artifacts({path: file_metadata[path] for path in renderable})
+    except AppArtifactLimitError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
 
     # Read all files concurrently — serial was ~20ms * N on cold cache.
     contents = await asyncio.gather(*[

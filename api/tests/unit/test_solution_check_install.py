@@ -41,3 +41,14 @@ def test_no_needs_for_non_modules_imports():
     python_files = {"workflows/w.py": "import os\nfrom datetime import datetime\n"}
     needs = check_install_needs(python_files)
     assert needs == []
+
+
+def test_outbound_access_allows_shared_module_resolution():
+    python_files = {"workflows/w.py": "from modules.helpers import x\n"}
+    assert check_install_needs(python_files, allow_outbound_access=True) == []
+
+
+def test_explicitly_sealed_install_requires_bundled_module():
+    python_files = {"workflows/w.py": "from modules.helpers import x\n"}
+    needs = check_install_needs(python_files, allow_outbound_access=False)
+    assert any(need.ref == "modules.helpers" for need in needs)

@@ -328,6 +328,7 @@ class WorkflowExecutionConsumer:
         started_at: datetime | None = None
         completed_at: datetime | None = None
         log_receipt = None
+        event_delivery = None
 
         # DB operations and log flush — single short-lived session
         # (log flush reads Redis internally but DB writes share the session)
@@ -357,7 +358,7 @@ class WorkflowExecutionConsumer:
             if metadata.get("event") is not None or recovered_from_database:
                 try:
                     from src.services.events.processor import update_delivery_from_execution
-                    await update_delivery_from_execution(
+                    event_delivery = await update_delivery_from_execution(
                         execution_id, status.value, session=session
                     )
                 except Exception as e:
@@ -409,6 +410,26 @@ class WorkflowExecutionConsumer:
             {"duration_ms": duration_ms},
         )
         notification_ms = (time.perf_counter() - completion_started) * 1000
+
+        # Event delivery subscribers observe only the committed terminal
+        # result. Keep this network fan-out off the caller-critical durable
+        # session and after the execution transport notification.
+        if event_delivery is not None:
+            try:
+                from src.services.events.processor import (
+                    broadcast_delivery_update_after_commit,
+                )
+
+                async with session_factory() as broadcast_session:
+                    await broadcast_delivery_update_after_commit(
+                        broadcast_session, event_delivery
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to broadcast event delivery for %s...: %s",
+                    execution_id[:8],
+                    exc,
+                )
 
         if is_sync:
             await asyncio.sleep(_SYNC_DERIVED_WORK_GRACE_SECONDS)
@@ -543,6 +564,7 @@ class WorkflowExecutionConsumer:
         else:
             status = ExecutionStatus.FAILED
         log_receipt = None
+        event_delivery = None
 
         # DB operations and log flush — single short-lived session
         session_factory = get_session_factory()
@@ -570,7 +592,7 @@ class WorkflowExecutionConsumer:
             if metadata.get("event") is not None or recovered_from_database:
                 try:
                     from src.services.events.processor import update_delivery_from_execution
-                    await update_delivery_from_execution(
+                    event_delivery = await update_delivery_from_execution(
                         execution_id,
                         status.value,
                         error_message=error,
@@ -613,6 +635,23 @@ class WorkflowExecutionConsumer:
             status.value,
             {"error": error, "errorType": error_type},
         )
+
+        if event_delivery is not None:
+            try:
+                from src.services.events.processor import (
+                    broadcast_delivery_update_after_commit,
+                )
+
+                async with session_factory() as broadcast_session:
+                    await broadcast_delivery_update_after_commit(
+                        broadcast_session, event_delivery
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "Failed to broadcast event delivery for %s...: %s",
+                    execution_id[:8],
+                    exc,
+                )
 
         # Derived work begins only after the terminal status is available to
         # both sync and async callers.
@@ -745,6 +784,8 @@ class WorkflowExecutionConsumer:
         artifact_workspace_id = pending.get("artifact_workspace_id")
         lineage = pending.get("lineage")
         impersonation_provenance = pending.get("impersonation_provenance")
+        execution_origin = pending.get("execution_origin")
+        agent_id = pending.get("agent_id")
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
@@ -842,6 +883,8 @@ class WorkflowExecutionConsumer:
                         check_existing=True,
                         lineage=lineage,
                         impersonation_provenance=impersonation_provenance,
+                        execution_origin=execution_origin,
+                        agent_id=agent_id,
                     )
                     await update_execution(
                         execution_id=execution_id,
@@ -893,6 +936,8 @@ class WorkflowExecutionConsumer:
                 check_existing=True,
                 lineage=lineage,
                 impersonation_provenance=impersonation_provenance,
+                execution_origin=execution_origin,
+                agent_id=agent_id,
                 credential_version=credential_version_for(credential_route.protocol),
             )
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
@@ -947,6 +992,29 @@ class WorkflowExecutionConsumer:
                 legacy_lifetime_seconds=legacy_engine_token_lifetime(timeout_seconds),
             )
 
+            from src.services.authorization.runtime import (
+                RuntimeIdentityError,
+                load_execution_provenance,
+                load_runtime_authority,
+            )
+
+            origin = "unknown"
+            origin_agent_id = None
+            original_user_id = None
+            original_user_is_platform_admin = False
+            try:
+                async with get_db_context() as db:
+                    authority = await load_runtime_authority(db, "workflow_execution", UUID(execution_id))
+                    provenance = await load_execution_provenance(db, authority)
+                origin = provenance.origin
+                origin_agent_id = None if provenance.agent_id is None else str(provenance.agent_id)
+                original_user_id = str(authority.run_user.user_id)
+                original_user_is_platform_admin = authority.run_user.is_platform_admin
+            except RuntimeIdentityError:
+                # Historic executions without proven lineage may still run,
+                # but cannot claim a direct-human policy exception.
+                logger.warning("Execution %s has no current runtime authority", execution_id)
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -966,6 +1034,11 @@ class WorkflowExecutionConsumer:
                 "cache_ttl_seconds": cache_ttl_seconds,
                 "transient": False,
                 "is_platform_admin": pending.get("is_platform_admin", False),
+                "is_agent": origin == "agent",
+                "execution_origin": origin,
+                "agent_id": origin_agent_id,
+                "original_user_is_platform_admin": original_user_is_platform_admin,
+                "original_user_id": original_user_id,
                 "startup": startup,  # Launch workflow results (available via context.startup)
                 "form_inputs": form_inputs,
                 "embed": embed,
