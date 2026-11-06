@@ -26,7 +26,9 @@ from src.models.contracts.oauth_config import (
 )
 from src.services.oauth_config_service import (
     OAuthConfigService,
+    OAuthConfigValidationError,
     OAuthLoginPreferenceError,
+    OAuthProviderConfig,
     OAuthProviderPreferenceConflict,
 )
 from src.services.authorization.enforce import load_caller, require_permission
@@ -34,6 +36,37 @@ from src.services.authorization.enforce import load_caller, require_permission
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/settings/oauth", tags=["OAuth SSO Config"])
+
+
+def _config_response(
+    provider: OAuthSSOProvider, config: OAuthProviderConfig
+) -> OAuthProviderConfigResponse:
+    """Build the response from stored state, never from the request body."""
+    return OAuthProviderConfigResponse(
+        provider=provider,
+        configured=config.is_complete,
+        client_id=config.client_id,
+        client_secret_set=bool(config.client_secret),
+        token_endpoint_auth_method=config.token_endpoint_auth_method,  # type: ignore[arg-type]
+        private_key_set=bool(config.private_key),
+        private_key_kid=config.private_key_kid,
+        private_key_alg=config.private_key_alg,
+        tenant_id=config.tenant_id if provider == "microsoft" else None,
+        discovery_url=config.discovery_url if provider == "oidc" else None,
+        display_name=config.display_name if provider == "oidc" else None,
+    )
+
+
+async def _save_response(
+    service: OAuthConfigService, provider: OAuthSSOProvider
+) -> OAuthProviderConfigResponse:
+    saved = await service.get_provider_config(provider)
+    if saved is None:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OAuth configuration did not persist",
+        )
+    return _config_response(provider, saved)
 
 
 async def _authorize_oauth_settings(
@@ -140,15 +173,7 @@ async def get_oauth_config(
     config = await service.get_provider_config(provider)
 
     if config:
-        return OAuthProviderConfigResponse(
-            provider=provider,
-            configured=config.is_complete,
-            client_id=config.client_id,
-            client_secret_set=bool(config.client_secret),
-            tenant_id=config.tenant_id if provider == "microsoft" else None,
-            discovery_url=config.discovery_url if provider == "oidc" else None,
-            display_name=config.display_name if provider == "oidc" else None,
-        )
+        return _config_response(provider, config)
 
     return OAuthProviderConfigResponse(
         provider=provider,
@@ -193,16 +218,16 @@ async def set_microsoft_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_microsoft_config(config, updated_by=user.email)
+    try:
+        await service.set_microsoft_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
-    return OAuthProviderConfigResponse(
-        provider="microsoft",
-        configured=True,
-        client_id=config.client_id,
-        client_secret_set=True,
-        tenant_id=config.tenant_id,
-    )
+    return await _save_response(service, "microsoft")
 
 
 @router.put(
@@ -234,15 +259,16 @@ async def set_google_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_google_config(config, updated_by=user.email)
+    try:
+        await service.set_google_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
-    return OAuthProviderConfigResponse(
-        provider="google",
-        configured=True,
-        client_id=config.client_id,
-        client_secret_set=True,
-    )
+    return await _save_response(service, "google")
 
 
 @router.put(
@@ -277,17 +303,16 @@ async def set_oidc_config(
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
-    await service.set_oidc_config(config, updated_by=user.email)
+    try:
+        await service.set_oidc_config(config, updated_by=user.email)
+    except OAuthConfigValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
     await db.commit()
 
-    return OAuthProviderConfigResponse(
-        provider="oidc",
-        configured=True,
-        client_id=config.client_id,
-        client_secret_set=True,
-        discovery_url=config.discovery_url,
-        display_name=config.display_name,
-    )
+    return await _save_response(service, "oidc")
 
 
 @router.delete(
@@ -347,7 +372,9 @@ async def test_oauth_config(
     - New credentials (if test_data provided) - useful before saving
 
     The test validates that the discovery endpoint is reachable and returns
-    valid OIDC configuration. It does NOT test the actual OAuth flow.
+    valid OIDC configuration. It does NOT test the actual OAuth flow or the
+    token-endpoint client authentication (client_secret_basic/post or
+    private_key_jwt); that remains a documented follow-up.
     """
     await _authorize_oauth_settings(ctx, user, write=True)
     service = OAuthConfigService(db)
