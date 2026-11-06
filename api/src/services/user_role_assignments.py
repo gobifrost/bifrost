@@ -704,6 +704,46 @@ def _check_base_change(caller: Caller, target: AssignmentTarget, old: RoleInfo, 
     check_role_change(caller, new, target.held, target.user.organization_id)
 
 
+async def set_base_role_assignment(
+    session: AsyncSession, caller: Caller, *, user_id: UUID, base_role_id: UUID
+) -> None:
+    """Change only the base role using the single-account assignment guards."""
+    from shared.role_cache import invalidate_user
+    from shared.sdk_users import UserServiceError, set_user_base_role
+    from src.services.audit import emit_audit
+
+    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION)
+    user = target.user
+    if user.id == caller.principal.user_id:
+        raise RoleAssignmentError(400, "Cannot change your own roles via bulk action")
+    if is_system_account(user.id):
+        raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
+    if _has_fixed_base_role(user):
+        raise RoleAssignmentError(409, DEFAULT_IDENTITY_BASE_ROLE_MESSAGE)
+    roles = await load_roles(session, {user.base_role_id, base_role_id})
+    if base_role_id not in roles:
+        raise RoleAssignmentError(422, "Base role not found")
+    _check_base_change(caller, target, roles[user.base_role_id], roles[base_role_id])
+    if base_role_id == user.base_role_id:
+        return
+    if await session.scalar(
+        select(UserRole.user_id).where(UserRole.user_id == user.id, UserRole.role_id == base_role_id)
+    ):
+        raise RoleAssignmentError(422, "The base role can't also be an additional role")
+    before = user.base_role_id
+    try:
+        await set_user_base_role(session, user, base_role_id)
+    except UserServiceError as exc:
+        raise RoleAssignmentError(exc.status_code, exc.detail) from None
+    user.updated_at = datetime.now(timezone.utc)
+    await session.flush()
+    await invalidate_user(user.id)
+    await emit_audit(
+        session, "user.base_role_updated", resource_type="user", resource_id=user.id,
+        details={"before": str(before), "after": str(base_role_id)},
+    )
+
+
 async def _require_organizations_exist(session: AsyncSession, organization_ids: set[UUID]) -> None:
     if not organization_ids:
         return

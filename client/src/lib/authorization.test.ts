@@ -218,3 +218,30 @@ describe("invalidateAuthorization", () => {
 		).toBe(true);
 	});
 });
+
+describe("home permission requirements", () => {
+	it("rejects Chat grants held only in a different organization", () => {
+		const authz = summary([grant("chat.execute", "organization", ORG_A)]);
+		expect(canAnywhere(authz, "chat.execute")).toBe(true);
+		expect(
+			meetsRequirement(authz, { permission: "chat.execute", at: "home" }),
+		).toBe(false);
+	});
+
+	it("allows the home organization grant and Global users' platform grant", () => {
+		expect(
+			meetsRequirement(summary([grant("chat.execute", "home")]), {
+				permission: "chat.execute",
+				at: "home",
+			}),
+		).toBe(true);
+		expect(
+			meetsRequirement(
+				summary([grant("chat.execute", "platform")], {
+					home_organization_id: null,
+				}),
+				{ permission: "chat.execute", at: "home" },
+			),
+		).toBe(true);
+	});
+});

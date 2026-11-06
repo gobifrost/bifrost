@@ -3,6 +3,136 @@
     {
       "observed": {
         "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_base_role_default_get",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "users.defaults.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roleassignments.read",
+          "settings.read",
+          "organizations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Account defaults are deployment-local authorization state.",
+          "native_builder": "Account provisioning defaults are platform administration.",
+          "sdk": "Account provisioning defaults are platform administration."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_base_role_default_get"
+        },
+        "native_builder": false,
+        "operation_id": "users.defaults.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/base-role-defaults",
+          "request_model": null,
+          "response_model": "BaseRoleDefaultsResponse"
+        },
+        "side_effects": [],
+        "summary": "Read the default base role for newly provisioned accounts",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "set"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_base_role_default_update",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "users.defaults.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.readwrite",
+          "organizations.readwrite",
+          "userlifecycle.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "set"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Account defaults are deployment-local authorization state.",
+          "native_builder": "Account provisioning defaults are platform administration.",
+          "sdk": "Account provisioning defaults are platform administration."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_base_role_default_update"
+        },
+        "native_builder": false,
+        "operation_id": "users.defaults.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/base-role-defaults",
+          "request_model": "BaseRoleDefaultsUpdate",
+          "response_model": "BaseRoleDefaultsResponse"
+        },
+        "side_effects": [],
+        "summary": "Set the default base role for newly provisioned accounts",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": null,
           "status": "intentionally_unsupported"
         },
@@ -10558,10 +10688,10 @@
     }
   ],
   "counts": {
-    "cli": 177,
+    "cli": 179,
     "manifest": 16,
-    "mcp": 98,
-    "rest": 708,
+    "mcp": 100,
+    "rest": 710,
     "sdk": 21
   },
   "schema_version": 1,

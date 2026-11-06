@@ -18,7 +18,11 @@ from shared.builtin_roles import (
     is_builtin_role_id,
 )
 from src.core.constants import PROVIDER_ORG_ID
-from src.models.contracts.permissions import WILDCARD_EXCLUDED_PERMISSIONS, parse_permission
+from src.models.contracts.permissions import (
+    WILDCARD_EXCLUDED_PERMISSIONS,
+    parse_permission,
+    permission_display_name,
+)
 from src.services.access_list import ACCESS_LIST
 from src.services.authorization.context import Boundary, BoundaryKind
 from src.services.user_role_assignments import SECRETS_READER_BOUNDARIES
@@ -73,6 +77,12 @@ def test_seeded_user_permissions_read_or_launch_only():
         parsed = parse_permission(permission)
         assert parsed.action in {"read", "readbasic", "execute"}, permission
         assert not parsed.extended, permission
+
+
+def test_user_role_defaults_to_chat_without_expanding_other_builtin_roles():
+    assert permission_display_name("chat.execute") == "Use Chat"
+    assert "chat.execute" in USER_BASE_PERMISSIONS
+    assert "chat.execute" not in PLATFORM_OPERATOR_PERMISSIONS
 
 
 def test_platform_operator_permissions_are_user_support_reads_and_execution():
@@ -139,13 +149,15 @@ def test_migration_frozen_copies_match_live_constants():
     their launch permissions, and
     `20261001_r3a_operator_perms` seeds Secrets Reader. After a deliberate
     change to the live values, update them through a NEW migration and adjust
-    this test to pin the new revision instead. The R2b migration stays pinned
+    this test to pin the new revision instead. `20261106_chat_execute` then
+    gives only the User base role Chat access. The R2b migration stays pinned
     to what it seeded."""
     fix = _load_migration("20260929_user_base_perm_fix.py")
     r2b = _load_migration("20260929_r2b_roles.py")
     operator = _load_migration("20261001_r3a_operator_perms.py")
     latest = _load_migration("20261003_r3_operator_secrets.py")
     graph = _load_migration("20261009_graph_permission_names.py")
+    chat = _load_migration("20261106_chat_execute.py")
 
     assert fix.down_revision == "20260929_r2b_wf_permissions"
     assert fix.USER_ROLE_ID == USER_ROLE_ID
@@ -154,7 +166,10 @@ def test_migration_frozen_copies_match_live_constants():
     assert graph.USER_ROLE_ID == str(USER_ROLE_ID)
     assert graph.PLATFORM_OPERATOR_ROLE_ID == str(PLATFORM_OPERATOR_ROLE_ID)
     user_at_graph = _graph_renamed(graph, USER_ROLE_ID, fix.USER_BASE_PERMISSIONS)
-    assert user_at_graph == USER_BASE_PERMISSIONS
+    assert chat.down_revision == "20261105_wf_provenance_merge"
+    assert chat.USER_ROLE_ID == str(USER_ROLE_ID)
+    assert chat.ADDED_USER_PERMISSIONS == frozenset({"chat.execute"})
+    assert user_at_graph | chat.ADDED_USER_PERMISSIONS == USER_BASE_PERMISSIONS
 
     assert r2b.PLATFORM_ADMIN_ROLE_ID == PLATFORM_ADMIN_ROLE_ID
     assert r2b.USER_ROLE_ID == USER_ROLE_ID

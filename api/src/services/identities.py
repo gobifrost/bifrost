@@ -19,7 +19,12 @@ from sqlalchemy import case, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import USER_BASE_PERMISSIONS, USER_ROLE_ID
+from shared.builtin_roles import USER_BASE_PERMISSIONS
+from shared.base_role_defaults import (
+    BaseRoleDefaultError,
+    base_role_is_privileged,
+    resolve_base_role,
+)
 from shared.identities import (
     IDENTITY_EMAIL_DOMAIN,
     identity_label,
@@ -257,7 +262,7 @@ async def list_run_identities(session: AsyncSession, workflow_organization_id: U
 
 
 async def create_identity(session: AsyncSession, caller: Caller, request: IdentityCreate) -> IdentityPublic:
-    """A custom identity (base role User, no additional roles) in an
+    """A custom identity with an explicit or configured base role in an
     organization, or Global when ``organization_id`` is null."""
     require_operation(caller, CREATE_OPERATION, org_target(request.organization_id))
     if request.organization_id is not None and await session.get(Organization, request.organization_id) is None:
@@ -275,7 +280,17 @@ async def create_identity(session: AsyncSession, caller: Caller, request: Identi
         organization_id=request.organization_id,
         identity_kind=IdentityKind.CUSTOM,
     )
-    await set_user_base_role(session, identity, USER_ROLE_ID)
+    try:
+        resolved_base_role = await resolve_base_role(
+            session,
+            organization_id=request.organization_id,
+            explicit_base_role_id=request.base_role_id,
+        )
+    except BaseRoleDefaultError as exc:
+        raise IdentityError(exc.status_code, exc.detail) from None
+    if await base_role_is_privileged(session, resolved_base_role.id):
+        require_permission(caller, "privilegedaccess.readwrite", request.organization_id)
+    await set_user_base_role(session, identity, resolved_base_role.id)
     await _flush_named(session, identity, request.name)
     await emit_audit(
         session,

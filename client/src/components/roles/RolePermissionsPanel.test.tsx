@@ -16,6 +16,7 @@ const IDENTITY = [
 	"users.read",
 	"users.readwrite",
 ];
+const RUNTIME = ["agents.execute", "ai.execute", "chat.execute"];
 const PRIVILEGED = new Set([
 	"users.readwrite",
 	"userlifecycle.readwrite",
@@ -58,9 +59,18 @@ function entry(
 
 // Sorted by area then title, as the server sends it.
 const CATALOG: PermissionCatalogEntry[] = [
+	entry("chat", "Chat", "Automation", {
+		names: { "chat.execute": "Use Chat" },
+		enforced: true,
+	}),
+	entry("ai", "AI", "Automation", {
+		names: { "ai.execute": "Use AI" },
+		enforced: true,
+	}),
 	entry("agents", "Agents", "Automation", {
 		names: {
 			"agents.read": "Read Agents",
+			"agents.execute": "Run Agents",
 			"agents.readwrite": "Read and Write Agents",
 			"agents.read.all": "Read All Agents",
 		},
@@ -103,12 +113,14 @@ function permissionsOf(
 			item(p, !isBuiltin && IDENTITY.includes(p)),
 		),
 		identity_permissions: IDENTITY.map((p) => item(p, !isBuiltin)),
+		runtime_permissions: RUNTIME.map((p) => item(p, !isBuiltin)),
 	};
 }
 
 const state = vi.hoisted(() => ({
 	data: undefined as Permissions | undefined,
 	canManage: true,
+	catalog: [] as PermissionCatalogEntry[],
 	mutateAsync: vi.fn(),
 }));
 
@@ -127,7 +139,7 @@ vi.mock("@/hooks/useRoles", () => ({
 
 vi.mock("@/services/access", () => ({
 	usePermissionCatalog: () => ({
-		data: CATALOG,
+		data: state.catalog,
 		isError: false,
 		isFetching: false,
 		refetch: vi.fn(),
@@ -155,6 +167,7 @@ function areaHeadings() {
 }
 
 beforeEach(() => {
+	state.catalog = CATALOG;
 	state.data = permissionsOf(["users.read", "agents.readwrite"]);
 	state.canManage = true;
 	state.mutateAsync.mockReset();
@@ -168,6 +181,7 @@ describe("RolePermissionsPanel", () => {
 		);
 
 		expect(areaHeadings()).toEqual([
+			"Everyday Access",
 			"Identity & Access",
 			"Automation",
 			"Data & Content",
@@ -227,6 +241,33 @@ describe("RolePermissionsPanel", () => {
 		});
 	});
 
+	it("edits everyday runtime permissions separately from identity permissions", async () => {
+		state.data = permissionsOf(["users.read", "agents.execute"]);
+		const { user } = renderWithProviders(
+			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
+		);
+
+		expect(
+			screen.getByRole("checkbox", { name: "Run Agents" }),
+		).toBeChecked();
+		expect(
+			screen.getByRole("checkbox", { name: "Use Chat" }),
+		).not.toBeChecked();
+		await user.click(screen.getByRole("checkbox", { name: "Use Chat" }));
+		await user.click(
+			screen.getByRole("button", { name: "Save Permissions" }),
+		);
+
+		await waitFor(() => expect(state.mutateAsync).toHaveBeenCalled());
+		expect(state.mutateAsync).toHaveBeenCalledWith({
+			params: { path: { role_id: "role-1" } },
+			body: {
+				permissions: ["users.read"],
+				runtime_permissions: ["agents.execute", "chat.execute"],
+			},
+		});
+	});
+
 	it("offers only the actions a domain has", () => {
 		renderWithProviders(
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
@@ -268,6 +309,9 @@ describe("RolePermissionsPanel", () => {
 	});
 
 	it("says once on an area when every domain there takes effect with R3b", () => {
+		state.catalog = CATALOG.map((entry) =>
+			entry.area === "Automation" ? { ...entry, enforced: false } : entry,
+		);
 		renderWithProviders(
 			<RolePermissionsPanel roleId="role-1" isBuiltin={false} />,
 		);
@@ -373,7 +417,10 @@ describe("RolePermissionsPanel", () => {
 		});
 		await user.type(search, "secret");
 		await waitFor(() =>
-			expect(areaHeadings()).toEqual(["Integrations & Secrets"]),
+			expect(areaHeadings()).toEqual([
+				"Everyday Access",
+				"Integrations & Secrets",
+			]),
 		);
 		expect(domain("Configuration")).toBeVisible();
 

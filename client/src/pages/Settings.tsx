@@ -24,6 +24,7 @@ import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructi
 import { MCP } from "@/pages/settings/MCP";
 import { Maintenance } from "@/pages/settings/Maintenance";
 import { KubernetesSettings } from "@/pages/settings/KubernetesSettings";
+import { BaseRoleDefaultsSettings } from "@/pages/settings/BaseRoleDefaultsSettings";
 import { cn } from "@/lib/utils";
 import {
 	Bot,
@@ -115,6 +116,12 @@ const settingsSections: SettingsSection[] = [
 		label: "Security",
 		icon: Shield,
 		items: [
+			{
+				value: "base-role-defaults",
+				label: "Base Role Defaults",
+				icon: Shield,
+				content: BaseRoleDefaultsSettings,
+			},
 			{
 				value: "sso",
 				label: "Authentication",

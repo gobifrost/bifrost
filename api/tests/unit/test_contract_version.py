@@ -55,6 +55,7 @@ from src.models.contracts.access_checks import (  # noqa: E402
 from src.models.contracts.audit import AuditLogListResponse  # noqa: E402
 from src.models.contracts.audit_retention import AuditRetentionStatus  # noqa: E402
 from src.models.contracts.identities import IdentityCreate, IdentityPublic  # noqa: E402
+from src.models.contracts.base_role_defaults import BaseRoleDefaultsResponse, BaseRoleDefaultsUpdate  # noqa: E402
 from src.models.contracts.permissions import PermissionCatalogEntry  # noqa: E402
 from src.models.contracts.role_assignments import (  # noqa: E402
     UserRoleAssignmentsResponse,
@@ -107,6 +108,8 @@ from src.models.contracts import cli as _cli_contracts  # noqa: E402
 
 #: The explicit CRUD + execute DTOs the `bifrost <entity>` command surface uses.
 _COMMAND_DTOS: list[type] = [
+    BaseRoleDefaultsResponse,
+    BaseRoleDefaultsUpdate,
     OrganizationCreate,
     OrganizationUpdate,
     RoleCreate,
@@ -416,7 +419,8 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # SDK exact integration-mapping lookup (2026-11-03, #1016). ADDITIVE: new
     # find_mapping request/response DTOs plus the worker-socket route; existing
     # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
-    "455f08e75558f49330b1a18f5179a27776d069b015d1e5941f4a52f09b256da6"
+    # Default-base-role commands and optional explicit identity base roles are additive.
+    "3a4380492fe5d255496e85a3f14180f1d142484334b620feb034a9330f7150e0"
 )
 
 

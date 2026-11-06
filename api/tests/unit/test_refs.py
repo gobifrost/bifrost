@@ -148,6 +148,19 @@ async def test_resolve_role_by_name_uuid_ambiguous() -> None:
 
 
 @pytest.mark.asyncio
+async def test_role_lookup_includes_builtin_base_roles() -> None:
+    role_id = str(uuid4())
+
+    class BuiltinRoleClient:
+        async def get(self, path: str, *, params: dict[str, bool]):
+            assert path == "/api/roles"
+            assert params == {"include_builtin": True}
+            return _FakeResponse([{"id": role_id, "name": "User", "is_builtin": True}])
+
+    assert await resolve_ref(BuiltinRoleClient(), "role", "User") == role_id
+
+
+@pytest.mark.asyncio
 async def test_resolve_workflow_by_path_func() -> None:
     wf_id = str(uuid4())
     client = FakeClient(

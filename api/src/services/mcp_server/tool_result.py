@@ -111,6 +111,7 @@ def error_result(error_message: str, extra_data: dict[str, Any] | None = None) -
     return ToolResult(
         content=content,
         structured_content=data,
+        is_error=True,
     )
 
 
