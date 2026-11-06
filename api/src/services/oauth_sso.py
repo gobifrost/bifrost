@@ -382,8 +382,10 @@ class OAuthService:
                 claims_options=claims_options,
                 jwks_provider=self._jwks_provider,
             )
-            async with client:
+            try:
                 return await client.parse_verified_id_token(token_data, nonce)
+            finally:
+                await client.aclose()
         except Exception as exc:
             # Log the real cause server-side; never echo Authlib/joserfc
             # exception text to the browser (the router returns detail=str(e)).

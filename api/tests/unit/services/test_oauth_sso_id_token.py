@@ -91,6 +91,28 @@ async def _oidc_config(service: OAuthService) -> dict:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", [False, True])
+async def test_verification_closes_its_client_on_success_and_failure(invalid):
+    client = MagicMock()
+    client.parse_verified_id_token = AsyncMock(return_value={"sub": "user-1"})
+    client.aclose = AsyncMock()
+    if invalid:
+        client.parse_verified_id_token.side_effect = ValueError("invalid token")
+    service = _service(oidc_client_factory=MagicMock(return_value=client))
+
+    if invalid:
+        with pytest.raises(OAuthError, match="Could not verify"):
+            await service._verify_id_token("google", {"client_id": CLIENT_ID}, {}, "nonce-1")
+    else:
+        claims = await service._verify_id_token(
+            "google", {"client_id": CLIENT_ID}, {}, "nonce-1"
+        )
+        assert claims == {"sub": "user-1"}
+
+    client.aclose.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_generic_oidc_config_carries_discovery_and_verifies_id_token():
     key = _private_key()
     service = _service(jwks_provider=_jwks_provider(key))

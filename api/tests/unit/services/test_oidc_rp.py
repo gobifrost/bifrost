@@ -55,13 +55,14 @@ def _token(private_key, claims: Mapping[str, Any], kid: str = "key-1") -> str:
 
 
 def _provider(
-    *key_sets: Mapping[str, Any],
+    first_key_set: Mapping[str, Any],
+    *remaining_key_sets: Mapping[str, Any],
 ) -> tuple[JwksProvider, list[bool]]:
     calls: list[bool] = []
 
     async def provider(force: bool) -> Mapping[str, Any]:
         calls.append(force)
-        return key_sets[1] if force and len(key_sets) > 1 else key_sets[0]
+        return remaining_key_sets[0] if force and remaining_key_sets else first_key_set
 
     return provider, calls
 

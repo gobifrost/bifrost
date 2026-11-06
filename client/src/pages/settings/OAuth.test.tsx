@@ -9,6 +9,9 @@ vi.mock("@/components/users/SsoExclusions", () => ({
 
 const refetch = vi.fn();
 const updateLoginPreference = vi.fn();
+const updateMicrosoftConfig = vi.fn();
+const updateGoogleConfig = vi.fn();
+const updateOidcConfig = vi.fn();
 const configData = {
 	providers: [
 		{
@@ -17,16 +20,22 @@ const configData = {
 			client_id: "client-id",
 			client_secret_set: true,
 			tenant_id: "organizations",
+			token_endpoint_auth_method: "private_key_jwt",
+			private_key_alg: "RS384",
 		},
 		{
 			provider: "google",
 			configured: false,
 			client_secret_set: false,
+			token_endpoint_auth_method: "private_key_jwt",
+			private_key_alg: "RS384",
 		},
 		{
 			provider: "oidc",
 			configured: false,
 			client_secret_set: false,
+			token_endpoint_auth_method: "private_key_jwt",
+			private_key_alg: "RS384",
 		},
 	],
 	callback_url: "http://localhost/auth/oauth/callback",
@@ -48,9 +57,9 @@ vi.mock("@/services/oauth-config", () => ({
 		mutateAsync: updateLoginPreference,
 		isPending: false,
 	}),
-	useUpdateMicrosoftConfig: () => ({ mutateAsync: vi.fn() }),
-	useUpdateGoogleConfig: () => ({ mutateAsync: vi.fn() }),
-	useUpdateOIDCConfig: () => ({ mutateAsync: vi.fn() }),
+	useUpdateMicrosoftConfig: () => ({ mutateAsync: updateMicrosoftConfig }),
+	useUpdateGoogleConfig: () => ({ mutateAsync: updateGoogleConfig }),
+	useUpdateOIDCConfig: () => ({ mutateAsync: updateOidcConfig }),
 	useDeleteOAuthConfig: () => ({ mutateAsync: vi.fn() }),
 	useTestOAuthConfig: () => ({ mutateAsync: vi.fn() }),
 }));
@@ -60,7 +69,41 @@ describe("OAuth settings", () => {
 		vi.clearAllMocks();
 		updateLoginPreference.mockResolvedValue({});
 		refetch.mockResolvedValue({});
+		configData.providers.forEach((provider, index) => {
+			provider.configured = index === 0;
+		});
 	});
+
+	it.each([
+		[0, updateMicrosoftConfig],
+		[1, updateGoogleConfig],
+		[2, updateOidcConfig],
+	] as const)(
+		"preserves provider %i client authentication when saving without a new secret",
+		async (index, save) => {
+			configData.providers.forEach((provider) => {
+				provider.configured = true;
+			});
+			const { user } = renderWithProviders(<OAuth />);
+			await user.click(
+				screen.getAllByRole("button", { name: "Edit" })[index]!,
+			);
+			await user.click(
+				screen.getByRole("button", { name: "Save Configuration" }),
+			);
+
+			await waitFor(() =>
+				expect(save).toHaveBeenCalledWith({
+					body: expect.objectContaining({
+						token_endpoint_auth_method: "private_key_jwt",
+						private_key_alg: "RS384",
+						clear_private_key: false,
+						client_secret: null,
+					}),
+				}),
+			);
+		},
+	);
 
 	it("saves a configured provider as the preferred first attempt", async () => {
 		const { user } = renderWithProviders(<OAuth />);

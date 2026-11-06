@@ -22,11 +22,8 @@ _RealAsyncClient = httpx_module.AsyncClient
 
 
 class _FakeRelyingParty:
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return False
+    async def aclose(self):
+        pass
 
     async def parse_verified_id_token(self, token, nonce):
         return {"sub": "user-1"}

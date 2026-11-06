@@ -20594,15 +20594,44 @@ export interface components {
          */
         GoogleOAuthConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Client Id
              * @description Google OAuth 2.0 Client ID
              */
             client_id: string;
             /**
              * Client Secret
-             * @description Google OAuth 2.0 Client secret
+             * @description Google OAuth 2.0 Client secret (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
         };
         /**
          * GraphEdgeResponse
@@ -23273,15 +23302,44 @@ export interface components {
          */
         MicrosoftOAuthConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Client Id
              * @description Azure AD Application (client) ID
              */
             client_id: string;
             /**
              * Client Secret
-             * @description Azure AD client secret value
+             * @description Azure AD client secret value (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
             /**
              * Tenant Id
              * @description Azure AD tenant ID. Use 'common' for multi-tenant apps (allows any Microsoft account), 'organizations' for work/school only, or a specific tenant ID/domain for single-tenant
@@ -23971,6 +24029,29 @@ export interface components {
              */
             client_secret_set: boolean;
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key Set
+             * @description Whether a private_key_jwt key is configured (key material is never returned)
+             * @default false
+             */
+            private_key_set: boolean;
+            /**
+             * Private Key Kid
+             * @description JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt
+             */
+            private_key_alg?: string | null;
+            /**
              * Tenant Id
              * @description Microsoft tenant ID
              */
@@ -24015,6 +24096,35 @@ export interface components {
          */
         OIDCConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Discovery Url
              * @description OIDC discovery URL (must be HTTPS, e.g., https://provider.com/.well-known/openid-configuration)
              */
@@ -24026,9 +24136,9 @@ export interface components {
             client_id: string;
             /**
              * Client Secret
-             * @description OIDC Client secret
+             * @description OIDC Client secret (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
             /**
              * Display Name
              * @description Display name for the login button (e.g., 'Okta', 'Auth0', 'Company SSO')
