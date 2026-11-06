@@ -146,8 +146,9 @@ async def test_repeated_cancellation_drains_one_owned_abort_and_preserves_primar
         await asyncio.sleep(0)
         assert not owner.done() and not completed.is_set()
         finish.set()
+        await asyncio.wait({owner})
         with pytest.raises(asyncio.CancelledError, match="primary stop"):
-            await owner
+            owner.result()
         assert completed.is_set()
         s3.abort_multipart_upload.assert_awaited_once()
     finally:
@@ -164,11 +165,14 @@ async def test_optional_read_does_not_hide_body_absence_or_consumer_failure():
         yield "body"
     store = SimpleNamespace(open_read=open_read)
     error = StorageError("not_found", provider_code="LateBodyFailure")
-    with pytest.raises(StorageError) as caught:
+    try:
         async with optional_read(store, "key") as read:
             assert read == "body"
             raise error
-    assert caught.value is error
+    except StorageError as caught:
+        assert caught is error
+    else:
+        pytest.fail("Consumer errors must propagate")
 
 
 @pytest.mark.asyncio

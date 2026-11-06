@@ -167,8 +167,9 @@ async def test_cancelled_native_transfer_kills_and_drains_before_releasing_owner
                 assert not owner.done()
             process.kill.assert_called_once()
             release.set()
+            await asyncio.wait({owner})
             with pytest.raises(asyncio.CancelledError):
-                await owner
+                owner.result()
             assert finished.is_set()
             process.wait.assert_awaited_once()
         finally:

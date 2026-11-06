@@ -63,3 +63,24 @@ def test_parent_reader_factory_is_cached_and_reset_closes_selected_provider(monk
     finally:
         modules.reset_storage_client()
     selected.close.assert_called_once()
+
+
+def test_parent_reader_negative_cache_is_cleared_only_by_reset(monkeypatch):
+    from unittest.mock import Mock
+    from src.core import module_cache_sync as modules
+    from src.core import storage
+
+    modules.reset_storage_client()
+    selected = Mock()
+    factory = Mock(side_effect=[RuntimeError("fixture construction failure"), selected])
+    monkeypatch.setattr(storage, "sync_object_store", factory)
+    try:
+        assert modules._get_storage_client() is None
+        assert modules._get_storage_client() is None
+        assert factory.call_count == 1
+        modules.reset_storage_client()
+        assert modules._get_storage_client() is selected
+        assert factory.call_count == 2
+    finally:
+        modules.reset_storage_client()
+    selected.close.assert_called_once()

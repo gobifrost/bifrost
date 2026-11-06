@@ -1,6 +1,6 @@
 # Provenance: R2 qualification owner report r2-provider-offline-qualification-20261106-06.
 # Supplied SHA256: 215d8a88894e0bdcac90e40c4e8539976b9fe9062789540b5ed5a212affe057c.
-# Integration changes: formatting only; parsed AST verified identical.
+# Integration changes: formatting and conventional receiver naming; assertions unchanged.
 """Typed-provider wire qualification with synthetic credentials and network none.
 
 These assertions exercise real committed provider/transport code. Mock HTTP
@@ -597,8 +597,8 @@ class TypedProvider(unittest.IsolatedAsyncioTestCase):
         class TrackedStream(SyntheticResponseStream):
             closed = False
 
-            async def aclose(stream):
-                stream.closed = True
+            async def aclose(self):
+                self.closed = True
 
         stream = TrackedStream(b"one-two-three")
 

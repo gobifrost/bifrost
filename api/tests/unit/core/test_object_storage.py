@@ -73,8 +73,9 @@ async def test_cancellation_closes_the_owned_read_body():
         task = asyncio.create_task(consume())
         await ready.wait()
         task.cancel()
+        await asyncio.wait({task})
         with pytest.raises(asyncio.CancelledError):
-            await task
+            task.result()
         assert stream.closed
 
 
@@ -117,10 +118,13 @@ async def test_consumer_errors_are_not_reclassified_as_storage_failures():
         return httpx.Response(200, headers={"etag": '"v1"', "content-length": "4"}, stream=stream)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(httpx.ConnectError) as caught:
+        try:
             async with _store(client).open_read("key"):
                 raise caller_error
-    assert caught.value is caller_error
+        except httpx.ConnectError as caught:
+            assert caught is caller_error
+        else:
+            pytest.fail("Consumer errors must propagate")
     assert stream.closed
 
 

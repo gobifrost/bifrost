@@ -289,8 +289,8 @@ class TestS3ClientCaching:
         from src.core.storage.contracts import StorageError
         mock_client.read.side_effect = StorageError("not_found", provider_code="fixture")
 
-        mod._storage_client = mock_client
-        mod._storage_available = True
+        mod._storage_reader.client = mock_client
+        mod._storage_reader.available = True
 
         env_vars = {
             "BIFROST_S3_ENDPOINT_URL": "http://localhost:8333",
@@ -315,8 +315,8 @@ class TestS3ClientCaching:
         import src.core.module_cache_sync as mod
 
         # Simulate unavailable client
-        mod._storage_available = False
-        mod._storage_client = None
+        mod._storage_reader.available = False
+        mod._storage_reader.client = None
 
         result = mod._get_storage_module("any/path.py")
         assert result is None

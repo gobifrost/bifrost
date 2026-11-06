@@ -128,6 +128,7 @@ class S3WorkspaceMirror:
                 try:
                     process.kill()
                 except ProcessLookupError:
+                    # The child exited after the return-code check; drain below.
                     pass
             # Do not release the repository lock while the owned process or its
             # pipe readers can still write. Repeated cancellation is deferred.
@@ -136,6 +137,7 @@ class S3WorkspaceMirror:
                 try:
                     await asyncio.shield(draining)
                 except asyncio.CancelledError:
+                    # Keep the lock until this same process and its pipes drain.
                     pass
             raise
         if process.returncode != 0:

@@ -40,6 +40,7 @@ async def _abort(s3: S3Transport, bucket: str, key: str, upload_id: str) -> None
         try:
             await asyncio.shield(cleanup)
         except asyncio.CancelledError:
+            # Drain this owned abort; the caller re-raises its original failure.
             pass
     result = cleanup.result()[0]
     if isinstance(result, BaseException):

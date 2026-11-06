@@ -69,7 +69,8 @@ AuthorizeRename = Callable[[str], Awaitable[bool]]
 
 
 class MoveStorage(Protocol):
-    def serialize_version(self, version: ObjectVersion) -> str: ...
+    def serialize_version(self, version: ObjectVersion) -> str:
+        raise NotImplementedError
 
     async def head_object(self, key: str) -> ObjectInfo | None:
         """The object's head, or None when no object is stored at ``key``."""

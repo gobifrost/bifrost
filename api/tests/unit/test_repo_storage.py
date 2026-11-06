@@ -45,7 +45,8 @@ def provider(monkeypatch):
 async def test_source_reads_writes_and_deletes_keep_their_scope(provider, solution):
     source = SolutionStorage("install-a") if solution else RepoStorage()
     key = "_solutions/install-a/workflows/test.py" if solution else "_repo/workflows/test.py"
-    assert await source.write("/workflows/test.py", b"hello world") == hashlib.sha256(b"hello world").hexdigest()
+    written_hash = await source.write("/workflows/test.py", b"hello world")
+    assert written_hash == hashlib.sha256(b"hello world").hexdigest()
     provider.write.assert_awaited_once_with(key, b"hello world")
     assert await source.read("/workflows/test.py") == b"hello world"
     provider.open_read.assert_called_once_with(key)

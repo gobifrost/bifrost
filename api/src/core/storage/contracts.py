@@ -1,5 +1,6 @@
 """Provider-neutral object reads; versions are concurrency tokens, not hashes."""
 
+from abc import abstractmethod
 from collections.abc import AsyncIterator, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
@@ -52,9 +53,17 @@ class ObjectInfo:
 
 
 class ObjectBody(Protocol):
-    async def read(self, amt: int | None = None) -> bytes: ...
-    def iter_chunks(self, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]: ...
-    async def close(self) -> None: ...
+    @abstractmethod
+    async def read(self, amt: int | None = None) -> bytes:
+        raise NotImplementedError
+
+    @abstractmethod
+    def iter_chunks(self, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def close(self) -> None:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)
@@ -137,47 +146,91 @@ class ObjectStore(Protocol):
     Page cursors and versions belong to this provider/namespace, not a migration.
     """
 
-    async def __aenter__(self) -> Self: ...
+    @abstractmethod
+    async def __aenter__(self) -> Self:
+        raise NotImplementedError
+
+    @abstractmethod
     async def __aexit__(
         self, exc_type: type[BaseException] | None, exc: BaseException | None,
         traceback: TracebackType | None,
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     def serialize_version(self, version: ObjectVersion) -> str:
         """Encode durable witnesses in this provider's established representation."""
-        ...
+        raise NotImplementedError
+
+    @abstractmethod
     def restore_version(self, value: str) -> ObjectVersion:
         """Restore a persisted witness without treating it as a content hash."""
-        ...
-    async def probe(self) -> None: ...
-    async def stat(self, key: str) -> ObjectInfo: ...
+        raise NotImplementedError
+
+    @abstractmethod
+    async def probe(self) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def stat(self, key: str) -> ObjectInfo:
+        raise NotImplementedError
+
+    @abstractmethod
     def open_read(
         self, key: str, *, expected_version: ObjectVersion | None = None,
-    ) -> AbstractAsyncContextManager[ObjectRead]: ...
-    async def write(self, key: str, content: bytes, *, options: WriteOptions | None = None) -> WriteResult: ...
+    ) -> AbstractAsyncContextManager[ObjectRead]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def write(self, key: str, content: bytes, *, options: WriteOptions | None = None) -> WriteResult:
+        raise NotImplementedError
+
+    @abstractmethod
     async def write_stream(
         self, key: str, content: AsyncIterator[bytes], *, options: WriteOptions | None = None,
-    ) -> StreamWriteResult: ...
+    ) -> StreamWriteResult:
+        raise NotImplementedError
+
+    @abstractmethod
     async def copy(
         self, source: ObjectInfo, destination_key: str, *, options: CopyOptions | None = None,
-    ) -> WriteResult: ...
-    async def delete(self, key: str, *, expected_version: ObjectVersion | None = None) -> None: ...
-    async def delete_many(self, keys: Sequence[str]) -> None: ...
+    ) -> WriteResult:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, key: str, *, expected_version: ObjectVersion | None = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete_many(self, keys: Sequence[str]) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
     async def list_page(
         self, prefix: str = "", *, delimiter: str | None = None,
         cursor: PageCursor | None = None, limit: int = 1000,
-    ) -> ObjectPage: ...
+    ) -> ObjectPage:
+        raise NotImplementedError
+
+    @abstractmethod
     async def signed_request(
         self, key: str, method: Literal["GET", "PUT"], *, expires_in: int = 3600,
         content_type: str | None = None, response_content_type: str | None = None,
         response_content_disposition: str | None = None,
-    ) -> SignedRequest: ...
+    ) -> SignedRequest:
+        raise NotImplementedError
 
 
 class SyncObjectStore(Protocol):
     """Narrow whole-object reads for parent-process import/setup callers."""
 
-    def read(self, key: str) -> bytes: ...
-    def close(self) -> None: ...
+    @abstractmethod
+    def read(self, key: str) -> bytes:
+        raise NotImplementedError
+
+    @abstractmethod
+    def close(self) -> None:
+        raise NotImplementedError
 
 
 SnapshotGuard = Callable[[Mapping[str, ObjectVersion]], None]
@@ -187,7 +240,18 @@ class WorkspaceMirror(Protocol):
     """Provider-owned bulk transfer, including uncommitted files and Git internals."""
 
     @property
-    def follows_symlinks(self) -> bool: ...
-    async def download(self, prefix: str, target: Path) -> None: ...
-    async def upload(self, source: Path, prefix: str, *, validate_snapshot: SnapshotGuard | None = None) -> None: ...
-    async def delete(self, prefix: str) -> None: ...
+    @abstractmethod
+    def follows_symlinks(self) -> bool:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def download(self, prefix: str, target: Path) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def upload(self, source: Path, prefix: str, *, validate_snapshot: SnapshotGuard | None = None) -> None:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def delete(self, prefix: str) -> None:
+        raise NotImplementedError

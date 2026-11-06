@@ -169,8 +169,13 @@ def _candidate_storage_paths(path: str) -> list[str]:
 
 
 # Cached parent storage reader — reused across calls to avoid repeated setup
-_storage_client: SyncObjectStore | None = None
-_storage_available: bool | None = None
+@dataclass
+class _StorageReaderState:
+    client: SyncObjectStore | None = None
+    available: bool | None = None
+
+
+_storage_reader = _StorageReaderState()
 _sync_redis_client: Any = None
 # Set only by TemplateProcess after fork. It is process-local by virtue of
 # fork's copy-on-write memory and never comes from workflow-controlled input.
@@ -583,21 +588,20 @@ def resolve_module_sync(name: str) -> ModuleResolution:
 
 def _get_storage_client() -> SyncObjectStore | None:
     """Get the parent-only synchronous reader for the selected provider."""
-    global _storage_client, _storage_available
-    if _storage_available is False:
+    if _storage_reader.available is False:
         return None
-    if _storage_client is not None:
-        return _storage_client
+    if _storage_reader.client is not None:
+        return _storage_reader.client
     try:
         from src.config import get_settings
         from src.core.storage import sync_object_store
 
         settings = get_settings()
-        _storage_client = sync_object_store(settings)
-        _storage_available = True
-        return _storage_client
+        _storage_reader.client = sync_object_store(settings)
+        _storage_reader.available = True
+        return _storage_reader.client
     except Exception:
-        _storage_available = False
+        _storage_reader.available = False
         logger.debug("Object storage reader unavailable; parent fallback disabled")
         return None
 
@@ -740,9 +744,8 @@ def reset_sync_redis() -> None:
 
 def reset_storage_client() -> None:
     """Reset the cached synchronous storage reader. Used for testing."""
-    global _storage_client, _storage_available
-    if _storage_client is not None:
+    if _storage_reader.client is not None:
         with suppress(Exception):
-            _storage_client.close()
-    _storage_client = None
-    _storage_available = None
+            _storage_reader.client.close()
+    _storage_reader.client = None
+    _storage_reader.available = None
