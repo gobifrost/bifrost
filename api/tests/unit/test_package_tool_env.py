@@ -10,6 +10,7 @@ from __future__ import annotations
 import ast
 import asyncio
 import importlib
+import json
 import os
 import subprocess
 from collections.abc import Awaitable, Callable
@@ -193,6 +194,25 @@ async def _app_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     SolutionAppBuilder()._run_vite_build(tmp_path)
 
 
+async def _locked_app_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    sdk = "file:./bifrost-sdk.tgz"
+    root = {"dependencies": {"bifrost": sdk}}
+    (tmp_path / "package.json").write_text(json.dumps(root))
+    (tmp_path / "package-lock.json").write_text(json.dumps({
+        "lockfileVersion": 3,
+        "packages": {
+            "": root,
+            "node_modules/bifrost": {"version": "1.0.0", "resolved": sdk},
+        },
+    }))
+    vite = tmp_path / "node_modules/.bin/vite"
+    vite.parent.mkdir(parents=True)
+    vite.write_text("locked Vite")
+    SolutionAppBuilder()._run_vite_build(tmp_path)
+
+
 async def _router_outdated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     from src.routers.packages import check_package_updates
 
@@ -259,6 +279,7 @@ _CALL_SITES: dict[str, tuple[Callable[[Path, pytest.MonkeyPatch], Awaitable[None
     "requirements_setup_helper._get_installed_packages": (_setup_helper_pip_list, 1),
     "process_pool._get_installed_packages": (_process_pool_pip_list, 1),
     "app_build._run_vite_build": (_app_build, 2),
+    "app_build.locked_build": (_locked_app_build, 3),
     "packages.check_package_updates": (_router_outdated, 1),
     "packages.get_installed_packages_local": (_router_pip_list, 1),
     "package_install._pip_uninstall": (_consumer_uninstall, 1),
@@ -294,14 +315,27 @@ _PACKAGE_TOOLS = {"pip", "npm", "npx", "uv"}
 _SUBPROCESS_FUNCS = {"run", "Popen", "call", "check_call", "check_output"}
 
 
-def _argv_literals(node: ast.Call) -> list[str]:
+def _argv_literals(node: ast.Call, tree: ast.AST) -> list[str]:
     func = node.func
     if not isinstance(func, ast.Attribute):
         return []
     if func.attr == "create_subprocess_exec":
         parts: list[ast.expr] = list(node.args)
-    elif node.args and isinstance(node.args[0], (ast.List, ast.Tuple)):
-        parts = list(node.args[0].elts)
+    elif node.args:
+        argv = node.args[0]
+        if isinstance(argv, ast.Name):
+            # Builders choose an argv list before executing it. Inspect those
+            # assignments too, including both locked and unlocked branches.
+            candidates = [
+                assignment.value for assignment in ast.walk(tree)
+                if isinstance(assignment, ast.Assign)
+                and any(isinstance(target, ast.Name) and target.id == argv.id
+                        for target in assignment.targets)
+            ]
+        else:
+            candidates = [argv]
+        parts = [part for candidate in candidates for part in ast.walk(candidate)
+                 if isinstance(part, ast.Constant)]
     else:
         parts = []
     return [p.value for p in parts if isinstance(p, ast.Constant) and isinstance(p.value, str)]
@@ -336,7 +370,7 @@ def test_package_tool_subprocesses_use_package_tool_env() -> None:
             for node in ast.walk(tree):
                 if not isinstance(node, ast.Call) or not _is_subprocess_call(node):
                     continue
-                if not _PACKAGE_TOOLS.intersection(_argv_literals(node)):
+                if not _PACKAGE_TOOLS.intersection(_argv_literals(node, tree)):
                     continue
                 location = f"{path.relative_to(API_ROOT)}:{node.lineno}"
                 found.append(location)
