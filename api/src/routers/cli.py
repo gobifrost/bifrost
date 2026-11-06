@@ -82,6 +82,8 @@ from src.models.contracts.cli import (
     SDKIntegrationsListMappingsRequest,
     SDKIntegrationsListMappingsResponse,
     SDKIntegrationsGetMappingRequest,
+    SDKIntegrationsFindMappingRequest,
+    SDKIntegrationsFindMappingResponse,
     SDKIntegrationsUpsertMappingRequest,
     SDKIntegrationsDeleteMappingRequest,
     SDKIntegrationsMappingItem,
@@ -530,6 +532,48 @@ async def sdk_integrations_get_mapping(
     if result is None:
         return None
     return SDKIntegrationsMappingItem(**result)
+
+
+@router.post(
+    "/integrations/find_mapping",
+    response_model=SDKIntegrationsFindMappingResponse | None,
+    summary="Find one mapping by exact entity ID within authorized reach",
+)
+async def sdk_integrations_find_mapping(
+    request: SDKIntegrationsFindMappingRequest,
+    current_user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
+) -> SDKIntegrationsFindMappingResponse | None:
+    """Find one mapping by exact entity ID within authorized reach via SDK.
+
+    Searches the same permitted set ``list_mappings`` returns, with no
+    caller-supplied organization. Returns a discriminated
+    unique/ambiguous/not_found_in_authorized_scope result whose receipt
+    never claims global absence. Unresolved outcomes perform zero tenant
+    actions. ``get_mapping`` behavior is unchanged.
+    """
+    from shared.sdk_integrations import find_sdk_integration_mapping_dict
+    from src.services.authorization.enforce import load_caller
+
+    caller = await load_caller(db, current_user)
+
+    try:
+        result = await find_sdk_integration_mapping_dict(
+            db,
+            name=request.name,
+            entity_id=request.entity_id,
+            caller=caller,
+        )
+    except HTTPException:
+        # Auth failures (e.g. no reach) must surface.
+        raise
+    except Exception as e:
+        logger.error(f"SDK integrations.find_mapping failed: {log_safe(e)}")
+        raise HTTPException(status_code=500, detail="Failed to find integration mapping") from None
+
+    if result is None:
+        return None
+    return SDKIntegrationsFindMappingResponse(**result)
 
 
 @router.post(

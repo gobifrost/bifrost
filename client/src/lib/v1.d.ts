@@ -4848,6 +4848,32 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/integrations/find_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find one mapping by exact entity ID within authorized reach
+         * @description Find one mapping by exact entity ID within authorized reach via SDK.
+         *
+         *     Searches the same permitted set ``list_mappings`` returns, with no
+         *     caller-supplied organization. Returns a discriminated
+         *     unique/ambiguous/not_found_in_authorized_scope result whose receipt
+         *     never claims global absence. Unresolved outcomes perform zero tenant
+         *     actions. ``get_mapping`` behavior is unchanged.
+         */
+        post: operations["sdk_integrations_find_mapping_api_sdk_integrations_find_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/sdk/integrations/upsert_mapping": {
         parameters: {
             query?: never;
@@ -26532,6 +26558,64 @@ export interface components {
             scope: string;
         };
         /**
+         * SDKIntegrationsFindMappingReceipt
+         * @description Search receipt: authorized-reach scope only, never global absence.
+         */
+        SDKIntegrationsFindMappingReceipt: {
+            /**
+             * Operation
+             * @description Reach operation searched
+             */
+            operation: string;
+            /**
+             * Searched
+             * @description Always 'authorized_reach'
+             */
+            searched: string;
+            /**
+             * Candidates Considered
+             * @description Mappings in reach scanned
+             */
+            candidates_considered: number;
+            /**
+             * Entity Id
+             * @description Entity ID searched
+             */
+            entity_id: string;
+        };
+        /**
+         * SDKIntegrationsFindMappingRequest
+         * @description Request to find one mapping by exact entity ID within authorized reach.
+         */
+        SDKIntegrationsFindMappingRequest: {
+            /**
+             * Name
+             * @description Integration name
+             */
+            name: string;
+            /**
+             * Entity Id
+             * @description External entity ID (exact match)
+             */
+            entity_id: string;
+        };
+        /**
+         * SDKIntegrationsFindMappingResponse
+         * @description Discriminated exact-lookup result within authorized reach.
+         */
+        SDKIntegrationsFindMappingResponse: {
+            /**
+             * Status
+             * @description Lookup outcome within authorized reach
+             * @enum {string}
+             */
+            status: "unique" | "ambiguous" | "not_found_in_authorized_scope";
+            /** @description Matched mapping (unique only) */
+            mapping?: components["schemas"]["SDKIntegrationsMappingItem"] | null;
+            /** @description Search receipt (never claims global absence) */
+            receipt: components["schemas"]["SDKIntegrationsFindMappingReceipt"];
+        };
+        /**
          * SDKIntegrationsGetMappingRequest
          * @description Request to get a specific mapping via SDK.
          */
@@ -40515,6 +40599,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SDKIntegrationsMappingItem"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_find_mapping_api_sdk_integrations_find_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsFindMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsFindMappingResponse"] | null;
                 };
             };
             /** @description Validation Error */

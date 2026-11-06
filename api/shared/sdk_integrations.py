@@ -17,8 +17,8 @@ scope-based token fetch — so HTTP and worker-local results are identical by
 construction.
 
 Only the three read operations (``get``, ``list_mappings``, ``get_mapping``)
-plus the mapping mutations (``upsert_mapping``, ``delete_mapping``) and
-OAuth token refresh live here. The HTTP handlers
+plus the exact reach-scoped ``find_mapping`` lookup and the mapping mutations
+(``upsert_mapping``, ``delete_mapping``) and OAuth token refresh live here. The HTTP handlers
 (``api/src/routers/cli.py::sdk_integrations_*``) — whether reached by an
 external caller or by a child over the worker-local engine socket — call
 these same functions, so results are identical by construction.
@@ -639,6 +639,67 @@ async def get_sdk_integration_mapping_dict(
     return await _mapping_item_dict(
         repo, integration.id, mapping, caller=caller
     )
+
+
+async def find_sdk_integration_mapping_dict(
+    session: AsyncSession,
+    *,
+    name: str,
+    entity_id: str,
+    caller: Caller,
+) -> dict[str, Any] | None:
+    """Find one mapping by exact entity ID within authorized reach.
+
+    Searches the same permitted set ``list_sdk_integration_mappings`` returns
+    (``operation_reach(caller, "integrations.mappings.list")``) with no
+    caller-supplied organization: every candidate is already readable, and the
+    Python-side ``entity_id`` filter never widens that reach. ``get_mapping``
+    behavior is unchanged.
+
+    Returns None when the integration is missing (matching ``list``). Otherwise
+    a discriminated dict: ``unique`` carries the mapping (via
+    ``_mapping_item_dict``), while ``ambiguous`` (>=2 matches) and
+    ``not_found_in_authorized_scope`` carry no mapping and perform zero tenant
+    actions (no config fetch/decrypt). The receipt describes only the
+    authorized-reach search and never claims global absence.
+    """
+    from src.repositories.integrations import IntegrationsRepository
+
+    reach = operation_reach(caller, "integrations.mappings.list")
+    repo = IntegrationsRepository(session)
+    integration = await repo.get_integration_by_name(name)
+    if not integration:
+        return None
+
+    candidates = await repo.list_mappings(integration.id, reach=reach)
+    matches = [m for m in candidates if m.entity_id == entity_id]
+    receipt = {
+        "operation": "integrations.mappings.list",
+        "searched": "authorized_reach",
+        "candidates_considered": len(candidates),
+        "entity_id": entity_id,
+    }
+
+    if len(matches) == 1:
+        logger.info(f"SDK found mapping for integration '{log_safe(name)}'")
+        return {
+            "status": "unique",
+            "mapping": await _mapping_item_dict(
+                repo, integration.id, matches[0], caller=caller
+            ),
+            "receipt": receipt,
+        }
+    if len(matches) > 1:
+        logger.info(
+            f"SDK found ambiguous entity_id '{log_safe(entity_id)}' "
+            f"for integration '{log_safe(name)}'"
+        )
+        return {"status": "ambiguous", "mapping": None, "receipt": receipt}
+    return {
+        "status": "not_found_in_authorized_scope",
+        "mapping": None,
+        "receipt": receipt,
+    }
 
 
 async def upsert_sdk_integration_mapping(

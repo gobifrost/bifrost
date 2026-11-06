@@ -25,7 +25,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 177,
         "manifest": 16,
         "mcp": 98,
-        "rest": 707,  # Main's additions plus the conversion REST surface.
+        "rest": 708,  # Main endpoints plus exact integration mapping lookup.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

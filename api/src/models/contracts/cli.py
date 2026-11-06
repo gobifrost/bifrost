@@ -2,7 +2,7 @@
 CLI contract models for Bifrost (file operations, config, oauth).
 """
 
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -296,6 +296,42 @@ class SDKIntegrationsDeleteMappingRequest(BaseModel):
 
     name: str = Field(..., description="Integration name")
     scope: str = Field(..., description="Organization ID (required for delete)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SDKIntegrationsFindMappingRequest(BaseModel):
+    """Request to find one mapping by exact entity ID within authorized reach."""
+
+    name: str = Field(..., description="Integration name")
+    entity_id: str = Field(..., description="External entity ID (exact match)")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SDKIntegrationsFindMappingReceipt(BaseModel):
+    """Search receipt: authorized-reach scope only, never global absence."""
+
+    operation: str = Field(..., description="Reach operation searched")
+    searched: str = Field(..., description="Always 'authorized_reach'")
+    candidates_considered: int = Field(..., description="Mappings in reach scanned")
+    entity_id: str = Field(..., description="Entity ID searched")
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class SDKIntegrationsFindMappingResponse(BaseModel):
+    """Discriminated exact-lookup result within authorized reach."""
+
+    status: Literal["unique", "ambiguous", "not_found_in_authorized_scope"] = Field(
+        ..., description="Lookup outcome within authorized reach"
+    )
+    mapping: SDKIntegrationsMappingItem | None = Field(
+        default=None, description="Matched mapping (unique only)"
+    )
+    receipt: SDKIntegrationsFindMappingReceipt = Field(
+        ..., description="Search receipt (never claims global absence)"
+    )
 
     model_config = ConfigDict(from_attributes=True)
 

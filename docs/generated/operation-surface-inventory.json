@@ -10561,7 +10561,7 @@
     "cli": 177,
     "manifest": 16,
     "mcp": 98,
-    "rest": 707,
+    "rest": 708,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14144,6 +14144,13 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/sdk/integrations/delete_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/find_mapping",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
