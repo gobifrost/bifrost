@@ -33,7 +33,6 @@ from src.services.oauth_provider import append_query_params
 from src.services.oidc_rp import (
     GOOGLE_CLAIMS_OPTIONS,
     MICROSOFT_CLAIMS_OPTIONS,
-    IDTokenValidationError,
     JwksProvider,
     OIDCClientFactory,
     build_oidc_relying_party,
@@ -176,6 +175,7 @@ class OAuthService:
             return {
                 "client_id": config.client_id,
                 "client_secret": config.client_secret,
+                "tenant_id": tenant,
                 "authorize_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
                 "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/v1.0/me",
@@ -205,6 +205,10 @@ class OAuthService:
             return {
                 "client_id": config.client_id,
                 "client_secret": config.client_secret,
+                "discovery_url": config.discovery_url,
+                # Reuse the document already fetched for the endpoints above so
+                # id_token verification does not fetch discovery a second time.
+                "discovery": discovery,
                 "authorize_url": discovery["authorization_endpoint"],
                 "token_url": discovery["token_endpoint"],
                 "userinfo_url": discovery.get("userinfo_endpoint"),
@@ -339,8 +343,15 @@ class OAuthService:
     ) -> tuple[dict[str, Any], dict[str, Any] | None]:
         """Return discovery metadata and issuer options for id_token checks."""
         if provider == "oidc":
-            # Generic OIDC uses the configured discovery document's issuer.
-            return await self._fetch_oidc_discovery(config["discovery_url"]), None
+            # Generic OIDC uses the discovery document already fetched by
+            # ``get_provider_config``; only fetch if the caller supplied none.
+            discovery = config.get("discovery")
+            if not discovery:
+                discovery_url = config.get("discovery_url")
+                if not discovery_url:
+                    raise OAuthError("OIDC discovery is not configured")
+                discovery = await self._fetch_oidc_discovery(discovery_url)
+            return discovery, None
         if provider == "microsoft":
             return (
                 microsoft_server_metadata(config.get("tenant_id")),
@@ -358,19 +369,28 @@ class OAuthService:
         nonce: str,
     ) -> dict[str, Any]:
         """Verify the provider ``id_token``; never fall back to userinfo."""
-        metadata, claims_options = await self._id_token_metadata(provider, config)
-        client = self._oidc_client_factory(
-            client_id=config["client_id"],
-            client_secret=config.get("client_secret"),
-            server_metadata=metadata,
-            claims_options=claims_options,
-            jwks_provider=self._jwks_provider,
-        )
         try:
+            metadata, claims_options = await self._id_token_metadata(provider, config)
+            client = self._oidc_client_factory(
+                client_id=config["client_id"],
+                client_secret=config.get("client_secret"),
+                server_metadata=metadata,
+                claims_options=claims_options,
+                jwks_provider=self._jwks_provider,
+            )
             async with client:
                 return await client.parse_verified_id_token(token_data, nonce)
-        except IDTokenValidationError as exc:
-            raise OAuthError(f"ID token validation failed: {exc}") from exc
+        except Exception as exc:
+            # Log the real cause server-side; never echo Authlib/joserfc
+            # exception text to the browser (the router returns detail=str(e)).
+            logger.error(
+                "OIDC id_token verification failed for %s: %s",
+                log_safe(provider),
+                log_safe(str(exc)),
+            )
+            raise OAuthError(
+                "Could not verify the identity provider's response. Please try signing in again."
+            ) from exc
 
     async def get_user_info(
         self,

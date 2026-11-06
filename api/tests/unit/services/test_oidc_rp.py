@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from jwt.algorithms import RSAAlgorithm
 
 from src.services.oidc_rp import (
+    MICROSOFT_CLAIMS_OPTIONS,
     IDTokenValidationError,
     OIDCRelyingParty,
     microsoft_issuer_is_valid,
@@ -219,8 +220,43 @@ async def test_microsoft_claims_use_the_tenant_issuer_validator():
     with pytest.raises(IDTokenValidationError):
         await _parse(rp, token)
 
-    from src.services.oidc_rp import MICROSOFT_CLAIMS_OPTIONS
-
     microsoft_rp = _rp(provider, claims_options=MICROSOFT_CLAIMS_OPTIONS)
     claims = await _parse(microsoft_rp, token)
     assert claims["tid"] == WORK_TENANT
+
+
+@pytest.mark.asyncio
+async def test_microsoft_issuer_hook_survives_repeated_parses():
+    """Authlib pops validate hooks from the options dict it is given."""
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _rp(provider, claims_options=MICROSOFT_CLAIMS_OPTIONS)
+
+    good = _token(
+        key, _claims(iss=f"https://login.microsoftonline.com/{WORK_TENANT}/v2.0")
+    )
+    claims = await _parse(rp, good)
+    assert claims["tid"] == WORK_TENANT
+
+    evil = _token(key, _claims(iss="https://evil.example"))
+    with pytest.raises(IDTokenValidationError, match="iss"):
+        await _parse(rp, evil)
+
+    assert MICROSOFT_CLAIMS_OPTIONS == {
+        "iss": {"validate": microsoft_issuer_is_valid}
+    }
+
+
+@pytest.mark.asyncio
+async def test_missing_or_non_string_nonce_is_rejected():
+    key = _private_key()
+    provider, _ = _provider({"keys": [_jwk(key, "key-1")]})
+    rp = _rp(provider)
+    token = _token(key, _claims())
+
+    for nonce in ("", None):
+        with pytest.raises(IDTokenValidationError, match="nonce"):
+            await rp.parse_verified_id_token(
+                {"id_token": token, "access_token": "access-token"},
+                nonce,  # type: ignore[arg-type]
+            )

@@ -92,6 +92,7 @@ async def _entra_callback(
         600,
         json.dumps(
             {
+                "version": 2,
                 "code_verifier": "verifier",
                 "redirect_uri": "https://app.test/callback",
                 "nonce": "test-nonce",

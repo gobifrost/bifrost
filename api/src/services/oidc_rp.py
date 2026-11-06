@@ -8,13 +8,17 @@ flows: the authorization-code request stays in :mod:`src.services.oauth_sso`,
 while signature, JWKS, ``iss``, ``aud``, ``exp``/``iat``, ``nonce`` and ``azp``
 validation are delegated to Authlib's ``parse_id_token``.
 
-No custom JWKS cache or claim validation lives here.  ``server_metadata`` is
-supplied from the provider configuration/discovery document, and
+Authlib performs signature, JWKS, ``iss``, ``aud``, ``exp``/``iat``, ``nonce``
+and ``azp`` validation. This module only supplies the discovery metadata and
+the claims options that point those checks at Bifrost's configured issuer and
+client ID (Authlib's ``parse_id_token`` does not check ``aud`` on its own).
+There is no custom JWKS cache and no hand-written claim validation;
 ``jwks_provider`` exists only so tests can inject a fixed key set.
 """
 
 from __future__ import annotations
 
+import copy
 import re
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
@@ -81,14 +85,19 @@ def _claims_options(
     server_metadata: Mapping[str, Any],
     claims_options: Mapping[str, Any] | None,
 ) -> dict[str, Any]:
-    """Add the audience check while preserving Authlib's issuer default.
+    """Add the audience check and always supply an issuer option.
 
     Authlib's ``parse_id_token`` validates ``aud`` only through claims options;
     ``azp`` alone does not reject a token issued for another client. Supplying
     ``aud`` here keeps the check inside Authlib's ``JWTClaims.validate_aud``.
+    Supplying ``iss`` means Authlib's metadata-derived default never applies.
+
+    The options are deep-copied because Authlib's ``BaseClaims`` pops the
+    ``validate`` hook out of each nested option dict; handing it a shared or
+    module-level structure would disable the hook after the first parse.
     """
 
-    options = dict(claims_options or {})
+    options = copy.deepcopy(dict(claims_options or {}))
     options.setdefault("aud", {"values": [client_id]})
     if "iss" not in options and server_metadata.get("issuer"):
         options["iss"] = {"values": [server_metadata["issuer"]]}
@@ -146,6 +155,10 @@ class OIDCRelyingParty(AsyncOAuth2Client, AsyncOpenIDMixin):
         self, token: Mapping[str, Any], nonce: str
     ) -> dict[str, Any]:
         """Verify ``token['id_token']`` and return its validated claims."""
+        if not isinstance(nonce, str) or not nonce:
+            # Authlib's validate_nonce only runs when params["nonce"] is truthy.
+            raise IDTokenValidationError("Authorization request is missing a nonce")
+
         raw_id_token = token.get("id_token")
         if not isinstance(raw_id_token, str) or not raw_id_token:
             raise IDTokenValidationError("Authorization server did not return an id_token")
@@ -154,7 +167,9 @@ class OIDCRelyingParty(AsyncOAuth2Client, AsyncOpenIDMixin):
             user_info = await self.parse_id_token(
                 dict(token),
                 nonce=nonce,
-                claims_options=self.claims_options,
+                # Authlib pops the ``validate`` hooks out of the options it is
+                # given, so hand it a fresh copy on every parse.
+                claims_options=copy.deepcopy(self.claims_options),
             )
         except Exception as exc:  # Authlib/joserfc raise several exception types.
             raise IDTokenValidationError(str(exc)) from exc

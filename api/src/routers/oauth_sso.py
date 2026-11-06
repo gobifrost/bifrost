@@ -35,6 +35,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
+# Bumped when the Redis state payload changes shape. v2 added the OIDC nonce.
+OAUTH_STATE_VERSION = 2
+
 
 async def _save_microsoft_profile_photo(
     oauth_service: OAuthService,
@@ -184,6 +187,7 @@ async def init_oauth(
         # that was used in the init. The nonce is single-use with the state.
         r = await get_shared_redis()
         state_data = json.dumps({
+            "version": OAUTH_STATE_VERSION,
             "code_verifier": code_verifier,
             "redirect_uri": redirect_uri,
             "nonce": nonce,
@@ -248,10 +252,11 @@ async def oauth_callback(
     """
     oauth_service = OAuthService(db)
 
-    # Validate state and retrieve PKCE verifier + redirect_uri from Redis
+    # Validate state and retrieve PKCE verifier + redirect_uri from Redis.
+    # GETDEL keeps the state single-use atomically.
     r = await get_shared_redis()
     state_key = oauth_state_key(callback_data.state)
-    state_data_raw = await r.get(state_key)
+    state_data_raw = await r.getdel(state_key)
 
     if not state_data_raw:
         logger.warning(
@@ -263,23 +268,34 @@ async def oauth_callback(
             detail="Invalid or expired OAuth state",
         )
 
-    # Delete state immediately (single-use)
-    await r.delete(state_key)
-
-    # Parse state data (contains code_verifier, redirect_uri and nonce)
     if isinstance(state_data_raw, bytes):
         state_data_raw = state_data_raw.decode("utf-8")
 
     try:
         state_data = json.loads(state_data_raw)
-        code_verifier = state_data["code_verifier"]
-        redirect_uri = state_data["redirect_uri"]
-        nonce = state_data["nonce"]
-    except (json.JSONDecodeError, KeyError) as e:
+    except json.JSONDecodeError as e:
         logger.error(f"Invalid OAuth state data format: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OAuth state data",
+        )
+
+    code_verifier = state_data.get("code_verifier")
+    redirect_uri = state_data.get("redirect_uri")
+    nonce = state_data.get("nonce")
+    if not code_verifier or not redirect_uri:
+        logger.error("OAuth state data is missing code_verifier or redirect_uri")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid OAuth state data",
+        )
+    if state_data.get("version") != OAUTH_STATE_VERSION or not isinstance(nonce, str) or not nonce:
+        # A state written before this deploy has no nonce/version. Rejecting it
+        # is safer than continuing without nonce validation.
+        logger.warning("OAuth state is missing the expected nonce/version")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Your sign-in session expired before it completed. Please try again.",
         )
 
     try:

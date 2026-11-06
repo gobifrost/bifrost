@@ -21,10 +21,13 @@ from src.services.oauth_sso import (
 
 
 class _Redis:
-    def __init__(self, state: str):
+    def __init__(self, state: str, payload: dict | None = None):
         self.values = {
             oauth_state_key(state): json.dumps(
-                {
+                payload
+                if payload is not None
+                else {
+                    "version": 2,
                     "code_verifier": "verifier",
                     "redirect_uri": "https://app.test/callback",
                     "nonce": "test-nonce",
@@ -34,6 +37,9 @@ class _Redis:
 
     async def get(self, key):
         return self.values.get(key)
+
+    async def getdel(self, key):
+        return self.values.pop(key, None)
 
     async def delete(self, key):
         self.values.pop(key, None)
@@ -72,9 +78,10 @@ async def _callback(
     reject_validation: bool = False,
     get_user_info_side_effect: object | None = None,
     photo_side_effect: object | None = None,
+    state_payload: dict | None = None,
 ):
     state = "callback-state"
-    redis = _Redis(state)
+    redis = _Redis(state, state_payload)
     db = SimpleNamespace(commit=AsyncMock())
     provision = AsyncMock(return_value=SimpleNamespace(user=provision_result))
     lookup = AsyncMock(return_value=existing_user)
@@ -301,3 +308,22 @@ async def test_google_sign_in_does_not_fetch_a_microsoft_photo(monkeypatch):
 
     assert response.status_code == 200
     photo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_state_without_nonce_asks_the_user_to_retry(monkeypatch):
+    response, lookup, provision, _photo = await _callback(
+        monkeypatch,
+        user_info=OAuthUserInfo("google", "google-id", "kim@clientco.com"),
+        tokens=OAuthTokens("access"),
+        existing_user=None,
+        state_payload={
+            "code_verifier": "verifier",
+            "redirect_uri": "https://app.test/callback",
+        },
+    )
+
+    assert response.status_code == 400
+    assert "expired" in response.json()["detail"].lower()
+    lookup.assert_not_awaited()
+    provision.assert_not_awaited()
