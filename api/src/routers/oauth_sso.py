@@ -10,6 +10,7 @@ Provides endpoints for OAuth/SSO authentication:
 
 import json
 import logging
+import secrets
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
@@ -164,24 +165,28 @@ async def init_oauth(
     oauth_service = OAuthService(db)
 
     try:
-        # Generate PKCE values and state
+        # Generate PKCE values, state and the OIDC nonce
         code_verifier = OAuthService.generate_code_verifier()
         state = OAuthService.generate_state()
+        nonce = secrets.token_urlsafe(32)
 
         authorization_url = await oauth_service.get_authorization_url(
             provider=provider,
             redirect_uri=redirect_uri,
             state=state,
             code_verifier=code_verifier,
+            nonce=nonce,
         )
 
-        # Store state -> {code_verifier, redirect_uri} binding in Redis (server-side PKCE)
-        # This prevents the client from ever seeing the verifier and ensures we use
-        # the same redirect_uri in the callback that was used in the init
+        # Store state -> {code_verifier, redirect_uri, nonce} in Redis
+        # (server-side PKCE). This prevents the client from ever seeing the
+        # verifier and ensures we use the same redirect_uri in the callback
+        # that was used in the init. The nonce is single-use with the state.
         r = await get_shared_redis()
         state_data = json.dumps({
             "code_verifier": code_verifier,
             "redirect_uri": redirect_uri,
+            "nonce": nonce,
         })
         await r.setex(
             oauth_state_key(state),
@@ -261,7 +266,7 @@ async def oauth_callback(
     # Delete state immediately (single-use)
     await r.delete(state_key)
 
-    # Parse state data (contains code_verifier and redirect_uri)
+    # Parse state data (contains code_verifier, redirect_uri and nonce)
     if isinstance(state_data_raw, bytes):
         state_data_raw = state_data_raw.decode("utf-8")
 
@@ -269,6 +274,7 @@ async def oauth_callback(
         state_data = json.loads(state_data_raw)
         code_verifier = state_data["code_verifier"]
         redirect_uri = state_data["redirect_uri"]
+        nonce = state_data["nonce"]
     except (json.JSONDecodeError, KeyError) as e:
         logger.error(f"Invalid OAuth state data format: {log_safe(e)}")
         raise HTTPException(
@@ -278,12 +284,14 @@ async def oauth_callback(
 
     try:
 
-        # Exchange code for tokens using server-side verifier
+        # Exchange code for tokens using server-side verifier, then verify the
+        # id_token against the nonce stored with this state.
         tokens = await oauth_service.exchange_code_for_tokens(
             provider=callback_data.provider,
             code=callback_data.code,
             redirect_uri=redirect_uri,
             code_verifier=code_verifier,
+            nonce=nonce,
         )
 
         # Get user info from provider

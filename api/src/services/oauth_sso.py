@@ -15,13 +15,13 @@ import hashlib
 import io
 import logging
 import secrets
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import httpx
-import jwt
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +30,16 @@ from src.core.log_safety import log_safe
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
 from src.services.oauth_provider import append_query_params
+from src.services.oidc_rp import (
+    GOOGLE_CLAIMS_OPTIONS,
+    MICROSOFT_CLAIMS_OPTIONS,
+    IDTokenValidationError,
+    JwksProvider,
+    OIDCClientFactory,
+    build_oidc_relying_party,
+    google_server_metadata,
+    microsoft_server_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +80,7 @@ class OAuthTokens:
     expires_in: int | None = None
     token_type: str = "Bearer"
     id_token: str | None = None
+    id_token_claims: dict[str, Any] | None = None
     scope: str | None = None
 
 
@@ -81,9 +92,17 @@ class OAuthError(Exception):
 class OAuthService:
     """Service for OAuth SSO operations."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        oidc_client_factory: OIDCClientFactory = build_oidc_relying_party,
+        jwks_provider: JwksProvider | None = None,
+    ):
         self.db = db
         self._config_service = OAuthConfigService(db)
+        self._oidc_client_factory = oidc_client_factory
+        self._jwks_provider = jwks_provider
         # Cache for OIDC discovery documents
         self._oidc_discovery_cache: dict[str, dict[str, Any]] = {}
 
@@ -210,6 +229,7 @@ class OAuthService:
         redirect_uri: str,
         state: str,
         code_verifier: str,
+        nonce: str,
     ) -> str:
         """
         Generate the authorization URL for OAuth login.
@@ -219,6 +239,7 @@ class OAuthService:
             redirect_uri: Callback URL
             state: CSRF state value
             code_verifier: PKCE code verifier
+            nonce: OIDC nonce bound to this authorization request
 
         Returns:
             Authorization URL to redirect user to
@@ -232,6 +253,7 @@ class OAuthService:
             "redirect_uri": redirect_uri,
             "scope": " ".join(config["scopes"]),
             "state": state,
+            "nonce": nonce,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
@@ -253,18 +275,21 @@ class OAuthService:
         code: str,
         redirect_uri: str,
         code_verifier: str,
+        nonce: str,
     ) -> OAuthTokens:
         """
-        Exchange authorization code for tokens.
+        Exchange authorization code for tokens and verify the ``id_token``.
 
         Args:
             provider: OAuth provider name
             code: Authorization code from callback
             redirect_uri: Callback URL (must match authorize request)
             code_verifier: PKCE code verifier
+            nonce: Nonce sent in the authorization request
 
         Returns:
-            OAuthTokens with access token and optionally refresh token
+            OAuthTokens with access token, verified ``id_token`` claims and
+            optionally a refresh token
         """
         config = await self.get_provider_config(provider)
 
@@ -295,14 +320,57 @@ class OAuthService:
 
             token_data = response.json()
 
+        id_token_claims = await self._verify_id_token(
+            provider, config, token_data, nonce
+        )
+
         return OAuthTokens(
             access_token=token_data["access_token"],
             refresh_token=token_data.get("refresh_token"),
             expires_in=token_data.get("expires_in"),
             token_type=token_data.get("token_type", "Bearer"),
             id_token=token_data.get("id_token"),
+            id_token_claims=id_token_claims,
             scope=token_data.get("scope"),
         )
+
+    async def _id_token_metadata(
+        self, provider: str, config: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Return discovery metadata and issuer options for id_token checks."""
+        if provider == "oidc":
+            # Generic OIDC uses the configured discovery document's issuer.
+            return await self._fetch_oidc_discovery(config["discovery_url"]), None
+        if provider == "microsoft":
+            return (
+                microsoft_server_metadata(config.get("tenant_id")),
+                MICROSOFT_CLAIMS_OPTIONS,
+            )
+        if provider == "google":
+            return google_server_metadata(), GOOGLE_CLAIMS_OPTIONS
+        raise OAuthError(f"Unknown OAuth provider: {provider}")
+
+    async def _verify_id_token(
+        self,
+        provider: str,
+        config: dict[str, Any],
+        token_data: dict[str, Any],
+        nonce: str,
+    ) -> dict[str, Any]:
+        """Verify the provider ``id_token``; never fall back to userinfo."""
+        metadata, claims_options = await self._id_token_metadata(provider, config)
+        client = self._oidc_client_factory(
+            client_id=config["client_id"],
+            client_secret=config.get("client_secret"),
+            server_metadata=metadata,
+            claims_options=claims_options,
+            jwks_provider=self._jwks_provider,
+        )
+        try:
+            async with client:
+                return await client.parse_verified_id_token(token_data, nonce)
+        except IDTokenValidationError as exc:
+            raise OAuthError(f"ID token validation failed: {exc}") from exc
 
     async def get_user_info(
         self,
@@ -373,7 +441,7 @@ class OAuthService:
         data = user_info.raw_data or {}
 
         if user_info.provider == "microsoft":
-            tenant_id = _microsoft_tenant_id(tokens.id_token)
+            tenant_id = _microsoft_tenant_id(tokens.id_token_claims)
             if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
                 raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
             if "#ext#" in user_info.email:
@@ -536,18 +604,10 @@ class OAuthService:
         return result.scalar_one_or_none()
 
 
-def _microsoft_tenant_id(id_token: str | None) -> str:
-    """The `tid` claim of a Microsoft ID token.
-
-    The token comes straight from Microsoft's token endpoint over TLS in the code exchange,
-    so its signature isn't checked (OpenID Connect Core 3.1.3.7).
-    """
-    if not id_token:
+def _microsoft_tenant_id(claims: Mapping[str, Any] | None) -> str:
+    """The ``tid`` claim of a Microsoft id_token verified by ``OIDCRelyingParty``."""
+    if claims is None:
         raise OAuthError("Microsoft didn't return an ID token")
-    try:
-        claims = jwt.decode(id_token, options={"verify_signature": False})
-    except jwt.PyJWTError as e:
-        raise OAuthError("Microsoft returned an unreadable ID token") from e
     tenant_id = claims.get("tid")
     if not tenant_id:
         raise OAuthError("Microsoft's ID token has no tenant")
