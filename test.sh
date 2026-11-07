@@ -458,6 +458,7 @@ repository_ci_checks() {
     python3 -m unittest scripts.test_pool_drills
     python3 -m unittest scripts.test_product_updates
     python3 -m unittest scripts.test_release_gate
+    python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population
     bash scripts/test_release_check.sh
     bash scripts/test_prepare_release_body.sh
     node --test scripts/test_product_updates_scope.cjs
