@@ -1,265 +1,118 @@
-"""
-Repo Storage Service — S3 operations scoped to _repo/ prefix.
-
-All paths are relative to _repo/. Callers pass "workflows/test.py"
-and this service reads/writes "_repo/workflows/test.py" in S3.
-"""
+"""Workspace source storage, scoped to the provider-independent _repo/ prefix."""
 
 from __future__ import annotations
 
 import hashlib
-import logging
 from collections.abc import Callable
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime
 
 from src.config import Settings, get_settings
-from src.core.s3_transport import S3Error, S3Transport
-
-logger = logging.getLogger(__name__)
+from src.core.storage import object_pages, object_store, optional_read
+from src.core.storage.contracts import ObjectInfo, ObjectStore, ObjectSummary, ObjectVersion, StorageError
 
 REPO_PREFIX = "_repo/"
 
 
-@dataclass
-class S3FileMetadata:
-    """Metadata for a file stored in S3."""
-    etag: str
+@dataclass(frozen=True)
+class SourceFileMetadata:
+    """A source object's opaque version witness and listing metadata."""
+
+    version: ObjectVersion
     last_modified: datetime
     size: int
 
+    @classmethod
+    def from_object(cls, item: ObjectInfo | ObjectSummary) -> SourceFileMetadata:
+        if item.modified_at is None:
+            raise StorageError("backend_error", provider_code="MissingSourceTimestamp")
+        return cls(item.version, item.modified_at, item.size)
+
 
 class RepoStorage:
-    """S3 storage scoped to _repo/ prefix."""
-
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
 
-    @asynccontextmanager
-    async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
-            yield client
+    def _get_store(self) -> ObjectStore:
+        return object_store(self._settings)
 
     def _repo_key(self, path: str) -> str:
-        """Convert relative path to S3 key with _repo/ prefix."""
         return f"{REPO_PREFIX}{path.lstrip('/')}"
 
     async def read(self, path: str) -> bytes:
-        """Read a file from _repo/."""
-        async with self._get_client() as client:
-            return await self._read_from_s3(client, path)
-
-    async def _read_from_s3(self, client, path: str) -> bytes:
-        key = self._repo_key(path)
-        response = await client.get_object(Bucket=self._bucket, Key=key)
-        return await response["Body"].read()
+        async with self._get_store() as store:
+            async with store.open_read(self._repo_key(path)) as read:
+                return await read.body.read()
 
     async def write(self, path: str, content: bytes) -> str:
-        """Write a file to _repo/. Returns content hash."""
-        async with self._get_client() as client:
-            return await self._write_to_s3(client, path, content)
-
-    async def _write_to_s3(self, client, path: str, content: bytes) -> str:
-        key = self._repo_key(path)
-        content_hash = hashlib.sha256(content).hexdigest()
-        await client.put_object(Bucket=self._bucket, Key=key, Body=content)
-        return content_hash
+        async with self._get_store() as store:
+            await store.write(self._repo_key(path), content)
+        return self.compute_hash(content)
 
     async def delete(self, path: str) -> None:
-        """Delete a file from _repo/."""
-        async with self._get_client() as client:
-            key = self._repo_key(path)
-            await client.delete_object(Bucket=self._bucket, Key=key)
+        async with self._get_store() as store:
+            await store.delete(self._repo_key(path))
 
     async def list(self, prefix: str = "") -> list[str]:
-        """List files in _repo/ with optional sub-prefix. Returns relative paths."""
-        async with self._get_client() as client:
-            return await self._list_from_s3(client, prefix)
-
-    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
-        """List files in _repo/ with metadata. Returns {relative_path: S3FileMetadata}."""
-        async with self._get_client() as client:
-            return await self._list_with_metadata_from_s3(client, prefix)
-
-    async def _list_with_metadata_from_s3(self, client, prefix: str = "") -> dict[str, S3FileMetadata]:
-        full_prefix = self._repo_key(prefix)
-        result: dict[str, S3FileMetadata] = {}
-        continuation_token = None
-
-        while True:
-            kwargs = {"Bucket": self._bucket, "Prefix": full_prefix}
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-
-            response = await client.list_objects_v2(**kwargs)
-            for obj in response.get("Contents", []):
-                rel_path = obj["Key"][len(REPO_PREFIX):]
-                # S3 ETags are quoted — strip quotes for clean comparison
-                etag = obj["ETag"].strip('"')
-                last_modified = obj["LastModified"]
-                result[rel_path] = S3FileMetadata(
-                    etag=etag, last_modified=last_modified, size=obj["Size"]
-                )
-
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
-        return result
-
-    async def _list_from_s3(self, client, prefix: str = "") -> list[str]:
-        full_prefix = self._repo_key(prefix)
-        paths: list[str] = []
-        continuation_token = None
-
-        while True:
-            kwargs = {"Bucket": self._bucket, "Prefix": full_prefix}
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-
-            response = await client.list_objects_v2(**kwargs)
-            for obj in response.get("Contents", []):
-                # Strip _repo/ prefix from key
-                rel_path = obj["Key"][len(REPO_PREFIX):]
-                paths.append(rel_path)
-
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
+        paths = []
+        async with self._get_store() as store:
+            async for page in object_pages(store, self._repo_key(prefix)):
+                paths.extend(item.key[len(REPO_PREFIX):] for item in page.objects)
         return paths
 
+    async def list_with_metadata(self, prefix: str = "") -> dict[str, SourceFileMetadata]:
+        result = {}
+        async with self._get_store() as store:
+            async for page in object_pages(store, self._repo_key(prefix)):
+                for item in page.objects:
+                    result[item.key[len(REPO_PREFIX):]] = SourceFileMetadata.from_object(item)
+        return result
+
     async def list_directory(
-        self,
-        prefix: str = "",
-        exclude_fn: Callable[[str], bool] | None = None,
+        self, prefix: str = "", exclude_fn: Callable[[str], bool] | None = None,
     ) -> tuple[list[str], list[str]]:
-        """List direct children of a directory in _repo/.
-
-        Returns (files, folders) where:
-        - files: full relative paths of direct child files
-        - folders: full relative paths of direct child directories (with trailing /)
-
-        Uses S3 Delimiter='/' for efficient non-recursive listing that scales
-        with the number of direct children, not total descendants.
-
-        Args:
-            prefix: Directory prefix (e.g. "apps/myapp/"). Empty string for root.
-            exclude_fn: Optional filter function(path) -> bool. If True, path is excluded.
-        """
         from src.services.editor.file_filter import is_excluded_path
 
         filter_fn = exclude_fn or is_excluded_path
-
-        async with self._get_client() as client:
-            raw_files, raw_folders = await self._list_directory_from_s3(client, prefix)
-
-        files = [f for f in raw_files if not filter_fn(f)]
-        folders = [d for d in raw_folders if not filter_fn(d.rstrip("/"))]
-
-        return sorted(files), sorted(folders)
-
-    async def _list_directory_from_s3(
-        self, client, prefix: str = ""
-    ) -> tuple[list[str], list[str]]:
-        """Non-recursive S3 listing using Delimiter='/'.
-
-        Returns (files, folders) as relative paths under _repo/.
-        """
-        full_prefix = self._repo_key(prefix)
-        files: list[str] = []
-        folders: list[str] = []
-        continuation_token = None
-
-        while True:
-            kwargs: dict = {
-                "Bucket": self._bucket,
-                "Prefix": full_prefix,
-                "Delimiter": "/",
-            }
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-
-            response = await client.list_objects_v2(**kwargs)
-
-            # Direct child files
-            for obj in response.get("Contents", []):
-                rel_path = obj["Key"][len(REPO_PREFIX):]
-                if rel_path:
-                    files.append(rel_path)
-
-            # Direct child folders (CommonPrefixes)
-            for prefix_obj in response.get("CommonPrefixes", []):
-                folder_path = prefix_obj["Prefix"][len(REPO_PREFIX):]
-                if folder_path:
-                    folders.append(folder_path)
-
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
-        return files, folders
+        files, folders = [], []
+        async with self._get_store() as store:
+            async for page in object_pages(store, self._repo_key(prefix), delimiter="/"):
+                files.extend(item.key[len(REPO_PREFIX):] for item in page.objects)
+                folders.extend(path[len(REPO_PREFIX):] for path in page.prefixes)
+        return (
+            sorted(path for path in files if path and not filter_fn(path)),
+            sorted(path for path in folders if path and not filter_fn(path.rstrip("/"))),
+        )
 
     async def exists(self, path: str) -> bool:
-        """Check if a file exists in _repo/."""
-        try:
-            async with self._get_client() as client:
-                key = self._repo_key(path)
-                await client.head_object(Bucket=self._bucket, Key=key)
-                return True
-        except Exception:
-            return False
+        return await self.head(path) is not None
 
-    async def head(self, path: str) -> S3FileMetadata | None:
-        """Return one object's metadata, or None when it does not exist."""
-        async with self._get_client() as client:
-            try:
-                response = await client.head_object(Bucket=self._bucket, Key=self._repo_key(path))
-            except S3Error as exc:
-                if exc.response.get("Error", {}).get("Code") in ("404", "NoSuchKey", "NotFound"):
-                    return None
-                raise
-            return S3FileMetadata(
-                etag=response["ETag"].strip('"'),
-                last_modified=response["LastModified"],
-                size=response["ContentLength"],
-            )
+    async def head(self, path: str) -> SourceFileMetadata | None:
+        try:
+            async with self._get_store() as store:
+                return SourceFileMetadata.from_object(await store.stat(self._repo_key(path)))
+        except StorageError as error:
+            if error.kind == "not_found":
+                return None
+            raise
 
     async def content_hash(self, path: str) -> str | None:
-        """Return a bounded-memory SHA-256 fingerprint, or None when absent."""
-        async with self._get_client() as client:
-            try:
-                response = await client.get_object(
-                    Bucket=self._bucket, Key=self._repo_key(path)
-                )
-            except client.exceptions.NoSuchKey:
-                return None
-            digest = hashlib.sha256()
-            body = response["Body"]
-            async with body:
-                while chunk := await body.read(8 * 1024 * 1024):
+        async with self._get_store() as store:
+            async with optional_read(store, self._repo_key(path)) as read:
+                if read is None:
+                    return None
+                digest = hashlib.sha256()
+                async for chunk in read.body.iter_chunks():
                     digest.update(chunk)
-            return digest.hexdigest()
+                return digest.hexdigest()
 
     async def prefix_exists(self, prefix: str) -> bool:
-        """Check if any object exists under a _repo/ prefix."""
-        async with self._get_client() as client:
-            key_prefix = self._repo_key(prefix.rstrip("/") + "/")
-            response = await client.list_objects_v2(
-                Bucket=self._bucket,
-                Prefix=key_prefix,
-                MaxKeys=1,
-            )
-            return response.get("KeyCount", 0) > 0 or bool(response.get("Contents"))
+        async with self._get_store() as store:
+            async for page in object_pages(store, self._repo_key(prefix.rstrip("/") + "/"), limit=1):
+                if page.objects:
+                    return True
+        return False
 
     @staticmethod
     def compute_hash(content: bytes) -> str:
-        """Compute SHA-256 hash of content."""
         return hashlib.sha256(content).hexdigest()

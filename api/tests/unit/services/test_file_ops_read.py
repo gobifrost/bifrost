@@ -32,21 +32,13 @@ class TestReadFileModuleCacheGuard:
     async def test_read_tsx_file_skips_module_cache(self):
         """Non-Python files should NOT check Redis module cache."""
         with patch("src.core.module_cache.get_module", new_callable=AsyncMock) as mock_get:
-            # Set up S3 fallback
-            mock_s3_client = AsyncMock()
-            mock_response = {"Body": AsyncMock()}
-            mock_response["Body"].read = AsyncMock(return_value=b"<div>hello</div>")
-            mock_s3_client.get_object = AsyncMock(return_value=mock_response)
-
             from src.services.file_storage.file_ops import FileOperationsService
 
             service = MagicMock()
-            service._s3_client.get_client.return_value.__aenter__ = AsyncMock(return_value=mock_s3_client)
-            service._s3_client.get_client.return_value.__aexit__ = AsyncMock()
-            service.settings.s3_bucket = "test"
+            service._object_storage.read_uploaded_file = AsyncMock(return_value=b"<div>hello</div>")
             service.read_file = FileOperationsService.read_file.__get__(service)
-
-            await service.read_file("apps/myapp/pages/index.tsx")
+            assert await service.read_file("apps/myapp/pages/index.tsx") == (b"<div>hello</div>", None)
+            service._object_storage.read_uploaded_file.assert_awaited_once_with("_repo/apps/myapp/pages/index.tsx")
 
             mock_get.assert_not_called()
 
@@ -59,9 +51,9 @@ class TestWriteFileDecoratorAcceptance:
         service = FileOperationsService.__new__(FileOperationsService)
         service.db = AsyncMock()
         service.settings = SimpleNamespace(s3_bucket="test-bucket")
-        service._s3_client = MagicMock()
+        service._object_storage = MagicMock()
         s3 = AsyncMock()
-        service._s3_client.get_client.return_value.__aenter__.return_value = s3
+        service._object_storage.get_store.return_value.__aenter__.return_value = s3
         service._compute_hash = MagicMock(return_value="source-hash")
         service._guess_content_type = MagicMock(return_value="text/plain")
         service._find_app_by_path = AsyncMock(return_value=None)
@@ -74,7 +66,7 @@ class TestWriteFileDecoratorAcceptance:
         ):
             await service.write_file("workflows/current.py", b"VALUE = 2\n")
 
-        s3.put_object.assert_awaited_once()
+        s3.write.assert_awaited_once()
         cached.assert_awaited_once_with("workflows/current.py", "VALUE = 2\n", "source-hash")
 
     @pytest.mark.asyncio
@@ -82,7 +74,7 @@ class TestWriteFileDecoratorAcceptance:
         from src.services.file_storage.file_ops import FileOperationsService
 
         service = FileOperationsService.__new__(FileOperationsService)
-        service._s3_client = MagicMock()
+        service._object_storage = MagicMock()
         service._compute_hash = MagicMock()
         service._guess_content_type = MagicMock()
         service.db = AsyncMock()
@@ -93,7 +85,7 @@ class TestWriteFileDecoratorAcceptance:
                 b"from bifrost import workflow\n@workflow(timeout_seconds=1)\ndef run(): pass\n",
             )
 
-        service._s3_client.get_client.assert_not_called()
+        service._object_storage.get_store.assert_not_called()
         service._compute_hash.assert_not_called()
         service._guess_content_type.assert_not_called()
         service.db.flush.assert_not_awaited()
@@ -106,9 +98,9 @@ class TestWriteFileDecoratorAcceptance:
         service = FileOperationsService.__new__(FileOperationsService)
         service.db = AsyncMock()
         service.settings = SimpleNamespace(s3_bucket="test-bucket")
-        service._s3_client = MagicMock()
+        service._object_storage = MagicMock()
         s3 = AsyncMock()
-        service._s3_client.get_client.return_value.__aenter__.return_value = s3
+        service._object_storage.get_store.return_value.__aenter__.return_value = s3
         service._compute_hash = MagicMock(return_value="source-hash")
         service._guess_content_type = MagicMock(return_value="text/plain")
         service._find_app_by_path = AsyncMock(return_value=None)
@@ -155,8 +147,8 @@ class TestMoveFileModuleCache:
         context = MagicMock()
         context.__aenter__ = AsyncMock(return_value=s3)
         context.__aexit__ = AsyncMock(return_value=None)
-        service._s3_client = MagicMock()
-        service._s3_client.get_client.return_value = context
+        service._object_storage = MagicMock()
+        service._object_storage.get_store.return_value = context
 
         old_result = MagicMock()
         old_result.scalar_one_or_none.return_value = old_record
@@ -172,17 +164,17 @@ class TestMoveFileModuleCache:
         service, s3 = self._service(old_record)
         events: list[str] = []
 
-        async def copied(**_kwargs):
+        async def copied(*_args, **_kwargs):
             events.append("copy")
 
-        async def deleted(**_kwargs):
+        async def deleted(*_args, **_kwargs):
             events.append("delete")
 
         async def invalidated(path):
             events.append(f"invalidate:{path}")
 
-        s3.copy_object.side_effect = copied
-        s3.delete_object.side_effect = deleted
+        s3.copy.side_effect = copied
+        s3.delete.side_effect = deleted
         with (
             patch("src.services.file_storage.file_ops.invalidate_module", side_effect=invalidated) as invalidate,
             patch("src.services.file_storage.file_ops.FileIndexService.move_index", new_callable=AsyncMock) as move_index,
@@ -203,7 +195,7 @@ class TestMoveFileModuleCache:
         old_record = SimpleNamespace(content="VALUE = 1", content_hash="source-hash")
         service, s3 = self._service(old_record)
         error = RuntimeError("storage unavailable")
-        s3.copy_object.side_effect = error
+        s3.copy.side_effect = error
 
         with (
             patch("src.services.file_storage.file_ops.invalidate_module", new_callable=AsyncMock) as invalidate,
@@ -224,18 +216,18 @@ class TestMoveFileModuleCache:
         service, s3 = self._service(old_record)
         events: list[str] = []
 
-        async def copied(**_kwargs):
+        async def copied(*_args, **_kwargs):
             events.append("copy")
 
-        async def delete_failed(**_kwargs):
+        async def delete_failed(*_args, **_kwargs):
             events.append("delete")
             raise RuntimeError("source delete failed")
 
         async def invalidated(path):
             events.append(f"invalidate:{path}")
 
-        s3.copy_object.side_effect = copied
-        s3.delete_object.side_effect = delete_failed
+        s3.copy.side_effect = copied
+        s3.delete.side_effect = delete_failed
         with (
             patch("src.services.file_storage.file_ops.invalidate_module", side_effect=invalidated),
             patch("src.services.file_storage.file_ops.FileIndexService.move_index", new_callable=AsyncMock) as move_index,
@@ -254,10 +246,10 @@ class TestMoveFileModuleCache:
         old_record = SimpleNamespace(content=None, content_hash="source-hash")
         service, s3 = self._service(old_record)
 
-        async def source_delete_cancelled(**_kwargs):
+        async def source_delete_cancelled(*_args, **_kwargs):
             raise asyncio.CancelledError()
 
-        s3.delete_object.side_effect = source_delete_cancelled
+        s3.delete.side_effect = source_delete_cancelled
         with (
             patch("src.services.file_storage.file_ops.invalidate_module", new_callable=AsyncMock) as invalidate,
             patch("src.services.file_storage.file_ops.FileIndexService.move_index", new_callable=AsyncMock) as move_index,
@@ -275,7 +267,7 @@ class TestMoveFileModuleCache:
     async def test_move_preserves_storage_failure_when_cache_cleanup_also_fails(self, storage_error_type):
         service, s3 = self._service(SimpleNamespace(content=None, content_hash="source-hash"))
         storage_error = storage_error_type() if storage_error_type else None
-        s3.delete_object.side_effect = storage_error
+        s3.delete.side_effect = storage_error
         cache_error = RuntimeError("cache unavailable")
         expected = storage_error if storage_error is not None else cache_error
         with (
@@ -306,8 +298,8 @@ class TestMoveFileModuleCache:
         ):
             await service.move_file("workflows/old.py", "workflows/new.py")
 
-        s3.copy_object.assert_awaited_once()
-        s3.delete_object.assert_awaited_once()
+        s3.copy.assert_awaited_once()
+        s3.delete.assert_awaited_once()
         assert [call.args for call in invalidate.await_args_list] == [
             ("workflows/old.py",), ("workflows/new.py",),
         ]

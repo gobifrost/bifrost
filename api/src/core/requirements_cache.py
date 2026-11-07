@@ -27,8 +27,10 @@ Key Pattern:
 import hashlib
 import json
 import logging
-import os
 from typing import Any, TypedDict
+from collections.abc import Callable
+
+from src.core.storage.contracts import StorageError, SyncObjectStore
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -89,7 +91,7 @@ def get_requirements_sync() -> str | None:
         Requirements content string, or None if not found
     """
     from src.core.module_cache_sync import (
-        _get_s3_client,
+        _get_storage_client,
         _get_sync_redis,
     )
 
@@ -104,7 +106,7 @@ def get_requirements_sync() -> str | None:
             return None
 
         logger.info("[requirements] Redis cache empty, reading S3")
-        content = _read_requirements_from_s3(_get_s3_client)
+        content = _read_requirements_from_storage(_get_storage_client)
         if not content:
             return None
 
@@ -118,37 +120,24 @@ def get_requirements_sync() -> str | None:
 
         return content
 
-    except Exception as e:
-        logger.warning(f"[requirements] Error reading requirements: {e}")
-        return None
+    except Exception as error:
+        logger.warning("[requirements] Could not read configured requirements (%s)", type(error).__name__)
+        raise
 
 
-def _read_requirements_from_s3(get_client_fn: Any) -> str | None:
-    """Read _repo/requirements.txt from S3 using the synchronous CRT transport."""
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
-    if not bucket:
-        return None
-
+def _read_requirements_from_storage(get_client_fn: Callable[[], SyncObjectStore | None]) -> str | None:
+    """Read requirements using the selected parent-only synchronous provider."""
     client = get_client_fn()
     if client is None:
         return None
-
     try:
-        response = client.get_object(Bucket=bucket, Key="_repo/requirements.txt")
-        content = response["Body"].read().decode()
-        if content.strip():
-            logger.info("[requirements] Loaded requirements.txt from S3")
-            return content
-        return None
-    except Exception as e:
-        resp = getattr(e, "response", None)
-        if isinstance(resp, dict):
-            code = resp.get("Error", {}).get("Code", "")
-            if code == "NoSuchKey":
-                logger.info("[requirements] No requirements.txt in S3")
-                return None
-        logger.warning(f"[requirements] S3 read error: {e}")
-        return None
+        content = client.read("_repo/requirements.txt").decode()
+        return content if content.strip() else None
+    except StorageError as error:
+        if error.kind == "not_found":
+            logger.info("[requirements] No requirements.txt in object storage")
+            return None
+        raise
 
 
 async def set_requirements(content: str, content_hash: str) -> None:
@@ -176,25 +165,28 @@ async def warm_requirements_cache() -> bool:
     Returns:
         True if requirements.txt was cached, False if not found
     """
+    from src.config import get_settings
     from src.services.repo_storage import RepoStorage
 
+    settings = get_settings()
+    # Optional unconfigured startup remains unchanged. Configured namespaces
+    # must not hide permission or IO failures.
+    if not settings.s3_bucket:
+        return False
     try:
-        repo = RepoStorage()
-        content_bytes = await repo.read("requirements.txt")
-        content = content_bytes.decode()
-
-        if content.strip():
-            content_hash = hashlib.sha256(content.encode()).hexdigest()
-            await set_requirements(content=content, content_hash=content_hash)
-            logger.info("Warmed requirements cache from S3")
-            return True
-
-        logger.info("requirements.txt in S3 is empty")
+        content_bytes = await RepoStorage().read("requirements.txt")
+    except StorageError as error:
+        if error.kind == "not_found":
+            logger.info("No requirements.txt in object storage")
+            return False
+        raise
+    content = content_bytes.decode()
+    if not content.strip():
         return False
-    except Exception as e:
-        # File may not exist yet in S3
-        logger.info(f"No requirements.txt found in S3: {e}")
-        return False
+    content_hash = hashlib.sha256(content.encode()).hexdigest()
+    await set_requirements(content=content, content_hash=content_hash)
+    logger.info("Warmed requirements cache from object storage")
+    return True
 
 
 async def save_requirements(content: str, db: AsyncSession) -> None:

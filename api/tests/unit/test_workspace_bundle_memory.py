@@ -113,15 +113,16 @@ async def test_expired_preview_with_active_job_is_retained_for_retry(monkeypatch
     removed: list[str] = []
 
     class Client:
-        async def list_objects_v2(self, **_kwargs):
-            return {"Contents": [{"Key": f"_workspace_bundle_imports/{preview_id}/preview.json"}]}
+        async def list_page(self, prefix, **_kwargs):
+            from src.core.storage.contracts import ObjectPage, ObjectSummary, ObjectVersion
+            return ObjectPage((ObjectSummary(f"_workspace_bundle_imports/{preview_id}/preview.json", 1, ObjectVersion("v"), None),), (), None)
 
     class RootStorage:
         def __init__(self, _settings):
             pass
 
         @asynccontextmanager
-        async def get_client(self):
+        async def get_store(self):
             yield Client()
 
     class Preview:
@@ -149,7 +150,7 @@ async def test_expired_preview_with_active_job_is_retained_for_retry(monkeypatch
         s3_bucket = "test"
 
     monkeypatch.setattr(storage_module, "get_settings", Settings)
-    monkeypatch.setattr(storage_module, "S3StorageClient", RootStorage)
+    monkeypatch.setattr(storage_module, "FileObjectStorage", RootStorage)
     monkeypatch.setattr(storage_module, "WorkspaceBundleStorage", Preview)
     monkeypatch.setattr("src.core.database.get_db_context", db_context)
 

@@ -13,7 +13,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings
+from .object_storage import FileObjectStorage
 from src.core.log_safety import log_safe
+from src.core.storage.contracts import ContentProperties, WriteOptions
 from src.models import Workflow
 from src.models.orm.file_index import FileIndex
 from src.services.file_index_service import FileIndexService
@@ -51,7 +53,7 @@ class FileOperationsService:
         self,
         db: AsyncSession,
         settings: Settings,
-        s3_client,
+        object_storage: FileObjectStorage,
         diagnostics: "DiagnosticsService",
         deactivation: "DeactivationProtectionService",
         file_hash_fn: Callable[[bytes], str],
@@ -66,7 +68,7 @@ class FileOperationsService:
         Args:
             db: Database session
             settings: Application settings
-            s3_client: S3 client context manager
+            object_storage: Provider-backed workspace storage
             diagnostics: DiagnosticsService instance
             deactivation: DeactivationProtectionService instance
             file_hash_fn: Function to compute content hash
@@ -77,7 +79,7 @@ class FileOperationsService:
         """
         self.db = db
         self.settings = settings
-        self._s3_client = s3_client
+        self._object_storage = object_storage
         self._diagnostics = diagnostics
         self._deactivation = deactivation
         self._compute_hash = file_hash_fn
@@ -112,16 +114,7 @@ class FileOperationsService:
 
         # Fallback to S3 _repo/ prefix
         s3_key = f"{REPO_PREFIX}{path}"
-        async with self._s3_client.get_client() as s3:
-            try:
-                response = await s3.get_object(
-                    Bucket=self.settings.s3_bucket,
-                    Key=s3_key,
-                )
-                content = await response["Body"].read()
-                return content, None
-            except s3.exceptions.NoSuchKey:
-                raise FileNotFoundError(f"File not found: {path}")
+        return await self._object_storage.read_uploaded_file(s3_key), None
 
     async def write_file(
         self,
@@ -213,13 +206,8 @@ class FileOperationsService:
         # Write ALL files to S3 under _repo/ prefix — this is the durable store.
         # Platform entities also go to S3 so the Redis→S3 fallback works for workers.
         s3_key = f"{REPO_PREFIX}{path}"
-        async with self._s3_client.get_client() as s3:
-            await s3.put_object(
-                Bucket=self.settings.s3_bucket,
-                Key=s3_key,
-                Body=content,
-                ContentType=content_type,
-            )
+        async with self._object_storage.get_store() as store:
+            await store.write(s3_key, content, options=WriteOptions(properties=ContentProperties(content_type=content_type)))
 
         content_str = cached_content_str or content.decode("utf-8", errors="replace")
 
@@ -389,8 +377,7 @@ class FileOperationsService:
     async def _delete_from_s3(self, path: str) -> None:
         """Delete from S3 _repo/ — source-of-truth operation."""
         s3_key = f"{REPO_PREFIX}{path}"
-        async with self._s3_client.get_client() as s3:
-            await s3.delete_object(Bucket=self.settings.s3_bucket, Key=s3_key)
+        await self._object_storage.delete_object_strict(s3_key)
 
     async def _remove_from_search_index(self, path: str) -> None:
         """Remove from the source search index if present."""
@@ -646,16 +633,9 @@ class FileOperationsService:
         new_s3_key = f"{REPO_PREFIX}{new_path}"
         storage_completed = False
         try:
-            async with self._s3_client.get_client() as s3:
-                await s3.copy_object(
-                    Bucket=self.settings.s3_bucket,
-                    CopySource={"Bucket": self.settings.s3_bucket, "Key": old_s3_key},
-                    Key=new_s3_key,
-                )
-                await s3.delete_object(
-                    Bucket=self.settings.s3_bucket,
-                    Key=old_s3_key,
-                )
+            async with self._object_storage.get_store() as store:
+                await store.copy(await store.stat(old_s3_key), new_s3_key)
+                await store.delete(old_s3_key)
             storage_completed = True
         finally:
             # Cleanup also runs during cancellation, without intercepting the

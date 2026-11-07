@@ -252,11 +252,11 @@ class TestGetV2DistAsset:
 
     async def test_missing_key_returns_404(self, monkeypatch):
         """The transport's missing-key error maps to 404."""
-        from src.core.s3_transport import S3NoSuchKey
+        from src.core.storage.contracts import StorageError
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        not_found = S3NoSuchKey("NoSuchKey", 404, "The specified key does not exist.")
+        not_found = StorageError("not_found", provider_code="fixture", status_code=404)
         app_id = self._setup(monkeypatch, not_found)
 
         with pytest.raises(HTTPException) as exc_info:
@@ -279,15 +279,15 @@ class TestGetV2DistAsset:
     async def test_non_notfound_client_error_is_logged_and_reraised(self, monkeypatch, caplog):
         """A transport error that is NOT NoSuchKey (e.g. AccessDenied) is a real
         storage error, not a missing asset."""
-        from src.core.s3_transport import S3Error
+        from src.core.storage.contracts import StorageError
 
         from src.routers.app_code_files import get_v2_dist_asset
 
-        denied = S3Error("AccessDenied", 403, "denied")
+        denied = StorageError("permission_denied", provider_code="fixture", status_code=403)
         app_id = self._setup(monkeypatch, denied)
 
         with caplog.at_level("ERROR", logger="src.routers.app_code_files"):
-            with pytest.raises(S3Error):
+            with pytest.raises(StorageError):
                 await get_v2_dist_asset(app_id=app_id, path="main.js", ctx=SimpleNamespace(org_id=None), _user=None)
         assert any("dist asset read failed" in r.message for r in caplog.records)
 

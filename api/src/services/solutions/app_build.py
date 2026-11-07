@@ -28,7 +28,8 @@ from bifrost.app_lockfile import ReproducibleDependencyBuildError, refresh_sdk_l
 from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
-from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.core.storage import object_pages, object_store, optional_read
+from src.core.storage.contracts import ObjectStore
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +58,6 @@ class SolutionAppBuilder:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
         self.last_build_identity: str | None = None
         self._recipes: dict[bool, dict] = {}
 
@@ -75,13 +75,8 @@ class SolutionAppBuilder:
         )
         return f"{base}{rel.lstrip('/')}" if rel else base
 
-    def _client(self):
-        return S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        )
+    def _get_store(self) -> ObjectStore:
+        return object_store(self._settings)
 
     def source_identity(
         self, app_id: UUID | str, files: dict[str, bytes], dependencies: dict[str, str],
@@ -125,19 +120,19 @@ class SolutionAppBuilder:
             "artifacts": {rel: {"size": len(data), "sha256": hashlib.sha256(data).hexdigest()}
                           for rel, data in sorted(dist.items())},
         }
-        async with self._client() as client:
-            await client.put_object(Bucket=self._bucket,
-                                    Key=self._provenance_key(app_id, deployment_id),
-                                    Body=json.dumps(record, sort_keys=True).encode())
+        async with self._get_store() as client:
+            await client.write(self._provenance_key(app_id, deployment_id), json.dumps(record, sort_keys=True).encode())
 
     async def can_reuse(self, app_id: UUID | str, deployment_id: UUID | str | None, identity: str) -> bool:
         if deployment_id is None:
             return False
-        async with self._client() as client:
+        async with self._get_store() as client:
             try:
-                response = await client.get_object(Bucket=self._bucket, Key=self._provenance_key(app_id, deployment_id))
-                record = json.loads(await response["Body"].read())
-            except (S3NoSuchKey, ValueError, UnicodeDecodeError):
+                async with optional_read(client, self._provenance_key(app_id, deployment_id)) as read:
+                    if read is None:
+                        return False
+                    record = json.loads(await read.body.read())
+            except (ValueError, UnicodeDecodeError):
                 return False
             if (not isinstance(record, dict) or type(record.get("schema")) is not int or record.get("schema") != 1
                     or record.get("app_id") != str(app_id)
@@ -152,11 +147,10 @@ class SolutionAppBuilder:
             for rel, expected in artifacts.items():
                 if not isinstance(rel, str) or rel.startswith("/") or ".." in Path(rel).parts or not isinstance(expected, dict):
                     return False
-                try:
-                    response = await client.get_object(Bucket=self._bucket, Key=self._dist_key(app_id, rel, deployment_id=deployment_id))
-                    content = await response["Body"].read()
-                except S3NoSuchKey:
-                    return False
+                async with optional_read(client, self._dist_key(app_id, rel, deployment_id=deployment_id)) as read:
+                    if read is None:
+                        return False
+                    content = await read.body.read()
                 if expected != {"size": len(content), "sha256": hashlib.sha256(content).hexdigest()}:
                     return False
         return True
@@ -170,10 +164,10 @@ class SolutionAppBuilder:
         *,
         require_lockfile: bool = False,
     ) -> dict[str, bytes]:
-        """Produce the app's dist/ IN MEMORY (no S3). This is the failure-prone
+        """Produce the app's dist/ IN MEMORY (no object storage). This is the failure-prone
         part — npm install + vite build — isolated so a deploy can run it BEFORE
         the durable DB commit; a build error then rolls the deploy back with no
-        S3 or DB side effects (Codex R4 atomicity).
+        Storage or DB side effects (Codex R4 atomicity).
 
         If ``prebuilt_dist`` is non-empty it's returned verbatim (disconnected
         fast-path, no build). Synchronous (subprocess-bound); call via
@@ -242,13 +236,9 @@ class SolutionAppBuilder:
         dist: dict[str, bytes],
     ) -> None:
         """Upload one immutable deployment without touching the active build."""
-        async with self._client() as c:
+        async with self._get_store() as c:
             for rel, data in dist.items():
-                await c.put_object(
-                    Bucket=self._bucket,
-                    Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
-                    Body=data,
-                )
+                await c.write(self._dist_key(app_id, rel, deployment_id=deployment_id), data)
 
     async def build(
         self,
@@ -373,11 +363,9 @@ class SolutionAppBuilder:
         # Full replace: a redeploy must not leave a removed/renamed asset
         # fetchable from the new dist/. Clear the prefix, then upload.
         await self.delete_dist(app_id)
-        async with self._client() as c:
+        async with self._get_store() as c:
             for rel, data in dist.items():
-                await c.put_object(
-                    Bucket=self._bucket, Key=self._dist_key(app_id, rel), Body=data
-                )
+                await c.write(self._dist_key(app_id, rel), data)
 
     async def read_dist(
         self,
@@ -387,12 +375,9 @@ class SolutionAppBuilder:
         deployment_id: UUID | str | None = None,
     ) -> bytes:
         """Read one built dist file back from ``_apps/{app_id}/dist/``."""
-        async with self._client() as c:
-            resp = await c.get_object(
-                Bucket=self._bucket,
-                Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
-            )
-            return await resp["Body"].read()
+        async with self._get_store() as c:
+            async with c.open_read(self._dist_key(app_id, rel, deployment_id=deployment_id)) as read:
+                return await read.body.read()
 
     async def list_dist(
         self,
@@ -403,62 +388,27 @@ class SolutionAppBuilder:
         """List the relative paths of an app's uploaded ``dist/``."""
         prefix = self._dist_key(app_id, deployment_id=deployment_id)
         strip = len(prefix)
-        paths: list[str] = []
-        token = None
-        async with self._client() as c:
-            while True:
-                kwargs: dict = {"Bucket": self._bucket, "Prefix": prefix}
-                if token:
-                    kwargs["ContinuationToken"] = token
-                resp = await c.list_objects_v2(**kwargs)
-                for obj in resp.get("Contents", []):
-                    key = obj.get("Key")
-                    if key:
-                        paths.append(key[strip:])
-                if not resp.get("IsTruncated"):
-                    break
-                token = resp.get("NextContinuationToken")
-        return paths
+        async with self._get_store() as store:
+            return [item.key[strip:] async for page in object_pages(store, prefix)
+                    for item in page.objects if item.key]
 
     async def delete_dist(self, app_id: UUID | str) -> None:
-        """Delete an app's entire ``_apps/{app_id}/dist/`` artifact (reconcile)."""
-        async with self._client() as c:
-            for rel in await self.list_dist(app_id):
-                await c.delete_object(
-                    Bucket=self._bucket, Key=self._dist_key(app_id, rel)
-                )
+        """Delete an app's unversioned dist artifacts."""
+        keys = [self._dist_key(app_id, rel) for rel in await self.list_dist(app_id)]
+        async with self._get_store() as store:
+            await store.delete_many(keys)
 
-    async def delete_deployment(
-        self, app_id: UUID | str, deployment_id: UUID | str
-    ) -> None:
-        """Delete one versioned deployment artifact."""
-        rels = await self.list_dist(app_id, deployment_id=deployment_id)
-        async with self._client() as c:
-            await c.delete_object(Bucket=self._bucket, Key=self._provenance_key(app_id, deployment_id))
-            for rel in rels:
-                await c.delete_object(
-                    Bucket=self._bucket,
-                    Key=self._dist_key(app_id, rel, deployment_id=deployment_id),
-                )
+    async def delete_deployment(self, app_id: UUID | str, deployment_id: UUID | str) -> None:
+        """Delete one versioned deployment artifact and its provenance."""
+        keys = [self._provenance_key(app_id, deployment_id)] + [
+            self._dist_key(app_id, rel, deployment_id=deployment_id)
+            for rel in await self.list_dist(app_id, deployment_id=deployment_id)
+        ]
+        async with self._get_store() as store:
+            await store.delete_many(keys)
 
     async def delete_all_app_artifacts(self, app_id: UUID | str) -> None:
-        """Delete every artifact under ``_apps/{app_id}/``.
-
-        Used when the app row itself is removed. This clears both the legacy
-        unversioned dist prefix and every immutable versioned deployment.
-        """
-        prefix = f"{APPS_PREFIX}{app_id}/"
-        token = None
-        async with self._client() as c:
-            while True:
-                kwargs: dict = {"Bucket": self._bucket, "Prefix": prefix}
-                if token:
-                    kwargs["ContinuationToken"] = token
-                resp = await c.list_objects_v2(**kwargs)
-                for obj in resp.get("Contents", []):
-                    key = obj.get("Key")
-                    if key:
-                        await c.delete_object(Bucket=self._bucket, Key=key)
-                if not resp.get("IsTruncated"):
-                    break
-                token = resp.get("NextContinuationToken")
+        """Delete legacy and versioned artifacts when their App is removed."""
+        async with self._get_store() as store:
+            async for page in object_pages(store, f"{APPS_PREFIX}{app_id}/"):
+                await store.delete_many([item.key for item in page.objects])

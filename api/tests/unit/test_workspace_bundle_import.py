@@ -202,7 +202,7 @@ async def test_promoted_python_refreshes_module_cache_and_oversized_text_removes
 
     cached = AsyncMock()
     invalidated = AsyncMock()
-    monkeypatch.setattr("src.services.file_storage.s3_client.S3StorageClient", lambda _settings: Storage())
+    monkeypatch.setattr("src.services.file_storage.object_storage.FileObjectStorage", lambda _settings: Storage())
     monkeypatch.setattr("src.core.module_cache.set_module", cached)
     monkeypatch.setattr("src.core.module_cache.invalidate_module", invalidated)
     db = type("Db", (), {"execute": AsyncMock()})()

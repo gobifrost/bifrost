@@ -9,7 +9,7 @@ from sqlalchemy import text
 
 from src.core.database import get_db_context
 from src.services.file_storage.move import FileMover, MoveRequest
-from src.services.file_storage.s3_client import ObjectMissing
+from src.services.file_storage.object_storage import ObjectMissing
 
 from .support import allow_rename, holds_move_copy, key_for, rows_at, seed_file
 
@@ -17,7 +17,7 @@ DATA = b"x" * 64  # above the test threshold of 16 bytes
 
 
 def mover(store, target, **kwargs) -> FileMover:
-    return FileMover(store, target, authorize_rename=allow_rename, multipart_threshold=16, part_size=8, **kwargs)
+    return FileMover(store, target, authorize_rename=allow_rename, locked_copy_limit=16, **kwargs)
 
 
 async def _path_lock_free(target, path: str) -> bool:
@@ -43,7 +43,7 @@ async def test_multipart_copy_runs_without_path_locks(store, solution_target) ->
     outcome = await mover(store, solution_target).move(MoveRequest("a/big.bin", "b/big.bin"), "error")
     assert outcome.status_code == 200
     assert observed == [True]
-    assert store.copies[0]["multipart_threshold"] == 16 and store.copies[0]["part_size"] == 8
+    assert "multipart_threshold" not in store.copies[0] and "part_size" not in store.copies[0]
 
 
 async def test_single_part_copy_holds_path_locks(store, solution_target) -> None:

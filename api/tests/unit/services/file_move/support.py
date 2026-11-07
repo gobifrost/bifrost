@@ -20,9 +20,8 @@ from src.services.file_storage.move import (
     MoveTarget,
     source_marker,
 )
-from src.services.file_storage.s3_client import (
-    COPY_OBJECT_LIMIT,
-    ObjectHead,
+from src.core.storage.contracts import ContentProperties, ObjectInfo, ObjectVersion
+from src.services.file_storage.object_storage import (
     ObjectMissing,
     ObjectPreconditionFailed,
 )
@@ -38,7 +37,7 @@ class StoredObject:
 
 
 class FakeStore:
-    """In-memory stand-in for the S3StorageClient move primitives.
+    """In-memory stand-in for the provider-backed managed-file move boundary.
 
     ``before[op]`` / ``after[op]`` hooks receive the key and run around the
     operation, so tests can inject failures and concurrent writers.
@@ -63,28 +62,25 @@ class FakeStore:
         if hook is not None:
             await hook(key)
 
-    async def head_object(self, key: str) -> ObjectHead | None:
+    def serialize_version(self, version: ObjectVersion) -> str:
+        return f'"{version}"'
+
+    async def head_object(self, key: str) -> ObjectInfo | None:
         self.calls.append(("head", key))
         await self._run(self.before, "head", key)
         obj = self.objects.get(key)
         if obj is None:
             return None
-        return ObjectHead(
-            size=len(obj.data),
-            etag=obj.etag,
-            metadata=dict(obj.metadata),
-            headers={"ContentType": "application/pdf"},
-        )
+        return ObjectInfo(key, len(obj.data), ObjectVersion(obj.etag[1:-1]), None,
+                          ContentProperties(content_type="application/pdf"), dict(obj.metadata), obj.etag)
 
     async def copy_object(
         self,
         source_key: str,
         destination_key: str,
         *,
-        source: ObjectHead,
+        source: ObjectInfo,
         metadata: dict[str, str],
-        multipart_threshold: int = COPY_OBJECT_LIMIT,
-        part_size: int | None = None,
     ) -> None:
         self.calls.append(("copy", destination_key))
         self.copies.append(
@@ -93,15 +89,13 @@ class FakeStore:
                 "destination_key": destination_key,
                 "source": source,
                 "metadata": dict(metadata),
-                "multipart_threshold": multipart_threshold,
-                "part_size": part_size,
             }
         )
         await self._run(self.before, "copy", destination_key)
         current = self.objects.get(source_key)
         if current is None:
             raise ObjectMissing(source_key)
-        if current.etag != source.etag:
+        if current.etag != self.serialize_version(source.version):
             raise ObjectPreconditionFailed("source")
         self.put(destination_key, current.data, metadata)
         await self._run(self.after, "copy", destination_key)
