@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
-  "collected_at": "2026-11-07T22:04:44Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+  "target_ref": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+  "collected_at": "2026-11-07T23:41:36Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2727,6 +2727,13 @@
       "subject": "Fix nightly cleanup transport and Knowledge Sources listing (#1282)",
       "prs": [
         1282
+      ]
+    },
+    {
+      "sha": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+      "subject": "Pin release overviews above detailed product updates (#1283)",
+      "prs": [
+        1283
       ]
     }
   ],
@@ -7850,6 +7857,19 @@
       "merge_commit": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
       "body": "The final release nightly completed the Home collection UI journey but failed its API-fixture cleanup when Playwright reused a connection at Uvicorn's five-second idle cutoff. API-only fixture contexts now close each request connection; browser behavior and authentication are unchanged, and reset mutations are never retried. A real HTTP-peer regression reproduces the old ECONNRESET and verifies one successful cleanup attempt with the repair.\n\nThe same run's logs exposed a Knowledge Sources namespace-list 500: its repository constructor omitted the required organization argument. Supply that argument while retaining the existing authorized visibility predicate, with a live regression proving own/Global visibility and foreign-organization exclusion.\n\nValidation:\n- `./test.sh client unit src/test/human-auth.test.ts` \u2014 8 passed; Node26.\n- `./test.sh client e2e e2e/home.admin.spec.ts --project=platform-admin` \u2014 setup plus3Home cases passed,31.4s; production client, zero retries; stack cleaned.\n- `(cd client && npm run tsc && npm run lint)` \u2014 passed; lint reports the existing seed-review-pack console warning, no errors.\n- `./test.sh tests/e2e/api/test_knowledge_document_authorization.py -v --durations=0` \u2014 2 passed, including the live own/Global/foreign namespace regression.\n- `./test.sh quality api` \u2014 pyright0errors/0warnings; Ruff passed.\n\nThe failed nightly42407182661 has a durable disposition in `docs/releases/evidence/2.0.0-nightly-disposition.md`. The complete nightly must pass on the repaired frozen source before release readiness. Broader suites are left to the protected merge queue and final nightly.\n\nProduct Updates: Other \u2014 Fixed: Knowledge Sources lists authorized namespaces correctly.\n\nRefs #603. Stable2.0 publication remains held; this PR does not create a tag, release, latest promotion or rollout.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1282"
+    },
+    {
+      "number": 1283,
+      "title": "Pin release overviews above detailed product updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1283",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T23:24:41Z",
+      "merge_commit": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+      "body": "Release overview entries can be pinned above detailed updates in both the What\u2019s New dialog/history and generated release notes. Pinning preserves existing visibility, UUID acknowledgments and source credits; the detailed entries remain scrollable below.\n\nDocument the recommended App SDK update and capacity checks, including the local Solution build versus server-side independent App build distinction. Existing supported Apps still require no rebuild to survive the image upgrade. The 2.0 overview itself remains in held release-notes PR #1281; publication remains held.\n\nValidation:\n- Focused renderer/schema tests: 2 passed.\n- Backend bundle/receipt unit and live API tests: 8 passed.\n- Four focused client test files: 26 passed.\n- Controlled-feed Playwright: setup and page scenario passed; verifies pin order, hidden entries, coherent receipt fixture and scrolling. This is UI fixture coverage, not a claim of a generated-bundle end-to-end journey.\n- Generated OpenAPI types from this worktree\u2019s API; client type/lint checks and Dockerized API Pyright/Ruff passed. No CLI contract fingerprint change. Full suites were not run locally; the protected merge queue remains the full gate.\n\nProduct Updates: Other \u2014 Upgrade guidance appears above detailed product updates.\n\nRefs #603.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1283"
     }
   ]
 }
