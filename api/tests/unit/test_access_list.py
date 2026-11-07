@@ -3092,13 +3092,6 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/cancel"): "Own agent run (or any, for a scope-bypass caller).",
-    ("POST", "/api/chat/conversations"): "Own chat conversation.",
-    ("DELETE", "/api/chat/conversations/{conversation_id}"): "Own chat conversation.",
-    ("POST", "/api/chat/runs/{run_id}/cancel"): "Own chat conversation.",
-    ("PATCH", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
-    ("DELETE", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
-    ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
-    ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
     ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",
 }

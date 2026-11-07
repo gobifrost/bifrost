@@ -1,0 +1,18 @@
+{
+  "key": "pr:1265",
+  "classification": "highlight",
+  "entry_ids": [
+    "c7503cbf-a168-4b2e-8572-906d98593989"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1265"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1265",
+      "Maintainer-approved release-readiness scope after focused verification; canonical release-only Security entry retains provider compatibility limits and verified contributor credit."
+    ]
+  }
+}

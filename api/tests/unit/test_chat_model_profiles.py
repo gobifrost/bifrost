@@ -5,6 +5,15 @@ from uuid import uuid4
 import pytest
 
 from src.services.ai_model_service import AIModelService
+from tests.helpers.authorization import admin_caller
+
+
+@pytest.fixture
+def chat_user():
+    """A principal with the validated context expected by Chat handlers."""
+    caller = admin_caller()
+    caller.principal.authorization_context = caller.ctx
+    return caller.principal
 
 
 async def _seed_profile(
@@ -31,7 +40,7 @@ async def _seed_profile(
 
 
 @pytest.mark.asyncio
-async def test_model_profiles_expose_enabled_profiles_without_provider_model_ids(db_session):
+async def test_model_profiles_expose_enabled_profiles_without_provider_model_ids(db_session, chat_user):
     from src.routers.chat import get_model_profiles
 
     profile = await _seed_profile(
@@ -42,7 +51,7 @@ async def test_model_profiles_expose_enabled_profiles_without_provider_model_ids
     )
     await AIModelService(db_session).set_assignment("chat_default", profile.id)
 
-    response = await get_model_profiles(db_session, object())
+    response = await get_model_profiles(db_session, chat_user)
     payload = response.model_dump(mode="json")
 
     assert payload["default_profile_id"] == str(profile.id)
@@ -53,7 +62,7 @@ async def test_model_profiles_expose_enabled_profiles_without_provider_model_ids
 
 
 @pytest.mark.asyncio
-async def test_disabled_model_profiles_are_hidden(db_session):
+async def test_disabled_model_profiles_are_hidden(db_session, chat_user):
     from src.routers.chat import get_model_profiles
 
     enabled = await _seed_profile(
@@ -70,7 +79,7 @@ async def test_disabled_model_profiles_are_hidden(db_session):
     )
     await AIModelService(db_session).set_assignment("chat_default", enabled.id)
 
-    response = await get_model_profiles(db_session, object())
+    response = await get_model_profiles(db_session, chat_user)
     names = [profile.name for profile in response.profiles]
 
     assert names == ["Visible"]

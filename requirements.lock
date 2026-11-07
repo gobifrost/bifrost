@@ -247,6 +247,10 @@ attrs==26.1.0 \
     #   aiohttp
     #   jsonschema
     #   referencing
+authlib==1.9.5 \
+    --hash=sha256:3f031d5e9b6486089e91e8f7f1b68f36275f3151c66460d650fc90d420545fd7 \
+    --hash=sha256:e32a63e3d869196b61816b2602231862179a2ffc29358c009d1f022c8b86a8b2
+    # via bifrost-api (pyproject.toml)
 awscrt==0.38.0 \
     --hash=sha256:03a7ae10f93dbe54fe7af76507932538508dc3156e74576de826cfa80f40b862 \
     --hash=sha256:0ac76b3945278a92ee86482fe973e5cd353526f7e3be3ee50db67953f778a058 \
@@ -812,8 +816,10 @@ cryptography==47.0.0 \
     --hash=sha256:f7db373287273d8af1414cf95dc4118b13ffdc62be521997b0f2b270771fef50 \
     --hash=sha256:f9a034b642b960767fb343766ae5ba6ad653f2e890ddd82955aef288ffea8736
     # via
+    #   authlib
     #   bifrost-api (pyproject.toml)
     #   google-auth
+    #   joserfc
     #   pyjwt
     #   pyopenssl
     #   secretstorage
@@ -1351,6 +1357,10 @@ jmespath==1.1.0 \
     --hash=sha256:472c87d80f36026ae83c6ddd0f1d05d4e510134ed462851fd5f754c8c3cbb88d \
     --hash=sha256:a5663118de4908c91729bea0acadca56526eb2698e83de10cd116ae0f4e97c64
     # via bifrost-api (pyproject.toml)
+joserfc==1.8.0 \
+    --hash=sha256:176b836ac7ed9a46a88629e24076314b475f33a75d0bad7f26146e572eed7c79 \
+    --hash=sha256:cbf03cb2c6db8cc5289f1ef8718842e53dba244b4c0de5fefa0c0eaee4bde8db
+    # via authlib
 json-repair==0.63.5 \
     --hash=sha256:0e39b3066f7829b4bd7fc614e463cfd4ff7a4c46f82f5b65431fc11e29a74c81 \
     --hash=sha256:75a6a1a4ea954935dd3fb69b6e49ac0e3e3d69b4290127a0c8d37af93b709f3a

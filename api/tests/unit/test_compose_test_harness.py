@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 
 import yaml
 
@@ -340,6 +341,29 @@ def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():
     assert "reset_state" in prepare
     assert "prepare_test_state" in pytest_runner
     assert "prepare_test_state" in browser_runner
+
+
+def test_fresh_database_discards_browser_credentials_without_a_second_reset(tmp_path):
+    script = _find_repo_file("test.sh").read_text()
+    functions = []
+    for name in ("clear_browser_auth_state", "prepare_test_state"):
+        body = script.split(f"{name}() {{", 1)[1].split("\n}", 1)[0]
+        functions.append(f"{name}() {{{body}\n}}")
+    auth = tmp_path / "client/e2e/.auth"
+    auth.mkdir(parents=True)
+    for name in ("credentials.json", "platform_admin.json", "org1_user.json", "org2_user.json"):
+        (auth / name).write_text("stale test credentials")
+    unrelated = auth / "unrelated.json"
+    unrelated.write_text("keep")
+    command = "\n".join([
+        "set -eu", *functions,
+        "reset_state() { exit 42; }",
+        "TEST_STACK_CLEAN=1", "prepare_test_state",
+        '[ "$TEST_STACK_CLEAN" = 0 ]',
+    ])
+    result = subprocess.run(["bash", "-c", command], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in auth.iterdir()) == ["unrelated.json"]
 
 
 def test_pytest_runner_prevents_concurrent_or_orphaned_stack_mutation():

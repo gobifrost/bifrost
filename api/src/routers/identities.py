@@ -50,7 +50,7 @@ async def list_identities(
     response_model=IdentityPublic,
     status_code=status.HTTP_201_CREATED,
     summary="Create a custom identity",
-    description="A custom identity with the User base role, in an organization or (organization_id null) Global.",
+    description="A custom identity with an explicit or configured default base role, in an organization or Global.",
 )
 async def create_identity(request: IdentityCreate, user: CurrentActiveUser, db: DbSession) -> IdentityPublic:
     try:

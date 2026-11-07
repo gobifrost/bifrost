@@ -130,6 +130,7 @@ vi.mock("@/components/users/EditUserDialog", () => ({
 }));
 
 vi.mock("@/components/users/BulkUserDialogs", () => ({
+	BulkSetBaseRoleDialog: () => null,
 	BulkMoveOrgDialog: () => null,
 	BulkReplaceRolesDialog: () => null,
 	BulkResultDialog: () => null,

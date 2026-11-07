@@ -15,6 +15,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { BaseRoleSelect } from "@/components/users/BaseRoleSelect";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { getErrorMessage } from "@/lib/api-error";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
@@ -65,6 +66,7 @@ function NewIdentityDialogContent({
 	// An organization id, GLOBAL_CHOICE, or "" until chosen.
 	const [place, setPlace] = useState("");
 	const [error, setError] = useState<string | null>(null);
+	const [baseRoleId, setBaseRoleId] = useState<string | null>(null);
 	const errorRef = useRef<HTMLDivElement>(null);
 	const authorization = useAuthorization();
 	const create = useCreateIdentity();
@@ -92,6 +94,12 @@ function NewIdentityDialogContent({
 
 	const ready = name.trim().length > 0 && place !== "";
 	const busy = create.isPending;
+	const canSetBaseRole =
+		place !== "" &&
+		authorization.canAt(
+			"roleassignments.readwrite",
+			place === GLOBAL_CHOICE ? GLOBAL_TARGET : orgTarget(place),
+		);
 
 	const handleSubmit = async (event: React.FormEvent) => {
 		event.preventDefault();
@@ -102,6 +110,7 @@ function NewIdentityDialogContent({
 				body: {
 					name: name.trim(),
 					organization_id: place === GLOBAL_CHOICE ? null : place,
+					...(baseRoleId ? { base_role_id: baseRoleId } : {}),
 				},
 			});
 			toast.success("Identity created", {
@@ -135,8 +144,8 @@ function NewIdentityDialogContent({
 						</DialogTitle>
 						<DialogDescription className="mt-1.5 text-sm leading-5">
 							An identity runs workflows that no person starts. It
-							begins with the User base role; give it roles on its
-							page.
+							uses the applicable base-role default unless you
+							choose one below.
 						</DialogDescription>
 					</div>
 					<Button
@@ -205,6 +214,20 @@ function NewIdentityDialogContent({
 							work that belongs to no organization.
 						</p>
 					</div>
+					{canSetBaseRole && (
+						<div className="space-y-2">
+							<Label htmlFor="identity-base-role">
+								Base Role
+							</Label>
+							<BaseRoleSelect
+								id="identity-base-role"
+								value={baseRoleId}
+								onChange={setBaseRoleId}
+								disabled={busy}
+								defaultDescription="Uses the base-role default for this scope."
+							/>
+						</div>
+					)}
 				</div>
 				<DialogFooter className="shrink-0 border-t border-border/70 px-4 py-4 sm:px-6">
 					<Button

@@ -16,6 +16,7 @@ from uuid import uuid4
 
 import httpx
 import pytest
+import click
 from click.testing import CliRunner, Result
 
 from bifrost import client as bifrost_client_module
@@ -146,6 +147,12 @@ class _FakeClient:
             "/auth/authorization": {"provider_organization_id": PROVIDER_ID},
             f"/api/users/{USER_ID}/access": ACCESS_MAP,
             "/api/permissions/catalog": CATALOG,
+            "/api/base-role-defaults": {
+                "default_base_role_id": HELPDESK_ROLE_ID,
+                "effective_base_role_id": HELPDESK_ROLE_ID,
+                "effective_base_role_name": "Helpdesk",
+                "source": "global",
+            },
             f"/api/users/{USER_ID}/role-assignments": ASSIGNMENTS,
             "/api/workflows": [
                 {"id": WORKFLOW_ID, "name": "Sync Invoices", "function_name": "sync", "source_file_path": "workflows/sync.py"}
@@ -165,7 +172,8 @@ class _FakeClient:
         self.calls.append(("POST", path, json))
         return self._response("POST", path)
 
-    async def put(self, path: str, *, json: dict[str, Any] | None = None) -> httpx.Response:
+    async def put(self, path: str, *, json: dict[str, Any] | None = None, params: dict[str, Any] | None = None) -> httpx.Response:
+        self.last_put_params = params
         self.calls.append(("PUT", path, json))
         return self._response("PUT", path)
 
@@ -346,7 +354,7 @@ class TestUsersRolesSet:
         result = _invoke(["roles", "set", USER_ID, "--role", "Helpdesk"])
         assert result.exit_code == 0, result.output
         assert fake_client.calls == [
-            ("GET", "/api/roles", None),
+            ("GET", "/api/roles", {"include_builtin": True}),
             ("GET", self.URL, None),
             ("PUT", self.URL, {"base_role_id": USER_ROLE_ID, "additional": [{"role_id": HELPDESK_ROLE_ID}]}),
         ]
@@ -479,3 +487,28 @@ class TestUsersRolesSet:
         )
         assert result.exit_code != 0
         assert not any(call[0] == "PUT" for call in fake_client.calls)
+
+
+class TestBaseRoleDefaults:
+    def test_get_organization_default_resolves_org(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["defaults", "get", "--org", "Contoso"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == ("GET", "/api/base-role-defaults", {"organization_id": ORG_ID})
+
+    def test_set_organization_default_resolves_role_and_org(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["defaults", "set", "--org", "Contoso", "--role", "Helpdesk"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls[-1] == ("PUT", "/api/base-role-defaults", {"default_base_role_id": HELPDESK_ROLE_ID})
+        assert fake_client.last_put_params == {"organization_id": ORG_ID}
+
+    def test_reset_global_default_sends_null(self, fake_client: _FakeClient) -> None:
+        result = _invoke(["defaults", "set", "--inherit"])
+        assert result.exit_code == 0, result.output
+        assert fake_client.calls == [("PUT", "/api/base-role-defaults", {"default_base_role_id": None})]
+        assert fake_client.last_put_params == {}
+
+    @pytest.mark.parametrize("options", [[], ["--inherit", "--role", "Helpdesk"]])
+    def test_requires_exactly_one_default_choice(self, fake_client: _FakeClient, options: list[str]) -> None:
+        with pytest.raises(click.UsageError, match="Choose exactly one"):
+            _invoke(["defaults", "set", *options])
+        assert fake_client.calls == []

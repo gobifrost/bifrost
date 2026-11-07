@@ -73,9 +73,9 @@ USER_PERMISSIONS = {
     "settings.read",
 }
 CUSTOM_PERMISSIONS = {"forms.readwrite", "users.read"}
-# Left by the later 20261009_graph_permission_names revision, which renames
-# the basic resources' everyday read to readbasic and adds the launch
-# permissions.
+# Left by later revisions: 20261009_graph_permission_names renames the basic
+# resources' everyday read to readbasic and adds the launch permissions, then
+# 20261106_chat_execute gives only the User base role Chat access.
 USER_PERMISSIONS_AT_HEAD = {
     "agentruns.read",
     "agents.execute",
@@ -83,6 +83,7 @@ USER_PERMISSIONS_AT_HEAD = {
     "ai.execute",
     "ai.read",
     "apps.readbasic",
+    "chat.execute",
     "executions.readbasic",
     "forms.readbasic",
     "knowledge.read",
@@ -244,7 +245,8 @@ def test_operator_gains_user_support_and_secrets_reader_is_seeded() -> None:
         # assignable" from Secrets Reader's description, and
         # 20261009_graph_permission_names has renamed the basic reads, added
         # the launch permissions and rewritten Platform Operator's description;
-        # everything else this revision wrote holds.
+        # 20261106_chat_execute gives only User `chat.execute`; everything
+        # else this revision wrote holds.
         _upgrade(database_url, "head")
         at_head = asyncio.run(_snapshot(database_url, custom_role_id))
         assert at_head == {

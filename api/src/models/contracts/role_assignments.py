@@ -132,13 +132,19 @@ class RolePermissionsResponse(BaseModel):
     identity_permissions: list[RolePermissionItem] = Field(
         description="The identity permissions an editor may choose from, held or not."
     )
+    runtime_permissions: list[RolePermissionItem] = Field(
+        description="Everyday runtime permissions a custom role may grant, held or not.",
+    )
 
 
 class RolePermissionsUpdate(BaseModel):
-    """The role's identity permissions (users, userlifecycle, organizations,
-    roleassignments, roles). Other permissions the role holds are kept."""
+    """Replace identity permissions and optionally everyday runtime permissions."""
 
     permissions: list[str]
+    runtime_permissions: list[str] | None = Field(
+        default=None,
+        description="Replace everyday runtime permissions when supplied; omitted leaves them unchanged.",
+    )
 
 
 class AuthorizationBoundary(BaseModel):

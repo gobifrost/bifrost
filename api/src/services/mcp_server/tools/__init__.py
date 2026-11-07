@@ -7,6 +7,7 @@ Each module provides a register_tools(mcp, get_context_fn) function.
 from src.services.mcp_server.tools import (
     agents,
     apps,
+    base_role_defaults,
     claims,
     code_editor,
     configs,
@@ -31,6 +32,7 @@ from src.services.mcp_server.tools import gateway
 TOOL_MODULES = [
     agents,
     apps,
+    base_role_defaults,
     claims,
     code_editor,
     configs,

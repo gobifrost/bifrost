@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { Label } from "@/components/ui/label";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
 import { RolesMultiSelect } from "@/components/forms/RolesMultiSelect";
+import { BaseRoleSelect } from "@/components/users/BaseRoleSelect";
 import { useOrganizations } from "@/hooks/useOrganizations";
 import { useRoles } from "@/hooks/useRoles";
 import { UserLookupNotice } from "./UserLookupNotice";
@@ -396,6 +397,104 @@ function BulkReplaceRolesDialogInner({
 					<span>{copy.empty}</span>
 				</div>
 			)}
+			<BulkSubmitError message={submitError} />
+		</BulkDialogFrame>
+	);
+}
+
+// =============================================================================
+// Set base role
+// =============================================================================
+
+export function BulkSetBaseRoleDialog(props: BulkDialogSharedProps) {
+	if (!props.open) return null;
+	return <BulkSetBaseRoleDialogInner {...props} />;
+}
+
+function BulkSetBaseRoleDialogInner({
+	open,
+	onOpenChange,
+	users,
+	onPartialFailure,
+	onSuccess,
+}: BulkDialogSharedProps) {
+	const [baseRoleId, setBaseRoleId] = useState<string | null>(null);
+	const [submitError, setSubmitError] = useState<string | null>(null);
+	const bulkOp = useBulkUserOperation();
+	const submitBusy = useRef(false);
+
+	const handleSubmit = async () => {
+		if (submitBusy.current) return;
+		if (!baseRoleId) {
+			setSubmitError("Choose a base role");
+			return;
+		}
+		setSubmitError(null);
+		submitBusy.current = true;
+		try {
+			const result = (await bulkOp.mutateAsync({
+				body: {
+					user_ids: users.map((user) => user.id),
+					operation: "set_base_role",
+					base_role_id: baseRoleId,
+				},
+			})) as BulkUserResponse;
+			summarize(result, "Set base role");
+			if (result.failed.length > 0) onPartialFailure(result, users);
+			if (result.succeeded.length > 0) onSuccess?.();
+			onOpenChange(false);
+		} catch (error) {
+			setSubmitError(
+				getErrorMessage(error, "Bulk base-role update failed"),
+			);
+		} finally {
+			submitBusy.current = false;
+		}
+	};
+
+	return (
+		<BulkDialogFrame
+			open={open}
+			onOpenChange={onOpenChange}
+			busy={bulkOp.isPending}
+			title={`Set Base Role for ${users.length} User(s)`}
+			description="The selected base role replaces each user's current base role. Their additional roles stay in place."
+			footer={
+				<DialogFooter className="gap-3">
+					<Button
+						type="button"
+						variant="outline"
+						disabled={bulkOp.isPending}
+						onClick={() => onOpenChange(false)}
+						className="h-11"
+					>
+						Cancel
+					</Button>
+					<Button
+						type="button"
+						disabled={bulkOp.isPending || !baseRoleId}
+						onClick={handleSubmit}
+						className="h-11"
+					>
+						{bulkOp.isPending ? "Saving..." : "Set Base Role"}
+					</Button>
+				</DialogFooter>
+			}
+		>
+			<div className="space-y-2">
+				<Label htmlFor="bulk-base-role">Base Role</Label>
+				<BaseRoleSelect
+					id="bulk-base-role"
+					value={baseRoleId}
+					onChange={setBaseRoleId}
+					disabled={bulkOp.isPending}
+					defaultLabel="Select a base role"
+					ariaLabel="Base role"
+				/>
+				<p className="text-xs text-muted-foreground">
+					Additional roles are retained.
+				</p>
+			</div>
 			<BulkSubmitError message={submitError} />
 		</BulkDialogFrame>
 	);

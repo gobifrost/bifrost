@@ -103,6 +103,7 @@ from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
     authorize_agent_execution,
     authorize_agentless_ai,
+    authorize_chat_execution,
 )
 from src.services.execution.autonomous_agent_executor import (
     AutonomousAgentExecutor,
@@ -319,6 +320,7 @@ class AgentExecutor:
         self._knowledge_search_budget.reset()
         self._run_user_id = run_user_id
         async with self._db() as session:
+            caller = await authorize_chat_execution(session, caller)
             if agent is None:
                 caller = await authorize_agentless_ai(session, caller)
             else:

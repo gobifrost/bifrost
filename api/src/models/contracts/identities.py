@@ -42,10 +42,11 @@ class IdentityPublic(BaseModel):
 
 
 class IdentityCreate(BaseModel):
-    """A new custom identity (base role User, no additional roles)."""
+    """A new custom identity with an explicit or configured default base role."""
 
     name: IdentityName
     organization_id: UUID | None = Field(description="The identity's organization; null for a Global identity.")
+    base_role_id: UUID | None = Field(default=None, description="Explicit base role; omit to use the organization's or instance's default.")
 
 
 class IdentityUpdate(BaseModel):

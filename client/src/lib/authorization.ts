@@ -21,10 +21,10 @@ export type AuthorizationTarget =
 	{ kind: "org"; id: string } | { kind: "global" };
 
 /** A route or navigation item's requirement: the permission held anywhere,
- * or held platform-wide. */
+ * or held at the home organization or platform-wide. */
 export interface SinglePermissionRequirement {
 	permission: string;
-	at?: "anywhere" | "global";
+	at?: "anywhere" | "global" | "home";
 }
 
 /** A route or navigation item may need several independent API surfaces. */
@@ -115,6 +115,13 @@ export function meetsRequirement(
 	if ("allOf" in requirement) {
 		return requirement.allOf.every((member) =>
 			meetsRequirement(authz, member),
+		);
+	}
+	if (requirement.at === "home") {
+		return canAt(
+			authz,
+			requirement.permission,
+			orgTarget(authz?.home_organization_id),
 		);
 	}
 	return requirement.at === "global"

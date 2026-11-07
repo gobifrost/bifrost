@@ -99,6 +99,7 @@ async def list_users(
 @click.option("--identity", "identity", is_flag=True, required=True, help="Create an identity (the only thing created here).")
 @click.option("--org", required=True, help="Organization UUID or name, or 'global'.")
 @click.option("--name", required=True, help="The identity's name.")
+@click.option("--base-role", help="Explicit base role UUID or name; omit for the configured default.")
 @click.pass_context
 @pass_resolver
 @run_async
@@ -107,22 +108,62 @@ async def create_identity(
     identity: bool,  # noqa: ARG001 - required to be set; selects what to create
     org: str,
     name: str,
+    base_role: str | None,
     *,
     client: BifrostClient,
     resolver: RefResolver,
 ) -> None:
     """Create a custom identity in --org, or Global.
 
-    The identity starts with the User base role and no additional roles; give it roles with `bifrost users roles set`, then point a workflow at it with `bifrost workflows update --run-as`.
+    The identity starts with the configured default base role and no additional roles. Use --base-role to select a different base role, then point a workflow at it with `bifrost workflows update --run-as`.
 
     Example:
 
       bifrost users create --identity --org Contoso --name "Contoso Nightly"
     """
     target = await resolve_org_target(org, False, resolver)
-    response = await client.post("/api/identities", json={"name": name, "organization_id": target.organization_id})
+    body = {"name": name, "organization_id": target.organization_id}
+    if base_role is not None:
+        body["base_role_id"] = await resolver.resolve("role", base_role)
+    response = await client.post("/api/identities", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx, human=_print_created_identity)
+
+
+@users_group.group("defaults", cls=EntityGroup)
+def defaults_group() -> None:
+    """Read or set the base role assigned to new users and custom identities."""
+
+
+@defaults_group.command("get")
+@click.option("--org", help="Organization UUID or name; omit for the instance default.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def get_defaults(ctx: click.Context, org: str | None, *, client: BifrostClient, resolver: RefResolver) -> None:
+    """Show the configured and effective default base role."""
+    params = {"organization_id": await resolver.resolve("org", org)} if org else {}
+    response = await client.get("/api/base-role-defaults", params=params)
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@defaults_group.command("set")
+@click.option("--org", help="Organization UUID or name; omit for the instance default.")
+@click.option("--role", help="Default base role UUID or name.")
+@click.option("--inherit", is_flag=True, help="Clear an org override, or reset the instance default to User.")
+@click.pass_context
+@pass_resolver
+@run_async
+async def set_defaults(ctx: click.Context, org: str | None, role: str | None, inherit: bool, *, client: BifrostClient, resolver: RefResolver) -> None:
+    """Choose a default for new accounts; existing accounts are unchanged."""
+    if bool(role) == inherit:
+        raise click.UsageError("Choose exactly one of --role or --inherit")
+    params = {"organization_id": await resolver.resolve("org", org)} if org else {}
+    role_id = await resolver.resolve("role", role) if role else None
+    response = await client.put("/api/base-role-defaults", params=params, json={"default_base_role_id": role_id})
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
 
 
 class _AccessGroup(EntityGroup):

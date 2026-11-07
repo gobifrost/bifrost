@@ -119,6 +119,8 @@
 | POST | `/api/audit/exports` |
 | GET | `/api/audit/exports/{job_id}/download` |
 | GET | `/api/audit/{event_id}/explain` |
+| GET | `/api/base-role-defaults` |
+| PUT | `/api/base-role-defaults` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |

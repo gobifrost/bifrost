@@ -17,6 +17,7 @@ from src.models.contracts.agents import ChatContextUsage
 from src.models.enums import MessageRole
 from src.models.orm import Conversation, Message
 from src.services.chat_attachments import ChatAttachmentService
+from tests.e2e.fixtures.setup import _login_user
 
 logger = logging.getLogger(__name__)
 
@@ -559,6 +560,75 @@ class TestChatAttachments:
 
 class TestConversationsAccessControl:
     """Test conversation access control."""
+
+    def test_custom_ai_and_agent_role_without_chat_cannot_use_chat(
+        self,
+        e2e_client,
+        platform_admin,
+        non_admin_user,
+    ):
+        """Chat requires its own grant; AI and agent execution do not imply it."""
+        role_response = e2e_client.post(
+            "/api/roles",
+            headers=platform_admin.headers,
+            json={"name": f"No Chat {uuid4().hex[:8]}"},
+        )
+        assert role_response.status_code == 201, role_response.text
+        role = role_response.json()
+        assignments_response = e2e_client.get(
+            f"/api/users/{non_admin_user.user_id}/role-assignments",
+            headers=platform_admin.headers,
+        )
+        assert assignments_response.status_code == 200, assignments_response.text
+        original = assignments_response.json()
+        additional = [
+            {
+                "role_id": assignment["role_id"],
+                "boundaries": [
+                    {
+                        "kind": boundary["kind"],
+                        "organization_id": boundary["organization_id"],
+                    }
+                    for boundary in assignment["boundaries"]
+                ],
+            }
+            for assignment in original["additional"]
+        ]
+
+        try:
+            permissions_response = e2e_client.put(
+                f"/api/roles/{role['id']}/permissions",
+                headers=platform_admin.headers,
+                json={"permissions": [], "runtime_permissions": ["agents.execute", "ai.execute"]},
+            )
+            assert permissions_response.status_code == 200, permissions_response.text
+            assignment_response = e2e_client.put(
+                f"/api/users/{non_admin_user.user_id}/role-assignments",
+                headers=platform_admin.headers,
+                json={"base_role_id": role["id"], "additional": additional},
+            )
+            assert assignment_response.status_code == 200, assignment_response.text
+            _login_user(non_admin_user)
+
+            denied = e2e_client.get(
+                "/api/chat/conversations", headers=non_admin_user.headers
+            )
+            assert denied.status_code == 403, denied.text
+        finally:
+            restored = e2e_client.put(
+                f"/api/users/{non_admin_user.user_id}/role-assignments",
+                headers=platform_admin.headers,
+                json={
+                    "base_role_id": original["base_role"]["id"],
+                    "additional": additional,
+                },
+            )
+            assert restored.status_code == 200, restored.text
+            _login_user(non_admin_user)
+            deleted = e2e_client.delete(
+                f"/api/roles/{role['id']}", headers=platform_admin.headers
+            )
+            assert deleted.status_code == 204, deleted.text
 
     def test_user_can_only_see_own_conversations(
         self,

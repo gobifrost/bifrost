@@ -7,6 +7,8 @@ caller's own items.
 
 | Intent | CLI | MCP | Scope |
 |---|---|---|---|
+| `users.defaults.get` | `bifrost users defaults get` | `bifrost_base_role_default_get` | `roleassignments.read`, `settings.read`, `organizations.read` |
+| `users.defaults.update` | `bifrost users defaults set` | `bifrost_base_role_default_update` | `settings.readwrite`, `organizations.readwrite`, `userlifecycle.readwrite` |
 | `productupdates.get` | — | — | `settings.read` |
 | `productupdates.receipts.create` | — | — | `settings.readwrite` |
 | `agents.list` | `bifrost agents list` | `bifrost_agent_list` | `agents.readbasic` |

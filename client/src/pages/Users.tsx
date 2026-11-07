@@ -71,6 +71,7 @@ import {
 	BulkReplaceRolesDialog,
 	BulkResultDialog,
 	BulkSetActiveDialog,
+	BulkSetBaseRoleDialog,
 	type BulkTarget,
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
@@ -183,11 +184,16 @@ export function Users() {
 		canReplaceRoles:
 			canBulk("roleassignments.readwrite") &&
 			authorization.meets({ permission: "roles.read", at: "global" }),
+		canSetBaseRole:
+			canBulk("userlifecycle.readwrite") &&
+			canBulk("roleassignments.readwrite") &&
+			authorization.meets({ permission: "roles.read", at: "global" }),
 		canSetActive: canBulk("users.readwrite"),
 	};
 	const showSelection =
 		bulkAbilities.canMoveOrg ||
 		bulkAbilities.canReplaceRoles ||
+		bulkAbilities.canSetBaseRole ||
 		bulkAbilities.canSetActive;
 
 	const handleSort = (column: SortColumn) => {
@@ -207,7 +213,13 @@ export function Users() {
 	);
 	const selection = useUserSelection(users, disabledSelectionIds);
 
-	type BulkMode = "move_org" | "replace_roles" | "disable" | "enable" | null;
+	type BulkMode =
+		| "move_org"
+		| "replace_roles"
+		| "set_base_role"
+		| "disable"
+		| "enable"
+		| null;
 	const [bulkMode, setBulkMode] = useState<BulkMode>(null);
 	const [bulkResult, setBulkResult] = useState<
 		v1["schemas"]["BulkUserResponse"] | null
@@ -857,6 +869,7 @@ export function Users() {
 				onClear={selection.clear}
 				onMoveOrg={() => setBulkMode("move_org")}
 				onReplaceRoles={() => setBulkMode("replace_roles")}
+				onSetBaseRole={() => setBulkMode("set_base_role")}
 				onDisable={() => setBulkMode("disable")}
 				onEnable={() => setBulkMode("enable")}
 			/>
@@ -871,6 +884,13 @@ export function Users() {
 			<BulkReplaceRolesDialog
 				open={bulkMode === "replace_roles"}
 				onOpenChange={(o) => !o && closeBulk()}
+				users={selection.selectedItems}
+				onPartialFailure={handlePartialFailure}
+				onSuccess={onBulkSuccess}
+			/>
+			<BulkSetBaseRoleDialog
+				open={bulkMode === "set_base_role"}
+				onOpenChange={(open) => !open && closeBulk()}
 				users={selection.selectedItems}
 				onPartialFailure={handlePartialFailure}
 				onSuccess={onBulkSuccess}

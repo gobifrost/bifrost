@@ -71,8 +71,8 @@ def is_builtin_role_id(role_id: UUID) -> bool:
     return role_id in BUILTIN_ROLE_IDS
 
 
-# Frozen permission set from 20261009_graph_permission_names. The access
-# list records enforcement; it is not a source of new role grants.
+# Frozen permission set from 20261106_chat_execute. The access list records
+# enforcement; it is not a source of new role grants.
 USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
     {
         "agentruns.read",
@@ -81,6 +81,7 @@ USER_BASE_PERMISSIONS: frozenset[str] = frozenset(
         "ai.execute",
         "ai.read",
         "apps.readbasic",
+        "chat.execute",
         "executions.readbasic",
         "forms.readbasic",
         "knowledge.read",

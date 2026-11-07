@@ -16,10 +16,12 @@ const defaults = {
 	activeMix: "all_active" as const,
 	canMoveOrg: true,
 	canReplaceRoles: true,
+	canSetBaseRole: true,
 	canSetActive: true,
 	onClear: vi.fn(),
 	onMoveOrg: vi.fn(),
 	onReplaceRoles: vi.fn(),
+	onSetBaseRole: vi.fn(),
 	onDisable: vi.fn(),
 	onEnable: vi.fn(),
 };
@@ -79,6 +81,7 @@ describe("UserBulkActionBar", () => {
 			onClear: vi.fn(),
 			onMoveOrg: vi.fn(),
 			onReplaceRoles: vi.fn(),
+			onSetBaseRole: vi.fn(),
 			onDisable: vi.fn(),
 			onEnable: vi.fn(),
 		};
@@ -88,6 +91,7 @@ describe("UserBulkActionBar", () => {
 				activeMix="mixed"
 				canMoveOrg
 				canReplaceRoles
+				canSetBaseRole
 				canSetActive
 				{...handlers}
 			/>,
@@ -97,6 +101,9 @@ describe("UserBulkActionBar", () => {
 		await user.click(
 			screen.getByRole("button", { name: /replace roles/i }),
 		);
+		await user.click(
+			screen.getByRole("button", { name: /set base role/i }),
+		);
 		await user.click(screen.getByRole("button", { name: /^disable$/i }));
 		await user.click(screen.getByRole("button", { name: /^enable$/i }));
 		await user.click(
@@ -105,6 +112,7 @@ describe("UserBulkActionBar", () => {
 
 		expect(handlers.onMoveOrg).toHaveBeenCalledOnce();
 		expect(handlers.onReplaceRoles).toHaveBeenCalledOnce();
+		expect(handlers.onSetBaseRole).toHaveBeenCalledOnce();
 		expect(handlers.onDisable).toHaveBeenCalledOnce();
 		expect(handlers.onEnable).toHaveBeenCalledOnce();
 		expect(handlers.onClear).toHaveBeenCalledOnce();
@@ -117,6 +125,7 @@ describe("UserBulkActionBar", () => {
 				activeMix="mixed"
 				canMoveOrg={false}
 				canReplaceRoles={false}
+				canSetBaseRole={false}
 			/>,
 		);
 		expect(
@@ -124,6 +133,9 @@ describe("UserBulkActionBar", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("button", { name: /replace roles/i }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /set base role/i }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.getByRole("button", { name: /^disable$/i }),

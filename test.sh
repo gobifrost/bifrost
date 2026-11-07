@@ -169,10 +169,7 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
     docker compose -f "$COMPOSE_FILE" rm -sf seaweedfs > /dev/null
     docker compose -f "$COMPOSE_FILE" up -d seaweedfs > /dev/null
 
-    rm -f client/e2e/.auth/credentials.json \
-          client/e2e/.auth/platform_admin.json \
-          client/e2e/.auth/org1_user.json \
-          client/e2e/.auth/org2_user.json
+    clear_browser_auth_state
 
     docker compose -f "$COMPOSE_FILE" start pgbouncer > /dev/null
     wait_for_service "$COMPOSE_FILE" pgbouncer pg_isready -h localhost -p 5432 -U bifrost
@@ -186,11 +183,19 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
     echo "State reset complete."
 }
 
+clear_browser_auth_state() {
+    rm -f client/e2e/.auth/credentials.json \
+          client/e2e/.auth/platform_admin.json \
+          client/e2e/.auth/org1_user.json \
+          client/e2e/.auth/org2_user.json
+}
+
 prepare_test_state() {
     # The first suite can use a fresh command-owned stack directly. Combined
     # commands reset between suites; adopted stacks also require a reset.
     if [ "$TEST_STACK_CLEAN" = 1 ]; then
         TEST_STACK_CLEAN=0
+        clear_browser_auth_state
         echo "Using clean state from the newly booted test stack."
         return
     fi

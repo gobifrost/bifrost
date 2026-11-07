@@ -99,6 +99,7 @@ beforeEach(() => {
 	mockAuthorization.mockReturnValue({
 		canAt: () => false,
 		canAnywhere: () => false,
+		meets: () => false,
 	});
 });
 
@@ -190,6 +191,7 @@ describe("AgentDetailPage — edit mode", () => {
 				target.kind === "org" &&
 				target.id === "org-other",
 			canAnywhere: () => true,
+			meets: () => true,
 		});
 		await renderAtRoute("/agents/agent-1");
 		expect(

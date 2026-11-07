@@ -38,6 +38,7 @@ import { useAuthorization } from "@/services/authorization";
 import { useEventSources } from "@/services/events";
 import { useSendInvite } from "@/hooks/useUserInvites";
 import { RegistrationLinkDialog } from "@/components/users/RegistrationLinkDialog";
+import { BaseRoleSelect } from "@/components/users/BaseRoleSelect";
 import { toast } from "sonner";
 import type { components } from "@/lib/v1";
 
@@ -80,6 +81,7 @@ function CreateUserDialogContent({
 		new Set(),
 	);
 	const [rolesPopoverOpen, setRolesPopoverOpen] = useState(false);
+	const [baseRoleId, setBaseRoleId] = useState<string | null>(null);
 
 	const createMutation = useCreateUser();
 	const [createdUser, setCreatedUser] = useState<Awaited<
@@ -191,6 +193,7 @@ function CreateUserDialogContent({
 						organization_id: orgId || null,
 						invite: true,
 						trigger_automation: false,
+						...(baseRoleId ? { base_role_id: baseRoleId } : {}),
 					},
 				});
 				setCreatedUser(result);
@@ -427,6 +430,25 @@ function CreateUserDialogContent({
 									checked={isExternal}
 									onCheckedChange={setIsExternal}
 								/>
+							</div>
+						)}
+
+						{assignsRoles && (
+							<div className="space-y-2">
+								<Label htmlFor="create-user-base-role">
+									Base Role
+								</Label>
+								<BaseRoleSelect
+									id="create-user-base-role"
+									value={baseRoleId}
+									onChange={setBaseRoleId}
+									disabled={isSaving}
+									defaultDescription="Uses the policy default for this organization."
+								/>
+								<p className="text-xs text-muted-foreground">
+									Optional. Leave this at the default to use
+									the organization policy.
+								</p>
 							</div>
 						)}
 

@@ -15,13 +15,16 @@ import hashlib
 import io
 import logging
 import secrets
+from collections.abc import Mapping
+from urllib.parse import parse_qsl, urlencode
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
 import httpx
-import jwt
+from authlib.oauth2.auth import ClientAuth
+from authlib.oauth2.rfc7523 import PrivateKeyJWT
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,6 +33,15 @@ from src.core.log_safety import log_safe
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
 from src.services.oauth_provider import append_query_params
+from src.services.oidc_rp import (
+    GOOGLE_CLAIMS_OPTIONS,
+    MICROSOFT_CLAIMS_OPTIONS,
+    JwksProvider,
+    OIDCClientFactory,
+    build_oidc_relying_party,
+    google_server_metadata,
+    microsoft_server_metadata,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +82,7 @@ class OAuthTokens:
     expires_in: int | None = None
     token_type: str = "Bearer"
     id_token: str | None = None
+    id_token_claims: dict[str, Any] | None = None
     scope: str | None = None
 
 
@@ -81,9 +94,17 @@ class OAuthError(Exception):
 class OAuthService:
     """Service for OAuth SSO operations."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(
+        self,
+        db: AsyncSession,
+        *,
+        oidc_client_factory: OIDCClientFactory = build_oidc_relying_party,
+        jwks_provider: JwksProvider | None = None,
+    ):
         self.db = db
         self._config_service = OAuthConfigService(db)
+        self._oidc_client_factory = oidc_client_factory
+        self._jwks_provider = jwks_provider
         # Cache for OIDC discovery documents
         self._oidc_discovery_cache: dict[str, dict[str, Any]] = {}
 
@@ -157,10 +178,12 @@ class OAuthService:
             return {
                 "client_id": config.client_id,
                 "client_secret": config.client_secret,
+                "tenant_id": tenant,
                 "authorize_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
                 "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/v1.0/me",
                 "scopes": ["openid", "email", "profile", "User.Read"],
+                **_client_auth_fields(config),
             }
 
         elif provider == "google":
@@ -174,6 +197,7 @@ class OAuthService:
                 "token_url": "https://oauth2.googleapis.com/token",
                 "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
                 "scopes": ["openid", "email", "profile"],
+                **_client_auth_fields(config),
             }
 
         elif provider == "oidc":
@@ -186,11 +210,16 @@ class OAuthService:
             return {
                 "client_id": config.client_id,
                 "client_secret": config.client_secret,
+                "discovery_url": config.discovery_url,
+                # Reuse the document already fetched for the endpoints above so
+                # id_token verification does not fetch discovery a second time.
+                "discovery": discovery,
                 "authorize_url": discovery["authorization_endpoint"],
                 "token_url": discovery["token_endpoint"],
                 "userinfo_url": discovery.get("userinfo_endpoint"),
                 "scopes": ["openid", "email", "profile"],
                 "display_name": config.display_name or "SSO",
+                **_client_auth_fields(config),
             }
 
         else:
@@ -210,6 +239,7 @@ class OAuthService:
         redirect_uri: str,
         state: str,
         code_verifier: str,
+        nonce: str,
     ) -> str:
         """
         Generate the authorization URL for OAuth login.
@@ -219,6 +249,7 @@ class OAuthService:
             redirect_uri: Callback URL
             state: CSRF state value
             code_verifier: PKCE code verifier
+            nonce: OIDC nonce bound to this authorization request
 
         Returns:
             Authorization URL to redirect user to
@@ -232,6 +263,7 @@ class OAuthService:
             "redirect_uri": redirect_uri,
             "scope": " ".join(config["scopes"]),
             "state": state,
+            "nonce": nonce,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
         }
@@ -253,20 +285,24 @@ class OAuthService:
         code: str,
         redirect_uri: str,
         code_verifier: str,
+        nonce: str,
     ) -> OAuthTokens:
         """
-        Exchange authorization code for tokens.
+        Exchange authorization code for tokens and verify the ``id_token``.
 
         Args:
             provider: OAuth provider name
             code: Authorization code from callback
             redirect_uri: Callback URL (must match authorize request)
             code_verifier: PKCE code verifier
+            nonce: Nonce sent in the authorization request
 
         Returns:
-            OAuthTokens with access token and optionally refresh token
+            OAuthTokens with access token, verified ``id_token`` claims and
+            optionally a refresh token
         """
         config = await self.get_provider_config(provider)
+        token_url = config["token_url"]
 
         data = {
             "client_id": config["client_id"],
@@ -275,16 +311,13 @@ class OAuthService:
             "redirect_uri": redirect_uri,
             "code_verifier": code_verifier,
         }
-
-        # Add client secret if configured
-        if config.get("client_secret"):
-            data["client_secret"] = config["client_secret"]
+        post_data, headers = _token_request_auth(config, token_url, data)
 
         async with httpx.AsyncClient() as client:
             response = await client.post(
-                config["token_url"],
-                data=data,
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+                token_url,
+                data=post_data,
+                headers=headers,
             )
 
             if response.status_code != 200:
@@ -295,14 +328,75 @@ class OAuthService:
 
             token_data = response.json()
 
+        id_token_claims = await self._verify_id_token(
+            provider, config, token_data, nonce
+        )
+
         return OAuthTokens(
             access_token=token_data["access_token"],
             refresh_token=token_data.get("refresh_token"),
             expires_in=token_data.get("expires_in"),
             token_type=token_data.get("token_type", "Bearer"),
             id_token=token_data.get("id_token"),
+            id_token_claims=id_token_claims,
             scope=token_data.get("scope"),
         )
+
+    async def _id_token_metadata(
+        self, provider: str, config: dict[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, Any] | None]:
+        """Return discovery metadata and issuer options for id_token checks."""
+        if provider == "oidc":
+            # Generic OIDC uses the discovery document already fetched by
+            # ``get_provider_config``; only fetch if the caller supplied none.
+            discovery = config.get("discovery")
+            if not discovery:
+                discovery_url = config.get("discovery_url")
+                if not discovery_url:
+                    raise OAuthError("OIDC discovery is not configured")
+                discovery = await self._fetch_oidc_discovery(discovery_url)
+            return discovery, None
+        if provider == "microsoft":
+            return (
+                microsoft_server_metadata(config.get("tenant_id")),
+                MICROSOFT_CLAIMS_OPTIONS,
+            )
+        if provider == "google":
+            return google_server_metadata(), GOOGLE_CLAIMS_OPTIONS
+        raise OAuthError(f"Unknown OAuth provider: {provider}")
+
+    async def _verify_id_token(
+        self,
+        provider: str,
+        config: dict[str, Any],
+        token_data: dict[str, Any],
+        nonce: str,
+    ) -> dict[str, Any]:
+        """Verify the provider ``id_token``; never fall back to userinfo."""
+        try:
+            metadata, claims_options = await self._id_token_metadata(provider, config)
+            client = self._oidc_client_factory(
+                client_id=config["client_id"],
+                client_secret=config.get("client_secret"),
+                server_metadata=metadata,
+                claims_options=claims_options,
+                jwks_provider=self._jwks_provider,
+            )
+            try:
+                return await client.parse_verified_id_token(token_data, nonce)
+            finally:
+                await client.aclose()
+        except Exception as exc:
+            # Log the real cause server-side; never echo Authlib/joserfc
+            # exception text to the browser (the router returns detail=str(e)).
+            logger.error(
+                "OIDC id_token verification failed for %s: %s",
+                log_safe(provider),
+                log_safe(str(exc)),
+            )
+            raise OAuthError(
+                "Could not verify the identity provider's response. Please try signing in again."
+            ) from exc
 
     async def get_user_info(
         self,
@@ -332,14 +426,38 @@ class OAuthService:
 
             user_data = response.json()
 
-        return self._parse_user_info(provider, user_data)
+        return self._parse_user_info(provider, user_data, tokens.id_token_claims)
 
-    def _parse_user_info(self, provider: str, data: dict) -> OAuthUserInfo:
-        """Extract a normalized OAuth identity without authorizing a new email link."""
+    def _parse_user_info(
+        self,
+        provider: str,
+        data: dict,
+        claims: Mapping[str, Any] | None = None,
+    ) -> OAuthUserInfo:
+        """Extract a normalized OAuth identity without authorizing a new email link.
+
+        For Microsoft the stored key stays the Graph ``id`` (the Entra ``oid``):
+        the id_token ``sub`` is pairwise and app-scoped, so switching to it would
+        re-key every existing account. The verified ``oid`` is instead
+        cross-checked against the Graph id. Google and generic OIDC require
+        userinfo ``sub`` to equal the id_token ``sub`` (OIDC Core 5.3.2), so the
+        verified claim is used after that equality check.
+        """
         if provider == "microsoft":
+            graph_id = _provider_user_id(data.get("id"))
+            if claims is not None:
+                verified_oid = claims.get("oid")
+                if not isinstance(verified_oid, str) or not verified_oid.strip():
+                    raise OAuthError(
+                        "Microsoft's verified token did not contain the expected account identifier (oid)"
+                    )
+                if verified_oid != graph_id:
+                    raise OAuthError(
+                        "Microsoft returned an id_token that doesn't match the signed-in account"
+                    )
             return OAuthUserInfo(
                 provider=provider,
-                provider_user_id=_provider_user_id(data.get("id")),
+                provider_user_id=graph_id,
                 # Graph's `mail` is free text and never identifies a Bifrost user.
                 email=_normalized_email(data.get("userPrincipalName")),
                 name=data.get("displayName"),
@@ -350,9 +468,18 @@ class OAuthService:
                 raw_data=data,
             )
 
+        userinfo_sub = _provider_user_id(data.get("sub"))
+        provider_user_id = userinfo_sub
+        if claims is not None:
+            provider_user_id = _provider_user_id(claims.get("sub"))
+            if provider_user_id != userinfo_sub:
+                raise OAuthError(
+                    "The id_token subject does not match the userinfo subject"
+                )
+
         return OAuthUserInfo(
             provider=provider,
-            provider_user_id=_provider_user_id(data.get("sub")),
+            provider_user_id=provider_user_id,
             email=_normalized_email(data.get("email")),
             name=data.get("name"),
             picture=data.get("picture"),
@@ -373,7 +500,7 @@ class OAuthService:
         data = user_info.raw_data or {}
 
         if user_info.provider == "microsoft":
-            tenant_id = _microsoft_tenant_id(tokens.id_token)
+            tenant_id = _microsoft_tenant_id(tokens.id_token_claims)
             if tenant_id == MICROSOFT_CONSUMER_TENANT_ID:
                 raise OAuthError("Personal Microsoft accounts can't sign in. Use your work or school account.")
             if "#ext#" in user_info.email:
@@ -536,18 +663,51 @@ class OAuthService:
         return result.scalar_one_or_none()
 
 
-def _microsoft_tenant_id(id_token: str | None) -> str:
-    """The `tid` claim of a Microsoft ID token.
+def _client_auth_fields(config: Any) -> dict[str, Any]:
+    """Expose the provider's token-endpoint client authentication settings."""
+    return {
+        "token_endpoint_auth_method": config.token_endpoint_auth_method,
+        "private_key": config.private_key,
+        "private_key_kid": config.private_key_kid,
+        "private_key_alg": config.private_key_alg,
+    }
 
-    The token comes straight from Microsoft's token endpoint over TLS in the code exchange,
-    so its signature isn't checked (OpenID Connect Core 3.1.3.7).
-    """
-    if not id_token:
+
+def _token_request_auth(
+    config: dict[str, Any], token_url: str, data: dict[str, Any]
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Attach client authentication using Authlib's own encoders/signers."""
+    method = config.get("token_endpoint_auth_method") or "client_secret_post"
+    client_id = config["client_id"]
+    client_secret = config.get("client_secret") or ""
+
+    if method == "private_key_jwt":
+        private_key = config.get("private_key")
+        if not private_key:
+            raise OAuthError("private_key_jwt requires a private key")
+        kid = config.get("private_key_kid")
+        assertion = PrivateKeyJWT(
+            token_endpoint=token_url,
+            headers={"kid": kid} if kid else None,
+            alg=config.get("private_key_alg") or "RS256",
+        )
+        client_auth = ClientAuth(client_id, private_key, assertion)
+    elif method in {"client_secret_post", "client_secret_basic"}:
+        client_auth = ClientAuth(client_id, client_secret, method)
+    else:
+        raise OAuthError(f"Unsupported token_endpoint_auth_method: {method}")
+
+    _uri, headers, body = client_auth.prepare("POST", token_url, {}, urlencode(data))
+    return (
+        dict(parse_qsl(body, keep_blank_values=True)),
+        {**headers, "Content-Type": "application/x-www-form-urlencoded"},
+    )
+
+
+def _microsoft_tenant_id(claims: Mapping[str, Any] | None) -> str:
+    """The ``tid`` claim of a Microsoft id_token verified by ``OIDCRelyingParty``."""
+    if claims is None:
         raise OAuthError("Microsoft didn't return an ID token")
-    try:
-        claims = jwt.decode(id_token, options={"verify_signature": False})
-    except jwt.PyJWTError as e:
-        raise OAuthError("Microsoft returned an unreadable ID token") from e
     tenant_id = claims.get("tid")
     if not tenant_id:
         raise OAuthError("Microsoft's ID token has no tenant")

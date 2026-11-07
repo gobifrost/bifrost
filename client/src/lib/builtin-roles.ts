@@ -1,6 +1,9 @@
 /** Fixed id of the built-in Platform Admin role (`shared/builtin_roles.py`). */
 export const PLATFORM_ADMIN_ROLE_ID = "00000000-0000-0000-0000-000000000005";
 
+/** Fixed id of the built-in User base role (`shared/builtin_roles.py`). */
+export const USER_ROLE_ID = "00000000-0000-0000-0000-000000000006";
+
 /**
  * Built-in roles whose permission nothing checks yet, by role id. They are
  * already assigned, and take effect once the permission is enforced.
