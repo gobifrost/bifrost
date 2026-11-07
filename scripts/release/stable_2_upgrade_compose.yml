@@ -68,3 +68,6 @@ services:
   worker:
     <<: *api
     command: [python, -m, src.worker.main]
+  scheduler:
+    <<: *api
+    command: [python, -m, src.scheduler.main]

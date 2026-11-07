@@ -103,6 +103,9 @@ jobs:
       - name: Check E2E shard allocation
         run: python3 -m unittest scripts.test_e2e_shard
 
+      - name: Check release upgrade rehearsal safety
+        run: python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population
+
       - name: Check stack lifecycle and ownership
         run: |
           python3 -m unittest scripts.test_stack_lifecycle scripts.test_memory_sampler

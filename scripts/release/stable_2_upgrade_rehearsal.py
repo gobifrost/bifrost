@@ -75,6 +75,7 @@ class Rehearsal:
             "passed": False,
         }
         self.owns_project = False
+        self.population_payload: dict = {}
 
     def run(
         self,
@@ -179,6 +180,38 @@ class Rehearsal:
         # rabbitmqctl may prepend a human status line before its JSON array.
         return json.loads(raw[raw.index("[") :])
 
+    def population(self, phase: str) -> None:
+        """Run HTTP assertions in the selected image; keep legacy tokens in memory."""
+        helper = Path(__file__).with_name("stable_2_upgrade_population.py").read_text()
+        result = self.dc(
+            "exec", "-T", "api", "python", "-c", helper, phase,
+            stdin=json.dumps(self.population_payload),
+        )
+        payload = json.loads(result.stdout)
+        if phase == "seed":
+            self.population_payload = payload
+            self.report["seeded_entities"] = payload["state"]
+        self.report.setdefault("population", {})[phase] = payload["evidence"]
+        self.save()
+
+    def secret_record_fingerprints(self) -> list[dict]:
+        """Compare seeded rows without retrieving plaintext or ciphertext values."""
+        state = self.population_payload["state"]
+        integration_ids = [str(UUID(state["integrations"][key])) for key in ("a", "b")]
+        records = json.loads(self.sql(
+            "SELECT coalesce(json_agg(proof ORDER BY id), '[]') FROM ("
+            "SELECT id, key, organization_id, integration_id, config_schema_id, "
+            "md5(value::text) AS stored_value_checksum, "
+            "length(value->>'value') > 64 AS longer_than_fixture_plaintext "
+            "FROM configs WHERE config_type='secret' AND ("
+            "key IN ('stable2_upgrade_org_a', 'stable2_upgrade_org_b') OR "
+            f"integration_id IN ('{integration_ids[0]}','{integration_ids[1]}'))"
+            ") proof"
+        ))
+        if len(records) != 4 or not all(r["longer_than_fixture_plaintext"] for r in records):
+            raise RuntimeError("Expected four non-plaintext seeded secret records")
+        return records
+
     def execute(self) -> None:
         label = f"label=com.docker.compose.project={self.project}"
         for inventory in (["ps", "-aq"], ["network", "ls", "-q"], ["volume", "ls", "-q"]):
@@ -187,12 +220,23 @@ class Rehearsal:
                 raise RuntimeError("Refusing to reuse an existing Compose project")
         self.owns_project = True
         self.phase("Verify immutable images and target source")
+        self.report["runtime_versions"] = {}
         for image in (SOURCE, BRIDGE, self.args.target_api_image):
             self.run(["docker", "pull", image])
+            version = self.run([
+                "docker", "run", "--rm", "--entrypoint", "python", image,
+                "-c", "from shared.version import get_version; print(get_version())",
+            ]).stdout.strip()
+            self.report["runtime_versions"][image] = version
+        if self.report["runtime_versions"][SOURCE] != "1.4.1":
+            raise RuntimeError("Source artifact is not Bifrost 1.4.1")
         witnesses = [
             "api/src/main.py",
             "api/src/services/legacy_broker_drain.py",
             "api/alembic/versions/20261031_authz_claims_gate.py",
+            "api/src/jobs/platform/application_sdk_update.py",
+            "api/src/services/application_source_artifact.py",
+            "api/src/services/solutions/app_build.py",
         ]
         expected = {
             p.removeprefix("api/"): hashlib.sha256(
@@ -224,9 +268,15 @@ class Rehearsal:
                 "Target runtime witness hashes do not match selected source"
             )
         self.report["target_source_witnesses"] = expected
-        self.phase("Boot actual 1.4.1 and enqueue one real HTTP execution")
+        self.phase("Boot actual 1.4.1 and seed a representative installation")
         self.dc("up", "-d", "--wait", "postgres", "redis", "rabbit", "seaweedfs")
         self.start_api(SOURCE)
+        self.dc("up", "-d", "--no-deps", "worker", "scheduler")
+        self.population("seed")
+        self.report["seed_secret_record_fingerprints"] = self.secret_record_fingerprints()
+        self.dc("stop", "worker", "scheduler")
+        self.dc("rm", "-f", "worker", "scheduler")
+        self.phase("Enqueue one real HTTP execution before the upgrade")
         seeded = json.loads(self.dc("exec", "-T", "api", "python", "-c", SEED).stdout)
         execution_id = str(UUID(seeded["execution_id"]))
         self.report["execution_id"] = execution_id
@@ -298,6 +348,9 @@ class Rehearsal:
         self.dc("rm", "-f", "api")
         self.phase("Upgrade to target; prove dispatch lineage before worker admission")
         self.start_api(self.args.target_api_image)
+        if self.secret_record_fingerprints() != self.report["seed_secret_record_fingerprints"]:
+            raise RuntimeError("Seeded secret rows or stored-value fingerprints changed")
+        self.report["secret_record_fingerprints_preserved"] = True
         dispatch = self.sql(
             f"SELECT row_to_json(proof) FROM (SELECT e.id, e.executed_by, e.run_user_id, e.started_by_user_id, e.root_execution_id, e.status, d.id AS dispatch_id FROM executions e JOIN work_dispatches d ON d.subject_id=e.id WHERE e.id='{execution_id}') proof"
         )
@@ -350,6 +403,9 @@ class Rehearsal:
             != "0"
         ):
             raise RuntimeError("Recovered execution still has unclaimed dispatch")
+        self.phase("Verify populated data, human access, automation and the App SDK upgrade")
+        self.dc("up", "-d", "--no-deps", "worker", "scheduler")
+        self.population("verify")
         self.report["passed"] = True
         self.phase("Rehearsal assertions passed")
 

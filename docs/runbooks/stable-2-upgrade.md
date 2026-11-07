@@ -110,6 +110,20 @@ python3 scripts/release/stable_2_upgrade_rehearsal.py \
 The rehearsal verifies source witnesses, queues work through the real 1.4.1
 HTTP API, proves direct-upgrade refusal on a cloned database, starts the real
 bridge, and checks durable recovery, lineage, terminal success, and queue
-accounting on the target. The receipt distinguishes a qualified source build
+accounting on the target. It also seeds organizations, invited human users,
+role-controlled resources, encrypted integration configuration, linked
+workflow/form/agent records, and a deployed V2 App through the 1.4.1 API.
+After upgrading, it checks retained data and access boundaries, runs the
+registered automation, and rebuilds that App from its retained source through
+the normal SDK-update job. The receipt records each checked contract separately.
+
+The real jobs are the old App deployment, the recovered queued execution,
+the target registered workflow execution, and the target App SDK rebuild.
+Agent tool bindings are checked without making an external AI-provider call.
+The fixture uses synthetic data; it is not a copy of an operator's database.
+The [populated upgrade receipt](../releases/evidence/2.0.0-populated-upgrade.json)
+records the selected source digest, seeded entity IDs, secret-record checksums,
+recovered execution, and SDK-update deployment IDs and provenance.
+The receipt distinguishes a qualified source build
 from the final versioned release artifact. It does not replace the production
 maintenance boundary or App SDK verification.
