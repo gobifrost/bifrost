@@ -16,8 +16,6 @@ class RehearsalSafetyTests(unittest.TestCase):
         self.scratch = tempfile.TemporaryDirectory()
         self.addCleanup(self.scratch.cleanup)
         root = Path(self.scratch.name)
-        private = root / "private"
-        private.mkdir()
         self.rehearsal = Rehearsal(
             argparse.Namespace(
                 run_id="test",
@@ -25,7 +23,6 @@ class RehearsalSafetyTests(unittest.TestCase):
                 target_api_image="unused",
                 target_source="unused",
             ),
-            str(private),
         )
 
     def test_project_collision_never_cleans_up_the_existing_stack(self):
@@ -40,6 +37,26 @@ class RehearsalSafetyTests(unittest.TestCase):
                         self.rehearsal.execute()
                     self.rehearsal.cleanup()
                     compose.assert_not_called()
+
+    def test_credentials_reach_compose_without_a_plaintext_file(self):
+        with patch(
+            "subprocess.run", return_value=subprocess.CompletedProcess([], 0, "", "")
+        ) as process:
+            self.rehearsal.dc("config", "--quiet")
+        environment = process.call_args.kwargs["env"]
+        self.assertTrue(
+            environment.get("REHEARSAL_PASSWORD") == self.rehearsal.password,
+            "Compose must receive its generated password through its environment",
+        )
+        self.assertTrue(
+            environment.get("REHEARSAL_SECRET") == self.rehearsal.secret,
+            "Compose must receive its generated key through its environment",
+        )
+        for path in Path(self.scratch.name).rglob("*"):
+            if path.is_file():
+                contents = path.read_text()
+                self.assertFalse(self.rehearsal.password in contents, "Password must not be persisted")
+                self.assertFalse(self.rehearsal.secret in contents, "Key must not be persisted")
 
     def test_failed_cleanup_leaves_a_durable_failure_receipt(self):
         self.rehearsal.owns_project = True

@@ -18,7 +18,7 @@
     "src/services/legacy_broker_drain.py": "ecd04ed8719923f060c5a6d41593f5bff781c5a7f8472a8a30978516d5abf867",
     "alembic/versions/20261031_authz_claims_gate.py": "88d28ac049547ba681b040e4fe78792579fb9d83497a03c796c1236334054be1"
   },
-  "execution_id": "943254d1-a431-4112-a16b-6def5bb48427",
+  "execution_id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
   "source_revision": "20260916_solution_inbound",
   "source_queues": [
     {
@@ -34,22 +34,22 @@
   ],
   "bridge_revision": "20261030_authz_versions",
   "recovered_dispatch": {
-    "id": "943254d1-a431-4112-a16b-6def5bb48427",
-    "executed_by": "54951b89-7cf2-4e07-97d9-58f36fc4efac",
-    "run_user_id": "54951b89-7cf2-4e07-97d9-58f36fc4efac",
-    "started_by_user_id": "54951b89-7cf2-4e07-97d9-58f36fc4efac",
-    "root_execution_id": "943254d1-a431-4112-a16b-6def5bb48427",
+    "id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
+    "executed_by": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "run_user_id": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "started_by_user_id": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "root_execution_id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
     "status": "Pending",
-    "dispatch_id": "539bab35-6e23-463b-aecd-066071d61664"
+    "dispatch_id": "44c39b7d-d665-4f83-902f-ae32b06239e8"
   },
   "target_revision": "20261106_chat_execute",
   "terminal_execution": {
-    "id": "943254d1-a431-4112-a16b-6def5bb48427",
+    "id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
     "status": "Success",
     "result": {
       "release_rehearsal": true
     },
-    "completed_at": "2026-11-07T01:06:45.804302+00:00"
+    "completed_at": "2026-11-07T01:26:31.578175+00:00"
   },
   "execution_marker_count": 1,
   "final_queues": [

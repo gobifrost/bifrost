@@ -17,7 +17,6 @@ import re
 import secrets
 import signal
 import subprocess
-import tempfile
 import time
 from uuid import UUID
 
@@ -43,26 +42,27 @@ print(json.dumps({"execution_id": result["execution_id"], "status": result["stat
 
 
 class Rehearsal:
-    def __init__(self, args: argparse.Namespace, private: str):
+    def __init__(self, args: argparse.Namespace):
         self.args = args
         self.project = "bifrost-upgrade-" + args.run_id
         self.evidence = args.evidence_dir / args.run_id
         self.evidence.mkdir(mode=0o700)
         self.password = secrets.token_hex(24)
         self.secret = secrets.token_hex(32)
-        self.environment = dict(os.environ, REHEARSAL_IMAGE=SOURCE)
-        self.env_file = Path(private) / "compose.env"
-        self.env_file.write_text(
-            f"REHEARSAL_PASSWORD={self.password}\nREHEARSAL_SECRET={self.secret}\n"
+        self.environment = dict(
+            os.environ,
+            REHEARSAL_IMAGE=SOURCE,
+            REHEARSAL_DATABASE="bifrost",
+            REHEARSAL_PASSWORD=self.password,
+            REHEARSAL_SECRET=self.secret,
         )
-        self.env_file.chmod(0o600)
         self.compose = [
             "docker",
             "compose",
             "--project-name",
             self.project,
             "--env-file",
-            str(self.env_file),
+            os.devnull,
             "-f",
             str(Path(__file__).with_name("stable_2_upgrade_compose.yml")),
         ]
@@ -389,21 +389,20 @@ def main() -> None:
         parser.error(
             "evidence-dir must be an existing absolute directory outside the repository"
         )
-    with tempfile.TemporaryDirectory(prefix="bifrost-upgrade-private-") as private:
-        rehearsal = Rehearsal(args, private)
+    rehearsal = Rehearsal(args)
 
-        def terminate(_signum, _frame):
-            raise SystemExit("Rehearsal interrupted")
+    def terminate(_signum, _frame):
+        raise SystemExit("Rehearsal interrupted")
 
-        signal.signal(signal.SIGTERM, terminate)
-        signal.signal(signal.SIGHUP, terminate)
-        try:
-            rehearsal.execute()
-        except BaseException as error:
-            rehearsal.report["error"] = str(error)
-            raise
-        finally:
-            rehearsal.cleanup()
+    signal.signal(signal.SIGTERM, terminate)
+    signal.signal(signal.SIGHUP, terminate)
+    try:
+        rehearsal.execute()
+    except BaseException as error:
+        rehearsal.report["error"] = str(error)
+        raise
+    finally:
+        rehearsal.cleanup()
 
 
 if __name__ == "__main__":
