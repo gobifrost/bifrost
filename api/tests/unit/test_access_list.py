@@ -369,6 +369,18 @@ def _parse_source(source: str) -> ast.Module:
         return ast.parse("if True:\n" + source)
 
 
+@functools.cache
+def _function_source(func: object) -> str:
+    """A loaded function's source is immutable during this guard run.
+
+    Hundreds of routes share authorization/service helpers. Re-reading their
+    files for each root made the transitive guard time out on bind mounts.
+    Cache only source text, retaining the existing call-target and per-root
+    cycle/visited rules. Distinct synthetic functions still have distinct keys.
+    """
+    return inspect.getsource(func)
+
+
 def _reachable_sources(func: object, depth: int = 1) -> list[str]:
     """The function's own source, plus up to ``depth`` hops of calls it
     makes to a function that lives in ``shared.``/``src.`` (the call shapes
@@ -396,7 +408,7 @@ def _reachable_functions(
     if getattr(func, "__name__", "") in _NOISE_FUNC_NAMES:
         return []
     try:
-        source = inspect.getsource(func)
+        source = _function_source(func)
     except (OSError, TypeError):
         return []
     found: list[tuple[object, str]] = [(func, source)]
@@ -2097,6 +2109,10 @@ _FLAG_POLICY_SEEDS: dict[str, str] = {}
 # trusts); workflow code can write Redis today, so each one closes at the
 # cutover.
 _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
+    # External provider authority: sealed cache values bind scope + expiry;
+    # fresh database App/binding fences remain required by the caller.
+    "shared.github_app_client.GitHubAppClient.token": (1, "cutover"),
+    "shared.github_app_client.GitHubAppClient.repositories": (1, "cutover"),
     "bifrost._logging.append_log_to_stream": (2, "cutover"),
     "bifrost._logging.append_log_to_stream_async": (2, "cutover"),
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
@@ -2148,6 +2164,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
 # Redis reads whose value never reaches a principal, a token, an
 # authorization decision or code loading: (count, reason).
 _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
+    "shared.github_app.list_installations": (1, "Sanitized quota telemetry after database organization admission; never grants access."),
     "bifrost._logging.recover_terminal_execution_logs": (
         1, "Bounded maintenance scan for terminal execution-log streams.",
     ),

@@ -15,6 +15,7 @@ import { WorkflowKeys } from "@/pages/settings/WorkflowKeys";
 import { Branding } from "@/pages/settings/Branding";
 import { OAuth } from "@/pages/settings/OAuth";
 import { GitHub } from "@/pages/settings/GitHub";
+import { GitHubAppSettings } from "@/pages/settings/GitHubAppSettings";
 import { AIModelSettings } from "@/pages/settings/AIModelSettings";
 import { AIEmbeddingSettings } from "@/pages/settings/AIEmbeddingSettings";
 import { AIBehaviorSettings } from "@/pages/settings/AIBehaviorSettings";
@@ -109,6 +110,7 @@ const settingsSections: SettingsSection[] = [
 		items: [
 			{ value: "mcp", label: "MCP", icon: Plug, content: MCP },
 			{ value: "github", label: "GitHub", icon: Github, content: GitHub },
+			{ value: "github-app", label: "GitHub App", icon: Github, content: GitHubAppSettings },
 		],
 	},
 	{

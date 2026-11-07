@@ -35,6 +35,26 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/hooks", tags=["Webhooks"])
 
 
+@router.post("/github-app/{app_id}", include_in_schema=False)
+async def receive_github_app_webhook(app_id: int, request: Request, db: DbSession) -> Response:
+    from shared.github_app_auth import MAX_WEBHOOK_BYTES, GitHubAppError
+    from shared.github_app_events import accept_webhook
+
+    body = bytearray()
+    async for chunk in request.stream():
+        body.extend(chunk)
+        if len(body) > MAX_WEBHOOK_BYTES:
+            return Response("Webhook payload is too large", status_code=413)
+    try:
+        queued = await accept_webhook(db, app_id, bytes(body), _normalize_headers(dict(request.headers)))
+    except GitHubAppError as exc:
+        headers = {"Retry-After": str(exc.retry_after)} if exc.retry_after else None
+        raise HTTPException(exc.status_code, str(exc), headers=headers) from None
+    await db.commit()
+    await queued.hand_off()
+    return Response("Accepted", status_code=202)
+
+
 def _get_client_ip(request: Request) -> str | None:
     """Extract client IP from request, handling proxies."""
     # Check X-Forwarded-For header (set by reverse proxies)

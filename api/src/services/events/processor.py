@@ -70,6 +70,8 @@ async def resolve_webhook_source(
     except ValueError:
         return None
 
+    from src.models.orm.github_app import GitHubAppInstallation
+
     stmt = (
         sa.select(EventSource)
         .options(
@@ -81,6 +83,9 @@ async def resolve_webhook_source(
             EventSource.id == source_uuid,
             EventSource.is_active.is_(True),
             EventSource.source_type == EventSourceType.WEBHOOK,
+            # Managed App sources admit events only through the mandatory
+            # App-level HMAC route, even if their adapter config is edited.
+            ~sa.exists().where(GitHubAppInstallation.event_source_id == EventSource.id),
         )
     )
     result = await db.execute(stmt)
@@ -418,8 +423,7 @@ class EventProcessor:
 
         if isinstance(result, Deliver):
             # Process the event
-            return await self._process_delivery(
-                webhook_source=webhook_source,
+            return await self.accept_verified_webhook(
                 event_source=event_source,
                 deliver=result,
                 request=request,
@@ -537,13 +541,12 @@ class EventProcessor:
         )
         return event.id, matching_subscriptions
 
-    async def _process_delivery(
+    async def accept_verified_webhook(
         self,
-        webhook_source: WebhookSource,
         event_source: EventSource,
         deliver: Deliver,
         request: WebhookRequest,
-    ) -> HandleResult:
+    ) -> Deliver:
         """
         Process a delivery request from an adapter.
 
@@ -555,6 +558,7 @@ class EventProcessor:
             id=uuid.uuid4(),
             event_source_id=event_source.id,
             event_type=deliver.event_type,
+            organization_id=event_source.organization_id,
             received_at=datetime.now(timezone.utc),
             headers=deliver.raw_headers,
             data=deliver.data,

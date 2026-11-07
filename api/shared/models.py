@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 SEMVER_PATTERN = (
@@ -14,6 +14,62 @@ SEMVER_PATTERN = (
     r"(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+
+
+class GitHubAppConfigure(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    app_id: int = Field(gt=0, le=2**53 - 1)
+    private_key: SecretStr | None = Field(default=None, max_length=16384)
+    webhook_secret: SecretStr | None = Field(default=None, min_length=32, max_length=256)
+
+
+class GitHubAppConfigView(BaseModel):
+    configured: bool = False
+    app_id: int | None = None
+    slug: str | None = None
+    private_key_set: bool = False
+    webhook_secret_set: bool = False
+    webhook_path: str | None = None
+    last_reconciled_at: datetime | None = None
+    recovery_gap: bool = False
+
+
+class GitHubAppBind(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    installation_id: int = Field(gt=0, le=2**53 - 1)
+    organization_id: UUID
+
+
+class GitHubAppRepository(BaseModel):
+    id: int
+    full_name: str
+    private: bool
+
+
+class GitHubAppInstallationView(BaseModel):
+    id: UUID
+    installation_id: int
+    organization_id: UUID
+    account_login: str
+    status: str
+    permissions: dict[str, str]
+    repositories: list[GitHubAppRepository]
+    event_source_id: UUID
+    verified_at: datetime | None
+    last_delivery_at: datetime | None
+    last_error: str | None
+    available_events: list[str]
+    quota_remaining: int | None = None
+    quota_reset: int | None = None
+    retry_after: int | None = None
+
+
+class GitHubAppInstallations(BaseModel):
+    installations: list[GitHubAppInstallationView]
+
+
+class GitHubAppMaintenancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
 
 
 class AppConnectionDetails(BaseModel):

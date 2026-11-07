@@ -33,6 +33,11 @@ _MAINTENANCE = "src.jobs.platform.system_maintenance"
 
 SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
     ScheduledTaskDefinition(
+        "github_app_reconciliation", "Reconcile GitHub App", "Every 5 minutes", "durable_job",
+        callback="src.jobs.platform.github_app:enqueue_automatic_reconcile",
+        trigger_args={"minutes": 5}, run_at_startup=True,
+    ),
+    ScheduledTaskDefinition(
         "app_sdk_upgrades", "App SDK Upgrades", "At startup and every minute", "durable_job",
         callback="shared.application_sdk_upgrades:enqueue_automatic_app_sdk_upgrades",
         trigger_args={"minutes": 1}, run_at_startup=True,

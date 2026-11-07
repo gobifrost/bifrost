@@ -62,6 +62,7 @@ def _control(lease: FakeLease, **kwargs) -> ControlPlane:
 # Expected system schedules, including deliberate catalog changes. Moving
 # control between hosts must not add, drop or retime any of these tasks.
 LEGACY_SCHEDULES = {
+    "github_app_reconciliation": ("interval", {"minutes": 5}, True),
     "app_sdk_upgrades": ("interval", {"minutes": 1}, True),
     "schedule_processor": ("cron", {"minute": "*/1"}, False),
     "summary_backfill_reconciliation": ("interval", {"seconds": 60}, True),

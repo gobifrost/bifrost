@@ -52,6 +52,11 @@ _METADATA = MappingProxyType(
         item.job_type: item
         for item in (
             _metadata(
+                "github_app.reconcile", "src.jobs.platform.github_app", "GITHUB_APP_RECONCILE_DEFINITION",
+                PlatformJobPolicy(30 * 60, max_attempts=2, max_concurrency=1, min_memory_headroom_mb=128,
+                                  allow_running_cancellation=True),
+            ),
+            _metadata(
                 "application.deploy",
                 "src.jobs.platform.application_deploy",
                 "APPLICATION_DEPLOY_DEFINITION",

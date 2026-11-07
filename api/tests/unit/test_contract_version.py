@@ -420,7 +420,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # find_mapping request/response DTOs plus the worker-socket route; existing
     # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
     # Default-base-role commands and optional explicit identity base roles are additive.
-    "3a4380492fe5d255496e85a3f14180f1d142484334b620feb034a9330f7150e0"
+    # Optional GitHub App administration DTOs are additive. Existing CLI wire
+    # shapes and the minimum compatible CLI version remain unchanged.
+    "905329da8cef16195ab9f6a57a78cbf31a8c48d046140784adbd9495624d48da"
 )
 
 

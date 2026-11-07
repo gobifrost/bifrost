@@ -61,6 +61,7 @@ def _fake_db(source):
     db.flush = AsyncMock()
     db.commit = AsyncMock()
     db.get = AsyncMock(return_value=None)  # no Integration lookup needed by default
+    db.scalar = AsyncMock(return_value=None)  # no App-owned binding
 
     async def execute(_statement):
         result = MagicMock()

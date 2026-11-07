@@ -3,6 +3,7 @@ Built-in webhook adapters for the Bifrost event system.
 """
 
 from src.services.webhooks.adapters.generic import GenericWebhookAdapter
+from src.services.webhooks.adapters.github_app import GitHubAppAdapter
 from src.services.webhooks.adapters.microsoft_bot_framework import (
     MicrosoftBotFrameworkAdapter,
 )
@@ -16,6 +17,7 @@ __all__ = [
 
 # Registry of built-in adapters
 BUILTIN_ADAPTERS: dict[str, type] = {
+    "github_app": GitHubAppAdapter,
     "generic": GenericWebhookAdapter,
     "microsoft_bot_framework": MicrosoftBotFrameworkAdapter,
     "microsoft_graph": MicrosoftGraphAdapter,

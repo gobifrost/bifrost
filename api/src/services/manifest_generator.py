@@ -33,6 +33,7 @@ from src.models.orm.external_mcp import (
 from src.models.orm.file_metadata import FileMetadata
 from src.models.orm.forms import Form, FormField, FormRole
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
+from src.models.orm.github_app import GitHubAppInstallation
 from src.models.orm.oauth import OAuthProvider
 from src.models.orm.organizations import Organization
 from src.models.orm.policy_rule import PolicyRule
@@ -266,6 +267,10 @@ def export_criteria(model: type) -> list[ColumnElement[bool]]:
     A row the export leaves out (an inactive agent, an independent V2 app with no
     repo path) is never swept as "removed from the repo".
     """
+    # App bindings and their sources are deployment-owned. Export and the
+    # deletion sweep share this exclusion so PAT sync cannot erase a claim.
+    managed_app_sources = select(WebhookSource.event_source_id).where(
+        WebhookSource.adapter_name == "github_app").union(select(GitHubAppInstallation.event_source_id))
     criteria: dict[type, list[ColumnElement[bool]]] = {
         Workflow: [Workflow.is_active.is_(True)],
         Form: [Form.is_active.is_(True)],
@@ -273,7 +278,7 @@ def export_criteria(model: type) -> list[ColumnElement[bool]]:
         Application: [Application.repo_path.isnot(None)],
         Integration: [Integration.is_deleted.is_(False)],
         PolicyRule: [PolicyRule.is_builtin.is_(False)],
-        EventSource: [EventSource.is_active.is_(True)],
+        EventSource: [EventSource.is_active.is_(True), EventSource.id.not_in(managed_app_sources)],
         EventSubscription: [EventSubscription.is_active.is_(True)],
     }
     return criteria[model]

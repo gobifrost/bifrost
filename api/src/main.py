@@ -469,6 +469,8 @@ def create_app() -> FastAPI:
     app.include_router(metrics_router)
     app.include_router(packages_router)
     app.include_router(github_router)
+    from src.routers.github_app import router as github_app_router
+    app.include_router(github_app_router)
     app.include_router(jobs_router)
     app.include_router(platform_jobs_router)
     app.include_router(scheduler_diagnostics_router)
