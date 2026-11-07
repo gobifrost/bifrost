@@ -1,0 +1,13 @@
+{
+  "key": "pr:1273",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal documentation capture/evidence harness repair; no product runtime or user-facing behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1273",
+      "Release coordinator traced lost capture records to import-time deletion on worker replacement. Once-per-run launcher initialization, atomic writes and fail-visible malformed JSON preserve complete evidence.9Nodechecks,clienttypes/lintandfourtargetedlivecapturespassed;no retry,timeoutincreaseorskipadded."
+    ]
+  }
+}
