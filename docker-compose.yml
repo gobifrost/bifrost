@@ -291,6 +291,7 @@ services:
         limits:
           cpus: "2.0"
           memory: 2G
+    stop_grace_period: 310s
     command: python -m src.worker.main
 
 volumes:
