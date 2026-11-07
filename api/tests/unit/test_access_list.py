@@ -1917,6 +1917,9 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 #            named permission enforcement consumes.
 #   "internal_authorized_resource": reads state named by a previously
 #            verified runtime authority, with no caller-selected target.
+#   "credential_schema": validates an exact credential wire shape; legacy
+#            privilege fields are format markers, never permission grants.
+#            Current durable runtime facts decide authority separately.
 #   a permission string: the power the flag unlocks. No such permission is
 #            held by the User or Platform Operator role.
 # A site with several checks maps to a tuple of these. Each entry is
@@ -1925,7 +1928,8 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     # Every current site is a verified fact copy, role/reach derivation, a
-    # post-gate internal load, or the reviewed Platform Admin self-edit bridge.
+    # post-gate internal load, exact credential schema, or the reviewed
+    # Platform Admin self-edit bridge.
     "bifrost.cli._run_direct": (2, "actor_facts"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
@@ -1951,7 +1955,8 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.core.auth._get_current_user_optional": (3, "actor_facts"),
     "src.core.auth.get_original_human_user": (2, "actor_facts"),
     "src.core.auth.get_current_user_ws": (3, "actor_facts"),
-    "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": (1, "actor_facts"),
+    "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": (4, "actor_facts"),
+    "src.jobs.consumers.workflow_execution._legacy_unattended_pending_actor": (3, "actor_facts"),
     "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
     "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),
@@ -1997,6 +2002,9 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
+    # The signed old header must match v1.4.1's shape, but its admin field
+    # grants nothing: live DB authority determines the resulting principal.
+    "src.services.authorization.runtime_auth._previous_stable_engine_execution_id": (1, "credential_schema"),
     "src.services.authorization.tokens._human_principal": (2, "actor_facts"),
     "src.services.authorization.tokens._snapshot_human_claims": (1, "current_role_derivation"),
     "src.services.authorization.tokens.parse_human_claims": (1, "current_role_derivation"),
@@ -2049,6 +2057,7 @@ _SITE_KINDS = {
     "actor_facts",
     "current_role_derivation",
     "internal_authorized_resource",
+    "credential_schema",
 }
 
 # Where a token is minted or a principal is handed on (blind spot B2), and
@@ -2327,7 +2336,7 @@ class TestEveryElevatedCheckHasAScope:
                 except ValueError as exc:
                     invalid.append(f"{where}: {exc}")
         assert not invalid, (
-            "_ELEVATED_SITES replacements that are not reach/route/delete/cutover/system/a permission:\n"
+            "_ELEVATED_SITES replacements that are not a reviewed site kind or permission:\n"
             + "\n".join(invalid)
         )
 

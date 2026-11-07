@@ -141,6 +141,17 @@ async def child_lineage(session: AsyncSession, parent_execution_id: UUID | str) 
 
 async def principal_lineage(session: AsyncSession, principal: UserPrincipal) -> RunLineage | None:
     """Lineage of a run started by an authenticated caller."""
+    runtime = principal.runtime_authority
+    if runtime is not None and runtime.kind == "workflow_execution":
+        # The exact previous-stable engine token can recover lineage from its
+        # durable execution while an old worker finishes a rolling upgrade.
+        # Preserve that resolved lineage for a child instead of rereading the
+        # still-unbackfilled parent row.
+        return RunLineage(
+            run_user_id=runtime.run_user.user_id,
+            started_by_user_id=runtime.started_by_user_id or runtime.run_user.user_id,
+            root_execution_id=runtime.root_execution_id,
+        )
     if principal.service_id is not None or principal.embed:
         return await identity_lineage(session, principal.organization_id)
     if principal.engine_execution_id is not None:

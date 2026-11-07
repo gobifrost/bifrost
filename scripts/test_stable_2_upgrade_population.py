@@ -12,6 +12,7 @@ from pathlib import Path
 import sys
 import time
 from types import ModuleType
+from types import SimpleNamespace
 import unittest
 import urllib.error
 from unittest.mock import patch
@@ -57,6 +58,27 @@ class UpgradePopulationTests(unittest.TestCase):
                 replacement.writestr(name, content)
         with self.assertRaisesRegex(population.ScenarioError, "source file changed"):
             population.assert_retained_source(changed.getvalue(), "verify", "/source")
+
+    def test_changed_legacy_bundle_is_rejected_even_with_the_same_deployment(self) -> None:
+        class Http:
+            artifact = b"original deployed bundle"
+
+            def json(self, method, path, **kwargs):
+                if path.endswith("bundle-manifest"):
+                    return {"entry": "main.js", "runtime_contract": "mount-v1"}
+                return {"sdk_contract_version": 2}
+
+            def request(self, method, path, **kwargs):
+                return SimpleNamespace(body=population.source_zip() if path.endswith("/source") else self.artifact)
+
+        http = Http()
+        application = {"id": "app-id", "slug": "app", "deployment_id": "original"}
+        application["bundle"] = population.active_bundle_fingerprint(http, "app-id", "seed", "token")
+        with patch.object(population, "active_deployment_id", return_value="original"):
+            population.assert_active_legacy_bundle(http, {"application": application}, "verify", "token")
+            http.artifact = b"changed deployed bundle"
+            with self.assertRaisesRegex(population.ScenarioError, "legacy application artifact changed"):
+                population.assert_active_legacy_bundle(http, {"application": application}, "verify", "token")
 
     def test_activation_reads_do_not_reuse_connections_from_closed_loops(self) -> None:
         owner = None
