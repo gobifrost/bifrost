@@ -1,15 +1,17 @@
 {
-  "target_ref": "5c3baf58443484602be5fd9778d11de54a95468c",
+  "target_ref": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "Release coordinator draft under Jack's explicit authorization; final source inventory, populated rehearsal and copy review pending.",
       "Compatibility repairs1276 and1277 merged; frozen runtime5c3baf58443484602be5fd9778d11de54a95468c has passed full nightly. Old bridge/manual App-rebuild requirements removed from draft; direct browser rehearsal, multi-replica policy and final inventory remain pending.",
-      "API-verified incremental inventory through1277:386commits/386mergedPRs; existing additional contributor evidence retained. Current runtime blocked by real-browser expiry recovery; follow-up repair not yet included."
+      "API-verified incremental inventory through1277:386commits/386mergedPRs; existing additional contributor evidence retained. Current runtime blocked by real-browser expiry recovery; follow-up repair not yet included.",
+      "API-verified inventory387commits/387mergedPRs through1279; protected exact-candidate gate passed and immutable images identified. Direct browser qualification on corrected images and exact-source nightly42407182661 in progress. Publication held.",
+      "Release coordinator completed content/security/default-change review and validated387source coverage records through1279, retaining existing approved UUIDs and additional contributor evidence. The actual1.4.1 direct-image rehearsal passed originalSDK2expiry/epoch/revocation, data/secret preservation, old-worker SDK transport and exactly-one queued workflow recovery. This is material approval only; final nightly, qualification follow-up source freeze and user publication hold remain separate gates."
     ]
   },
   "security": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/advisories/GHSA-2883-xcg3-v3hh",
       "https://github.com/advisories/GHSA-3589-pxp7-3gj8",
@@ -38,7 +40,9 @@
       "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
       "https://github.com/advisories/GHSA-82r6-8w77-94w6",
       "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
-      "Closed advisory metadata reviewed against previous final v1.4.1 and current lockfiles. Root retained 33 source alert records; draft fixed-CVE list adds independently verified AnyIO advisory. Final source and copy review pending."
+      "Closed advisory metadata reviewed against previous final v1.4.1 and current lockfiles. Root retained 33 source alert records; draft fixed-CVE list adds independently verified AnyIO advisory. Final source and copy review pending.",
+      "Final preparation review retained the18 verified fixedCVEs and33 original advisory records, with dependency/lockfile scope. Open moderate105/minimatch is development-only and is explicitly not claimed fixed. No new runtime dependency changes since reviewed source;1279 auth recovery passed scoped freshPython/JavaScriptCodeQL and full protectedCI.",
+      "Known open, not fixed: {\"advisory\": \"https://github.com/advisories/GHSA-g3hv-75wg-m249\", \"cve\": \"CVE-2026-118764\", \"fixed\": false, \"package\": \"minimatch\", \"scope\": \"development tooling via typescript-eslint; absent from the client production dependency tree\"}"
     ],
     "fixed_cves": [
       "[CVE-2023-54404](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5): zod (scripts/docs/package-lock.json).",
@@ -59,26 +63,18 @@
       "[CVE-2026-84375](https://github.com/advisories/GHSA-2883-xcg3-v3hh): js-yaml (client/package-lock.json, scripts/docs/package-lock.json).",
       "[CVE-2026-93749](https://github.com/advisories/GHSA-68fv-2mgg-jv7q): source-map-js (api/src/services/app_compiler/package-lock.json, client/package-lock.json).",
       "[CVE-2026-63374](https://github.com/advisories/GHSA-82r6-8w77-94w6): AnyIO TLS hostname validation; the Python runtime now pins AnyIO 4.14.2."
-    ],
-    "known_open": [
-      {
-        "advisory": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
-        "cve": "CVE-2026-118764",
-        "package": "minimatch",
-        "scope": "development tooling via typescript-eslint; absent from the client production dependency tree",
-        "fixed": false
-      }
     ]
   },
   "breaking_changes": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "docs/runbooks/stable-2-upgrade.md",
       "docs/runbooks/human-auth-cutover.md",
       "docs/runbooks/zero-trust-automation.md",
       "docs/runbooks/application-sdk-update.md",
-      "Existing canonical action-required Product Updates and reviewed source dispositions; populated upgrade proof pending."
+      "Existing canonical action-required Product Updates and reviewed source dispositions; populated upgrade proof pending.",
+      "Current source runbooks and passing direct image receipt supersede the intermediate bridge, mandatory App rebuild and universal automation-drain notices. The qualified case uses a single API replacement; multi-replica deployments retain the documented coordinated human-validator cutover. CLI binaries, physical launchers, duplicate names, unattended sync and userinfo-onlyOIDC actions are conditional on those affected installations. Existing FullAccess workflows retain their mode and approvals; only new/changed Solution requests require approval."
     ],
-    "summary": "Update directly from 1.4.1 using the normal image update. Follow the [2.0 Upgrade Guide](https://github.com/gobifrost/bifrost/blob/5c3baf58443484602be5fd9778d11de54a95468c/docs/runbooks/stable-2-upgrade.md); the final multi-replica cutover disposition is still under review. Back up PostgreSQL and object storage together, preserve the platform secret, and account for queued work before retiring RabbitMQ.\n\nVerify every serving API finishes replacing the old authentication validator. People may need to sign in again in browsers, CLI and MCP clients. Existing supported SDK2 Apps work without a rebuild. Rollback below this authentication version is unsupported; use a forward repair build.\n\nUpgrade CLI and MCP clients with the server: the 1.4.1 CLI cannot parse the new execution responses, and renamed MCP tools require refreshed client discovery. Upgrade physical worker launchers to support the current remote-summary handlers. Resolve duplicate ad-hoc table names in each organization or global scope before their migration.\n\nUnattended file-synchronization scripts must explicitly acknowledge their changes with --force or BIFROST_NONINTERACTIVE. Generic OIDC providers that previously returned only user information must return a valid ID token before upgrading. Full Access remains the default workflow mode; converting workflows to Declared Permissions is optional.\n\n## Release Cadence Going Forward\n\nWe aim for a stable release roughly every month, with more frequent release candidates between stable releases. Release candidates are intended to be safer than dev builds. The dev channel remains bleeding edge and will contain bugs the maintainer intends to find in his own production first."
+    "summary": "Update directly from 1.4.1 using the normal image update. Follow the [2.0 Upgrade Guide](https://github.com/gobifrost/bifrost/blob/e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a/docs/runbooks/stable-2-upgrade.md) for the API-fleet cutover boundary. Back up PostgreSQL and object storage together, preserve the platform secret, and account for queued work before retiring RabbitMQ.\n\nVerify every serving API finishes replacing the old authentication validator. People may need to sign in again in browsers, CLI and MCP clients. Existing supported SDK2 Apps work without a rebuild. Rollback below this authentication version is unsupported; use a forward repair build.\n\nUpgrade CLI and MCP clients with the server: the 1.4.1 CLI cannot parse the new execution responses, and renamed MCP tools require refreshed client discovery. If you use physical worker launchers, upgrade them for the current remote-summary handlers. Installations with duplicate ad-hoc table names must resolve those duplicates within their organization or global scope before migration.\n\nUnattended file-synchronization scripts must explicitly acknowledge their changes with --force or BIFROST_NONINTERACTIVE. Generic OIDC providers that previously returned only user information must return a valid ID token before upgrading. Full Access remains the default workflow mode; converting workflows to Declared Permissions is optional.\n\n## Release Cadence Going Forward\n\nWe aim for a stable release roughly every month, with more frequent release candidates between stable releases. Release candidates are intended to be safer than dev builds. The dev channel remains bleeding edge and will contain bugs the maintainer intends to find in his own production first."
   }
 }

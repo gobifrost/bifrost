@@ -86,14 +86,15 @@
   },
   "assets": [],
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/929",
       "https://github.com/gobifrost/bifrost/pull/1212",
       "https://github.com/gobifrost/bifrost/pull/1213",
       "https://github.com/gobifrost/bifrost/pull/1235",
       "https://github.com/gobifrost/bifrost/pull/1258",
-      "Release-only canonical notice prepared from the approved per-source security reviews; source claims, attribution and copy await final range review. Existing in-app omissions are preserved by in_app:false."
+      "Release-only canonical notice prepared from the approved per-source security reviews; source claims, attribution and copy await final range review. Existing in-app omissions are preserved by in_app:false.",
+      "Release coordinator completed final copy/source review under delegated preparation authority: concrete customer outcome, scoped required actions, verified routes, retained UUID/credits, security/source evidence and agent prompts. This approves the prepared prose, not stable publication; the final source freeze and nightly remain release gates."
     ]
   }
 }
