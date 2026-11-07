@@ -1,0 +1,286 @@
+{
+  "source": "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0",
+  "target": "ghcr.io/gobifrost/bifrost-api@sha256:72e11ca49c3ed1f415bd9a8cdc31390709cdd21c7532c0f11318e32c3b634e04",
+  "target_source": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
+  "target_client": "ghcr.io/gobifrost/bifrost-client@sha256:6ef7f4df7118c8a872c9f3e03419d364d40fe56c1d1470496ed7a5dca35e61c6",
+  "browser_runner": "sha256:62e941a7a0f5c7fb8abc18f24c367ee6e0513b6e6b425683f071d997fdf58783",
+  "phases": [
+    "Verify immutable images and target source",
+    "Boot actual 1.4.1 and seed a representative installation",
+    "Start a real 1.4.1 worker and hold a durable SDK execution",
+    "Replace the API directly and release the source worker",
+    "Verify populated data and its active legacy App without rebuilding",
+    "Exercise the original App through expiry, epoch change and revocation",
+    "Qualify isolated pending source dispatch recovery",
+    "Rehearsal assertions passed"
+  ],
+  "passed": true,
+  "runtime_versions": {
+    "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0": "1.4.1",
+    "ghcr.io/gobifrost/bifrost-api@sha256:72e11ca49c3ed1f415bd9a8cdc31390709cdd21c7532c0f11318e32c3b634e04": "1.4.2-dev.1794074691"
+  },
+  "target_source_witnesses": {
+    "src/main.py": "bb8049f6ce6bd807e2ddf030b7ee5b277129fc8b3737e79a38018e5072432234",
+    "src/services/legacy_broker_drain.py": "ecd04ed8719923f060c5a6d41593f5bff781c5a7f8472a8a30978516d5abf867",
+    "alembic/versions/20261031_authz_claims_gate.py": "39b741ebdc4efb137eb0faf6485cb305b3290048a7d4e8c8fdcec6dfa29266fb",
+    "src/jobs/platform/application_sdk_update.py": "3273d377a16b6ba2f40a1c959ef871d7df6a1bae505a53b0798c1ab097327c0b",
+    "src/services/application_source_artifact.py": "6b956a696f0e7c02c191d604fe81ef25847e21db6c08c052c381aa3fdbff81aa",
+    "src/services/solutions/app_build.py": "b1be3994e4f2c7202b4c0334e62f0752d5b1f6f328c2e45ec3fe8b70b92dad59",
+    "src/services/authorization/runtime.py": "8483314304fa76cce949ff38985b151e675e20d480e793c96186f1fbc52260c2",
+    "src/services/authorization/runtime_auth.py": "35106a5ae027600fa16a9f1cea2bc805405456fb38a25a9cf8352c833f7b4341",
+    "src/jobs/consumers/workflow_execution.py": "3b05fb9158b85d2947f789ed75c083cfe78d8f97b5e24bfc3143870f0cb19dc5",
+    "shared/run_lineage.py": "dcb0afc0c9bf09c7998ee2827afcf916093e4ae213e86d0e7a6af42721550771",
+    "alembic/versions/20261107_running_run_lineage.py": "11ba4bd8d486b00e2e6d7a09326d3c4f4b38d23f88fa14fe7a3dac8010af23e8",
+    "src/core/auth.py": "4ee281697be12122a3689ec77fa0a334d076712c9be36a03314c76b8ad7f956a",
+    "src/routers/websocket.py": "7447c6b6b773099da27b67c91f0d8a29efa6de4a76ded8c0b98ad189a881c05c",
+    "src/services/websocket_auth_recovery.py": "2ea146e442ebf5e5a2dfb944213cd1ffafd8b46f214f685cb85fa87222c33c17"
+  },
+  "seeded_entities": {
+    "organizations": {
+      "a": "c5c1c29e-ba2a-4dc6-b179-a94e262b9481",
+      "b": "8e56751c-f89f-4525-958e-aec7d1fcf0d9"
+    },
+    "users": {
+      "a": {
+        "id": "e9f2ea5e-57c0-44c3-ad1a-2277a31fefa1",
+        "email": "stable2-human-a@gobifrost.dev"
+      },
+      "b": {
+        "id": "826ad262-e691-43ae-a508-35c37803b905",
+        "email": "stable2-human-b@gobifrost.dev"
+      },
+      "a_without_role": {
+        "id": "9ae56d0b-2d55-47ce-ad97-e4ba4fbc295e",
+        "email": "stable2-human-a-without-role@gobifrost.dev"
+      }
+    },
+    "roles": {
+      "a": "5659da5c-8469-45bd-a5b9-225759ab2e26",
+      "b": "10990d23-2c97-4a5d-8efb-edc522a29dcc"
+    },
+    "configs": {
+      "a_key": "stable2_upgrade_org_a",
+      "b_key": "stable2_upgrade_org_b",
+      "secret_length": 64
+    },
+    "integrations": {
+      "a": "c64a41e7-fe29-4ca0-b0fb-a436e406c26c",
+      "b": "d39c4b94-ae04-4f92-836f-d959548e1265",
+      "a_mapping": "6f425b4b-1526-4044-9c36-7bc6126a76e6",
+      "b_mapping": "dfe9c839-ef2c-4d16-98cb-cbc1a79a8ed6"
+    },
+    "workflow": {
+      "id": "27f8e023-f9ce-4078-aa62-e7e62c7a321a",
+      "path": "workflows/stable_2_upgrade_tool.py",
+      "name": "stable_2_upgrade_tool"
+    },
+    "form": {
+      "id": "9f163954-ef5e-4982-9e13-de23a601ae02"
+    },
+    "agent": {
+      "id": "8e767e70-e240-4562-81a2-8b7598981c29"
+    },
+    "live_table": {
+      "id": "eccbe911-ee7a-4f48-8cca-70ef19484c2d",
+      "document_id": "18738dbe-163a-4044-aa52-28c5f9550bca",
+      "name": "stable_2_upgrade_live"
+    },
+    "application": {
+      "id": "7e736081-da01-461d-b8e5-4722d2110db6",
+      "slug": "stable-2-upgrade-app",
+      "deployment_id": "60e77ffb-053f-40c1-8685-dff688cadb04",
+      "deploy_job_id": "78f83de2-d8e3-47a8-9c3e-c59b4aebf87b",
+      "bundle": {
+        "entry": "assets/index-DlxD2Pwn.js",
+        "artifact_sha256": "4ef5c0c758f330fd5985986ef00b87cfa6b28fc08ef65578f66e7dc5c7aef30d",
+        "artifact_bytes": 154274
+      }
+    }
+  },
+  "population": {
+    "seed": {
+      "seeded_two_orgs": true,
+      "invites_registered": true,
+      "role_memberships": true,
+      "secret_configs_seeded": true,
+      "secret_integration_configs_seeded": true,
+      "registered_tool_linked_to_form_and_agent": true,
+      "retained_v2_source": true,
+      "deploy_job_terminal": true
+    },
+    "verify": {
+      "new_human_logins": true,
+      "legacy_token_future_before_rejection": true,
+      "legacy_access_rejected": true,
+      "role_and_org_isolation": true,
+      "resource_ids_and_links_preserved": true,
+      "integration_mapping_ids_preserved": true,
+      "worker_decrypted_synthetic_credentials": true,
+      "registered_automation_succeeded": true,
+      "legacy_app_active_bundle_verified_before_rebuild": true,
+      "registered_execution": {
+        "id": "e2f2e97f-b4fe-4512-ae64-e84bfd4ae800",
+        "status": "Success",
+        "result": {
+          "entity": "stable2-tenant-a",
+          "config_ok": true,
+          "integration_ok": true
+        }
+      },
+      "legacy_active_bundle": {
+        "deployment_id": "60e77ffb-053f-40c1-8685-dff688cadb04",
+        "sdk_contract_version": 2,
+        "entry": "assets/index-DlxD2Pwn.js",
+        "artifact_sha256": "4ef5c0c758f330fd5985986ef00b87cfa6b28fc08ef65578f66e7dc5c7aef30d",
+        "artifact_bytes": 154274
+      }
+    },
+    "verify-app": {
+      "original_legacy_app_after_browser": {
+        "deployment_id": "60e77ffb-053f-40c1-8685-dff688cadb04",
+        "sdk_contract_version": 2,
+        "entry": "assets/index-DlxD2Pwn.js",
+        "artifact_sha256": "4ef5c0c758f330fd5985986ef00b87cfa6b28fc08ef65578f66e7dc5c7aef30d",
+        "artifact_bytes": 154274
+      }
+    }
+  },
+  "seed_secret_record_fingerprints": [
+    {
+      "id": "62322798-1df9-4384-8995-847d8e9cbf68",
+      "key": "stable2_upgrade_org_b",
+      "organization_id": "8e56751c-f89f-4525-958e-aec7d1fcf0d9",
+      "integration_id": null,
+      "config_schema_id": null,
+      "stored_value_checksum": "b2685592941afb8c863275ebbca3b00f",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "68656801-7126-4902-be71-66c59b554ca6",
+      "key": "stable2_upgrade_org_a",
+      "organization_id": "c5c1c29e-ba2a-4dc6-b179-a94e262b9481",
+      "integration_id": null,
+      "config_schema_id": null,
+      "stored_value_checksum": "99923346a22f885a4013ae3ac3971daf",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "8e107aee-fa0c-4ceb-902b-e588dc24f345",
+      "key": "api_key",
+      "organization_id": null,
+      "integration_id": "d39c4b94-ae04-4f92-836f-d959548e1265",
+      "config_schema_id": "81f6f041-512a-470e-b18f-bb00213e75f9",
+      "stored_value_checksum": "65dc561aed909c0d9a998cdcfa99f38e",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "a859d542-f8e2-462d-bb5c-30de288446df",
+      "key": "api_key",
+      "organization_id": null,
+      "integration_id": "c64a41e7-fe29-4ca0-b0fb-a436e406c26c",
+      "config_schema_id": "5ebe5b3c-7fbf-48e6-a423-436a36abff53",
+      "stored_value_checksum": "b384172a66153071cba6210b13e35da3",
+      "longer_than_fixture_plaintext": true
+    }
+  ],
+  "active_old_worker_execution_id": "9cd49ae6-568e-410f-ba87-1cfc8dd72188",
+  "source_revision": "20260916_solution_inbound",
+  "secret_record_fingerprints_preserved": true,
+  "target_revision": "20261107_running_run_lineage",
+  "target_authorization_protocols": {
+    "protocol_1": 0,
+    "protocol_2": 1
+  },
+  "active_old_worker": {
+    "terminal_execution": {
+      "id": "9cd49ae6-568e-410f-ba87-1cfc8dd72188",
+      "status": "Success",
+      "result": {
+        "old_worker_target_secret_ok": true
+      },
+      "completed_at": "2026-11-07T19:38:25.612199+00:00"
+    },
+    "target_config_marker_count": 1
+  },
+  "original_app_browser": {
+    "passed": true,
+    "initial_sdk2_query_token_verified": true,
+    "expiry_recovered": true,
+    "epoch_recovered": true,
+    "local_state_preserved": true,
+    "revoked_family_refused": true,
+    "browser_refreshes": 2,
+    "table_subscription_acks": 3,
+    "page_errors": 0
+  },
+  "cleanup_completed": true,
+  "project_cleanup": {
+    "bifrost-upgrade-stable2-direct-e7c953-02": true,
+    "bifrost-upgrade-stable2-direct-e7c953-02-recovery": true
+  },
+  "pending_recovery": {
+    "execution_id": "38dba278-93bf-4664-a5c7-01c6e4ac07a9",
+    "source_queues": [
+      {
+        "messages": 0,
+        "name": "workflow-executions-poison",
+        "messages_unacknowledged": 0
+      },
+      {
+        "messages": 1,
+        "name": "workflow-executions",
+        "messages_unacknowledged": 0
+      }
+    ],
+    "recovered_dispatch": {
+      "id": "38dba278-93bf-4664-a5c7-01c6e4ac07a9",
+      "executed_by": "70738c4f-cd4a-41c0-adcb-28da4a51b405",
+      "run_user_id": "70738c4f-cd4a-41c0-adcb-28da4a51b405",
+      "started_by_user_id": "70738c4f-cd4a-41c0-adcb-28da4a51b405",
+      "root_execution_id": "38dba278-93bf-4664-a5c7-01c6e4ac07a9",
+      "status": "Pending",
+      "dispatch_id": "35ba4899-7ad7-48bd-99ff-a04a4cd6519d"
+    },
+    "terminal_execution": {
+      "id": "38dba278-93bf-4664-a5c7-01c6e4ac07a9",
+      "status": "Success",
+      "result": {
+        "pending_recovery": true
+      },
+      "completed_at": "2026-11-07T19:41:15.700072+00:00"
+    },
+    "marker_count": 1,
+    "final_queues": [
+      {
+        "messages": 0,
+        "name": "workflow-executions-poison",
+        "messages_unacknowledged": 0
+      },
+      {
+        "messages": 0,
+        "name": "workflow-executions",
+        "messages_unacknowledged": 0
+      }
+    ]
+  },
+  "controller_files_sha256": {
+    "scripts/release/stable_2_upgrade_rehearsal.py": "4e2dd874287a13142680708b362f14c3af4089ad3eda8005efb559ebebc0949e",
+    "scripts/release/stable_2_upgrade_population.py": "d8ba4ac4de1dad425df1c2eaa948e84d700b026ef130b3dbe596fde45608995b",
+    "scripts/release/stable_2_upgrade_browser.mjs": "7c948b835524aefc67182e6e25503313f69adc7ad9241e09fed7930b553d8d5e",
+    "scripts/release/stable_2_upgrade_compose.yml": "e6b32efa4c599b8a24a7423321cb926a557369db217882094f9e1da6e9f791d0"
+  },
+  "fixture_correction": "The controller uses the runtime editor vocabulary workflows.execute, replacing the invalid test value workflows.read. This changed only the rehearsal fixture; tested production images are unchanged.",
+  "client_source_witness": {
+    "source": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
+    "image": "ghcr.io/gobifrost/bifrost-client@sha256:6ef7f4df7118c8a872c9f3e03419d364d40fe56c1d1470496ed7a5dca35e61c6",
+    "nginx_sha256": "1e5320f8dab7e36e3424fbed3deaa7263ad3f80584f57f2d3faab36535838c76",
+    "public_host_port_preserved": true
+  },
+  "limits": [
+    "Representative synthetic data, not a production database snapshot or scale test.",
+    "Single API replacement with a held real source worker; mixed old/new human API validators were not qualified.",
+    "One source workflow queue message recovered exactly once; no external-provider agent/OAuth call.",
+    "The shortened signed access token belongs to a real new durable human session; production token TTL/settings are unchanged.",
+    "The original SDK2 deployment, retained source and served bundle were checked before and after browser recovery; no SDK rebuild was used."
+  ]
+}
