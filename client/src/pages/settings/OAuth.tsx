@@ -7,6 +7,24 @@ import {
 } from "./oauth/PreferredSignIn";
 import { OAuthReadError } from "./oauth/OAuthReadError";
 import { OAuthProviderCard } from "./oauth/OAuthProviderCard";
+import {
+	OAuthClientAuthFields,
+	type OAuthClientAuthDraft,
+} from "./oauth/OAuthClientAuthFields";
+
+const AUTH_DEFAULTS: OAuthClientAuthDraft = {
+	token_endpoint_auth_method: "client_secret_post",
+	private_key: "",
+	private_key_kid: "",
+	private_key_alg: "RS256",
+	clear_private_key: false,
+	scopes: "",
+};
+
+function scopesPayload(value: string): string[] | null {
+	const parts = value.split(/[\s,]+/).filter(Boolean);
+	return parts.length ? parts : null;
+}
 /**
  * OAuth SSO Configuration Settings
  *
@@ -42,15 +60,18 @@ export function OAuth() {
 		}) > 0;
 	// Form state for each provider
 	const [microsoftForm, setMicrosoftForm] = useState({
+		...AUTH_DEFAULTS,
 		client_id: "",
 		client_secret: "",
 		tenant_id: "common",
 	});
 	const [googleForm, setGoogleForm] = useState({
+		...AUTH_DEFAULTS,
 		client_id: "",
 		client_secret: "",
 	});
 	const [oidcForm, setOidcForm] = useState({
+		...AUTH_DEFAULTS,
 		discovery_url: "",
 		client_id: "",
 		client_secret: "",
@@ -187,13 +208,23 @@ export function OAuth() {
 				provider="microsoft"
 				onEdit={() =>
 					setMicrosoftForm({
+						...AUTH_DEFAULTS,
 						client_id: microsoftConfig?.client_id ?? "",
 						client_secret: "",
 						tenant_id: microsoftConfig?.tenant_id ?? "common",
+						token_endpoint_auth_method:
+							microsoftConfig?.token_endpoint_auth_method ??
+							"client_secret_post",
+						private_key_kid:
+							microsoftConfig?.private_key_kid ?? "",
+						private_key_alg:
+							microsoftConfig?.private_key_alg ?? "RS256",
+						scopes: (microsoftConfig?.scopes ?? []).join(" "),
 					})
 				}
 				onCancel={() =>
 					setMicrosoftForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						tenant_id: "common",
@@ -216,16 +247,12 @@ export function OAuth() {
 						body: {
 							...microsoftForm,
 							client_secret: microsoftForm.client_secret || null,
-							token_endpoint_auth_method:
-								microsoftConfig?.token_endpoint_auth_method ??
-								"client_secret_post",
-							private_key_alg:
-								microsoftConfig?.private_key_alg ?? "RS256",
-							clear_private_key: false,
+							scopes: scopesPayload(microsoftForm.scopes),
 						},
 					});
 					await refetch();
 					setMicrosoftForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						tenant_id: "common",
@@ -237,6 +264,7 @@ export function OAuth() {
 					});
 					await refetch();
 					setMicrosoftForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						tenant_id: "common",
@@ -356,6 +384,20 @@ export function OAuth() {
 							</AccordionContent>
 						</AccordionItem>
 					</Accordion>
+
+					<OAuthClientAuthFields
+						idPrefix="ms"
+						token_endpoint_auth_method={microsoftForm.token_endpoint_auth_method}
+						private_key={microsoftForm.private_key}
+						private_key_kid={microsoftForm.private_key_kid}
+						private_key_alg={microsoftForm.private_key_alg}
+						clear_private_key={microsoftForm.clear_private_key}
+						scopes={microsoftForm.scopes}
+						privateKeySet={microsoftConfig?.private_key_set || false}
+						onChange={(patch) =>
+							setMicrosoftForm((prev) => ({ ...prev, ...patch }))
+						}
+					/>
 				</div>
 			</OAuthProviderCard>
 
@@ -364,12 +406,25 @@ export function OAuth() {
 				provider="google"
 				onEdit={() =>
 					setGoogleForm({
+						...AUTH_DEFAULTS,
 						client_id: googleConfig?.client_id ?? "",
 						client_secret: "",
+						token_endpoint_auth_method:
+							googleConfig?.token_endpoint_auth_method ??
+							"client_secret_post",
+						private_key_kid:
+							googleConfig?.private_key_kid ?? "",
+						private_key_alg:
+							googleConfig?.private_key_alg ?? "RS256",
+						scopes: (googleConfig?.scopes ?? []).join(" "),
 					})
 				}
 				onCancel={() =>
-					setGoogleForm({ client_id: "", client_secret: "" })
+					setGoogleForm({
+						...AUTH_DEFAULTS,
+						client_id: "",
+						client_secret: "",
+					})
 				}
 				title="Google"
 				description="Allow users to sign in with their Google accounts."
@@ -382,23 +437,26 @@ export function OAuth() {
 						body: {
 							...googleForm,
 							client_secret: googleForm.client_secret || null,
-							token_endpoint_auth_method:
-								googleConfig?.token_endpoint_auth_method ??
-								"client_secret_post",
-							private_key_alg:
-								googleConfig?.private_key_alg ?? "RS256",
-							clear_private_key: false,
+							scopes: scopesPayload(googleForm.scopes),
 						},
 					});
 					await refetch();
-					setGoogleForm({ client_id: "", client_secret: "" });
+					setGoogleForm({
+						...AUTH_DEFAULTS,
+						client_id: "",
+						client_secret: "",
+					});
 				}}
 				onDelete={async () => {
 					await deleteConfig.mutateAsync({
 						params: { path: { provider: "google" } },
 					});
 					await refetch();
-					setGoogleForm({ client_id: "", client_secret: "" });
+					setGoogleForm({
+						...AUTH_DEFAULTS,
+						client_id: "",
+						client_secret: "",
+					});
 				}}
 				onTest={async () => {
 					const result = await testConfig.mutateAsync({
@@ -491,6 +549,20 @@ export function OAuth() {
 							</AccordionContent>
 						</AccordionItem>
 					</Accordion>
+
+					<OAuthClientAuthFields
+						idPrefix="google"
+						token_endpoint_auth_method={googleForm.token_endpoint_auth_method}
+						private_key={googleForm.private_key}
+						private_key_kid={googleForm.private_key_kid}
+						private_key_alg={googleForm.private_key_alg}
+						clear_private_key={googleForm.clear_private_key}
+						scopes={googleForm.scopes}
+						privateKeySet={googleConfig?.private_key_set || false}
+						onChange={(patch) =>
+							setGoogleForm((prev) => ({ ...prev, ...patch }))
+						}
+					/>
 				</div>
 			</OAuthProviderCard>
 
@@ -499,14 +571,24 @@ export function OAuth() {
 				provider="oidc"
 				onEdit={() =>
 					setOidcForm({
+						...AUTH_DEFAULTS,
 						client_id: oidcConfig?.client_id ?? "",
 						client_secret: "",
 						discovery_url: oidcConfig?.discovery_url ?? "",
 						display_name: oidcConfig?.display_name ?? "SSO",
+						token_endpoint_auth_method:
+							oidcConfig?.token_endpoint_auth_method ??
+							"client_secret_post",
+						private_key_kid:
+							oidcConfig?.private_key_kid ?? "",
+						private_key_alg:
+							oidcConfig?.private_key_alg ?? "RS256",
+						scopes: (oidcConfig?.scopes ?? []).join(" "),
 					})
 				}
 				onCancel={() =>
 					setOidcForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						discovery_url: "",
@@ -534,16 +616,12 @@ export function OAuth() {
 						body: {
 							...oidcForm,
 							client_secret: oidcForm.client_secret || null,
-							token_endpoint_auth_method:
-								oidcConfig?.token_endpoint_auth_method ??
-								"client_secret_post",
-							private_key_alg:
-								oidcConfig?.private_key_alg ?? "RS256",
-							clear_private_key: false,
+							scopes: scopesPayload(oidcForm.scopes),
 						},
 					});
 					await refetch();
 					setOidcForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						discovery_url: "",
@@ -556,6 +634,7 @@ export function OAuth() {
 					});
 					await refetch();
 					setOidcForm({
+						...AUTH_DEFAULTS,
 						client_id: "",
 						client_secret: "",
 						discovery_url: "",
@@ -694,6 +773,20 @@ export function OAuth() {
 							</AccordionContent>
 						</AccordionItem>
 					</Accordion>
+
+					<OAuthClientAuthFields
+						idPrefix="oidc"
+						token_endpoint_auth_method={oidcForm.token_endpoint_auth_method}
+						private_key={oidcForm.private_key}
+						private_key_kid={oidcForm.private_key_kid}
+						private_key_alg={oidcForm.private_key_alg}
+						clear_private_key={oidcForm.clear_private_key}
+						scopes={oidcForm.scopes}
+						privateKeySet={oidcConfig?.private_key_set || false}
+						onChange={(patch) =>
+							setOidcForm((prev) => ({ ...prev, ...patch }))
+						}
+					/>
 				</div>
 			</OAuthProviderCard>
 		</div>

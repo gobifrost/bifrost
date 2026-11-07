@@ -18,10 +18,11 @@ OAuthTokenEndpointAuthMethod = Literal[
     "client_secret_post", "client_secret_basic", "private_key_jwt"
 ]
 
-# Authlib 1.9.5's PrivateKeyJWT signer is RSA-only, so EC algorithms (ES256/
-# ES384/ES512) are intentionally rejected. Supporting them needs joserfc or a
-# newer authlib signer and is a follow-up.
-OAUTH_PRIVATE_KEY_ALGS: tuple[str, ...] = ("RS256", "RS384", "RS512")
+# RSA uses Authlib's PrivateKeyJWT signer; EC uses joserfc because Authlib
+# 1.9.5's signer is RSA-only. The algorithm must match the key type/curve.
+OAUTH_PRIVATE_KEY_ALGS: tuple[str, ...] = (
+    "RS256", "RS384", "RS512", "ES256", "ES384", "ES512",
+)
 _PRIVATE_KEY_ALG_PATTERN = "^(" + "|".join(OAUTH_PRIVATE_KEY_ALGS) + ")$"
 
 # Config key constants for each provider
@@ -36,6 +37,7 @@ OAUTH_MICROSOFT_TOKEN_ENDPOINT_AUTH_METHOD = "microsoft_token_endpoint_auth_meth
 OAUTH_MICROSOFT_PRIVATE_KEY = "microsoft_private_key"
 OAUTH_MICROSOFT_PRIVATE_KEY_KID = "microsoft_private_key_kid"
 OAUTH_MICROSOFT_PRIVATE_KEY_ALG = "microsoft_private_key_alg"
+OAUTH_MICROSOFT_SCOPES = "microsoft_scopes"
 
 # Google config keys
 OAUTH_GOOGLE_CLIENT_ID = "google_client_id"
@@ -44,6 +46,7 @@ OAUTH_GOOGLE_TOKEN_ENDPOINT_AUTH_METHOD = "google_token_endpoint_auth_method"
 OAUTH_GOOGLE_PRIVATE_KEY = "google_private_key"
 OAUTH_GOOGLE_PRIVATE_KEY_KID = "google_private_key_kid"
 OAUTH_GOOGLE_PRIVATE_KEY_ALG = "google_private_key_alg"
+OAUTH_GOOGLE_SCOPES = "google_scopes"
 
 # OIDC config keys
 OAUTH_OIDC_DISCOVERY_URL = "oidc_discovery_url"
@@ -54,6 +57,7 @@ OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "oidc_token_endpoint_auth_method"
 OAUTH_OIDC_PRIVATE_KEY = "oidc_private_key"
 OAUTH_OIDC_PRIVATE_KEY_KID = "oidc_private_key_kid"
 OAUTH_OIDC_PRIVATE_KEY_ALG = "oidc_private_key_alg"
+OAUTH_OIDC_SCOPES = "oidc_scopes"
 
 
 class OAuthLoginPreference(BaseModel):
@@ -114,10 +118,7 @@ class ClientAuthConfigRequest(BaseModel):
     private_key_alg: str = Field(
         default="RS256",
         pattern=_PRIVATE_KEY_ALG_PATTERN,
-        description=(
-            "JWT signing algorithm for private_key_jwt (RSA only; EC is a "
-            "documented follow-up)"
-        ),
+        description="JWT signing algorithm for private_key_jwt (RSA or EC)",
     )
     clear_private_key: bool = Field(
         default=False,
@@ -128,7 +129,20 @@ class ClientAuthConfigRequest(BaseModel):
     )
 
 
-class MicrosoftOAuthConfigRequest(ClientAuthConfigRequest):
+class ProviderConfigRequest(ClientAuthConfigRequest):
+    """Configuration shared by every provider beyond client authentication."""
+
+    scopes: list[str] | None = Field(
+        default=None,
+        description=(
+            "OAuth scopes to request. Omit for the provider default "
+            "(openid email profile; Microsoft also requests User.Read). "
+            "openid is required so an id_token is returned."
+        ),
+    )
+
+
+class MicrosoftOAuthConfigRequest(ProviderConfigRequest):
     """Request model for configuring Microsoft OAuth SSO."""
 
     client_id: str = Field(
@@ -151,7 +165,7 @@ class MicrosoftOAuthConfigRequest(ClientAuthConfigRequest):
     )
 
 
-class GoogleOAuthConfigRequest(ClientAuthConfigRequest):
+class GoogleOAuthConfigRequest(ProviderConfigRequest):
     """Request model for configuring Google OAuth SSO."""
 
     client_id: str = Field(
@@ -166,7 +180,7 @@ class GoogleOAuthConfigRequest(ClientAuthConfigRequest):
     )
 
 
-class OIDCConfigRequest(ClientAuthConfigRequest):
+class OIDCConfigRequest(ProviderConfigRequest):
     """Request model for configuring a generic OIDC provider."""
 
     discovery_url: str = Field(
@@ -227,6 +241,10 @@ class OAuthProviderConfigResponse(BaseModel):
     private_key_alg: str | None = Field(
         default=None,
         description="JWT signing algorithm for private_key_jwt",
+    )
+    scopes: list[str] = Field(
+        default_factory=list,
+        description="Requested OAuth scopes",
     )
     # Provider-specific fields
     tenant_id: str | None = Field(

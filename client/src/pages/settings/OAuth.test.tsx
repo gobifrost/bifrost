@@ -105,6 +105,31 @@ describe("OAuth settings", () => {
 		},
 	);
 
+	it("saves custom scopes from the settings form", async () => {
+		configData.providers.forEach((provider) => {
+			provider.configured = true;
+		});
+		const { user } = renderWithProviders(<OAuth />);
+		await user.click(
+			screen.getAllByRole("button", { name: "Edit" })[1]!,
+		);
+
+		const scopes = screen.getByLabelText(/scopes/i);
+		await user.clear(scopes);
+		await user.type(scopes, "openid email groups");
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+
+		await waitFor(() =>
+			expect(updateGoogleConfig).toHaveBeenCalledWith({
+				body: expect.objectContaining({
+					scopes: ["openid", "email", "groups"],
+				}),
+			}),
+		);
+	});
+
 	it("saves a configured provider as the preferred first attempt", async () => {
 		const { user } = renderWithProviders(<OAuth />);
 
