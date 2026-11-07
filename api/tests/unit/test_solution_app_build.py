@@ -319,3 +319,23 @@ async def test_delete_all_app_artifacts_deletes_legacy_and_versioned_paginated(
         pages[None]["Contents"][1]["Key"],
         pages["page-2"]["Contents"][0]["Key"],
     ]
+
+
+def test_ordinary_build_with_lock_uses_locked_toolchain(tmp_path, monkeypatch):
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    (tmp_path / "package-lock.json").write_text("{}")
+    calls = []
+    monkeypatch.setattr(SolutionAppBuilder, "_refresh_sdk_lockfile", lambda *args: calls.append("refresh"))
+
+    def run(argv, **kwargs):
+        calls.append(list(argv))
+        if argv[:2] == ["npm", "ci"]:
+            vite = tmp_path / "node_modules/.bin/vite"
+            vite.parent.mkdir(parents=True)
+            vite.write_text("vite")
+
+    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", run)
+    SolutionAppBuilder()._run_vite_build(tmp_path)
+    assert calls == ["refresh", ["npm", "ci", "--no-audit", "--no-fund"],
+                     [str(tmp_path / "node_modules/.bin/vite"), "build", "--base", "/"]]

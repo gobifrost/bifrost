@@ -202,3 +202,24 @@ class TestOAuthProviderRepositoryCascade:
 
         assert OAuthProviderRepository.model is OAuthProvider
         assert OAuthProviderRepository.role_table is None
+
+
+class TestExactOAuthWriteScope:
+    async def test_external_global_scope_never_queries_tokens(self, session) -> None:
+        repo = OAuthTokenRepository(session, org_id=None, is_external=True)
+
+        assert await repo.get_exact_org_level_for_provider(uuid4()) is None
+        session.execute.assert_not_awaited()
+
+    async def test_missing_org_write_target_never_reads_global(self, session) -> None:
+        session.execute.return_value = _result_returning(None)
+        repo = OAuthTokenRepository(session, org_id=ORG_A)
+
+        assert await repo.get_exact_org_level_for_provider(uuid4(), for_update=True) is None
+        session.execute.assert_awaited_once()
+        statement = session.execute.call_args.args[0]
+        assert ORG_A in statement.compile().params.values()
+        query = str(statement)
+        assert "organization_id IS NULL" not in query
+        assert "user_id IS NULL" in query
+        assert "FOR UPDATE" in query

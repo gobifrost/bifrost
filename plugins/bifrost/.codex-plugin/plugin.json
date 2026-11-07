@@ -1,6 +1,6 @@
 {
   "name": "bifrost",
-  "version": "1.4.2-dev.1",
+  "version": "2.0.0",
   "description": "Bifrost — MSP automation platform. Build automation artifacts, migrate legacy Apps, and migrate Rewst automation with private API extraction, planning, testing, and cutover guidance.",
   "author": {
     "name": "Jack Musick",

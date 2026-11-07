@@ -3,6 +3,136 @@
     {
       "observed": {
         "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "get"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_base_role_default_get",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "users.defaults.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "roleassignments.read",
+          "settings.read",
+          "organizations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "get"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Account defaults are deployment-local authorization state.",
+          "native_builder": "Account provisioning defaults are platform administration.",
+          "sdk": "Account provisioning defaults are platform administration."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_base_role_default_get"
+        },
+        "native_builder": false,
+        "operation_id": "users.defaults.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/base-role-defaults",
+          "request_model": null,
+          "response_model": "BaseRoleDefaultsResponse"
+        },
+        "side_effects": [],
+        "summary": "Read the default base role for newly provisioned accounts",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "set"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_base_role_default_update",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "users.defaults.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.readwrite",
+          "organizations.readwrite",
+          "userlifecycle.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Settings at Global or organization management at the selected organization; writes also require User Lifecycle",
+        "cli": {
+          "path": [
+            "users",
+            "defaults",
+            "set"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Account defaults are deployment-local authorization state.",
+          "native_builder": "Account provisioning defaults are platform administration.",
+          "sdk": "Account provisioning defaults are platform administration."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_base_role_default_update"
+        },
+        "native_builder": false,
+        "operation_id": "users.defaults.update",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/base-role-defaults",
+          "request_model": "BaseRoleDefaultsUpdate",
+          "response_model": "BaseRoleDefaultsResponse"
+        },
+        "side_effects": [],
+        "summary": "Set the default base role for newly provisioned accounts",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": null,
           "status": "intentionally_unsupported"
         },
@@ -1684,6 +1814,264 @@
         "side_effects": [],
         "summary": "Read durable status for one queued platform job",
         "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "analyze"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_workflow_conversion_create",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "workflows.conversions.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.read"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": null,
+        "authorization_resolver": "Current durable platform administrator and shared conversion authorization",
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "analyze"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Analysis does not mutate portable workflow declarations.",
+          "native_builder": "Permission conversion is an administrator review operation.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_workflow_conversion_create"
+        },
+        "native_builder": false,
+        "operation_id": "workflows.conversions.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflow-conversions",
+          "request_model": "WorkflowConversionAnalyzeRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue or reuse read-only workflow analysis"
+        ],
+        "summary": "Analyze a frozen workflow selection for least-privilege conversion",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "report"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_workflow_conversion_get",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "workflows.conversions.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Current durable platform administrator and shared platform-job visibility",
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "report"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Reading a report does not mutate manifest state.",
+          "native_builder": "Permission conversion is an administrator review operation.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_workflow_conversion_get"
+        },
+        "native_builder": false,
+        "operation_id": "workflows.conversions.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/workflow-conversions/{job_id}/report",
+          "request_model": null,
+          "response_model": "WorkflowConversionReport"
+        },
+        "side_effects": [],
+        "summary": "Read a page of a durable workflow conversion report",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "apply"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_workflow_conversion_update",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "workflows.conversions.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": "workflow.permission_conversion.apply",
+        "authorization_resolver": "Current durable platform administrator, exact reviewed proposal and current source/authority",
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "apply"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Instance conversion uses reviewed environment-specific authority.",
+          "native_builder": "Permission conversion is an administrator review operation.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_workflow_conversion_update"
+        },
+        "native_builder": false,
+        "operation_id": "workflows.conversions.update",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflow-conversions/{job_id}/apply",
+          "request_model": "WorkflowConversionApplyRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "enqueue reviewed permission and identity conversion"
+        ],
+        "summary": "Apply reviewed workflow permission and unattended identity proposals",
+        "target_kind": "platform"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "cutover"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_workflow_permission_default_update",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "workflows.permission_default.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "settings.readwrite"
+        ],
+        "async_policy": "platform_job",
+        "audit_event": "workflow.permission_conversion.cutover",
+        "authorization_resolver": "Current durable platform administrator and revalidated full-platform conversion readiness",
+        "cli": {
+          "path": [
+            "workflows",
+            "convert",
+            "cutover"
+          ]
+        },
+        "exclusions": {
+          "manifest": "Platform permission defaults are environment-specific.",
+          "native_builder": "Platform cutover requires an administrator's explicit reviewed decision.",
+          "sdk": "Workflow catalog administration is not available to application SDKs."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_workflow_permission_default_update"
+        },
+        "native_builder": false,
+        "operation_id": "workflows.permission_default.update",
+        "rest": {
+          "method": "POST",
+          "path": "/api/workflow-conversions/{job_id}/cutover",
+          "request_model": "WorkflowConversionCutoverRequest",
+          "response_model": "PlatformJobAccepted"
+        },
+        "side_effects": [
+          "change the workflow permission default after complete readiness verification"
+        ],
+        "summary": "Complete reviewed platform Declared Permissions cutover",
+        "target_kind": "platform"
       }
     },
     {
@@ -10300,10 +10688,10 @@
     }
   ],
   "counts": {
-    "cli": 173,
+    "cli": 179,
     "manifest": 16,
-    "mcp": 94,
-    "rest": 703,
+    "mcp": 100,
+    "rest": 710,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13886,6 +14274,13 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/sdk/integrations/delete_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/find_mapping",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

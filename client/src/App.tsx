@@ -107,6 +107,11 @@ const FormBuilder = lazyWithReload(() =>
 const Workflows = lazyWithReload(() =>
 	import("@/pages/Workflows").then((m) => ({ default: m.Workflows })),
 );
+const WorkflowConversion = lazyWithReload(() =>
+	import("@/pages/WorkflowConversion").then((m) => ({
+		default: m.WorkflowConversion,
+	})),
+);
 const ServiceDetail = lazyWithReload(() =>
 	import("@/pages/ServiceDetail").then((m) => ({
 		default: m.ServiceDetail,
@@ -434,6 +439,18 @@ const routeElements = (
 						}}
 					>
 						<Workflows />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="workflows/convert"
+				element={
+					<ProtectedRoute
+						requirePermission={{
+							permission: "workflows.readwrite",
+						}}
+					>
+						<WorkflowConversion />
 					</ProtectedRoute>
 				}
 			/>
@@ -1082,7 +1099,9 @@ const routeElements = (
 			<Route
 				path="chat/:conversationId?"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{ permission: "chat.execute", at: "home" }}
+					>
 						<Chat />
 					</ProtectedRoute>
 				}
@@ -1090,7 +1109,9 @@ const routeElements = (
 			<Route
 				path="chat/artifacts"
 				element={
-					<ProtectedRoute>
+					<ProtectedRoute
+						requirePermission={{ permission: "chat.execute", at: "home" }}
+					>
 						<ChatArtifacts />
 					</ProtectedRoute>
 				}

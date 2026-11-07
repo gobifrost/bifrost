@@ -50,12 +50,11 @@ Keep this section identical in `AGENTS.md` and `CLAUDE.md`.
 
 Use this whenever you need a running Bifrost instance to exercise — clicking around, screenshots, browser testing, or driving the API directly via the CLI. Always do this from the worktree, not the primary checkout.
 
-1. **Boot the stack** from the worktree root:
+1. **Boot and own the stack** from the worktree root in a terminal you can keep open:
    ```bash
    ./debug.sh up
-   ./debug.sh status
    ```
-   Capture the `Open:` URL from `./debug.sh status`. Under netbird mode (default when `NETBIRD_SETUP_KEY` is set), this is an ephemeral public HTTPS URL issued by `netbird expose`; `Private:` shows the peer's mesh-only URL. Under port mode, `Open:` is `http://localhost:<port>`.
+   After readiness, the command prints the `Open:` URL and streams logs as the foreground owner. In another terminal, `./debug.sh status` can retrieve the URL and login details. Under netbird mode (default when `NETBIRD_SETUP_KEY` is set), `Open:` is an ephemeral public HTTPS URL issued by `netbird expose`; `Private:` shows the peer's mesh-only URL. Under port mode, `Open:` is `http://localhost:<port>`.
 
 2. **Connect via the CLI** from an isolated scratch directory outside the repo (not the worktree, not `~`). This keeps `.env`/credentials out of the source tree and lets you install the API-matched CLI without disturbing the user's global `bifrost` install:
    ```bash
@@ -95,13 +94,13 @@ Tips:
 
 Start the development stack (per-worktree isolated):
 ```bash
-./debug.sh             # Boot stack, print URL + login
+./debug.sh             # Foreground dev-stack owner: boot, print URL + login, then stream logs
 ./debug.sh status      # Show URL, login, mode (port or netbird)
 ./debug.sh down        # Tear down + remove volumes for THIS worktree
 ./debug.sh logs api    # Follow logs for one service
 ```
 
-`./debug.sh` derives its Compose project name from the worktree path, so multiple worktrees can run debug stacks in parallel. URL and login are printed at the end of `up`. Port mode uses `dev@gobifrost.com` / `password`; Netbird mode uses the same email with a strong generated per-worktree password. MFA is off.
+`./debug.sh` derives its Compose project name from the worktree path, so multiple worktrees can run debug stacks in parallel. It is a foreground owner: after readiness it prints the URL and login, streams logs, and removes its containers, networks, volumes, and locally generated debug images on normal exit, Ctrl+C (`INT`), `TERM`, `HUP`, or an essential-service stop. Docker's shared build cache remains reusable. Run `./debug.sh down` from another terminal for explicit cleanup. Port mode uses `dev@gobifrost.com` / `password`; Netbird mode uses the same email with a strong generated per-worktree password. MFA is off.
 
 The default mode allocates a free local port for the client (deterministic per worktree, in 30000-39999). If `NETBIRD_SETUP_KEY` is set in `~/.config/bifrost/debug.env`, the stack boots with a NetBird sidecar that provides both private mesh access and an ephemeral public HTTPS proxy through `netbird expose` — no host ports, durable Admin proxy mapping, or NetBird API key.
 
@@ -302,8 +301,8 @@ export async function getDataProviders() {
     -   **Never rerun until green or mask instability.** Do not add retries, longer timeouts, `skip`, or `xfail`. Reproduce the exposing condition, fix the hypothesized cause, then use repetition only to validate the fix. See `.claude/skills/bifrost-testing/SKILL.md` for the full protocol.
     -   **Prefer simple, durable tests.** Keep one observable contract per test, minimal fixtures, deterministic state, explicit cleanup, and only one useful end-to-end happy path. Move edge cases down to unit/component tests; complexity is not evidence of rigor.
     -   **Expensive backend E2E tests:** Before adding a deploy, install, publish, build, sync, or worker job to a test, follow `.claude/skills/bifrost-testing/authoring-rules.md` → “Expensive backend E2E tests.” Count the jobs and identify the unique cross-process contract each one proves.
-    -   **IMPORTANT**: Always use `./test.sh` — it manages the Dockerized test stack (PostgreSQL, Redis, SeaweedFS, API, worker). Running pytest directly on the host will FAIL for anything touching DB/cache/storage.
-    -   **Stack lifecycle is separate from test execution.** Boot once per worktree, run tests many times. See the Commands section below.
+    -   **IMPORTANT**: Always use `./test.sh` — each stateful test command owns an isolated Docker stack (PostgreSQL, Redis, SeaweedFS, API, worker), then removes its containers, networks, volumes, and per-worktree image tag when it finishes or is interrupted. Docker's shared build cache remains reusable. Running pytest directly on the host will FAIL for anything touching DB/cache/storage.
+    -   **API quality:** `./test.sh quality api` uses and cleans up only its one-off resources; it does not boot the full test stack.
     -   **Test results**: `./test.sh` writes JUnit XML to `/tmp/bifrost-<project>/test-results.xml` on the host (the project name is printed by `./test.sh stack status`) — parse this for pass/fail details instead of grepping stdout.
     -   **Logs**: Container logs are exported to `/tmp/bifrost-<project>/*.log` after test runs (per-worktree, so parallel worktrees don't clobber each other).
 -   **Type Checking**: Must pass `pyright` (API) and `npm run tsc` (client)
@@ -312,19 +311,13 @@ export async function getDataProviders() {
 ### Commands
 
 ```bash
-# Dev stack (per-worktree)
-./debug.sh                                         # Boot dev stack (hot reload)
+# Dev stack (per-worktree, foreground owner)
+./debug.sh                                         # Boot, print URL, then stream logs until exit/Ctrl+C
 ./debug.sh status                                  # URL + login
 ./debug.sh down                                    # Tear down + wipe volumes
 ./debug.sh logs api                                # Follow one service's logs
 
-# Test stack lifecycle (per worktree, long-lived)
-./test.sh stack up                                 # Boot the test stack for this worktree
-./test.sh stack down                               # Tear it down + remove volumes
-./test.sh stack reset                              # Fast state reset (<2s) — DB clone + redis flush + object storage wipe
-./test.sh stack status                             # Is the stack up? What project name?
-
-# Backend tests (stack must be up; state auto-reset before each run)
+# Backend tests (each command boots and tears down its own test stack)
 ./test.sh                                          # Unit tests only (fast default)
 ./test.sh unit                                     # Same
 ./test.sh e2e                                      # Backend e2e
@@ -333,24 +326,33 @@ export async function getDataProviders() {
 
 # Client tests
 ./test.sh client unit                              # Vitest on host (no stack needed)
-./test.sh client e2e                               # Playwright in containers
+./test.sh client e2e                               # Playwright; owns its test stack
+./test.sh client smoke                             # Critical zero-retry Playwright merge gate
+./test.sh client nightly                           # Full product Playwright suite
+./test.sh client docs                              # Documentation screenshot capture
 ./test.sh client e2e --screenshots                 # Capture screenshots for every test (UX review)
 ./test.sh client e2e e2e/auth.unauth.spec.ts       # Passthrough to Playwright
 
-# Optional full local reproduction (diagnostic — the merge queue is the broad gate)
-./test.sh pre-pr                         # Optional one-shot local reproduction of the merge gate
-./test.sh ci
+# Broad one-shot commands share one stack internally, then tear it down
+./test.sh pre-pr                                  # Optional local reproduction of the merge gate
+./test.sh pr-preflight                            # Repository and changed-test PR gate
+./test.sh ci                                      # Full backend + browser suites
+
+# Diagnostics/manual cleanup only (test commands never require these)
+./test.sh stack status
+./test.sh stack down
 
 # Type Generation (requires dev stack running via ./debug.sh)
+# Start ./debug.sh in another terminal; it remains the foreground owner.
 (cd client && npm run generate:types)     # Regenerate TypeScript types from API
 
 # Quality Checks
-./test.sh quality api                     # Type check + lint Python in Docker
+./test.sh quality api                     # Type check + lint Python with one-off resources only
 (cd client && npm run tsc)                # Type check TypeScript
 (cd client && npm run lint)               # Lint TypeScript
 ```
 
-**Parallel worktrees:** Each git worktree gets its own isolated test stack (Compose project name is derived from the worktree path). Run `./test.sh stack up` in multiple worktrees simultaneously without conflict.
+**Parallel worktrees:** Each git worktree gets its own isolated test and dev stacks (Compose project names derive from the worktree path), so commands in different worktrees do not conflict.
 
 ### Common Workflows
 
@@ -406,8 +408,7 @@ Before marking work complete, select verification from the actual change surface
 ./test.sh client unit src/path/RelevantComponent.test.tsx
 ./test.sh client e2e e2e/relevant-flow.admin.spec.ts  # when a user journey changed
 
-# API contract changed: regenerate types against this worktree's running debug stack
-./debug.sh status | grep -q "Status:   UP" || ./debug.sh up
+# API contract changed: in another terminal, run ./debug.sh and leave it foreground
 (cd client && npm run generate:types)
 ```
 

@@ -5,13 +5,14 @@ import { toast } from "sonner";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { SearchBox } from "@/components/search/SearchBox";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useRolePermissions, useUpdateRolePermissions } from "@/hooks/useRoles";
 import { getErrorMessage } from "@/lib/api-error";
-import { PLATFORM_ADMIN_ROLE_ID } from "@/lib/builtin-roles";
+import { PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID } from "@/lib/builtin-roles";
 import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import {
 	usePermissionCatalog,
@@ -40,6 +41,18 @@ function permissionsFor(domain: string, level: Level, vocabulary: Set<string>) {
 }
 
 const NO_ACCESS = "No Access";
+
+function runtimePermissionLabel(
+	permission: string,
+	catalog: PermissionCatalogEntry[],
+) {
+	return permissionDisplayName(
+		permission,
+		catalog.find(
+			(entry) => entry.domain === permissionParts(permission).domain,
+		),
+	);
+}
 
 /** "No Access", or the name of the level's permission ("Read and Write Roles"). */
 function levelLabel(entry: PermissionCatalogEntry, level: Level) {
@@ -190,11 +203,13 @@ export function RolePermissionsPanel({
 }) {
 	const authorization = useAuthorization();
 	const query = useRolePermissions(roleId);
+	const userPermissionsQuery = useRolePermissions(USER_ROLE_ID);
 	const catalogQuery = usePermissionCatalog();
 	const update = useUpdateRolePermissions();
 	const data = query.data;
 	const catalog = catalogQuery.data;
 	const [draft, setDraft] = useState<Set<string> | null>(null);
+	const [runtimeDraft, setRuntimeDraft] = useState<Set<string> | null>(null);
 	const [saveError, setSaveError] = useState<string | null>(null);
 	const [search, setSearch] = useState("");
 
@@ -245,6 +260,9 @@ export function RolePermissionsPanel({
 	const vocabulary = new Set(
 		data.identity_permissions.map((p) => p.permission),
 	);
+	const runtimeVocabulary = new Set(
+		data.runtime_permissions.map((p) => p.permission),
+	);
 	const editableVocabulary = new Set(
 		data.identity_permissions
 			.filter((p) => p.editable)
@@ -264,6 +282,12 @@ export function RolePermissionsPanel({
 			.filter((permission) => vocabulary.has(permission)),
 	);
 	const selected = draft ?? savedIdentity;
+	const savedRuntime = new Set(
+		data.permissions
+			.map((p) => p.permission)
+			.filter((permission) => runtimeVocabulary.has(permission)),
+	);
+	const selectedRuntime = runtimeDraft ?? savedRuntime;
 	const heldByDomain = new Map<string, PermissionItem[]>();
 	for (const held of data.permissions) {
 		const { domain } = permissionParts(held.permission);
@@ -281,10 +305,17 @@ export function RolePermissionsPanel({
 		catalog.filter((entry) => matchesSearch(entry, search)),
 		identityDomains,
 	);
-	const dirty =
+	const identityDirty =
 		draft !== null &&
 		(draft.size !== savedIdentity.size ||
 			[...draft].some((permission) => !savedIdentity.has(permission)));
+	const runtimeDirty =
+		runtimeDraft !== null &&
+		(runtimeDraft.size !== savedRuntime.size ||
+			[...runtimeDraft].some(
+				(permission) => !savedRuntime.has(permission),
+			));
+	const dirty = identityDirty || runtimeDirty;
 
 	const setLevel = (domain: string, level: Level) => {
 		const next = new Set(
@@ -306,15 +337,35 @@ export function RolePermissionsPanel({
 		try {
 			await update.mutateAsync({
 				params: { path: { role_id: roleId } },
-				body: { permissions: [...selected].sort() },
+				body: {
+					permissions: [...selected].sort(),
+					...(runtimeDirty
+						? { runtime_permissions: [...selectedRuntime].sort() }
+						: {}),
+				},
 			});
 			setDraft(null);
+			setRuntimeDraft(null);
 			toast.success("Permissions saved");
 		} catch (error) {
 			setSaveError(
 				getErrorMessage(error, "Permissions could not be saved"),
 			);
 		}
+	};
+
+	const toggleRuntimePermission = (permission: string, checked: boolean) => {
+		const next = new Set(selectedRuntime);
+		if (checked) next.add(permission);
+		else next.delete(permission);
+		setRuntimeDraft(next);
+	};
+
+	const useUserRuntimePermissions = () => {
+		const baseline = userPermissionsQuery.data?.permissions
+			.map((item) => item.permission)
+			.filter((permission) => runtimeVocabulary.has(permission));
+		if (baseline) setRuntimeDraft(new Set(baseline));
 	};
 
 	const identityControl = (entry: PermissionCatalogEntry) => {
@@ -406,6 +457,83 @@ export function RolePermissionsPanel({
 				sign-in, or roles.
 			</p>
 
+			{runtimeVocabulary.size > 0 && (
+				<section
+					aria-labelledby="everyday-access-heading"
+					className="space-y-3"
+				>
+					<div className="flex flex-wrap items-center justify-between gap-3">
+						<div>
+							<h2
+								id="everyday-access-heading"
+								className="text-base font-semibold"
+							>
+								Everyday Access
+							</h2>
+							<p className="mt-1 text-sm text-muted-foreground">
+								Common capabilities for people and custom
+								identities using this base role.
+							</p>
+						</div>
+						{canEdit && (
+							<Button
+								type="button"
+								variant="outline"
+								className="min-h-11"
+								disabled={
+									userPermissionsQuery.isLoading ||
+									!userPermissionsQuery.data
+								}
+								onClick={useUserRuntimePermissions}
+							>
+								Use User Permissions
+							</Button>
+						)}
+					</div>
+					<div className="divide-y rounded-[var(--bf-radius-surface)] border border-border/70">
+						{data.runtime_permissions.map((item) => {
+							const checked = selectedRuntime.has(
+								item.permission,
+							);
+							const editable = canEdit && item.editable;
+							return (
+								<label
+									key={item.permission}
+									className="flex min-h-11 cursor-pointer items-center gap-3 p-4 has-[:disabled]:cursor-default"
+								>
+									<Checkbox
+										checked={checked}
+										disabled={!editable}
+										onCheckedChange={(next) =>
+											toggleRuntimePermission(
+												item.permission,
+												next === true,
+											)
+										}
+										aria-label={runtimePermissionLabel(
+											item.permission,
+											catalog,
+										)}
+									/>
+									<span
+										className={
+											checked
+												? "font-medium"
+												: "text-muted-foreground"
+										}
+									>
+										{runtimePermissionLabel(
+											item.permission,
+											catalog,
+										)}
+									</span>
+								</label>
+							);
+						})}
+					</div>
+				</section>
+			)}
+
 			{isPlatformAdminRole ? (
 				<p className="rounded-[var(--bf-radius-surface)] border border-border/70 p-4 text-sm">
 					Platform Admin holds every permission except reading
@@ -479,6 +607,7 @@ export function RolePermissionsPanel({
 							disabled={!dirty || update.isPending}
 							onClick={() => {
 								setDraft(null);
+								setRuntimeDraft(null);
 								setSaveError(null);
 							}}
 						>

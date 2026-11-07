@@ -135,6 +135,8 @@ Event publishing operations (async).
 
 **`integrations.delete_mapping(name: str, scope: str) -> bool`**
 
+**`integrations.find_mapping(name: str, entity_id: str) -> IntegrationMappingFindResult | None`**
+
 **`integrations.get(name: str, scope: str | None = None, oauth_scope: str | None = None) -> IntegrationData | None`**
 
 **`integrations.get_mapping(name: str, scope: str | None = None, entity_id: str | None = None) -> IntegrationMappingResponse | None`**
@@ -233,7 +235,7 @@ Event publishing operations (async).
 
 
 
-**`users.create(email: str, name: str, is_superuser: bool = False, org_id: str | None = None, is_active: bool = True) -> UserPublic`**
+**`users.create(email: str, name: str, is_superuser: bool = False, org_id: str | None = None, is_active: bool = True, base_role_id: str | None = None) -> UserPublic`**
 
 **`users.delete(user_id: str) -> bool`**
 

@@ -1,0 +1,79 @@
+# Private, disposable release qualification. No host ports or shared volumes.
+x-api: &api
+  image: ${REHEARSAL_IMAGE:?immutable image required}
+  environment: &environment
+    BIFROST_ENVIRONMENT: production
+    BIFROST_SECRET_KEY: ${REHEARSAL_SECRET:?required}
+    BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:${REHEARSAL_PASSWORD}@postgres:5432/${REHEARSAL_DATABASE:-bifrost}
+    BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:${REHEARSAL_PASSWORD}@postgres:5432/${REHEARSAL_DATABASE:-bifrost}
+    BIFROST_REDIS_URL: redis://redis:6379/0
+    BIFROST_RABBITMQ_URL: amqp://bifrost:${REHEARSAL_PASSWORD}@rabbit:5672/
+    BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
+    BIFROST_S3_BUCKET: bifrost-rehearsal
+    BIFROST_S3_ACCESS_KEY: rehearsal
+    BIFROST_S3_SECRET_KEY: ${REHEARSAL_PASSWORD}
+    BIFROST_S3_REGION: us-east-1
+    BIFROST_DEFAULT_USER_EMAIL: release-rehearsal@example.invalid
+    BIFROST_DEFAULT_USER_PASSWORD: ${REHEARSAL_PASSWORD}
+    BIFROST_MFA_ENABLED: "false"
+    BIFROST_USAGE_REPORTING_ENABLED: "false"
+    BIFROST_API_URL: http://api:8000
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_DB: bifrost
+      POSTGRES_USER: bifrost
+      POSTGRES_PASSWORD: ${REHEARSAL_PASSWORD}
+    healthcheck:
+      test: [CMD, pg_isready, -U, bifrost]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    healthcheck:
+      test: [CMD, redis-cli, ping]
+      interval: 2s
+      timeout: 2s
+      retries: 30
+  rabbit:
+    image: rabbitmq:4-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: bifrost
+      RABBITMQ_DEFAULT_PASS: ${REHEARSAL_PASSWORD}
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 3s
+      timeout: 10s
+      retries: 30
+  seaweedfs:
+    image: chrislusf/seaweedfs:latest
+    command: [mini, -dir=/data, -admin.port=12646]
+    environment:
+      AWS_ACCESS_KEY_ID: rehearsal
+      AWS_SECRET_ACCESS_KEY: ${REHEARSAL_PASSWORD}
+      S3_BUCKET: bifrost-rehearsal
+  init:
+    <<: *api
+    command: [python, -m, scripts.init_container]
+  api:
+    <<: *api
+    command: [uvicorn, "src.main:app", --host, 0.0.0.0, --port, "8000"]
+    healthcheck:
+      test: [CMD, curl, -fsS, "http://localhost:8000/health/ready"]
+      interval: 3s
+      timeout: 3s
+      retries: 60
+  worker:
+    <<: *api
+    command: [python, -m, src.worker.main]
+  # This service stays on the source image while the API is replaced.  It
+  # proves a real in-flight source worker can finish through the target API.
+  old-worker:
+    <<: *api
+    image: ${REHEARSAL_OLD_WORKER_IMAGE:?immutable source worker image required}
+    command: [python, -m, src.worker.main]
+  scheduler:
+    <<: *api
+    command: [python, -m, src.scheduler.main]

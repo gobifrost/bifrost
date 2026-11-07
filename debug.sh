@@ -14,7 +14,7 @@
 #
 # Subcommands:
 #   ./debug.sh              boot the stack (default verb: up)
-#   ./debug.sh up           same
+#   ./debug.sh up           same (foreground session; Ctrl+C tears down)
 #   ./debug.sh down         tear down + remove volumes for THIS worktree
 #   ./debug.sh status       print mode, project name, URL, login
 #   ./debug.sh fixtures     seed and run real local scheduler workloads
@@ -32,6 +32,7 @@ cd "$SCRIPT_DIR"
 
 # shellcheck source=scripts/lib/test_helpers.sh
 source "$SCRIPT_DIR/scripts/lib/test_helpers.sh"
+source "$SCRIPT_DIR/scripts/lib/stack_lifecycle.sh"
 
 COMPOSE_FILE="docker-compose.debug.yml"
 BIFROST_PROJECT_PREFIX="bifrost-debug"
@@ -383,7 +384,7 @@ cmd_up() {
         fi
         if [ $i -eq 180 ]; then
             echo "ERROR: api did not become ready in 180s. Check logs:" >&2
-            echo "  ./debug.sh logs api" >&2
+            echo "  Logs are preserved in $LOG_DIR/api.log after teardown." >&2
             return 1
         fi
         sleep 1
@@ -400,7 +401,10 @@ cmd_up() {
 cmd_down() {
     print_header
     echo "Tearing down stack..."
-    docker compose -f "$COMPOSE_FILE" --profile netbird down -v
+    export_logs "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"
+    docker compose -f "$COMPOSE_FILE" --profile '*' down --volumes --remove-orphans --rmi local || return $?
+    rm -f "$LOG_DIR/debug-session.pid"
+    echo "Logs: $LOG_DIR"
     echo "Done."
 }
 
@@ -498,14 +502,39 @@ cmd_fixtures() {
 
 load_env_files
 
-if [ $# -eq 0 ]; then
+# A foreground launcher owns the project through startup, use, and teardown.
+# `down` from another terminal may stop it; a second launcher cannot adopt it.
+if [ "${1:-up}" = up ]; then
+    exec {debug_session_lock_fd}>"$LOG_DIR/debug-stack.lock"
+    if ! flock -n "$debug_session_lock_fd"; then
+        echo "ERROR: another debug session owns this worktree's stack." >&2
+        exit 1
+    fi
+    printf '%s\n' "$$" > "$LOG_DIR/debug-session.pid"
+    stack_lifecycle_start cmd_down
     cmd_up
+    stack_session_wait
+    exit $?
+fi
+
+# Ask the owner to exit first, then acquire its lock before explicit teardown.
+# This keeps `down` usable from another terminal without racing a new launcher.
+if [ "$1" = down ]; then
+    exec {debug_session_lock_fd}>"$LOG_DIR/debug-stack.lock"
+    if ! flock -n "$debug_session_lock_fd"; then
+        debug_owner_pid=$(<"$LOG_DIR/debug-session.pid")
+        if [[ ! "$debug_owner_pid" =~ ^[0-9]+$ ]]; then
+            echo "ERROR: invalid debug session owner PID." >&2
+            exit 1
+        fi
+        kill -TERM "$debug_owner_pid"
+        flock "$debug_session_lock_fd"
+    fi
+    cmd_down
     exit $?
 fi
 
 case "$1" in
-    up)     shift; cmd_up "$@" ;;
-    down)   shift; cmd_down "$@" ;;
     status) shift; cmd_status "$@" ;;
     fixtures) shift; cmd_fixtures "$@" ;;
     logs)   shift; cmd_logs "$@" ;;

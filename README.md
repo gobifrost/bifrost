@@ -179,10 +179,10 @@ that record deleted, so the next upgrade drains again:
 The full stack runs in Docker with hot reload enabled for both API and client:
 
 ```bash
-./debug.sh              # Start all services with hot reload
+./debug.sh              # Start, print the URL, then stream logs until exit/Ctrl+C
 ```
 
-This launches PostgreSQL, Redis, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. Access the app at **http://localhost:3000** — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
+This launches PostgreSQL, Redis, SeaweedFS for S3-compatible object storage, the API, the client, the scheduler, and workers. `./debug.sh` is the foreground owner: it removes its containers, networks, volumes, and locally generated debug images on normal exit, Ctrl+C (`INT`), `TERM`, `HUP`, or an essential-service stop; Docker's shared build cache remains reusable. Use `./debug.sh down` from another terminal for explicit cleanup. Access the app at the `Open:` URL it prints — Vite proxies `/api/*` to the API container, so you don't hit the API on a separate port.
 
 Changes to files in `api/src/`, `api/shared/`, and `client/src/` automatically reload — **do not restart containers for code changes.**
 
@@ -204,15 +204,10 @@ For the full container-management contract (when to restart what, hot-reload rul
 
 ### Running Tests
 
-The test stack runs in Docker and is separate from your dev stack. Boot it once per worktree and run tests as many times as you like — state is reset between runs.
+The test stack runs in Docker and is separate from your dev stack. Every stateful test command boots its own per-worktree stack and removes containers, networks, volumes, and its per-worktree image tag when the command finishes, fails, or is interrupted; Docker's shared build cache remains reusable. `ci`, `pre-pr`, and `pr-preflight` share one stack for their internal stages, then remove it at the end.
 
 ```bash
-# Stack lifecycle (per worktree)
-./test.sh stack up                                 # Boot the test stack
-./test.sh stack reset                              # Fast state reset between runs
-./test.sh stack down                               # Tear down + remove volumes
-
-# Backend tests (stack must be up)
+# Backend tests (each command owns its stack)
 ./test.sh                                          # Unit tests (fast default)
 ./test.sh e2e                                      # Backend e2e
 ./test.sh all                                      # All backend tests, including slow tests
@@ -220,11 +215,22 @@ The test stack runs in Docker and is separate from your dev stack. Boot it once 
 
 # Client tests
 ./test.sh client unit                              # Vitest (no stack needed)
-./test.sh client e2e                               # Playwright in containers
+./test.sh client e2e                               # Playwright; owns its stack
+./test.sh client smoke                             # Critical zero-retry Playwright suite
+./test.sh client nightly                           # Full product Playwright suite
+./test.sh client docs                              # Documentation screenshot capture
 
-# Optional full local reproduction and broader one-shot run
+# API type check + lint (one-off resources only; no full stack)
+./test.sh quality api
+
+# Broad one-shot commands share one stack internally
 ./test.sh pre-pr                                 # Optional: reproduce the merge gate locally
+./test.sh pr-preflight                            # Local PR gate
 ./test.sh ci                                     # All backend + full browser suites
+
+# Diagnostics/manual cleanup only
+./test.sh stack status
+./test.sh stack down
 ```
 
 Parallel worktrees each get their own isolated stack, so you can run tests in several worktrees simultaneously without conflict.

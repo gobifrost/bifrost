@@ -49,6 +49,14 @@ type Workflow = BaseWorkflow & {
 	is_orphaned?: boolean;
 	access_level?: "authenticated" | "everyone" | "role_based";
 };
+
+export function workflowConversionLocation(workflowIds: string[]) {
+	return {
+		to: "/workflows/convert?selection=true",
+		state: { workflowIds },
+	};
+}
+
 export function Workflows() {
 	const navigate = useNavigate();
 	const authorization = useAuthorization();
@@ -66,6 +74,9 @@ export function Workflows() {
 	);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [viewMode, setViewMode] = useState<"grid" | "table">("grid");
+	const [selectedWorkflowIds, setSelectedWorkflowIds] = useState<Set<string>>(
+		new Set(),
+	);
 	const [typeFilter, setTypeFilter] = useState<string>("all");
 	// Auto-collapse sidebar on smaller screens. Tracking the previous
 	// `isDesktop` and adjusting state during render is the React-recommended
@@ -219,6 +230,15 @@ export function Workflows() {
 	const handleExecute = (workflowName: string) => {
 		navigate(`/workflows/${encodeURIComponent(workflowName)}/execute`);
 	};
+	const conversionWorkflowIds = selectedWorkflowIds.size
+		? [...selectedWorkflowIds]
+		: filteredWorkflows.map((workflow) => workflow.id).filter(Boolean);
+	const conversionLabel = selectedWorkflowIds.size
+		? `Review ${selectedWorkflowIds.size} selected workflow${selectedWorkflowIds.size === 1 ? "" : "s"}`
+		: `Review ${filteredWorkflows.length} matching workflow${filteredWorkflows.length === 1 ? "" : "s"}`;
+	const conversionLocation = workflowConversionLocation(
+		conversionWorkflowIds,
+	);
 
 	const handleEditWorkflow = (workflow: Workflow, tab?: string) => {
 		setEditingWorkflow(workflow);
@@ -329,6 +349,16 @@ export function Workflows() {
 							orgTarget(workflow.organization_id),
 						)
 					}
+					selectedWorkflowIds={selectedWorkflowIds}
+					onSelectWorkflow={(workflow, selected) => {
+						if (!workflow.id) return;
+						setSelectedWorkflowIds((current) => {
+							const next = new Set(current);
+							if (selected) next.add(workflow.id);
+							else next.delete(workflow.id);
+							return next;
+						});
+					}}
 					getOrgName={getOrgName}
 					hasGlobalKey={hasGlobalKey}
 					workflowsWithKeys={workflowsWithKeys}
@@ -385,6 +415,25 @@ export function Workflows() {
 								</ToggleGroupItem>
 							</ToggleGroup>
 						)}
+						<Button
+							variant="outline"
+							disabled={
+								!authorization.isPlatformAdmin ||
+								conversionWorkflowIds.length === 0
+							}
+							title={
+								!authorization.isPlatformAdmin
+									? "Platform administrator access is required for conversion"
+									: undefined
+							}
+							onClick={() =>
+								navigate(conversionLocation.to, {
+									state: conversionLocation.state,
+								})
+							}
+						>
+							{conversionLabel}
+						</Button>
 						<Button
 							variant="outline"
 							size="icon-lg"

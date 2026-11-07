@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import pathlib
 import re
+import subprocess
 
 import yaml
 
@@ -136,7 +137,7 @@ def test_stack_up_reconciles_running_containers_with_current_compose_config():
     script = _find_repo_file("test.sh").read_text()
     already_running = script.split(
         'if stack_is_up "$COMPOSE_PROJECT_NAME" "$COMPOSE_FILE"; then', 1
-    )[1].split('echo "Stack already up."', 1)[0]
+    )[1].split('echo "Adopted existing stack;', 1)[0]
 
     assert (
         'docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build'
@@ -329,18 +330,40 @@ def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
 
 
 def test_clean_boot_optimization_is_one_shot_and_shared_by_test_runners():
-    """A CI clean boot may skip only the first otherwise-redundant reset."""
+    """A new command-owned stack skips only the first redundant reset."""
     script = _find_repo_file("test.sh").read_text()
     prepare = script.split("prepare_test_state() {", 1)[1].split("\n}", 1)[0]
     pytest_runner = script.split("run_pytest() {", 1)[1].split("\n}", 1)[0]
     browser_runner = script.split("client_e2e() {", 1)[1].split("\n}", 1)[0]
 
-    assert "BIFROST_TEST_USE_CLEAN_BOOT" in prepare
-    assert ".clean-boot-consumed" in prepare
-    assert "touch \"$boot_marker\"" in prepare
+    assert 'if [ "$TEST_STACK_CLEAN" = 1 ]; then' in prepare
+    assert "TEST_STACK_CLEAN=0" in prepare
     assert "reset_state" in prepare
     assert "prepare_test_state" in pytest_runner
     assert "prepare_test_state" in browser_runner
+
+
+def test_fresh_database_discards_browser_credentials_without_a_second_reset(tmp_path):
+    script = _find_repo_file("test.sh").read_text()
+    functions = []
+    for name in ("clear_browser_auth_state", "prepare_test_state"):
+        body = script.split(f"{name}() {{", 1)[1].split("\n}", 1)[0]
+        functions.append(f"{name}() {{{body}\n}}")
+    auth = tmp_path / "client/e2e/.auth"
+    auth.mkdir(parents=True)
+    for name in ("credentials.json", "platform_admin.json", "org1_user.json", "org2_user.json"):
+        (auth / name).write_text("stale test credentials")
+    unrelated = auth / "unrelated.json"
+    unrelated.write_text("keep")
+    command = "\n".join([
+        "set -eu", *functions,
+        "reset_state() { exit 42; }",
+        "TEST_STACK_CLEAN=1", "prepare_test_state",
+        '[ "$TEST_STACK_CLEAN" = 0 ]',
+    ])
+    result = subprocess.run(["bash", "-c", command], cwd=tmp_path, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in auth.iterdir()) == ["unrelated.json"]
 
 
 def test_pytest_runner_prevents_concurrent_or_orphaned_stack_mutation():
@@ -352,7 +375,8 @@ def test_pytest_runner_prevents_concurrent_or_orphaned_stack_mutation():
     assert 'runner_name="${COMPOSE_PROJECT_NAME}-pytest-runner"' in pytest_runner
     assert 'docker container inspect "$runner_name"' in pytest_runner
     assert '--name "$runner_name" test-runner' in pytest_runner
-    assert "trap cleanup_pytest_runner INT TERM" in pytest_runner
+    assert "trap cleanup_pytest_runner" not in pytest_runner
+    assert "stack_lifecycle_start stack_down" in script
     assert 'docker rm -f "$runner_name"' in pytest_runner
 
 

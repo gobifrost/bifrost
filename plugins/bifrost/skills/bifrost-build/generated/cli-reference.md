@@ -3127,10 +3127,11 @@ Options:
   --help  Show this message and exit.
 
 Commands:
-  access  Show a user's access, or check what it would allow.
-  create  Create a custom identity in --org, or Global.
-  list    List the people you may read, or with --identities the identities.
-  roles   Show and replace a user's roles.
+  access    Show a user's access, or check what it would allow.
+  create    Create a custom identity in --org, or Global.
+  defaults  Read or set the base role assigned to new users and custom...
+  list      List the people you may read, or with --identities the...
+  roles     Show and replace a user's roles.
 ```
 
 ### `users access`
@@ -3200,18 +3201,65 @@ Usage: users create [OPTIONS]
 
   Create a custom identity in --org, or Global.
 
-  The identity starts with the User base role and no additional roles; give it
-  roles with `bifrost users roles set`, then point a workflow at it with
-  `bifrost workflows update --run-as`.
+  The identity starts with the configured default base role and no additional
+  roles. Use --base-role to select a different base role, then point a
+  workflow at it with `bifrost workflows update --run-as`.
 
   Example:
 
     bifrost users create --identity --org Contoso --name "Contoso Nightly"
 
 Options:
-  --identity   Create an identity (the only thing created here).  [required]
-  --org TEXT   Organization UUID or name, or 'global'.  [required]
-  --name TEXT  The identity's name.  [required]
+  --identity        Create an identity (the only thing created here).
+                    [required]
+  --org TEXT        Organization UUID or name, or 'global'.  [required]
+  --name TEXT       The identity's name.  [required]
+  --base-role TEXT  Explicit base role UUID or name; omit for the configured
+                    default.
+  --json            Emit JSON instead of human-readable output.
+  --help            Show this message and exit.
+```
+
+### `users defaults`
+
+```
+Usage: users defaults [OPTIONS] COMMAND [ARGS]...
+
+  Read or set the base role assigned to new users and custom identities.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  get  Show the configured and effective default base role.
+  set  Choose a default for new accounts; existing accounts are unchanged.
+```
+
+#### `users defaults get`
+
+```
+Usage: users defaults get [OPTIONS]
+
+  Show the configured and effective default base role.
+
+Options:
+  --org TEXT  Organization UUID or name; omit for the instance default.
+  --json      Emit JSON instead of human-readable output.
+  --help      Show this message and exit.
+```
+
+#### `users defaults set`
+
+```
+Usage: users defaults set [OPTIONS]
+
+  Choose a default for new accounts; existing accounts are unchanged.
+
+Options:
+  --org TEXT   Organization UUID or name; omit for the instance default.
+  --role TEXT  Default base role UUID or name.
+  --inherit    Clear an org override, or reset the instance default to User.
   --json       Emit JSON instead of human-readable output.
   --help       Show this message and exit.
 ```
@@ -3303,6 +3351,7 @@ Options:
   --help  Show this message and exit.
 
 Commands:
+  convert          Analyze, review and convert workflow permissions.
   delete           Delete a workflow by removing its function from the...
   execute          Execute a registered workflow remotely and stream logs...
   get              Get a single workflow by UUID, name, or ``path::func``...
@@ -3316,6 +3365,86 @@ Commands:
   replace          Repoint an orphaned workflow to a new file location.
   revoke-role      Revoke a role's access from a workflow.
   update           Update a workflow's editable properties.
+```
+
+### `workflows convert`
+
+```
+Usage: workflows convert [OPTIONS] COMMAND [ARGS]...
+
+  Analyze, review and convert workflow permissions.
+
+Options:
+  --json  Emit JSON instead of human-readable output.
+  --help  Show this message and exit.
+
+Commands:
+  analyze  Start durable read-only analysis.
+  apply    Apply explicitly reviewed proposals; stale proposals are refused.
+  cutover  Request the final reviewed platform switch.
+  report   Read a page of a saved analysis without restarting it.
+```
+
+#### `workflows convert analyze`
+
+```
+Usage: workflows convert analyze [OPTIONS]
+
+  Start durable read-only analysis. Observe it with platform-jobs get.
+
+Options:
+  --workflow TEXT     Workflow UUID, name or path::function. Repeat for a
+                      selection.
+  --scope TEXT        all, global, or an organization UUID when no workflows
+                      are selected.
+  --platform-cutover  Prepare a platform-wide readiness review; does not
+                      change the default.
+  --json              Emit JSON instead of human-readable output.
+  --help              Show this message and exit.
+```
+
+#### `workflows convert apply`
+
+```
+Usage: workflows convert apply [OPTIONS] JOB_ID
+
+  Apply explicitly reviewed proposals; stale proposals are refused.
+
+Options:
+  --review-file FILENAME  JSON reviewed selections, fingerprints and explicit
+                          acknowledgements from the saved report.  [required]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
+```
+
+#### `workflows convert cutover`
+
+```
+Usage: workflows convert cutover [OPTIONS] JOB_ID
+
+  Request the final reviewed platform switch. Analysis alone never switches
+  it.
+
+Options:
+  --acknowledge-platform-cutover  Explicitly request Declared Permissions as
+                                  the platform default after readiness is
+                                  revalidated.  [required]
+  --json                          Emit JSON instead of human-readable output.
+  --help                          Show this message and exit.
+```
+
+#### `workflows convert report`
+
+```
+Usage: workflows convert report [OPTIONS] JOB_ID
+
+  Read a page of a saved analysis without restarting it.
+
+Options:
+  --offset INTEGER RANGE  [x>=0]
+  --limit INTEGER RANGE   [1<=x<=200]
+  --json                  Emit JSON instead of human-readable output.
+  --help                  Show this message and exit.
 ```
 
 ### `workflows delete`

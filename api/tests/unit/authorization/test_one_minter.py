@@ -51,7 +51,6 @@ _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     ),
     # Decode only.
     "shared.browser_impersonation": (frozenset({"decode", "InvalidTokenError"}), frozenset()),
-    "src.services.oauth_sso": (frozenset({"decode", "PyJWTError"}), frozenset()),
     "src.services.webhooks.adapters.microsoft_bot_framework": (
         frozenset({"decode", "get_unverified_header", "PyJWK", "PyJWTError"}),
         frozenset(),
@@ -206,6 +205,8 @@ def test_only_reviewed_functions_mint_access_tokens_outside_the_minter() -> None
 def test_each_known_bypass_is_flagged() -> None:
     outside = "src.services.sneaky"
     jwt_cases = {
+        # SSO provider tokens are verified through Authlib, not PyJWT.
+        ("src.services.oauth_sso", "import jwt\n"),
         # Outside the reviewed modules: any import, any form, any scope.
         (outside, "import jwt\n"),
         (outside, "import jwt as signing\n"),

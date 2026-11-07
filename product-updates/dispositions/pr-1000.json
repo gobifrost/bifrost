@@ -1,0 +1,18 @@
+{
+  "key": "pr:1000",
+  "classification": "highlight",
+  "entry_ids": [
+    "a523fe00-ec4a-4468-a4f1-79d248e6cf22"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1000"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1000",
+      "Existing author-reviewed capability notice retained. Review verifies source and enforced-check evidence, stale-input refusal, preservation of existing run identities, roles and organization reach, exact Solution approval, and separate platform cutover. Real-worker conversion covers limited identity, conditional private-artifact permission, absent grants and out-of-reach denial. Maintainer authorized protected merge after repairs and requested a Preview warning before Apply. Contributor and required security evidence remain attached; source eligibility withholds the notice until delivery."
+    ]
+  }
+}

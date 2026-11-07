@@ -119,6 +119,8 @@
 | POST | `/api/audit/exports` |
 | GET | `/api/audit/exports/{job_id}/download` |
 | GET | `/api/audit/{event_id}/explain` |
+| GET | `/api/base-role-defaults` |
+| PUT | `/api/base-role-defaults` |
 | DELETE | `/api/branding` |
 | GET | `/api/branding` |
 | PUT | `/api/branding` |
@@ -496,6 +498,7 @@
 | GET | `/api/sdk/context` |
 | GET | `/api/sdk/download` |
 | POST | `/api/sdk/integrations/delete_mapping` |
+| POST | `/api/sdk/integrations/find_mapping` |
 | POST | `/api/sdk/integrations/get` |
 | POST | `/api/sdk/integrations/get_mapping` |
 | POST | `/api/sdk/integrations/list_mappings` |
@@ -612,6 +615,10 @@
 | PUT | `/api/users/{user_id}/role-assignments` |
 | GET | `/api/users/{user_id}/roles` |
 | GET | `/api/version` |
+| POST | `/api/workflow-conversions` |
+| POST | `/api/workflow-conversions/{job_id}/apply` |
+| POST | `/api/workflow-conversions/{job_id}/cutover` |
+| GET | `/api/workflow-conversions/{job_id}/report` |
 | GET | `/api/workflow-keys` |
 | POST | `/api/workflow-keys` |
 | DELETE | `/api/workflow-keys/{workflow_id}` |

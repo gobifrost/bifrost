@@ -3,6 +3,7 @@ import net from "node:net";
 import { spawn, spawnSync } from "node:child_process";
 import { readFileSync, writeFileSync } from "node:fs";
 import { buildReport, markdown, validateLedger } from "./acceptance-report.mjs";
+import { initializeDocsCapture } from "./docs-results.mjs";
 const target = { host: process.env.TEST_CLIENT_HOST || "client", port: 80 };
 const localOrigins = [3000, 3001, 3002];
 
@@ -67,11 +68,16 @@ function createLocalOrigin(port) {
 // This keeps report joins covered by the existing gate.
 const harnessChecks = spawnSync(
 	process.execPath,
-	["--test", "e2e/support/acceptance-report.test.mjs"],
+	[
+		"--test",
+		"e2e/support/acceptance-report.test.mjs",
+		"e2e/support/docs-results.test.mjs",
+	],
 	{ stdio: "inherit" },
 );
 if (harnessChecks.status !== 0) process.exit(harnessChecks.status ?? 1);
 
+initializeDocsCapture(process.argv.slice(2), process.env.DOCS_REPO_PATH);
 const servers = await Promise.all(localOrigins.map(createLocalOrigin));
 const runStartedAt = Date.now();
 const playwright = spawn(

@@ -22,6 +22,16 @@ export function useRoles(options: { enabled?: boolean } = {}) {
 	return $api.useQuery("get", "/api/roles", {}, options);
 }
 
+/** Roles that may be used as a person's base role, including the built-in User role. */
+export function useBaseRoles(options: { enabled?: boolean } = {}) {
+	return $api.useQuery(
+		"get",
+		"/api/roles",
+		{ params: { query: { include_builtin: true } } },
+		options,
+	);
+}
+
 export interface RolesPageParams {
 	search?: string;
 	sortBy: "name" | "created";

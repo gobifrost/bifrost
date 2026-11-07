@@ -34,6 +34,7 @@ vi.mock("@/hooks/useUsers", () => ({
 
 vi.mock("@/hooks/useRoles", () => ({
 	useRoles: () => mockRoles(),
+	useBaseRoles: () => mockRoles(),
 	useAssignUsersToRole: () => ({
 		mutateAsync: mockAssignMutate,
 		isPending: false,
@@ -53,6 +54,10 @@ vi.mock("@/hooks/useUserInvites", () => ({
 		mutateAsync: mockSendInviteMutate,
 		isPending: false,
 	}),
+}));
+
+vi.mock("@/components/users/BaseRoleSelect", () => ({
+	BaseRoleSelect: () => null,
 }));
 
 const authz = vi.hoisted(() => ({

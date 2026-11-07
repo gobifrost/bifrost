@@ -4,9 +4,9 @@ Builtin roles (Platform Admin, User, Platform Operator, Secrets Reader —
 see ``shared.builtin_roles``) cannot be modified through this service: their
 permission sets are fixed by migration/seed data. Platform Admin's access is
 the wildcard permission, stored as its one ``role_permissions`` row like any
-other role's permissions; no custom role can be given it. Custom roles' identity permissions are edited through
-``replace_identity_permissions``; their other permissions are not editable
-from the API yet.
+other role's permissions; no custom role can be given it. The existing editor
+manages identity permissions and the everyday runtime capabilities offered by
+the User baseline. Other permissions a role holds are retained.
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from fastapi import HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from shared.builtin_roles import BUILTIN_ROLE_IDS, WILDCARD_PERMISSION
+from shared.builtin_roles import BUILTIN_ROLE_IDS, USER_BASE_PERMISSIONS, WILDCARD_PERMISSION
 from src.models.contracts.permissions import parse_permission
 
 if TYPE_CHECKING:
@@ -71,6 +71,14 @@ async def set_role_permissions(
         raise RolePermissionError(exc.status_code, exc.detail) from None
 
     from src.models import RolePermission as RolePermissionORM
+    from src.models import Role as RoleORM
+
+    from shared.base_role_defaults import default_base_role_reference_count
+    from src.services.authorization.privilege import is_privileged_principal
+
+    await session.execute(select(RoleORM.id).where(RoleORM.id == role_id).with_for_update())
+    if is_privileged_principal(permissions) and await default_base_role_reference_count(session, role_id=role_id):
+        raise RolePermissionError(409, "A configured default base role cannot grant privileged access")
 
     await session.execute(delete(RolePermissionORM).where(RolePermissionORM.role_id == role_id))
     for permission in permissions:
@@ -128,6 +136,11 @@ def identity_permissions() -> tuple[str, ...]:
     )
 
 
+def runtime_permissions() -> tuple[str, ...]:
+    """Everyday capabilities used to configure custom base roles."""
+    return tuple(sorted(USER_BASE_PERMISSIONS))
+
+
 def _item(permission: str, *, editable: bool):
     from src.models.contracts.permissions import PRIVILEGED_PERMISSIONS
     from src.models.contracts.role_assignments import RolePermissionItem
@@ -148,7 +161,7 @@ async def describe_role_permissions(session: AsyncSession, *, role_id: UUID):
     role = await session.get(RoleORM, role_id)
     if role is None:
         raise RolePermissionError(404, "Role not found")
-    editable_vocabulary = set(identity_permissions()) if not role.is_builtin else set()
+    editable_vocabulary = set(identity_permissions()) | set(runtime_permissions()) if not role.is_builtin else set()
     held = await get_role_permissions(session, role_id=role_id)
     return RolePermissionsResponse(
         role_id=role_id,
@@ -157,15 +170,20 @@ async def describe_role_permissions(session: AsyncSession, *, role_id: UUID):
         identity_permissions=[
             _item(p, editable=not role.is_builtin) for p in identity_permissions()
         ],
+        runtime_permissions=[
+            _item(p, editable=not role.is_builtin) for p in runtime_permissions()
+        ],
     )
 
 
 async def replace_identity_permissions(
-    session: AsyncSession, *, caller: Caller, role_id: UUID, permissions: list[str]
+    session: AsyncSession, *, caller: Caller, role_id: UUID, permissions: list[str],
+    runtime_permissions: list[str] | None = None,
 ):
-    """Replace the role's identity permissions, keeping every other
-    permission it holds. 422 for anything outside the identity set, 409 for
-    a builtin role, 404 for a missing one."""
+    """Replace identity permissions and, when supplied, runtime permissions.
+
+    Other grants are retained; builtin roles remain immutable.
+    """
     from src.models import Role as RoleORM
     from src.services.audit import emit_audit
     from src.services.authorization.enforce import require_permission
@@ -193,6 +211,13 @@ async def replace_identity_permissions(
     held = await get_role_permissions(session, role_id=role_id)
     kept = {p for p in held if parse_permission(p).domain not in IDENTITY_PERMISSION_DOMAINS}
     resulting = frozenset(kept | set(permissions))
+    if runtime_permissions is not None:
+        runtime_vocabulary = set(USER_BASE_PERMISSIONS)
+        for permission in runtime_permissions:
+            validate_permission(permission)
+            if permission not in runtime_vocabulary:
+                raise RolePermissionError(422, f"{permission!r} is not an editable runtime permission")
+        resulting = frozenset((resulting - runtime_vocabulary) | set(runtime_permissions))
     if is_privileged_principal(held) or is_privileged_principal(resulting):
         try:
             require_permission(caller, "privilegedaccess.readwrite", None)

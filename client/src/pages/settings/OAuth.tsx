@@ -213,7 +213,16 @@ export function OAuth() {
 				callbackUrl={`${window.location.origin}/auth/callback/microsoft`}
 				onSave={async () => {
 					await updateMicrosoft.mutateAsync({
-						body: microsoftForm,
+						body: {
+							...microsoftForm,
+							client_secret: microsoftForm.client_secret || null,
+							token_endpoint_auth_method:
+								microsoftConfig?.token_endpoint_auth_method ??
+								"client_secret_post",
+							private_key_alg:
+								microsoftConfig?.private_key_alg ?? "RS256",
+							clear_private_key: false,
+						},
 					});
 					await refetch();
 					setMicrosoftForm({
@@ -370,7 +379,16 @@ export function OAuth() {
 				callbackUrl={`${window.location.origin}/auth/callback/google`}
 				onSave={async () => {
 					await updateGoogle.mutateAsync({
-						body: googleForm,
+						body: {
+							...googleForm,
+							client_secret: googleForm.client_secret || null,
+							token_endpoint_auth_method:
+								googleConfig?.token_endpoint_auth_method ??
+								"client_secret_post",
+							private_key_alg:
+								googleConfig?.private_key_alg ?? "RS256",
+							clear_private_key: false,
+						},
 					});
 					await refetch();
 					setGoogleForm({ client_id: "", client_secret: "" });
@@ -513,7 +531,16 @@ export function OAuth() {
 				callbackUrl={`${window.location.origin}/auth/callback/oidc`}
 				onSave={async () => {
 					await updateOIDC.mutateAsync({
-						body: oidcForm,
+						body: {
+							...oidcForm,
+							client_secret: oidcForm.client_secret || null,
+							token_endpoint_auth_method:
+								oidcConfig?.token_endpoint_auth_method ??
+								"client_secret_post",
+							private_key_alg:
+								oidcConfig?.private_key_alg ?? "RS256",
+							clear_private_key: false,
+						},
 					});
 					await refetch();
 					setOidcForm({

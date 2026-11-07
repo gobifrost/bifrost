@@ -1516,7 +1516,7 @@ export interface paths {
         head?: never;
         /**
          * Bulk user operation
-         * @description Apply one operation (move_org, replace_roles, set_active) to a batch of users in a single transaction. Returns per-user pass/fail.
+         * @description Apply one operation (move_org, replace_roles, set_base_role, set_active) to a batch of users in a single transaction. Returns per-user pass/fail.
          */
         patch: operations["users.bulk_update"];
         trace?: never;
@@ -2000,8 +2000,8 @@ export interface paths {
          */
         get: operations["get_role_permissions_api_roles__role_id__permissions_get"];
         /**
-         * Set a role's identity permissions
-         * @description Replace the role's identity permissions (users, userlifecycle, organizations, roleassignments, roles); its other permissions are kept. Builtin roles can't be changed.
+         * Set a role's editable permissions
+         * @description Replace the role's identity permissions (users, userlifecycle, organizations, roleassignments, roles) and optionally its everyday runtime permissions; other permissions are kept. Builtin roles can't be changed.
          */
         put: operations["set_role_permissions_api_roles__role_id__permissions_put"];
         post?: never;
@@ -2597,6 +2597,74 @@ export interface paths {
         get: operations["get_workflow_recommended_access_api_workflows__workflow_id__recommended_access_get"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Analyze Workflows */
+        post: operations["workflows.conversions.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/report": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Workflow Conversion Report */
+        get: operations["workflows.conversions.get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/apply": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Apply Workflow Conversion */
+        post: operations["workflows.conversions.update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/workflow-conversions/{job_id}/cutover": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Cutover Workflow Permissions */
+        post: operations["workflows.permission_default.update"];
         delete?: never;
         options?: never;
         head?: never;
@@ -4774,6 +4842,32 @@ export interface paths {
          *     worker-local engine child calls for the same inputs.
          */
         post: operations["sdk_integrations_get_mapping_api_sdk_integrations_get_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/find_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Find one mapping by exact entity ID within authorized reach
+         * @description Find one mapping by exact entity ID within authorized reach via SDK.
+         *
+         *     Searches the same permitted set ``list_mappings`` returns, with no
+         *     caller-supplied organization. Returns a discriminated
+         *     unique/ambiguous/not_found_in_authorized_scope result whose receipt
+         *     never claims global absence. Unresolved outcomes perform zero tenant
+         *     actions. ``get_mapping`` behavior is unchanged.
+         */
+        post: operations["sdk_integrations_find_mapping_api_sdk_integrations_find_mapping_post"];
         delete?: never;
         options?: never;
         head?: never;
@@ -7792,7 +7886,7 @@ export interface paths {
         put?: never;
         /**
          * Create a custom identity
-         * @description A custom identity with the User base role, in an organization or (organization_id null) Global.
+         * @description A custom identity with an explicit or configured default base role, in an organization or Global.
          */
         post: operations["create_identity_api_identities_post"];
         delete?: never;
@@ -7823,6 +7917,30 @@ export interface paths {
          * @description Rename a custom identity; default identities are all named Default Identity and can't be renamed.
          */
         patch: operations["rename_identity_api_identities__identity_id__patch"];
+        trace?: never;
+    };
+    "/api/base-role-defaults": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Base Role Defaults
+         * @description Get the setting for Global or an organization and its effective role.
+         */
+        get: operations["users.defaults.get"];
+        /**
+         * Update Base Role Defaults
+         * @description Set the default at Global or override it for one organization.
+         */
+        put: operations["users.defaults.update"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/admin/roi/settings": {
@@ -14693,6 +14811,37 @@ export interface components {
              */
             cost_basis: "history" | "fallback";
         };
+        /**
+         * BaseRoleDefaultsResponse
+         * @description The configured default at a scope and its resolved effective role.
+         */
+        BaseRoleDefaultsResponse: {
+            /**
+             * Default Base Role Id
+             * @description Configured role; null for an organization that inherits the global default.
+             */
+            default_base_role_id: string | null;
+            /**
+             * Effective Base Role Id
+             * Format: uuid
+             */
+            effective_base_role_id: string;
+            /** Effective Base Role Name */
+            effective_base_role_name: string;
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "global" | "organization";
+        };
+        /**
+         * BaseRoleDefaultsUpdate
+         * @description Replace a default base role; null resets/inherits for its scope.
+         */
+        BaseRoleDefaultsUpdate: {
+            /** Default Base Role Id */
+            default_base_role_id: string | null;
+        };
         /** Body_deploy_application_api_applications__app_id__deploy_post */
         Body_deploy_application_api_applications__app_id__deploy_post: {
             /** Source */
@@ -14978,7 +15127,7 @@ export interface components {
          * BulkUserOperation
          * @description One bulk operation on a set of users.
          *
-         *     Exactly one of `organization_id`, `role_ids`, or `is_active` is required;
+         *     Exactly one of `organization_id`, `role_ids`, `base_role_id`, or `is_active` is required;
          *     `operation` identifies which.
          */
         BulkUserOperation: {
@@ -14986,7 +15135,7 @@ export interface components {
             user_ids: string[];
             /**
              * Operation
-             * @description One of: move_org, replace_roles, set_active
+             * @description One of: move_org, replace_roles, set_base_role, set_active
              */
             operation: string;
             /**
@@ -15004,6 +15153,11 @@ export interface components {
              * @description Target active state for set_active.
              */
             is_active?: boolean | null;
+            /**
+             * Base Role Id
+             * @description Base role for set_base_role. Additional roles are retained.
+             */
+            base_role_id?: string | null;
         };
         /**
          * BulkUserResponse
@@ -20440,15 +20594,44 @@ export interface components {
          */
         GoogleOAuthConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Client Id
              * @description Google OAuth 2.0 Client ID
              */
             client_id: string;
             /**
              * Client Secret
-             * @description Google OAuth 2.0 Client secret
+             * @description Google OAuth 2.0 Client secret (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
         };
         /**
          * GraphEdgeResponse
@@ -20662,7 +20845,7 @@ export interface components {
         };
         /**
          * IdentityCreate
-         * @description A new custom identity (base role User, no additional roles).
+         * @description A new custom identity with an explicit or configured default base role.
          */
         IdentityCreate: {
             /** Name */
@@ -20672,6 +20855,11 @@ export interface components {
              * @description The identity's organization; null for a Global identity.
              */
             organization_id: string | null;
+            /**
+             * Base Role Id
+             * @description Explicit base role; omit to use the organization's or instance's default.
+             */
+            base_role_id?: string | null;
         };
         /** IdentityPublic */
         IdentityPublic: {
@@ -23114,15 +23302,44 @@ export interface components {
          */
         MicrosoftOAuthConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Client Id
              * @description Azure AD Application (client) ID
              */
             client_id: string;
             /**
              * Client Secret
-             * @description Azure AD client secret value
+             * @description Azure AD client secret value (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
             /**
              * Tenant Id
              * @description Azure AD tenant ID. Use 'common' for multi-tenant apps (allows any Microsoft account), 'organizations' for work/school only, or a specific tenant ID/domain for single-tenant
@@ -23812,6 +24029,29 @@ export interface components {
              */
             client_secret_set: boolean;
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key Set
+             * @description Whether a private_key_jwt key is configured (key material is never returned)
+             * @default false
+             */
+            private_key_set: boolean;
+            /**
+             * Private Key Kid
+             * @description JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt
+             */
+            private_key_alg?: string | null;
+            /**
              * Tenant Id
              * @description Microsoft tenant ID
              */
@@ -23856,6 +24096,35 @@ export interface components {
          */
         OIDCConfigRequest: {
             /**
+             * Token Endpoint Auth Method
+             * @description How Bifrost authenticates to the token endpoint
+             * @default client_secret_post
+             * @enum {string}
+             */
+            token_endpoint_auth_method: "client_secret_post" | "client_secret_basic" | "private_key_jwt";
+            /**
+             * Private Key
+             * @description PEM private key for private_key_jwt. Write-only: it is encrypted at rest and never returned.
+             */
+            private_key?: string | null;
+            /**
+             * Private Key Kid
+             * @description Optional JWT header kid for private_key_jwt
+             */
+            private_key_kid?: string | null;
+            /**
+             * Private Key Alg
+             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @default RS256
+             */
+            private_key_alg: string;
+            /**
+             * Clear Private Key
+             * @description Remove the stored private key (and kid) without deleting the provider. Cannot be combined with private_key.
+             * @default false
+             */
+            clear_private_key: boolean;
+            /**
              * Discovery Url
              * @description OIDC discovery URL (must be HTTPS, e.g., https://provider.com/.well-known/openid-configuration)
              */
@@ -23867,9 +24136,9 @@ export interface components {
             client_id: string;
             /**
              * Client Secret
-             * @description OIDC Client secret
+             * @description OIDC Client secret (required unless private_key_jwt)
              */
-            client_secret: string;
+            client_secret?: string | null;
             /**
              * Display Name
              * @description Display name for the login button (e.g., 'Okta', 'Auth0', 'Company SSO')
@@ -26197,15 +26466,24 @@ export interface components {
              * @description The identity permissions an editor may choose from, held or not.
              */
             identity_permissions: components["schemas"]["RolePermissionItem"][];
+            /**
+             * Runtime Permissions
+             * @description Everyday runtime permissions a custom role may grant, held or not.
+             */
+            runtime_permissions: components["schemas"]["RolePermissionItem"][];
         };
         /**
          * RolePermissionsUpdate
-         * @description The role's identity permissions (users, userlifecycle, organizations,
-         *     roleassignments, roles). Other permissions the role holds are kept.
+         * @description Replace identity permissions and optionally everyday runtime permissions.
          */
         RolePermissionsUpdate: {
             /** Permissions */
             permissions: string[];
+            /**
+             * Runtime Permissions
+             * @description Replace everyday runtime permissions when supplied; omitted leaves them unchanged.
+             */
+            runtime_permissions?: string[] | null;
         };
         /**
          * RolePlacementSummary
@@ -26462,6 +26740,64 @@ export interface components {
              * @description Organization ID (required for delete)
              */
             scope: string;
+        };
+        /**
+         * SDKIntegrationsFindMappingReceipt
+         * @description Search receipt: authorized-reach scope only, never global absence.
+         */
+        SDKIntegrationsFindMappingReceipt: {
+            /**
+             * Operation
+             * @description Reach operation searched
+             */
+            operation: string;
+            /**
+             * Searched
+             * @description Always 'authorized_reach'
+             */
+            searched: string;
+            /**
+             * Candidates Considered
+             * @description Mappings in reach scanned
+             */
+            candidates_considered: number;
+            /**
+             * Entity Id
+             * @description Entity ID searched
+             */
+            entity_id: string;
+        };
+        /**
+         * SDKIntegrationsFindMappingRequest
+         * @description Request to find one mapping by exact entity ID within authorized reach.
+         */
+        SDKIntegrationsFindMappingRequest: {
+            /**
+             * Name
+             * @description Integration name
+             */
+            name: string;
+            /**
+             * Entity Id
+             * @description External entity ID (exact match)
+             */
+            entity_id: string;
+        };
+        /**
+         * SDKIntegrationsFindMappingResponse
+         * @description Discriminated exact-lookup result within authorized reach.
+         */
+        SDKIntegrationsFindMappingResponse: {
+            /**
+             * Status
+             * @description Lookup outcome within authorized reach
+             * @enum {string}
+             */
+            status: "unique" | "ambiguous" | "not_found_in_authorized_scope";
+            /** @description Matched mapping (unique only) */
+            mapping?: components["schemas"]["SDKIntegrationsMappingItem"] | null;
+            /** @description Search receipt (never claims global absence) */
+            receipt: components["schemas"]["SDKIntegrationsFindMappingReceipt"];
         };
         /**
          * SDKIntegrationsGetMappingRequest
@@ -30573,6 +30909,213 @@ export interface components {
             /** Points */
             points?: components["schemas"]["WorkerMetricPoint"][];
         };
+        /** WorkflowConversionAnalyzeRequest */
+        WorkflowConversionAnalyzeRequest: {
+            /** Workflow Ids */
+            workflow_ids?: string[] | null;
+            /** Scope */
+            scope?: string | null;
+            /**
+             * Platform Cutover
+             * @default false
+             */
+            platform_cutover: boolean;
+        };
+        /** WorkflowConversionApplyRequest */
+        WorkflowConversionApplyRequest: {
+            /** Selections */
+            selections: components["schemas"]["WorkflowConversionSelection"][];
+            /**
+             * Acknowledged Solution Requests
+             * @default false
+             */
+            acknowledged_solution_requests: boolean;
+        };
+        /** WorkflowConversionCutoverRequest */
+        WorkflowConversionCutoverRequest: {
+            /**
+             * Acknowledged Remaining Exceptions
+             * @default false
+             */
+            acknowledged_remaining_exceptions: boolean;
+        };
+        /** WorkflowConversionEvidence */
+        WorkflowConversionEvidence: {
+            /** Path */
+            path: string;
+            /** Line */
+            line?: number | null;
+            /** Call */
+            call: string;
+            /** Via */
+            via?: string[];
+        };
+        /** WorkflowConversionIdentitySummary */
+        WorkflowConversionIdentitySummary: {
+            /** Id */
+            id?: string | null;
+            /** Name */
+            name?: string | null;
+            /** Identity Kind */
+            identity_kind?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+            /**
+             * Shared
+             * @default false
+             */
+            shared: boolean;
+        };
+        /** WorkflowConversionReport */
+        WorkflowConversionReport: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            /** Total */
+            total: number;
+            /** Offset */
+            offset: number;
+            /** Limit */
+            limit: number;
+            /** Items */
+            items: components["schemas"]["WorkflowConversionReportItem"][];
+            summary: components["schemas"]["WorkflowConversionReportSummary"];
+        };
+        /** WorkflowConversionReportItem */
+        WorkflowConversionReportItem: {
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            /** Workflow Name */
+            workflow_name: string;
+            /** Organization Id */
+            organization_id?: string | null;
+            /** Solution Id */
+            solution_id?: string | null;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "ready" | "needs_review" | "blocked" | "already_declared" | "stale";
+            /**
+             * Current Permission Mode
+             * @enum {string}
+             */
+            current_permission_mode: "full" | "restricted";
+            /** Proposed Permissions */
+            proposed_permissions?: string[];
+            /** Source Permissions */
+            source_permissions?: string[];
+            /** Observed Permissions */
+            observed_permissions?: string[];
+            /** Observed Operations */
+            observed_operations?: string[];
+            /** Evidence */
+            evidence?: components["schemas"]["WorkflowConversionEvidence"][];
+            /** Unknowns */
+            unknowns?: string[];
+            /** Warnings */
+            warnings?: string[];
+            identity?: components["schemas"]["WorkflowConversionIdentitySummary"] | null;
+            solution_permission_request?: components["schemas"]["WorkflowConversionSolutionRequestSummary"] | null;
+            /** Error */
+            error?: string | null;
+            /** Review */
+            review?: {
+                [key: string]: unknown;
+            } | null;
+        };
+        /** WorkflowConversionReportSummary */
+        WorkflowConversionReportSummary: {
+            /**
+             * Platform Cutover
+             * @default false
+             */
+            platform_cutover: boolean;
+            /** Analyzer Version */
+            analyzer_version: string;
+            /** Total */
+            total: number;
+            /**
+             * Ready
+             * @default 0
+             */
+            ready: number;
+            /**
+             * Needs Review
+             * @default 0
+             */
+            needs_review: number;
+            /**
+             * Blocked
+             * @default 0
+             */
+            blocked: number;
+            /**
+             * Already Declared
+             * @default 0
+             */
+            already_declared: number;
+            /**
+             * Stale
+             * @default 0
+             */
+            stale: number;
+            /**
+             * Observation Window Days
+             * @default 30
+             */
+            observation_window_days: number;
+            /**
+             * Default Permission Mode
+             * @enum {string}
+             */
+            default_permission_mode: "full" | "restricted";
+            /**
+             * Cutover Ready
+             * @default false
+             */
+            cutover_ready: boolean;
+            /**
+             * Remaining Full
+             * @default 0
+             */
+            remaining_full: number;
+        };
+        /** WorkflowConversionSelection */
+        WorkflowConversionSelection: {
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            /** Source Fingerprint */
+            source_fingerprint: string;
+            /**
+             * Acknowledged Unknowns
+             * @default false
+             */
+            acknowledged_unknowns: boolean;
+        };
+        /** WorkflowConversionSolutionRequestSummary */
+        WorkflowConversionSolutionRequestSummary: {
+            /** Status */
+            status: string;
+            /** Request Digest */
+            request_digest: string;
+            /** Approved Digest */
+            approved_digest?: string | null;
+            /** Requested Mode */
+            requested_mode: string;
+            /** Requested Permissions */
+            requested_permissions?: string[];
+        };
         /**
          * WorkflowExecution
          * @description Workflow execution entity — summary fields plus full payloads.
@@ -31819,6 +32362,11 @@ export interface components {
             is_external: boolean;
             /** Organization Id */
             organization_id?: string | null;
+            /**
+             * Base Role Id
+             * @description Explicit base role; omit to use the organization's or instance's default.
+             */
+            base_role_id?: string | null;
             /**
              * Invite
              * @default false
@@ -36075,6 +36623,143 @@ export interface operations {
             };
         };
     };
+    "workflows.conversions.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionAnalyzeRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.conversions.get": {
+        parameters: {
+            query?: {
+                offset?: number;
+                limit?: number;
+            };
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkflowConversionReport"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.conversions.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionApplyRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "workflows.permission_default.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                job_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["WorkflowConversionCutoverRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     "forms.list": {
         parameters: {
             query?: {
@@ -40103,6 +40788,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SDKIntegrationsMappingItem"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_find_mapping_api_sdk_integrations_find_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsFindMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsFindMappingResponse"] | null;
                 };
             };
             /** @description Validation Error */
@@ -45767,6 +46485,72 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IdentityPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "users.defaults.get": {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaseRoleDefaultsResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "users.defaults.update": {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BaseRoleDefaultsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BaseRoleDefaultsResponse"];
                 };
             };
             /** @description Validation Error */

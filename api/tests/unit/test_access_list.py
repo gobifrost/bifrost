@@ -1917,6 +1917,9 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 #            named permission enforcement consumes.
 #   "internal_authorized_resource": reads state named by a previously
 #            verified runtime authority, with no caller-selected target.
+#   "credential_schema": validates an exact credential wire shape; legacy
+#            privilege fields are format markers, never permission grants.
+#            Current durable runtime facts decide authority separately.
 #   a permission string: the power the flag unlocks. No such permission is
 #            held by the User or Platform Operator role.
 # A site with several checks maps to a tuple of these. Each entry is
@@ -1925,7 +1928,8 @@ def scanned_functions(entry_functions) -> dict[str, list[tuple[str, str]]]:
 # registered function fails until it is counted and its replacement named.
 _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     # Every current site is a verified fact copy, role/reach derivation, a
-    # post-gate internal load, or the reviewed Platform Admin self-edit bridge.
+    # post-gate internal load, exact credential schema, or the reviewed
+    # Platform Admin self-edit bridge.
     "bifrost.cli._run_direct": (2, "actor_facts"),
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
@@ -1951,11 +1955,13 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.core.auth._get_current_user_optional": (3, "actor_facts"),
     "src.core.auth.get_original_human_user": (2, "actor_facts"),
     "src.core.auth.get_current_user_ws": (3, "actor_facts"),
-    "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": (1, "actor_facts"),
+    "src.jobs.consumers.workflow_execution.WorkflowExecutionConsumer.process_message": (4, "actor_facts"),
+    "src.jobs.consumers.workflow_execution._legacy_unattended_pending_actor": (3, "actor_facts"),
     "src.jobs.consumers.agent_run._load_acting_user": (2, "actor_facts"),
     "src.jobs.consumers.agent_run._load_run_as": (3, "actor_facts"),
     "src.jobs.platform.application_publish.run_application_publish": (1, "internal_authorized_resource"),
     "src.jobs.schedulers.deferred_execution_promoter._pending_record": (2, "actor_facts"),
+    "src.repositories.oauth.OAuthTokenRepository.get_exact_org_level_for_provider": (1, "internal_authorized_resource"),
     "src.repositories.oauth.OAuthTokenRepository.get_org_level_for_provider": (1, "internal_authorized_resource"),
     "src.repositories.org_scoped.OrgScopedRepository._authenticated_tier_grants": (1, "internal_authorized_resource"),
     "src.repositories.users.UserRepository.has_any_users": (1, "internal_authorized_resource"),
@@ -1977,6 +1983,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.routers.tables.create_table": (1, "internal_authorized_resource"),
     "src.routers.tables.update_table": (1, "internal_authorized_resource"),
     "src.routers.tables.validate_policies": (1, "internal_authorized_resource"),
+    # Conversion deliberately adds a current Platform Admin restriction to
+    # its named operation gate, both at enqueue and in the durable runner.
+    "src.routers.workflow_conversions._admin_caller": (1, "route"),
+    "shared.workflow_conversions._require_current_conversion_admin": (1, "route"),
     "src.routers.users.create_user": (2, "actor_facts"),
     "src.routers.users.get_user_forms": (2, "internal_authorized_resource"),
     "src.routers.users.update_user": (2, "actor_facts"),
@@ -1992,6 +2002,9 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.services.authorization.explain.in_reach": (1, "current_role_derivation"),
     "src.services.authorization.explain.load_run_as_target": (3, "current_role_derivation"),
     "src.services.authorization.runtime_auth._principal_from_authority": (1, "actor_facts"),
+    # The signed old header must match v1.4.1's shape, but its admin field
+    # grants nothing: live DB authority determines the resulting principal.
+    "src.services.authorization.runtime_auth._previous_stable_engine_execution_id": (1, "credential_schema"),
     "src.services.authorization.tokens._human_principal": (2, "actor_facts"),
     "src.services.authorization.tokens._snapshot_human_claims": (1, "current_role_derivation"),
     "src.services.authorization.tokens.parse_human_claims": (1, "current_role_derivation"),
@@ -2044,6 +2057,7 @@ _SITE_KINDS = {
     "actor_facts",
     "current_role_derivation",
     "internal_authorized_resource",
+    "credential_schema",
 }
 
 # Where a token is minted or a principal is handed on (blind spot B2), and
@@ -2150,6 +2164,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         1, "Reads the Redis source stream before staging durable log rows.",
     ),
     "shared.role_cache.invalidate_role": (1, "Scans role-cache entries to delete them."),
+    "shared.runtime_modules.read_runtime_modules": (
+        1,
+        "Worker-reported installed import roots for permission-scan diagnostics; never grants access or loads code.",
+    ),
     "src.core.cache.data_provider_cache.get_cached_result": (1, "Cached data-provider options for a form field."),
     "src.core.cache.keys._current_global_version": (1, "Cache version counter."),
     "src.core.cache.keys.config_hash_key_versioned": (
@@ -2318,7 +2336,7 @@ class TestEveryElevatedCheckHasAScope:
                 except ValueError as exc:
                     invalid.append(f"{where}: {exc}")
         assert not invalid, (
-            "_ELEVATED_SITES replacements that are not reach/route/delete/cutover/system/a permission:\n"
+            "_ELEVATED_SITES replacements that are not a reviewed site kind or permission:\n"
             + "\n".join(invalid)
         )
 
@@ -3083,13 +3101,6 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("DELETE", "/api/agent-runs/{run_id}/verdict"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/flag-conversation/message"): "Own private agent's run (tuning).",
     ("POST", "/api/agent-runs/{run_id}/cancel"): "Own agent run (or any, for a scope-bypass caller).",
-    ("POST", "/api/chat/conversations"): "Own chat conversation.",
-    ("DELETE", "/api/chat/conversations/{conversation_id}"): "Own chat conversation.",
-    ("POST", "/api/chat/runs/{run_id}/cancel"): "Own chat conversation.",
-    ("PATCH", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
-    ("DELETE", "/api/chat/artifacts/{attachment_id}"): "Own chat artifact.",
-    ("POST", "/api/chat/conversations/{conversation_id}/attachments"): "Own chat conversation.",
-    ("DELETE", "/api/chat/conversations/{conversation_id}/attachments/{attachment_id}"): "Own chat conversation.",
     ("DELETE", "/api/me/mcp-connections/{connection_id}"): "Own MCP tool connection.",
     ("POST", "/api/platform-jobs/{job_id}/cancel"): "Own platform job (or any, for a platform admin).",
 }

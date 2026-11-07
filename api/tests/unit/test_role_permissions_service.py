@@ -182,3 +182,38 @@ async def test_impersonate_users_is_editable_on_a_custom_role_and_flagged_privil
     offered = {item.permission: item for item in described.identity_permissions}
     assert (held["users.impersonate"].editable, held["users.impersonate"].privileged) == (True, True)
     assert (offered["users.impersonate"].editable, offered["users.impersonate"].privileged) == (True, True)
+
+
+@pytest.mark.asyncio
+async def test_custom_base_role_can_keep_user_capabilities_without_chat(db_session):
+    from shared.builtin_roles import USER_BASE_PERMISSIONS
+
+    role = await _seed_role(db_session)
+    wanted = USER_BASE_PERMISSIONS - {"chat.execute"}
+    described = await replace_identity_permissions(
+        db_session, caller=admin_caller(), role_id=role.id,
+        permissions=[], runtime_permissions=sorted(wanted),
+    )
+    assert {item.permission for item in described.permissions} == wanted
+    assert any(item.permission == "chat.execute" and item.editable for item in described.runtime_permissions)
+
+
+@pytest.mark.asyncio
+async def test_identity_permission_edit_retains_runtime_permissions_when_not_supplied(db_session):
+    role = await _seed_role(db_session)
+    await set_role_permissions(db_session, role_id=role.id, permissions=frozenset({"chat.execute"}))
+    await replace_identity_permissions(
+        db_session, caller=admin_caller(), role_id=role.id, permissions=["users.read"],
+    )
+    assert await get_role_permissions(db_session, role_id=role.id) == {"chat.execute", "users.read"}
+
+
+@pytest.mark.asyncio
+async def test_runtime_permission_edit_rejects_non_runtime_grants(db_session):
+    role = await _seed_role(db_session)
+    with pytest.raises(RolePermissionError, match="not an editable runtime permission"):
+        await replace_identity_permissions(
+            db_session, caller=admin_caller(), role_id=role.id, permissions=[],
+            runtime_permissions=["roles.readwrite"],
+        )
+    assert await get_role_permissions(db_session, role_id=role.id) == set()

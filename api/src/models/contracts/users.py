@@ -98,6 +98,7 @@ class UserCreate(BaseModel):
     is_superuser: bool = False
     is_external: bool = False  # External (portal/guest) user — settable at invite
     organization_id: UUID | None = None
+    base_role_id: UUID | None = Field(default=None, description="Explicit base role; omit to use the organization's or instance's default.")
     invite: bool = False  # If True, generate invite record; link returned and event optionally fired
     trigger_automation: bool | None = None  # None treated as True for contract compat during transition
 
@@ -159,11 +160,11 @@ class UserResponse(BaseModel):
 class BulkUserOperation(BaseModel):
     """One bulk operation on a set of users.
 
-    Exactly one of `organization_id`, `role_ids`, or `is_active` is required;
+    Exactly one of `organization_id`, `role_ids`, `base_role_id`, or `is_active` is required;
     `operation` identifies which.
     """
     user_ids: list[UUID] = Field(..., min_length=1, max_length=500)
-    operation: str = Field(..., description="One of: move_org, replace_roles, set_active")
+    operation: str = Field(..., description="One of: move_org, replace_roles, set_base_role, set_active")
     organization_id: UUID | None = Field(
         default=None,
         description="Target org for move_org. None means move to platform/provider org.",
@@ -173,6 +174,7 @@ class BulkUserOperation(BaseModel):
         description="Full role set for replace_roles. Empty list clears all roles.",
     )
     is_active: bool | None = Field(default=None, description="Target active state for set_active.")
+    base_role_id: UUID | None = Field(default=None, description="Base role for set_base_role. Additional roles are retained.")
 
     @model_validator(mode="after")
     def validate_operation(self):
@@ -185,9 +187,12 @@ class BulkUserOperation(BaseModel):
         elif self.operation == "set_active":
             if self.is_active is None:
                 raise ValueError("is_active is required for set_active")
+        elif self.operation == "set_base_role":
+            if self.base_role_id is None:
+                raise ValueError("base_role_id is required for set_base_role")
         else:
             raise ValueError(
-                f"Unknown operation '{self.operation}'. Must be move_org, replace_roles, or set_active."
+                f"Unknown operation '{self.operation}'. Must be move_org, replace_roles, set_base_role, or set_active."
             )
         return self
 

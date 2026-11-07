@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { renderHook, waitFor } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -15,6 +15,7 @@ vi.mock("@/lib/api-client", () => ({
 
 import { ApiError } from "@/lib/api-error";
 import {
+	useBulkUserOperation,
 	useReplaceUserRoleAssignments,
 	useUpdateUser,
 	useUser,
@@ -31,6 +32,23 @@ function wrapper({ children }: { children: ReactNode }) {
 			{children}
 		</QueryClientProvider>
 	);
+}
+
+function deferred() {
+	let resolve!: () => void;
+	const promise = new Promise<void>((done) => {
+		resolve = done;
+	});
+	return { promise, resolve };
+}
+
+async function flushMutationContinuation() {
+	await act(async () => {
+		// TanStack awaits onSuccess before resolving mutateAsync; flush that await
+		// and the caller's following .then callback.
+		await Promise.resolve();
+		await Promise.resolve();
+	});
 }
 
 describe("useUsersPage", () => {
@@ -146,6 +164,79 @@ describe("access map invalidation", () => {
 		);
 
 		expect(invalidate).toHaveBeenCalledWith(accessKey);
+	});
+
+	it("does not complete a role change until current authorization refreshes", async () => {
+		const authorizationRefresh = deferred();
+		vi.spyOn(queryClient, "invalidateQueries").mockImplementation(
+			(filters) =>
+				filters?.queryKey?.[0] === "authorization"
+					? authorizationRefresh.promise
+					: Promise.resolve(),
+		);
+		mockUseMutation.mockImplementation((_method, _path, options) => ({
+			mutateAsync: async (variables: unknown) => {
+				await options.onSuccess({ base_role: null }, variables);
+			},
+		}));
+
+		const { result } = renderHook(() => useReplaceUserRoleAssignments(), {
+			wrapper,
+		});
+		let complete = false;
+		const save = result.current
+			.mutateAsync({
+				params: { path: { user_id: "user-1" } },
+				body: { base_role_id: "role-1", additional: [] },
+			})
+			.then(() => {
+				complete = true;
+			});
+
+		await flushMutationContinuation();
+		expect(complete).toBe(false);
+
+		authorizationRefresh.resolve();
+		await save;
+		await waitFor(() => expect(complete).toBe(true));
+	});
+
+	it("does not complete a bulk change until the users list refreshes", async () => {
+		const usersRefresh = deferred();
+		vi.spyOn(queryClient, "invalidateQueries").mockImplementation(
+			(filters) =>
+				filters?.queryKey?.[1] === "/api/users"
+					? usersRefresh.promise
+					: Promise.resolve(),
+		);
+		mockUseMutation.mockImplementation((_method, _path, options) => ({
+			mutateAsync: async () => {
+				await options.onSuccess();
+			},
+		}));
+
+		const { result } = renderHook(() => useBulkUserOperation(), {
+			wrapper,
+		});
+		let complete = false;
+		const save = result.current
+			.mutateAsync({
+				body: {
+					user_ids: [],
+					operation: "move_org",
+					organization_id: null,
+				},
+			})
+			.then(() => {
+				complete = true;
+			});
+
+		await flushMutationContinuation();
+		expect(complete).toBe(false);
+
+		usersRefresh.resolve();
+		await save;
+		await waitFor(() => expect(complete).toBe(true));
 	});
 
 	it("refreshes access maps after a person is moved or edited", () => {

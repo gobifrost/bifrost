@@ -362,6 +362,33 @@ class OAuthTokenRepository(OrgScopedRepository[OAuthToken]):
     ):
         super().__init__(session, org_id, user_id, is_superuser, is_external)
 
+    async def get_exact_org_level_for_provider(
+        self, provider_id: UUID, *, for_update: bool = False
+    ) -> Any:
+        """Get only the org-level token in this repository's exact scope.
+
+        Unlike :meth:`get_org_level_for_provider`, this method never cascades
+        from an organization to the global token. Refresh callers use it when
+        the resolved SDK scope is also the credential writeback scope, so an
+        org-targeted client-credentials exchange cannot overwrite a global
+        fallback row.
+        """
+        if self.external_restricted and self.org_id is None:
+            return None
+
+        query = select(OAuthToken).where(
+            OAuthToken.provider_id == provider_id,
+            OAuthToken.user_id.is_(None),
+        )
+        if self.org_id is None:
+            query = query.where(OAuthToken.organization_id.is_(None))
+        else:
+            query = query.where(OAuthToken.organization_id == self.org_id)
+        if for_update:
+            query = query.with_for_update()
+        result = await self.session.execute(query)
+        return result.scalars().first()
+
     async def get_org_level_for_provider(
         self, provider_id: UUID, *, for_update: bool = False
     ) -> Any:

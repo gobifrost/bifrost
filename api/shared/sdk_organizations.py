@@ -106,6 +106,8 @@ async def create_organization(
     from src.models import OrganizationPublic
     from src.services.audit import emit_audit
 
+    if settings and "default_base_role_id" in settings:
+        raise OrganizationServiceError(422, "Set the default base role through Base Role Defaults")
     now = datetime.now(timezone.utc)
 
     org = OrganizationORM(
@@ -186,7 +188,7 @@ async def update_organization(
     from src.services.audit import emit_audit
 
     result = await session.execute(
-        select(OrganizationORM).where(OrganizationORM.id == org_id)
+        select(OrganizationORM).where(OrganizationORM.id == org_id).with_for_update()
     )
     org = result.scalar_one_or_none()
 
@@ -205,6 +207,8 @@ async def update_organization(
     if is_active is not None:
         org.is_active = is_active
     if settings is not None:
+        if settings.get("default_base_role_id") != (org.settings or {}).get("default_base_role_id"):
+            raise OrganizationServiceError(422, "Set the default base role through Base Role Defaults")
         org.settings = settings
 
     org.updated_at = datetime.now(timezone.utc)

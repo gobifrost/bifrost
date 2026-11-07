@@ -103,6 +103,14 @@ jobs:
       - name: Check E2E shard allocation
         run: python3 -m unittest scripts.test_e2e_shard
 
+      - name: Check release upgrade rehearsal safety
+        run: python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population
+
+      - name: Check stack lifecycle and ownership
+        run: |
+          python3 -m unittest scripts.test_stack_lifecycle scripts.test_memory_sampler
+          bash scripts/lib/test_stack_lock_test.sh
+
       - name: Check Rewst extraction helper offline
         run: |
           python3 scripts/sync_rewst_migration_client.py --check
@@ -256,8 +264,10 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.API_IMAGE }}:candidate-${{ github.sha }}
           build-args: BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=dev-candidate-api
-          cache-to: type=gha,scope=dev-candidate-api,mode=max
+          # Keep build caches in the registry with the candidate artifacts.
+          # Actions cache export returned not_found after a successful image push.
+          cache-from: type=registry,ref=ghcr.io/${{ env.API_IMAGE }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.API_IMAGE }}:buildcache,mode=max
 
       - name: Exercise the exact API candidate artifact
         env:
@@ -324,8 +334,8 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${{ github.sha }}
           build-args: VITE_BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=dev-candidate-client
-          cache-to: type=gha,scope=dev-candidate-client,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ env.CLIENT_IMAGE }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.CLIENT_IMAGE }}:buildcache,mode=max
 
       - name: Sign client candidate digest
         uses: ./.github/actions/sign-image
@@ -418,10 +428,8 @@ jobs:
       - name: Run critical browser smoke
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh client smoke
 
       - name: Export stack logs and tear down
@@ -473,10 +481,8 @@ jobs:
       - name: Run unit tests
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           ./test.sh unit
 
   # =============================================================================
@@ -527,10 +533,8 @@ jobs:
       - name: Run E2E tests (shard ${{ matrix.shard }}/3)
         env:
           BIFROST_SKIP_BUILD: "1"
-          BIFROST_TEST_USE_CLEAN_BOOT: "1"
         run: |
           chmod +x test.sh
-          ./test.sh stack up
           mapfile -t shard_files < <(python3 scripts/e2e_shard.py --shard-id ${{ matrix.shard }} --total 3)
           if [ ${#shard_files[@]} -eq 0 ]; then
             echo "ERROR: shard ${{ matrix.shard }} resolved to zero files" >&2
@@ -544,7 +548,7 @@ jobs:
         run: |
           source scripts/lib/test_helpers.sh
           bifrost_test_project="$(compute_project_name .)"
-          COMPOSE_PROJECT_NAME="$bifrost_test_project" docker compose -f docker-compose.test.yml logs --tail=300 api
+          tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
 
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
   # Fails if any backend E2E shard, the client unit suite, or the critical

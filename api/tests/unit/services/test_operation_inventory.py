@@ -15,15 +15,17 @@ REPO_ROOT = API_ROOT.parent
 def test_every_observed_surface_is_classified_with_a_reason() -> None:
     inventory = build_operation_inventory(app, REPO_ROOT)
     # R1a snapshot against current main. There is no Builder runtime on main
-    # yet (native_builder is a Builder-phase surface), and cli/mcp counts
+    # yet (native_builder is a Builder-phase surface). The reviewed workflow
+    # conversion surfaces add four CLI commands, four MCP tools, and four REST
+    # routes; cli/mcp counts otherwise
     # reflect main's pre-rename tool/command surface: R1b lands each domain's
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 173,
+        "cli": 179,
         "manifest": 16,
-        "mcp": 94,
-        "rest": 703,  # Branding endpoints plus Solution app-build preflight.
+        "mcp": 100,
+        "rest": 710,  # Includes global/org base-role-default read and update routes.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

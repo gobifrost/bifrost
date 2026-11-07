@@ -97,7 +97,7 @@ def valid_recipe(recipe: object) -> bool:
         and recipe["schema"] == SCHEMA
         and isinstance(recipe["variant"], str)
         and recipe["variant"]
-        in {"cli-install-v1", "server-install-v1", "server-locked-v1"}
+        in {"cli-install-v1", "server-install-v1", "server-locked-v1", "cli-install-v2", "server-install-v2"}
         and all(
             isinstance(recipe[k], str)
             and len(recipe[k]) == 64
@@ -130,9 +130,11 @@ def build_identity(
             "recipe": recipe,
             "commands": [
                 "npm ci"
-                if recipe["variant"] == "server-locked-v1"
+                if recipe["variant"] == "server-locked-v1" or (recipe["variant"] in {"cli-install-v2", "server-install-v2"} and "package-lock.json" in files)
                 else "npm install --no-audit --no-fund --package-lock=false",
-                "npx vite build --base",
+                "node_modules/.bin/vite build --base"
+                if recipe["variant"] in {"cli-install-v2", "server-install-v2"} and "package-lock.json" in files
+                else "npx vite build --base",
             ],
         }
     )

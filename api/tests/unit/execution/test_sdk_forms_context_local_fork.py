@@ -204,10 +204,7 @@ class TestForkedFormsContextTransport:
             "    'detail_id': _detail.id,",
             "    'detail_name': _detail.name,",
             "    'missing': _missing,",
-            "    'ctx_user': _ctx_direct.get('user', {}),",
-            "    'ctx_org': _ctx_direct.get('organization'),",
-            "    'ctx_params': _ctx_direct.get('default_parameters'),",
-            "    'ctx_track': _ctx_direct.get('track_executions'),",
+            "    'context': _ctx_direct,",
             "    'concurrent_count': len(_concurrent_forms),",
             "    'concurrent_ctx_ok': _concurrent_ctx == _ctx_direct,",
             "    'async_ctx_ok': _ctx_async == _ctx_direct,",
@@ -255,10 +252,10 @@ class TestForkedFormsContextTransport:
             assert result["detail_id"] == str(org_form_id), result
             assert result["detail_name"] == org_name, result
             assert result["missing"] == "ValueError", result
-            assert result["ctx_user"].get("email") == runtime_user.email, result
-            assert result["ctx_org"] is None, result
-            assert result["ctx_params"] == {}, result
-            assert result["ctx_track"] is True, result
+            assert result["context"]["user"].get("email") == runtime_user.email, result
+            assert result["context"]["organization"] is None, result
+            assert result["context"]["default_parameters"] == {}, result
+            assert result["context"]["track_executions"] is True, result
             assert result["concurrent_count"] >= 3, result
             assert result["concurrent_ctx_ok"] is True, result
             assert result["async_ctx_ok"] is True, result
@@ -280,12 +277,7 @@ class TestForkedFormsContextTransport:
                 runtime_authority=authority,
             )
             expected_ctx = await get_sdk_context(db_session, engine_user, org_id=None)
-            child_ctx = {
-                "user": result["ctx_user"],
-                "organization": result["ctx_org"],
-                "default_parameters": result["ctx_params"],
-                "track_executions": result["ctx_track"],
-            }
+            child_ctx = result["context"]
             assert child_ctx == expected_ctx, (child_ctx, expected_ctx)
 
             parent_forms = await list_sdk_forms(db_session, engine_user, scope=None)

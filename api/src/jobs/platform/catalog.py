@@ -302,6 +302,42 @@ _METADATA = MappingProxyType(
                 ),
                 encrypt_payload=True,
             ),
+            _metadata(
+                "workflow.permissions.analyze",
+                "src.jobs.platform.workflow_conversion",
+                "ANALYZE_JOB_DEFINITION",
+                PlatformJobPolicy(
+                    60 * 60,
+                    max_attempts=2,
+                    max_concurrency=1,
+                    min_memory_headroom_mb=384,
+                    allow_running_cancellation=True,
+                ),
+            ),
+            _metadata(
+                "workflow.permissions.apply",
+                "src.jobs.platform.workflow_conversion",
+                "APPLY_JOB_DEFINITION",
+                PlatformJobPolicy(
+                    60 * 60,
+                    max_attempts=2,
+                    max_concurrency=1,
+                    min_memory_headroom_mb=384,
+                    allow_running_cancellation=True,
+                ),
+            ),
+            _metadata(
+                "workflow.permissions.cutover",
+                "src.jobs.platform.workflow_conversion",
+                "CUTOVER_JOB_DEFINITION",
+                PlatformJobPolicy(
+                    15 * 60,
+                    max_attempts=2,
+                    max_concurrency=1,
+                    min_memory_headroom_mb=384,
+                    allow_running_cancellation=True,
+                ),
+            ),
         )
     }
 )

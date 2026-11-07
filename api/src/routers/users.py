@@ -132,6 +132,7 @@ async def create_user(
             is_superuser=request.is_superuser,
             is_external=request.is_external,
             organization_id=request.organization_id,
+            base_role_id=request.base_role_id,
         )
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -142,7 +143,7 @@ async def create_user(
     response_model=BulkUserResponse,
     summary="Bulk user operation",
     description=(
-        "Apply one operation (move_org, replace_roles, set_active) to a batch of users "
+        "Apply one operation (move_org, replace_roles, set_base_role, set_active) to a batch of users "
         "in a single transaction. Returns per-user pass/fail."
     ),
 **operation_route("users.bulk_update"))

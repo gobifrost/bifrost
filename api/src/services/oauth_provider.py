@@ -468,13 +468,14 @@ async def build_token_refresh_context(
     """
     Build the token context dict consumed by ``refresh_oauth_token_http``.
 
-    Handles ``{entity_id}`` URL placeholder resolution with the canonical
-    fallback chain:
+    Handles ``{entity_id}`` URL placeholder resolution with the canonical,
+    token-bound fallback chain:
 
-      1. org-scoped integration mapping's ``entity_id`` (if ``org_id`` is
-         provided and a mapping exists for this integration)
-      2. ``integration.default_entity_id``
-      3. ``integration.entity_id``
+      1. the integration mapping directly linked to ``token.id``
+      2. the integration mapping for the selected token's organization, or
+         the explicit organization when no token has been selected
+      3. integration defaults for a global token or a caller-authorized
+         client-credentials acquisition without a selected token
 
     The resolved value is injected into the returned ``token_url_defaults``
     dict under the ``entity_id`` key so ``resolve_url_template`` picks it up
@@ -485,10 +486,13 @@ async def build_token_refresh_context(
         db: Active async session (used to load the linked integration and,
             if ``org_id`` is set, the org mapping).
         provider: The ``OAuthProvider`` being refreshed.
-        token: Optional stored ``OAuthToken`` (required for authorization_code
-            flows, ignored for client_credentials).
-        org_id: Optional organization context; when set, an org mapping is
-            consulted before falling back to the integration defaults.
+        token: Optional stored ``OAuthToken``. Its ID and organization bind
+            tenant resolution for every flow; its refresh token is additionally
+            required for authorization_code flows.
+        org_id: Optional caller-authorized organization context. It supplies
+            credential scope only when no token has been selected; otherwise
+            the selected token's organization (including global ``None``) is
+            authoritative.
 
     Returns:
         A dict matching the shape ``refresh_oauth_token_http`` expects.
@@ -499,22 +503,60 @@ async def build_token_refresh_context(
         dict(provider.token_url_defaults) if provider.token_url_defaults else {}
     )
 
+    token_org_id = token.organization_id if token is not None else None
+    # ``org_id`` proves which scope the caller was authorized to request. Once
+    # a token is selected, its stored organization is the credential scope.
+    # In particular, NULL is an intentional global scope rather than missing
+    # context that may be replaced by the caller's organization.
+    effective_org_id = token_org_id if token is not None else org_id
+    tenant_context_mismatch = (
+        token_org_id is not None
+        and org_id is not None
+        and token_org_id != org_id
+    )
+
+    # A fresh client-credentials acquisition uses configured defaults; it
+    # does not repurpose an existing organization-bound credential.
+    is_acquisition = token is None and provider.oauth_flow_type == "client_credentials"
     resolved_entity_id: str | None = None
-    if provider.integration_id:
-        # 1. Org mapping (explicit per-tenant override)
-        if org_id is not None:
+    if provider.integration_id and not tenant_context_mismatch:
+        # 1. A mapping that explicitly references this token is the strongest
+        # source. Constrain it to the token's effective tenant so a stale or
+        # inconsistent cross-tenant link cannot influence URL resolution.
+        if token is not None:
+            direct_mapping_query = select(IntegrationMapping).where(
+                IntegrationMapping.integration_id == provider.integration_id,
+                IntegrationMapping.oauth_token_id == token.id,
+            )
+            if effective_org_id is None:
+                direct_mapping_query = direct_mapping_query.where(
+                    IntegrationMapping.organization_id.is_(None)
+                )
+            else:
+                direct_mapping_query = direct_mapping_query.where(
+                    IntegrationMapping.organization_id == effective_org_id
+                )
+            direct_mapping_result = await db.execute(direct_mapping_query)
+            direct_mapping = direct_mapping_result.scalar_one_or_none()
+            if direct_mapping and direct_mapping.entity_id:
+                resolved_entity_id = direct_mapping.entity_id
+
+        # 2. Fall back to the mapping for the effective tenant. This supports
+        # legacy rows whose mapping predates the oauth_token_id link.
+        if resolved_entity_id is None and effective_org_id is not None:
             mapping_result = await db.execute(
                 select(IntegrationMapping).where(
                     IntegrationMapping.integration_id == provider.integration_id,
-                    IntegrationMapping.organization_id == org_id,
+                    IntegrationMapping.organization_id == effective_org_id,
                 )
             )
             mapping = mapping_result.scalar_one_or_none()
             if mapping and mapping.entity_id:
                 resolved_entity_id = mapping.entity_id
 
-        # 2/3. Integration defaults — always consulted if mapping didn't resolve
-        if resolved_entity_id is None:
+        # Shared defaults remain valid for new, authorized acquisitions.
+        # Existing org-bound tokens must retain their own tenant context.
+        if resolved_entity_id is None and (effective_org_id is None or is_acquisition):
             integration_result = await db.execute(
                 select(Integration).where(Integration.id == provider.integration_id)
             )
@@ -524,8 +566,19 @@ async def build_token_refresh_context(
                     integration.default_entity_id or integration.entity_id
                 )
 
-    if resolved_entity_id:
+    context_error: str | None = None
+    if tenant_context_mismatch:
+        token_url_defaults.pop("entity_id", None)
+        context_error = "OAuth token organization does not match refresh context"
+    elif resolved_entity_id:
         token_url_defaults["entity_id"] = resolved_entity_id
+    elif effective_org_id is not None and provider.integration_id and not is_acquisition:
+        token_url_defaults.pop("entity_id", None)
+        if provider.token_url and "{entity_id}" in provider.token_url:
+            context_error = (
+                "Tenant-scoped OAuth token has no matching integration mapping "
+                "entity_id"
+            )
 
     return {
         "token_id": token.id if token else None,
@@ -539,6 +592,7 @@ async def build_token_refresh_context(
         "scopes": provider.scopes,
         "audience": provider.audience,
         "encrypted_refresh_token": token.encrypted_refresh_token if token else None,
+        "context_error": context_error,
     }
 
 
@@ -573,6 +627,10 @@ async def refresh_oauth_token_http(td: dict[str, Any]) -> dict[str, Any]:
     }
 
     try:
+        if td.get("context_error"):
+            outcome["error"] = td["context_error"]
+            return outcome
+
         client_secret: str | None = None
         if td["encrypted_client_secret"]:
             raw = td["encrypted_client_secret"]

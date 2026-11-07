@@ -342,22 +342,13 @@ async def interactive_sync(
 ) -> SyncResult | None:
     """Show the sync TUI and return the result.
 
-    Non-TTY fallback: returns all items grouped by their default actions.
+    Cancel if a terminal is unavailable; missing UI never approves actions.
     """
     if not items:
         return SyncResult()
 
     if not sys.stdin.isatty() or not sys.stdout.isatty():
-        # Non-TTY: use default actions for everything
-        result = SyncResult()
-        for item in items:
-            action = item.get("default_action", "skip")
-            bucket = getattr(result, action, None)
-            if bucket is not None:
-                bucket.append(item)
-            else:
-                result.skip.append(item)
-        return result
+        return None
 
     app = SyncApp(items, file_count, entity_count, subtitle, title)
     return await app.run_async()

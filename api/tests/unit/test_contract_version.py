@@ -55,6 +55,7 @@ from src.models.contracts.access_checks import (  # noqa: E402
 from src.models.contracts.audit import AuditLogListResponse  # noqa: E402
 from src.models.contracts.audit_retention import AuditRetentionStatus  # noqa: E402
 from src.models.contracts.identities import IdentityCreate, IdentityPublic  # noqa: E402
+from src.models.contracts.base_role_defaults import BaseRoleDefaultsResponse, BaseRoleDefaultsUpdate  # noqa: E402
 from src.models.contracts.permissions import PermissionCatalogEntry  # noqa: E402
 from src.models.contracts.role_assignments import (  # noqa: E402
     UserRoleAssignmentsResponse,
@@ -107,6 +108,8 @@ from src.models.contracts import cli as _cli_contracts  # noqa: E402
 
 #: The explicit CRUD + execute DTOs the `bifrost <entity>` command surface uses.
 _COMMAND_DTOS: list[type] = [
+    BaseRoleDefaultsResponse,
+    BaseRoleDefaultsUpdate,
     OrganizationCreate,
     OrganizationUpdate,
     RoleCreate,
@@ -408,9 +411,16 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # clients can ignore the additive field; the CLI minimum remains unchanged.
     # External capacity models and daily UsageReport are both additive.
     # Preserve both merged surfaces; existing CLI/SDK shapes and minimum stay unchanged.
-    # App consent models and the Global org_id scope marker are additive.
-    # Existing CLI shapes and minimum version remain unchanged (2026-11-04).
-    "75afc691e5a280c496031031fd17f6bb2dbc9945c0cd31d400875dd9f56bf61b"
+    # Workflow conversion commands and report DTOs are additive; CLI compatibility is unchanged.
+    # App consent models are additive; existing CLI minimum stays unchanged.
+    # The existing org_id string also accepts the additive Global scope marker.
+    # Only its description changes in the DTO; existing CLI shapes and minimum stay unchanged.
+    #
+    # SDK exact integration-mapping lookup (2026-11-03, #1016). ADDITIVE: new
+    # find_mapping request/response DTOs plus the worker-socket route; existing
+    # get/list/get_mapping shapes are unchanged, so the CLI minimum is unchanged.
+    # Default-base-role commands and optional explicit identity base roles are additive.
+    "3a4380492fe5d255496e85a3f14180f1d142484334b620feb034a9330f7150e0"
 )
 
 
