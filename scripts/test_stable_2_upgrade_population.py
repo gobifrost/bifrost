@@ -14,7 +14,7 @@ import time
 from types import ModuleType
 import unittest
 import urllib.error
-from unittest import mock
+from unittest.mock import patch
 import zipfile
 
 
@@ -27,6 +27,13 @@ SPEC.loader.exec_module(population)
 
 
 class UpgradePopulationTests(unittest.TestCase):
+    def test_fixture_credentials_are_repeatable_and_separated_by_purpose(self) -> None:
+        with patch.dict(population.os.environ, {"BIFROST_DEFAULT_USER_PASSWORD": "synthetic-root-for-unit-test"}):
+            password = population.fixture_password("human-a")
+            self.assertEqual(password, population.fixture_password("human-a"))
+            self.assertNotEqual(password, population.fixture_password("human-b"))
+            self.assertNotEqual(password, population.secret_value("human-a"))
+
     def test_source_archive_preserves_sdk_bound_mount_source(self) -> None:
         archive = population.source_zip()
         population.assert_retained_source(archive, "test", "/source")
@@ -81,7 +88,7 @@ class UpgradePopulationTests(unittest.TestCase):
         sqlalchemy.text = lambda statement: statement
         modules = {"src": ModuleType("src"), "src.core": ModuleType("src.core"), "src.core.database": database, "sqlalchemy": sqlalchemy}
         app_id = "11111111-1111-4111-8111-111111111111"
-        with mock.patch.dict(sys.modules, modules):
+        with patch.dict(sys.modules, modules):
             self.assertEqual(population.active_deployment_id(app_id, "verify"), "active-deployment")
             self.assertEqual(population.active_deployment_id(app_id, "verify"), "active-deployment")
         self.assertEqual(disposals, 2)
@@ -102,7 +109,7 @@ class UpgradePopulationTests(unittest.TestCase):
 
     def test_http_error_reports_status_without_response_body(self) -> None:
         error = urllib.error.HTTPError("http://localhost:8000/private", 403, "forbidden", {}, io.BytesIO(b"response-secret"))
-        with mock.patch.object(population.urllib.request, "urlopen", side_effect=error):
+        with patch.object(population.urllib.request, "urlopen", side_effect=error):
             with self.assertRaises(population.ScenarioError) as raised:
                 population.Http("verify").request("GET", "/private", token="token-secret")
         message = str(raised.exception)

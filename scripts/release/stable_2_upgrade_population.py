@@ -130,12 +130,12 @@ def default_password() -> str:
 
 def fixture_password(label: str) -> str:
     """Derive non-persisted fixture passwords from the private container secret."""
-    digest = hashlib.sha256((default_password() + "\0" + label).encode()).hexdigest()
+    digest = hashlib.pbkdf2_hmac("sha256", default_password().encode(), ("upgrade-password:" + label).encode(), 600_000).hex()
     return "Upg!" + digest[:28]
 
 
 def secret_value(label: str) -> str:
-    return hashlib.sha256((default_password() + "\0secret\0" + label).encode()).hexdigest()
+    return hashlib.pbkdf2_hmac("sha256", default_password().encode(), ("upgrade-secret:" + label).encode(), 600_000).hex()
 
 
 def legacy_token_expiry(token: str) -> float:

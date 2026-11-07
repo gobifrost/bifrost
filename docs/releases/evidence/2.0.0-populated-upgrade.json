@@ -30,26 +30,26 @@
   },
   "seeded_entities": {
     "organizations": {
-      "a": "916984cf-ee27-4d0e-a560-88006c772128",
-      "b": "baadacb3-4738-4471-8d8a-0a61d944e6e5"
+      "a": "7ea87f0f-971d-408d-86d5-bed535277281",
+      "b": "f0bdb4fb-1b65-4880-ab0c-edb1579e2007"
     },
     "users": {
       "a": {
-        "id": "d1375a9a-0d03-4459-b87f-85f90124bd2c",
+        "id": "de47a638-e3f6-4f2c-a277-17e9a8629415",
         "email": "stable2-human-a@gobifrost.dev"
       },
       "b": {
-        "id": "eed7c774-df85-4bb8-852e-ba63d04783af",
+        "id": "95bcd3f0-eb4a-4b25-a003-ab7856041ca8",
         "email": "stable2-human-b@gobifrost.dev"
       },
       "a_without_role": {
-        "id": "91d4b7ba-98fe-4580-a23a-ef827fd116ae",
+        "id": "feac82fb-2f14-4ae4-bccb-b66d4157c3c4",
         "email": "stable2-human-a-without-role@gobifrost.dev"
       }
     },
     "roles": {
-      "a": "bc2d5b1c-851b-4a4c-a4f2-a6728305fe52",
-      "b": "04b3b57a-0750-4421-8a5f-edc24b30330b"
+      "a": "e2796256-f3f6-4bae-afa2-803bf40a268f",
+      "b": "44bd888a-265a-4b98-ad88-cf2baaca52ff"
     },
     "configs": {
       "a_key": "stable2_upgrade_org_a",
@@ -57,27 +57,27 @@
       "secret_length": 64
     },
     "integrations": {
-      "a": "08a18750-3824-447a-9437-24a651165872",
-      "b": "017d9113-5b33-438b-a8eb-a82edc27296a",
-      "a_mapping": "103b4ff6-b645-458a-b943-e5a13b55111f",
-      "b_mapping": "23e957cb-c782-4ac7-866e-8236b8968ea3"
+      "a": "ae0cba66-977f-4793-bafe-6a5b44ac6ee9",
+      "b": "03568f15-b947-4199-a89d-253d76ce22e2",
+      "a_mapping": "04f0e404-a178-4030-ad8a-deca7f5c1fbb",
+      "b_mapping": "e7de476f-ca13-4720-978e-da9be67d42e5"
     },
     "workflow": {
-      "id": "2937263a-9d37-4cb6-85e2-1d742e28e5a3",
+      "id": "19fde54f-3210-45a2-a8df-e8242d074082",
       "path": "workflows/stable_2_upgrade_tool.py",
       "name": "stable_2_upgrade_tool"
     },
     "form": {
-      "id": "87905955-967e-4663-b163-fdd4b0873be0"
+      "id": "03818c53-e0fe-428d-9b2e-580c63dcd171"
     },
     "agent": {
-      "id": "a6d8f9d6-11e9-4122-9dc5-c8e61819844a"
+      "id": "7122728a-b69b-4579-9de2-0f0f2ae6ea50"
     },
     "application": {
-      "id": "3c9d2450-89b0-4b16-b1ba-6f8fae8c0c79",
+      "id": "1d4f8f56-fdf2-4ddc-bc27-cafeb55907e6",
       "slug": "stable-2-upgrade-app",
-      "deployment_id": "da64acdc-ddbc-480c-86b5-efb99d89a33c",
-      "deploy_job_id": "ef1e1791-dbef-4bfc-b66e-4dbbf7c90f48"
+      "deployment_id": "2f0cfea3-2e94-4217-9406-d19383d7204b",
+      "deploy_job_id": "bd889311-d50e-4e7b-b966-ba64290d775a"
     }
   },
   "population": {
@@ -104,7 +104,7 @@
       "sdk_update_job_terminal": true,
       "sdk_contract_3_current": true,
       "registered_execution": {
-        "id": "87b2b1f1-05f2-4f7a-a9fe-5540270993ec",
+        "id": "76bc273d-2c1e-4ad6-ae70-cd1e7db1cc06",
         "status": "Success",
         "result": {
           "entity": "stable2-tenant-a",
@@ -113,10 +113,10 @@
         }
       },
       "sdk_update": {
-        "job_id": "d92338b9-98e2-48ca-98b2-d871fe212277",
+        "job_id": "83c3603f-cff7-4e84-adb0-1042c2de458c",
         "status": "succeeded",
-        "old_deployment_id": "da64acdc-ddbc-480c-86b5-efb99d89a33c",
-        "new_deployment_id": "28e6874d-474a-487c-a710-6325891a2d98",
+        "old_deployment_id": "2f0cfea3-2e94-4217-9406-d19383d7204b",
+        "new_deployment_id": "c8d34af3-0eb0-4bea-95c5-d4e086ce2bb7",
         "old_contract": 2,
         "new_contract": 3,
         "fingerprint": "bbb905d36e3b3f6e",
@@ -127,43 +127,43 @@
   },
   "seed_secret_record_fingerprints": [
     {
-      "id": "202b740c-45cc-4db9-a43c-aa1c1141c7bb",
+      "id": "81e52723-29d3-43cb-bdb3-2374453fcac8",
       "key": "stable2_upgrade_org_b",
-      "organization_id": "baadacb3-4738-4471-8d8a-0a61d944e6e5",
+      "organization_id": "f0bdb4fb-1b65-4880-ab0c-edb1579e2007",
       "integration_id": null,
       "config_schema_id": null,
-      "stored_value_checksum": "4fba2313a32515c761300ba9fdfa4c92",
+      "stored_value_checksum": "2644c14aac37313d1310ec75f3cb3120",
       "longer_than_fixture_plaintext": true
     },
     {
-      "id": "3de905fc-5cb0-49c5-8fd2-4aa13597fe1a",
-      "key": "api_key",
-      "organization_id": null,
-      "integration_id": "08a18750-3824-447a-9437-24a651165872",
-      "config_schema_id": "4d6cf5a7-3d88-46fc-a821-725aa0dc40fc",
-      "stored_value_checksum": "3b611c3e1212e09b83473d7b3da92d7d",
-      "longer_than_fixture_plaintext": true
-    },
-    {
-      "id": "b9526552-eb57-4670-97ab-c4575a3b40fd",
+      "id": "98bf1418-e7b3-4336-ab6d-5168534c85b1",
       "key": "stable2_upgrade_org_a",
-      "organization_id": "916984cf-ee27-4d0e-a560-88006c772128",
+      "organization_id": "7ea87f0f-971d-408d-86d5-bed535277281",
       "integration_id": null,
       "config_schema_id": null,
-      "stored_value_checksum": "739b701ead0d434d9473ae5d5931eec7",
+      "stored_value_checksum": "107faf8b64d895b81614e41ef872827e",
       "longer_than_fixture_plaintext": true
     },
     {
-      "id": "f7976d9a-f8c4-4334-b62a-fd7ff7c7210f",
+      "id": "9c72812f-a207-4f32-a315-c351f7011d40",
       "key": "api_key",
       "organization_id": null,
-      "integration_id": "017d9113-5b33-438b-a8eb-a82edc27296a",
-      "config_schema_id": "cd08a5ac-b709-4ffe-8715-5696b544da65",
-      "stored_value_checksum": "0bf64cbe093b69f8053515380d1e02a2",
+      "integration_id": "03568f15-b947-4199-a89d-253d76ce22e2",
+      "config_schema_id": "2caf3a37-73d6-406c-bf91-82abd8d93553",
+      "stored_value_checksum": "9f2e1f3551fb9dc6ce99bda0c175dc46",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "cecb84f4-e2dd-43f6-9844-3dccfea315a0",
+      "key": "api_key",
+      "organization_id": null,
+      "integration_id": "ae0cba66-977f-4793-bafe-6a5b44ac6ee9",
+      "config_schema_id": "6a1a460d-0619-441b-88a8-af2bb8794f38",
+      "stored_value_checksum": "c6587deae2d70d7aa1561aff902a3936",
       "longer_than_fixture_plaintext": true
     }
   ],
-  "execution_id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+  "execution_id": "05a7d4f5-e11a-4455-ab39-fa6d57f51190",
   "source_revision": "20260916_solution_inbound",
   "source_queues": [
     {
@@ -220,22 +220,22 @@
   "bridge_revision": "20261030_authz_versions",
   "secret_record_fingerprints_preserved": true,
   "recovered_dispatch": {
-    "id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
-    "executed_by": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
-    "run_user_id": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
-    "started_by_user_id": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
-    "root_execution_id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+    "id": "05a7d4f5-e11a-4455-ab39-fa6d57f51190",
+    "executed_by": "cbe2325d-bad9-47bf-bc38-3120f6c10f89",
+    "run_user_id": "cbe2325d-bad9-47bf-bc38-3120f6c10f89",
+    "started_by_user_id": "cbe2325d-bad9-47bf-bc38-3120f6c10f89",
+    "root_execution_id": "05a7d4f5-e11a-4455-ab39-fa6d57f51190",
     "status": "Pending",
-    "dispatch_id": "442e0395-5eda-401b-b132-3b3734ff3a0a"
+    "dispatch_id": "d49e74d9-fba1-4a3d-a277-13bc38202bd8"
   },
   "target_revision": "20261106_chat_execute",
   "terminal_execution": {
-    "id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+    "id": "05a7d4f5-e11a-4455-ab39-fa6d57f51190",
     "status": "Success",
     "result": {
       "release_rehearsal": true
     },
-    "completed_at": "2026-11-07T05:09:50.972441+00:00"
+    "completed_at": "2026-11-07T05:20:47.017229+00:00"
   },
   "execution_marker_count": 1,
   "final_queues": [
