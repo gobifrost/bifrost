@@ -52,6 +52,35 @@ The same rehearsal preserved the seeded entities and encrypted credentials,
 finished a held source-worker SDK call and recovered one queued workflow exactly
 once. This covers a single API replacement, not a mixed-validator API fleet.
 
+## Recommended App SDK Updates
+
+After the image update, review App SDK status in Apps and update eligible Apps
+to adopt hosted SDK delivery. This is recommended maintenance; existing supported
+SDK2 Apps do not need a rebuild to keep working.
+
+Automatic App SDK Upgrades is opt-in and defaults to off. It requires eligible
+retained source and a reproducible lockfile. You can instead use the manual
+Update SDK action. Follow progress in Notifications and confirm the update
+finishes successfully; a queued or failed build has not updated the App. See
+[Application SDK Updates](application-sdk-update.md) for eligibility and commands.
+
+Check available memory before scheduling builds. The unified executor can run
+App SDK jobs on either an existing scheduler or worker. If an old scheduler's
+limit prevents builds, consider consolidating that capacity into resized
+workers. The [Sizing Guide](kubernetes-worker-deployment.md#resource-sizing)
+recommends 2 GB per worker as a starting point; larger App builds may need more.
+Establish healthy replacement capacity and let the retiring executor finish its
+active work before removing the scheduler. Broker
+retirement remains a separate operation and requires accounting for every queue
+and unacknowledged message.
+
+A Solution source redeploy builds its Apps locally before uploading their build
+output, which can relieve server build pressure. It also reconciles the full
+Solution, so review the source and proposed changes first. Independent App
+redeploys currently upload source and build on the server; redeploying one from
+your workstation does not offload that build. A failed SDK rebuild leaves the
+previous active deployment in place.
+
 ## Human Authentication
 
 The new session registry intentionally does not accept old human access JWTs or
