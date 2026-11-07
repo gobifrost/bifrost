@@ -20,7 +20,6 @@ from sqlalchemy.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
-from shared.run_lineage import recorded_user_lineage
 from shared.system_account_guard import is_system_account
 from shared.execution_provenance import ExecutionProvenance
 from src.models.enums import LIVE_EXECUTION_STATUSES
@@ -160,6 +159,9 @@ async def _load_workflow_execution(
             raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
         if execution.executed_by is None:
             raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+        # Ordinary SDK route imports do not need legacy lineage recovery.
+        from shared.run_lineage import recorded_user_lineage
+
         # An old system-account execution is only recoverable with its
         # workflow still present: that is the durable source for its chosen
         # identity.  Do not turn a missing workflow into a new default grant.
