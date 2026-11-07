@@ -15,7 +15,6 @@ import hashlib
 import io
 import logging
 import secrets
-import time
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, urlencode
 from dataclasses import dataclass
@@ -26,8 +25,6 @@ from uuid import UUID
 import httpx
 from authlib.oauth2.auth import ClientAuth
 from authlib.oauth2.rfc7523 import PrivateKeyJWT
-from joserfc import jwt as jose_jwt
-from joserfc.jwk import ECKey
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.log_safety import log_safe
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
+from src.services.oauth_client_assertion import encode_ec_client_assertion
 from src.services.oauth_provider import append_query_params
 from src.services.oidc_rp import (
     GOOGLE_CLAIMS_OPTIONS,
@@ -691,23 +689,13 @@ def _token_request_auth(
         kid = config.get("private_key_kid")
         alg = config.get("private_key_alg") or "RS256"
         if alg.startswith("ES"):
-            # Authlib 1.9.5's client-assertion signer is RSA-only; EC assertions
-            # are signed with joserfc, the same JOSE library Authlib uses.
-            now = int(time.time())
-            assertion = jose_jwt.encode(
-                {"alg": alg, "typ": "JWT", **({"kid": kid} if kid else {})},
-                {
-                    "iss": client_id,
-                    "sub": client_id,
-                    "aud": token_url,
-                    "jti": secrets.token_urlsafe(32),
-                    "iat": now,
-                    "exp": now + 300,
-                },
-                ECKey.import_key(private_key),
-                # joserfc only enables recommended algorithms by default;
-                # ES384/ES512 must be explicitly allowed.
-                algorithms=[alg],
+            # Authlib 1.9.5's client-assertion signer is RSA-only.
+            assertion = encode_ec_client_assertion(
+                client_id=client_id,
+                token_endpoint=token_url,
+                private_key=private_key,
+                alg=alg,
+                kid=kid,
             )
             body = {
                 **data,
