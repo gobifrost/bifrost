@@ -9,6 +9,7 @@ Every protected operation still requires a currently valid access credential.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
+from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import WebSocket, WebSocketDisconnect
@@ -82,22 +83,41 @@ async def refreshable_websocket_session(websocket: WebSocket) -> RefreshSession 
     return RefreshSession(claims.sub, family) if family is not None else None
 
 
-def _same_origin_query_socket(websocket: WebSocket) -> bool:
+def _hosted_query_socket(websocket: WebSocket) -> bool:
     if (
         not websocket.query_params.get("token")
         or websocket.headers.get("authorization")
         or websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
     ):
         return False
-    # Browser Fetch Metadata describes the public origin even through a TLS
-    # terminator or a proxy that rewrites Host/port. It selects retry behavior
-    # only; the signed human credential and durable family are still required.
-    return websocket.headers.get("sec-fetch-site") == "same-origin"
+    # Chromium does not send Fetch Metadata on WebSocket handshakes. Compare
+    # its actual Origin with the public Host preserved by the WS proxy instead.
+    # TLS may terminate upstream, so the internal ws/wss scheme is not the
+    # browser's scheme. This is a hosted retry selector, never authentication:
+    # the signed human credential and current durable family remain required.
+    try:
+        origin = urlsplit(websocket.headers.get("origin", ""))
+        host = urlsplit("//" + websocket.headers.get("host", ""))
+        if (
+            origin.scheme not in ("http", "https")
+            or not origin.hostname or origin.username is not None or origin.password is not None
+            or origin.path or origin.query or origin.fragment
+            or not host.hostname or host.username is not None or host.password is not None
+            or host.path or host.query or host.fragment
+        ):
+            return False
+        default_port = 443 if origin.scheme == "https" else 80
+        return (
+            origin.hostname == host.hostname
+            and (origin.port or default_port) == (host.port or default_port)
+        )
+    except ValueError:
+        return False
 
 
 async def request_legacy_websocket_refresh(websocket: WebSocket) -> bool:
     """Ask the matching host to refresh; True selects a transient retry only."""
-    if not _same_origin_query_socket(websocket):
+    if not _hosted_query_socket(websocket):
         return False
     session = await refreshable_websocket_session(websocket)
     if session is None:
