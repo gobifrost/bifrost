@@ -1,0 +1,15 @@
+{
+  "key": "pr:1276",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Allow direct database upgrades from 1.4.1 and keep existing workflow credentials usable during image replacement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1276",
+      "Release coordinator reviewed exact stable token shape, current DB-backed authority, partial-lineage refusal, preserved historical actors, and canonical unattended admission. Signed legacy privilege flags grant no authority; versioned token and human-session revocation checks remain strict.",
+      "Focused migration/runtime/auth checks passed; real HTTP legacy acceptance/end-of-run refusal passed; final consumer/broker recovery29passed including actual credential mint. Tooling20passed on host and production Python; API pyright and Ruff passed. This disposition does not qualify the still-unrun direct image chain or unresolved App automatic-upgrade path."
+    ]
+  }
+}
