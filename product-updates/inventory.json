@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
-  "collected_at": "2026-11-07T19:38:17Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
+  "target_ref": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+  "collected_at": "2026-11-07T22:04:44Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...ab536cd521506afa6dd1b5e17631559bdcd1a62a",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2713,6 +2713,20 @@
       "subject": "Recover existing App subscriptions in real browsers (#1279)",
       "prs": [
         1279
+      ]
+    },
+    {
+      "sha": "55cab41e3eddc28852cc27a13ee756520028efff",
+      "subject": "Record passing direct 1.4.1 upgrade and original App qualification (#1280)",
+      "prs": [
+        1280
+      ]
+    },
+    {
+      "sha": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+      "subject": "Fix nightly cleanup transport and Knowledge Sources listing (#1282)",
+      "prs": [
+        1282
       ]
     }
   ],
@@ -7810,6 +7824,32 @@
       "merge_commit": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
       "body": "Existing SDK2 Apps stop receiving live updates after access expiry because the recovery selector requires `Sec-Fetch-Site`, which the real Chromium WebSocket handshake omits. Use the browser's HTTP(S) Origin and public WebSocket Host authority to select hosted recovery, and preserve the public port through NGINX. Signed human credentials, current durable-family eligibility, expiry, epoch, revocation and protected-data checks remain enforced.\n\nExtend the existing real 1.4.1 image rehearsal with an original SDK2 React App, a live tenant-scoped table, real signed 90-second fixture expiry, an authority change, family revocation and local-state preservation. The App's active deployment, retained source and served bundle must remain unchanged. Browser and control session families stay separate; private credentials use memory-only IPC and proof fields are whitelisted. Fix the source-worker barrier observation: 1.4.1 persists execution logs only after completion, so a held run must signal through its isolated container instead.\n\nThe committed evidence records the predecessor image's successful backend/data checks and failed browser boundary; it explicitly does not claim a full upgrade pass. After this lands, qualify the corrected immutable API/client artifacts before release. Stable publication remains held by the user's direction.\n\nValidation:\n- `./test.sh tests/unit/services/test_websocket_auth_recovery.py tests/e2e/api/test_websocket_legacy_app_recovery.py -v`: 41 passed, no skips; the real Redis/socket test no longer fabricates Fetch Metadata.\n- `./test.sh tests/performance/test_sdk_config_throughput.py tests/performance/test_workflow_dispatch_latency.py tests/unit/routers/test_websocket_human_claims.py tests/unit/routers/test_websocket_table_messages.py tests/unit/test_websocket_table_resolution.py -s -v`: 25 passed, no skips. Bounded development-stack observations; no production-capacity or controlled before/after claim.\n- `python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population -q`: 27 passed.\n- `./test.sh quality api`, production NGINX configuration test, runner-image Node syntax check and diff checks passed.\n- Fresh full Python and JavaScript CodeQL security-and-quality suites: zero findings across changed files/flow locations, including unchanged lines; existing CI filters only.\n- Full backend/client suites were not repeated locally; the protected exact-candidate merge queue is the complete-suite gate.\n\nRefs #603; follows #1277.\n\nProduct Updates proposal: Other / fix \u2014 Keep existing App live updates working when a browser session refreshes. Canonical disposition: `product-updates/dispositions/pr-1279.json` (approved).",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1279"
+    },
+    {
+      "number": 1280,
+      "title": "Record passing direct 1.4.1 upgrade and original App qualification",
+      "url": "https://github.com/gobifrost/bifrost/pull/1280",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T20:18:10Z",
+      "merge_commit": "55cab41e3eddc28852cc27a13ee756520028efff",
+      "body": "Record the passing direct upgrade from the actual stable 1.4.1 image to the immutable API/client artifacts built from e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a. No intermediate image or SDK rebuild was used.\n\nThe receipt verifies representative organizations/users/roles, resource IDs and workflow/form/agent links, four preserved encrypted credential records, a real source worker completing its SDK call through the target API, and one old queued workflow recovered and completed exactly once. The original SDK2 App recovered real signed access expiry and a global authority-epoch change, kept local component state, and refused data after family revocation. Its deployment pointer, retained source and served bundle hashes stayed unchanged. Both isolated Compose projects were removed.\n\nCorrect the rehearsal's role-editor fixture from non-editable `workflows.read` to the advertised User-base permission `workflows.execute`, and include its numeric status in safe failure diagnostics. Production runtime/authentication code and images are unchanged. Controller-file hashes identify the exact harness used; the runbook now links the passing receipt and states its single-API/synthetic-data limits.\n\nValidation: actual immutable-image rehearsal `stable2-direct-e7c953-02` passed with complete cleanup; 27 tooling tests passed; runner-image Node syntax and diff checks passed. Previous failed fixture attempt is retained with its durable disposition; no retries, timeout increases or skips. The full exact-source nightly on e7c953 is running as workflow 42407182661. This PR neither claims mixed-validator API-fleet coverage nor publishes a stable release.\n\nRefs #603; follows #1279. Product Updates proposal: Omit \u2014 internal release qualification, safe synthetic evidence, fixture correction and operator documentation; no product runtime behavior change.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1280"
+    },
+    {
+      "number": 1282,
+      "title": "Fix nightly cleanup transport and Knowledge Sources listing",
+      "url": "https://github.com/gobifrost/bifrost/pull/1282",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T21:03:48Z",
+      "merge_commit": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+      "body": "The final release nightly completed the Home collection UI journey but failed its API-fixture cleanup when Playwright reused a connection at Uvicorn's five-second idle cutoff. API-only fixture contexts now close each request connection; browser behavior and authentication are unchanged, and reset mutations are never retried. A real HTTP-peer regression reproduces the old ECONNRESET and verifies one successful cleanup attempt with the repair.\n\nThe same run's logs exposed a Knowledge Sources namespace-list 500: its repository constructor omitted the required organization argument. Supply that argument while retaining the existing authorized visibility predicate, with a live regression proving own/Global visibility and foreign-organization exclusion.\n\nValidation:\n- `./test.sh client unit src/test/human-auth.test.ts` \u2014 8 passed; Node26.\n- `./test.sh client e2e e2e/home.admin.spec.ts --project=platform-admin` \u2014 setup plus3Home cases passed,31.4s; production client, zero retries; stack cleaned.\n- `(cd client && npm run tsc && npm run lint)` \u2014 passed; lint reports the existing seed-review-pack console warning, no errors.\n- `./test.sh tests/e2e/api/test_knowledge_document_authorization.py -v --durations=0` \u2014 2 passed, including the live own/Global/foreign namespace regression.\n- `./test.sh quality api` \u2014 pyright0errors/0warnings; Ruff passed.\n\nThe failed nightly42407182661 has a durable disposition in `docs/releases/evidence/2.0.0-nightly-disposition.md`. The complete nightly must pass on the repaired frozen source before release readiness. Broader suites are left to the protected merge queue and final nightly.\n\nProduct Updates: Other \u2014 Fixed: Knowledge Sources lists authorized namespaces correctly.\n\nRefs #603. Stable2.0 publication remains held; this PR does not create a tag, release, latest promotion or rollout.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1282"
     }
   ]
 }
