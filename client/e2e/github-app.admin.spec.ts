@@ -43,6 +43,18 @@ test.beforeAll(async ({ browser }) => {
                      { role_id: "00000000-0000-0000-0000-000000000008" }],
     } });
     await expectOk(granted);
+    // Existing announcements have their own journey. Start this feature's
+    // operator with receipts so a delayed onboarding dialog cannot cover it.
+    const operator = await createFreshApiContext(browser, reader);
+    try {
+        const response = await operator.api.get("/api/product-updates");
+        await expectOk(response);
+        const feed = await response.json() as components["schemas"]["ProductUpdatesFeedResponse"];
+        const entryIds = feed.bundle.entries.filter((entry) => entry.in_app !== false).map((entry) => entry.id);
+        if (entryIds.length) await expectOk(await operator.api.post("/api/product-updates/receipts", { data: { entry_ids: entryIds } }));
+    } finally {
+        await operator.context.close();
+    }
     const content = readFileSync("/app/examples/github-app/workflows/github_events.py", "utf8");
     await expectOk(await admin.put("/api/files/editor/content", { data: { path: sourcePath, content, encoding: "utf-8" } }));
     const registered = await admin.post("/api/workflows/register", { data: { path: sourcePath, function_name: "github_pr_triage", organization_id: organizationId } });
