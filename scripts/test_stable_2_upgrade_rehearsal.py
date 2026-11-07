@@ -83,6 +83,24 @@ class RehearsalSafetyTests(unittest.TestCase):
         self.assertNotIn(self.rehearsal.secret, saved)
         self.assertIn("[redacted]", saved)
 
+    def test_population_evidence_excludes_the_legacy_human_token(self):
+        payload = {
+            "state": {"organization_ids": ["org-a", "org-b"]},
+            "evidence": {"organizations": 2, "old_app_deployed": True},
+            "legacy_access_token": "private-in-memory-test-value",
+        }
+        with patch.object(Path, "read_text", return_value="# helper"), patch.object(
+            self.rehearsal, "dc",
+            return_value=subprocess.CompletedProcess([], 0, json.dumps(payload), ""),
+        ) as compose:
+            self.rehearsal.population("seed")
+        self.assertEqual(self.rehearsal.population_payload, payload)
+        self.assertEqual(json.loads(compose.call_args.kwargs["stdin"]), {})
+        receipt = (self.rehearsal.evidence / "receipt.json").read_text()
+        self.assertNotIn(payload["legacy_access_token"], receipt)
+        self.assertNotIn("legacy_access_token", receipt)
+        self.assertEqual(json.loads(receipt)["population"]["seed"], payload["evidence"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,0 +1,294 @@
+{
+  "source": "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0",
+  "bridge": "ghcr.io/gobifrost/bifrost-api@sha256:9ca80613869946a0fcad769cdfe355ccaa6968a624df9f38b232c1702a9bda9a",
+  "target": "ghcr.io/gobifrost/bifrost-api@sha256:0d95fab798897e69b8635f6d9fced041b4048e693295a7321414d979597a15f0",
+  "target_source": "e33eb5a4607cab1d7c36a877dd8eff3e3ec93b59",
+  "phases": [
+    "Verify immutable images and target source",
+    "Boot actual 1.4.1 and seed a representative installation",
+    "Enqueue one real HTTP execution before the upgrade",
+    "Prove a direct upgrade is rejected on a clone",
+    "Start the real bridge API and preserve recovered durable dispatch",
+    "Upgrade to target; prove dispatch lineage before worker admission",
+    "Start one target worker and verify terminal success",
+    "Verify populated data, human access, automation and the App SDK upgrade",
+    "Rehearsal assertions passed"
+  ],
+  "passed": true,
+  "runtime_versions": {
+    "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0": "1.4.1",
+    "ghcr.io/gobifrost/bifrost-api@sha256:9ca80613869946a0fcad769cdfe355ccaa6968a624df9f38b232c1702a9bda9a": "1.4.2-dev.1793357148",
+    "ghcr.io/gobifrost/bifrost-api@sha256:0d95fab798897e69b8635f6d9fced041b4048e693295a7321414d979597a15f0": "1.4.2-dev.1794018516"
+  },
+  "target_source_witnesses": {
+    "src/main.py": "bb8049f6ce6bd807e2ddf030b7ee5b277129fc8b3737e79a38018e5072432234",
+    "src/services/legacy_broker_drain.py": "ecd04ed8719923f060c5a6d41593f5bff781c5a7f8472a8a30978516d5abf867",
+    "alembic/versions/20261031_authz_claims_gate.py": "88d28ac049547ba681b040e4fe78792579fb9d83497a03c796c1236334054be1",
+    "src/jobs/platform/application_sdk_update.py": "3273d377a16b6ba2f40a1c959ef871d7df6a1bae505a53b0798c1ab097327c0b",
+    "src/services/application_source_artifact.py": "6b956a696f0e7c02c191d604fe81ef25847e21db6c08c052c381aa3fdbff81aa",
+    "src/services/solutions/app_build.py": "b1be3994e4f2c7202b4c0334e62f0752d5b1f6f328c2e45ec3fe8b70b92dad59"
+  },
+  "seeded_entities": {
+    "organizations": {
+      "a": "916984cf-ee27-4d0e-a560-88006c772128",
+      "b": "baadacb3-4738-4471-8d8a-0a61d944e6e5"
+    },
+    "users": {
+      "a": {
+        "id": "d1375a9a-0d03-4459-b87f-85f90124bd2c",
+        "email": "stable2-human-a@gobifrost.dev"
+      },
+      "b": {
+        "id": "eed7c774-df85-4bb8-852e-ba63d04783af",
+        "email": "stable2-human-b@gobifrost.dev"
+      },
+      "a_without_role": {
+        "id": "91d4b7ba-98fe-4580-a23a-ef827fd116ae",
+        "email": "stable2-human-a-without-role@gobifrost.dev"
+      }
+    },
+    "roles": {
+      "a": "bc2d5b1c-851b-4a4c-a4f2-a6728305fe52",
+      "b": "04b3b57a-0750-4421-8a5f-edc24b30330b"
+    },
+    "configs": {
+      "a_key": "stable2_upgrade_org_a",
+      "b_key": "stable2_upgrade_org_b",
+      "secret_length": 64
+    },
+    "integrations": {
+      "a": "08a18750-3824-447a-9437-24a651165872",
+      "b": "017d9113-5b33-438b-a8eb-a82edc27296a",
+      "a_mapping": "103b4ff6-b645-458a-b943-e5a13b55111f",
+      "b_mapping": "23e957cb-c782-4ac7-866e-8236b8968ea3"
+    },
+    "workflow": {
+      "id": "2937263a-9d37-4cb6-85e2-1d742e28e5a3",
+      "path": "workflows/stable_2_upgrade_tool.py",
+      "name": "stable_2_upgrade_tool"
+    },
+    "form": {
+      "id": "87905955-967e-4663-b163-fdd4b0873be0"
+    },
+    "agent": {
+      "id": "a6d8f9d6-11e9-4122-9dc5-c8e61819844a"
+    },
+    "application": {
+      "id": "3c9d2450-89b0-4b16-b1ba-6f8fae8c0c79",
+      "slug": "stable-2-upgrade-app",
+      "deployment_id": "da64acdc-ddbc-480c-86b5-efb99d89a33c",
+      "deploy_job_id": "ef1e1791-dbef-4bfc-b66e-4dbbf7c90f48"
+    }
+  },
+  "population": {
+    "seed": {
+      "seeded_two_orgs": true,
+      "invites_registered": true,
+      "role_memberships": true,
+      "secret_configs_seeded": true,
+      "secret_integration_configs_seeded": true,
+      "registered_tool_linked_to_form_and_agent": true,
+      "retained_v2_source": true,
+      "deploy_job_terminal": true
+    },
+    "verify": {
+      "new_human_logins": true,
+      "legacy_token_future_before_rejection": true,
+      "legacy_access_rejected": true,
+      "role_and_org_isolation": true,
+      "resource_ids_and_links_preserved": true,
+      "integration_mapping_ids_preserved": true,
+      "worker_decrypted_synthetic_credentials": true,
+      "registered_automation_succeeded": true,
+      "source_and_active_bundle_retrieved": true,
+      "sdk_update_job_terminal": true,
+      "sdk_contract_3_current": true,
+      "registered_execution": {
+        "id": "87b2b1f1-05f2-4f7a-a9fe-5540270993ec",
+        "status": "Success",
+        "result": {
+          "entity": "stable2-tenant-a",
+          "config_ok": true,
+          "integration_ok": true
+        }
+      },
+      "sdk_update": {
+        "job_id": "d92338b9-98e2-48ca-98b2-d871fe212277",
+        "status": "succeeded",
+        "old_deployment_id": "da64acdc-ddbc-480c-86b5-efb99d89a33c",
+        "new_deployment_id": "28e6874d-474a-487c-a710-6325891a2d98",
+        "old_contract": 2,
+        "new_contract": 3,
+        "fingerprint": "bbb905d36e3b3f6e",
+        "binding_api_major": 1,
+        "artifact_bytes": 15031
+      }
+    }
+  },
+  "seed_secret_record_fingerprints": [
+    {
+      "id": "202b740c-45cc-4db9-a43c-aa1c1141c7bb",
+      "key": "stable2_upgrade_org_b",
+      "organization_id": "baadacb3-4738-4471-8d8a-0a61d944e6e5",
+      "integration_id": null,
+      "config_schema_id": null,
+      "stored_value_checksum": "4fba2313a32515c761300ba9fdfa4c92",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "3de905fc-5cb0-49c5-8fd2-4aa13597fe1a",
+      "key": "api_key",
+      "organization_id": null,
+      "integration_id": "08a18750-3824-447a-9437-24a651165872",
+      "config_schema_id": "4d6cf5a7-3d88-46fc-a821-725aa0dc40fc",
+      "stored_value_checksum": "3b611c3e1212e09b83473d7b3da92d7d",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "b9526552-eb57-4670-97ab-c4575a3b40fd",
+      "key": "stable2_upgrade_org_a",
+      "organization_id": "916984cf-ee27-4d0e-a560-88006c772128",
+      "integration_id": null,
+      "config_schema_id": null,
+      "stored_value_checksum": "739b701ead0d434d9473ae5d5931eec7",
+      "longer_than_fixture_plaintext": true
+    },
+    {
+      "id": "f7976d9a-f8c4-4334-b62a-fd7ff7c7210f",
+      "key": "api_key",
+      "organization_id": null,
+      "integration_id": "017d9113-5b33-438b-a8eb-a82edc27296a",
+      "config_schema_id": "cd08a5ac-b709-4ffe-8715-5696b544da65",
+      "stored_value_checksum": "0bf64cbe093b69f8053515380d1e02a2",
+      "longer_than_fixture_plaintext": true
+    }
+  ],
+  "execution_id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+  "source_revision": "20260916_solution_inbound",
+  "source_queues": [
+    {
+      "messages": 0,
+      "name": "agent-tuning-chat",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-runs",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-backfill-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-tuning-chat-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-backfill",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "workflow-executions-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 1,
+      "name": "workflow-executions",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-runs-poison",
+      "messages_unacknowledged": 0
+    }
+  ],
+  "bridge_revision": "20261030_authz_versions",
+  "secret_record_fingerprints_preserved": true,
+  "recovered_dispatch": {
+    "id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+    "executed_by": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
+    "run_user_id": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
+    "started_by_user_id": "6eb985df-08d2-4b74-a9ec-61fa61f0e497",
+    "root_execution_id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+    "status": "Pending",
+    "dispatch_id": "442e0395-5eda-401b-b132-3b3734ff3a0a"
+  },
+  "target_revision": "20261106_chat_execute",
+  "terminal_execution": {
+    "id": "2ce2b1f0-3751-4e74-9c11-240dda957b01",
+    "status": "Success",
+    "result": {
+      "release_rehearsal": true
+    },
+    "completed_at": "2026-11-07T05:09:50.972441+00:00"
+  },
+  "execution_marker_count": 1,
+  "final_queues": [
+    {
+      "messages": 0,
+      "name": "agent-tuning-chat",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-runs",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-backfill-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-tuning-chat-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization-backfill",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-summarization",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "workflow-executions-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "workflow-executions",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "agent-runs-poison",
+      "messages_unacknowledged": 0
+    }
+  ],
+  "cleanup_completed": true
+}
