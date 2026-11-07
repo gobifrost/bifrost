@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 import threading
 import time
+from urllib.parse import unquote, urlsplit
 
 import httpx
 
@@ -17,6 +18,21 @@ PROFILE = Path('/private/profile.json')
 def sdk_path(path):
     path = path.split('?', 1)[0]
     return path.startswith('/api/sdk/') or path == '/api/tables' or path.startswith('/api/tables/') or path == '/auth/refresh'
+
+
+def sdk_target(raw):
+    """Canonicalize before route authorization; authority is never client input."""
+    if not isinstance(raw, str) or not raw.isascii() or any(ord(c) < 33 for c in raw):
+        raise ValueError('Invalid request target')
+    parsed = urlsplit(raw)
+    path = unquote(parsed.path, errors='strict')
+    if (parsed.scheme or parsed.netloc or parsed.fragment or not path.startswith('/')
+        or path.startswith('//') or '\\' in path or '%' in path
+        or any(segment in ('.', '..') for segment in path.split('/'))
+        or any(ord(c) < 33 for c in path) or not sdk_path(path)):
+        raise ValueError('SDK route required')
+    return httpx.URL(scheme='http', host='api', port=8000, path=path,
+                     query=parsed.query.encode('ascii') if parsed.query else None)
 
 
 def main():
@@ -42,32 +58,45 @@ def main():
             nonlocal child_requests
             origin = self.server.server_port == 8800
             if time.time()*1000 >= profile['expires_at_ms']:
-                return self.finish_response(410)
-            if origin and (not hmac.compare_digest(self.headers.get('X-Qualification-Auth', ''), profile['secret']) or not sdk_path(self.path)):
-                return self.finish_response(403)
+                self.finish_response(410)
+                return
+            if origin and not hmac.compare_digest(self.headers.get('X-Qualification-Auth', ''), profile['secret']):
+                self.finish_response(403)
+                return
             if not origin and (self.command != 'POST' or self.path not in ('/', '/__fixture_warmup')):
-                return self.finish_response(405)
+                self.finish_response(405)
+                return
+            if origin:
+                try:
+                    target = sdk_target(self.path)
+                except ValueError:
+                    self.finish_response(403)
+                    return
+            else:
+                target = ('https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/'
+                          if self.path == '/' else
+                          'https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev/__fixture_warmup')
             try:
                 response_started = False
                 size = int(self.headers.get('Content-Length', '0'))
                 if not 0 <= size <= MAX_BODY or self.headers.get('Transfer-Encoding'):
-                    return self.finish_response(413)
+                    self.finish_response(413)
+                    return
                 body = self.rfile.read(size)
                 if len(body) != size:
-                    return self.finish_response(400)
+                    self.finish_response(400)
+                    return
                 headers = {key: value for key, value in self.headers.items()
                            if key.lower() not in ('host', 'connection', 'content-length', 'x-qualification-auth', 'x-dev-auth')}
-                if origin:
-                    target = 'http://api:8000'+self.path
-                else:
+                if not origin:
                     with lock:
                         if child_requests >= 3:
-                            return self.finish_response(429)
+                            self.finish_response(429)
+                            return
                         child_requests += 1
                         request_index = child_requests
                         Path('/private/relay-receipt.json').write_text(json.dumps({'child_requests': child_requests, 'expired': False}))
                     headers['X-Dev-Auth'] = profile['secret']
-                    target = profile['endpoint']+self.path
                 with httpx.Client(timeout=90, follow_redirects=False, trust_env=False) as client:
                     with client.stream(self.command, target, headers=headers, content=body) as response:
                         if not origin:
