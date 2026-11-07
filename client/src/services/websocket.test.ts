@@ -4,6 +4,7 @@ import {
 	EMBED_TOKEN_KEY,
 	setImpersonationToken,
 } from "@/lib/auth-token";
+import { useNotificationStore } from "@/stores/notificationStore";
 import { type PlatformJobUpdate, webSocketService } from "./websocket";
 
 class MockWebSocket {
@@ -93,6 +94,28 @@ describe("platform WebSocket authentication", () => {
 		expect(MockWebSocket.instances).toHaveLength(2);
 		expect(new URL(MockWebSocket.urls[1]).searchParams.getAll("channels")).toEqual(["execution:new"]);
 		expect(webSocketService.isConnected()).toBe(true);
+	});
+
+	it("stores a notification without logging its untrusted payload", async () => {
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		useNotificationStore.getState().clearNotifications();
+		try {
+			await webSocketService.connect();
+			MockWebSocket.instances[0].onmessage?.({ data: JSON.stringify({
+				type: "notification_created", notification: {
+					id: "notice", category: "system", title: "User\ninput", description: null,
+					status: "completed", percent: null, error: null, result: null, metadata: null,
+					created_at: "2026-11-07T00:00:00Z", updated_at: "2026-11-07T00:00:00Z", user_id: "person",
+				},
+			}) } as MessageEvent);
+			expect(useNotificationStore.getState().notifications).toEqual([
+				expect.objectContaining({ id: "notice", title: "User\ninput", status: "completed" }),
+			]);
+			expect(warning).not.toHaveBeenCalled();
+		} finally {
+			warning.mockRestore();
+			useNotificationStore.getState().clearNotifications();
+		}
 	});
 
 	it("does not reconnect after a 4001 when session refresh fails", async () => {

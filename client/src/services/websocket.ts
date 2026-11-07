@@ -550,19 +550,21 @@ class WebSocketService {
 
 		// If already connecting, wait for that connection
 		if (this.isConnecting && this.connectionPromise) {
+			const generation = this.connectionGeneration;
 			await this.connectionPromise;
-			this.reconcileChannels(channels);
+			if (this.connectionGeneration === generation) this.reconcileChannels(channels);
 			return;
 		}
 
 		this.isConnecting = true;
+		const generation = this.connectionGeneration;
 		const pending = this._connect(Array.from(this.desiredChannels));
 		this.connectionPromise = pending;
 		try {
 			await pending;
-			if (this.connectionPromise === pending) this.reconcileChannels(channels);
+			if (this.connectionGeneration === generation) this.reconcileChannels(channels);
 		} finally {
-			if (this.connectionPromise === pending) {
+			if (this.connectionGeneration === generation) {
 				this.isConnecting = false;
 				this.connectionPromise = null;
 			}
@@ -1074,13 +1076,6 @@ class WebSocketService {
 	 * Handle notification message from backend
 	 */
 	private handleNotification(payload: NotificationPayload) {
-		console.warn(
-			"[WS] Notification received:",
-			payload.status,
-			payload.id,
-			payload,
-		);
-
 		// Convert snake_case to camelCase for frontend
 		const notification: Notification = {
 			id: payload.id,
