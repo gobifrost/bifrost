@@ -40,7 +40,7 @@ async def test_legacy_app_refreshes_via_its_host_then_stops_after_session_revoca
     try:
         async with (
             connect(ws_url, additional_headers={"Cookie": f"access_token={old_token}"}, origin=origin) as host,
-            connect(f"{ws_url}?token={quote(old_token, safe='')}", origin=origin, additional_headers={"Sec-Fetch-Site": "same-origin"}) as legacy,
+            connect(f"{ws_url}?token={quote(old_token, safe='')}", origin=origin) as legacy,
         ):
             assert json.loads(await host.recv())["type"] == "connected"
             assert json.loads(await legacy.recv())["type"] == "connected"
@@ -68,12 +68,12 @@ async def test_legacy_app_refreshes_via_its_host_then_stops_after_session_revoca
         expired = _encode_claims(typed.model_copy(update={"exp": 1}))
         async with connect(ws_url, additional_headers={"Cookie": f"access_token={fresh}"}, origin=origin) as fresh_host:
             assert json.loads(await fresh_host.recv())["type"] == "connected"
-            async with connect(f"{ws_url}?token={quote(expired, safe='')}", origin=origin, additional_headers={"Sec-Fetch-Site": "same-origin"}) as stale_retry:
+            async with connect(f"{ws_url}?token={quote(expired, safe='')}", origin=origin) as stale_retry:
                 await _closed_without_data(stale_retry, 1012)
             # A stale query cannot force rotation of an already current host.
             await fresh_host.send(json.dumps({"type": "ping"}))
             assert json.loads(await fresh_host.recv())["type"] == "pong"
-        async with connect(f"{ws_url}?token={quote(fresh, safe='')}", origin=origin, additional_headers={"Sec-Fetch-Site": "same-origin"}) as recovered:
+        async with connect(f"{ws_url}?token={quote(fresh, safe='')}", origin=origin) as recovered:
             assert json.loads(await recovered.recv())["type"] == "connected"
             await recovered.send(json.dumps({"type": "ping"}))
             assert json.loads(await recovered.recv())["type"] == "pong"
