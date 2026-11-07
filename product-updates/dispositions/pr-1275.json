@@ -1,0 +1,13 @@
+{
+  "key": "pr:1275",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal stable-release qualification, synthetic upgrade fixture, non-secret evidence receipt and operator runbook clarification; no product runtime behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1275",
+      "Release coordinator verified actual 1.4.1 to pinned bridge to immutable target with a populated synthetic installation, four preserved secret-row checksums, human access isolation, real workflow decryption, exactly-one recovered run and SDK2-to-3 App activation. Final run and own cleanup passed. Fourteen unit/safety tests passed on host and target Docker; fresh local Python CodeQL reported zero findings."
+    ]
+  }
+}
