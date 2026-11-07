@@ -53,6 +53,7 @@ dependencies = [
     "pyotp",  # TOTP/HOTP for MFA
     "webauthn>=2.7.1",  # WebAuthn/Passkeys support
     "authlib>=1.9.5",  # OIDC relying party: JWKS + id_token claim validation
+    "joserfc>=1.8.0",  # EC client-assertion signing (Authlib's signer is RSA-only)
     "altcha>=2.1.0",  # Self-hosted proof-of-work protection for public forms
 
     # =========================================================================

@@ -15,6 +15,7 @@ import hashlib
 import io
 import logging
 import secrets
+import time
 from collections.abc import Mapping
 from urllib.parse import parse_qsl, urlencode
 from dataclasses import dataclass
@@ -25,6 +26,8 @@ from uuid import UUID
 import httpx
 from authlib.oauth2.auth import ClientAuth
 from authlib.oauth2.rfc7523 import PrivateKeyJWT
+from joserfc import jwt as jose_jwt
+from joserfc.jwk import ECKey
 from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -182,7 +185,7 @@ class OAuthService:
                 "authorize_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
                 "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/v1.0/me",
-                "scopes": ["openid", "email", "profile", "User.Read"],
+                "scopes": config.scopes,
                 **_client_auth_fields(config),
             }
 
@@ -196,7 +199,7 @@ class OAuthService:
                 "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
                 "token_url": "https://oauth2.googleapis.com/token",
                 "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
-                "scopes": ["openid", "email", "profile"],
+                "scopes": config.scopes,
                 **_client_auth_fields(config),
             }
 
@@ -217,7 +220,7 @@ class OAuthService:
                 "authorize_url": discovery["authorization_endpoint"],
                 "token_url": discovery["token_endpoint"],
                 "userinfo_url": discovery.get("userinfo_endpoint"),
-                "scopes": ["openid", "email", "profile"],
+                "scopes": config.scopes,
                 "display_name": config.display_name or "SSO",
                 **_client_auth_fields(config),
             }
@@ -686,10 +689,41 @@ def _token_request_auth(
         if not private_key:
             raise OAuthError("private_key_jwt requires a private key")
         kid = config.get("private_key_kid")
+        alg = config.get("private_key_alg") or "RS256"
+        if alg.startswith("ES"):
+            # Authlib 1.9.5's client-assertion signer is RSA-only; EC assertions
+            # are signed with joserfc, the same JOSE library Authlib uses.
+            now = int(time.time())
+            assertion = jose_jwt.encode(
+                {"alg": alg, "typ": "JWT", **({"kid": kid} if kid else {})},
+                {
+                    "iss": client_id,
+                    "sub": client_id,
+                    "aud": token_url,
+                    "jti": secrets.token_urlsafe(32),
+                    "iat": now,
+                    "exp": now + 300,
+                },
+                ECKey.import_key(private_key),
+                # joserfc only enables recommended algorithms by default;
+                # ES384/ES512 must be explicitly allowed.
+                algorithms=[alg],
+            )
+            body = {
+                **data,
+                "client_id": client_id,
+                "client_assertion_type": (
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                ),
+                "client_assertion": assertion,
+            }
+            return dict(body), {
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
         assertion = PrivateKeyJWT(
             token_endpoint=token_url,
             headers={"kid": kid} if kid else None,
-            alg=config.get("private_key_alg") or "RS256",
+            alg=alg,
         )
         client_auth = ClientAuth(client_id, private_key, assertion)
     elif method in {"client_secret_post", "client_secret_basic"}:
