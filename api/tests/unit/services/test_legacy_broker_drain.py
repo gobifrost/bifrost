@@ -179,7 +179,12 @@ async def test_a_promoted_scheduled_run_gets_its_dispatch_and_lineage(world) -> 
 async def test_an_unattended_queued_run_runs_as_its_organizations_identity(world) -> None:  # type: ignore[no-untyped-def]
     from shared.identities import ensure_default_identity
     from src.core.constants import SYSTEM_USER_UUID
+    from src.core.redis_client import PendingExecution
+    from src.jobs.consumers.workflow_execution import _legacy_unattended_pending_actor
     from src.models.orm.organizations import Organization
+    from src.repositories.executions import create_execution
+    from src.services.authorization.runtime import load_runtime_authority
+    from src.services.authorization.tokens import RuntimeSubject, issue_run_credentials
 
     org_id, _ = await _person(world)
     async with world.sessions() as session:
@@ -194,6 +199,32 @@ async def test_an_unattended_queued_run_runs_as_its_organizations_identity(world
     async with world.sessions() as session:
         execution = await session.get(Execution, UUID(execution_id))
     assert (execution.run_user_id, execution.started_by_user_id) == (identity_id, identity_id)
+
+    dispatch = await world.dispatch(UUID(execution_id))
+    assert dispatch is not None
+    pending = PendingExecution(**dispatch.payload)
+    async with world.sessions() as session:
+        actor = await _legacy_unattended_pending_actor(session, pending)
+        await create_execution(
+            execution_id=execution_id,
+            workflow_name="recovered unattended run",
+            parameters=pending["parameters"],
+            org_id=str(org_id),
+            user_id=actor.user_id,
+            user_name=actor.name,
+            lineage=pending.get("lineage"),
+            credential_version=2,
+            session=session,
+        )
+        await session.commit()
+        authority = await load_runtime_authority(session, "workflow_execution", UUID(execution_id))
+    credentials = await issue_run_credentials(
+        RuntimeSubject("workflow_execution", UUID(execution_id)), protocol=2, legacy_lifetime_seconds=300
+    )
+
+    assert authority.acting_user_id == authority.run_user.user_id == identity_id
+    assert authority.run_user.is_platform_admin is False
+    assert credentials.access_token and credentials.refresh_token
 
 
 async def test_a_run_cancelled_while_queued_is_recorded_as_cancelled(world) -> None:  # type: ignore[no-untyped-def]

@@ -16,6 +16,7 @@ from typing import Literal
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import MultipleResultsFound, NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import load_only
 
@@ -98,6 +99,19 @@ async def load_runtime_authority(
     raise RuntimeIdentityError("Unknown runtime kind.")
 
 
+async def load_previous_stable_workflow_authority(
+    db: AsyncSession, execution_id: UUID
+) -> RuntimeAuthority:
+    """Resolve the v1.4.1 engine-token subject from durable execution facts.
+
+    A rolling image upgrade can leave an old worker to move a pre-existing
+    Pending row to Running after the lineage migration has passed.  Only the
+    exact previous-stable token adapter calls this recovery path.  It never
+    trusts the token's admin, organization, Solution, or repository claims.
+    """
+    return await _load_workflow_execution(db, execution_id, recover_legacy_lineage=True)
+
+
 async def _solution_active(db: AsyncSession, solution_id: UUID | None) -> bool | None:
     if solution_id is None:
         return None
@@ -108,7 +122,9 @@ async def _solution_active(db: AsyncSession, solution_id: UUID | None) -> bool |
 _WORKFLOW_AUTHORITY_COLUMNS = (Workflow.id, Workflow.solution_id, Workflow.permission_mode)
 
 
-async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> RuntimeAuthority:
+async def _load_workflow_execution(
+    db: AsyncSession, execution_id: UUID, *, recover_legacy_lineage: bool = False
+) -> RuntimeAuthority:
     execution = await db.get(
         Execution,
         execution_id,
@@ -133,17 +149,68 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         raise RuntimeIdentityError(_EXECUTION_NOT_FOUND)
     if execution.status not in LIVE_EXECUTION_STATUSES:
         raise RuntimeIdentityError(_EXECUTION_NOT_LIVE)
-    if execution.run_user_id is None:
-        raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
-    run_user = await load_run_user(db, execution.run_user_id)
-    if run_user is None:
-        raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
-    if execution.started_by_user_id is None or execution.root_execution_id is None:
-        raise RuntimeIdentityError(_EXECUTION_LINEAGE_MISSING)
-    if execution.executed_by is None or is_system_account(execution.executed_by):
-        raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
-    if execution.executed_by != run_user.user_id and await load_run_user(db, execution.executed_by) is None:
-        raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+    lineage_is_absent = (
+        execution.run_user_id is None
+        and execution.started_by_user_id is None
+        and execution.root_execution_id is None
+    )
+    if lineage_is_absent:
+        if not recover_legacy_lineage:
+            raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
+        if execution.executed_by is None:
+            raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+        # Ordinary SDK route imports do not need legacy lineage recovery.
+        from shared.run_lineage import recorded_user_lineage
+
+        # An old system-account execution is only recoverable with its
+        # workflow still present: that is the durable source for its chosen
+        # identity.  Do not turn a missing workflow into a new default grant.
+        if execution.workflow_id is not None and is_system_account(execution.executed_by):
+            if await db.get(Workflow, execution.workflow_id, options=[load_only(Workflow.id, raiseload=True)]) is None:
+                raise RuntimeIdentityError(_WORKFLOW_MISSING)
+        try:
+            lineage = await recorded_user_lineage(
+                db,
+                execution.executed_by,
+                workflow_id=execution.workflow_id,
+                organization_id=execution.organization_id,
+            )
+        except (NoResultFound, MultipleResultsFound) as exc:
+            # An absent or ambiguous default identity is not a recoverable
+            # authority fact.  Keep this a credential refusal, not a 500.
+            raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING) from exc
+        run_user = await load_run_user(db, lineage.run_user_id)
+        if run_user is None:
+            raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
+        started_by_user_id = lineage.started_by_user_id
+        root_execution_id = execution.id
+        acting_user_id = lineage.run_user_id if is_system_account(execution.executed_by) else execution.executed_by
+    else:
+        # A partial lineage has no unambiguous recovery rule.  Do not replace
+        # a durable original with values inferred from a legacy row.
+        if (
+            execution.run_user_id is None
+            or execution.started_by_user_id is None
+            or execution.root_execution_id is None
+        ):
+            if execution.run_user_id is None:
+                raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
+            raise RuntimeIdentityError(_EXECUTION_LINEAGE_MISSING)
+        run_user = await load_run_user(db, execution.run_user_id)
+        if run_user is None:
+            raise RuntimeIdentityError(_EXECUTION_RUN_USER_MISSING)
+        if execution.executed_by is None:
+            raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+        if is_system_account(execution.executed_by):
+            if not recover_legacy_lineage:
+                raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+            acting_user_id = run_user.user_id
+        elif execution.executed_by != run_user.user_id and await load_run_user(db, execution.executed_by) is None:
+            raise RuntimeIdentityError(_EXECUTION_ACTOR_MISSING)
+        else:
+            acting_user_id = execution.executed_by
+        started_by_user_id = execution.started_by_user_id
+        root_execution_id = execution.root_execution_id
 
     powers = None
     solution_id = None
@@ -164,11 +231,11 @@ async def _load_workflow_execution(db: AsyncSession, execution_id: UUID) -> Runt
         credential_id=execution.id,
         run_user=run_user,
         powers=powers,
-        acting_user_id=execution.executed_by,
+        acting_user_id=acting_user_id,
         organization_id=execution.organization_id,
         workflow_id=execution.workflow_id,
-        started_by_user_id=execution.started_by_user_id,
-        root_execution_id=execution.root_execution_id,
+        started_by_user_id=started_by_user_id,
+        root_execution_id=root_execution_id,
         solution_id=solution_id,
         impersonated_by_user_id=execution.impersonated_by_user_id,
         impersonation_session_id=execution.impersonation_session_id,

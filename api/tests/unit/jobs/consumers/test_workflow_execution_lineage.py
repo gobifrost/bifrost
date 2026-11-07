@@ -8,13 +8,17 @@ from uuid import UUID
 
 import pytest
 
-from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
+from src.jobs.consumers.workflow_execution import (
+    WorkflowExecutionConsumer,
+    _legacy_unattended_pending_actor,
+)
 from src.services.authorization.tokens import RunCredentials
 from src.services.execution.process_pool import CredentialRoute
 
 MODULE = "src.jobs.consumers.workflow_execution"
 EXECUTION_ID = "00000000-0000-0000-0000-000000000001"
 RUN_USER_ID = "00000000-0000-0000-0000-0000000000aa"
+SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000001"
 MESSAGE = {"execution_id": EXECUTION_ID, "code": "eA==", "script_name": "inline"}
 
 
@@ -68,7 +72,142 @@ async def test_row_gets_the_claimed_lineage() -> None:
         "root_execution_id": EXECUTION_ID,
     }
 
-    assert (await _created_with(_claimed(lineage=lineage)))["lineage"] == lineage
+    created = await _created_with(_claimed(lineage=lineage))
+
+    assert created["lineage"] == lineage
+    assert created["user_id"] == RUN_USER_ID
+
+
+@pytest.mark.asyncio
+async def test_historic_unattended_pending_run_uses_its_durable_identity_not_pending_flags() -> None:
+    lineage = {
+        "run_user_id": RUN_USER_ID,
+        "started_by_user_id": RUN_USER_ID,
+        "root_execution_id": EXECUTION_ID,
+    }
+    actor = SimpleNamespace(
+        user_id=RUN_USER_ID,
+        email="identity@example.test",
+        name="Scheduled Identity",
+        is_platform_admin=False,
+    )
+    issued = RunCredentials("access", None, datetime.now(timezone.utc), 2)
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+        patch(f"{MODULE}._legacy_unattended_pending_actor", new=AsyncMock(return_value=actor)),
+        patch(
+            "src.services.authorization.tokens.issue_run_credentials", new=AsyncMock(return_value=issued)
+        ) as mint,
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ),
+    ):
+        consumer = _consumer(CredentialRoute(2))
+        await consumer.process_message(
+            MESSAGE,
+            _claimed(
+                user_id=SYSTEM_USER_ID,
+                user_name="System",
+                user_email="engine@bifrost.internal",
+                is_platform_admin=True,
+                lineage=lineage,
+            ),
+        )  # type: ignore[arg-type]
+
+    assert create.await_args.kwargs["user_id"] == RUN_USER_ID
+    assert create.await_args.kwargs["user_name"] == "Scheduled Identity"
+    assert mint.await_count == 1
+    routed = consumer._pool.route_execution.await_args.kwargs["context"]
+    assert routed["caller"] == {
+        "user_id": RUN_USER_ID,
+        "email": "identity@example.test",
+        "name": "Scheduled Identity",
+    }
+    assert routed["is_platform_admin"] is False
+    assert routed["original_user_id"] == RUN_USER_ID
+
+
+@pytest.mark.asyncio
+async def test_historic_unattended_pending_run_without_proven_identity_fails_before_minting() -> None:
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()),
+        patch(f"{MODULE}.update_execution", new=AsyncMock()),
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+        patch(
+            f"{MODULE}._legacy_unattended_pending_actor",
+            new=AsyncMock(side_effect=ValueError("legacy pending lineage is incomplete")),
+        ),
+        patch("src.services.authorization.tokens.issue_run_credentials", new=AsyncMock()) as mint,
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ),
+    ):
+        consumer = _consumer(CredentialRoute(2))
+        await consumer.process_message(
+            MESSAGE,
+            _claimed(user_id=SYSTEM_USER_ID, lineage=None),
+        )  # type: ignore[arg-type]
+
+    mint.assert_not_awaited()
+    consumer._pool.route_execution.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_legacy_unattended_actor_uses_current_identity_and_roles() -> None:
+    identity = SimpleNamespace(
+        id=UUID(RUN_USER_ID),
+        email="identity@example.test",
+        name="Scheduled Identity",
+        is_system=False,
+        identity_kind="org_default",
+    )
+    db = AsyncMock()
+    db.get.return_value = identity
+    with patch(
+        "src.services.authorization.explain.load_run_user",
+        new=AsyncMock(return_value=SimpleNamespace(is_platform_admin=False)),
+    ):
+        actor = await _legacy_unattended_pending_actor(
+            db,
+            _claimed(
+                user_id=SYSTEM_USER_ID,
+                is_platform_admin=True,
+                lineage={
+                    "run_user_id": RUN_USER_ID,
+                    "started_by_user_id": RUN_USER_ID,
+                    "root_execution_id": EXECUTION_ID,
+                },
+            ),  # type: ignore[arg-type]
+        )
+
+    assert actor is not None
+    assert actor.user_id == RUN_USER_ID
+    assert actor.email == "identity@example.test"
+    assert actor.is_platform_admin is False
+
+
+@pytest.mark.asyncio
+async def test_legacy_unattended_actor_refuses_absent_identity() -> None:
+    db = AsyncMock()
+    db.get.return_value = None
+
+    with pytest.raises(ValueError, match="no current run identity"):
+        await _legacy_unattended_pending_actor(
+            db,
+            _claimed(
+                user_id=SYSTEM_USER_ID,
+                lineage={
+                    "run_user_id": RUN_USER_ID,
+                    "started_by_user_id": RUN_USER_ID,
+                    "root_execution_id": EXECUTION_ID,
+                },
+            ),  # type: ignore[arg-type]
+        )
 
 
 @pytest.mark.asyncio

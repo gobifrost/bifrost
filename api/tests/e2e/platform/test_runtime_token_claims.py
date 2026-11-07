@@ -29,6 +29,8 @@ from sqlalchemy.ext.asyncio import AsyncEngine
 from bifrost import client as client_mod
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
 from src.config import get_settings
+from src.core.constants import SYSTEM_USER_ID
+from src.core.security import create_access_token
 from src.models.enums import ExecutionStatus
 from src.models.orm.users import UserRole, UserRoleBoundary
 from src.services.authorization.tokens import RuntimeSubject, issue_run_refresh_token
@@ -207,12 +209,31 @@ async def test_a_deactivated_solution_is_refused_after_the_refresh(
     assert client._access_token != access
 
 
+@pytest.mark.parametrize("token_format", ["pr1", "stable-1.4.1"])
 async def test_a_legacy_token_is_bridged_only_while_its_run_is_live(
-    async_engine: AsyncEngine, e2e_api_url: str
+    async_engine: AsyncEngine, e2e_api_url: str, token_format: str
 ) -> None:
     async with committed_world(async_engine) as world:
         run = await _live_run(world, platform_admin=False)
-        legacy, _ = legacy_engine_token(execution_id=str(run.execution.id), timeout_seconds=300)
+        if token_format == "stable-1.4.1":
+            # An old worker can claim this execution after the migration has
+            # passed. Resolve its recorded user live, without trusting the
+            # system/admin flags in the previous stable credential format.
+            run.execution.run_user_id = None
+            run.execution.started_by_user_id = None
+            run.execution.root_execution_id = None
+            await world.session.commit()
+            legacy = create_access_token({
+                "sub": SYSTEM_USER_ID,
+                "email": "engine@bifrost.internal",
+                "name": "Bifrost Engine",
+                "is_superuser": True,
+                "engine_execution_id": str(run.execution.id),
+                "engine_solution_id": None,
+                "engine_global_repo_access": True,
+            })
+        else:
+            legacy, _ = legacy_engine_token(execution_id=str(run.execution.id), timeout_seconds=300)
 
         accepted = await _get(e2e_api_url, legacy, "/api/sdk/context")
         # The authority epoch does not apply: it is read from the database.
@@ -223,6 +244,8 @@ async def test_a_legacy_token_is_bridged_only_while_its_run_is_live(
         refused = await _get(e2e_api_url, legacy, "/api/sdk/context")
 
     assert accepted.status_code == 200, accepted.text
+    assert accepted.json()["user"]["id"] == str(run.user.id)
+    assert accepted.json()["user"]["is_superuser"] is False
     assert still_accepted.status_code == 200, still_accepted.text
     assert (refused.status_code, refused.headers["www-authenticate"]) == (401, "Bearer")
 

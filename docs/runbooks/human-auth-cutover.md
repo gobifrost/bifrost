@@ -1,8 +1,9 @@
 # Human Authentication Cutover
 
-This runbook describes a future PR2 release. It does not authorize deployment.
-Runtime-token PR1a/PR1b and their later PR1c prerequisites are unchanged; see
-[Authority Epoch](authz-epoch.md). The implementation/coverage ledger is
+This runbook describes the durable human-session semantics in 2.0. Stable
+1.4.1 upgrades directly; there is no intermediate token-release image. The
+normal-image-update compatibility target and remaining release gates are in
+[Upgrading From 1.4.1 to 2.0](stable-2-upgrade.md). The implementation/coverage ledger is
 [Authentication Consolidation](../plans/2026-10-30-authentication-consolidation.md).
 
 ## Required Maintenance Boundary
