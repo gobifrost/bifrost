@@ -531,6 +531,13 @@ class WebSocketService {
 	private desiredChannels = new Set<string>();
 	private pendingSubscriptions = new Set<string>();
 
+	/** Request advisory live updates; the shared transport owns failure reporting. */
+	connectInBackground(channels: string[] = []): void {
+		void this.connect(channels).catch((error: unknown) => {
+			console.error("[WebSocket] Background connection failed:", error);
+		});
+	}
+
 	/**
 	 * Connect to WebSocket with authentication
 	 */
@@ -652,7 +659,7 @@ class WebSocketService {
 							const refreshed = await refreshAccessToken();
 							if (!refreshed) return;
 						}
-						this.connect(Array.from(this.desiredChannels));
+						this.connectInBackground(Array.from(this.desiredChannels));
 					}, delay);
 				}
 			};
@@ -689,7 +696,6 @@ class WebSocketService {
 		} catch (error) {
 			// Explicit disconnect/session replacement cancels the old attempt.
 			if (this.connectionGeneration !== generation) return;
-			console.error("[WebSocket] Failed to connect:", error);
 			this.ws = null;
 			throw error;
 		}

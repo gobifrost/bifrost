@@ -301,9 +301,7 @@ export function StandaloneV2App({
 		// Immutable bundled SDKs cannot refresh terminal auth closures. Keep the
 		// shared cookie-authenticated host connected even outside the platform
 		// notification shell. It owns refresh; the App tree stays mounted.
-		void webSocketService.connect().catch((error: unknown) => {
-			console.error("[StandaloneV2App] Host socket connection failed", error);
-		});
+		webSocketService.connectInBackground();
 		// The singleton also serves other consumers; App unmount does not own
 		// its lifetime; the server still checks authentication before all data.
 	}, [needsRefreshHost]);

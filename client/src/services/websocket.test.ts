@@ -64,6 +64,35 @@ afterEach(async () => {
 });
 
 describe("platform WebSocket authentication", () => {
+	it("reports a background handshake failure without an unhandled rejection", async () => {
+		vi.useFakeTimers();
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const status = vi.fn();
+		const unsubscribe = webSocketService.onConnectionStatusChange(status);
+		try {
+			webSocketService.connectInBackground(["agent-runs"]);
+			MockWebSocket.instances[0].emit("close", { code: 1006 } as CloseEvent);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(status).toHaveBeenCalledWith(false);
+			expect(webSocketService.isConnected()).toBe(false);
+			expect(error).toHaveBeenCalledExactlyOnceWith(
+				"[WebSocket] Background connection failed:",
+				expect.objectContaining({ message: "WebSocket closed before connection completed" }),
+			);
+		} finally {
+			unsubscribe();
+			error.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects an explicitly awaited handshake failure", async () => {
+		const failure = expect(webSocketService.connect()).rejects.toThrow("WebSocket closed before connection completed");
+		MockWebSocket.instances[0].emit("close", { code: 1000 } as CloseEvent);
+		await failure;
+		expect(webSocketService.isConnected()).toBe(false);
+	});
+
 	it("reuses a rotated family and replaces another session without old frames", async () => {
 		const token = (sid: string, jti: string) => `header.${btoa(JSON.stringify({ sub: "person", sid, jti }))}.signature`;
 		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-a", "first"));

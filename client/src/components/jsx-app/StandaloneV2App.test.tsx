@@ -21,7 +21,7 @@ const { mockHostConnect, mockHostDisconnect } = vi.hoisted(() => ({
 	mockHostConnect: vi.fn(), mockHostDisconnect: vi.fn(),
 }));
 vi.mock("@/services/websocket", () => ({
-	webSocketService: { connect: mockHostConnect, disconnect: mockHostDisconnect },
+	webSocketService: { connectInBackground: mockHostConnect, disconnect: mockHostDisconnect },
 }));
 
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
@@ -119,7 +119,7 @@ beforeEach(() => {
 	authState.isPlatformAdmin = false;
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
-	mockHostConnect.mockReset().mockResolvedValue(undefined);
+	mockHostConnect.mockReset();
 	mockHostDisconnect.mockReset();
 	mockAuthFetch.mockReset();
 	mockPreloadHostedSdkFactory.mockReset();
