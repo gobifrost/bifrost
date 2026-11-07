@@ -1,23 +1,25 @@
 # Isolated development deployment
 
-[Closed canonical cloud deployment](CLOSED-CLOUD-CANONICAL.md): the locally
-qualified candidate is uploaded and active with public routes disabled, expiry0
-and no secret. Combined deployed execution remains unqualified.
+[Deployed canonical acceptance](CLOUD-CANONICAL-ACCEPTANCE.md): on2026-11-07,
+two real tenant workflows passed the upstream engine/SDK and canonical
+duplicate/fencing/reconciliation fixture in deployed Python Workers. Both public
+endpoints are now closed, expiry0, temporary secrets removed. Arbitrary/untrusted
+admission and abnormal physical termination remain unqualified (YELLOW).
 
-[Latest guarded canonical integration](GUARDED-LOCAL.md) now passes the real
-engine/SDK, duplicate/reconciliation and cleanup fixture locally. Deployed
-combined acceptance remains separate.
+[Historical guarded local integration](GUARDED-LOCAL.md) preserves the earlier
+local engine/SDK fixture and failed controls. Its receipt is pinned to that source.
 
 [Optional provider configuration and boundaries](PROVIDERS.md): Cloudflare
 hosting/ingress/execution are independent choices behind upstream contracts.
 
-Current preparation: [guarded canonical candidate](CANONICAL-CANDIDATE.md) builds
+Earlier preparation: [guarded canonical candidate](CANONICAL-CANDIDATE.md) builds
 offline with cf CLI; [closed-guard/API alignment](CANONICAL-ALIGNMENT.md) verifies
-local denial and an actual dev-schema mismatch. This candidate is not deployed.
+local denial and an actual dev-schema mismatch. Those are historical receipts;
+the newer cloud acceptance above uses the matched isolated canonical test API.
 
 [Matched API runtime](MATCHED-API.md) now boots at the canonical source/schema
-in the isolated test project. Changed candidate admission has focused regression
-coverage; execution through that changed entry and its deployment remain pending.
+in the isolated test project. The newer deployed receipt retains exact API,
+packaged engine/SDK, candidate and cleanup identities.
 
 Latest cancellation qualification: [deployed incoming disconnect](REQUEST-SIGNAL-CLOUD.md).
 The parent and I/O delivery controls pass; CPU physical termination remains

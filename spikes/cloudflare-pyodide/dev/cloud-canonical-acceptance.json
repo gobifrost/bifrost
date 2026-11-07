@@ -1,0 +1,242 @@
+{
+  "runs": [
+    {
+      "revision": 1,
+      "log_sha256": "757af4d6acd10ff4a7b74f90251489af91ee9e6abef2bee12a1d96761bd3885a",
+      "child_requests": 3,
+      "physical_termination_verified": false,
+      "responses": [],
+      "passed": false
+    },
+    {
+      "revision": 2,
+      "log_sha256": "69161916570b371ec8c25ff942c74625e7c53070833e20d5aee1bc52d595d4e7",
+      "child_requests": 0,
+      "physical_termination_verified": false,
+      "responses": [],
+      "passed": false
+    },
+    {
+      "revision": 3,
+      "log_sha256": "688a4fd3ceeb63844c8a7cbfe96c9f59d29cb037468ad7324043895358f99b35",
+      "child_requests": 3,
+      "physical_termination_verified": false,
+      "responses": [
+        {
+          "status": 200,
+          "bytes": 902,
+          "path": "/__fixture_warmup",
+          "sha256": "fee091ee7851bb08989f42211ed543994f817b0cbf999f77e0bf9da0ca0a1cff",
+          "success": null,
+          "error_type": null,
+          "sdk_close_returned": null
+        },
+        {
+          "status": 200,
+          "bytes": 1051,
+          "path": "/",
+          "sha256": "defd91e6b06093d61a3c84a4e502c043be904b95eac0fd65f15b7feace5ae4d8",
+          "success": false,
+          "error_type": "WorkflowLoadError",
+          "sdk_close_returned": true
+        },
+        {
+          "status": 200,
+          "bytes": 44272,
+          "path": "/",
+          "sha256": "78ddd93f1ca084122a989fc889220142fcfd614ed665a5ea0c23bd6493979fc3",
+          "success": false,
+          "error_type": "ConnectError",
+          "sdk_close_returned": true
+        }
+      ],
+      "passed": false
+    },
+    {
+      "revision": 4,
+      "log_sha256": "3ed166efe0c4d1d57186f9816868b426b72c97145a7705ca85a811d4c159ea2e",
+      "child_requests": 3,
+      "physical_termination_verified": false,
+      "responses": [
+        {
+          "status": 200,
+          "bytes": 902,
+          "path": "/__fixture_warmup",
+          "sha256": "fee091ee7851bb08989f42211ed543994f817b0cbf999f77e0bf9da0ca0a1cff",
+          "success": null,
+          "error_type": null,
+          "sdk_close_returned": null
+        },
+        {
+          "status": 200,
+          "bytes": 4512,
+          "path": "/",
+          "sha256": "c34c6aed5a9d8c3a9c6ee543ddef51e47c923263d7c16542531de1b6da750aa3",
+          "success": false,
+          "error_type": "ValueError",
+          "sdk_close_returned": true
+        },
+        {
+          "status": 200,
+          "bytes": 2854,
+          "path": "/",
+          "sha256": "68d7b33f0b458f208d7bb630df38010413b5b6740b3d324ea1b460c6f91f1967",
+          "success": true,
+          "error_type": null,
+          "sdk_close_returned": true
+        }
+      ],
+      "passed": true,
+      "contract_observations": {
+        "shared_native_pool_probe": true,
+        "physical_termination_verified": false,
+        "credential_free_prewarm": true,
+        "both_real_sdk_effects_held_concurrently": true,
+        "stale_terminal_owner_rejected": true,
+        "canonical_peer_accounting_verified": true,
+        "failed_replay_unchanged_verified": true,
+        "peer_live_after_failure_reconcile": true,
+        "duplicate_dispatch_reused_peer": true,
+        "lost_ack_reconnect_verified": true,
+        "automatic_terminal_delivery_verified": true,
+        "canonical_settled_accounting_verified": true,
+        "single_native_pool_verified": true,
+        "terminal_obligations_released": true,
+        "canonical_terminal_reconciliation_verified": true,
+        "mux_retired_after_canonical_ack": true,
+        "reusable_private_adapter_verified": true,
+        "api_preparation_verified": true,
+        "fixture_worker_cascade_cleanup_verified": true
+      },
+      "launch_counts": [
+        1,
+        1
+      ],
+      "native_busy_counts": [
+        2,
+        2,
+        1,
+        0
+      ],
+      "attempts": [
+        {
+          "label": "fails-first",
+          "canonical_status": "Failed",
+          "access_after_terminal_status": 401,
+          "persisted_log_count": 10,
+          "fresh": null,
+          "sdk_close_returned": true
+        },
+        {
+          "label": "succeeds-second",
+          "canonical_status": "Success",
+          "access_after_terminal_status": 401,
+          "persisted_log_count": 1,
+          "fresh": {
+            "module": null,
+            "builtins": null,
+            "filesystem": null,
+            "environment": null
+          },
+          "sdk_close_returned": true
+        }
+      ]
+    }
+  ],
+  "total_child_requests": 9,
+  "runtime_inventory": {
+    "runtime": {
+      "pyodide": "314.0.6",
+      "python": [
+        3,
+        14,
+        2
+      ],
+      "cache_tag": "cpython-314",
+      "soabi": "cpython-314-wasm32-emscripten",
+      "platform": "emscripten-5.0.3-wasm32"
+    },
+    "packages": [
+      {
+        "name": "annotated-types",
+        "version": "0.8.0"
+      },
+      {
+        "name": "certifi",
+        "version": "2026.4.22"
+      },
+      {
+        "name": "httpx",
+        "version": "0.28.1"
+      },
+      {
+        "name": "idna",
+        "version": "3.20"
+      },
+      {
+        "name": "pydantic",
+        "version": "2.14.2"
+      },
+      {
+        "name": "pydantic-core",
+        "version": "2.50.2"
+      },
+      {
+        "name": "python-dotenv",
+        "version": "1.2.4"
+      },
+      {
+        "name": "pyyaml",
+        "version": "6.0.3"
+      },
+      {
+        "name": "redis",
+        "version": "7.4.0"
+      },
+      {
+        "name": "typing-extensions",
+        "version": "4.16.0"
+      },
+      {
+        "name": "typing-inspection",
+        "version": "0.4.4"
+      },
+      {
+        "name": "workers-runtime-sdk",
+        "version": "1.9.5"
+      }
+    ],
+    "package_environment": "pyodide"
+  },
+  "candidate_files_sha256": {
+    "probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "backend/cooperative-runtime.mjs": "711bb655fa320891faee297a6fe1326f8dbff545c75fa8ad68b11e202c82b5a6",
+    "backend/cooperative-rpc-result.mjs": "01297509fd999cc646b3e565afff6d5dd322dac0ab51d0aa32947b5d917223fd",
+    "backend/lossless-json.mjs": "043d0ab4aca0629558d6c7b03a6432f3b555de3bb9e4161f7182acaca6f58430",
+    "backend/fixture-admission.mjs": "b18189c8f77f1c8764b03fa228ef038d2ce7736e27b956294984905813da6133",
+    "backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "backend/invocation-stream.mjs": "7f1b0297249aaa59e0db97b19ad2f9d144af8460890457caecc67ee066bf83ed",
+    "backend/terminal-response.mjs": "2cfcea15dd3091f44abdef532b66476e5abe5db6b7c488a3b43d7d2d61d3a8d0",
+    "backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "backend/source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "backend/log-delivery-evidence.mjs": "5ec87758f64315f3b52f547fb082570f8a65e0dd102715daa0116f16dd2b762e",
+    "dev/executor/canonical-entry.mjs": "bef78cec5368fe4dd13e1acd4efe31e357090f28ed66c270ecb2a777c3e5c6bf",
+    "dev/executor/canonical-api.mjs": "e7c2d51e45e0b616cab09d5784578e63221b2d8711eece233606dbea2e18d616",
+    "dev/executor/canonical-admission.mjs": "e5f921570a6764bb2d5a64f3e0e014d153fb07b2bbcf0c0097a8fd57734f8211",
+    "dev/executor/canonical-guard.mjs": "17b9e39bc55aa21b81b726b0a46ddd79864cd6d924900b5bc1af9b8744146a72",
+    "dev/executor/deployment-options.mjs": "73788ca000085581fa2fbe19e4e5ca1a00fb47f07cc946c4f8bb9940e8f26c7e",
+    "dev/executor/policy.mjs": "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+    "dev/executor/package.json": "540bb053586853a22d39972dee9f2060e5b3391dc4e5146ff7be63ba959d0c4f",
+    "dev/executor/package-lock.json": "59d7d40f06197215c903a66de6246f009604defff0b80a5779db7d30c88b5be7",
+    "dev/executor/cooperative-code.mjs": "39e709f31efb4a5f978c187fd9762f079ef48210b668d0a88916e4ba10701d85",
+    "dev/executor/rpc-serialization-code.mjs": "bab004fae9e82a7f031186cda76d7fe4fbc6204db865251c2a025a474bda9b6c",
+    "dev/executor/cloudflare.config.ts": "9909bd075f7b6cf7e8b0ac3cb08a5b08e532a908ccc8e826803804f81342801e"
+  },
+  "owned_test_running_after_cleanup": "",
+  "relay_running_after_cleanup": "",
+  "api_source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "engine_source": "f49d4ba99cebd24aa497f1244833b940e640885f",
+  "sdk_source": "139596497d57b219ddcc3616aa66ec58e1b3cf3c",
+  "fixture_counter_note": "Reused native fixture reports cloud_invocations=0; actual cloud request counts are supplied by the relay above."
+}

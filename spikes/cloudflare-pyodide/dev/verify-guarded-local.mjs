@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {readFileSync} from 'node:fs';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const read = name => JSON.parse(readFileSync(new URL(name, import.meta.url), 'utf8'));
 for (const revision of [2, 3]) {
   const failed = read(`guarded-local-v${revision}.json`);
@@ -22,6 +23,6 @@ assert.deepEqual(passed.running_after_cleanup, []);
 assert.equal(passed.cloud_invocations, 0);
 assert.equal(passed.physical_termination_verified, false);
 const manifest = read('guarded-local-source-v4.json');
-const entry = readFileSync(new URL('./executor/canonical-entry.mjs', import.meta.url));
+const entry = execFileSync('git', ['show', 'd9fa3159551847d6cff1ca6318ea396f2d75ab1b:spikes/cloudflare-pyodide/dev/executor/canonical-entry.mjs']);
 assert.equal(createHash('sha256').update(entry).digest('hex'), manifest.files_sha256['dev/executor/canonical-entry.mjs']);
-console.log('Latest guarded entry passed canonical engine/SDK locally; failed controls retained; no deployed or physical-stop claim.');
+console.log('Historical d9fa315 guarded entry passed locally; failed controls retained; this receipt does not qualify revised source.');

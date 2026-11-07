@@ -10,7 +10,7 @@ const files = ['probe-io.mjs',
   ...['cooperative-runtime.mjs', 'cooperative-rpc-result.mjs', 'lossless-json.mjs', 'fixture-admission.mjs',
     'attempt-egress.mjs', 'invocation-stream.mjs', 'terminal-response.mjs', 'module-response.mjs',
     'resolution-response.mjs', 'source-integrity-response.mjs', 'log-delivery-evidence.mjs'].map(name => 'backend/'+name),
-  ...['canonical-entry.mjs', 'canonical-admission.mjs', 'canonical-guard.mjs', 'deployment-options.mjs', 'policy.mjs', 'package.json', 'package-lock.json'].map(name => 'dev/executor/'+name)];
+  ...['canonical-entry.mjs', 'canonical-api.mjs', 'canonical-admission.mjs', 'canonical-guard.mjs', 'deployment-options.mjs', 'policy.mjs', 'package.json', 'package-lock.json'].map(name => 'dev/executor/'+name)];
 
 export async function stageCanonicalCandidate(input, output) {
   const bundle = await readFile(input);

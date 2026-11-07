@@ -1,0 +1,25 @@
+{
+    "output_archive_sha256":  "ca3ecdc1385397dacb9f0194c5b782f3b6c4af560ad0a2cf0b99d662198518e2",
+    "temporary_profiles_removed":  true,
+    "executor":  {
+                     "expiry":  "0",
+                     "secret_names":  [
+
+                                      ],
+                     "previews":  false,
+                     "closed_active_version":  "214f9e26-5b51-46bc-b751-1f154a25e781",
+                     "open_version":  "2573973f-1887-4605-b84f-7f87e7a670a0",
+                     "closed_deployment":  "280f47f5-0d99-4b4b-8f3f-4b4d2a369012",
+                     "workers_dev":  false
+                 },
+    "tunnel_stopped":  true,
+    "gateway":  {
+                    "secret_names":  [
+
+                                     ],
+                    "previews":  false,
+                    "workers_dev":  false,
+                    "expiry":  "0",
+                    "closed_latest_version":  "88fc89ae-63ed-49ce-b541-50660a378fdc"
+                }
+}
