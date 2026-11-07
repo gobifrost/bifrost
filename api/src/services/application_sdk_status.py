@@ -16,6 +16,7 @@ from src.services.sdk_package import (
     sdk_fingerprint,
     sdk_package_version,
     sdk_supported_binding_api_majors,
+    sdk_supported_contract_versions,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,6 +39,7 @@ class CurrentApplicationSdkMetadata:
     binding_api_major: int | None = None
     supported_binding_api_majors: frozenset[int] = frozenset()
     automatic_hosted_migration_from: frozenset[int] = frozenset()
+    supported_contract_versions: frozenset[int] = frozenset()
 
 
 class ApplicationSdkStatusInput(Protocol):
@@ -63,6 +65,7 @@ def current_sdk_metadata() -> CurrentApplicationSdkMetadata:
         binding_api_major=sdk_binding_api_major(),
         supported_binding_api_majors=sdk_supported_binding_api_majors(),
         automatic_hosted_migration_from=sdk_automatic_hosted_migration_contracts(),
+        supported_contract_versions=sdk_supported_contract_versions(),
     )
 
 
@@ -109,7 +112,11 @@ def application_sdk_status(
     ):
         return "unknown"
     if application.sdk_contract_version != current.contract_version:
-        return "update_required"
+        return (
+            "update_available"
+            if application.sdk_contract_version in current.supported_contract_versions
+            else "update_required"
+        )
     if application.sdk_fingerprint == current.fingerprint:
         if current.binding_api_major is not None:
             return "update_available"

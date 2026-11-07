@@ -446,8 +446,25 @@ function isEmbedToken(token: string): boolean {
 	}
 }
 
+// Client routing only: the server still authenticates every frame. A refresh
+// keeps the durable SID, while another login/family must get its own socket.
+function socketSessionKey(token: string | null): string | null {
+	if (!token) return null;
+	try {
+		const payload = JSON.parse(atob(token.split(".")[1].replace(/-/g, "+").replace(/_/g, "/")));
+		if (typeof payload.sub === "string" && typeof payload.sid === "string") {
+			return JSON.stringify([payload.sub, payload.sid]);
+		}
+		return null;
+	} catch {
+		return null;
+	}
+}
+
 class WebSocketService {
 	private ws: WebSocket | null = null;
+	private connectionSessionKey: string | null = null;
+	private connectionGeneration = 0;
 	private connectionPromise: Promise<void> | null = null;
 	private isConnecting = false;
 	private retryCount = 0;
@@ -518,6 +535,11 @@ class WebSocketService {
 	 * Connect to WebSocket with authentication
 	 */
 	async connect(channels: string[] = []): Promise<void> {
+		const sessionKey = socketSessionKey(getActiveToken());
+		if (this.connectionSessionKey !== sessionKey && (this.ws || this.isConnecting || this.connectionSessionKey !== null)) {
+			await this.disconnect();
+		}
+		this.connectionSessionKey = sessionKey;
 		channels.forEach((channel) => this.desiredChannels.add(channel));
 
 		// If already connected, just subscribe to new channels
@@ -534,20 +556,22 @@ class WebSocketService {
 		}
 
 		this.isConnecting = true;
-		this.connectionPromise = this._connect(
-			Array.from(this.desiredChannels),
-		);
-
+		const pending = this._connect(Array.from(this.desiredChannels));
+		this.connectionPromise = pending;
 		try {
-			await this.connectionPromise;
-			this.reconcileChannels(channels);
+			await pending;
+			if (this.connectionPromise === pending) this.reconcileChannels(channels);
 		} finally {
-			this.isConnecting = false;
-			this.connectionPromise = null;
+			if (this.connectionPromise === pending) {
+				this.isConnecting = false;
+				this.connectionPromise = null;
+			}
 		}
 	}
 
 	private async _connect(channels: string[]): Promise<void> {
+		let socket: WebSocket | null = null;
+		const generation = this.connectionGeneration;
 		try {
 			channels.forEach((channel) => this.pendingSubscriptions.add(channel));
 
@@ -572,16 +596,19 @@ class WebSocketService {
 
 			// Create WebSocket connection
 			// Note: Cookies (including access_token) are automatically sent by the browser
-			this.ws = new WebSocket(wsUrl);
+			socket = new WebSocket(wsUrl);
+			this.ws = socket;
 
 			// Set up WebSocket handlers
 			this.ws.onopen = () => {
+				if (this.ws !== socket) return;
 				this.retryCount = 0;
 				this.startPingInterval();
 				this.connectionStatusCallbacks.forEach((cb) => cb(true));
 			};
 
 			this.ws.onmessage = (event) => {
+				if (this.ws !== socket) return;
 				try {
 					const message = JSON.parse(event.data) as WebSocketMessage;
 					this.handleMessage(message);
@@ -594,10 +621,12 @@ class WebSocketService {
 			};
 
 			this.ws.onerror = (error) => {
+				if (this.ws !== socket) return;
 				console.error("[WebSocket] Error:", error);
 			};
 
 			this.ws.onclose = (event) => {
+				if (this.ws !== socket) return;
 				this.ws = null;
 				this.subscribedChannels.clear();
 				this.pendingSubscriptions.clear();
@@ -641,6 +670,10 @@ class WebSocketService {
 						},
 						{ once: true },
 					);
+					this.ws.addEventListener("close", () => {
+						clearTimeout(timeout);
+						reject(new Error("WebSocket closed before connection completed"));
+					}, { once: true });
 					this.ws.addEventListener(
 						"error",
 						(error) => {
@@ -652,6 +685,8 @@ class WebSocketService {
 				}
 			});
 		} catch (error) {
+			// Explicit disconnect/session replacement cancels the old attempt.
+			if (this.connectionGeneration !== generation) return;
 			console.error("[WebSocket] Failed to connect:", error);
 			this.ws = null;
 			throw error;
@@ -1510,10 +1545,14 @@ class WebSocketService {
 		this.pendingSubscriptions.clear();
 		this.subscribedChannels.clear();
 
-		if (this.ws) {
-			this.ws.close(1000, "Normal closure");
-			this.ws = null;
-		}
+		const socket = this.ws;
+		this.connectionGeneration++;
+		this.ws = null;
+		this.connectionSessionKey = null;
+		this.connectionPromise = null;
+		this.isConnecting = false;
+		this.userId = null;
+		socket?.close(1000, "Normal closure");
 	}
 
 	/**

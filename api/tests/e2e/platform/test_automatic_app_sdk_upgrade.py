@@ -13,7 +13,6 @@ import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
-from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -95,15 +94,11 @@ async def _store_source(app_id, deployment_id, files: dict[str, bytes]) -> None:
 
 
 async def test_automatic_upgrade_builds_once_and_keeps_recovery_artifacts(
-    e2e_client, platform_admin, async_session_factory, monkeypatch
+    e2e_client, platform_admin, async_session_factory
 ) -> None:
     """An eligible contract-2 App reaches current SDK through one live worker job."""
-    # Exercise one explicitly reviewed transition without enabling the first
-    # hosted-delivery release's automatic migration policy for real instances.
-    from shared import application_sdk_upgrades
-
-    target = replace(current_sdk_metadata(), automatic_hosted_migration_from=frozenset({2}))
-    monkeypatch.setattr(application_sdk_upgrades, "current_sdk_metadata", lambda: target)
+    target = current_sdk_metadata()
+    assert target.automatic_hosted_migration_from == frozenset({2})
     assert target.contract_version == 3
     assert target.automatic_upgrade_from == frozenset({2})
     assert target.fingerprint

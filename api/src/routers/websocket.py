@@ -60,6 +60,10 @@ from src.services.platform_job_access import (
     require_platform_job_access,
 )
 from src.services.service_access import can_access_service as service_access_allowed
+from src.services.websocket_auth_recovery import (
+    consume_auth_refresh_request,
+    request_legacy_websocket_refresh,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -1036,8 +1040,9 @@ async def _require_live_impersonation(websocket: WebSocket, user: UserPrincipal)
         # logout or expiry closes this socket before its next sensitive event;
         # the browser refreshes and reconnects with its current cookies.
         if await get_current_user_ws(websocket) is None:
-            await websocket.close(code=4001, reason="Authentication refresh required")
-            raise WebSocketDisconnect(code=4001)
+            code = 1012 if await request_legacy_websocket_refresh(websocket) else 4001
+            await websocket.close(code=code, reason="Authentication refresh required")
+            raise WebSocketDisconnect(code=code)
         return
     if not is_browser_impersonation(user):
         return
@@ -1057,6 +1062,8 @@ def _make_delivery_dispatcher(websocket: WebSocket, user: UserPrincipal):
                 manager.connections.pop(channel, None)
 
     async def dispatch(channel: str, payload: dict[str, Any]) -> None:
+        if await consume_auth_refresh_request(websocket, channel, payload):
+            return
         await _require_live_impersonation(websocket, user)
         # Table and file handlers own their visibility filtering and delivery.
         # A filtered message is not an authorization revocation, so it must not
@@ -1132,13 +1139,14 @@ async def websocket_connect(
             ...payload
         }
     """
-    # Authenticate via header (query params not supported for security)
+    # Authenticate through the shared header/query/cookie selector.
     user = await get_current_user_ws(websocket)
 
     if not user:
         # Must accept before closing, otherwise client sees HTTP 403
         await websocket.accept()
-        await websocket.close(code=4001, reason="Unauthorized")
+        code = 1012 if await request_legacy_websocket_refresh(websocket) else 4001
+        await websocket.close(code=code, reason="Unauthorized")
         return
 
     if user.embed and user.embed_kind == "form":

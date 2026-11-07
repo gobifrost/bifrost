@@ -63,6 +63,38 @@ afterEach(async () => {
 });
 
 describe("platform WebSocket authentication", () => {
+	it("reuses a rotated family and replaces another session without old frames", async () => {
+		const token = (sid: string, jti: string) => `header.${btoa(JSON.stringify({ sub: "person", sid, jti }))}.signature`;
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-a", "first"));
+		await webSocketService.connect(["execution:old"]);
+		const old = MockWebSocket.instances[0];
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-a", "rotated"));
+		await webSocketService.connect();
+		expect(MockWebSocket.instances).toHaveLength(1);
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-b", "fresh-login"));
+		await webSocketService.connect();
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(new URL(MockWebSocket.urls[1]).searchParams.getAll("channels")).toEqual([]);
+		old.onmessage?.({ data: JSON.stringify({ type: "connected", channels: [], userId: "old-person" }) } as MessageEvent);
+		expect(webSocketService.getUserId()).toBeNull();
+		MockWebSocket.instances[1].onmessage?.({ data: JSON.stringify({ type: "connected", channels: [], userId: "person" }) } as MessageEvent);
+		expect(webSocketService.getUserId()).toBe("person");
+		old.onclose?.({ code: 1000 } as CloseEvent);
+		expect(webSocketService.isConnected()).toBe(true);
+	});
+
+	it("replaces an in-flight previous session without canceling the new connection", async () => {
+		const token = (sid: string) => `header.${btoa(JSON.stringify({ sub: "person", sid }))}.signature`;
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("old-family"));
+		const oldConnection = webSocketService.connect(["execution:old"]);
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("new-family"));
+		const newConnection = webSocketService.connect(["execution:new"]);
+		await Promise.all([oldConnection, newConnection]);
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(new URL(MockWebSocket.urls[1]).searchParams.getAll("channels")).toEqual(["execution:new"]);
+		expect(webSocketService.isConnected()).toBe(true);
+	});
+
 	it("does not reconnect after a 4001 when session refresh fails", async () => {
 		vi.useFakeTimers();
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
