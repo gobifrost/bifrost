@@ -61,3 +61,7 @@ api/tmp/
 
 # Node modules (if any)
 node_modules/
+
+# Companion Pyodide build environments and captured experiments never enter images.
+spikes/cloudflare-pyodide/
+.cloudflare/

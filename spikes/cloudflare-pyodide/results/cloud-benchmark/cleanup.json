@@ -1,0 +1,16 @@
+{
+    "fresh_children":  5,
+    "closed_version":  "8268db76-7b21-44e5-8c74-4c6b6d577b89",
+    "incremental_cost_cap_usd":  0.1,
+    "secret_names":  [
+
+                     ],
+    "total_worker_http_requests":  16,
+    "observed_at":  "2026-11-03T00:25:02.1960950+00:00",
+    "expiry_ms":  1793667086056,
+    "open_version":  "840082e7-f2eb-4f1d-aa91-cc935a03ced2",
+    "closed_deployment":  "11dff682-9793-4e83-929d-167354a402f9",
+    "retired_guard_status":  404,
+    "maximum_invocations":  20,
+    "fixture_http_reservations":  15
+}

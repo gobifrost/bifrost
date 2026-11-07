@@ -1,0 +1,23 @@
+test_oversized_first_dispatch_is_rejected_before_native_bookkeeping (test_private_http_pool.PrivatePoolTests.test_oversized_first_dispatch_is_rejected_before_native_bookkeeping) ... FAIL
+
+======================================================================
+FAIL: test_oversized_first_dispatch_is_rejected_before_native_bookkeeping (test_private_http_pool.PrivatePoolTests.test_oversized_first_dispatch_is_rejected_before_native_bookkeeping)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_private_http_pool.py", line 108, in test_oversized_first_dispatch_is_rejected_before_native_bookkeeping
+    self.redis_write.assert_not_awaited()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/usr/local/lib/python3.14/unittest/mock.py", line 2471, in assert_not_awaited
+    raise AssertionError(msg)
+AssertionError: Expected _write_context_to_redis to not have been awaited. Awaited 1 times.
+
+----------------------------------------------------------------------
+Ran 1 test in 0.016s
+
+FAILED (failures=1)

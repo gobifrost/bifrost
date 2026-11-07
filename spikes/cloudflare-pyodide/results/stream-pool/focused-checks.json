@@ -1,0 +1,20 @@
+{
+    "scope":  "Framing-only focused checks; real engine/SDK evidence is v1.json",
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "image":  "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "python_command":  "docker run --rm --network none --cpus=0.5 --memory=256m --memory-swap=256m --pids-limit=32 --mount type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/inbox/stream-pool-v1,dst=/qualification,readonly --workdir /qualification --entrypoint python bifrost-test-api-dev:bifrost-test-7ddfac36 -m unittest -v test_invocation_stream",
+    "python_exit":  0,
+    "python_tests":  4,
+    "node_command":  "node --test spikes/cloudflare-pyodide/backend/invocation-stream.test.mjs",
+    "node_exit":  0,
+    "node_tests":  3,
+    "ruff_command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py invocation_stream.py test_invocation_stream.py",
+    "ruff_exit":  0,
+    "pyright_command":  "pyright invocation_stream.py test_invocation_stream.py",
+    "pyright_exit":  0,
+    "source_sha256":  {
+                          "invocation-stream.test.mjs":  "9c86e45e8bf45d18b0c7c7703f69d72845f6cd34f1cd50c71187a002bc06a899",
+                          "test_invocation_stream.py":  "9be0d1163dc4b5af264a069b98db3ef949613691c3dbb07d0aaafbb6f0e418a4"
+                      },
+    "cloud_invocations":  0
+}

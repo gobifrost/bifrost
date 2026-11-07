@@ -1,0 +1,65 @@
+"""Logical deadline delivery through upstream; never a physical settlement API."""
+import asyncio
+from datetime import datetime, timedelta, timezone
+
+from src.worker.remote.fencing import LeaseRef, remote_owner_context
+from src.worker.remote.ownership import owns_remote_session
+from src.worker.remote.protocol import CredentialRouteChanged
+
+
+async def report_expired_workflow(lease, consumer, execution):
+    """Consume/replay the upstream timeout envelope without releasing a handle.
+
+    Inputs belong to the trusted native parent. No guest/public deadline or
+    result-submission endpoint is introduced. Normal return means consumed
+    (possibly stale), not that this outcome won a race or provider work stopped.
+    Callback failure or owner replacement remains uncertain and propagates.
+    """
+    if consumer.owner_worker_id != lease.worker_id:
+        raise ValueError('Deadline consumer belongs to another worker')
+    if not await owns_remote_session(lease):
+        raise CredentialRouteChanged('Stale deadline owner')
+    if execution.timeout_seconds <= 0 or execution.started_at.tzinfo is None:
+        raise ValueError('A bounded trusted dispatch deadline is required')
+    deadline = execution.started_at + timedelta(seconds=execution.timeout_seconds)
+    if datetime.now(timezone.utc) < deadline:
+        raise ValueError('Original dispatch deadline has not expired')
+    # The same failure envelope used by ProcessPoolManager._report_timeout;
+    # persistence, authorization, revocation, logs and stale-result semantics
+    # remain in WorkflowExecutionConsumer. No physical metrics are invented.
+    result = execution.attach_transport_metadata({
+        'type': 'result', 'execution_id': execution.execution_id, 'success': False,
+        'error': f'Execution timed out after {execution.timeout_seconds}s',
+        'error_type': 'TimeoutError', 'duration_ms': int(execution.elapsed_seconds * 1000),
+    })
+    with remote_owner_context(LeaseRef(lease)):
+        await consumer._handle_result(result)
+    if not await owns_remote_session(lease):
+        raise CredentialRouteChanged('Owner replaced before deadline consumption receipt')
+
+
+async def supervise_attempt_deadline(lease, consumer, execution, collection, *, lease_at_cutoff=None):
+    """Own one original-deadline timer; never cancel the retained collection.
+
+    A successful collection before cutoff needs normal result reconciliation.
+    Failure/cancellation stays uncertain until the authorized cutoff. A timeout
+    delivery exception propagates; callers retain/replay through upstream.
+    This native transport task is neither a business queue nor HTTP waitUntil.
+    """
+    if not asyncio.isfuture(collection):
+        raise TypeError('Retained collection Task/Future required')
+    if execution.timeout_seconds <= 0 or execution.started_at.tzinfo is None:
+        raise ValueError('A bounded trusted dispatch deadline is required')
+    cutoff = execution.started_at + timedelta(seconds=execution.timeout_seconds)
+    timer = asyncio.create_task(asyncio.sleep(max(0, (cutoff - datetime.now(timezone.utc)).total_seconds())))
+    try:
+        await asyncio.wait((collection, timer), return_when=asyncio.FIRST_COMPLETED)
+        if (datetime.now(timezone.utc) < cutoff and not timer.done() and collection.done()
+            and not collection.cancelled() and collection.exception() is None):
+            return False
+        await timer
+        await report_expired_workflow(lease if lease_at_cutoff is None else lease_at_cutoff(), consumer, execution)
+        return True
+    finally:
+        timer.cancel()
+        await asyncio.gather(timer, return_exceptions=True)

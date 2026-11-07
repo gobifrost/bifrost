@@ -1,0 +1,23 @@
+test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches (test_private_http_pool.PrivatePoolTests.test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches) ... FAIL
+
+======================================================================
+FAIL: test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches (test_private_http_pool.PrivatePoolTests.test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_private_http_pool.py", line 262, in test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches
+    self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1,
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                     'uncertain started invocation lost native capacity')
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 1 : uncertain started invocation lost native capacity
+
+----------------------------------------------------------------------
+Ran 1 test in 0.047s
+
+FAILED (failures=1)

@@ -1,0 +1,175 @@
+{
+  "owner": "6e1d35f9-0847-466a-a570-f72fd16f9ed7",
+  "vmid": 128,
+  "source": "eee2a6faf23b3242b633e42b030d6959455a4593",
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "started_at_epoch": 1793517726.0889702,
+      "exit_code": 0,
+      "finished_at_epoch": 1793517796.1548638
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-a68d5ca1",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "started_at_epoch": 1793517796.1548672,
+      "exit_code": 0,
+      "finished_at_epoch": 1793517808.1757026
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-a68d5ca1",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-a68d5ca1-control-auth",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/eee2a6faf23b3242b633e42b030d6959455a4593/spikes/cloudflare-pyodide:/spike:ro",
+        "test-runner",
+        "python",
+        "/spike/backend/control-auth.py",
+        "--control-auth"
+      ],
+      "started_at_epoch": 1793517808.1757047,
+      "exit_code": 0,
+      "finished_at_epoch": 1793517817.1837077
+    }
+  ],
+  "cloud_invocations": 0,
+  "runtime_acceptance": false,
+  "wall_limit_seconds": 900,
+  "disk_used_guard_bytes": 25769803776,
+  "hard_guest_limits": {
+    "cpus": 2,
+    "memory_mib": 4096,
+    "swap": 0
+  },
+  "started_at_epoch": 1793517720.0019858,
+  "remote_test_executed": true,
+  "staged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "required_untracked_files": [],
+  "tree": "22802d5dc2f9dc8ba21bf44ec34f95b3061c7aa3",
+  "image": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "sidecar_pin_manifest": {
+    "observed_from": "Existing isolated laptop test images; metadata read only",
+    "target_verified": false,
+    "sidecars": {
+      "pgvector/pgvector:pg16": "pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a",
+      "redis:7-alpine": "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+      "edoburu/pgbouncer:latest": "edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d",
+      "chrislusf/seaweedfs:latest": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860"
+    },
+    "api_build": {
+      "dockerfile": "api/Dockerfile.dev",
+      "python_requirements": "requirements.lock",
+      "python_bootstrap": "requirements-piptools.lock",
+      "instruction": "Build from pinned public source and its digest-pinned base images; do not copy private caches or laptop credentials. Verify actual resolved digests before tests."
+    }
+  },
+  "sidecars_verified": [
+    {
+      "image_id": "sha256:f1447071e6c8449dcf4056aa0994c81d3566ce5ee232de36b04dc25696a116dd",
+      "pinned_digest": "pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a",
+      "platform": "linux/amd64",
+      "size": 445397497,
+      "tag": "pgvector/pgvector:pg16",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:98c6ca8f397f86e469be752c3e7ed5eb8b17f2479840cb69a2e413037038e9f4",
+      "pinned_digest": "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+      "platform": "linux/amd64",
+      "size": 39058931,
+      "tag": "redis:7-alpine",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:5b28fd5ba5b5455bded482d859bc40fec7e7e5318a75a48a51f60bac65728588",
+      "pinned_digest": "edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d",
+      "platform": "linux/amd64",
+      "size": 18086752,
+      "tag": "edoburu/pgbouncer:latest",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:17804fb097257c8c8ca9d57338ff756ee1f4312f40e1e521d62c1a1f8614b203",
+      "pinned_digest": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860",
+      "platform": "linux/amd64",
+      "size": 536372517,
+      "tag": "chrislusf/seaweedfs:latest",
+      "tag_absent_before_stage": true
+    }
+  ],
+  "project": "bifrost-test-a68d5ca1",
+  "fixture_sha256": {
+    "spikes/cloudflare-pyodide/backend/control-auth.py": "d7cb913997c80a4274736cb2c5e275c5219c6936fa3efa67373f596bd74d6bce"
+  },
+  "control_auth": {
+    "runtime": "live-isolated-upstream-control-auth",
+    "control_auth_probe": true,
+    "cloud_invocations": 0,
+    "actual_worker_invocations": 0,
+    "physical_termination_verified": false,
+    "inventory_sent": false,
+    "execution_admission_qualified": false,
+    "invalid_signature_close": 1008,
+    "invalid_signature_did_not_acquire_owner": true,
+    "signed_hello_generation": 1,
+    "nonce_replay_close": 1008,
+    "nonce_replay_did_not_advance_owner": true,
+    "signed_reconnect_generation": 2,
+    "superseded_socket_close": 1008,
+    "stale_generation_close": 1008,
+    "empty_handlers_preserved": true,
+    "remained_starting": true,
+    "claims_observed": 0,
+    "linux_templates_unstarted": true,
+    "signed_hello_material_retained": false,
+    "fixture_worker_cleanup_verified": true
+  },
+  "qualification_passed": true,
+  "owned_container_ids": [
+    "fcb5cf7c292a",
+    "aade69bf7c30",
+    "131cea1234e1",
+    "7841ff51f1eb",
+    "e15519ea5177",
+    "e0d94dbb327b",
+    "3562638e46ce",
+    "857b969c2e98",
+    "901cb4dd48c0"
+  ],
+  "cleanup_stop_exit": 0,
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 107.32670827582479,
+  "finished_at_epoch": 1793517827.3286965,
+  "artifacts": {
+    "phase-0.log": "5094ef52443e330574f09412a28653b6b84530e14ae532b0523355bc9fecf060",
+    "memory-samples.jsonl": "0b09d3c6594d68f98f688b73efb90a63704533fe01c0cc00f115638a67105100",
+    "phase-1.log": "cbb5122e711524c1d58bfa5769b6334c8050d0653f2de02d441eb97d707a87e2",
+    "phase-2.log": "b8d7556868c3ccd3cc690d9081b0e456c7dfa43709b767e8d68c7bfd08404a04"
+  }
+}

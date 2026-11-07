@@ -1,0 +1,19 @@
+{
+  "api_source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "runtime_engine_source": "f49d4ba99cebd24aa497f1244833b940e640885f",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "qualification_passed": false,
+  "running_after_cleanup": [],
+  "elapsed_seconds": 105.83581238705665,
+  "raw_receipt_sha256": "e17406a5e326e8ce3a3ba1398f046ca3def49f4901c5bffe0de63575cffc7108",
+  "command_exit_codes": [
+    0,
+    0,
+    0
+  ],
+  "contract_observations": {},
+  "launch_counts": [],
+  "attempts": [],
+  "provider_oom": false
+}

@@ -1,0 +1,20 @@
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+INFO:src.services.execution.simple_worker:[pool] No requirements.txt found
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+[template] INFO - Template process starting (PID=11, profile=workflow)
+[template] INFO - Template process starting (PID=12, profile=agent)
+[template] INFO - get_settings cache_info at scrub: currsize=0 (clean)
+[template] INFO - Scrubbed 8 env var(s) from template before fork: ['BIFROST_DATABASE_URL', 'BIFROST_DATABASE_URL_SYNC', 'BIFROST_REDIS_URL', 'BIFROST_S3_ACCESS_KEY', 'BIFROST_S3_SECRET_KEY', 'BIFROST_S3_ENDPOINT_URL', 'BIFROST_S3_BUCKET', 'BIFROST_S3_REGION']
+[template] INFO - settings cache primed with inert secret and Redis values, env vars removed
+[template] INFO - Virtual import hook installed
+[template] INFO - Template process ready — all dependencies loaded
+[template] INFO - Template process ready — all dependencies loaded
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+{"runtime": "actual-linux-launcher-bootstrap", "cloud_invocations": 0, "workflow_invocations": 0, "inventory_sent": false, "execution_admission_qualified": false, "pyodide_physical_termination_verified": false, "qualification_passed": true, "signed_session_generation": 1, "native_template_pids": [11, 12], "baseline_bytes": 332619776, "signed_owner_and_unadmitted_bootstrap_verified": true, "native_templates_stopped": true, "fixture_worker_cleanup_verified": true, "cgroup": {"memory.peak": "339484672\n", "memory.max": "2147483648\n", "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"}}

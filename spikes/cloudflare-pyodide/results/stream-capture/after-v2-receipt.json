@@ -1,0 +1,82 @@
+{
+  "source": "1017cca1795540f75b9781d87137822a4a42d685",
+  "overlay_sha256": {
+    "api/tests/unit/engine/test_stream_capture.py": "67c5e8e13c4433ba4f09921e87591946436de97a897b2f728cefde210734b598",
+    "api/src/services/execution/engine.py": "6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21"
+  },
+  "project": "bifrost-test-8e9f191a",
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/engine/test_stream_capture.py",
+        "tests/unit/engine/test_engine_token_redaction.py",
+        "tests/unit/engine/test_execution_contract.py",
+        "tests/unit/engine/test_runtime_log_lock.py",
+        "-q"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-8e9f191a",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "src/services/execution/engine.py",
+        "tests/unit/engine/test_stream_capture.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-8e9f191a",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "pyright",
+        "src/services/execution/engine.py",
+        "tests/unit/engine/test_stream_capture.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "phase": "after",
+  "cloud_invocations": 0,
+  "qualification_passed": true,
+  "junit": {
+    "cases": 37,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "expected_baseline_reproduced": false,
+  "running_after_cleanup": [],
+  "elapsed_seconds": 103.86616980005056
+}

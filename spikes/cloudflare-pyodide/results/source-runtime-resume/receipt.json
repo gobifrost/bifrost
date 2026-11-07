@@ -1,0 +1,131 @@
+{
+  "source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "guest": 128,
+  "network": "none",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "runtime_qualified": true,
+  "started_at_epoch": 1793553560.9237657,
+  "wall_limit_seconds": 180,
+  "container_limits": {
+    "cpus": 1,
+    "memory_mib": 1024,
+    "pids": 256
+  },
+  "bundle_cache": {
+    "source": "/opt/bifrost-tests/pyodide-ddf316c1/runs/publisher-bundle-build-v7/output/execroot/_main/bazel-out/k8-fastbuild/bin/src/pyodide/314.0.6/generated/pyodide.capnp.bin",
+    "sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+    "size_bytes": 13727600
+  },
+  "workerd_binary_sha256": "b6aff93fcc97091fa38b4ba78c172276349c4940000694c5baf382c218b8e6ee",
+  "wrapper_sha256": "9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7",
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-source-runtime-v1",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/home,dst=/isolated-home",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/qualification/workerd-with-cache.sh",
+    "--workdir",
+    "/spike",
+    "--env",
+    "HOME=/isolated-home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "node_modules/wrangler/bin/wrangler.js",
+    "dev",
+    "--local",
+    "--ip",
+    "127.0.0.1",
+    "--port",
+    "8810",
+    "--config",
+    "backend/wrangler.runtime-probe.jsonc"
+  ],
+  "container_id": "fefa21d617bf9c4b6de649e1bd445ad657f5390a42111f4a3404ff8dd613d977",
+  "server_ready": true,
+  "probe_command": [
+    "docker",
+    "exec",
+    "pyodide-ddf316c1-source-runtime-v1",
+    "node",
+    "-e",
+    "fetch('http://127.0.0.1:8810',{method:'POST',signal:AbortSignal.timeout(60000)}).then(async r=>console.log(JSON.stringify({status:r.status,body:await r.text()}))).catch(e=>{console.log(JSON.stringify({error_type:e.name}));process.exitCode=1})"
+  ],
+  "observer_exit": 0,
+  "response": {
+    "status": 200,
+    "body": "{\"pyodide\": \"314.0.6\", \"python\": [3, 14, 2], \"cache_tag\": \"cpython-314\", \"soabi\": \"cpython-314-wasm32-emscripten\", \"platform\": \"emscripten-5.0.3-wasm32\", \"pydantic\": \"2.14.2\", \"pydantic_core\": \"2.50.2\", \"validated\": {\"values\": [1, 2]}, \"invalid_rejected\": true}"
+  },
+  "abi": {
+    "pyodide": "314.0.6",
+    "python": [
+      3,
+      14,
+      2
+    ],
+    "cache_tag": "cpython-314",
+    "soabi": "cpython-314-wasm32-emscripten",
+    "platform": "emscripten-5.0.3-wasm32",
+    "pydantic": "2.14.2",
+    "pydantic_core": "2.50.2",
+    "validated": {
+      "values": [
+        1,
+        2
+      ]
+    },
+    "invalid_rejected": true
+  },
+  "state_before_stop": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 72311,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-01T17:19:22.180538413Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "state_after_stop": {
+    "Status": "exited",
+    "Running": false,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 0,
+    "ExitCode": 143,
+    "Error": "",
+    "StartedAt": "2026-11-01T17:19:22.180538413Z",
+    "FinishedAt": "2026-11-01T17:19:31.743900027Z"
+  },
+  "elapsed_seconds": 10.876559623982757,
+  "artifacts": {
+    "workerd-with-cache.sh": "9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7",
+    "runtime.log": "7ea7f1b0bf9a1afad0e2d8a003c87199797d93b83542f18a67e213870b2c0dea",
+    "probe.log": "e080b1b4d8a8b5babf42ed92e02f007100fe7771863c23e8c57372af738e0fd7"
+  }
+}

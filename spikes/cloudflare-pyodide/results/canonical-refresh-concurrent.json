@@ -1,0 +1,45 @@
+{
+  "container": "bifrost-pyodide-refresh-89e2b269-5c5f-4307-8741-3f09e920ac6c",
+  "scenario": "concurrent",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "error_type": "AssertionError",
+    "exception_chain": [
+      {
+        "error_type": "AssertionError",
+        "constraint": null,
+        "table": null,
+        "locations": [
+          "canonical-local.py:452",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:358"
+        ]
+      }
+    ],
+    "locations": [
+      "canonical-local.py:452",
+      "runners.py:205",
+      "runners.py:128",
+      "base_events.py:720",
+      "canonical-local.py:358"
+    ]
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "4e928cfd42b047dc8bf04dc80fb7d13e482af7e07bda8acbf7125ddd12944c31",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "1bd0075e66791d6d55625b807ee08ae829f877a034258698076c66b10a947f8b",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "53cd177ec818e1f5b89c72ec5e10030c87de0f24be3ef4335e36fbc21e9d90db",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "4e6c30fa818620ce6c5922a2191dd42baa2660216d7d54ae0c6536be41323df1",
+    "spikes/cloudflare-pyodide/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "spikes/cloudflare-pyodide/backend/pyodide_refresh.py": "fcebb39bc9f9bb029c59bf6f8f078c9eb15354d199720d5c52e285461f025f1b",
+    "spikes/cloudflare-pyodide/backend/pack-engine.py": "d376ed86e6f54a22f81cdd8097f20832a704eab3cc92fa16fb7aa604831f9754"
+  },
+  "payload_sha256": "344afbb5a62e39b2799a52789bbaecaf17d281e66583becb88818c25154b2eb4"
+}

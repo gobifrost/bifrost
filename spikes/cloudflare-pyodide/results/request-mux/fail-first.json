@@ -1,0 +1,14 @@
+{
+    "before_helper_sha256":  "29884f086cbe1d5432c0cee2fbdfaa26ace0935bcdbb23fa45998ebee850c66b",
+    "environment":  "CT128 native Python 3.14.8, network-disabled cached Docker, 0.25 CPU/512 MiB/64 PIDs",
+    "command":  "python -m unittest -v test_workflow_request_mux",
+    "v2_unit_disposition":  "Nine cases passed but the new ownership-race fixture did not retrieve its retained failed collection task. V3 explicitly awaits and asserts that retained failure; final unit run has no unobserved-task warning.",
+    "test_sha256":  "7d4032c9410ce23f70c36432021d5c8f5ff5122707d7ed877bd0762ca59d8b20",
+    "failures":  2,
+    "exit_code":  1,
+    "failing_tests":  [
+                          "test_generation_and_changed_duplicate_rejected_before_another_effect",
+                          "test_owner_rotation_before_collector_starts_refuses_effects"
+                      ],
+    "cases":  5
+}

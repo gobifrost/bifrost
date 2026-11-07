@@ -1,0 +1,9 @@
+{
+  "runtime": "local-workerd",
+  "test": "container termination during ten-second I/O",
+  "wall_ms": 4257,
+  "outcome": {
+    "error": "TypeError: fetch failed"
+  },
+  "durable_recovery": "not implemented; no authoritative execution was claimed"
+}

@@ -1,0 +1,20 @@
+Extracting Bazel installation...
+OpenJDK 64-Bit Server VM warning: Options -Xverify:none and -noverify were deprecated in JDK 13 and will likely be removed in a future release.
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+Computing main repo mapping: 
+INFO: Repo sqlite3+ defined by rule http_archive in @@bazel_tools//tools/build_defs/repo:http.bzl
+ERROR: /build/output/external/bazel_tools/tools/build_defs/repo/utils.bzl:270:21: An error occurred during the fetch of repository 'sqlite3+':
+   Traceback (most recent call last):
+	File "/build/output/external/bazel_tools/tools/build_defs/repo/http.bzl", line 217, column 32, in _http_archive_impl
+		remote_patches_info = patch(ctx)
+	File "/build/output/external/bazel_tools/tools/build_defs/repo/utils.bzl", line 270, column 21, in patch
+		fail("Error applying patch %s:\n%s%s" %
+Error in fail: Error applying patch @@//:patches/sqlite/0001-row-counts-plain.patch:
+bash: line 1: patch: command not found
+WARNING: Download from https://api.github.com/repos/google/perfetto/tarball/v58.2 failed: class java.net.SocketException Closed by interrupt
+WARNING: Download from https://api.github.com/repos/google/boringssl/tarball/0.20261020.0 failed: class java.net.SocketException Closed by interrupt
+ERROR: Error computing the main repository mapping: error during computation of main repo mapping: Error applying patch @@//:patches/sqlite/0001-row-counts-plain.patch:
+bash: line 1: patch: command not found

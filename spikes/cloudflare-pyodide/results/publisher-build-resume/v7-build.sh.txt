@@ -1,0 +1,7 @@
+#!/bin/sh
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update
+apt-get install -y --no-install-recommends clang=1:19.0-63 lld=1:19.0-63 libc++-dev=1:19.0-63 libc++abi-dev=1:19.0-63
+dpkg-query -W > /build/toolchain-packages.tsv
+exec /build/bazel --batch --host_jvm_args=-Xmx512m --host_jvm_args=-XX:ActiveProcessorCount=1 --output_user_root=/build/bazel-state --output_base=/build/output build //src/pyodide:pyodide.capnp.bin@rule@314.0.6 --jobs=1 --loading_phase_threads=1 --legacy_globbing_threads=1 --local_resources=memory=1024 --repository_cache=/build/repository-cache --downloader_config=/build/downloader.conf --remote_cache= --remote_executor=

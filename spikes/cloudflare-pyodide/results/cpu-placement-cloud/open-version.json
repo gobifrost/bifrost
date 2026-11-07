@@ -1,0 +1,19 @@
+{
+    "id":  "cd139623-a0a5-4374-b70f-176058397f50",
+    "limits":  {
+                   "cpu_ms":  1000
+               },
+    "compatibility_date":  "2026-10-30",
+    "created_on":  "2026-11-03T01:21:51.518592Z",
+    "source":  "cf_cli",
+    "module_hashes":  [
+                          {
+                              "name":  "entry.js",
+                              "content_type":  "application/javascript+module",
+                              "sha256":  "c4879ec8ad44ccfbf37e8ba0ab2bcbe333921e13c7f7deaa24e6d6318a691a99",
+                              "bytes":  6720
+                          }
+                      ],
+    "expiry":  "1793670698143",
+    "guard_binding_present":  true
+}

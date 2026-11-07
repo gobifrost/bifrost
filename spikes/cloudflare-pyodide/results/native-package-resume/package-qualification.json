@@ -1,0 +1,53 @@
+{
+  "source": "688e7a0f4f25aa8a280838da2a7d185740d2aa72",
+  "url": "https://github.com/pyodide/pyodide/releases/download/314.0.6/pyodide-core-314.0.6.tar.bz2",
+  "expected_sha256": "1016c31e39ce3764d9a418cbb491a392c802c1b86ccc1367f009f5c59bf8f5fd",
+  "runtime": "official-pyodide-on-node",
+  "cloudflare_runtime_qualified": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793548797.4902318,
+  "command": [
+    "docker",
+    "run",
+    "--name",
+    "pyodide-ddf316c1-package-qualification",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=128",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/pyodide-package-qualification-resume,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/python_modules,dst=/packages,readonly",
+    "--workdir",
+    "/qualification",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "qualify.mjs"
+  ],
+  "exit_code": 0,
+  "observed": {
+    "pyodide": "314.0.6",
+    "python": [
+      3,
+      14,
+      2
+    ],
+    "cache_tag": "cpython-314",
+    "soabi": "cpython-314-wasm32-emscripten",
+    "platform": "emscripten-5.0.3-wasm32",
+    "pydantic": "2.14.2",
+    "pydantic_core": "2.50.2",
+    "pyyaml": "6.0.3",
+    "checks": {
+      "int_coercion": true,
+      "strict_int_rejected": true,
+      "native_yaml": true,
+      "pydantic_model": true
+    }
+  },
+  "finished_at_epoch": 1793548804.382903
+}

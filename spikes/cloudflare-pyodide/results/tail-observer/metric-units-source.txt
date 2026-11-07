@@ -1,0 +1,2 @@
+7caf6dee5bfe9af1b7710ddf66222900007af080:src/workerd/api/trace.c++:222:      cpuTime(trace.cpuTime / kj::MILLISECONDS),
+7caf6dee5bfe9af1b7710ddf66222900007af080:src/workerd/api/trace.c++:223:      wallTime(trace.wallTime / kj::MILLISECONDS),

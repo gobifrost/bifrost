@@ -1,0 +1,86 @@
+test_acknowledged_tombstone_still_rejects_other_owner (test_attempt_journal_owners.RouteOwnerTests.test_acknowledged_tombstone_still_rejects_other_owner) ... FAIL
+test_another_launcher_cannot_retrieve_route_result (test_attempt_journal_owners.RouteOwnerTests.test_another_launcher_cannot_retrieve_route_result) ... FAIL
+test_another_live_worker_cannot_retrieve_route_result (test_attempt_journal_owners.RouteOwnerTests.test_another_live_worker_cannot_retrieve_route_result) ... FAIL
+test_other_owner_cannot_consume_or_acknowledge_terminal (test_attempt_journal_owners.RouteOwnerTests.test_other_owner_cannot_consume_or_acknowledge_terminal) ... FAIL
+test_retained_result_cannot_be_consumed_by_other_worker (test_attempt_journal_owners.RouteOwnerTests.test_retained_result_cannot_be_consumed_by_other_worker) ... FAIL
+test_same_launcher_reconnect_can_retrieve_and_acknowledge_once (test_attempt_journal_owners.RouteOwnerTests.test_same_launcher_reconnect_can_retrieve_and_acknowledge_once) ... ok
+
+======================================================================
+FAIL: test_acknowledged_tombstone_still_rejects_other_owner (test_attempt_journal_owners.RouteOwnerTests.test_acknowledged_tombstone_still_rejects_other_owner)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_journal_owners.py", line 48, in test_acknowledged_tombstone_still_rejects_other_owner
+    with self.assertRaisesRegex(ValueError, 'route owner conflict'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_another_launcher_cannot_retrieve_route_result (test_attempt_journal_owners.RouteOwnerTests.test_another_launcher_cannot_retrieve_route_result)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_journal_owners.py", line 33, in test_another_launcher_cannot_retrieve_route_result
+    with self.assertRaisesRegex(ValueError, 'route owner conflict'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_another_live_worker_cannot_retrieve_route_result (test_attempt_journal_owners.RouteOwnerTests.test_another_live_worker_cannot_retrieve_route_result)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_journal_owners.py", line 27, in test_another_live_worker_cannot_retrieve_route_result
+    with self.assertRaisesRegex(ValueError, 'route owner conflict'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_other_owner_cannot_consume_or_acknowledge_terminal (test_attempt_journal_owners.RouteOwnerTests.test_other_owner_cannot_consume_or_acknowledge_terminal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_journal_owners.py", line 40, in test_other_owner_cannot_consume_or_acknowledge_terminal
+    with self.assertRaisesRegex(ValueError, 'route owner conflict'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_retained_result_cannot_be_consumed_by_other_worker (test_attempt_journal_owners.RouteOwnerTests.test_retained_result_cannot_be_consumed_by_other_worker)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_journal_owners.py", line 61, in test_retained_result_cannot_be_consumed_by_other_worker
+    with self.assertRaisesRegex(ValueError, 'route owner conflict'):
+         ~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.025s
+
+FAILED (failures=5)

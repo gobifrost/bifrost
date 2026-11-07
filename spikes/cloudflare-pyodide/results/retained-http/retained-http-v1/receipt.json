@@ -1,0 +1,719 @@
+{
+  "api_source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "runtime_engine_source": "f49d4ba99cebd24aa497f1244833b940e640885f",
+  "project": "bifrost-test-5dc8d94e",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "qualification_passed": true,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "pyodide-ddf316c1-retained-http-v1",
+        "--network",
+        "bifrost-test-5dc8d94e_default",
+        "--network-alias",
+        "bifrost-pyodide-ddf316c1",
+        "--cpus=1",
+        "--memory=2g",
+        "--memory-swap=2g",
+        "--pids-limit=128",
+        "--label",
+        "com.docker.compose.project=bifrost-test-5dc8d94e",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/retained-http-v1,dst=/qualification",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/project/node_modules,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+        "--env",
+        "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+        "--env",
+        "HOME=/qualification/home",
+        "--env",
+        "CI=true",
+        "--env",
+        "WRANGLER_SEND_METRICS=false",
+        "--workdir",
+        "/qualification/project",
+        "--entrypoint",
+        "node",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "/qualification/project/node_modules/cf/bin/cf",
+        "dev"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/spikes/cloudflare-pyodide:/spike:ro",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/retained-http-v1:/qualification:ro",
+        "test-runner",
+        "python",
+        "/qualification/shared-native-pool.py",
+        "--retained-http"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "compose_sha256": "33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9",
+  "api_overlay_sha256": {
+    "api/src/worker/remote/protocol.py": "91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5",
+    "api/src/worker/remote/remote_pool.py": "dd14eb91761041a0f6ea6ea974295c2c610ad43c9e50e46dbb14028ef9f81789"
+  },
+  "dependency_image_id": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "packet_sha256": {
+    "ct128-retained-contract.py": "943bd00d4fb0765f92c315664c3f9d1d503a9f818f720afdc0915c6751a0c7b8",
+    "test_attempt_deadline.py": "88f3feb8e264f1ae215d68645127786879d7be8279f7d474c620d659fc11cca7",
+    "attempt_journal.py": "00fc58be27d921445b7f51934a8b29434b97998a1dc818733ba5e39c2edf4e09",
+    "test_attempt_journal_owners.py": "0e80934c4ef896a4ec5e6bb61022b413adf1836db35901e915141d7763ea190d",
+    "ct128-canonical-failure.py": "23bfd9a76360d8535e3c267cd6a4bb2f4dac036781d618c585726d6aea88f5d0",
+    "retained_http_fault.py": "ecb516033c67b7c83dcc8e53bb8f4b6df7c077172549caa512203deebb74ac6c",
+    "test_http_invocation.py": "2c98ec1972a585e61ee0aeb4f9007f8f4cc3d630c510f0b2d69b2134448765a8",
+    "http_invocation.py": "8d865526d58b5387d708ea6d0fbdd10b82618e133ad27e9da5bc8b14078591b4",
+    "workspace_prepare.py": "a91b2d9c0738afd42d77d8d4e9d3662217e2b1b06e47a0e56d0822635064fa99",
+    "module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "pyright-guest-fixtures.json": "77d2dde981aa6c3acbf32392ebe229846c4a76166e919ea09c92bac5d934faef",
+    "source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "test_private_http_pool.py": "0d546e60a3f8451616f9922fd2fe243b8dda52ba749de5c398ba212060337713",
+    "test_workspace_prepare.py": "2deb99514da3aa596f953621e8f45623c3b7dd8226970260771b0bcd6fc87406",
+    "task_cleanup.py": "ba97cbfdf25823e6324849d4571c3bb13ae2dd9c10eb16ca3fdad2e8856a906c",
+    "workflow_request_mux.py": "1fcb76b1f9e3d33937eacf4fa38cbb24a4c7891a7dbf2e6c6cc29446d7c74246",
+    "test_workflow_request_mux.py": "71509d49ab7da86deca256526e56c30311d8cab0882074e27104dd4f83c27ec0",
+    "attempt_deadline.py": "b03e447b326c009234c95ca77dc486991541901959659f3c91ace6c11336bd2d",
+    "shared-native-pool.py": "1dc47965eea76853f76a0c7ba6971ed859701134f0aad44fb314cfd5a5dd5090",
+    "canonical-local.py": "310a8b0f15acac9c807d44cfb641f2972ee9cd1d5bc1d36997103f016b7d291d",
+    "source-integrity-response.test.mjs": "041d28e949004791059123c04bfb544e92ac2ff0a58c1b72427697d357490547",
+    "test_attempt_delivery.py": "edea0ece3833cd982425bb3f5ada84e63b65d83feaef50a23fb98a66dbeaecd2",
+    "test_retained_http_fault.py": "490f7becca8fda4b246d1306e77e1fc630d5914c37b1a3b3aecd9b29e04c0e8a",
+    "invocation_stream.py": "c2ccd824555a03da1390ca0f2641ed1659804498bf88a0a6617fa805df24e0bd",
+    "private_http_pool.py": "bd183129b53a6e659031ee183ef6c668201844511366129416210b12d5ee51f8",
+    "project/probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "project/wrangler.config.ts": "f5b5a98a872023b96d441ecd24313bd0621a06fb128cefb35caf03db034b9845",
+    "project/package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "project/cloudflare.config.ts": "30b50080cf29ff3b38cc9811e9a0901d725eeaff1f3ee81ded80e27874305d3b",
+    "project/backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "project/backend/refresh-gate.mjs": "afdfb6205f633beb8482ad48176fab677ed022baca27118b22037bc1dc69f928",
+    "project/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "project/backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "project/backend/runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "project/backend/source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "project/backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "project/backend/invocation-stream.mjs": "a9203f4c5a371d4be8db4b9c7102edfa2619bc1180406f63ad5ea8af62a543d3",
+    "project/backend/authorized-local-entry.mjs": "a88f1b7948ca85e19aac86b4bdc5189f0768450ea73c98682752b338e9ec15c0",
+    "project/backend/generated-runtime.mjs": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+    "project/backend/fixture-admission.mjs": "b18189c8f77f1c8764b03fa228ef038d2ce7736e27b956294984905813da6133"
+  },
+  "shared_pool_result": {
+    "shared_native_pool_probe": true,
+    "cloud_invocations": 0,
+    "physical_termination_verified": false,
+    "launches": {
+      "12898dc2-c4f6-48f1-bdb8-06fe7f2c09bc": 1,
+      "ade7d5e7-bf89-43f1-845b-2f3afd287136": 1
+    },
+    "attempts": {
+      "12898dc2-c4f6-48f1-bdb8-06fe7f2c09bc": {
+        "label": "fails-first",
+        "canonical_status": "Failed",
+        "canonical_result": null,
+        "canonical_error": "shared fixture failed credential=[REDACTED]",
+        "persisted_logs": [
+          "shared label=fails-first credential=[REDACTED]",
+          "Traceback (most recent call last):",
+          "  File \"/session/metadata/src/services/execution/engine.py\", line 1671, in _execute_workflow_with_trace",
+          "    result = await _run_workflow_async()",
+          "             ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"/session/metadata/src/services/execution/engine.py\", line 1662, in _run_workflow_async",
+          "    return await func(**accepted_params)",
+          "           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+          "  File \"workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py\", line 32, in qualified",
+          "ValueError: shared fixture failed credential=[REDACTED]"
+        ],
+        "runtime_handle": "29bba2d6-2da7-4984-aecb-3bb5875ee438",
+        "route": "workflow:12898dc2-c4f6-48f1-bdb8-06fe7f2c09bc:27053104-2573-4dc7-b7b3-77d21555fff0",
+        "accepted_monotonic": null,
+        "terminal_monotonic": 3307499.998254477,
+        "evidence": {
+          "api_calls": [
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules/workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py",
+              "status": 200
+            },
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules-resolve",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 403
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables/pyodide-shared-925ab4dafd274a80a9006ff92a276ee3fails-first/documents/upsert",
+              "status": 404
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables",
+              "status": 201
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables/pyodide-shared-925ab4dafd274a80a9006ff92a276ee3fails-first/documents/upsert",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            }
+          ],
+          "result": {
+            "cache_expires_at": null,
+            "cached": false,
+            "duration_ms": 5429,
+            "error": "shared fixture failed credential=[REDACTED]",
+            "error_type": "ValueError",
+            "execution_context": {
+              "artifact_workspace_id": null,
+              "email": "token-cc9f0f0d@example.test",
+              "embed": {},
+              "execution_id": "12898dc2-c4f6-48f1-bdb8-06fe7f2c09bc",
+              "form_inputs": {},
+              "is_agent": false,
+              "is_function_key": false,
+              "is_platform_admin": false,
+              "name": "Person 7f96",
+              "organization": {
+                "id": "7f0e83ef-c95a-4ca5-90f2-f3bfc513a6b0",
+                "is_active": true,
+                "is_provider": false,
+                "name": "Token World 1808e531"
+              },
+              "parameters": {
+                "n": 7,
+                "peer_key": "shared-value-925ab4dafd274a80a9006ff92a276ee3succeeds-second",
+                "peer_scope": "8943b8b1-28d4-494b-b81f-9a8299c82e21"
+              },
+              "public_url": "https://test-api.invalid",
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              },
+              "scope": "7f0e83ef-c95a-4ca5-90f2-f3bfc513a6b0",
+              "startup": null,
+              "user_id": "b90792cf-2537-44ee-9866-dce506c76d96",
+              "workflow_deadline": "2026-11-03T09:33:32.394805+00:00",
+              "workflow_name": "token_c93593b1",
+              "workflow_timeout_seconds": 30
+            },
+            "execution_id": "12898dc2-c4f6-48f1-bdb8-06fe7f2c09bc",
+            "integration_calls": [],
+            "logs": [
+              {
+                "level": "warning",
+                "message": "shared label=fails-first credential=[REDACTED]",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.824999+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK] Traceback (most recent call last):",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.825999+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1671, in _execute_workflow_with_trace",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.827000+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]     result = await _run_workflow_async()",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.828000+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.828999+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1662, in _run_workflow_async",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.830000+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]     return await func(**accepted_params)",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.831000+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.832000+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK]   File \"workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py\", line 32, in qualified",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.832999+00:00"
+              },
+              {
+                "level": "info",
+                "message": "[TRACEBACK] ValueError: shared fixture failed credential=[REDACTED]",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.833999+00:00"
+              },
+              {
+                "level": "error",
+                "message": "Execution error: token_c93593b1",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.835000+00:00"
+              },
+              {
+                "level": "error",
+                "message": "ValueError: shared fixture failed credential=[REDACTED]",
+                "source": "workflow",
+                "timestamp": "2026-11-03T09:33:12.836000+00:00"
+              }
+            ],
+            "metrics": {
+              "code_hash": "eb66945d05c41b9c42ec79be4f361e0766a992f60729064ff0ce2101bf13d72d",
+              "cpu_system_seconds": null,
+              "cpu_total_seconds": null,
+              "cpu_user_seconds": null,
+              "peak_memory_bytes": null,
+              "peak_process_rss_bytes": null
+            },
+            "result": null,
+            "roi": null,
+            "status": "Failed",
+            "success": false,
+            "variables": {
+              "doc": {
+                "created_at": "2026-11-03T09:33:12.419064+00:00",
+                "created_by": "b90792cf-2537-44ee-9866-dce506c76d96",
+                "data": {
+                  "value": 70
+                },
+                "id": "proof",
+                "table_id": "916ca651-36d3-435f-9ffd-e6d484c2ea25",
+                "updated_at": "2026-11-03T09:33:12.419064+00:00",
+                "updated_by": "b90792cf-2537-44ee-9866-dce506c76d96"
+              },
+              "fresh": {
+                "builtins": null,
+                "environment": null,
+                "filesystem": null,
+                "module": null
+              },
+              "marker": "<PosixPath>",
+              "n": 7,
+              "peer_key": "shared-value-925ab4dafd274a80a9006ff92a276ee3succeeds-second",
+              "peer_scope": "8943b8b1-28d4-494b-b81f-9a8299c82e21",
+              "peer_status": 403,
+              "value": 42
+            },
+            "worker_id": "6cbbb080-4494-45c9-9277-c024d5dec49e"
+          },
+          "runtime_handle": "29bba2d6-2da7-4984-aecb-3bb5875ee438"
+        },
+        "access_after_terminal_status": 401,
+        "preparation": {
+          "observations": [
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules/workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py",
+              "status": 200
+            },
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules-resolve",
+              "status": 200
+            }
+          ],
+          "response_bytes": 2482,
+          "manifest": {
+            "workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py": "eb66945d05c41b9c42ec79be4f361e0766a992f60729064ff0ce2101bf13d72d",
+            "pyodide_helper_e50e331febea441782defdfe2414a0bb.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+          },
+          "original_content_hash": null
+        }
+      },
+      "ade7d5e7-bf89-43f1-845b-2f3afd287136": {
+        "label": "succeeds-second",
+        "canonical_status": "Success",
+        "canonical_result": {
+          "fresh": {
+            "module": null,
+            "builtins": null,
+            "filesystem": null,
+            "environment": null
+          },
+          "label": "succeeds-second",
+          "value": 78,
+          "credential": "[REDACTED]",
+          "peer_status": 403,
+          "parent_secret_present": false
+        },
+        "canonical_error": null,
+        "persisted_logs": [
+          "shared label=succeeds-second credential=[REDACTED]"
+        ],
+        "runtime_handle": "4827b1a9-e993-4a89-a4e4-d012847cde2e",
+        "route": "workflow:ade7d5e7-bf89-43f1-845b-2f3afd287136:d51cd7ee-24a3-4884-8731-21e3c8ce375b",
+        "accepted_monotonic": 3307499.435013139,
+        "terminal_monotonic": 3307500.149623243,
+        "evidence": {
+          "runtime_handle": "4827b1a9-e993-4a89-a4e4-d012847cde2e",
+          "result": {
+            "execution_id": "ade7d5e7-bf89-43f1-845b-2f3afd287136",
+            "success": true,
+            "status": "Success",
+            "result": {
+              "value": 78,
+              "label": "succeeds-second",
+              "fresh": {
+                "builtins": null,
+                "module": null,
+                "environment": null,
+                "filesystem": null
+              },
+              "peer_status": 403,
+              "parent_secret_present": false,
+              "credential": "[REDACTED]"
+            },
+            "error": null,
+            "error_type": null,
+            "duration_ms": 654,
+            "logs": [
+              {
+                "timestamp": "2026-11-03T09:33:13.059000+00:00",
+                "level": "warning",
+                "message": "shared label=succeeds-second credential=[REDACTED]",
+                "source": "workflow"
+              }
+            ],
+            "variables": {
+              "n": 8,
+              "peer_key": "shared-value-925ab4dafd274a80a9006ff92a276ee3fails-first",
+              "peer_scope": "7f0e83ef-c95a-4ca5-90f2-f3bfc513a6b0",
+              "marker": "<PosixPath>",
+              "fresh": {
+                "builtins": null,
+                "module": null,
+                "environment": null,
+                "filesystem": null
+              },
+              "peer_status": 403,
+              "value": 42,
+              "doc": {
+                "id": "proof",
+                "table_id": "f2915b78-eb25-456e-a623-ec70270be5d2",
+                "data": {
+                  "value": 78
+                },
+                "created_at": "2026-11-03T09:33:12.496380+00:00",
+                "updated_at": "2026-11-03T09:33:12.496380+00:00",
+                "created_by": "b8554849-91da-4c64-9d79-317281bc773b",
+                "updated_by": "b8554849-91da-4c64-9d79-317281bc773b"
+              }
+            },
+            "integration_calls": [],
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            },
+            "metrics": {
+              "peak_memory_bytes": null,
+              "peak_process_rss_bytes": null,
+              "cpu_user_seconds": null,
+              "cpu_system_seconds": null,
+              "cpu_total_seconds": null,
+              "code_hash": "3ab2ba8b1d2073fd8679246741e6821c4c4a4d4ade9ade43a2deb88eaa7de325"
+            },
+            "cached": false,
+            "cache_expires_at": null,
+            "execution_context": {
+              "user_id": "b8554849-91da-4c64-9d79-317281bc773b",
+              "email": "token-1fa34658@example.test",
+              "name": "Person cb12",
+              "scope": "8943b8b1-28d4-494b-b81f-9a8299c82e21",
+              "organization": {
+                "id": "8943b8b1-28d4-494b-b81f-9a8299c82e21",
+                "name": "Token World 67da1c6c",
+                "is_active": true,
+                "is_provider": false
+              },
+              "is_platform_admin": false,
+              "is_function_key": false,
+              "execution_id": "ade7d5e7-bf89-43f1-845b-2f3afd287136",
+              "workflow_deadline": "2026-11-03T09:33:37.497183+00:00",
+              "workflow_timeout_seconds": 30,
+              "workflow_name": "token_f53192ff",
+              "is_agent": false,
+              "artifact_workspace_id": null,
+              "public_url": "https://test-api.invalid",
+              "parameters": {
+                "n": 8,
+                "peer_key": "shared-value-925ab4dafd274a80a9006ff92a276ee3fails-first",
+                "peer_scope": "7f0e83ef-c95a-4ca5-90f2-f3bfc513a6b0"
+              },
+              "startup": null,
+              "form_inputs": {},
+              "embed": {},
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              }
+            },
+            "worker_id": "6cbbb080-4494-45c9-9277-c024d5dec49e"
+          },
+          "api_calls": [
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules/workflows/pyodide_qualification_c08d56c98e164b748bbc78f0ecc45650.py",
+              "status": 200
+            },
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules-resolve",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 403
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables/pyodide-shared-925ab4dafd274a80a9006ff92a276ee3succeeds-second/documents/upsert",
+              "status": 404
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables",
+              "status": 201
+            },
+            {
+              "method": "POST",
+              "path": "/api/tables/pyodide-shared-925ab4dafd274a80a9006ff92a276ee3succeeds-second/documents/upsert",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/runtime/logs",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            },
+            {
+              "method": "POST",
+              "path": "/api/sdk/config/get",
+              "status": 200
+            }
+          ]
+        },
+        "access_after_terminal_status": 401,
+        "preparation": {
+          "observations": [
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules/workflows/pyodide_qualification_c08d56c98e164b748bbc78f0ecc45650.py",
+              "status": 200
+            },
+            {
+              "method": "GET",
+              "path": "/api/sdk/modules-resolve",
+              "status": 200
+            }
+          ],
+          "response_bytes": 2519,
+          "manifest": {
+            "workflows/pyodide_qualification_c08d56c98e164b748bbc78f0ecc45650.py": "3ab2ba8b1d2073fd8679246741e6821c4c4a4d4ade9ade43a2deb88eaa7de325",
+            "pyodide_helper_c08d56c98e164b748bbc78f0ecc45650.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+          },
+          "original_content_hash": null
+        }
+      }
+    },
+    "workspace_sha256": {
+      "pyodide_helper_e50e331febea441782defdfe2414a0bb.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4",
+      "pyodide_helper_c08d56c98e164b748bbc78f0ecc45650.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4",
+      "workflows/pyodide_qualification_e50e331febea441782defdfe2414a0bb.py": "eb66945d05c41b9c42ec79be4f361e0766a992f60729064ff0ce2101bf13d72d",
+      "workflows/pyodide_qualification_c08d56c98e164b748bbc78f0ecc45650.py": "3ab2ba8b1d2073fd8679246741e6821c4c4a4d4ade9ade43a2deb88eaa7de325"
+    },
+    "worker_id": "6cbbb080-4494-45c9-9277-c024d5dec49e",
+    "credential_free_prewarm": true,
+    "invalid_preparation_credential_status": 401,
+    "native_busy_counts": [
+      2,
+      2,
+      1,
+      0
+    ],
+    "both_real_sdk_effects_held_concurrently": true,
+    "stale_terminal_owner_rejected": true,
+    "retained_http_preack_loss_verified": true,
+    "parent_accepted_observed": false,
+    "original_collection_error_type": "ReadError",
+    "retained_posts": 1,
+    "retained_collector_eof_complete": true,
+    "canonical_peer_accounting_verified": true,
+    "failed_replay_unchanged_verified": true,
+    "peer_live_after_failure_reconcile": true,
+    "failed_access_status": 401,
+    "peer_access_status": 200,
+    "duplicate_dispatch_reused_peer": true,
+    "lost_ack_reconnect_verified": true,
+    "automatic_terminal_delivery_verified": true,
+    "canonical_settled_accounting_verified": true,
+    "single_native_pool_verified": true,
+    "terminal_obligations_released": true,
+    "canonical_terminal_reconciliation_verified": true,
+    "mux_retired_after_canonical_ack": true,
+    "reusable_private_adapter_verified": true,
+    "api_preparation_verified": true,
+    "fixture_worker_cascade_cleanup_verified": true
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 1994007,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T09:32:47.499098347Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 73.60765722114593
+}

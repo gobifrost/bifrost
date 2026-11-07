@@ -1,0 +1,52 @@
+{
+    "id":  "1ff3251d-6947-4f5e-a8bf-fd7c6fd7db19",
+    "number":  41,
+    "startup_time_ms":  2,
+    "limits":  {
+                   "cpu_ms":  1000
+               },
+    "compatibility_date":  "2026-10-30",
+    "main_module":  "entry.js",
+    "annotations":  {
+                        "workers/triggered_by":  "secret"
+                    },
+    "usage_model":  "standard",
+    "urls":  [
+
+             ],
+    "source":  "cf_cli",
+    "created_on":  "2026-11-03T02:11:20.620284Z",
+    "bindings":  [
+                     {
+                         "environment":  "production",
+                         "name":  "DEV_API",
+                         "service":  "bifrost-pyodide-dev-ui-ddf316c1",
+                         "type":  "service"
+                     },
+                     {
+                         "name":  "DEV_EXPIRES_AT",
+                         "text":  "0",
+                         "type":  "plain_text"
+                     },
+                     {
+                         "name":  "LOADER",
+                         "type":  "worker_loader"
+                     }
+                 ],
+    "env":  {
+                "DEV_API":  {
+                                "environment":  "production",
+                                "service":  "bifrost-pyodide-dev-ui-ddf316c1",
+                                "type":  "service"
+                            },
+                "DEV_EXPIRES_AT":  {
+                                       "text":  "0",
+                                       "type":  "plain_text"
+                                   },
+                "LOADER":  {
+                               "type":  "worker_loader"
+                           }
+            },
+    "author_id":  "179219b0ec33c82d138b8200ef49809f",
+    "author_email":  "thomas@midtowntg.com"
+}

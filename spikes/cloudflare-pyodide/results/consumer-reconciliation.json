@@ -1,0 +1,23 @@
+{
+  "baseline_head": "f8cc75e451a304c1a9e8084d898bf8badb536e75",
+  "environment": "isolated Docker PostgreSQL and Redis test stack bifrost-test-79c5c14e",
+  "command": "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -q",
+  "tests": 10,
+  "failures": 0,
+  "errors": 0,
+  "duration_seconds": 12.41,
+  "canonical_consumer_used": true,
+  "fixture_claims": true,
+  "canonical_claim_acquisition_verified": false,
+  "canonical_claim_release_verified": false,
+  "physical_launch": "deterministic fixture callback",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "failure_window": "after full consumer completion, before journal ACK",
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "5a2e1cec90b7a85df07e9e5e5b8691bfaae1dbab6fc2264fb89468c998d08c9d",
+    "api/tests/unit/dev/test_pyodide_attempt_journal.py": "d618e78c36c017739ba3bd4b81b4d8381b21ebd674d2dec340f2773f17609b23"
+  },
+  "quality_command": "./test.sh quality api",
+  "quality_result": "exit 0; Pyright 0 errors/0 warnings; Ruff all checks passed"
+}

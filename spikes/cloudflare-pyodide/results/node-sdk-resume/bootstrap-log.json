@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/lib/python314.zip/_pyodide/_base.py", line 597, in eval_code_async
+    await CodeRunner(
+    ...<9 lines>...
+    .run_async(globals, locals)
+  File "/lib/python314.zip/_pyodide/_base.py", line 411, in run_async
+    coroutine = eval(self.code, globals, locals)
+  File "<exec>", line 4, in <module>
+ModuleNotFoundError: No module named 'runtime_runner'
+

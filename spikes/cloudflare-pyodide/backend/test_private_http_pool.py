@@ -1,0 +1,693 @@
+"""Native adapter/framing tests; real engine/SDK qualification is separate."""
+import asyncio
+import copy
+import json
+from types import SimpleNamespace
+from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+import httpx
+
+from http_invocation import HttpInvocation
+from private_http_pool import PrivateHttpWorkflowPool
+from src.worker.remote.protocol import CredentialRouteChanged
+from test_runtime_inventory import probe as inventory_probe
+
+CLIENT = httpx.AsyncClient
+
+
+class Frames(httpx.AsyncByteStream):
+    def __init__(self, run, ack, finish, *, lose=False):
+        self.run, self.ack, self.finish, self.lose = run, ack, finish, lose
+
+    async def __aiter__(self):
+        await self.ack.wait()
+        handle = 'invocation:' + self.run
+        accepted = {'protocol': 1, 'type': 'accepted', 'execution_id': self.run, 'runtime_handle': handle}
+        yield (json.dumps(accepted) + '\n').encode()
+        await self.finish.wait()
+        if self.lose:
+            raise httpx.ReadError('Synthetic stream loss')
+        yield (json.dumps({**accepted, 'type': 'result', 'evidence': {'runtime_handle': handle,
+            'result': {'execution_id': self.run, 'success': True, 'result': {'value': 7}}}}) + '\n').encode()
+
+
+class PrivatePoolTests(IsolatedAsyncioTestCase):
+    async def asyncSetUp(self):
+        self.worker, self.run = uuid4(), str(uuid4())
+        self.ref = SimpleNamespace(lease=SimpleNamespace(worker_id=self.worker, launcher_id=uuid4(),
+                                                       session_generation=1, credential_protocol=2))
+        self.owner = self.enterContext(patch('private_http_pool.owns_remote_session', new_callable=AsyncMock, return_value=True))
+        self.journal_owner = self.enterContext(patch('attempt_journal.owns_remote_session', new_callable=AsyncMock, return_value=True))
+        self.enterContext(patch('src.worker.remote.ownership.owns_remote_session', new_callable=AsyncMock, return_value=True))
+        self.callback = AsyncMock()
+        self.pool = PrivateHttpWorkflowPool(endpoint='https://worker.invalid/', worker_id=self.worker,
+            lease_ref=self.ref, memory_sample=lambda: (100, 2**30), memory_request_bytes=lambda _key: 1024,
+            on_result=self.callback, capacity=2)
+        self.redis_write = self.enterContext(patch.object(self.pool.native, '_write_context_to_redis', new_callable=AsyncMock))
+        self.enterContext(patch.object(self.pool.native, '_write_active_execution_lease', new_callable=AsyncMock))
+        self.manifest = {'workflows/test.py': 'a' * 64}
+        self.context = {'execution_id': self.run, 'file_path': 'workflows/test.py', 'function_name': 'run',
+                        'content_hash': 'a' * 64, 'timeout_seconds': 30, 'engine_token': 'synthetic-only-token'}
+        self.active = {'execution_id': self.run, 'workflow_id': str(uuid4()), 'workflow_name': 'test',
+                       'org_id': None, 'user_id': str(uuid4()), 'user_name': 'test', 'user_email': 'test@example.test',
+                       'sync': False, 'event': None}
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['json'], packages={})
+
+    async def route(self, context=None, active=None):
+        await self.pool.route_execution(execution_id=self.run,
+            context=self.context if context is None else context,
+            active_execution=self.active if active is None else active, credential_route=self.pool.credential_route())
+
+    def provider(self, *, ack=None, finish=None, lose=False):
+        self.sent, self.started = [], asyncio.Event()
+        ack = ack or asyncio.Event()
+        finish = finish or asyncio.Event()
+
+        def handle(request):
+            # Transport receipt exists before the first physical POST.
+            self.assertEqual(self.pool.journal.inventory()[0]['execution_id'], self.run)
+            self.sent.append(json.loads(request.content))
+            self.started.set()
+            return httpx.Response(200, headers={'Content-Type': 'application/x-ndjson'},
+                                  stream=Frames(self.run, ack, finish, lose=lose))
+
+        self.enterContext(patch('http_invocation.httpx.AsyncClient',
+            side_effect=lambda **kw: CLIENT(transport=httpx.MockTransport(handle), **kw)))
+        return ack, finish
+
+    async def test_refusals_precede_native_bookkeeping(self):
+        for change in [{'content_hash': None}, {'content_hash': 'b' * 64}, {'code': ''},
+                       {'timeout_seconds': 31}, {'is_platform_admin': True}]:
+            with self.subTest(change=change), self.assertRaises(ValueError):
+                await self.route({**self.context, **change})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        for manifest in [{'../escape.py': 'a' * 64}, {'/absolute.py': 'a' * 64}, {'ok.py': 'invalid'}]:
+            with self.assertRaises(ValueError):
+                self.pool.bind_manifest(str(uuid4()), manifest, requirements=[], packages={})
+        with self.assertRaises(ValueError):
+            PrivateHttpWorkflowPool(endpoint='http://other.invalid', worker_id=self.worker, lease_ref=self.ref,
+                memory_sample=lambda: (100, 1000), memory_request_bytes=lambda _key: 1,
+                on_result=self.callback, capacity=1)
+
+    async def test_unsupported_declared_capabilities_refused_before_binding_or_dispatch(self):
+        execution_id = str(uuid4())
+        for requirements in [['custom-ca'], ['mtls'], ['http-proxy'], ['unix-sockets'],
+                             ['subprocess'], ['platform-fetch-https', 'custom-ca'],
+                             'platform-fetch-https', [None], ['platform-fetch-https'] * 33,
+                             ['json', 'json']]:
+            with self.subTest(requirements=requirements, packages={}), self.assertRaises(ValueError):
+                self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+            self.assertNotIn(execution_id, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_requirement_declaration_is_explicit_snapshotted_and_cannot_rebind(self):
+        execution_id = str(uuid4())
+        with self.assertRaises(TypeError):
+            self.pool.bind_manifest(execution_id, self.manifest, packages={})
+        requirements = ['pinned-workspace', 'json']
+        self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+        requirements.append('custom-ca')
+        self.assertEqual(self.pool._plans[execution_id]['requirements'], ('json', 'pinned-workspace'))
+        with self.assertRaises(RuntimeError):
+            self.pool.bind_manifest(execution_id, self.manifest, requirements=[], packages={})
+        self.redis_write.assert_not_awaited()
+
+    async def test_direct_https_requirement_is_refused_by_api_only_transport(self):
+        execution_id = str(uuid4())
+        for requirements in [['platform-fetch-https'], ['bifrost-http-sdk', 'platform-fetch-https']]:
+            with self.subTest(requirements=requirements), self.assertRaises(ValueError):
+                self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+            self.assertNotIn(execution_id, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        self.assertEqual(self.pool.native.processes, {})
+
+    async def test_api_sdk_requirement_declaration_remains_supported(self):
+        execution_id = str(uuid4())
+        requirements = ['json', 'async-workflow', 'pinned-workspace', 'bifrost-http-sdk']
+        self.pool.bind_manifest(execution_id, self.manifest, requirements=requirements, packages={})
+        self.assertEqual(self.pool._plans[execution_id]['requirements'], tuple(sorted(requirements)))
+
+    def configure_https(self):
+        org = str(uuid4())
+        policies = {'synthetic-vendor': {'org_id': org, 'origins': ['https://vendor.example'], 'max_requests': 6}}
+        self.pool = PrivateHttpWorkflowPool(endpoint='https://worker.invalid/', worker_id=self.worker,
+            lease_ref=self.ref, memory_sample=lambda: (100, 2**30), memory_request_bytes=lambda _key: 1024,
+            on_result=self.callback, capacity=2, https_policies=policies)
+        self.redis_write = self.enterContext(patch.object(self.pool.native, '_write_context_to_redis', new_callable=AsyncMock))
+        self.enterContext(patch.object(self.pool.native, '_write_active_execution_lease', new_callable=AsyncMock))
+        self.context['organization'] = {'id': org}
+        self.active['org_id'] = org
+        return policies
+
+    async def test_trusted_https_policy_is_snapshotted_and_sent_once_with_attempt(self):
+        policies = self.configure_https()
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['json', 'platform-fetch-https'],
+                                packages={}, https_policy_id='synthetic-vendor')
+        policies['synthetic-vendor']['origins'].append('https://attacker.example')
+        policies['synthetic-vendor']['org_id'] = str(uuid4())
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        await self.route()
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0]['https_policy'], {'policy_id': 'synthetic-vendor',
+            'execution_id': self.run, 'org_id': self.context['organization']['id'],
+            'origins': ['https://vendor.example'], 'max_requests': 6})
+        await self.pool.retire()
+
+    async def test_https_policy_requires_matching_declaration_and_known_host_policy(self):
+        self.configure_https()
+        for requirements, policy in [(['json'], 'synthetic-vendor'), (['platform-fetch-https'], None),
+                                     (['platform-fetch-https'], 'unknown')]:
+            with self.subTest(requirements=requirements, policy=policy), self.assertRaises(ValueError):
+                self.pool.bind_manifest(self.run, self.manifest, requirements=requirements,
+                                        packages={}, https_policy_id=policy)
+            self.assertNotIn(self.run, self.pool._plans)
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_https_tenant_mismatch_refused_before_native_or_transport_effects(self):
+        self.configure_https()
+        self.pool.bind_manifest(self.run, self.manifest, requirements=['platform-fetch-https'],
+                                packages={}, https_policy_id='synthetic-vendor')
+        for context, active in [({**self.context, 'organization': {'id': str(uuid4())}}, self.active),
+                                (self.context, {**self.active, 'org_id': str(uuid4())})]:
+            with self.assertRaises(ValueError):
+                await self.route(context, active)
+        self.redis_write.assert_not_awaited()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_package_requirements_refuse_before_binding_and_freeze_observed_match(self):
+        execution_id = str(uuid4())
+        with self.assertRaises(ValueError):
+            self.pool.bind_manifest(execution_id, self.manifest, requirements=[], packages={'httpx': '1.0.0'})
+        self.pool.bind_runtime_inventory(inventory_probe())
+        for packages in [{'missing': '1.0.0'}, {'httpx': 'wrong'}, None]:
+            with self.subTest(packages=packages), self.assertRaises(ValueError):
+                self.pool.bind_manifest(execution_id, self.manifest, requirements=[], packages=packages)
+            self.assertNotIn(execution_id, self.pool._plans)
+        packages = {'HTTPX': '1.0.0'}
+        self.pool.bind_manifest(execution_id, self.manifest, requirements=[], packages=packages)
+        packages['HTTPX'] = 'changed'
+        self.assertEqual(self.pool._plans[execution_id]['packages'], {'httpx': '1.0.0'})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_bound_runtime_inventory_is_read_only_and_does_not_enable_native_startup(self):
+        observed = inventory_probe()
+        self.pool.bind_runtime_inventory(observed)
+        observed['packages'][0]['version'] = 'changed'
+        packages = await self.pool.native._remote_packages()
+        self.assertEqual(packages[0]['version'], '1.0.0')
+        packages[0]['version'] = 'also changed'
+        self.assertEqual((await self.pool.native._remote_packages())[0]['version'], '1.0.0')
+        with self.assertRaises(RuntimeError):
+            await self.pool.native.transport.request('package_tool', {'operation': 'install', 'package': 'httpx'})
+        with self.assertRaises(ConnectionError):
+            await self.pool.native.start()
+        self.assertFalse(self.pool.native._started)
+        self.redis_write.assert_not_awaited()
+        with self.assertRaises(RuntimeError):
+            self.pool.bind_runtime_inventory(inventory_probe())
+
+    async def test_stale_physical_request_is_fenced_before_deadline_bookkeeping(self):
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=0)
+            start.assert_not_called()
+
+    async def test_lost_owner_physical_request_is_fenced_before_deadline_bookkeeping(self):
+        self.owner.return_value = False
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=1)
+            start.assert_not_called()
+
+    async def test_owner_rotation_during_physical_authority_check_precedes_deadline_bookkeeping(self):
+        async def rotate(_owner):
+            self.ref.lease = SimpleNamespace(**{**vars(self.ref.lease), 'session_generation': 2})
+            return True
+
+        self.owner.side_effect = rotate
+        with patch.object(self.pool, '_start_deadline') as start:
+            with self.assertRaises(CredentialRouteChanged):
+                await self.pool.native.transport.request('workflow', {'execution_id': self.run}, expected_generation=1)
+            start.assert_not_called()
+
+    async def test_prelaunch_refusal_keeps_failed_receipt_until_canonical_reconciliation(self):
+        self.provider()
+        self.owner.side_effect = [True, False]
+        redis = SimpleNamespace(delete=AsyncMock())
+        with patch.object(self.pool.native, '_get_redis', AsyncMock(return_value=redis)):
+            with self.assertRaises(CredentialRouteChanged):
+                await self.route()
+        attempt = self.pool.attempt(self.run)
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.receipt
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.delivery
+        self.assertEqual(self.sent, [])
+        self.assertEqual(attempt.launches, 0)
+        self.assertIsNone(attempt._deadline_task)
+        self.assertIsNone(self.pool.mux.collection(self.run))
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        redis.delete.assert_awaited_once()
+        self.callback.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory()[0]['collection_error_type'], 'CredentialRouteChanged')
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.owner.side_effect = None
+        self.owner.return_value = True
+        with self.assertRaises(CredentialRouteChanged):
+            await self.route()
+        self.assertIs(self.pool.attempt(self.run), attempt)
+        self.assertEqual(self.sent, [])
+        with self.assertRaisesRegex(RuntimeError, 'unacknowledged physical routes'):
+            await self.pool.retire()
+
+    async def test_retirement_closes_only_the_owned_native_redis_client(self):
+        client = SimpleNamespace(aclose=AsyncMock())
+        self.enterContext(patch.object(self.pool.native, '_redis', client))
+        await self.pool.retire()
+        client.aclose.assert_awaited_once()
+        self.assertIsNone(self.pool.native._redis)
+
+    async def make_no_send_refusal(self):
+        self.provider()
+        self.owner.side_effect = [True, False]
+        redis = SimpleNamespace(delete=AsyncMock())
+        with patch.object(self.pool.native, '_get_redis', AsyncMock(return_value=redis)):
+            with self.assertRaises(CredentialRouteChanged):
+                await self.route()
+        attempt = self.pool.attempt(self.run)
+        with self.assertRaises(CredentialRouteChanged):
+            await attempt.delivery
+        self.owner.side_effect = None
+        self.owner.return_value = True
+        return attempt
+
+    async def test_no_send_ack_is_explicit_and_preserves_failed_receipts_without_relaunch(self):
+        attempt = await self.make_no_send_refusal()
+        accept = AsyncMock(return_value=None)
+        self.assertFalse(await self.pool.acknowledge_refusal(self.run, accept))
+        accept.return_value = False
+        self.assertFalse(await self.pool.acknowledge_refusal(self.run, accept))
+        accept.side_effect = ConnectionError('Synthetic canonical ACK loss')
+        with self.assertRaises(ConnectionError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        accept.side_effect = None
+        accept.return_value = True
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, accept))
+        repeated = AsyncMock(return_value=True)
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, repeated))
+        repeated.assert_not_awaited()
+        for receipt in (attempt.receipt, attempt.delivery):
+            with self.assertRaises(CredentialRouteChanged):
+                await receipt
+        with self.assertRaises(CredentialRouteChanged):
+            await self.route()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        self.callback.assert_not_awaited()
+        await self.pool.retire()
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_no_send_ack_fences_before_and_after_canonical_callback(self):
+        await self.make_no_send_refusal()
+        accept = AsyncMock(return_value=True)
+        self.journal_owner.return_value = False
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        accept.assert_not_awaited()
+        self.journal_owner.return_value = True
+
+        async def replaced(_execution_id):
+            self.journal_owner.return_value = False
+            return True
+
+        accept.side_effect = replaced
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.journal_owner.return_value = True
+        self.ref.lease = SimpleNamespace(**{**vars(self.ref.lease), 'session_generation': 2})
+        accept.side_effect = None
+        self.assertTrue(await self.pool.acknowledge_refusal(self.run, accept))
+        await self.pool.retire()
+
+    async def test_no_send_ack_cannot_consume_a_started_or_completed_invocation(self):
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        accept = AsyncMock(return_value=True)
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept)
+        accept.assert_not_awaited()
+        await self.pool.retire()
+
+    async def test_owner_loss_at_receipt_reservation_never_starts_native_dispatch(self):
+        self.journal_owner.return_value = False
+        with self.assertRaises(CredentialRouteChanged):
+            await self.route()
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_oversized_first_dispatch_is_rejected_before_native_bookkeeping(self):
+        self.enterContext(patch.object(self.pool.native, '_get_redis',
+            new=AsyncMock(return_value=SimpleNamespace(delete=AsyncMock()))))
+        self.provider()
+        with self.assertRaises(ValueError):
+            await self.route({**self.context, 'parameters': {'blob': 'x' * 262144}})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.sent, [])
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        with self.assertRaises(KeyError):
+            self.pool.attempt(self.run)
+
+    async def test_escaped_unicode_is_budgeted_as_encoded_bytes_before_bookkeeping(self):
+        with self.assertRaises(ValueError):
+            await self.route({**self.context, 'parameters': {'blob': '\u6f22' * 50000}})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+        self.assertEqual(self.pool.mux.retained_count, 0)
+
+    async def test_combined_manifest_and_context_budget_precedes_bookkeeping(self):
+        self.run = str(uuid4())
+        manifest = {f'm{i}_' + 'x' * 490 + '.py': 'a' * 64 for i in range(128)}
+        self.pool.bind_manifest(self.run, manifest, requirements=['json'], packages={})
+        self.context.update(execution_id=self.run, file_path=next(iter(manifest)), parameters={'blob': 'x' * 200000})
+        self.active['execution_id'] = self.run
+        with self.assertRaises(ValueError):
+            await self.route()
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.journal.inventory(), [])
+
+    async def test_maximum_budget_request_is_not_replaced_by_a_smaller_context_limit(self):
+        context = {**self.context, 'parameters': {'blob': ''},
+                   'workflow_deadline': '9999-12-31T23:59:59.999999+00:00'}
+        envelope = {'mode': 'canonical', 'worker_id': str(self.worker), 'execution_id': self.run,
+                    'context': context, 'manifest': self.manifest}
+        _, empty = HttpInvocation.validated_request(envelope)
+        self.context['parameters'] = {'blob': 'x' * (262144 - len(empty))}
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        self.assertLessEqual(len(json.dumps(self.sent[0], separators=(',', ':')).encode()), 262144)
+        self.assertGreaterEqual(len(json.dumps(self.sent[0], separators=(',', ':')).encode()), 262137)
+        self.assertNotEqual(self.sent[0]['context']['workflow_deadline'], context['workflow_deadline'])
+        finish.set()
+        await self.pool.attempt(self.run).delivery
+        await self.pool.retire()
+
+    async def test_duplicate_snapshot_and_ack_retirement_use_actual_native_pool(self):
+        entered, release = asyncio.Event(), asyncio.Event()
+
+        async def consume(_result):
+            entered.set()
+            await release.wait()
+
+        self.callback.side_effect = consume
+        ack, finish = self.provider()
+        ack.set()
+        original, active = copy.deepcopy(self.context), copy.deepcopy(self.active)
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        self.assertNotIn('synthetic-only-token', repr(attempt))
+        self.context['engine_token'], self.active['sync'] = 'replacement', True
+        await self.route(original, active)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.sent[0]['context']['engine_token'], 'synthetic-only-token')
+        self.assertFalse(attempt.info.active_execution['sync'])
+        with self.assertRaises(ConnectionError):
+            await self.route(self.context, active)
+        finish.set()
+        await attempt.receipt
+        await entered.wait()
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        release.set()
+        self.assertEqual(await attempt.delivery, {'acknowledged': True})
+        self.callback.assert_awaited_once()
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        await self.pool.retire()
+        self.assertEqual(self.pool.mux.retained_count, 0)
+        with self.assertRaises(RuntimeError):
+            await self.route(original, active)
+
+    async def test_cancelled_routing_waiter_keeps_pre_dispatch_receipt_and_physical_task(self):
+        ack, finish = self.provider()
+        waiter = asyncio.create_task(self.route())
+        await self.started.wait()
+        attempt = self.pool.attempt(self.run)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        self.assertFalse(attempt.routed.cancelled())
+        self.assertEqual(self.pool.journal.inventory()[0]['collection_state'], 'pending')
+        ack.set()
+        await self.route()
+        finish.set()
+        await attempt.receipt
+        await attempt.delivery
+        self.assertEqual(len(self.sent), 1)
+        await self.pool.retire()
+
+    async def test_lost_stream_retains_failed_receipt_and_native_obligation_without_relaunch(self):
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaises(httpx.ReadError):
+            await attempt.receipt
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
+        accept_refusal = AsyncMock(return_value=True)
+        with self.assertRaises(ValueError):
+            await self.pool.acknowledge_refusal(self.run, accept_refusal)
+        accept_refusal.assert_not_awaited()
+        await self.route()
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        self.callback.assert_not_awaited()
+
+    async def test_failed_automatic_callback_retains_result_for_explicit_reconciliation(self):
+        ack, finish = self.provider()
+        ack.set()
+        self.callback.side_effect = ConnectionError('Synthetic ACK loss')
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaisesRegex(ConnectionError, 'Synthetic ACK loss'):
+            await attempt.delivery
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+        with self.assertRaises(RuntimeError):
+            await self.pool.retire()
+        self.callback.side_effect = None
+        self.assertTrue(await self.pool.reconcile(self.run))
+        self.assertEqual(len(self.sent), 1)
+        await self.pool.retire()
+
+    async def test_cancelled_delivery_waiter_does_not_cancel_reporting(self):
+        ack, finish = self.provider()
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+
+        async def wait():
+            return await attempt.delivery
+
+        waiter = asyncio.create_task(wait())
+        await asyncio.sleep(0)
+        waiter.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await waiter
+        finish.set()
+        self.assertEqual(await attempt.delivery, {'acknowledged': True})
+        self.callback.assert_awaited_once()
+        await self.pool.retire()
+
+    async def test_persistent_service_uses_native_profile_refusal_before_effects(self):
+        with self.assertRaisesRegex(RuntimeError, 'persistent services'):
+            await self.pool.route_service(service_id='service', attempt_id='attempt', lease_token='lease', context={})
+        self.redis_write.assert_not_awaited()
+        self.assertEqual(self.pool.native.service_processes, {})
+
+    async def test_retained_terminal_adoption_keeps_failed_receipt_and_recovers_lost_ack(self):
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
+        evidence = {'runtime_handle': attempt.invocation.runtime_handle,
+                    'result': {'execution_id': self.run, 'success': True, 'result': 7}}
+        self.callback.side_effect = ConnectionError('Synthetic retained ACK loss')
+        with self.assertRaisesRegex(ConnectionError, 'retained ACK loss'):
+            await self.pool.reconcile_retained(self.run, evidence)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+        self.assertFalse(self.pool.journal.inventory()[0]['acknowledged'])
+        with self.assertRaises(ValueError):
+            await self.pool.reconcile_retained(self.run, {**evidence, 'result': {**evidence['result'], 'result': 9}})
+        self.callback.side_effect = None
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        self.assertEqual(self.callback.await_count, 2)
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        with self.assertRaises(httpx.ReadError):
+            await attempt.receipt
+        await self.pool.retire()
+
+    async def test_retained_terminal_refuses_wrong_identity_and_stale_owner_before_callback(self):
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        await self.route()
+        attempt = self.pool.attempt(self.run)
+        finish.set()
+        with self.assertRaises(httpx.ReadError):
+            await attempt.delivery
+        result = {'execution_id': self.run, 'success': True}
+        for evidence in [
+            {'runtime_handle': 'another-handle', 'result': result},
+            {'runtime_handle': attempt.invocation.runtime_handle, 'result': {**result, 'execution_id': str(uuid4())}},
+            {'runtime_handle': attempt.invocation.runtime_handle, 'result': {**result, 'success': 'yes'}},
+        ]:
+            with self.assertRaises(ValueError):
+                await self.pool.reconcile_retained(self.run, evidence)
+        evidence = {'runtime_handle': attempt.invocation.runtime_handle, 'result': result}
+        self.owner.return_value = False
+        with self.assertRaises(CredentialRouteChanged):
+            await self.pool.reconcile_retained(self.run, evidence)
+        self.callback.assert_not_awaited()
+        self.assertIsNone(attempt.retained_fingerprint)
+        self.owner.return_value = True
+        self.assertTrue(await self.pool.reconcile_retained(self.run, evidence))
+        await self.pool.retire()
+
+    async def test_original_deadline_reports_before_launch_ack_without_releasing_capacity(self):
+        self.context['timeout_seconds'] = 1
+        ack, finish = self.provider()
+        routing = asyncio.create_task(self.route())
+        await self.started.wait()
+        attempt = self.pool.attempt(self.run)
+        original = attempt.info.started_at
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            self.assertEqual(await attempt.deadline, {'expired': True})
+            self.assertFalse(routing.done())
+            self.assertFalse(attempt.settled.done())
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            self.assertEqual(self.callback.await_args.args[0]['error_type'], 'TimeoutError')
+            self.assertEqual(attempt.info.started_at, original)
+            with self.assertRaises(RuntimeError):
+                await self.pool.retire()
+            ack.set()
+            await routing
+            finish.set()
+            await attempt.delivery
+        self.assertEqual(len(self.sent), 1)
+        self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+        await self.pool.retire()
+
+    async def test_transport_loss_before_ack_retains_native_capacity_and_never_relaunches(self):
+        self.context['timeout_seconds'] = 1
+        sends = []
+        cleanup = AsyncMock()
+        self.enterContext(patch.object(self.pool.native, '_get_redis',
+            new=AsyncMock(return_value=SimpleNamespace(delete=cleanup))))
+
+        def lose_before_ack(request):
+            sends.append(json.loads(request.content))
+            raise httpx.ReadError('Synthetic response lost before ACK')
+
+        self.enterContext(patch('http_invocation.httpx.AsyncClient',
+            side_effect=lambda **kw: CLIENT(transport=httpx.MockTransport(lose_before_ack), **kw)))
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            try:
+                await self.route()
+            except httpx.ReadError:
+                pass  # Expose the old definitive-failure path before the fix.
+            attempt = self.pool.attempt(self.run)
+            with self.assertRaises(httpx.ReadError):
+                await attempt.receipt
+            with self.assertRaises(httpx.ReadError):
+                await attempt.delivery
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1,
+                             'uncertain started invocation lost native capacity')
+            cleanup.assert_not_awaited()
+            await self.route()
+            self.assertEqual(len(sends), 1)
+            self.assertEqual(await attempt.deadline, {'expired': True})
+            self.assertEqual(self.callback.await_args.args[0]['error_type'], 'TimeoutError')
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            with self.assertRaises(RuntimeError):
+                await self.pool.retire()
+
+    async def test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts(self):
+        self.context['timeout_seconds'] = 1
+        ack, finish = self.provider(lose=True)
+        ack.set()
+        self.callback.side_effect = ConnectionError('Synthetic deadline receipt lost')
+        with patch('attempt_deadline.owns_remote_session', new_callable=AsyncMock, return_value=True):
+            await self.route()
+            attempt = self.pool.attempt(self.run)
+            finish.set()
+            with self.assertRaises(httpx.ReadError):
+                await attempt.delivery
+            with self.assertRaisesRegex(ConnectionError, 'deadline receipt lost'):
+                await attempt.deadline
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 1)
+            with self.assertRaises(ConnectionError):
+                await self.pool.reconcile_deadline(self.run)
+            self.callback.side_effect = None
+            await self.pool.reconcile_deadline(self.run)
+            evidence = {'runtime_handle': attempt.invocation.runtime_handle,
+                        'result': {'execution_id': self.run, 'success': True}}
+            error = None
+            try:
+                consumed = await self.pool.reconcile_retained(self.run, evidence)
+            except ConnectionError as exc:
+                error = type(exc).__name__
+                consumed = False
+            self.assertIsNone(error, 'recovered canonical deadline still blocks retained settlement')
+            self.assertTrue(consumed)
+            with self.assertRaisesRegex(ConnectionError, 'deadline receipt lost'):
+                await attempt.deadline
+            with self.assertRaises(httpx.ReadError):
+                await attempt.receipt
+            self.assertEqual(len(self.sent), 1)
+            self.assertEqual(self.pool.native._build_heartbeat()['busy_count'], 0)
+            await self.pool.retire()
+
+
+if __name__ == '__main__':
+    main()

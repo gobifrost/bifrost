@@ -1,0 +1,177 @@
+{
+  "cloud_invocations": 0,
+  "images": [
+    "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "sha256:98c6ca8f397f86e469be752c3e7ed5eb8b17f2479840cb69a2e413037038e9f4"
+  ],
+  "packet_sha256": {
+    "remote_pool.py.txt": "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+    "startup-redis-probe.py": "fd7801acab4f123f5139d12f5353b2fdd211278634523f0a8355ec597fdae16b",
+    "ct128-startup-redis.py": "9bdeb3ea3b512a62af580fa487d5f0d82912cf232be123b87fbdd128fc73eab7"
+  },
+  "command": [
+    "docker",
+    "run",
+    "--rm",
+    "--name",
+    "pyodide-ddf316c1-startup-redis-v2-test",
+    "--label",
+    "pyodide.owner=ddf316c1-startup-redis",
+    "--network",
+    "container:pyodide-ddf316c1-startup-redis-v2",
+    "--cpus=0.5",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=64",
+    "-v",
+    "/opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-redis-v2:/qualification:ro",
+    "-v",
+    "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api:/app:ro",
+    "-v",
+    "/opt/bifrost-tests/pyodide-ddf316c1/inbox/startup-redis-v2/remote_pool.py.txt:/app/src/worker/remote/remote_pool.py:ro",
+    "-v",
+    "/opt/bifrost-tests/pyodide-ddf316c1/runs/startup-redis-v2:/evidence",
+    "-e",
+    "PYTHONPATH=/app:/qualification",
+    "-e",
+    "BIFROST_ENVIRONMENT=testing",
+    "-e",
+    "BIFROST_SECRET_KEY=synthetic-unit-fixture-not-an-authenticator",
+    "-w",
+    "/qualification",
+    "--entrypoint",
+    "python",
+    "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "startup-redis-probe.py"
+  ],
+  "exit_code": 0,
+  "result": {
+    "scope": "actual candidate registration/unregistration and independent real Redis reads; synthetic transport/session and idle loops",
+    "candidate_sha256": "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+    "records": [
+      {
+        "mode": "healthy",
+        "partial_registration_observed": false,
+        "row_after_first_outcome": {
+          "started_at": "2026-11-03T16:40:37.573411+00:00",
+          "status": "online",
+          "hostname": "synthetic-redis-probe",
+          "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+          "runtime": "thin_remote",
+          "execution_owner": "remote_launcher",
+          "api_owner": "05d3e23831db"
+        },
+        "row_after_cleanup_retry": {},
+        "final_fixture_key_exists": 0,
+        "error_type": null
+      },
+      {
+        "mode": "tagging",
+        "partial_registration_observed": true,
+        "row_after_first_outcome": {},
+        "row_after_cleanup_retry": {},
+        "final_fixture_key_exists": 0,
+        "error_type": "RuntimeError"
+      },
+      {
+        "mode": "delete_failure",
+        "partial_registration_observed": true,
+        "row_after_first_outcome": {
+          "started_at": "2026-11-03T16:40:37.580141+00:00",
+          "status": "online",
+          "hostname": "synthetic-redis-probe",
+          "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]"
+        },
+        "row_after_cleanup_retry": {},
+        "final_fixture_key_exists": 0,
+        "error_type": "ExceptionGroup"
+      },
+      {
+        "mode": "readback_failure",
+        "partial_registration_observed": true,
+        "row_after_first_outcome": {},
+        "row_after_cleanup_retry": {},
+        "final_fixture_key_exists": 0,
+        "error_type": "ExceptionGroup"
+      },
+      {
+        "mode": "cancel",
+        "partial_registration_observed": true,
+        "row_after_first_outcome": {},
+        "row_after_cleanup_retry": {},
+        "final_fixture_key_exists": 0,
+        "error_type": "CancelledError"
+      },
+      {
+        "mode": "superseded",
+        "partial_registration_observed": true,
+        "row_after_first_outcome": {
+          "started_at": "2026-11-03T16:40:37.590081+00:00",
+          "status": "online",
+          "hostname": "synthetic-redis-probe",
+          "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+          "owner_marker": "replacement"
+        },
+        "row_after_cleanup_retry": {
+          "started_at": "2026-11-03T16:40:37.590081+00:00",
+          "status": "online",
+          "hostname": "synthetic-redis-probe",
+          "packages": "[{\"name\": \"synthetic-package\", \"version\": \"1.0.0\"}]",
+          "owner_marker": "replacement"
+        },
+        "final_fixture_key_exists": 0,
+        "error_type": "RuntimeError"
+      }
+    ],
+    "keys_remaining": [],
+    "cloud_invocations": 0,
+    "signed_startup_verified": false,
+    "execution_admission_qualified": false
+  },
+  "cleanup": {
+    "pyodide-ddf316c1-startup-redis-v2-test": {
+      "running_after": "absent"
+    },
+    "pyodide-ddf316c1-startup-redis-v2": {
+      "before": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2793620,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-03T16:40:34.081626808Z",
+        "FinishedAt": "0001-01-01T00:00:00Z",
+        "Health": {
+          "Status": "healthy",
+          "FailingStreak": 0,
+          "Log": [
+            {
+              "Start": "2026-11-03T16:40:35.082940912Z",
+              "End": "2026-11-03T16:40:35.116542459Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-11-03T16:40:36.117119027Z",
+              "End": "2026-11-03T16:40:36.152008916Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            },
+            {
+              "Start": "2026-11-03T16:40:37.152686658Z",
+              "End": "2026-11-03T16:40:37.186821841Z",
+              "ExitCode": 0,
+              "Output": "PONG\n"
+            }
+          ]
+        }
+      },
+      "running_after": "false"
+    }
+  },
+  "elapsed_seconds": 4.1737185241654515
+}

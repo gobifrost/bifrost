@@ -1,0 +1,10 @@
+{
+    "spikes/cloudflare-pyodide/dev/request-signal/entry.mjs":  "c1ab46e4b567cf23d66530b0fac99d78bbd49d9bf9c8442a546e91029eedd038",
+    "spikes/cloudflare-pyodide/dev/request-signal/policy.mjs":  "8d41181521cd11cda77e69dba221967acb2972c2456bb5c5fad6dca8f4b300dd",
+    "spikes/cloudflare-pyodide/dev/request-signal/cloudflare.config.ts":  "fa7fec6183ab09876bb6d0ee0293d695bb1633af1820c322ec2c54c38e91f015",
+    "spikes/cloudflare-pyodide/dev/request-signal/package.json":  "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "spikes/cloudflare-pyodide/dev/request-signal/qualify.py":  "da6e1694e984452ac6a990be02f03e7d455e9874a7fc8faeb52557e929474545",
+    "spikes/cloudflare-pyodide/dev/request-signal/run_guest.py":  "a57929beb30cd29ef1f239271c21ad4de8812db3778f548fbfb7c8f42ffd46fa",
+    "spikes/cloudflare-pyodide/backend/request-signal-probe.mjs":  "e43a62662248b4a2369fc3e8a960cb83c0ef5eea25309064ea40ca147597813c",
+    "spikes/cloudflare-pyodide/probe-io.mjs":  "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e"
+}

@@ -1,0 +1,8 @@
+{
+  "supported_checks_passed": true,
+  "reserved_invocations": 16,
+  "cpu_cancellation_prevents_later_effect": false,
+  "provider_cpu_exception_is_uncatchable": false,
+  "authorized_sdk_identity_verified": false,
+  "first_class_executor_acceptance": false
+}

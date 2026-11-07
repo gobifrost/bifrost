@@ -1,0 +1,15 @@
+{
+    "command":  "python -m unittest -v test_attempt_deadline.DeadlineTests.test_expired_deadline_is_not_hidden_by_delayed_timer_task_start",
+    "guest":  "CT128",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/deadline-stall-unit-v1",
+    "exit_code":  1,
+    "tests":  1,
+    "failures":  1,
+    "observed":  "AssertionError: False is not true",
+    "before_helper_sha256":  "9c9dbdd58b5161d7d66d80799cdfb8a7f00d2a1234330996a4a75ba4c128e236",
+    "test_source_sha256":  "d06df494a9258978a879df47da131410212b02b4ef18421093649e58c1b242ab",
+    "clock_manipulation":  "none",
+    "exposing_condition":  "20 ms real native scheduler stall before the timer task starts",
+    "correction":  "Recheck the immutable UTC cutoff before treating collection as timely; no timeout extension or retry",
+    "cloud_invocations":  0
+}

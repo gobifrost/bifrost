@@ -1,0 +1,5 @@
+{"case": "unsupported", "reservation": 1}
+{"case": "invalid_identity", "reservation": 2}
+{"case": "completion", "reservation": 3}
+{"case": "code_limit", "reservation": 4}
+{"case": "entrypoint_limit", "reservation": 5}

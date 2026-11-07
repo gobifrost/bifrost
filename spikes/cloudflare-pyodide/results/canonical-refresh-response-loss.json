@@ -1,0 +1,33 @@
+{
+  "container": "bifrost-pyodide-refresh-7d941fc4-c81b-4d1c-ae43-7a1cdf2c8ed3",
+  "scenario": "response-loss",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-response-loss",
+    "error_type": "AttributeError"
+  },
+  "qualification_error": {
+    "runtime": "local-workerd-canonical-response-loss",
+    "error_type": "AttributeError"
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "6c9a18bb4219184b96662e6fa188539508e3e2348ef7bec359eac304b895541c",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "f450d4486111ea13abebca21a603b9fe5f12976beba85d448d80aacb21f58d1b",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "53cd177ec818e1f5b89c72ec5e10030c87de0f24be3ef4335e36fbc21e9d90db",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "44427067c59a8e08b9811eb5f7d11a2d615a4a6a5ffe7b6976660a3b2965eac2",
+    "spikes/cloudflare-pyodide/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "spikes/cloudflare-pyodide/backend/pyodide_refresh.py": "f18595a72127f71dde1ad45545cfc65f23e9acd842a9a677ccef5e2434f323af",
+    "spikes/cloudflare-pyodide/backend/pack-engine.py": "d376ed86e6f54a22f81cdd8097f20832a704eab3cc92fa16fb7aa604831f9754",
+    "spikes/cloudflare-pyodide/backend/refresh-gate.mjs": "afdfb6205f633beb8482ad48176fab677ed022baca27118b22037bc1dc69f928",
+    "spikes/cloudflare-pyodide/backend/fixture-admission.mjs": "709163d6084457b7a05341804d84a8b12c984a668112b437a5ac466333991d4c",
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "f635cf633ea2f869a7a8baddea90e38417246cde5b18152e29d9ebc3ef083e8a",
+    "spikes/cloudflare-pyodide/backend/provider-response-loss.py": "79a4f1f424f2562e570b09ee40d7a7f64efa9b3d17616adaf0987c80213344cf"
+  },
+  "runtime_manifest": "concurrent-runtime-manifest.json",
+  "payload_sha256": "21b82a201061b86a025265b371b057a3516bb8f549c5a701634390f0a8ca9dc9"
+}

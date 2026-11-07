@@ -1,0 +1,118 @@
+{
+  "runtime": "local-workerd",
+  "results": [
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-A",
+            "own_canary": "synthetic-b221675d-7005-46dc-94e7-f43ea58b7330"
+          }
+        },
+        "effects": [],
+        "abort_requested": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-B",
+            "own_canary": "synthetic-375b4f7a-0f6a-4cd8-8e99-6db2f86fc13f"
+          }
+        },
+        "effects": [],
+        "abort_requested": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-A",
+            "own_canary": "synthetic-e63b6112-3d82-48dc-8d6e-b5e5dec2de23"
+          }
+        },
+        "effects": [],
+        "abort_requested": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-B",
+            "own_canary": "synthetic-36ab07aa-1c73-4f6a-87ec-d59d6b7320be"
+          }
+        },
+        "effects": [],
+        "abort_requested": false
+      }
+    },
+    {
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": [],
+        "abort_requested": false
+      }
+    },
+    {
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "completed": true
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ],
+        "abort_requested": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,27 @@
+{
+  "scope": "closed local canonical guard only",
+  "cloud_invocations": 0,
+  "engine_sdk_execution_verified": false,
+  "physical_termination_verified": false,
+  "passed": true,
+  "statuses": [
+    403,
+    403,
+    403
+  ],
+  "provider_state": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 3356660,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T21:43:31.800561224Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": "false",
+  "elapsed_seconds": 4.115920871961862
+}

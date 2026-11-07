@@ -31,6 +31,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from src.services.execution.requirements_setup_result import FailedPackage, RequirementsInstallResult
+from src.services.execution.result_envelope import execution_result_envelope
 
 logger = logging.getLogger(__name__)
 
@@ -236,10 +237,6 @@ async def _execute_async(
         # Calculate duration
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
 
-        # Determine success from result
-        status = result.get("status", "Failed")
-        success = status in ("Success", "CompletedWithErrors")
-
         # Capture resource metrics (use worker's metrics if available, else local)
         metrics = result.get("metrics") or _capture_resource_metrics()
 
@@ -250,29 +247,9 @@ async def _execute_async(
             metrics["peak_memory_bytes"] = max(0, end_pss - baseline_pss)
         metrics["peak_memory_growth_bytes"] = _peak_memory_growth(start_rss)
 
-        envelope: dict[str, Any] = {
-            "execution_id": execution_id,
-            "success": success,
-            "status": status,
-            "result": result.get("result"),
-            "error": result.get("error_message"),
-            "error_type": result.get("error_type"),
-            "duration_ms": result.get("duration_ms", duration_ms),
-            "logs": result.get("logs", []),
-            "variables": result.get("variables"),
-            "integration_calls": result.get("integration_calls", []),
-            "roi": result.get("roi"),
-            "metrics": metrics,
-            "cached": result.get("cached", False),
-            "cache_expires_at": result.get("cache_expires_at"),
-            "execution_context": result.get("execution_context"),
-            "worker_id": worker_id,
-        }
-        # Supervised services: pass the identity block through so the pool
-        # routes the envelope to attempt completion, not the execution path.
-        if isinstance(result.get("service"), dict):
-            envelope["service"] = result["service"]
-        return envelope
+        return execution_result_envelope(
+            execution_id, worker_id, result, duration_ms=duration_ms, metrics=metrics,
+        )
 
     except Exception as e:
         duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)

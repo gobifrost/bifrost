@@ -1,0 +1,23 @@
+{
+    "baseline_commit":  "d352dc663a0dfe40d38892a25b9b78725f0041ee",
+    "scope":  "Local PostgreSQL transport contract with deterministic launch callback",
+    "test_command":  "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/worker/remote/test_ownership.py tests/unit/worker/remote/test_fencing.py -q",
+    "regression_before":  {
+                              "failures":  1,
+                              "tests":  1
+                          },
+    "regression_after":  {
+                             "errors":  0,
+                             "tests":  29,
+                             "failures":  0
+                         },
+    "cloud_invocations":  0,
+    "actual_isolate_interruption_tested":  false,
+    "physical_termination_verified":  false,
+    "source_and_evidence_sha256":  {
+                                       "spikes/cloudflare-pyodide/backend/attempt_journal.py":  "f635cf633ea2f869a7a8baddea90e38417246cde5b18152e29d9ebc3ef083e8a",
+                                       "api/tests/unit/dev/test_pyodide_attempt_journal.py":  "5287e3de6bd35975c2ed8718d1911cbe8ea3789787aa00a528c53711bfbd2bb3",
+                                       "spikes/cloudflare-pyodide/results/transport-waiter-before.xml":  "f2ac9e7deba1aa5b9d87326a19074db8760ad5aa33cf5610097a377df91ad240",
+                                       "spikes/cloudflare-pyodide/results/transport-waiter-after.xml":  "6495c79a7535c0232c56e2f3857880453b81884eac484c13ae89708d514bae03"
+                                   }
+}

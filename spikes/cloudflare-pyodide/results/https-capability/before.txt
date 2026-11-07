@@ -1,0 +1,33 @@
+test_direct_https_requirement_is_refused_by_api_only_transport (test_private_http_pool.PrivatePoolTests.test_direct_https_requirement_is_refused_by_api_only_transport) ...
+  test_direct_https_requirement_is_refused_by_api_only_transport (test_private_http_pool.PrivatePoolTests.test_direct_https_requirement_is_refused_by_api_only_transport) (requirements=['platform-fetch-https']) ... FAIL
+test_direct_https_requirement_is_refused_by_api_only_transport (test_private_http_pool.PrivatePoolTests.test_direct_https_requirement_is_refused_by_api_only_transport) ... FAIL
+
+======================================================================
+FAIL: test_direct_https_requirement_is_refused_by_api_only_transport (test_private_http_pool.PrivatePoolTests.test_direct_https_requirement_is_refused_by_api_only_transport) (requirements=['platform-fetch-https'])
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/qualification/test_private_http_pool.py", line 125, in test_direct_https_requirement_is_refused_by_api_only_transport
+    with self.subTest(requirements=requirements), self.assertRaises(ValueError):
+                                                  ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^
+AssertionError: ValueError not raised
+
+======================================================================
+FAIL: test_direct_https_requirement_is_refused_by_api_only_transport (test_private_http_pool.PrivatePoolTests.test_direct_https_requirement_is_refused_by_api_only_transport)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_private_http_pool.py", line 127, in test_direct_https_requirement_is_refused_by_api_only_transport
+    self.assertNotIn(execution_id, self.pool._plans)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'f7bbfee6-f1d1-4672-975c-36eb2071475e' unexpectedly found in {'2178c1b2-c2e8-4370-a022-30acf85bf399': {'manifest': {'workflows/test.py': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}, 'requirements': ('json',), 'packages': {}}, 'f7bbfee6-f1d1-4672-975c-36eb2071475e': {'manifest': {'workflows/test.py': 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'}, 'requirements': ('platform-fetch-https',), 'packages': {}}}
+
+----------------------------------------------------------------------
+Ran 1 test in 0.005s
+
+FAILED (failures=2)
+exit_code=1

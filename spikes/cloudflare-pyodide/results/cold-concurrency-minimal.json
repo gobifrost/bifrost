@@ -1,0 +1,35 @@
+{
+  "runtime": "local-workerd",
+  "wrangler": "4.156.0",
+  "started_ms": 1793496111171,
+  "wall_ms": 6817,
+  "observer_exit": 0,
+  "result": {
+    "status": 200,
+    "body": {
+      "participants": [
+        {
+          "index": 0,
+          "error_type": "Error",
+          "error": "internal error; reference = jt60v2c57mkbbu3pkff0jr60"
+        },
+        {
+          "index": 1,
+          "status": 200,
+          "body": {
+            "before": null,
+            "value": 42
+          }
+        }
+      ]
+    }
+  },
+  "source_sha256": {
+    "cold-concurrency-entry.mjs": "6bb80de9ae4066649a00fbfe80dd982b32d74df3547b4a632d976da8d7ea6eee",
+    "wrangler.cold-concurrency.jsonc": "83f58427465e149827e6783738f475db75aeae707994fdfc6a15d678a3962cc3",
+    "cold-concurrency.mjs": "928291fd201311549472362d0bc2fc3b63d99a6e630edf5158f4ad48f78684d1"
+  },
+  "cloud_invocations": 0,
+  "credentials": false,
+  "bifrost_modules": false
+}

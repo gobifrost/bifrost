@@ -1,0 +1,39 @@
+{
+  "status": 500,
+  "text": "{\"scope\":\"raw Pyodide cooperative HTTP cancellation\",\"cases\":[{\"mode\":\"normal\",\"entered\":true,\"wrongRun\":false,\"requested\":false,\"lateCancel\":false,\"status\":200,\"body\":{\"outcome\":{\"status\":\"Success\",\"result\":\"normal\",\"http_status\":200},\"cleaned\":[true],\"active_slots\":0,\"python\":\"3.14.2 (main, Aug 25 2026, 05:50:55) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8\",\"abi\":\"cpython-314-wasm32-emscripten\"},\"execution_id\":\"478cb06f-63c5-4230-a060-55cb407b1879\",\"held\":{\"received\":true,\"committed\":false,\"effects\":[],\"events\":[\"hold_received\"]},\"before_release\":{\"received\":true,\"committed\":true,\"effects\":[],\"events\":[\"hold_received\",\"accepted_write_committed\"]},\"after_release\":{\"received\":true,\"committed\":true,\"effects\":[],\"events\":[\"hold_received\",\"accepted_write_committed\"]}},{\"mode\":\"cancel\",\"entered\":true,\"wrongRun\":false,\"requested\":true,\"lateCancel\":false,\"status\":200,\"body\":{\"outcome\":{\"cooperative_task_cancelled\":true,\"physical_stopped\":false,\"execution_settled\":false},\"cleaned\":[true],\"active_slots\":0,\"python\":\"3.14.2 (main, Aug 25 2026, 05:50:55) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8\",\"abi\":\"cpython-314-wasm32-emscripten\"},\"execution_id\":\"5bdef230-4611-4e8b-83e5-5405a4c5881d\",\"held\":{\"received\":true,\"committed\":false,\"effects\":[],\"events\":[\"hold_received\"]},\"before_release\":{\"received\":true,\"committed\":false,\"effects\":[],\"events\":[\"hold_received\"]},\"after_release\":{\"received\":true,\"committed\":true,\"effects\":[],\"events\":[\"hold_received\",\"connection_closed_before_commit\",\"accepted_write_committed\"]}}],\"failure\":\"Error: The Workers runtime canceled this request because it detected that your Worker's code had hung and would never generate a response. Refer to: https://developers.cloudflare.com/workers/observability/errors/\",\"failed_mode\":\"suppress\",\"failed_phase\":\"await_execution_result\",\"engine_sdk_execution_verified\":false,\"physical_stop_verified\":false}",
+  "cloud_invocations": 0,
+  "before_cleanup": {
+    "478cb06f-63c5-4230-a060-55cb407b1879": {
+      "received": true,
+      "committed": true,
+      "effects": [],
+      "events": [
+        "hold_received",
+        "accepted_write_committed"
+      ]
+    },
+    "5bdef230-4611-4e8b-83e5-5405a4c5881d": {
+      "received": true,
+      "committed": true,
+      "effects": [],
+      "events": [
+        "hold_received",
+        "connection_closed_before_commit",
+        "accepted_write_committed"
+      ]
+    },
+    "90c34740-d8a9-4439-909c-994b489928dd": {
+      "received": true,
+      "committed": true,
+      "effects": [],
+      "events": [
+        "hold_received",
+        "connection_closed_before_commit",
+        "accepted_write_committed"
+      ]
+    }
+  },
+  "failure": "Expected values to be strictly equal:\n\n500 !== 200\n",
+  "physical_termination_verified": false,
+  "engine_sdk_execution_verified": false
+}

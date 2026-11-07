@@ -1,0 +1,35 @@
+{
+  "runtime": "deployed-cloudflare-dynamic-python-worker",
+  "started_at": "2026-10-31T15:48:43.902Z",
+  "versions": "03460cde-9d4f-4942-a68f-93adb8624358",
+  "results": [
+    {
+      "ordinal": 16,
+      "request": {
+        "action": "cpu_catch"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "caught": "CpuLimitExceeded"
+          }
+        },
+        "effects": [
+          "before",
+          "caught",
+          "after"
+        ],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 4651.736199999999
+    }
+  ],
+  "unauthenticated_status": 403,
+  "finished_at": "2026-10-31T15:48:48.720Z",
+  "total_reserved_invocations": 16
+}

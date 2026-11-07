@@ -1,0 +1,64 @@
+{
+  "scope": "Offline historical evidence audit only",
+  "new_worker_invocations": 0,
+  "new_cloud_invocations": 0,
+  "heavy_laptop_batches": 0,
+  "cloud_cpu_cancellation": {
+    "request": {
+      "action": "cpu",
+      "cancel": true
+    },
+    "abort_requested": false,
+    "effects": [
+      "before",
+      "after"
+    ],
+    "test_exercised": false,
+    "classification": "not_exercised",
+    "cancellation_prevents_later_effect": null
+  },
+  "cloud_quota_exception": {
+    "version": "03460cde-9d4f-4942-a68f-93adb8624358",
+    "caught": "CpuLimitExceeded",
+    "effects": [
+      "before",
+      "caught",
+      "after"
+    ],
+    "abort_requested": false,
+    "physical_stop_verified": false
+  },
+  "uncaught_quota_case": {
+    "version": "13d72a73-ee73-4ea6-9525-8d40137f98a6",
+    "effects": [
+      "before"
+    ],
+    "physical_stop_verified": false
+  },
+  "local_external_abort": {
+    "requested": true,
+    "events": [
+      {
+        "event": "before",
+        "elapsed_ms": 9710.96327
+      },
+      {
+        "event": "after",
+        "elapsed_ms": 11519.686287
+      }
+    ],
+    "before_to_after_ms": 1808.7230170000003,
+    "abort_timestamp_recorded": false,
+    "exact_effect_order_relative_to_abort_verified": false
+  },
+  "historical_local_source_snapshot_commit": "2c225db85ed7512e4dbaa21bbbc516185c8aa334",
+  "historical_local_source_sha256": {
+    "backend/isolation-code.mjs": "c5f205405b5bc5a845724a88c7e2a83d345bf6e9c4a6ae83282760f21f0d0c43",
+    "backend/isolation-entry.mjs": "d9f5d19e5444f09a102fb49a2c9741e4b60621d968d0797560cff8406814a848",
+    "backend/cloud-isolation.mjs": "98a4f5baeff9c78444feac0a1166756ee2e539b212aada4ef6aa8cec5bea7e68"
+  },
+  "per_deployed_version_source_attestation_verified": false,
+  "historical_verification_report_sha256": "7630b8b0351d564caa8980dd6b397fd24c866145d3c9aac79cadd0ad2ad9cb86",
+  "historical_report_preserved_by_test": true,
+  "first_class_executor_acceptance": false
+}

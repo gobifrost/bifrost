@@ -1,0 +1,152 @@
+{
+  "process_exit_code": 1,
+  "batch": "984c5740e999470a86e4c3c8500ef48c",
+  "participants": [
+    {
+      "label": "tenant-a",
+      "container": "bifrost-pyodide-isolation-984c5740e999470a86e4c3c8500ef48c-tenant-a",
+      "process_exit_code": 1,
+      "unknown_process_state": false,
+      "report": {
+        "runtime": "local-workerd-canonical-claim-consumer",
+        "error_type": "AssertionError",
+        "exception_chain": [
+          {
+            "error_type": "AssertionError",
+            "constraint": null,
+            "table": null,
+            "locations": [
+              "canonical-local.py:352",
+              "runners.py:205",
+              "runners.py:128",
+              "base_events.py:720",
+              "canonical-local.py:273"
+            ]
+          }
+        ],
+        "locations": [
+          "canonical-local.py:352",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:273"
+        ]
+      }
+    },
+    {
+      "label": "tenant-b",
+      "container": "bifrost-pyodide-isolation-984c5740e999470a86e4c3c8500ef48c-tenant-b",
+      "process_exit_code": 1,
+      "unknown_process_state": false,
+      "report": {
+        "runtime": "local-workerd-canonical-claim-consumer",
+        "error_type": "IntegrityError",
+        "exception_chain": [
+          {
+            "error_type": "IntegrityError",
+            "constraint": null,
+            "table": null,
+            "locations": [
+              "canonical-local.py:352",
+              "runners.py:205",
+              "runners.py:128",
+              "base_events.py:720",
+              "canonical-local.py:122",
+              "contextlib.py:235",
+              "committed_runs.py:192",
+              "committed_runs.py:179",
+              "session.py:449",
+              "_concurrency_py3k.py:201",
+              "session.py:2351",
+              "session.py:2249",
+              "bulk_persistence.py:2033",
+              "context.py:306",
+              "base.py:1419",
+              "elements.py:527",
+              "base.py:1641",
+              "base.py:1846",
+              "base.py:1986",
+              "base.py:2363",
+              "base.py:1967",
+              "default.py:952",
+              "asyncpg.py:585",
+              "_concurrency_py3k.py:132",
+              "_concurrency_py3k.py:196",
+              "asyncpg.py:563",
+              "asyncpg.py:513",
+              "asyncpg.py:797"
+            ]
+          },
+          {
+            "error_type": "IntegrityError",
+            "constraint": null,
+            "table": null,
+            "locations": [
+              "base.py:1967",
+              "default.py:952",
+              "asyncpg.py:585",
+              "_concurrency_py3k.py:132",
+              "_concurrency_py3k.py:196",
+              "asyncpg.py:563",
+              "asyncpg.py:513",
+              "asyncpg.py:797"
+            ]
+          },
+          {
+            "error_type": "ForeignKeyViolationError",
+            "constraint": "configs_organization_id_fkey",
+            "table": "configs",
+            "locations": [
+              "asyncpg.py:550",
+              "prepared_stmt.py:177",
+              "prepared_stmt.py:268",
+              "prepared_stmt.py:257",
+              "protocol.pyx:205"
+            ]
+          }
+        ],
+        "locations": [
+          "canonical-local.py:352",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:122",
+          "contextlib.py:235",
+          "committed_runs.py:192",
+          "committed_runs.py:179",
+          "session.py:449",
+          "_concurrency_py3k.py:201",
+          "session.py:2351",
+          "session.py:2249",
+          "bulk_persistence.py:2033",
+          "context.py:306",
+          "base.py:1419",
+          "elements.py:527",
+          "base.py:1641",
+          "base.py:1846",
+          "base.py:1986",
+          "base.py:2363",
+          "base.py:1967",
+          "default.py:952",
+          "asyncpg.py:585",
+          "_concurrency_py3k.py:132",
+          "_concurrency_py3k.py:196",
+          "asyncpg.py:563",
+          "asyncpg.py:513",
+          "asyncpg.py:797"
+        ]
+      }
+    }
+  ],
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "barrier_keys_remaining": 0,
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-isolation.mjs": "e0a5d31deb631e3ec18a7d4b506a8f3a856900493c1fb69fb9fedcf2ca7afb58",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "e862eceb989eb27dfc9247fdbfa0d4614976a605ada77719ee05069c95bb2c5e",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "b810355e500c6f238db8f28db4df63345c255310dbc0cf87a53625c9d25b35c1",
+    "spikes/cloudflare-pyodide/backend/runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "5a2e1cec90b7a85df07e9e5e5b8691bfaae1dbab6fc2264fb89468c998d08c9d"
+  },
+  "verification_error_type": "AssertionError"
+}

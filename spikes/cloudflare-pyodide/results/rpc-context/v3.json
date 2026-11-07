@@ -1,0 +1,159 @@
+{
+  "scope": "credential-free RPC context lifetime only",
+  "cloud_invocations": 0,
+  "engine_sdk_execution_verified": false,
+  "sdk_import_constructor_passed": false,
+  "packet_sha256": {
+    "ct128-retained-contract.py": "943bd00d4fb0765f92c315664c3f9d1d503a9f818f720afdc0915c6751a0c7b8",
+    "test_attempt_deadline.py": "88f3feb8e264f1ae215d68645127786879d7be8279f7d474c620d659fc11cca7",
+    "test_sdk_cleanup.py": "66fbcb1514e7e9fff61b5c0b40711eb5f27a44c8729a2a52b0a6d1d3a7ebaf54",
+    "test_runtime_inventory.py": "a89f133a1d6ecbf6fc0e3f3ff9d62343928b9f8da615d2a7ba30170d806b1aa2",
+    "add-certifi-overlay.py": "c1297b337e5d77cff84b933f14ac1c3251f855f2850827918d23e6705b9a9a64",
+    "attempt_journal.py": "00fc58be27d921445b7f51934a8b29434b97998a1dc818733ba5e39c2edf4e09",
+    "test_attempt_journal_owners.py": "0e80934c4ef896a4ec5e6bb61022b413adf1836db35901e915141d7763ea190d",
+    "ct128-canonical-failure.py": "66b4e4342edbb2ca56f0dec2ff1601cdc66f4d41355273f7149eb91f877dedaa",
+    "ct128-sdk-probe.py": "5405c52379eab51aab9e9d94b35c86c05672b61827d4254c34c5a76f584e41f0",
+    "runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "retained_http_fault.py": "ecb516033c67b7c83dcc8e53bb8f4b6df7c077172549caa512203deebb74ac6c",
+    "test_http_invocation.py": "2c98ec1972a585e61ee0aeb4f9007f8f4cc3d630c510f0b2d69b2134448765a8",
+    "http_invocation.py": "11b389c8f2fa8a99de2948f42fd67907e3d19c9cb8d85dca4e22e6a6b4340ac9",
+    "workspace_prepare.py": "6c997ee36ff9fa66b0d9d6a278f6f8efa89397bca258fc25a575128c1f8ce292",
+    "sdk_cleanup.py": "20af8d22fc19286ce51069276a1b5e776f2a36d9543a836c58b7ff9ba64c8963",
+    "module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "runtime-code.mjs": "d8f5f8c5e4f9e095e14652f2b88e0b761eab19f7493ace6adcca5354af0372cc",
+    "pyright-guest-fixtures.json": "77d2dde981aa6c3acbf32392ebe229846c4a76166e919ea09c92bac5d934faef",
+    "source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "test_private_http_pool.py": "2f1b8abe5e161595ef958b9c120e040bd647fea56d7708030ab013ea690582b3",
+    "test_workspace_prepare.py": "0d065c300e354b886c188d70bb723cebfeae4677adf124b8381be19b24ba38dd",
+    "certifi-2026.4.22-py3-none-any.whl": "3cb2210c8f88ba2318d29b0388d1023c8492ff72ecdde4ebdaddbb13a31b1c4a",
+    "task_cleanup.py": "ba97cbfdf25823e6324849d4571c3bb13ae2dd9c10eb16ca3fdad2e8856a906c",
+    "workflow_request_mux.py": "1fcb76b1f9e3d33937eacf4fa38cbb24a4c7891a7dbf2e6c6cc29446d7c74246",
+    "runtime_inventory.py": "ba7a8a3bbb880fb2c6dff5133ed3d5df2d12a9c1060913f684e0daa62b5989ca",
+    "test_workflow_request_mux.py": "71509d49ab7da86deca256526e56c30311d8cab0882074e27104dd4f83c27ec0",
+    "attempt_deadline.py": "b03e447b326c009234c95ca77dc486991541901959659f3c91ace6c11336bd2d",
+    "shared-native-pool.py": "b35b5f29b860d9a4c46196c633108a723e6c4f83961311983d4c6fde8667cfca",
+    "canonical-local.py": "310a8b0f15acac9c807d44cfb641f2972ee9cd1d5bc1d36997103f016b7d291d",
+    "source-integrity-response.test.mjs": "041d28e949004791059123c04bfb544e92ac2ff0a58c1b72427697d357490547",
+    "test_attempt_delivery.py": "edea0ece3833cd982425bb3f5ada84e63b65d83feaef50a23fb98a66dbeaecd2",
+    "test_retained_http_fault.py": "490f7becca8fda4b246d1306e77e1fc630d5914c37b1a3b3aecd9b29e04c0e8a",
+    "invocation_stream.py": "c2ccd824555a03da1390ca0f2641ed1659804498bf88a0a6617fa805df24e0bd",
+    "private_http_pool.py": "7b8ada315eca574c23617b140fcd593ea5e868af4be97e30feca8da630d3ac0b",
+    "project/probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "project/wrangler.config.ts": "f5b5a98a872023b96d441ecd24313bd0621a06fb128cefb35caf03db034b9845",
+    "project/package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "project/cloudflare.config.ts": "30b50080cf29ff3b38cc9811e9a0901d725eeaff1f3ee81ded80e27874305d3b",
+    "project/backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "project/backend/rpc-result-entry.mjs": "72ae3f009376e0535ae154366a5fd4f174e971a0db6e145e1add3072bb3de10d",
+    "project/backend/sdk-cleanup-code.mjs": "fb86cd80e5d06cd8b7dc3f83a6a70196b8ee5b65e30339fcce5539994ac4862f",
+    "project/backend/rpc-context-entry.mjs": "63f04dc83e3aec74ababd4a32f2cafcf099b10171935354e1f2fa5bed45baf79",
+    "project/backend/lossless-json.test.mjs": "294adb57932c58e52a378472c6a933365eeb787866514c19850cde3146c3bd69",
+    "project/backend/json-transport-benchmark.mjs": "70ea3831936f8d991a56e35bc198394b42634802bab6b4251432120bfbd1a1bc",
+    "project/backend/guest-disposal-entry.mjs": "79869efd6ab9c88767ea86695113e9dab611ce30f159ccf630ef43761eeb1966",
+    "project/backend/refresh-gate.mjs": "afdfb6205f633beb8482ad48176fab677ed022baca27118b22037bc1dc69f928",
+    "project/backend/terminal-response.test.mjs": "4fe9b0f202db8a8b78fbad565ae0fc1033f1db1597b5da39c6d398a87d608909",
+    "project/backend/output-budget.test.mjs": "5cfce45c94187f66fe5569713d7aa3a14d4c5b7d1f8ce313726820caa9c6cc08",
+    "project/backend/sdk-overlay.mjs": "c2fea87dd7cb0ae0626e8ea0558764785e594c29a13f28133b4c595b0dd5e735",
+    "project/backend/tail-observer.mjs": "8845d9023c0d020acd3c4e2bf125e625ddb83ea3135b633225b79c10a579f510",
+    "project/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "project/backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "project/backend/runtime-code.mjs": "8cffaf4f9f08b505554e124347ad4324df64d5ebce63aa7b2118f6a7f547a52f",
+    "project/backend/source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "project/backend/latest-sdk-probe-entry.mjs": "93b859ee0c6bda21f71adbddba86cd54ad62dce2975b04fefa4fa378d06c7bb3",
+    "project/backend/lossless-json.mjs": "043d0ab4aca0629558d6c7b03a6432f3b555de3bb9e4161f7182acaca6f58430",
+    "project/backend/terminal-response.mjs": "2cfcea15dd3091f44abdef532b66476e5abe5db6b7c488a3b43d7d2d61d3a8d0",
+    "project/backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "project/backend/invocation-stream.mjs": "7f1b0297249aaa59e0db97b19ad2f9d144af8460890457caecc67ee066bf83ed",
+    "project/backend/invocation-stream.test.mjs": "3f023fd359b65e69fcfbf7279da26e4fb393fa9d36f0b43df9ab175d4bd2c1c6",
+    "project/backend/authorized-local-entry.mjs": "3f11682a2fbc3af553d06e4ffce6f962ef5519c30992707bb299b92d382c39ef",
+    "project/backend/generated-runtime.mjs": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+    "project/backend/fixture-admission.mjs": "b18189c8f77f1c8764b03fa228ef038d2ce7736e27b956294984905813da6133"
+  },
+  "observation": {
+    "status": 200,
+    "body": {
+      "control": {
+        "body": {
+          "value": 7
+        },
+        "tail_seen_before_release": true,
+        "before_release": [
+          "release",
+          "started",
+          "after",
+          "bridge_returned",
+          "response_eof",
+          "caller_tail"
+        ],
+        "events": [
+          "release",
+          "started",
+          "after",
+          "bridge_returned",
+          "response_eof",
+          "caller_tail"
+        ],
+        "tail": {
+          "schema": 1,
+          "outcome": "ok",
+          "event_timestamp": 1793721872572,
+          "log_count": 0,
+          "exception_count": 0,
+          "raw_numeric_fields": {
+            "cpuTime": 0,
+            "cpuTimeMs": null,
+            "wallTime": 0,
+            "wallTimeMs": null
+          }
+        }
+      },
+      "ended": {
+        "body": {
+          "started": true
+        },
+        "tail_seen_before_release": true,
+        "before_release": [
+          "started",
+          "response_eof",
+          "caller_tail"
+        ],
+        "events": [
+          "started",
+          "response_eof",
+          "caller_tail",
+          "release"
+        ],
+        "tail": {
+          "schema": 1,
+          "outcome": "ok",
+          "event_timestamp": 1793721876598,
+          "log_count": 0,
+          "exception_count": 0,
+          "raw_numeric_fields": {
+            "cpuTime": 0,
+            "cpuTimeMs": null,
+            "wallTime": 0,
+            "wallTimeMs": null
+          }
+        }
+      },
+      "physical_termination_verified": false,
+      "cloud_invocations": 0,
+      "scope": "Local request-owned Python child; bounded synthetic I/O context observation only"
+    }
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 2737704,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T16:04:27.544923823Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": "false",
+  "elapsed_seconds": 11.91652916977182
+}

@@ -1,0 +1,24 @@
+{
+  "baseline_head": "7c7bf4bd3841f09e28a031874f66595692648966",
+  "environment": "isolated Docker PostgreSQL and Redis bifrost-test-79c5c14e",
+  "command": "./test.sh tests/unit/execution/test_result_envelope.py tests/unit/dev/test_pyodide_attempt_journal.py tests/unit/test_solution_module_isolation.py -q",
+  "tests": 22,
+  "failures": 0,
+  "duration_seconds": 19.98,
+  "canonical_claim_next_verified": true,
+  "current_owner_prelaunch_release_verified": true,
+  "reservation_rollback_verified": true,
+  "completed_run_claim_release_verified": false,
+  "stale_owner_handback_verified": false,
+  "new_envelope_pyodide_execution_verified": false,
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "source_sha256": {
+    "api/src/services/execution/result_envelope.py": "2fe7bceb850379c9cd7cd524cd34464b427c8627fdd4181727ce12fad33c6f98",
+    "api/src/services/execution/simple_worker.py": "cf78405f057d7e73fbb0b05c06216bedc37b8b5d65811e3d066e448e07f1ef04",
+    "api/tests/unit/execution/test_result_envelope.py": "0dd99c3067dbcb2020720fc9f4fcad43b0274de8b0d86e8dc932aefc064e6ec3",
+    "api/tests/unit/dev/test_pyodide_attempt_journal.py": "fde86554b68b008674320da8f3391f473755dbb43605a7dc91fc15dfee5f0d1c"
+  },
+  "quality_command": "./test.sh quality api",
+  "quality_result": "exit 0; Pyright 0 errors/0 warnings; Ruff all checks passed"
+}

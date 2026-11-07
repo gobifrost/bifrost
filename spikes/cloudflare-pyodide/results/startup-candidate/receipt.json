@@ -1,0 +1,24 @@
+{
+    "scope":  "isolated source-overlay candidate, mocked transport/cache/session and loop bodies; no public startup",
+    "source_base_sha256":  "dd14eb91761041a0f6ea6ea974295c2c610ad43c9e50e46dbb14028ef9f81789",
+    "candidate_v1_sha256":  "eacdd53546167f29e3bc6ff91c816b6393551a7e7045bc299b08f6279e07d6b9",
+    "candidate_v4_sha256":  "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+    "test_sha256":  "32f9bd8e0dc80e5964239a48d03c6146f871cf4942b594580eb9648b69052b23",
+    "preparer_sha256":  "185a6e13d090eb8ab63a4db1c576998b941027ec2a5e283e4877cee136587853",
+    "artifacts":  {
+                      "remote-startup.patch":  "8222318fd1badd5b6c09f985444803109388bb197547a791b9d39f6a6d11b98f",
+                      "v1-preparer.mjs.txt":  "598f8930c105161f4dcb8673bd97f563ff2db3458187bb6ce04b5c4fa7d2c531",
+                      "v1-test.py.txt":  "440fbf82b9f3cd8d36a85cfaff05c42f8cae0d09e6f8081d6c77372552fc523d",
+                      "before.txt":  "1c1b2ab0e62e40c09d7f1bd436cb1d46f3be80ea93d51ffe4e3c97613c1c219d",
+                      "after.txt":  "979b411e5f42aad7aad0e23eaea88b90cb03d716074e857af95c1fd1f48974fb",
+                      "expanded.txt":  "9e9d77638fad42ccddb88648eff3e14445c581ef1faf31bd7cf4dfd5913e3b6e",
+                      "before-strict.txt":  "2d2fdc3282da0860bb835dce466241e3a5e987dfe3cda23207a7729c9d60e343",
+                      "strict.txt":  "1d7aa4c2039026a27da081434d186223e79c18ae8582940eb550d8cdf28907c6",
+                      "ruff.txt":  "f08bdda4e29585b184a7de565669337094d783aee0e7c6c64433c32ccf809250",
+                      "pyright.txt":  "ab3415080456baab5ed6021e31aa22e484968e11b59349f927e0e3ea13f1a079"
+                  },
+    "cloud_invocations":  0,
+    "shared_source_modified":  false,
+    "live_redis_cleanup_verified":  false,
+    "execution_admission_qualified":  false
+}

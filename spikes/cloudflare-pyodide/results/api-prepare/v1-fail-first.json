@@ -1,0 +1,13 @@
+{
+    "failures":  1,
+    "actual_workflow_invocations":  0,
+    "failing_test":  "test_input_and_response_bounds_refused",
+    "cloud_invocations":  0,
+    "phase":  "pre-runtime unit qualification",
+    "test_sha256":  "2deb99514da3aa596f953621e8f45623c3b7dd8226970260771b0bcd6fc87406",
+    "observed":  "One module GET occurred because upstream normalized ../escape to escape before this layer rejected noncanonical declarations.",
+    "before_sha256":  "aedb94f1b10fea5ceb528231ad58ab52c21a22f0ef99a1162444013148f37b04",
+    "fix":  "Require declared dotted or slash-separated name to equal the canonical base returned by the existing upstream helper, before I/O.",
+    "exit_code":  1,
+    "cases":  23
+}

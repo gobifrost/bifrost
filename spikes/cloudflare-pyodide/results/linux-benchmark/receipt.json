@@ -1,0 +1,148 @@
+{
+  "source": "f417d03f5c8d5e3a182e68f69e2bf601a3b60125",
+  "scope": "Linux signed control with one real native SDK workflow",
+  "cloud_invocations": 0,
+  "planned_workflows": 1,
+  "qualification_passed": true,
+  "started_at_epoch": 1793558017.2320335,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "-f",
+        "/opt/bifrost-tests/pyodide-ddf316c1/runs/linux-benchmark-v1/limits.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-cc399929-linux-control-reference",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/linux-benchmark-v1:/qualification:ro",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/f417d03f5c8d5e3a182e68f69e2bf601a3b60125/spikes/cloudflare-pyodide:/spike:ro",
+        "test-runner",
+        "python",
+        "/qualification/linux-control-reference.py",
+        "--benchmark-probe"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "project": "bifrost-test-cc399929",
+  "fixture_sha256": "bb4d228fb773f1fedcae79f5593ab80e5699645bb4954be9c0deac09eb3ec734",
+  "benchmark_source_sha256": "77e16fbd6adc0272bdd94c9843c81d1a2de04894d64c1267ef97178334cec3f2",
+  "observed": {
+    "runtime": "actual-linux-signed-control-reference",
+    "cloud_invocations": 0,
+    "pyodide_physical_termination_verified": false,
+    "qualification_passed": true,
+    "workspace_sha256": {
+      "workflows/linux_reference_a468745bacd54834809101f47caa472d.py": "3f287e6203a495dff644a7d983350290b3df602f81cf43d815f4f86992159650",
+      "linux_helper_a468745bacd54834809101f47caa472d.py": "950a3629efc09cf1bf4227c9eb88340410907405e2852af03af40e1788cbc7be"
+    },
+    "terminal_status": "Success",
+    "independent_document_value": 70,
+    "benchmark": [
+      {
+        "workload": "json_transform",
+        "correctness": true,
+        "median_wall_ms": 1.3330900110304356,
+        "samples_wall_ms": [
+          1.3330900110304356,
+          1.0032393038272858,
+          5.033792927861214
+        ]
+      },
+      {
+        "workload": "http_orchestration",
+        "correctness": true,
+        "median_wall_ms": 33.477566204965115,
+        "samples_wall_ms": [
+          20.998674910515547,
+          43.92080893740058,
+          33.477566204965115
+        ]
+      },
+      {
+        "workload": "integration_read",
+        "correctness": true,
+        "median_wall_ms": 31.705250963568687,
+        "samples_wall_ms": [
+          31.705250963568687,
+          38.22978399693966,
+          23.998660035431385
+        ]
+      },
+      {
+        "workload": "table_update",
+        "correctness": true,
+        "median_wall_ms": 26.37623529881239,
+        "samples_wall_ms": [
+          26.37623529881239,
+          54.47709001600742,
+          23.09053298085928
+        ]
+      },
+      {
+        "workload": "multi_step",
+        "correctness": true,
+        "median_wall_ms": 28.050257824361324,
+        "samples_wall_ms": [
+          21.90060680732131,
+          68.99648020043969,
+          28.050257824361324
+        ]
+      }
+    ],
+    "independent_benchmark_documents": 3,
+    "retained_log_messages": [
+      "integration secret=[REDACTED]",
+      "Linux control reference"
+    ],
+    "wire_events": {
+      "workflow_commands": 1,
+      "pid_acks": [
+        21
+      ],
+      "result_events": 1
+    },
+    "signed_session_generation": 1,
+    "runtime_access_after_terminal_status": 401,
+    "retained_terminal_acknowledged": true,
+    "real_linux_fork_verified": true,
+    "native_templates_stopped": true,
+    "fixture_worker_cleanup_verified": true
+  },
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 64.17446138011292
+}

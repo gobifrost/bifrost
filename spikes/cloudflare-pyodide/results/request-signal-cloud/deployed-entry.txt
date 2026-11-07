@@ -1,0 +1,166 @@
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
+
+// entry.mjs
+import { WorkerEntrypoint } from "cloudflare:workers";
+
+// ../../probe-io.mjs
+async function boundedText(response, maxBytes = 1024 * 1024) {
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const chunks = [];
+  let size = 0;
+  try {
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > maxBytes) throw new Error("Diagnostic response exceeds byte limit");
+      chunks.push(value);
+    }
+  } catch (error) {
+    await reader.cancel(error);
+    throw error;
+  } finally {
+    reader.releaseLock();
+  }
+  const bytes = new Uint8Array(size);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+}
+__name(boundedText, "boundedText");
+async function boundedJson(response, maxBytes) {
+  return JSON.parse(await boundedText(response, maxBytes));
+}
+__name(boundedJson, "boundedJson");
+
+// ../../backend/request-signal-probe.mjs
+var python = `
+import asyncio, json, sys, sysconfig, pyodide
+from workers import WorkerEntrypoint, Response
+class Default(WorkerEntrypoint):
+    async def fetch(self, request):
+        mode = json.loads(await request.text())["mode"]
+        await self.env.EFFECTS.record("before")
+        try:
+            if mode != "cpu_abort":
+                await asyncio.sleep(0.25)
+            else:
+                total = 0
+                for value in range(20000000):
+                    total += value
+        except BaseException as exc:
+            await self.env.EFFECTS.record("caught")
+        await self.env.EFFECTS.record("after")
+        return Response.json({"python": list(sys.version_info[:3]), "pyodide": pyodide.__version__,
+                              "soabi": sysconfig.get_config_var("SOABI")})
+`;
+async function forwardSignalProbe(request, loader, effects, onParentAbort, waitUntil) {
+  const body = await request.json();
+  if (!body || !/^[a-f0-9-]{36}$/.test(body.id) || !["control", "io_abort", "cpu_abort"].includes(body.mode)) {
+    return new Response("Fixed diagnostic only", { status: 422 });
+  }
+  request.signal.addEventListener("abort", () => {
+    waitUntil(onParentAbort(body.id));
+  }, { once: true });
+  const worker = loader.load({
+    compatibilityDate: "2026-10-30",
+    compatibilityFlags: ["python_workers"],
+    mainModule: "main.py",
+    modules: { "main.py": { py: python } },
+    env: { EFFECTS: effects(body.id) },
+    globalOutbound: null,
+    limits: { cpuMs: 1e3, subRequests: 4 }
+  });
+  return worker.getEntrypoint().fetch("https://attempt.invalid/", {
+    method: "POST",
+    body: JSON.stringify({ mode: body.mode }),
+    signal: request.signal
+  });
+}
+__name(forwardSignalProbe, "forwardSignalProbe");
+
+// policy.mjs
+var SIGNAL_CASES = ["completion", "parent_abort", "io_abort", "cpu_abort"];
+async function writeSignalLog(api, token, caseId, event) {
+  if (!SIGNAL_CASES.includes(caseId) || !["preflight", "before", "caught", "after", "parent_abort_received"].includes(event)) {
+    throw new TypeError("Fixed signal event only");
+  }
+  const response = await api.fetch(new Request("https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev/api/sdk/runtime/logs", {
+    method: "POST",
+    redirect: "manual",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ level: "INFO", message: `signal:${caseId}:${event}` })
+  }));
+  await response.body?.cancel();
+  return response.status;
+}
+__name(writeSignalLog, "writeSignalLog");
+async function handleSignalProbe(request, env, effects, waitUntil) {
+  if (!env.DEV_AUTH || request.headers.get("X-Dev-Auth") !== env.DEV_AUTH || !(Date.now() < Number(env.DEV_EXPIRES_AT))) {
+    return new Response("Private qualification only", { status: 403 });
+  }
+  if (request.method !== "POST") return new Response("POST required", { status: 405 });
+  let body;
+  try {
+    body = await boundedJson(request, 8192);
+    if (!body || Object.keys(body).sort().join(",") !== "case_id,run_token" || !SIGNAL_CASES.includes(body.case_id) || typeof body.run_token !== "string" || body.run_token.length < 16 || body.run_token.length > 4096 || /[\r\n]/.test(body.run_token)) {
+      throw new TypeError("Fixed input required");
+    }
+  } catch {
+    return new Response("Fixed signal diagnostic only", { status: 422 });
+  }
+  const log = /* @__PURE__ */ __name((event) => writeSignalLog(env.DEV_API, body.run_token, body.case_id, event).then((status) => {
+    if (status !== 200) throw new Error("Independent observer rejected event");
+  }), "log");
+  try {
+    const status = await writeSignalLog(env.DEV_API, body.run_token, body.case_id, "preflight");
+    if (status !== 200) return Response.json({ phase: "observer-auth", observer_status: status }, { status: 502 });
+    if (["completion", "parent_abort"].includes(body.case_id)) {
+      request.signal.addEventListener("abort", () => waitUntil(log("parent_abort_received")), { once: true });
+      await log("before");
+      await new Promise((resolve) => setTimeout(resolve, body.case_id === "completion" ? 100 : 2e3));
+      await log("after");
+      return Response.json({ parent_only: true });
+    }
+    const forwarded = new Request("https://fixed-signal.invalid/", {
+      method: "POST",
+      signal: request.signal,
+      body: JSON.stringify({ id: crypto.randomUUID(), mode: body.case_id })
+    });
+    return await forwardSignalProbe(
+      forwarded,
+      env.LOADER,
+      () => effects({ token: body.run_token, caseId: body.case_id }),
+      () => log("parent_abort_received"),
+      waitUntil
+    );
+  } catch (error) {
+    return Response.json({ phase: "signal-probe", error_type: error.name, physical_termination_verified: false }, { status: 502 });
+  }
+}
+__name(handleSignalProbe, "handleSignalProbe");
+
+// entry.mjs
+var Effects = class extends WorkerEntrypoint {
+  static {
+    __name(this, "Effects");
+  }
+  async record(event) {
+    if (!["before", "caught", "after"].includes(event)) throw new TypeError("Child event only");
+    const status = await writeSignalLog(this.env.DEV_API, this.ctx.props.token, this.ctx.props.caseId, event);
+    if (status !== 200) throw new Error("Independent observer rejected event");
+  }
+};
+var entry_default = { fetch(request, env, ctx) {
+  return handleSignalProbe(request, env, (props) => ctx.exports.Effects({ props }), (promise) => ctx.waitUntil(promise));
+} };
+export {
+  Effects,
+  entry_default as default
+};
+//# sourceMappingURL=entry.js.map

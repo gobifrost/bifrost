@@ -1,0 +1,20 @@
+{
+  "cli": "cf 1.0.0-beta.22",
+  "worker": "bifrost-pyodide-spike-ddf316c1",
+  "initial_version": "f3b67b9b-f00a-478f-9557-09b2b2d8f2a1",
+  "instrumented_runtime_version": "f9d8ad69-0264-4e68-8bb1-3256d906503a",
+  "final_private_version": "dc47f427-5115-4aa6-bad6-92213520be41",
+  "final_upload_kib": 9248.29,
+  "final_upload_gzip_kib": 2433.44,
+  "final_upload_validation_startup_ms": 939,
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": false,
+  "cpu_limit_ms": 1000,
+  "preview_deleted": "pyodide-ddf316c1",
+  "storage_queue_service_bindings": [],
+  "bifrost_credentials_uploaded": false,
+  "secret_binding": "SPIKE_AUTH (test authentication only; value omitted)",
+  "public_readback_artifact": "cloud-final-readback.json",
+  "scope": "isolated spike resources only; no production changes"
+}

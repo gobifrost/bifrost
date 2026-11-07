@@ -1,0 +1,61 @@
+{
+    "captured_at_utc":  "2026-11-01T05:20:43.1617297Z",
+    "delivery_request_id":  "af7a12d2-0873-4f74-9eab-e6c75099e0f3",
+    "instruction_acted_on":  true,
+    "remote_execution_observed":  false,
+    "volumes_deleted":  false,
+    "locks_deleted":  false,
+    "heavy_laptop_batches_after_instruction":  0,
+    "containers":  [
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-api-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-worker-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-scheduler-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-scheduler-fixtures-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-seaweedfs-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-pgbouncer-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-redis-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-test-79c5c14e-postgres-1",
+                           "exit_code":  0
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-pyodide-test-tools-ddf316c1",
+                           "exit_code":  137
+                       },
+                       {
+                           "status":  "exited",
+                           "name":  "bifrost-pyodide-ddf316c1",
+                           "exit_code":  137
+                       }
+                   ]
+}

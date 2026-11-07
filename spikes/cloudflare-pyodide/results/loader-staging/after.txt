@@ -1,0 +1,11 @@
+✔ fresh staged loader resolves its SDK cleanup dependency and injects the real adapter (35.3327ms)
+✔ an unpinned base artifact is rejected before derived runtime staging (132.5068ms)
+ℹ tests 2
+ℹ suites 0
+ℹ pass 2
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 298.2326
+exit_code=0

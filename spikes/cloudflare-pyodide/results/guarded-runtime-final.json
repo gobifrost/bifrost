@@ -1,0 +1,29 @@
+{
+  "status": 200,
+  "body": {
+    "fingerprint": {
+      "pyodide": "314.0.6",
+      "python": [
+        3,
+        14,
+        2
+      ],
+      "cache_tag": "cpython-314",
+      "soabi": "cpython-314-wasm32-emscripten",
+      "platform": "emscripten-5.0.3-wasm32"
+    },
+    "drift_rejected": true,
+    "effects_after_rejection": [],
+    "upstream_worker_imported": true
+  },
+  "cloud_invocations": 0,
+  "source_sha256": {
+    "guarded-runtime-entry.mjs": "aa487786e76e070e0c91cd3be3f9aea6efc34e44eabeb02367d86f70ebf6383b",
+    "wrangler.guarded-runtime.jsonc": "6fade322b589f0928ba9e2727f4fa98f2506e14755ce3377a90149fe5cd54369",
+    "guarded-runtime-probe.mjs": "5e335b8a2b5d23a45dff1a930eb14eea8c4d045fefdfccb26b5e1358431c569a",
+    "runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "runtime-runner.py": "18cdc399c85aa73d3b75e68643a1a0059c1dcd6c326bdb7f1a7131bc5a399c66",
+    "pack-engine.py": "fa3d9d380007086b31d293a284fb763180762e234b88b3b1ad002898879ae39e"
+  },
+  "payload_sha256": "da076facf8aa457f7414952b5554a6ffc27829f3279c9803fe53986e8c6fefb9"
+}

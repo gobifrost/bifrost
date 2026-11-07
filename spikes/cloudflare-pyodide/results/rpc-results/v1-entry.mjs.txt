@@ -1,0 +1,73 @@
+// Fixed local lifecycle probe. No workflow, identity, outbound access or admission.
+import {feature} from './guest-disposal-entry.mjs';
+const python = `
+from workers import WorkerEntrypoint
+import asyncio
+state = {"started": 0, "after": 0}
+class Default(WorkerEntrypoint):
+    async def result(self):
+        return {"value": 7}
+    async def primitive(self):
+        return 7
+    async def slow(self):
+        state["started"] += 1
+        await asyncio.sleep(0.15)
+        state["after"] += 1
+        return {"value": 7}
+    async def status(self):
+        return dict(state)
+`;
+function snapshot(value) { return {started: value.started, after: value.after}; }
+function dispose(value) {
+  if (!feature(value, Symbol.dispose).available) return false;
+  value[Symbol.dispose]();
+  return true;
+}
+export default {
+  async fetch(request, env) {
+    if (env.ISOLATED_TEST_STACK !== 'true' || request.method !== 'POST') return new Response('Local POST only', {status: 403});
+    const worker = env.LOADER.load({compatibilityDate: '2026-10-30', compatibilityFlags: ['python_workers'],
+      mainModule: 'main.py', modules: {'main.py': {py: python}}, env: {}, globalOutbound: null,
+      limits: {cpuMs: 1000, subRequests: 0}});
+    const entrypoint = worker.getEntrypoint();
+    const result = await entrypoint.result();
+    const value = result.value;
+    const resultFeatures = feature(result, Symbol.dispose);
+    const resultDisposed = dispose(result);
+    const promise = entrypoint.result();
+    const promiseFeatures = feature(promise, Symbol.dispose);
+    const second = await promise;
+    const promiseValue = second.value;
+    // Separate calls avoid double disposal of aliases to the same result.
+    const promiseDisposed = dispose(promise);
+    const primitive = await entrypoint.primitive();
+    const control = await entrypoint.slow();
+    dispose(control);
+    const controlStatus = await entrypoint.status();
+    const before = snapshot(controlStatus);
+    dispose(controlStatus);
+    const pending = entrypoint.slow();
+    const pendingFeatures = feature(pending, Symbol.dispose);
+    const atStatus = await entrypoint.status();
+    const atDisposal = snapshot(atStatus);
+    dispose(atStatus);
+    const pendingDisposed = dispose(pending);
+    let outcome;
+    try {
+      const returned = await pending;
+      outcome = {returned: true, value: returned.value};
+      // Only dispose this resolved object if the promise was not disposed.
+      if (!pendingDisposed) dispose(returned);
+    } catch (error) { outcome = {returned: false, error_type: error.name}; }
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const afterStatus = await entrypoint.status();
+    const after = snapshot(afterStatus);
+    dispose(afterStatus);
+    return Response.json({value, result_features: resultFeatures, result_disposed: resultDisposed,
+      promise_value: promiseValue, promise_features: promiseFeatures, promise_disposed: promiseDisposed,
+      primitive, primitive_features: feature(primitive, Symbol.dispose), before,
+      at_disposal: atDisposal, pending_features: pendingFeatures, pending_disposed: pendingDisposed,
+      pending_outcome: outcome, after, physical_termination_verified: false,
+      note: 'Object disposal and pending-work observations are not isolate destruction evidence'});
+  },
+};

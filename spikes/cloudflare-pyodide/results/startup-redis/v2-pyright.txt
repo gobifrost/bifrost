@@ -1,0 +1,7 @@
+venv .venv subdirectory not found in venv path /.
+/qualification/startup-redis-probe.py
+  /qualification/startup-redis-probe.py:47:22 - error: "int" is not awaitable
+  /qualification/startup-redis-probe.py:140:15 - error: "bool" is not awaitable
+2 errors, 0 warnings, 0 informations
+exit_code=1
+Transcribed diagnostic summary from observed tool output; protocol explanation lines omitted.

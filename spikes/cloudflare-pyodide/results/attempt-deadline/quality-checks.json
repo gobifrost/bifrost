@@ -1,0 +1,26 @@
+{
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/attempt-deadline-v3",
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "unit":  {
+                 "command":  "PYTHONPATH=/app:/qualification python -m unittest -v test_attempt_deadline",
+                 "exit_code":  0,
+                 "tests":  10,
+                 "memory_mib":  512,
+                 "network":  "none"
+             },
+    "ruff":  {
+                 "command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py attempt_deadline.py test_attempt_deadline.py",
+                 "exit_code":  0,
+                 "memory_mib":  512,
+                 "network":  "none"
+             },
+    "pyright":  {
+                    "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/canonical-local.py /qualification/ct128-canonical-failure.py /qualification/attempt_deadline.py /qualification/test_attempt_deadline.py",
+                    "exit_code":  0,
+                    "errors":  0,
+                    "memory_mib":  1024,
+                    "node_old_space_mib":  768,
+                    "network":  "none"
+                },
+    "cloud_invocations":  0
+}

@@ -1,0 +1,199 @@
+{
+  "runtime": "deployed-cloudflare-dynamic-python-worker",
+  "started_at": "2026-10-31T15:41:26.655Z",
+  "versions": "5d55880e-ec51-4c0f-938b-833096fd4ddb",
+  "results": [
+    {
+      "ordinal": 1,
+      "request": {
+        "action": "state",
+        "marker": "cloud-tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "cloud-tenant-A",
+            "own_canary": "synthetic-08f592d7-69d2-4abb-84ff-87917feaf25f",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 1798.6177
+    },
+    {
+      "ordinal": 2,
+      "request": {
+        "action": "state",
+        "marker": "cloud-tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "cloud-tenant-B",
+            "own_canary": "synthetic-f6b7a16f-2897-4625-9db3-4400ece6771b",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 1409.8589
+    },
+    {
+      "ordinal": 3,
+      "request": {
+        "action": "state",
+        "marker": "cloud-parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "cloud-parallel-A",
+            "own_canary": "synthetic-55f48599-8ebf-4e9c-9ec2-c22faad519fa",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 1136.2124
+    },
+    {
+      "ordinal": 4,
+      "request": {
+        "action": "state",
+        "marker": "cloud-parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "cloud-parallel-B",
+            "own_canary": "synthetic-112c5bd7-a684-4145-b282-196dedfa0aa8",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_canary_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 979.2217000000005
+    },
+    {
+      "ordinal": 5,
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": false
+      },
+      "client_wall_ms": 1188.6161000000002
+    },
+    {
+      "ordinal": 6,
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "error_type": "Error",
+          "error": "Error: diagnostic cancellation"
+        },
+        "effects": [
+          "before"
+        ],
+        "abort_requested": true,
+        "parent_canary_configured": true,
+        "cancel_input": true
+      },
+      "client_wall_ms": 1343.5906999999997
+    },
+    {
+      "ordinal": 7,
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 5,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "total": 199999990000000
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ],
+        "abort_requested": false,
+        "parent_canary_configured": true,
+        "cancel_input": true
+      },
+      "client_wall_ms": 3876.152799999999
+    }
+  ],
+  "unauthenticated_status": 403,
+  "finished_at": "2026-10-31T15:41:37.610Z",
+  "total_reserved_invocations": 7
+}

@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="1.704" timestamp="2026-11-03T03:18:53.403491+00:00" hostname="33c240feede7"><testcase classname="tests.unit.worker.remote.test_runtime_profile" name="test_unsigned_profile_is_not_silently_ignored" time="0.006"><failure message="Failed: DID NOT RAISE &lt;class 'src.worker.remote.protocol.AuthenticationError'&gt;">tests/unit/worker/remote/test_runtime_profile.py:24: in test_unsigned_profile_is_not_silently_ignored
+    with pytest.raises(AuthenticationError):
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E   Failed: DID NOT RAISE &lt;class 'src.worker.remote.protocol.AuthenticationError'&gt;</failure></testcase></testsuite></testsuites>

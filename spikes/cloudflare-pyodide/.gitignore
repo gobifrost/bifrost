@@ -1,0 +1,14 @@
+.venv*/
+node_modules/
+.wrangler/
+.cloudflare/
+python_modules/
+src/vendor/
+__pycache__/
+.dev.vars*
+!results/bundle.log
+!results/cf-final-private.log
+backend/generated-modules.mjs
+backend/generated-runtime.mjs
+backend/.wrangler/
+backend/runtime-source/

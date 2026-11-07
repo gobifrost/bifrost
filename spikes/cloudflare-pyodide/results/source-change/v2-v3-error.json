@@ -1,0 +1,7 @@
+{
+  "v2_error": "Failure ACK loss disturbed live peer",
+  "v3_exposing_diagnostic": "Peer collection finished unsuccessfully with BifrostAPIError, 410 log calls, original deadline already exceeded by 10783.879 ms; both native obligations remained held.",
+  "fix": "Preserve source denial but represent the known digest mismatch as an HTTP 409 with structured trace evidence rather than an uncaught exception through the Python/JS bridge. All other errors and upstream auth responses retain their behavior.",
+  "validation": "Same held-peer test and 30-second cutoff pass on exact-candidate V4 and V5. This is local finite-workflow evidence, not a general latency or isolation guarantee.",
+  "cleanup_note": "V2 immediate readback included SeaweedFS; read-only follow-up saw that exact owned container exited and project running list empty. Original receipt preserved."
+}

@@ -1,0 +1,486 @@
+{
+  "source_commit": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "artifact_sha256": "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+  "compared": 79,
+  "identical": 73,
+  "namespace_adapters": 6,
+  "unexpected": [],
+  "records": [
+    {
+      "path": "api/bifrost/__init__.py",
+      "source_sha256": "3ad5a367c97a8b1a7fcb36b956a7fb790d11b4f015bef2440cbf7ee5a7abeadf",
+      "packaged_sha256": "3ad5a367c97a8b1a7fcb36b956a7fb790d11b4f015bef2440cbf7ee5a7abeadf",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/__main__.py",
+      "source_sha256": "bd772e99553ba5ab753c384dab75e3f69e5faa22592a55c4327d1a8ecc690e64",
+      "packaged_sha256": "bd772e99553ba5ab753c384dab75e3f69e5faa22592a55c4327d1a8ecc690e64",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_context.py",
+      "source_sha256": "ade2222a380a1f916b0ae5e398bc40460e10d6b5930a6fc82a9924fc21c4771d",
+      "packaged_sha256": "ade2222a380a1f916b0ae5e398bc40460e10d6b5930a6fc82a9924fc21c4771d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_device_auth.py",
+      "source_sha256": "f9a0d33a76e123c046d01479b049b5347a1293db7ea286499ff1a663cef30653",
+      "packaged_sha256": "f9a0d33a76e123c046d01479b049b5347a1293db7ea286499ff1a663cef30653",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_execution_context.py",
+      "source_sha256": "790ef3b02d14a6df65831a9cdb89196cf3d9f650f1438a10f4e072f615bf7eed",
+      "packaged_sha256": "790ef3b02d14a6df65831a9cdb89196cf3d9f650f1438a10f4e072f615bf7eed",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_logging.py",
+      "source_sha256": "9c218f5d3f3c7a4ede228fd6aaf2e96341ff3cacef5642ecdcc4dc2c43ec50bd",
+      "packaged_sha256": "9c218f5d3f3c7a4ede228fd6aaf2e96341ff3cacef5642ecdcc4dc2c43ec50bd",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_refreshing.py",
+      "source_sha256": "9d3419a80fa07a9ea3dc41c243724d9e424aa0048a63fff4fc7640eb00057a0d",
+      "packaged_sha256": "9d3419a80fa07a9ea3dc41c243724d9e424aa0048a63fff4fc7640eb00057a0d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_runtime_io.py",
+      "source_sha256": "757740c9b5575744c942234a0f4b177659862c8184f2cf359bfc92a77187d648",
+      "packaged_sha256": "757740c9b5575744c942234a0f4b177659862c8184f2cf359bfc92a77187d648",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_service_runtime.py",
+      "source_sha256": "4063c6244f34db0502910454f330471fa16cb74e1e822442fa586088218c6cd1",
+      "packaged_sha256": "4063c6244f34db0502910454f330471fa16cb74e1e822442fa586088218c6cd1",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_solution_workspace.py",
+      "source_sha256": "986d2084e00eed59ae5991b44aafb23f502dccca1bdb363f6c740d89b602d0c5",
+      "packaged_sha256": "986d2084e00eed59ae5991b44aafb23f502dccca1bdb363f6c740d89b602d0c5",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_version_notice.py",
+      "source_sha256": "d3c453afc7ec9c4cb184ea7475d948e57ef46c47f63aeea66cfb40d622ffcc8c",
+      "packaged_sha256": "d3c453afc7ec9c4cb184ea7475d948e57ef46c47f63aeea66cfb40d622ffcc8c",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/_workspace_lock.py",
+      "source_sha256": "f014151253419b7638d00d91cde4b69045db74561f2329b53e38cc013a6ec704",
+      "packaged_sha256": "f014151253419b7638d00d91cde4b69045db74561f2329b53e38cc013a6ec704",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/agents.py",
+      "source_sha256": "77d9e1dc78dd965782d6950c438226456e89a99caa19561bfeda0ad441919794",
+      "packaged_sha256": "77d9e1dc78dd965782d6950c438226456e89a99caa19561bfeda0ad441919794",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/ai.py",
+      "source_sha256": "6f741fbf51fd3ec93861b73f23def01cce4d1512280598a2342643639de15405",
+      "packaged_sha256": "6f741fbf51fd3ec93861b73f23def01cce4d1512280598a2342643639de15405",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/api.py",
+      "source_sha256": "e22646a36fdbdb88beadd3a787d3af9ef5f9a041abf564f4f1d058cf4acd8e20",
+      "packaged_sha256": "e22646a36fdbdb88beadd3a787d3af9ef5f9a041abf564f4f1d058cf4acd8e20",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/app_binding.py",
+      "source_sha256": "4b22c4696fd146a6cd766ecea07b09df46098e2e0e9d825d167cff2d4d1e7e27",
+      "packaged_sha256": "4b22c4696fd146a6cd766ecea07b09df46098e2e0e9d825d167cff2d4d1e7e27",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/app_migration.py",
+      "source_sha256": "1a74e575808ec6319d99b1154e6281c21b6db8690f28d8954888ae9576734950",
+      "packaged_sha256": "1a74e575808ec6319d99b1154e6281c21b6db8690f28d8954888ae9576734950",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/artifacts.py",
+      "source_sha256": "053544a7b1194064bb1a669ed638f6c0d85e63ca238311837138f96204c3dbd8",
+      "packaged_sha256": "053544a7b1194064bb1a669ed638f6c0d85e63ca238311837138f96204c3dbd8",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/cli.py",
+      "source_sha256": "08c7ad0d3adcf32b2c45a7a9352c4a6640f15b18a87cd75bec967d486b025812",
+      "packaged_sha256": "08c7ad0d3adcf32b2c45a7a9352c4a6640f15b18a87cd75bec967d486b025812",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/client.py",
+      "source_sha256": "8a8eeb74585faca0ea7b33cf2b435ea99d1d39522b1a87d1ce237ff556b9cebd",
+      "packaged_sha256": "8a8eeb74585faca0ea7b33cf2b435ea99d1d39522b1a87d1ce237ff556b9cebd",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/config.py",
+      "source_sha256": "11a470002cf36720d313dd1c7c294233e9de225acd92b92bc1c52f1fc47839e3",
+      "packaged_sha256": "11a470002cf36720d313dd1c7c294233e9de225acd92b92bc1c52f1fc47839e3",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/contract_version.py",
+      "source_sha256": "009c68f1e17c81daa4fba7760b0e77191d507a459c91541e0d12bfa3c2c262d9",
+      "packaged_sha256": "009c68f1e17c81daa4fba7760b0e77191d507a459c91541e0d12bfa3c2c262d9",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/credentials.py",
+      "source_sha256": "be7721a1722090533b114fb5dda9e2ac8c83a58427f5e4005b5aaba149784ecb",
+      "packaged_sha256": "be7721a1722090533b114fb5dda9e2ac8c83a58427f5e4005b5aaba149784ecb",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/decorator_validation.py",
+      "source_sha256": "c3b9a8cb3a16adf710cdcdbe147f4892eada143979896d65ba683826a65cd7b1",
+      "packaged_sha256": "c3b9a8cb3a16adf710cdcdbe147f4892eada143979896d65ba683826a65cd7b1",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/decorators.py",
+      "source_sha256": "438fea26bc0d558c01266ca3cf504aed5181ceb0ecedab921603ff4cbd9336c7",
+      "packaged_sha256": "438fea26bc0d558c01266ca3cf504aed5181ceb0ecedab921603ff4cbd9336c7",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/definition_validation.py",
+      "source_sha256": "d3fc01de14ac30260f571aebdd499f1519d391582684f6ad00d9527cb19efb7b",
+      "packaged_sha256": "d3fc01de14ac30260f571aebdd499f1519d391582684f6ad00d9527cb19efb7b",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/dto_flags.py",
+      "source_sha256": "6e2ed6040443bf9d69a5dbe7badbcc1a007f6fc89c06245f463f3cadc6335abb",
+      "packaged_sha256": "6e2ed6040443bf9d69a5dbe7badbcc1a007f6fc89c06245f463f3cadc6335abb",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/events.py",
+      "source_sha256": "b74d0f9ee78946c0a213ea8c6b1621743ff5c48e671d2907fe9f83026f3c8c37",
+      "packaged_sha256": "b74d0f9ee78946c0a213ea8c6b1621743ff5c48e671d2907fe9f83026f3c8c37",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/executions.py",
+      "source_sha256": "c9d220a174fe6896aa9defbc7a44c82ec14bddba81739bb78bbca08e72bcd3fd",
+      "packaged_sha256": "c9d220a174fe6896aa9defbc7a44c82ec14bddba81739bb78bbca08e72bcd3fd",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/field_classes.py",
+      "source_sha256": "a86afed8adb9e2f846de0d730b7251c71045e220fe89f21de716583908d177ce",
+      "packaged_sha256": "a86afed8adb9e2f846de0d730b7251c71045e220fe89f21de716583908d177ce",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/files.py",
+      "source_sha256": "e56bfbc9d470a3833a414334c8a686c8f64b690e30ff90aaaaf095f5f54822f0",
+      "packaged_sha256": "e56bfbc9d470a3833a414334c8a686c8f64b690e30ff90aaaaf095f5f54822f0",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/forms.py",
+      "source_sha256": "32c8790cc8bebef46f6fb2071d4c722502c685db566797ba1367b85bc735fe40",
+      "packaged_sha256": "32c8790cc8bebef46f6fb2071d4c722502c685db566797ba1367b85bc735fe40",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/git_commands.py",
+      "source_sha256": "81469f8c4562d3ce7d45804a6b3fc7816ba5e15485c2c230ee588f6cbd376efb",
+      "packaged_sha256": "81469f8c4562d3ce7d45804a6b3fc7816ba5e15485c2c230ee588f6cbd376efb",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/ignore_patterns.py",
+      "source_sha256": "4f2e75ec36d2ee5e05b3bc997ac248d53fb847839186fc88319831baf1420f12",
+      "packaged_sha256": "4f2e75ec36d2ee5e05b3bc997ac248d53fb847839186fc88319831baf1420f12",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/integrations.py",
+      "source_sha256": "b376d92f0aa3f5bd722979afe58074161b7485423df27f911724115c5dc8b465",
+      "packaged_sha256": "b376d92f0aa3f5bd722979afe58074161b7485423df27f911724115c5dc8b465",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/knowledge.py",
+      "source_sha256": "562ce62703884bf150f462aeff2a2ad59a5c25e42c2e9f686e9135bf28b3ed53",
+      "packaged_sha256": "562ce62703884bf150f462aeff2a2ad59a5c25e42c2e9f686e9135bf28b3ed53",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/manifest.py",
+      "source_sha256": "57d10c26ee471089de3b688b859b72f221f5c2e4f1c8758b9bd32296103fbc76",
+      "packaged_sha256": "57d10c26ee471089de3b688b859b72f221f5c2e4f1c8758b9bd32296103fbc76",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/manifest_codec.py",
+      "source_sha256": "70241bf0e3655903080fa4b1f8338aac6811422e873bea514e9b05ebc1f02b1d",
+      "packaged_sha256": "70241bf0e3655903080fa4b1f8338aac6811422e873bea514e9b05ebc1f02b1d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/migrate_imports.py",
+      "source_sha256": "7364e37d17bd1ea00490afda7a179d5d8eb7079ac5dc59dfdc5c961db3f05af1",
+      "packaged_sha256": "7364e37d17bd1ea00490afda7a179d5d8eb7079ac5dc59dfdc5c961db3f05af1",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/migrate_v2.py",
+      "source_sha256": "b92aaaa83a0a953a535e0b7a85714d4363fae762b663d093763e052c185b0841",
+      "packaged_sha256": "b92aaaa83a0a953a535e0b7a85714d4363fae762b663d093763e052c185b0841",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/models.py",
+      "source_sha256": "7a7f6bc2dc32857960cec9ef4abe5a45d9083097ca1d39cc11093696a998d0ec",
+      "packaged_sha256": "7a7f6bc2dc32857960cec9ef4abe5a45d9083097ca1d39cc11093696a998d0ec",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/org_target.py",
+      "source_sha256": "904f74b0815cbf0923db5c9eed843bb7251e0c6b81630bfb82c671cf6e3dddcb",
+      "packaged_sha256": "904f74b0815cbf0923db5c9eed843bb7251e0c6b81630bfb82c671cf6e3dddcb",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/organizations.py",
+      "source_sha256": "0a3f34473bc6b8b7d964e30077dfcdc642a7ce9b8f5bfa48bd202b86f12ea1b6",
+      "packaged_sha256": "0a3f34473bc6b8b7d964e30077dfcdc642a7ce9b8f5bfa48bd202b86f12ea1b6",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/platform_jobs.py",
+      "source_sha256": "25095b43d1854b89c42e5aff0260e3866f76c2b895a229e5dca5a7d01d2c9d42",
+      "packaged_sha256": "25095b43d1854b89c42e5aff0260e3866f76c2b895a229e5dca5a7d01d2c9d42",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/platform_names.py",
+      "source_sha256": "43a422b9390416c05f76d064291dcbb65a3ff9364a9ef411179919d18854554d",
+      "packaged_sha256": "43a422b9390416c05f76d064291dcbb65a3ff9364a9ef411179919d18854554d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/refs.py",
+      "source_sha256": "d5da1707b945ecf1188f5fa9acfdf013e67253f7fab6cec088ab147b8c8b3473",
+      "packaged_sha256": "d5da1707b945ecf1188f5fa9acfdf013e67253f7fab6cec088ab147b8c8b3473",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/roles.py",
+      "source_sha256": "be5b8fb4e0616e316ebc477cdba01ac20a997a17efe1cd21eb212d8e95a64695",
+      "packaged_sha256": "be5b8fb4e0616e316ebc477cdba01ac20a997a17efe1cd21eb212d8e95a64695",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/skill.py",
+      "source_sha256": "ce5f1d03502377897924570c7b79871692de2d4f759a8c2f426493c89599891d",
+      "packaged_sha256": "ce5f1d03502377897924570c7b79871692de2d4f759a8c2f426493c89599891d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/solution_binding.py",
+      "source_sha256": "a9b72bfb79dd99aef7e59ebbf18ab261ae9162b181b01a1f711ba691f5273262",
+      "packaged_sha256": "a9b72bfb79dd99aef7e59ebbf18ab261ae9162b181b01a1f711ba691f5273262",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/solution_definition.py",
+      "source_sha256": "f15c2d692942d5a35d3d047de2a64934e41afad27800cacf000efaf75aa27345",
+      "packaged_sha256": "f15c2d692942d5a35d3d047de2a64934e41afad27800cacf000efaf75aa27345",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/solution_descriptor.py",
+      "source_sha256": "559044b907b1c2d3b60df4d31717c98b4195e7dcaba79fec513a7c5dcb82f5be",
+      "packaged_sha256": "559044b907b1c2d3b60df4d31717c98b4195e7dcaba79fec513a7c5dcb82f5be",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/solution_jobs.py",
+      "source_sha256": "618c42ffa27995088872c71be33d8609de64a5bea68fc5e9978d95c43c8e0b29",
+      "packaged_sha256": "618c42ffa27995088872c71be33d8609de64a5bea68fc5e9978d95c43c8e0b29",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/solution_vendoring.py",
+      "source_sha256": "b7e658e77fb6f3d55ccda832c14671bfb28c2ae77215db65d0475d6e5f16d5ac",
+      "packaged_sha256": "b7e658e77fb6f3d55ccda832c14671bfb28c2ae77215db65d0475d6e5f16d5ac",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/tables.py",
+      "source_sha256": "e88f58479b0bdf04ec689589745319bbda7b20cad66e5d800e5213106d10a36d",
+      "packaged_sha256": "e88f58479b0bdf04ec689589745319bbda7b20cad66e5d800e5213106d10a36d",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/users.py",
+      "source_sha256": "a8f6bf5dbf97f898a098ded50f81c1a163b5e30d1d01d089d5699927759c4f2f",
+      "packaged_sha256": "a8f6bf5dbf97f898a098ded50f81c1a163b5e30d1d01d089d5699927759c4f2f",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/webhooks.py",
+      "source_sha256": "44c9a7e180f2d7a6c38795ce5e21f8f2b858d6b409b30de1f3997a0e9d18d44c",
+      "packaged_sha256": "44c9a7e180f2d7a6c38795ce5e21f8f2b858d6b409b30de1f3997a0e9d18d44c",
+      "state": "identical"
+    },
+    {
+      "path": "api/bifrost/workflows.py",
+      "source_sha256": "f8c9353a9b989a7a972712b691fd7b99b6de1e35a4ca82881228736501741fea",
+      "packaged_sha256": "f8c9353a9b989a7a972712b691fd7b99b6de1e35a4ca82881228736501741fea",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/__init__.py",
+      "source_sha256": "880b63790f67030db2574c4d14bd4abf48a10c90538854c5a3b3aaa8e22442da",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/core/__init__.py",
+      "source_sha256": "1fded42f9c1571ff1ceaf51f98c3c373f18ffc9dea7d44906264e7a3f8d0bc77",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/core/error_messages.py",
+      "source_sha256": "50c2c4b1673f7373d83209456b68d9fb84f6c80ce47c539fbd3185b40718d0a2",
+      "packaged_sha256": "50c2c4b1673f7373d83209456b68d9fb84f6c80ce47c539fbd3185b40718d0a2",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/core/module_cache_contract.py",
+      "source_sha256": "d9514af209f42d8a12f376002996719e9993b5a02026b751a7f041f4d366f4b3",
+      "packaged_sha256": "d9514af209f42d8a12f376002996719e9993b5a02026b751a7f041f4d366f4b3",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/core/module_cache_sync.py",
+      "source_sha256": "d132e24a711da0bd5ecc7e8a6900bb66d4a3587969b7efad7b484963ea4996ad",
+      "packaged_sha256": "d132e24a711da0bd5ecc7e8a6900bb66d4a3587969b7efad7b484963ea4996ad",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/core/secret_string.py",
+      "source_sha256": "b2a67b23ef5f3d287e58651b1e071a3231c05f4b9f8c022aebb012555e62562b",
+      "packaged_sha256": "b2a67b23ef5f3d287e58651b1e071a3231c05f4b9f8c022aebb012555e62562b",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/models/__init__.py",
+      "source_sha256": "cab563a0a25dd1bef912ebd8e7dde43a1e98caca4cfdb0513c570104c951fd43",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/models/enums.py",
+      "source_sha256": "b27718e0d03309b80269d506c0e321651cb46ee31487a9068820b4c48b50cde1",
+      "packaged_sha256": "b27718e0d03309b80269d506c0e321651cb46ee31487a9068820b4c48b50cde1",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/sdk/__init__.py",
+      "source_sha256": "ab65cbe57119faf6e7998cdca65a29f95a5051c1d6bce11d2e0ddaf6b1dd2f6c",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/sdk/context.py",
+      "source_sha256": "99939333cf044a7392bad7a4d516e45ab5c8a006db9ffbecd6b90f6f062c73ce",
+      "packaged_sha256": "99939333cf044a7392bad7a4d516e45ab5c8a006db9ffbecd6b90f6f062c73ce",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/sdk/decorators.py",
+      "source_sha256": "bd360cec39160aefe2aa818f523814d863100d1fb342fe7c1c0f881812fc97fb",
+      "packaged_sha256": "bd360cec39160aefe2aa818f523814d863100d1fb342fe7c1c0f881812fc97fb",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/sdk/error_handling.py",
+      "source_sha256": "9e9f5d93abebc6c070658626eff0f03134abe94948044efdbe89917a11eff198",
+      "packaged_sha256": "9e9f5d93abebc6c070658626eff0f03134abe94948044efdbe89917a11eff198",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/sdk/errors.py",
+      "source_sha256": "1bba8edf0a25bc1f9e28a54db45a1a9be1663fb2ab72b522da345baec52a33ca",
+      "packaged_sha256": "1bba8edf0a25bc1f9e28a54db45a1a9be1663fb2ab72b522da345baec52a33ca",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/__init__.py",
+      "source_sha256": "8c17ccaa9bf7a8f66cc6eb9164041ab652da1ee9308ab017335bb74f06c79a15",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/services/execution/__init__.py",
+      "source_sha256": "fcd3055a78ee551bf60d8ac98fdb5d2d953c48342bf1899d62fd5bd8304ac5e0",
+      "packaged_sha256": "3ccb3f065e7894874adef6a14d18eac8eb3a3ed84ab147031e3374836eb34052",
+      "state": "explicit_namespace_adapter"
+    },
+    {
+      "path": "api/src/services/execution/engine.py",
+      "source_sha256": "6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21",
+      "packaged_sha256": "6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/module_loader.py",
+      "source_sha256": "71c78ed01dbd827a577336c65248a46d6be0949c8b9e02123a1a26f278121f76",
+      "packaged_sha256": "71c78ed01dbd827a577336c65248a46d6be0949c8b9e02123a1a26f278121f76",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/result_envelope.py",
+      "source_sha256": "2fe7bceb850379c9cd7cd524cd34464b427c8627fdd4181727ce12fad33c6f98",
+      "packaged_sha256": "2fe7bceb850379c9cd7cd524cd34464b427c8627fdd4181727ce12fad33c6f98",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/type_inference.py",
+      "source_sha256": "c7e2cf542684f0f7f42b5dff85d4ea330717de89c6ef4d774d062ff6e3276bca",
+      "packaged_sha256": "c7e2cf542684f0f7f42b5dff85d4ea330717de89c6ef4d774d062ff6e3276bca",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/virtual_import.py",
+      "source_sha256": "93660e10ea008c4b45f7d532b7724e34da7bf32a0b070820e689025db355f6dd",
+      "packaged_sha256": "93660e10ea008c4b45f7d532b7724e34da7bf32a0b070820e689025db355f6dd",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/worker.py",
+      "source_sha256": "5ed66b8e4abde9a349c3fa927e4eec06a2b9ae7a032fb307363ae37bbe72b925",
+      "packaged_sha256": "5ed66b8e4abde9a349c3fa927e4eec06a2b9ae7a032fb307363ae37bbe72b925",
+      "state": "identical"
+    },
+    {
+      "path": "api/src/services/execution/workspace_modules.py",
+      "source_sha256": "3485f46cb4e9289018ee48ab3d3fee0490c89392d8f4b5439f3af864e7a3f13c",
+      "packaged_sha256": "3485f46cb4e9289018ee48ab3d3fee0490c89392d8f4b5439f3af864e7a3f13c",
+      "state": "identical"
+    }
+  ],
+  "cloud_invocations": 0,
+  "scope": "Tracked Python modules in this closure only; not the whole platform, deployed API revision or namespace export compatibility"
+}

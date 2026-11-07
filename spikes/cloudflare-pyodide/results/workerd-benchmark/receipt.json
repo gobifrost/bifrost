@@ -1,0 +1,579 @@
+{
+  "api_source": "f417d03f5c8d5e3a182e68f69e2bf601a3b60125",
+  "runtime_source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "runtime": "actual-local-workerd",
+  "cloudflare_runtime_qualified": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793557637.4500217,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "started_at_epoch": 1793557637.7523818,
+      "exit_code": 0,
+      "finished_at_epoch": 1793557671.7570825
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "started_at_epoch": 1793557671.7570853,
+      "exit_code": 0,
+      "finished_at_epoch": 1793557678.7591155
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "pyodide-ddf316c1-workerd-benchmark-v3",
+        "--network",
+        "bifrost-test-cc399929_default",
+        "--network-alias",
+        "bifrost-pyodide-ddf316c1",
+        "--cpus=1",
+        "--memory=2g",
+        "--memory-swap=2g",
+        "--pids-limit=128",
+        "--label",
+        "com.docker.compose.project=bifrost-test-cc399929",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/workerd-benchmark-v3,dst=/qualification",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+        "--env",
+        "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+        "--env",
+        "HOME=/qualification/home",
+        "--env",
+        "CI=true",
+        "--env",
+        "WRANGLER_SEND_METRICS=false",
+        "--workdir",
+        "/qualification/project",
+        "--entrypoint",
+        "node",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "/spike/node_modules/wrangler/bin/wrangler.js",
+        "dev",
+        "--local",
+        "--ip",
+        "0.0.0.0",
+        "--port",
+        "8799",
+        "--config",
+        "backend/wrangler.authorized-local.jsonc"
+      ],
+      "started_at_epoch": 1793557678.7591178,
+      "exit_code": 0,
+      "finished_at_epoch": 1793557679.7600539
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-cc399929-sdk-fixture",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide:/spike:ro",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/workerd-benchmark-v3:/qualification:ro",
+        "test-runner",
+        "python",
+        "/qualification/canonical-local.py",
+        "--integration-probe",
+        "--integration-secret-probe",
+        "--benchmark-probe"
+      ],
+      "started_at_epoch": 1793557681.829604,
+      "exit_code": 0,
+      "finished_at_epoch": 1793557694.831637
+    }
+  ],
+  "qualification_passed": true,
+  "packet_sha256": {
+    "canonical-local.py": "20bf6f3d59c3daa6a39289699850d1e3722227bba36d0df45d5b4f47d5837d68",
+    "benchmark-workloads.py": "77e16fbd6adc0272bdd94c9843c81d1a2de04894d64c1267ef97178334cec3f2"
+  },
+  "worker_source_sha256": {
+    "backend/authorized-local-entry.mjs": "44427067c59a8e08b9811eb5f7d11a2d615a4a6a5ffe7b6976660a3b2965eac2",
+    "backend/runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "backend/generated-runtime.mjs": "e1cca587e10cb755d49df0f2325c038a361a25f7031142a9e9e896a3c004bd39",
+    "backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "backend/fixture-admission.mjs": "709163d6084457b7a05341804d84a8b12c984a668112b437a5ac466333991d4c",
+    "backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "backend/refresh-gate.mjs": "afdfb6205f633beb8482ad48176fab677ed022baca27118b22037bc1dc69f928",
+    "backend/wrangler.authorized-local.jsonc": "db8bab395ef84dfc1d99d2ac6fa34542cd6264dd8c1684bad0aa9fac1ffe64d1",
+    "probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e"
+  },
+  "project": "bifrost-test-cc399929",
+  "canonical_result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "workspace_sha256": {
+      "workflows/pyodide_qualification_b5e47be3577e431bb32f1d2a62ec4987.py": "92911bcbc76927d0ddbd12417372d058d604cd0e31b793a1aed6eb2a41d68c46",
+      "pyodide_helper_b5e47be3577e431bb32f1d2a62ec4987.py": "950a3629efc09cf1bf4227c9eb88340410907405e2852af03af40e1788cbc7be"
+    },
+    "physical_termination_verified": false,
+    "cloud_invocations": 0,
+    "worker_heartbeat_count": 4,
+    "owner_renewal_count": 1,
+    "routing_returned_before_collection_wait": true,
+    "integration_read_verified": true,
+    "integration_secret_decryption_and_redaction_verified": true,
+    "independent_document_value": 70,
+    "cross_tenant_status": 403,
+    "canonical_claim_verified": true,
+    "canonical_terminal_consumption_verified": true,
+    "lost_ack_reconnect_verified": true,
+    "credential_revoked_after_terminal_status": 401,
+    "launches": 1,
+    "persisted_log_count": 2,
+    "result": {
+      "result": {
+        "execution_id": "ef75525f-3468-435f-9dbb-eb1a3b3121b0",
+        "success": true,
+        "status": "Success",
+        "result": {
+          "value": 70,
+          "parent_secret_present": false,
+          "credential_redaction_probe": "[REDACTED]",
+          "integration_peer_status": 403,
+          "integration_value": 42,
+          "integration_secret_probe": "[REDACTED]",
+          "benchmark": [
+            {
+              "workload": "json_transform",
+              "samples_wall_ms": [
+                2.0003318786621094,
+                2.9997825622558594,
+                2.000093460083008
+              ],
+              "median_wall_ms": 2.0003318786621094,
+              "correctness": true
+            },
+            {
+              "workload": "http_orchestration",
+              "samples_wall_ms": [
+                20.999908447265625,
+                23.999929428100586,
+                15.000104904174805
+              ],
+              "median_wall_ms": 20.999908447265625,
+              "correctness": true
+            },
+            {
+              "workload": "integration_read",
+              "samples_wall_ms": [
+                19.999980926513672,
+                16.000032424926758,
+                23.000001907348633
+              ],
+              "median_wall_ms": 19.999980926513672,
+              "correctness": true
+            },
+            {
+              "workload": "table_update",
+              "samples_wall_ms": [
+                14.999866485595703,
+                14.000177383422852,
+                14.000177383422852
+              ],
+              "median_wall_ms": 14.000177383422852,
+              "correctness": true
+            },
+            {
+              "workload": "multi_step",
+              "samples_wall_ms": [
+                16.99972152709961,
+                16.99995994567871,
+                16.000032424926758
+              ],
+              "median_wall_ms": 16.99972152709961,
+              "correctness": true
+            }
+          ],
+          "benchmark_scope": "three samples within one workflow",
+          "benchmark_cpu_ms": null,
+          "benchmark_peak_isolate_memory_bytes": null,
+          "benchmark_cost_per_1000": null
+        },
+        "error": null,
+        "error_type": null,
+        "duration_ms": 436,
+        "logs": [
+          {
+            "timestamp": "2026-11-01T18:28:13.278000+00:00",
+            "level": "warning",
+            "message": "integration secret=[REDACTED]",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T18:28:13.279000+00:00",
+            "level": "warning",
+            "message": "canonical local Pyodide proof",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "n": 7,
+          "forbidden_scope": "8550fe6c-bfd3-4eb2-bf09-8158c1697d9a",
+          "forbidden_key": null,
+          "isolation": {
+            "integration_peer_status": 403,
+            "integration_value": 42,
+            "integration_secret_probe": "[REDACTED]"
+          },
+          "value": 42,
+          "integration": {
+            "integration_id": "531de42f-570f-4059-aa0b-c7b16263780b",
+            "entity_id": "synthetic-qualification-entity",
+            "entity_name": null,
+            "config": {
+              "qualification_value": 42,
+              "qualification_secret": "[REDACTED]"
+            },
+            "oauth": null,
+            "config_secret_keys": [
+              "qualification_secret"
+            ]
+          },
+          "synthetic_secret": "[REDACTED]",
+          "refresh_evidence": {
+            "benchmark": [
+              {
+                "workload": "json_transform",
+                "samples_wall_ms": [
+                  2.0003318786621094,
+                  2.9997825622558594,
+                  2.000093460083008
+                ],
+                "median_wall_ms": 2.0003318786621094,
+                "correctness": true
+              },
+              {
+                "workload": "http_orchestration",
+                "samples_wall_ms": [
+                  20.999908447265625,
+                  23.999929428100586,
+                  15.000104904174805
+                ],
+                "median_wall_ms": 20.999908447265625,
+                "correctness": true
+              },
+              {
+                "workload": "integration_read",
+                "samples_wall_ms": [
+                  19.999980926513672,
+                  16.000032424926758,
+                  23.000001907348633
+                ],
+                "median_wall_ms": 19.999980926513672,
+                "correctness": true
+              },
+              {
+                "workload": "table_update",
+                "samples_wall_ms": [
+                  14.999866485595703,
+                  14.000177383422852,
+                  14.000177383422852
+                ],
+                "median_wall_ms": 14.000177383422852,
+                "correctness": true
+              },
+              {
+                "workload": "multi_step",
+                "samples_wall_ms": [
+                  16.99972152709961,
+                  16.99995994567871,
+                  16.000032424926758
+                ],
+                "median_wall_ms": 16.99972152709961,
+                "correctness": true
+              }
+            ],
+            "benchmark_scope": "three samples within one workflow",
+            "benchmark_cpu_ms": null,
+            "benchmark_peak_isolate_memory_bytes": null,
+            "benchmark_cost_per_1000": null
+          },
+          "doc": {
+            "id": "proof",
+            "table_id": "9cd139aa-5a4e-4e48-a15e-68ebbb9d58c8",
+            "data": {
+              "value": 70
+            },
+            "created_at": "2026-11-01T18:28:13.038816+00:00",
+            "updated_at": "2026-11-01T18:28:13.038816+00:00",
+            "created_by": "d9bd1082-17e3-4373-b159-4aa18da907c1",
+            "updated_by": "d9bd1082-17e3-4373-b159-4aa18da907c1"
+          }
+        },
+        "integration_calls": [],
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        },
+        "metrics": {
+          "peak_memory_bytes": null,
+          "peak_process_rss_bytes": null,
+          "cpu_user_seconds": null,
+          "cpu_system_seconds": null,
+          "cpu_total_seconds": null,
+          "code_hash": "92911bcbc76927d0ddbd12417372d058d604cd0e31b793a1aed6eb2a41d68c46"
+        },
+        "cached": false,
+        "cache_expires_at": null,
+        "execution_context": {
+          "user_id": "d9bd1082-17e3-4373-b159-4aa18da907c1",
+          "email": "token-2a8f48c8@example.test",
+          "name": "Person d33e",
+          "scope": "a19d6562-d4b7-4a60-a66b-1faff8940a63",
+          "organization": {
+            "id": "a19d6562-d4b7-4a60-a66b-1faff8940a63",
+            "name": "Token World e037b93a",
+            "is_active": true,
+            "is_provider": false
+          },
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "ef75525f-3468-435f-9dbb-eb1a3b3121b0",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 30,
+          "workflow_name": "token_94dc84fb",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "https://test-api.invalid",
+          "parameters": {
+            "n": 7,
+            "forbidden_scope": "8550fe6c-bfd3-4eb2-bf09-8158c1697d9a"
+          },
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "worker_id": "f73e1f41-9210-4475-8f03-68d90f003658"
+      },
+      "api_calls": [
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules/workflows/pyodide_qualification_b5e47be3577e431bb32f1d2a62ec4987.py",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules-resolve",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/integrations/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/integrations/get",
+          "status": 403
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-b5e47be3577e431bb32f1d2a62ec4987/documents/upsert",
+          "status": 404
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables",
+          "status": 201
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-b5e47be3577e431bb32f1d2a62ec4987/documents/upsert",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/integrations/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/integrations/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/integrations/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-b5e47be3577e431bb32f1d2a62ec4987/documents/upsert",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-b5e47be3577e431bb32f1d2a62ec4987/documents/upsert",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/tables/pyodide-table-b5e47be3577e431bb32f1d2a62ec4987/documents/upsert",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        }
+      ]
+    },
+    "completed_claim_retained_as_upstream_specifies": true,
+    "fixture_worker_cascade_cleanup_verified": true
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 120873,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-01T18:27:58.915688116Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "provider_cgroup": {
+    "memory.peak": "1258438656\n",
+    "memory.max": "2147483648\n",
+    "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+  },
+  "owned_container_ids": [
+    "c5913c08515f",
+    "9c46ba88c009",
+    "6385c2326b7d",
+    "633f40394e25",
+    "b3d199a6b6b4",
+    "64c256f95c7c",
+    "74101c4e2761",
+    "437611c44010",
+    "329c9816cf2b",
+    "15dbc2e70df4",
+    "7be25a82f83d",
+    "2d4c8719aa3e",
+    "930a1af7ec81",
+    "f21cd41b1323",
+    "d559e87bf352",
+    "670312cab754",
+    "9f2b6eabd806",
+    "cc992de45267",
+    "991f9bc27da7",
+    "6cee45634a91",
+    "5623224b7234",
+    "35122ea2d03c"
+  ],
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 60.089682665187865,
+  "finished_at_epoch": 1793557697.5397077
+}

@@ -1,0 +1,132 @@
+{
+  "owner": "6e1d35f9-0847-466a-a570-f72fd16f9ed7",
+  "vmid": 128,
+  "source": "4d493d5547a6864cc6337df9144cdf9366652915",
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "started_at_epoch": 1793512779.8768444,
+      "exit_code": 0,
+      "finished_at_epoch": 1793512810.9108653
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/dev/test_pyodide_attempt_journal.py",
+        "tests/unit/worker/remote/test_launcher.py",
+        "tests/unit/worker/remote/test_ownership.py",
+        "tests/unit/worker/remote/test_fencing.py",
+        "-q"
+      ],
+      "started_at_epoch": 1793512810.9108677,
+      "exit_code": 0,
+      "finished_at_epoch": 1793512878.0113776
+    }
+  ],
+  "cloud_invocations": 0,
+  "runtime_acceptance": false,
+  "wall_limit_seconds": 900,
+  "disk_used_guard_bytes": 25769803776,
+  "hard_guest_limits": {
+    "cpus": 2,
+    "memory_mib": 4096,
+    "swap": 0
+  },
+  "started_at_epoch": 1793512779.5171204,
+  "remote_test_executed": true,
+  "staged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "unstaged_patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "required_untracked_files": [],
+  "tree": "c3966435749a6952bf6cf06f7a79eaf076ae9712",
+  "image": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "sidecar_pin_manifest": {
+    "observed_from": "Existing isolated laptop test images; metadata read only",
+    "target_verified": false,
+    "sidecars": {
+      "pgvector/pgvector:pg16": "pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a",
+      "redis:7-alpine": "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+      "edoburu/pgbouncer:latest": "edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d",
+      "chrislusf/seaweedfs:latest": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860"
+    },
+    "api_build": {
+      "dockerfile": "api/Dockerfile.dev",
+      "python_requirements": "requirements.lock",
+      "python_bootstrap": "requirements-piptools.lock",
+      "instruction": "Build from pinned public source and its digest-pinned base images; do not copy private caches or laptop credentials. Verify actual resolved digests before tests."
+    }
+  },
+  "sidecars_verified": [
+    {
+      "image_id": "sha256:f1447071e6c8449dcf4056aa0994c81d3566ce5ee232de36b04dc25696a116dd",
+      "pinned_digest": "pgvector/pgvector@sha256:7b822b0aac60967beb1ea5e576b8602c94c300a157d187f385ae3e0da199b90a",
+      "platform": "linux/amd64",
+      "size": 445397497,
+      "tag": "pgvector/pgvector:pg16",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:98c6ca8f397f86e469be752c3e7ed5eb8b17f2479840cb69a2e413037038e9f4",
+      "pinned_digest": "redis@sha256:8da19c7399dca900c6822a1cf30f9d2285585e2c4b457ff4095b0f4500054d3f",
+      "platform": "linux/amd64",
+      "size": 39058931,
+      "tag": "redis:7-alpine",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:5b28fd5ba5b5455bded482d859bc40fec7e7e5318a75a48a51f60bac65728588",
+      "pinned_digest": "edoburu/pgbouncer@sha256:8638aa563607256d3c7440437534195f1066a92b68015d89ae9d6b935b444a6d",
+      "platform": "linux/amd64",
+      "size": 18086752,
+      "tag": "edoburu/pgbouncer:latest",
+      "tag_absent_before_stage": true
+    },
+    {
+      "image_id": "sha256:17804fb097257c8c8ca9d57338ff756ee1f4312f40e1e521d62c1a1f8614b203",
+      "pinned_digest": "chrislusf/seaweedfs@sha256:c2658820e763294a9e9de7b36c81e59b879e3459148351aee4e31a126ca64860",
+      "platform": "linux/amd64",
+      "size": 536372517,
+      "tag": "chrislusf/seaweedfs:latest",
+      "tag_absent_before_stage": true
+    }
+  ],
+  "project": "bifrost-test-da7a5eef",
+  "fixture_sha256": {
+    "tests/unit/dev/test_pyodide_attempt_journal.py": "542bf6cd23628b9f7fc01d579e0d74d7f5b95b40151e31b4aef83e5244512c7e",
+    "tests/unit/worker/remote/test_launcher.py": "000a4b9430a48cbb05505b2bcf7236adbe0b0960d15a5adbf7a9d70f7a67263a",
+    "tests/unit/worker/remote/test_ownership.py": "9476d0ca17102b84b092df32fcc51a371f41419d4ba79a8322e3d6088bbdbc3e",
+    "tests/unit/worker/remote/test_fencing.py": "ee644ff5556c4ef83ab6fd890bd7476de8830c00fbe33cb4b35b98180b01f8c2"
+  },
+  "junit": {
+    "cases": 40,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "qualification_passed": true,
+  "owned_container_ids": [
+    "5266e9a0e7cd",
+    "5deca681b92d",
+    "3f438bfde133",
+    "2ab12c70115b",
+    "a8758e9ef868",
+    "915a3a5df155",
+    "df579217505a",
+    "59bbaa1e8232",
+    "b9556c8cf73b"
+  ],
+  "cleanup_stop_exit": 0,
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 100.44434049492702,
+  "finished_at_epoch": 1793512879.9614632,
+  "artifacts": {
+    "phase-0.log": "1739f14d1015f48a1c5de8e7b721108ffe57cbfd3da6ed82fb6ec6aafdbf3020",
+    "memory-samples.jsonl": "eff9e1c18635f34409e5ab2d48bedbc11d87ff82de58a8bc1749319262114cc2",
+    "phase-1.log": "0f4f912e3e4f87bc5695c06ff9d03a3b6820adaf2118fe6292bf9e65c0645a2e",
+    "test-results.xml": "8dab3b37f9669c307d39f10b193b4d9710e3cd8cb6f2527234fad64d9dc00ab5"
+  }
+}

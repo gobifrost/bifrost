@@ -1,0 +1,10 @@
+{
+    "scope":  "native private adapter admission and fixed-route unit tests only",
+    "before_source_commit":  "ea9a8eae02bee6c98357b25d35124301331c83e3",
+    "private_pool_sha256":  "1755ac1289a5c163e8f8a923adc23306b2e9c705515220bea15b16087a0e0194",
+    "tests_sha256":  "7db74982bae6e461d9de4a3fae1eb968568257a97d36d9c977f5fff755b22c0c",
+    "route_sha256":  "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "cloud_invocations":  0,
+    "external_https_implemented":  false,
+    "public_admission_enabled":  false
+}

@@ -1,6 +1,7 @@
 """The consumer writes the lineage its claimed run carries onto the execution row."""
 
 from datetime import datetime, timezone
+from typing import cast
 from unittest.mock import AsyncMock, Mock, patch
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
@@ -8,6 +9,7 @@ from uuid import UUID
 
 import pytest
 
+from src.core.redis_client import PendingExecution
 from src.jobs.consumers.workflow_execution import (
     WorkflowExecutionConsumer,
     _legacy_unattended_pending_actor,
@@ -44,6 +46,28 @@ def _consumer(route: CredentialRoute = CredentialRoute(1)) -> WorkflowExecutionC
     # A legacy route by default: its token is signed without a database read.
     consumer._pool.credential_route = Mock(return_value=route)
     return consumer
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('written', [True, False])
+@pytest.mark.parametrize('owner', [None, UUID('00000000-0000-0000-0000-0000000000bb')])
+async def test_setup_failure_fences_owner_and_notifies_only_after_written(written: bool, owner: UUID | None):
+    issued = RunCredentials('synthetic-access', 'synthetic-refresh', datetime.now(timezone.utc), 2)
+    consumer = _consumer(CredentialRoute(2, 1))
+    consumer.owner_worker_id = owner
+    consumer._pool.route_execution.side_effect = ValueError('Synthetic prelaunch refusal')
+    with (
+        patch(f'{MODULE}.create_execution', new=AsyncMock()),
+        patch(f'{MODULE}.update_execution', new=AsyncMock(return_value=written)) as update,
+        patch(f'{MODULE}.publish_execution_update', new=AsyncMock()) as publish,
+        patch(f'{MODULE}.publish_history_update', new=AsyncMock()) as history,
+        patch('src.services.authorization.tokens.issue_run_credentials', new=AsyncMock(return_value=issued)),
+    ):
+        await consumer.process_message({**MESSAGE, 'sync': True}, cast(PendingExecution, _claimed()))
+    assert update.await_args.kwargs.get('owner_worker_id') == owner
+    assert publish.await_count == int(written)
+    assert history.await_count == int(written)
+    assert consumer._redis_client.push_result.await_count == int(written)
 
 
 async def _created_with(claimed: dict) -> dict:
