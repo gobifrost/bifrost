@@ -1,0 +1,18 @@
+{
+  "key": "pr:1271",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "OIDC SSO settings now expose the token-endpoint client authentication method, a write-only RSA/EC private key with explicit revocation, and configurable scopes (defaults preserved, openid required). EC private-key JWT assertions (ES256/384/512) are supported alongside RSA, with key type and curve validated when saved.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1271"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1271",
+      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Backend focused unit and SSO/OAuth e2e tests pass (101), including ES256/384/512 assertions, key/curve mismatch rejection, scope validation and settings readback. Client tsc, ESLint and component/page tests pass; the live Playwright acceptance journey has not been extended."
+    ]
+  }
+}
