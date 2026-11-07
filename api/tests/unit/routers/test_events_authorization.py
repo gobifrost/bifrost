@@ -124,6 +124,37 @@ async def test_delegated_events_writer_cannot_move_or_delete_an_app_owned_source
     assert await db_session.get(GitHubAppInstallation, binding.id) is binding
 
 
+async def test_app_source_editor_can_echo_ownership_and_config_while_changing_rate(db_session, monkeypatch):
+    principal, home, _foreign = await _scoped_person(db_session, "events.readwrite")
+    source = await _source(db_session, home.id, "App installation")
+    source.source_type = EventSourceType.WEBHOOK
+    source.webhook_source = WebhookSource(adapter_name="github_app", config={}, state={})
+    binding = GitHubAppInstallation(installation_id=998878, app_id=112233,
+        organization_id=home.id, event_source_id=source.id, account_id=998878, account_login="fixture")
+    db_session.add(binding)
+    await db_session.flush()
+    monkeypatch.setattr("src.routers.events._build_event_source_response", AsyncMock(return_value=None))
+
+    await update_source(source.id, EventSourceUpdate(name="Renamed installation", organization_id=home.id,
+        webhook={"config": {}, "rate_limit_per_minute": 12}), SimpleNamespace(), principal, db_session)
+    assert source.name == "Renamed installation"
+    assert source.webhook_source.rate_limit_per_minute == 12
+    assert source.organization_id == home.id and binding.event_source_id == source.id
+
+
+@pytest.mark.parametrize("webhook", [{"adapter_name": "generic"}, {"config": {"injected": True}}, {"integration_id": str(uuid4())}])
+async def test_app_source_rejects_actual_structural_changes(db_session, webhook):
+    from shared.github_app import validate_event_source_update
+
+    _principal, home, _foreign = await _scoped_person(db_session, "events.readwrite")
+    source = await _source(db_session, home.id, "App installation")
+    source.source_type = EventSourceType.WEBHOOK
+    source.webhook_source = WebhookSource(adapter_name="github_app", config={}, state={})
+    with pytest.raises(HTTPException) as error:
+        await validate_event_source_update(db_session, source, EventSourceUpdate(webhook=webhook))
+    assert error.value.status_code == 409
+
+
 async def test_subscription_target_uses_live_workflow_resource_admission(db_session):
     principal, home, _foreign = await _scoped_person(
         db_session, "events.readwrite", "workflows.readwrite"

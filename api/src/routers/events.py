@@ -1026,10 +1026,8 @@ async def update_source(
 
     # Tenant subscription and source rate settings remain editable. Binding
     # ownership, adapter credentials, and historical payload scope do not.
-    if "organization_id" in request.model_fields_set or (request.webhook and
-        request.webhook.model_fields_set.intersection({"adapter_name", "integration_id", "config"})):
-        from shared.github_app import assert_source_structure_mutable
-        await assert_source_structure_mutable(db, source)
+    from shared.github_app import validate_event_source_update
+    app_managed = await validate_event_source_update(db, source, request)
 
     if request.webhook is not None and source.source_type != EventSourceType.WEBHOOK:
         raise HTTPException(
@@ -1079,6 +1077,10 @@ async def update_source(
         adapter_changed = webhook_fields.intersection(
             {"adapter_name", "integration_id", "config"}
         )
+        # The editor sends unchanged config fields with rate/name edits.
+        # Managed structure was checked above; those echoes cannot resubscribe.
+        if app_managed:
+            adapter_changed = set()
         if adapter_changed:
             adapter = get_adapter_registry().get(desired_adapter_name)
             if adapter is None:

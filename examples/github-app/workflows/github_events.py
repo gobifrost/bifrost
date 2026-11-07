@@ -4,7 +4,7 @@ from bifrost import workflow
 
 
 @workflow(name="github_pr_triage")
-def github_pr_triage(event: dict) -> dict:
+async def github_pr_triage(event: dict) -> dict:
     """Summarize an opened PR for a tenant's existing triage workflow."""
     if event["event"] != "pull_request" or event["action"] != "opened":
         raise ValueError("Subscribe this workflow only to github.pull_request.opened")
@@ -15,7 +15,7 @@ def github_pr_triage(event: dict) -> dict:
 
 
 @workflow(name="github_failed_check")
-def github_failed_check(event: dict) -> dict:
+async def github_failed_check(event: dict) -> dict:
     """Return a failed-check notification payload without writing to GitHub."""
     if event["event"] != "check_run" or event["action"] != "completed":
         raise ValueError("Subscribe this workflow only to github.check_run.completed")
@@ -27,7 +27,7 @@ def github_failed_check(event: dict) -> dict:
 
 
 @workflow(name="github_release_notice")
-def github_release_notice(event: dict) -> dict:
+async def github_release_notice(event: dict) -> dict:
     """Return a release announcement payload for an existing notification step."""
     if event["event"] != "release" or event["action"] != "published":
         raise ValueError("Subscribe this workflow only to github.release.published")

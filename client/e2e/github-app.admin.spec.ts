@@ -123,8 +123,9 @@ test("manually connects an App, verifies its inventory, and runs the read-only P
         await expect.poll(async () => {
             const events = await operator.api.get(`/api/events/sources/${sourceId}/events`);
             const result = await events.json() as components["schemas"]["EventListResponse"];
-            return result.items[0]?.success_count;
-        }).toBe(1);
+            const event = result.items[0];
+            return { status: event?.status, succeeded: event?.success_count, failed: event?.failed_count };
+        }).toEqual({ status: "completed", succeeded: 1, failed: 0 });
         await page.screenshot({ path: "playwright-results/github-app-setup-health.png", fullPage: true });
     } finally {
         if (subscriptionId) await operator.api.delete(`/api/events/subscriptions/${subscriptionId}`);

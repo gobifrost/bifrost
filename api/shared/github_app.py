@@ -18,19 +18,40 @@ from src.models.enums import EventSourceType
 from src.models.orm.events import EventSource, WebhookSource
 from src.models.orm.github_app import GitHubAppInstallation, GitHubAppRegistration
 from src.models.orm.organizations import Organization
+from src.models.contracts.events import EventSourceUpdate
 
 
-async def assert_source_structure_mutable(db: AsyncSession, source: EventSource) -> None:
+SOURCE_OWNERSHIP_MESSAGE = "This event source is managed by GitHub App settings; disconnect or rebind the installation there"
+
+
+async def is_managed_event_source(db: AsyncSession, source: EventSource) -> bool:
     """Keep binding ownership and historical event scope under App administration.
 
     The adapter marker also protects disconnected historical sources after a
     rebind moves the installation's foreign key to a fresh source.
     """
     if source.source_type != EventSourceType.WEBHOOK:
-        return
+        return False
     managed = source.webhook_source and source.webhook_source.adapter_name == "github_app"
-    if managed or await db.scalar(select(GitHubAppInstallation.id).where(GitHubAppInstallation.event_source_id == source.id)) is not None:
-        raise HTTPException(409, "This event source is managed by GitHub App settings; disconnect or rebind the installation there")
+    return bool(managed or await db.scalar(select(GitHubAppInstallation.id).where(GitHubAppInstallation.event_source_id == source.id)) is not None)
+
+
+async def assert_source_structure_mutable(db: AsyncSession, source: EventSource) -> None:
+    if await is_managed_event_source(db, source):
+        raise HTTPException(409, SOURCE_OWNERSHIP_MESSAGE)
+
+
+async def validate_event_source_update(db: AsyncSession, source: EventSource, request: EventSourceUpdate) -> bool:
+    managed = await is_managed_event_source(db, source)
+    if not managed:
+        return False
+    organization_changed = "organization_id" in request.model_fields_set and request.organization_id != source.organization_id
+    webhook_changed = request.webhook is not None and (source.webhook_source is None or any(
+        field in request.webhook.model_fields_set and getattr(request.webhook, field) != getattr(source.webhook_source, field)
+        for field in ("adapter_name", "integration_id", "config")))
+    if organization_changed or webhook_changed:
+        raise HTTPException(409, SOURCE_OWNERSHIP_MESSAGE)
+    return True
 
 
 async def source_webhook_details(db: AsyncSession, source_id: UUID) -> tuple[str, bool] | None:

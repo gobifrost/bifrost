@@ -163,19 +163,17 @@ def test_rejected_requests_do_not_create_events(e2e_client, app_connection, asyn
     asyncio.run(check())
 
 
-def test_source_rate_limit_rejects_new_events_but_allows_duplicate_receipts(e2e_client, app_connection, async_session_factory):
+def test_source_rate_limit_rejects_new_events_but_allows_duplicate_receipts(e2e_client, app_connection):
     binding = app_connection["bindings"][1]
 
-    async def limit(value):
-        async with async_session_factory() as db:
-            source = (await db.execute(select(WebhookSource).where(
-                WebhookSource.event_source_id == UUID(binding["event_source_id"])))).scalar_one()
-            source.rate_limit_per_minute = value
-            await db.commit()
+    def limit(value):
+        response = e2e_client.patch(f"/api/events/sources/{binding['event_source_id']}", headers=app_connection["headers"],
+            json={"organization_id": binding["organization_id"], "webhook": {"config": {}, "rate_limit_per_minute": value}})
+        assert response.status_code == 200, response.text
 
     identity = str(uuid4())
     value = {**payload(), "installation": {"id": 70002}, "repository": {"id": 80002}}
-    asyncio.run(limit(1))
+    limit(1)
     try:
         assert send(e2e_client, value, delivery_id=identity).status_code == 202
         limited = send(e2e_client, value)
@@ -183,7 +181,7 @@ def test_source_rate_limit_rejects_new_events_but_allows_duplicate_receipts(e2e_
         assert int(limited.headers["Retry-After"]) > 0
         assert send(e2e_client, value, delivery_id=identity).status_code == 202
     finally:
-        asyncio.run(limit(60))
+        limit(60)
 
 
 def test_concurrent_duplicates_fan_out_once_and_reuse_committed_identity(e2e_client, app_connection, org1, async_session_factory):
