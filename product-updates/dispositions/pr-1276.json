@@ -1,9 +1,10 @@
 {
   "key": "pr:1276",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "fix",
-  "summary": "Allow direct database upgrades from 1.4.1 and keep existing workflow credentials usable during image replacement.",
+  "classification": "highlight",
+  "entry_ids": [
+    "68314b62-0ea3-4d44-8779-6241f77275f3",
+    "c3e5b1a6-d2a4-49ce-9d25-2d0996382ee4"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -11,7 +12,8 @@
       "Release coordinator reviewed exact stable token shape, current DB-backed authority, partial-lineage refusal, preserved historical actors, and canonical unattended admission. Signed legacy privilege flags grant no authority; versioned token and human-session revocation checks remain strict.",
       "Focused migration/runtime/auth checks passed; real HTTP legacy acceptance/end-of-run refusal passed; final consumer/broker recovery29passed including actual credential mint. Tooling20passed on host and production Python; API pyright and Ruff passed. This disposition does not qualify the still-unrun direct image chain or unresolved App automatic-upgrade path.",
       "CodeQL alert2012 traced the redundant literal fixture config key into seed JSON output. Removed that fixture and its output metadata; probe now reuses tenant-A config and derives its expected comparison privately. Twenty-one tooling tests passed on host and production Python; a fresh full Python CodeQL database/suite reported zero findings across all changed PR files under existing CI exclusions, including unchanged sink lines. No new scanner suppression or exclusion.",
-      "CI unit failures were reproduced3of3in isolation. Registered exact authorization check counts, with the legacy header flag classified as credential schema only and DB authority unchanged; deferred lineage import until actual legacy recovery. All119focused access-inventory/import/runtime/consumer checks passed with no skips; final API pyright and Ruff passed."
+      "CI unit failures were reproduced3of3in isolation. Registered exact authorization check counts, with the legacy header flag classified as credential schema only and DB authority unchanged; deferred lineage import until actual legacy recovery. All119focused access-inventory/import/runtime/consumer checks passed with no skips; final API pyright and Ruff passed.",
+      "Stable2 release material links this implementation follow-up to the existing canonical notice UUIDs. All sources of an eligible entry must carry its highlight mapping; otherwise the deterministic bundler excludes it. No new feature UUID or repeat announcement is introduced. Reviewed compatibility/consent copy supersedes the earlier transitional update instructions."
     ]
   }
 }
