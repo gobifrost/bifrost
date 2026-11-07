@@ -10,19 +10,12 @@ import json
 import time
 from uuid import UUID, uuid4
 
-import httpx
 import pytest
 
 from src.models.orm.executions import Execution
-from tests.e2e.conftest import E2E_API_URL, execute_workflow_sync, write_and_register
+from tests.e2e.conftest import execute_workflow_sync, write_and_register
 
 pytestmark = pytest.mark.slow
-
-
-@pytest.fixture(scope="session")
-def e2e_client():
-    with httpx.Client(base_url=E2E_API_URL, timeout=120) as client:
-        yield client
 
 
 def test_first_and_warm_workflow_dispatch(e2e_client, platform_admin, async_session_factory):
