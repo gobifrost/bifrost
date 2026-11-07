@@ -185,8 +185,9 @@ async function run() {
 		const acksBeforeEpochUpdate = acknowledgements();
 		const refreshesBeforeEpochUpdate = browserRefreshes;
 		const roleResponse = await controlApi.put(`/api/roles/${encodeURIComponent(config.epochRoleId)}/permissions`, {
-			headers: bearer(controlAccess), data: { permissions: [], runtime_permissions: ["workflows.read"] },
+			headers: bearer(controlAccess), data: { permissions: [], runtime_permissions: ["workflows.execute"] },
 		});
+		diagnostic.control_status = roleResponse.status();
 		expect(roleResponse.status()).toBe(200);
 		await refreshControl();
 
