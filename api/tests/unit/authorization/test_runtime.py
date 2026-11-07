@@ -11,7 +11,9 @@ from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.sdk_users import set_platform_admin
+from shared.identities import ensure_default_identity
 from src.core.constants import SYSTEM_USER_UUID
+from src.core.security import create_access_token, decode_token
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.models.enums import AgentAccessLevel, ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
@@ -25,6 +27,7 @@ from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflows import Workflow
 from src.services.authorization.runtime import RuntimeIdentityError, load_runtime_authority
 from src.services.authorization.runtime_auth import load_runtime_principal
+from tests.helpers.runtime_tokens import legacy_engine_token
 
 
 async def _organization(session: AsyncSession, name: str) -> Organization:
@@ -84,6 +87,21 @@ async def _execution(
     session.add(execution)
     await session.flush()
     return execution
+
+
+def _previous_stable_engine_token(execution_id: UUID, **overrides: object) -> str:
+    """The v1.4.1 ``mint_engine_token`` wire format, not PR1's typed format."""
+    claims: dict[str, object] = {
+        "sub": str(SYSTEM_USER_UUID),
+        "email": "engine@bifrost.internal",
+        "name": "Bifrost Engine",
+        "is_superuser": True,
+        "engine_execution_id": str(execution_id),
+        "engine_solution_id": None,
+        "engine_global_repo_access": True,
+    }
+    claims.update(overrides)
+    return create_access_token(claims)
 
 
 @pytest.mark.asyncio
@@ -277,6 +295,261 @@ async def test_workflow_runtime_refuses_terminal_missing_lineage_and_sentinel_ac
         await load_runtime_authority(db_session, "workflow_execution", missing_lineage.id)
     with pytest.raises(RuntimeIdentityError):
         await load_runtime_authority(db_session, "workflow_execution", sentinel.id)
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_engine_token_uses_only_its_live_durable_execution(
+    db_session: AsyncSession,
+) -> None:
+    """v1.4.1's engine token is resolved from the run, never its admin flags."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    workflow = await _workflow(db_session, organization.id, permission_mode="restricted")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+
+    token = _previous_stable_engine_token(
+        execution.id,
+        engine_solution_id=str(uuid4()),
+        engine_global_repo_access=False,
+        is_superuser=True,
+    )
+    payload = decode_token(token, expected_type="access")
+    assert payload is not None
+
+    principal = await load_runtime_principal(db_session, payload)
+
+    assert principal is not None
+    assert principal.user_id == user.id
+    assert principal.runtime_authority.credential_id == execution.id
+    assert principal.runtime_authority.run_user.user_id == user.id
+    assert principal.runtime_authority.powers is not None
+    assert principal.runtime_authority.powers.mode is WorkflowPermissionMode.RESTRICTED
+    assert principal.is_superuser is False
+
+
+@pytest.mark.asyncio
+async def test_pr1_typed_legacy_engine_token_keeps_its_distinct_runtime_contract(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    token, _ = legacy_engine_token(execution_id=str(execution.id), timeout_seconds=300)
+    payload = decode_token(token, expected_type="access")
+    assert payload is not None
+    assert payload["credential_kind"] == "workflow_execution"
+    assert payload["sub"] == str(execution.id)
+
+    principal = await load_runtime_principal(db_session, payload)
+
+    assert principal is not None
+    assert principal.user_id == user.id
+    assert principal.runtime_authority.credential_id == execution.id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"sub": str(uuid4())},
+        {"credential_kind": "workflow_execution"},
+        {"service_id": str(uuid4())},
+        {"engine_agent_run_id": str(uuid4())},
+        {"ver": 1},
+        {"engine_global_repo_access": "true"},
+    ],
+    ids=["non-system-subject", "typed-mix", "service-mix", "agent-mix", "versioned", "wrong-shape"],
+)
+async def test_previous_stable_engine_token_rejects_ambiguous_or_malformed_claim_shapes(
+    db_session: AsyncSession, overrides: dict[str, object]
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    payload = decode_token(_previous_stable_engine_token(execution.id), expected_type="access")
+    assert payload is not None
+    payload.update(overrides)
+
+    assert await load_runtime_principal(db_session, payload) is None
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_engine_token_recovers_old_live_run_and_propagates_lineage(
+    db_session: AsyncSession,
+) -> None:
+    """An old worker may change Pending to Running after the migration passed."""
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=None,
+        actor=user,
+        organization_id=organization.id,
+    )
+    payload = decode_token(_previous_stable_engine_token(execution.id), expected_type="access")
+    assert payload is not None
+
+    principal = await load_runtime_principal(db_session, payload)
+
+    assert principal is not None
+    assert principal.user_id == user.id
+    assert principal.run_user_id == user.id
+    assert principal.started_by_user_id == user.id
+    assert principal.root_execution_id == execution.id
+    from shared.run_lineage import RunLineage, principal_lineage
+
+    assert await principal_lineage(db_session, principal) == RunLineage(
+        run_user_id=user.id,
+        started_by_user_id=user.id,
+        root_execution_id=execution.id,
+    )
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_unattended_run_uses_its_scoped_default_identity(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    identity = await ensure_default_identity(db_session, organization)
+    workflow = await _workflow(db_session, organization.id, permission_mode="restricted")
+    execution = await _execution(
+        db_session,
+        workflow=workflow,
+        run_user=None,
+        actor=None,
+        organization_id=organization.id,
+    )
+    execution.executed_by = SYSTEM_USER_UUID
+    await db_session.flush()
+    payload = decode_token(_previous_stable_engine_token(execution.id), expected_type="access")
+    assert payload is not None
+
+    principal = await load_runtime_principal(db_session, payload)
+
+    assert principal is not None
+    assert principal.user_id == principal.run_user_id == identity.id
+    assert principal.organization_id == organization.id
+    assert principal.is_superuser is False
+    assert principal.runtime_authority.powers is not None
+    assert principal.runtime_authority.powers.mode is WorkflowPermissionMode.RESTRICTED
+    assert execution.executed_by == SYSTEM_USER_UUID
+    assert execution.run_user_id is None
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_engine_token_accepts_filled_lineage_with_historic_system_actor_only(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    execution = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=None,
+        organization_id=organization.id,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    execution.executed_by = SYSTEM_USER_UUID
+    await db_session.flush()
+    payload = decode_token(_previous_stable_engine_token(execution.id), expected_type="access")
+    assert payload is not None
+
+    stable = await load_runtime_principal(db_session, payload)
+    typed = await load_runtime_principal(
+        db_session,
+        {"credential_kind": "workflow_execution", "sub": str(execution.id)},
+    )
+
+    assert stable is not None
+    assert stable.user_id == user.id
+    assert stable.runtime_authority.acting_user_id == user.id
+    assert typed is None
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_engine_token_rejects_ended_missing_and_unresolvable_runs(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    ended = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+        status=ExecutionStatus.SUCCESS,
+        started_by_user_id=user.id,
+        root_execution_id=uuid4(),
+    )
+    unresolvable = await _execution(
+        db_session,
+        workflow=None,
+        run_user=None,
+        actor=None,
+        organization_id=organization.id,
+    )
+
+    for execution_id in (ended.id, unresolvable.id, uuid4()):
+        payload = decode_token(_previous_stable_engine_token(execution_id), expected_type="access")
+        assert payload is not None
+        assert await load_runtime_principal(db_session, payload) is None
+
+
+@pytest.mark.asyncio
+async def test_previous_stable_engine_token_rejects_partial_lineage_and_missing_default_identity(
+    db_session: AsyncSession,
+) -> None:
+    organization = await _organization(db_session, "Contoso")
+    user = await _person(db_session, organization, "runtime-user")
+    partial = await _execution(
+        db_session,
+        workflow=None,
+        run_user=user,
+        actor=user,
+        organization_id=organization.id,
+    )
+    no_identity = await _execution(
+        db_session,
+        workflow=None,
+        run_user=None,
+        actor=None,
+        organization_id=organization.id,
+    )
+    no_identity.executed_by = SYSTEM_USER_UUID
+    await db_session.flush()
+
+    for execution_id in (partial.id, no_identity.id):
+        payload = decode_token(_previous_stable_engine_token(execution_id), expected_type="access")
+        assert payload is not None
+        assert await load_runtime_principal(db_session, payload) is None
 
 
 @pytest.mark.asyncio

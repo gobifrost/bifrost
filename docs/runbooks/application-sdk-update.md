@@ -32,6 +32,27 @@ responses include whether rebuild source is available. Solution list/get
 responses provide a server-computed aggregate and actionable App count, using
 one bounded App query rather than fetching every App in the browser.
 
+## Existing SDK2 Apps
+
+A normal platform image update does not require rebuilding an existing SDK2
+bundle. SDK2 and SDK3 wire contracts remain supported; an older supported bundle
+reports `update_available`, while missing provenance remains `unknown`.
+
+An immutable SDK2 bundle reads the host's current token when retrying a socket.
+When that token needs refresh, the server denies the protected operation,
+requests a refresh from the matching cookie-authenticated host over the shared
+user channel, and closes the old query-token socket with transient code 1012.
+The host uses the existing serialized refresh flow, and the App retries and
+resubscribes with the new token without remounting. Browser Fetch Metadata
+identifies same-origin query sockets through TLS terminators and proxies.
+
+Expiry and authority epochs still apply before every protected operation.
+Revoked or expired refresh families, invalid credentials, impersonation and
+embed sessions cannot borrow a human refresh. Internal refresh requests never
+reach browser subscribers. An already current host ignores a stale request.
+The host companion is connected on standalone App pages as well as the platform
+shell; cross-origin development transports retain their own SDK auth behavior.
+
 ## Rebuild behavior
 
 `application.sdk_update` is a shared PlatformJob. It resolves the active
@@ -61,10 +82,10 @@ considering at most 20 candidates per pass. It queues ordinary
 Notifications. An automatic attempt is eligible only for an active,
 source-built App with retained source that needs a transition explicitly
 approved by SDK metadata. Legacy wire-transition rules do not authorize a
-hosted-binding migration. The initial hosted delivery release leaves
-`automatic_hosted_migration_from` empty while adoption is dogfooded through the
-existing manual **Update SDK** action after a normal instance upgrade. Migrated
-Apps are never automatically advanced to another public major.
+hosted-binding migration. The reviewed SDK2 transition is included in
+`automatic_hosted_migration_from`; enabling automatic updates allows eligible
+retained source to migrate through the same job. Migrated Apps are never
+automatically advanced to another public major.
 
 The scheduler attempts an App/target pair once, including failures. Use the
 existing manual **Update SDK** action to retry a failure. Automatic updates do
@@ -78,8 +99,9 @@ The retained non-SDK root declarations must match `package.json`, and `npm ci`
 must install the resulting lockfile successfully. The developer's retained
 lockfile need not already contain the platform-injected SDK. SDKs with their own
 normal, optional, or bundled dependency graph require a manual update. An App
-without a valid reproducible lockfile is left for a manual update or source
-redeploy.
+without a valid reproducible lockfile is not automatically rebuilt. This does
+not make a rebuild a requirement for an existing supported App to keep working;
+a manual update or source redeploy is an optional way to adopt the newer SDK.
 
 Automatic jobs pin the SDK fingerprint and contract before compilation, then
 verify that same target before activation. They retain the prior deployment

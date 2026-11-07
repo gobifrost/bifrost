@@ -24,6 +24,7 @@ Execution Model:
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
@@ -31,6 +32,7 @@ from uuid import UUID
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.constants import SYSTEM_USER_ID
 from src.core.database import get_db_context
 from src.core.pubsub import publish_execution_update, publish_history_update
 from src.core.redis_client import ActiveExecution, PendingExecution, get_redis_client
@@ -47,6 +49,53 @@ logger = logging.getLogger(__name__)
 # grace lets sibling authoritative result commits finish before shared daily
 # and ROI aggregate rows are updated.
 _SYNC_DERIVED_WORK_GRACE_SECONDS = 0.025
+
+
+@dataclass(frozen=True)
+class _LegacyPendingActor:
+    user_id: str
+    email: str
+    name: str
+    is_platform_admin: bool
+
+
+async def _legacy_unattended_pending_actor(
+    db: AsyncSession, pending: PendingExecution
+) -> _LegacyPendingActor:
+    """Resolve an old system-owned pending run from its durable lineage.
+
+    Earlier workers put the system sentinel in ``user_id`` for unattended
+    work.  Its complete lineage is the durable proof of the actual identity;
+    no pending actor or admin flag is authority. Ordinary person-owned runs
+    do not use this admission path.
+    """
+    if pending["user_id"] != SYSTEM_USER_ID:
+        raise ValueError("pending execution is not a legacy system-owned run")
+    lineage = pending.get("lineage")
+    if not isinstance(lineage, dict):
+        raise ValueError("legacy pending execution has no lineage")
+    try:
+        run_user_id = UUID(lineage["run_user_id"])
+        UUID(lineage["started_by_user_id"])
+        UUID(lineage["root_execution_id"])
+    except (KeyError, TypeError, ValueError, AttributeError) as exc:
+        raise ValueError("legacy pending execution has incomplete lineage") from exc
+
+    from shared.identities import is_identity
+    from src.services.authorization.explain import load_run_user
+
+    user = await db.get(User, run_user_id)
+    if user is None or user.is_system or not is_identity(user):
+        raise ValueError("legacy pending execution has no current run identity")
+    run_user = await load_run_user(db, run_user_id)
+    if run_user is None:
+        raise ValueError("legacy pending execution has no current run identity")
+    return _LegacyPendingActor(
+        user_id=str(user.id),
+        email=user.email,
+        name=user.name or user.email,
+        is_platform_admin=run_user.is_platform_admin,
+    )
 
 
 class WorkflowExecutionConsumer:
@@ -775,6 +824,7 @@ class WorkflowExecutionConsumer:
         user_id = pending["user_id"]
         user_name = pending["user_name"]
         user_email = pending["user_email"]
+        is_platform_admin = pending.get("is_platform_admin", False)
         form_id = pending.get("form_id")
         api_key_id = pending.get("api_key_id")  # Workflow ID whose API key triggered this
         startup = pending.get("startup")  # Launch workflow results
@@ -789,8 +839,17 @@ class WorkflowExecutionConsumer:
 
         # Determine if this is a code or workflow execution
         is_script = bool(code_base64)
+        workflow_name = script_name or "inline_script"
 
         try:
+            if user_id == SYSTEM_USER_ID:
+                async with get_db_context() as db:
+                    legacy_actor = await _legacy_unattended_pending_actor(db, pending)
+                user_id = legacy_actor.user_id
+                user_name = legacy_actor.name
+                user_email = legacy_actor.email
+                is_platform_admin = legacy_actor.is_platform_admin
+
             logger.info(
                 f"Processing {'code' if is_script else 'workflow'} execution",
                 extra={
@@ -803,7 +862,6 @@ class WorkflowExecutionConsumer:
             )
 
             # Get workflow metadata from database if this is a workflow execution
-            workflow_name = script_name or "inline_script"
             timeout_seconds = 1800  # Default 30 minutes
             roi_time_saved = 0
             roi_value = 0.0
@@ -1033,7 +1091,7 @@ class WorkflowExecutionConsumer:
                 "timeout_seconds": timeout_seconds,
                 "cache_ttl_seconds": cache_ttl_seconds,
                 "transient": False,
-                "is_platform_admin": pending.get("is_platform_admin", False),
+                "is_platform_admin": is_platform_admin,
                 "is_agent": origin == "agent",
                 "execution_origin": origin,
                 "agent_id": origin_agent_id,

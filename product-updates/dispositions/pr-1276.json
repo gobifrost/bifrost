@@ -1,0 +1,17 @@
+{
+  "key": "pr:1276",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Allow direct database upgrades from 1.4.1 and keep existing workflow credentials usable during image replacement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1276",
+      "Release coordinator reviewed exact stable token shape, current DB-backed authority, partial-lineage refusal, preserved historical actors, and canonical unattended admission. Signed legacy privilege flags grant no authority; versioned token and human-session revocation checks remain strict.",
+      "Focused migration/runtime/auth checks passed; real HTTP legacy acceptance/end-of-run refusal passed; final consumer/broker recovery29passed including actual credential mint. Tooling20passed on host and production Python; API pyright and Ruff passed. This disposition does not qualify the still-unrun direct image chain or unresolved App automatic-upgrade path.",
+      "CodeQL alert2012 traced the redundant literal fixture config key into seed JSON output. Removed that fixture and its output metadata; probe now reuses tenant-A config and derives its expected comparison privately. Twenty-one tooling tests passed on host and production Python; a fresh full Python CodeQL database/suite reported zero findings across all changed PR files under existing CI exclusions, including unchanged sink lines. No new scanner suppression or exclusion.",
+      "CI unit failures were reproduced3of3in isolation. Registered exact authorization check counts, with the legacy header flag classified as credential schema only and DB authority unchanged; deferred lineage import until actual legacy recovery. All119focused access-inventory/import/runtime/consumer checks passed with no skips; final API pyright and Ruff passed."
+    ]
+  }
+}

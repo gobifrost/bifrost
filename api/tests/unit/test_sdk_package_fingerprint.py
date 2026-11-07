@@ -135,3 +135,8 @@ def test_sdk_fingerprint_does_not_cache_failures(monkeypatch):
     result = sdkpkg.sdk_fingerprint("v9.9.9-fingerprint-cache-test")
     assert isinstance(result, str)
     assert calls["n"] == 2
+
+
+def test_sdk_supported_contracts_include_current_and_stable() -> None:
+    assert sdkpkg.sdk_supported_contract_versions() == frozenset({2, 3})
+    assert sdkpkg.sdk_automatic_hosted_migration_contracts() == frozenset({2})

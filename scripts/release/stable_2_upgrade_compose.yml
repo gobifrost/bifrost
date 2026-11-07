@@ -68,3 +68,12 @@ services:
   worker:
     <<: *api
     command: [python, -m, src.worker.main]
+  # This service stays on the source image while the API is replaced.  It
+  # proves a real in-flight source worker can finish through the target API.
+  old-worker:
+    <<: *api
+    image: ${REHEARSAL_OLD_WORKER_IMAGE:?immutable source worker image required}
+    command: [python, -m, src.worker.main]
+  scheduler:
+    <<: *api
+    command: [python, -m, src.scheduler.main]
