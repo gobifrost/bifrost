@@ -58,6 +58,20 @@ class RehearsalSafetyTests(unittest.TestCase):
                 self.assertFalse(self.rehearsal.password in contents, "Password must not be persisted")
                 self.assertFalse(self.rehearsal.secret in contents, "Key must not be persisted")
 
+    def test_recovery_project_collision_never_cleans_up_an_existing_stack(self):
+        self.rehearsal.owns_project = True
+        with patch.object(
+            self.rehearsal, "run",
+            return_value=subprocess.CompletedProcess([], 0, "existing-resource", ""),
+        ), patch.object(self.rehearsal, "dc") as compose:
+            with self.assertRaisesRegex(RuntimeError, "existing Compose project"):
+                self.rehearsal.rehearse_pending_recovery()
+            self.rehearsal.cleanup()
+        self.assertFalse(self.rehearsal.owns_project)
+        self.assertEqual(compose.call_count, 1)
+        self.assertEqual(compose.call_args.args, ("down", "--volumes", "--remove-orphans"))
+        self.assertEqual(self.rehearsal.report["project_cleanup"], {"bifrost-upgrade-test": True})
+
     def test_failed_cleanup_leaves_a_durable_failure_receipt(self):
         self.rehearsal.owns_project = True
         self.rehearsal.report["passed"] = True
@@ -100,6 +114,36 @@ class RehearsalSafetyTests(unittest.TestCase):
         self.assertNotIn(payload["legacy_access_token"], receipt)
         self.assertNotIn("legacy_access_token", receipt)
         self.assertEqual(json.loads(receipt)["population"]["seed"], payload["evidence"])
+
+    def test_direct_qualification_does_not_describe_a_bridge_release(self):
+        self.assertNotIn("bridge", self.rehearsal.report)
+
+    def test_compose_defines_a_distinct_pinned_old_worker(self):
+        compose = (Path(__file__).parent / "release" / "stable_2_upgrade_compose.yml").read_text()
+        self.assertIn("old-worker:", compose)
+        self.assertIn("REHEARSAL_OLD_WORKER_IMAGE", compose)
+
+    def test_old_worker_probe_waits_for_target_release_before_reading_secret(self):
+        self.rehearsal.population_payload = {
+            "state": {"configs": {
+                "old_worker_secret_key": "secret-key",
+                "old_worker_secret_sha256": "expected-digest",
+            }}
+        }
+        code = self.rehearsal.old_worker_probe_code()
+        self.assertLess(code.index("STABLE_2_OLD_WORKER_BARRIER_REACHED"), code.index('await config.get("secret-key")'))
+        self.assertIn('Path("/tmp/stable2-upgrade-release").exists()', code)
+        self.assertIn("STABLE_2_OLD_WORKER_TARGET_CONFIG_SUCCESS", code)
+
+    def test_pending_recovery_preflights_its_second_compose_project(self):
+        with patch.object(self.rehearsal, "cleanup"), patch.object(
+            self.rehearsal,
+            "run",
+            return_value=subprocess.CompletedProcess([], 0, "existing-resource", ""),
+        ), patch.object(self.rehearsal, "dc") as compose:
+            with self.assertRaisesRegex(RuntimeError, "existing Compose project"):
+                self.rehearsal.rehearse_pending_recovery()
+        compose.assert_not_called()
 
 
 if __name__ == "__main__":

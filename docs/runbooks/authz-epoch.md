@@ -97,140 +97,29 @@ subject) if bumps exceed **30 in an hour** in any hour on three days of a week,
 or if `refresh_required` responses exceed **5 %** of authenticated runtime
 requests over a day.
 
-## Upgrading through the token releases
+## Updating the Platform Image
 
-The token change ships as consecutive releases. Each later release's migration
-refuses to run until the release before it has fully rolled out, and the
-database records that an API of each release started (`authz_protocol_state`).
-The second release's migration (`20261031_authz_claims_gate`) fails with
-"Upgrade to the release that added the authority version … and let it finish
-rolling out first" unless an API of the first release has started against
-this database (a fresh install records both itself).
-Upgrade **one token release at a time**, confirm the rollout finished, and only
-then take the next one. Never roll back below the first token release (the one
-that added `authz_versions`): run refresh requests would fail closed.
+Stable 1.4.1 installations upgrade directly to 2.0. There is no intermediate
+API image or staged token-release prerequisite. Forward migrations create the
+authority epoch, credential metadata, and durable human sessions in the normal
+init step. People sign in again after the update; passwords, MFA enrollments,
+passkeys, and encrypted integration credentials remain stored.
 
-### Docker Compose
+`authz_protocol_state` records which API protocols have actually started. An
+existing installation does not acquire a protocol-1 record merely by migrating.
+The historical claims-gate revision remains in the migration chain, but does
+not require a development image to have run.
 
-`docker-compose.yml` names the Bifrost images as
-`ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}` (and the client
-likewise). Run these steps from the directory that holds `docker-compose.yml`
-and `.env`.
+Use the normal deployment update for init, API, client, and executors. Preserve
+the database, object storage, platform secret, and any legacy broker until its
+recovery completes. Scheduler retirement and additional workers are separate,
+optional operations. See [Upgrading From 1.4.1 to 2.0](stable-2-upgrade.md).
 
-1. **Pin the release.** Set the release tag in `.env`:
-
-   ```bash
-   BIFROST_VERSION=v1.2.3
-   ```
-
-   To pin by digest instead, write full image references, from the release
-   notes, in a `docker-compose.override.yml` next to `docker-compose.yml`:
-
-   ```yaml
-   services:
-     init:
-       image: ghcr.io/gobifrost/bifrost-api@sha256:<api digest>
-     api:
-       image: ghcr.io/gobifrost/bifrost-api@sha256:<api digest>
-     worker:
-       image: ghcr.io/gobifrost/bifrost-api@sha256:<api digest>
-     client:
-       image: ghcr.io/gobifrost/bifrost-client@sha256:<client digest>
-   ```
-
-   Check what Compose resolved (this reads `.env` and the override, so it does
-   not depend on your shell's environment):
-
-   ```bash
-   docker compose config --images
-   ```
-
-2. **Pull the application images only.** PostgreSQL, PgBouncer, Redis and
-   SeaweedFS are not pulled or changed:
-
-   ```bash
-   docker compose pull init api worker client
-   ```
-
-3. **Check the dependencies are already healthy.**
-
-   ```bash
-   docker compose ps postgres pgbouncer redis seaweedfs \
-     --format '{{.Service}}: {{.State}} {{.Health}}'
-   ```
-
-   PostgreSQL, PgBouncer and Redis must show `running healthy`. SeaweedFS has
-   no health check, so it shows only `running`; confirm its S3 port accepts
-   connections from the running API container:
-
-   ```bash
-   docker compose exec api python -c \
-     "import socket; socket.create_connection(('seaweedfs', 8333), 5); print('seaweedfs ok')"
-   ```
-
-   If any check fails, stop and fix that service first.
-
-4. **Run the migrations alone.**
-
-   ```bash
-   docker compose run --rm --no-deps init
-   ```
-
-   `--no-deps` keeps Compose from recreating any dependency. If a migration
-   refuses (for example "Upgrade to the … release and let it finish rolling
-   out first"), stop here: the application containers still run the previous
-   release, and only the failed migration's own transaction was attempted and
-   rolled back.
-
-   The authority-version migration takes its table locks in two statements,
-   each capped at 1 second. While it waits and until it commits, product
-   traffic on the locked tables queues behind it: at most about 2 seconds on
-   `executions`, `service_attempts` and `execution_workers`, and about
-   1 second for writes to the other authority tables, plus milliseconds of
-   schema changes. Behind a longer-running transaction it fails with
-   `canceling statement due to lock timeout` (or `statement timeout`), the
-   queued traffic proceeds at once, and the database stays at the previous
-   revision. Run the same command again; if it keeps timing out, find the
-   long transaction with
-   `SELECT pid, now() - xact_start, query FROM pg_stat_activity WHERE xact_start IS NOT NULL ORDER BY 2 DESC;`.
-
-5. **Replace the application containers.**
-
-   ```bash
-   docker compose up -d --no-deps api worker client
-   ```
-
-6. **Verify the running images.** A tag in `docker compose ps` is not enough:
-   compare the image each container runs with the image Compose resolved, then
-   compare that image's digest with the release notes.
-
-   ```bash
-   for service in api worker client; do
-     want=$(docker compose config --format json | jq -r --arg s "$service" '.services[$s].image')
-     want_id=$(docker image inspect --format '{{.Id}}' "$want")
-     for container in $(docker compose ps -q "$service"); do
-       running=$(docker inspect --format '{{.Image}}' "$container")
-       [ "$running" = "$want_id" ] && echo "$service ok" || echo "$service MISMATCH: $container"
-     done
-     docker image inspect --format '{{join .RepoDigests "\n"}}' "$want"
-   done
-   ```
-
-   Every container must print `ok`, the printed `RepoDigests` must include the
-   digests published in the release notes for the API and client images, and
-   `docker compose ps api worker client` must show them healthy. That is the
-   confirmation that the rollout finished.
-
-7. Take the next token release only in a later upgrade.
-
-### Kubernetes (Flux)
-
-The init Job (or initContainer) runs the migrations before the new pods start;
-a refused migration blocks the rollout and the existing pods keep serving. A
-lock timeout behaves the same way and is retried with the Job.
-Confirm the rollout finished with `kubectl rollout status deploy/<api>` and the
-worker controller showing only Jobs of the new version before taking the next
-token release.
+The authority-version migration takes bounded table locks. A lock timeout rolls
+back the migration transaction; identify the long transaction before retrying.
+Protocol records are observational evidence, not a substitute for checking the
+images actually serving traffic. Do not roll back to a human-token validator
+that could accept credentials revoked by 2.0; use a forward repair build.
 
 ## Refresh challenge
 
@@ -264,8 +153,13 @@ and its service attempts keep the parent's token rotation. Each run's row
 records which format it received (`credential_version`: 2, or NULL for the
 older format).
 
-Older-format runtime tokens are accepted exactly as before, from the
-database, and only while their run is live. Each acceptance logs
+Older-format runtime tokens resolve current authority from the database and
+work only while their durable run is live. This includes the engine-token
+format emitted by stable 1.4.1, which identifies an execution through
+`engine_execution_id`. Its signed administrator, Solution, and repository
+flags do not grant authority. Missing legacy lineage is derived from the
+recorded user or the workflow's unattended identity; partially recorded lineage
+is rejected. New versioned credentials never fall back to this adapter. Each acceptance logs
 `authz.legacy_runtime_token_accepted` with the credential kind and expiry;
 count those lines to watch the bridge drain.
 

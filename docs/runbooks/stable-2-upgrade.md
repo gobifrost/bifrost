@@ -1,103 +1,69 @@
 # Upgrading From 1.4.1 to 2.0
 
-An existing 1.4.1 installation must start the authority-protocol bridge before
-upgrading to 2.0. A direct upgrade is deliberately rejected by
-`20261031_authz_claims_gate`. A fresh installation can start at 2.0.
+The compatibility target is a normal image update directly from stable 1.4.1.
+There is no intermediate development image or protocol-start prerequisite.
+People may need to sign in again in browsers, CLI, and MCP clients. Passwords,
+MFA enrollments, passkeys, and encrypted integration credentials are retained.
 
-This upgrade also changes human authentication. Reserve a maintenance window:
-old and new APIs must not serve together. Every person signs in again afterward,
-and existing V2 Apps need their SDK updated before reopening. Passwords, MFA
-enrollments, passkeys, and stored integration credentials are retained.
+## Image Update
 
-## Before Maintenance
+Use the normal deployment update for init, API, client, and executors, preserving
+PostgreSQL, object storage, the platform secret, and existing broker data. Run
+the selected image's forward migrations through the normal init service. Do not
+create protocol rows manually: an upgraded API records its own protocol start.
 
-- Back up PostgreSQL and object storage together, record the currently running
-  images, and verify the backups can be restored. Preserve the platform secret;
-  changing it also affects encrypted integration credentials.
-- Inventory existing V2 Apps. Confirm retained source or original deployment
-  source is available for their SDK rebuilds.
-- Inventory RabbitMQ queues, including historical and poison queues. Keep the
-  broker, its data, and `BIFROST_RABBITMQ_URL` available through recovery. Do not
-  delete queues or replay poison messages as part of this upgrade.
-- Obtain an API-matched CLI. The 1.4.1 CLI cannot parse newer execution
-  responses. See [Human Authentication Cutover](human-auth-cutover.md) and
-  [Application SDK Updates](application-sdk-update.md).
+Legacy workflow credentials identify their durable execution; the new API
+resolves its current user, scope, and workflow powers from database records.
+Legacy signed administrator, Solution, and repository flags confer no authority.
+A forward migration fills missing lineage for old Running/Cancelling executions;
+the credential adapter also handles an old worker claiming a waiting execution
+after that migration. Existing lineage and historical actor records are retained.
+Ended executions and ambiguous or missing authority fail closed.
 
-## Required Bridge
+The existing RabbitMQ recovery runs automatically in the new API. Keep its broker
+URL and data available while recovery completes. Recovered messages become
+canonical durable dispatches before acknowledgment. A lost Redis context fails
+its run visibly; a broker-drain record alone does not prove every run succeeded.
 
-The bridge is the published PR1a API build:
+Retiring the scheduler or RabbitMQ and adding workers are separate, optional
+operations. Account for every broker queue and unacknowledged message before
+retirement; do not delete or replay poison messages as part of the image update.
 
-```text
-ghcr.io/gobifrost/bifrost-api:1.4.2-dev.1793357148@sha256:9ca80613869946a0fcad769cdfe355ccaa6968a624df9f38b232c1702a9bda9a
-```
+Use the CLI supplied by the upgraded API for the current command/response
+contract. Reauthentication does not upgrade a separately installed CLI binary.
 
-Its source is `cc1cd64fb80aac69885df0db00ba12f61522dacd`. Pin this full
-reference for init and API services during the bridge phase. Do not substitute
-the moving `dev` or `latest` tag. Keep the 1.4.1 client unavailable during this
-phase; a bridge client is not needed for the maintenance steps.
+## Remaining App Compatibility Gate
 
-1. Block ordinary API and MCP ingress, drain requests and WebSockets, and stop
-   old APIs, workers, and schedulers. Preserve the broker and dependencies.
-2. Run the bridge init against the existing database, then start its API.
-   Starting the real API is essential: migrations alone do not record the
-   protocol rollout. Confirm the following returns one row:
+The currently implemented SDK contract 3 refreshes and reconnects App WebSockets
+after an authentication close. Stable 1.4.1 App bundles contain contract 2 and
+stop on that close. Their ordinary HTTP transport can use the platform's current
+authentication bridge, but retrieving an unchanged bundle does not prove its live
+subscriptions continue through token expiry or an authority change.
 
-   ```sql
-   SELECT protocol, first_started_at
-   FROM authz_protocol_state WHERE protocol = 1;
-   ```
+A required manual App rebuild does not meet the normal-image-update target.
+The full stable release remains unqualified until this contract is reconciled
+and verified with an existing bundle before any rebuild. Automatic source
+rebuilds alone cannot establish compatibility for Apps without retained source.
+See [Application SDK Updates](application-sdk-update.md) for the existing,
+separately available SDK-update operation.
 
-3. The bridge already includes broker recovery. Allow its canonical drain to
-   finish; it requires a 120-second quiet interval after the queues become
-   empty. Confirm the durable record exists:
+## Human Authentication
 
-   ```sql
-   SELECT value_json FROM system_configs
-   WHERE category = 'runtime' AND key = 'legacy_broker_drained'
-     AND organization_id IS NULL;
-   ```
+The new session registry intentionally does not accept old human access JWTs or
+Redis-only refresh credentials. Signing in again establishes the current durable
+session family. Logout and revocation remain enforced. Do not keep an older API
+validator reachable after the update: it could accept credentials revoked by the
+new session system. The serving API fleet must finish replacing the old build.
 
-   Account for every queue and unacknowledged message before retiring the
-   broker. Recovery supports workflow executions, agent runs, summaries, and
-   summary backfills. Poison messages stay put. A queued run whose old Redis
-   context expired fails visibly; a drain record does not prove every old run
-   succeeded. Investigate failures before proceeding.
-4. Stop the bridge API. Never create a protocol row manually or bypass the
-   migration guard.
-
-## Activate 2.0
-
-Follow the complete [Human Authentication Cutover](human-auth-cutover.md)
-procedure while ingress remains blocked:
-
-1. Pin the selected 2.0 API and client artifacts by their published immutable
-   digests. Use the same API artifact for init, API, worker, and scheduler.
-2. Apply the forward migrations and start the new serving fleet. Verify every
-   API replica and exposed MCP mount runs the selected build. Keep older human
-   issuers and validators inaccessible.
-3. Update each existing V2 App with `bifrost apps sdk update APP`. Verify its
-   PlatformJob completed and the active SDK provenance records contract 3.
-   Use controlled operator access and the selected build worker; do not
-   reconcile unrelated Solution entities.
-4. Start the selected workers and scheduler. Check recovered executions and
-   their recorded-user lineage. Remove the legacy broker configuration only
-   after recovery and queue accounting are complete.
-5. Reopen ingress and verify login/MFA, refresh rotation, revoke-all, MCP
-   reconnect, WebSocket reconnect, and an ordinary workflow. People must sign
-   in again in browsers, CLI, and MCP clients. Used or revoked refresh
-   credentials must fail.
-
-After human-auth activation, rolling back below the cutover is unsupported:
-old validators could accept revoked legacy credentials. Use a forward repair
-build. A lower-version disaster recovery needs a separately reviewed revocation
-plan. See [Authority Epoch](authz-epoch.md) for trigger-disabling maintenance and
-backup-restore rules.
+Rolling back below the human-authentication cutover is unsupported; use a forward
+repair build. See [Human Authentication Cutover](human-auth-cutover.md) for the
+session semantics and [Authority Epoch](authz-epoch.md) for trigger-disabling
+maintenance and backup-restore rules.
 
 ## Disposable Image Rehearsal
 
-The release coordinator runs the following against an explicitly selected API
-digest before publishing. It uses an isolated Compose project, synthetic data,
-and no host ports. Evidence must be outside the checkout:
+The release coordinator uses an isolated Compose project, synthetic data, and no
+host ports. Evidence must be outside the checkout:
 
 ```bash
 python3 scripts/release/stable_2_upgrade_rehearsal.py \
@@ -107,23 +73,13 @@ python3 scripts/release/stable_2_upgrade_rehearsal.py \
   --evidence-dir /absolute/existing/evidence-directory
 ```
 
-The rehearsal verifies source witnesses, queues work through the real 1.4.1
-HTTP API, proves direct-upgrade refusal on a cloned database, starts the real
-bridge, and checks durable recovery, lineage, terminal success, and queue
-accounting on the target. It also seeds organizations, invited human users,
-role-controlled resources, encrypted integration configuration, linked
-workflow/form/agent records, and a deployed V2 App through the 1.4.1 API.
-After upgrading, it checks retained data and access boundaries, runs the
-registered automation, and rebuilds that App from its retained source through
-the normal SDK-update job. The receipt records each checked contract separately.
+Qualification must cover direct migrations, a real 1.4.1 worker calling the new
+API, pending-work recovery exactly once, and populated organizations, users,
+roles, encrypted integrations, linked workflow/form/agent records, and an
+unchanged deployed App. Verify the old bundle's behavior before any optional SDK
+update. Agent tool bindings can be checked without an external AI-provider call.
 
-The real jobs are the old App deployment, the recovered queued execution,
-the target registered workflow execution, and the target App SDK rebuild.
-Agent tool bindings are checked without making an external AI-provider call.
-The fixture uses synthetic data; it is not a copy of an operator's database.
-The [populated upgrade receipt](../releases/evidence/2.0.0-populated-upgrade.json)
-records the selected source digest, seeded entity IDs, secret-record checksums,
-recovered execution, and SDK-update deployment IDs and provenance.
-The receipt distinguishes a qualified source build
-from the final versioned release artifact. It does not replace the production
-maintenance boundary or App SDK verification.
+The existing [populated staged receipt](../releases/evidence/2.0.0-populated-upgrade.json)
+used an intermediate image and an App rebuild. It remains evidence for the
+specific data-preservation and recovery assertions it records, but does not
+qualify a direct compatible upgrade or the final release artifact.

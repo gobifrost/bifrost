@@ -2,10 +2,11 @@
 """Populate and verify the representative stable-2 upgrade fixture.
 
 HTTP requests use the standard library in the pinned API images. A read-only
-database probe observes the activation pointer omitted from public App metadata.  It writes only compact JSON to stdout: credentials and
-HTTP response bodies never appear in diagnostics.  The one exception is the
-legacy access token in the seed result, which the driver keeps only in memory
-to prove that target authentication rejects it.
+database probe observes the activation pointer omitted from public App metadata.
+It writes only compact JSON to stdout: credentials and HTTP response bodies
+never appear in diagnostics. The one exception is the legacy access token in
+the seed result, which the driver keeps only in memory to prove that target
+authentication rejects it.
 """
 
 from __future__ import annotations
@@ -226,6 +227,32 @@ def assert_retained_source(archive_bytes: bytes, phase: str, path: str) -> None:
         raise ScenarioError(phase, path, "retained source archive was incomplete") from error
 
 
+def active_bundle_fingerprint(http: Http, app_id: str, phase: str, admin_token: str) -> dict[str, Any]:
+    """Fingerprint the served entry artifact, not just its deployment pointer."""
+    manifest = http.json("GET", f"/api/applications/{app_id}/bundle-manifest", token=admin_token)
+    entry = manifest.get("entry") if isinstance(manifest, dict) else None
+    require(isinstance(entry, str) and entry, phase, "/api/applications/bundle-manifest", "active legacy bundle omitted entry artifact")
+    require(manifest.get("runtime_contract") == "mount-v1", phase, "/api/applications/bundle-manifest", "active legacy bundle lost mount contract")
+    artifact = http.request("GET", f"/api/applications/{app_id}/dist/{entry}", token=admin_token)
+    require(bool(artifact.body), phase, "/api/applications/dist", "active legacy bundle artifact was empty")
+    return {"entry": entry, "artifact_sha256": hashlib.sha256(artifact.body).hexdigest(), "artifact_bytes": len(artifact.body)}
+
+
+def assert_active_legacy_bundle(http: Http, state: dict[str, Any], phase: str, admin_token: str) -> dict[str, Any]:
+    """Prove the source V2 deployment and artifact survive without rebuilding."""
+    application = state["application"]
+    app_id, app_slug = application["id"], application["slug"]
+    app = http.json("GET", f"/api/applications/{app_slug}", token=admin_token)
+    deployment_id = active_deployment_id(app_id, phase)
+    require(deployment_id == application["deployment_id"], phase, "/api/applications", "legacy application deployment changed")
+    require(app.get("sdk_contract_version") == 2, phase, "/api/applications", "legacy application contract changed")
+    source = http.request("GET", f"/api/applications/{app_id}/source", token=admin_token)
+    assert_retained_source(source.body, phase, "/api/applications/source")
+    bundle = active_bundle_fingerprint(http, app_id, phase, admin_token)
+    require(bundle == application["bundle"], phase, "/api/applications/dist", "legacy application artifact changed")
+    return {"deployment_id": deployment_id, "sdk_contract_version": app["sdk_contract_version"], **bundle}
+
+
 def wait_terminal(http: Http, path: str, *, token: str, timeout: int, success: tuple[str, ...]) -> dict[str, Any]:
     deadline = time.monotonic() + timeout
     while time.monotonic() < deadline:
@@ -283,6 +310,9 @@ def seed() -> dict[str, Any]:
     config_a_secret, config_b_secret = secret_value("config-a"), secret_value("config-b")
     for key, value, org_id in ((config_a_key, config_a_secret, org_a_id), (config_b_key, config_b_secret, org_b_id)):
         http.request("POST", "/api/sdk/config/set", token=admin_token, payload={"key": key, "value": value, "is_secret": True, "scope": org_id}, expected=(204,))
+    old_worker_secret_key = "stable2_upgrade_old_worker_secret"
+    old_worker_secret = secret_value("old-worker")
+    http.request("POST", "/api/sdk/config/set", token=admin_token, payload={"key": old_worker_secret_key, "value": old_worker_secret, "is_secret": True, "scope": "global"}, expected=(204,))
     integration_a_id, mapping_a_id = create_integration(http, admin_token, name="Stable 2 Integration A", organization_id=org_a_id, entity_id="stable2-tenant-a", secret=secret_value("integration-a"))
     integration_b_id, mapping_b_id = create_integration(http, admin_token, name="Stable 2 Integration B", organization_id=org_b_id, entity_id="stable2-tenant-b", secret=secret_value("integration-b"))
 
@@ -315,24 +345,24 @@ async def {workflow_name}():
     require(deployed_app.get("sdk_contract_version") == 2, "seed", "/api/applications", "source App did not record SDK contract 2")
     source = http.request("GET", f"/api/applications/{app_id}/source", token=admin_token)
     assert_retained_source(source.body, "seed", f"/api/applications/{app_id}/source")
+    bundle = active_bundle_fingerprint(http, app_id, "seed", admin_token)
     # Obtain this only after the slow deploy so rejection cannot be explained by
     # the ordinary lifetime of an early seed login.
     legacy_access_token = login(http, admin_email, default_password())
     require(http.status("GET", "/api/organizations", token=legacy_access_token) == 200, "seed", "/api/organizations", "newly issued legacy token was not accepted")
-
     return {
         "state": {
             "organizations": {"a": org_a_id, "b": org_b_id},
             "users": {"a": {"id": user_a_id, "email": user_a_email}, "b": {"id": user_b_id, "email": user_b_email}, "a_without_role": {"id": user_c_id, "email": user_c_email}},
             "roles": {"a": role_a_id, "b": role_b_id},
-            "configs": {"a_key": config_a_key, "b_key": config_b_key, "secret_length": len(config_a_secret)},
+            "configs": {"a_key": config_a_key, "b_key": config_b_key, "secret_length": len(config_a_secret), "old_worker_secret_key": old_worker_secret_key, "old_worker_secret_sha256": hashlib.sha256(old_worker_secret.encode()).hexdigest()},
             "integrations": {"a": integration_a_id, "b": integration_b_id, "a_mapping": mapping_a_id, "b_mapping": mapping_b_id},
             "workflow": {"id": workflow_id, "path": workflow_path, "name": workflow_name},
             "form": {"id": object_id(form, "seed", "/api/forms")},
             "agent": {"id": object_id(agent, "seed", "/api/agents")},
-            "application": {"id": app_id, "slug": "stable-2-upgrade-app", "deployment_id": deployment_id, "deploy_job_id": job_id},
+            "application": {"id": app_id, "slug": "stable-2-upgrade-app", "deployment_id": deployment_id, "deploy_job_id": job_id, "bundle": bundle},
         },
-        "evidence": {"seeded_two_orgs": True, "invites_registered": True, "role_memberships": True, "secret_configs_seeded": True, "secret_integration_configs_seeded": True, "registered_tool_linked_to_form_and_agent": True, "retained_v2_source": True, "deploy_job_terminal": bool(deployed)},
+        "evidence": {"seeded_two_orgs": True, "invites_registered": True, "role_memberships": True, "secret_configs_seeded": True, "secret_integration_configs_seeded": True, "old_worker_secret_seeded": True, "registered_tool_linked_to_form_and_agent": True, "retained_v2_source": True, "deploy_job_terminal": bool(deployed)},
         "legacy_access_token": legacy_access_token,
     }
 
@@ -347,10 +377,11 @@ def verify(seed_payload: dict[str, Any]) -> dict[str, Any]:
     user_a_token = login(http, users["a"]["email"], fixture_password("human-a"))
     user_b_token = login(http, users["b"]["email"], fixture_password("human-b"))
     user_c_token = login(http, users["a_without_role"]["email"], fixture_password("human-a-without-role"))
+    admin_token = login(http, os.environ["BIFROST_DEFAULT_USER_EMAIL"], default_password())
+    legacy_bundle = assert_active_legacy_bundle(http, state, phase, admin_token)
     require(legacy_token_expiry(legacy_token) > time.time(), phase, "legacy token", "legacy token expired before rejection check")
     legacy_status = http.status("GET", "/api/organizations", token=legacy_token)
     require(legacy_status == 401, phase, "/api/organizations", "legacy access token was not rejected as unauthenticated")
-    admin_token = login(http, os.environ["BIFROST_DEFAULT_USER_EMAIL"], default_password())
 
     workflow = http.json("GET", f"/api/workflows/{state['workflow']['id']}", token=admin_token)
     form = http.json("GET", f"/api/forms/{state['form']['id']}", token=admin_token)
@@ -367,7 +398,7 @@ def verify(seed_payload: dict[str, Any]) -> dict[str, Any]:
     require(own_form_status == 200, phase, "/api/forms", "role member lost form access")
     require(other_form_status in (403, 404), phase, "/api/forms", "other organization gained role access")
     require(no_role_form_status in (403, 404), phase, "/api/forms", "same organization user without role gained access")
-    app_id, app_slug = state["application"]["id"], state["application"]["slug"]
+    app_slug = state["application"]["slug"]
     own_app_status = http.status("GET", f"/api/applications/{app_slug}", token=user_a_token)
     other_app_status = http.status("GET", f"/api/applications/{app_slug}", token=user_b_token)
     require(own_app_status == 200, phase, "/api/applications", "own organization lost app access")
@@ -386,39 +417,9 @@ def verify(seed_payload: dict[str, Any]) -> dict[str, Any]:
     result = execution.get("result") or {}
     require(result.get("config_ok") is True and result.get("integration_ok") is True and result.get("entity") == "stable2-tenant-a", phase, "/api/executions", "workflow did not decrypt preserved synthetic credentials")
 
-    before = http.json("GET", f"/api/applications/{app_slug}", token=admin_token)
-    before_deployment_id = active_deployment_id(app_id, phase)
-    require(before_deployment_id == state["application"]["deployment_id"], phase, "/api/applications", "application deployment id changed before SDK update")
-    require(before.get("sdk_status") == "update_required", phase, "/api/applications", "legacy app was not marked SDK update required")
-    source_before = http.request("GET", f"/api/applications/{app_id}/source", token=admin_token)
-    assert_retained_source(source_before.body, phase, "/api/applications/source")
-    version = http.json("GET", "/api/version")
-    accepted = http.json("POST", f"/api/applications/{app_id}/sdk/update", token=admin_token, expected=(202,))
-    job_id = accepted.get("job_id")
-    require(isinstance(job_id, str), phase, "/api/applications/sdk/update", "SDK update omitted job id")
-    update = wait_terminal(http, f"/api/platform-jobs/{job_id}", token=admin_token, timeout=JOB_TIMEOUT_SECONDS, success=("succeeded",))
-    after = http.json("GET", f"/api/applications/{app_slug}", token=admin_token)
-    after_deployment_id = active_deployment_id(app_id, phase)
-    require(after_deployment_id != before_deployment_id, phase, "/api/applications", "SDK update did not create deployment")
-    require(update.get("result", {}).get("deployment_id") == after_deployment_id, phase, "/api/applications/sdk/update", "SDK result does not match active deployment")
-    require(after.get("sdk_contract_version") == 3, phase, "/api/applications", "SDK update did not reach contract 3")
-    require(after.get("sdk_fingerprint") == version.get("sdk_fingerprint"), phase, "/api/applications", "SDK fingerprint did not match target runtime")
-    require(after.get("sdk_binding_api_major") == version.get("sdk_binding_api_major"), phase, "/api/applications", "SDK binding major did not match target runtime")
-    require(after.get("sdk_status") == "current", phase, "/api/applications", "SDK update did not make app current")
-    source_after = http.request("GET", f"/api/applications/{app_id}/source", token=admin_token)
-    assert_retained_source(source_after.body, phase, "/api/applications/source")
-    manifest = http.json("GET", f"/api/applications/{app_id}/bundle-manifest", token=admin_token)
-    entry = manifest.get("entry") if isinstance(manifest, dict) else None
-    require(isinstance(entry, str) and entry, phase, "/api/applications/bundle-manifest", "active V2 bundle omitted entry artifact")
-    require(manifest.get("runtime_contract") == "mount-v1", phase, "/api/applications/bundle-manifest", "active V2 bundle lost mount contract")
-    artifact = http.request("GET", f"/api/applications/{app_id}/dist/{entry}", token=admin_token)
-    require(bool(artifact.body), phase, "/api/applications/dist", "active bundle artifact was empty")
-    require(http.status("GET", f"/api/applications/{app_slug}", token=user_a_token) == 200, phase, "/api/applications", "SDK update removed owning organization access")
-    require(http.status("GET", f"/api/applications/{app_slug}", token=user_b_token) in (403, 404), phase, "/api/applications", "SDK update widened organization access")
-
-    return {"state": state, "evidence": {"new_human_logins": True, "legacy_token_future_before_rejection": True, "legacy_access_rejected": True, "role_and_org_isolation": True, "resource_ids_and_links_preserved": True, "integration_mapping_ids_preserved": True, "worker_decrypted_synthetic_credentials": True, "registered_automation_succeeded": True, "source_and_active_bundle_retrieved": True, "sdk_update_job_terminal": bool(update), "sdk_contract_3_current": True,
+    return {"state": state, "evidence": {"new_human_logins": True, "legacy_token_future_before_rejection": True, "legacy_access_rejected": True, "role_and_org_isolation": True, "resource_ids_and_links_preserved": True, "integration_mapping_ids_preserved": True, "worker_decrypted_synthetic_credentials": True, "registered_automation_succeeded": True, "legacy_app_active_bundle_verified_before_rebuild": True,
         "registered_execution": {"id": execution_id, "status": execution["status"], "result": result},
-        "sdk_update": {"job_id": job_id, "status": update["status"], "old_deployment_id": before_deployment_id, "new_deployment_id": after_deployment_id, "old_contract": before["sdk_contract_version"], "new_contract": after["sdk_contract_version"], "fingerprint": after["sdk_fingerprint"], "binding_api_major": after["sdk_binding_api_major"], "artifact_bytes": len(artifact.body)},
+        "legacy_active_bundle": legacy_bundle,
     }}
 
 
