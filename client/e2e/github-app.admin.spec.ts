@@ -79,7 +79,16 @@ test("manually connects an App, verifies its inventory, and runs the read-only P
         await page.getByLabel("Installation ID", { exact: true }).fill(String(INSTALLATION_ID));
         await page.getByRole("button", { name: "Verify And Bind Installation", exact: true }).click();
         await expect(page.getByRole("heading", { name: "fixture-70001 — stale" })).toBeVisible();
+        // Follow the completion notification's actual query refresh. The
+        // assertions then check the resulting view, not a job-duration SLO.
+        const refreshedInventory = page.waitForResponse(async (response) => {
+            const url = new URL(response.url());
+            if (url.pathname !== "/api/github-app/installations" || url.searchParams.get("organization_id") !== organizationId || !response.ok()) return false;
+            const inventory = await response.json() as components["schemas"]["GitHubAppInstallations"];
+            return inventory.installations.some((installation) => installation.installation_id === INSTALLATION_ID && installation.status === "active");
+        });
         await page.getByRole("button", { name: "Refresh And Recover", exact: true }).click();
+        await refreshedInventory;
         await expect(page.getByRole("heading", { name: "fixture-70001 — active" })).toBeVisible();
         await expect(page.getByText("fixture/repository-70001", { exact: true })).toBeVisible();
         const listed = await operator.api.get("/api/github-app/installations", { params: { organization_id: organizationId } });
