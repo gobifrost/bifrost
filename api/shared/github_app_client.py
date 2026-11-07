@@ -6,10 +6,11 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import math
+import re
 import ssl
 import time
 from typing import Any, Awaitable, Callable, cast
-from urllib.parse import parse_qs, urlencode, urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 import httpx
 from cryptography.fernet import InvalidToken
@@ -21,6 +22,10 @@ from src.core.security import decrypt_secret, encrypt_secret
 
 API_URL = "https://api.github.com"
 MAX_PAGES = 50
+REQUEST_PATHS = {
+    "GET": r"/(?:app|app/installations/[1-9][0-9]*|app/hook/deliveries|installation/repositories)",
+    "POST": r"/app/(?:installations/[1-9][0-9]*/access_tokens|hook/deliveries/[1-9][0-9]*/attempts)",
+}
 
 
 @dataclass(frozen=True)
@@ -69,10 +74,14 @@ class GitHubAppClient:
 
     async def request(self, method: str, path: str, *, token: str | None = None,
                       installation_id: int | None = None, data: dict[str, Any] | None = None,
+                      params: dict[str, str | int] | None = None,
                       delivery_page: bool = False) -> Any:
-        # Paths are code-owned. Never follow a provider/user-supplied URL with auth.
-        if not path.startswith("/") or path.startswith("//") or "://" in path:
-            raise ValueError("GitHub request path must be relative")
+        # Limit authenticated requests to the endpoints this integration uses.
+        # Dynamic path segments are positive ASCII IDs; query values are passed
+        # separately so they cannot alter the endpoint or URL authority.
+        pattern = REQUEST_PATHS.get(method)
+        if pattern is None or not re.fullmatch(pattern, path):
+            raise ValueError("Unsupported GitHub App request endpoint")
         # JWT administration and installation bearer requests have distinct
         # coordination lanes. Token rotation never creates a new quota lane.
         budget = f"github-app:budget:{self.credentials.app_id}:{installation_id if token else 'app'}"
@@ -89,7 +98,7 @@ class GitHubAppClient:
                         async with asyncio.timeout(15):
                             async with httpx.AsyncClient(timeout=10, follow_redirects=False, trust_env=False,
                                                          verify=ssl.create_default_context()) as client:
-                                response = await client.request(method, API_URL + path, json=data, headers={
+                                response = await client.request(method, API_URL + path, params=params, json=data, headers={
                                     "Authorization": f"Bearer {bearer}",
                                     "Accept": "application/vnd.github+json",
                                     "X-GitHub-Api-Version": "2022-11-28",
@@ -142,10 +151,10 @@ class GitHubAppClient:
 
     async def delivery_history(self, cursor: str | None = None) -> DeliveryPage:
         # This endpoint uses opaque Link-header cursors, not numbered pages.
-        query = {"per_page": "100"}
+        query: dict[str, str | int] = {"per_page": "100"}
         if cursor is not None:
             query["cursor"] = cursor
-        return await self.request("GET", "/app/hook/deliveries?" + urlencode(query), delivery_page=True)
+        return await self.request("GET", "/app/hook/deliveries", params=query, delivery_page=True)
 
     async def installation(self, installation_id: int) -> dict[str, Any]:
         result = await self.request("GET", f"/app/installations/{installation_id}", installation_id=installation_id)
@@ -211,7 +220,7 @@ class GitHubAppClient:
                     expected_total = None
                     seen_ids: set[int] = set()
                     for page in range(1, MAX_PAGES + 1):
-                        result = await self.request("GET", f"/installation/repositories?per_page=100&page={page}",
+                        result = await self.request("GET", "/installation/repositories", params={"per_page": 100, "page": page},
                                                     token=bearer, installation_id=installation_id)
                         if not isinstance(result, dict) or not isinstance(result.get("repositories"), list):
                             raise GitHubAppError("response", "GitHub returned an invalid repository inventory", 502)

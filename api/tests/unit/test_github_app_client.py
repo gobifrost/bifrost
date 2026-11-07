@@ -3,7 +3,7 @@
 import asyncio
 from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import httpx
 import pytest
@@ -56,6 +56,60 @@ def client():
 def token_response():
     return {"token": "synthetic-installation-secret", "permissions": {"metadata": "read"},
             "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "path"), [
+    ("GET", "https://example.com/app"), ("GET", "//example.com/app"),
+    ("GET", "/app/installations/4/../../user"), ("GET", "/app/installations/%2e%2e"),
+    ("GET", "/app/installations/4?other=1"), ("GET", "/app/installations/4#other"),
+    ("GET", "/app/installations/4\\other"), ("GET", "/app/installations/4\n"),
+    ("GET", "/app/installations/４"), ("GET", "/app/installations/-1"),
+    ("GET", "/app/installations/0"), ("GET", "/user"),
+    ("GET", "/app/installations/4/access_tokens"), ("POST", "/app"),
+    ("PUT", "/app"), ("DELETE", "/app/installations/4"),
+])
+async def test_unsupported_paths_and_methods_are_rejected_before_credentials_or_network(cache, monkeypatch, method, path):
+    network = Mock(side_effect=AssertionError("Unexpected network request"))
+    jwt = Mock(side_effect=AssertionError("Unexpected credential use"))
+    monkeypatch.setattr(module.httpx, "AsyncClient", network)
+    monkeypatch.setattr(module, "issue_app_jwt", jwt)
+    with pytest.raises(ValueError, match="Unsupported GitHub App request endpoint"):
+        await client().request(method, path)
+    jwt.assert_not_called()
+    network.assert_not_called()
+    assert cache.values == {} and cache.health == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("method", "path"), [
+    ("GET", "/app"), ("GET", "/app/installations/4"),
+    ("GET", "/app/hook/deliveries"), ("GET", "/installation/repositories"),
+    ("POST", "/app/installations/4/access_tokens"), ("POST", "/app/hook/deliveries/4/attempts"),
+])
+async def test_supported_endpoints_keep_query_values_out_of_the_host_and_path(cache, monkeypatch, method, path):
+    calls = []
+    query = "../other?value=1#fragment&next=https://example.com"
+
+    def handle(request):
+        calls.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    original = httpx.AsyncClient
+
+    def transport(**kwargs):
+        assert kwargs["follow_redirects"] is False
+        assert kwargs["trust_env"] is False
+        return original(transport=httpx.MockTransport(handle), **kwargs)
+
+    monkeypatch.setattr(module.httpx, "AsyncClient", transport)
+    await client().request(method, path, params={"cursor": query}, token="synthetic-token", installation_id=4)
+    assert len(calls) == 1
+    request = calls[0]
+    assert request.method == method
+    assert request.url.scheme == "https" and request.url.host == "api.github.com"
+    assert request.url.path == path and request.url.fragment == ""
+    assert request.url.params["cursor"] == query
 
 
 @pytest.mark.asyncio
@@ -152,7 +206,8 @@ async def test_inventory_is_coalesced_and_uses_installation_endpoint(cache):
     inventories = await asyncio.gather(first.repositories(4, "binding-1"), second.repositories(4, "binding-1"))
     assert inventories == [[{"id": 11, "full_name": "owner/repo", "private": True}]] * 2
     assert request.await_count == 1
-    assert request.await_args.args[1] == "/installation/repositories?per_page=100&page=1"
+    assert request.await_args.args[1] == "/installation/repositories"
+    assert request.await_args.kwargs["params"] == {"per_page": 100, "page": 1}
 
 
 @pytest.mark.asyncio
