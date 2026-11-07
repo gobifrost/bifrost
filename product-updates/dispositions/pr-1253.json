@@ -1,0 +1,14 @@
+{
+  "key": "pr:1253",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Allow deployment-specific cold worker memory estimates for smaller execution workers.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1253",
+      "Codex reviewed this routine operator-setting summary under the authorized worker-capacity effort. Existing defaults remain unchanged; no mandatory upgrade or security disclosure is required."
+    ]
+  }
+}

@@ -31,6 +31,25 @@ capability changes after a save still fail closed at reconciliation.
 Kubernetes and external managed workers share the canonical worker ceiling,
 warm minimum, demand calculation, and memory and handler occupancy accounting.
 
+## Cold Worker Memory Estimate
+
+`BIFROST_POOL_WORKER_BASELINE_ESTIMATE_MIB` controls the process-baseline estimate
+used to plan physical workers before a managed worker reports its own budget.
+It defaults to 768 MiB. A deployment may set a positive value supported by its
+full-initialization memory measurements, including synchronized packages and
+both workflow and agent templates. An idle parent-process RSS alone is not that
+measurement. Retain workload and image identity, variation and safety margin
+when selecting an estimate; requalify it after relevant image/package changes.
+
+This setting changes provisioning estimates only. Once managed workers report,
+the largest measured baseline takes precedence even when it exceeds the configured
+estimate. Readiness, the memory-pressure threshold, transactional reservations,
+claim admission, cancellation and worker-count/size bounds remain unchanged.
+It does not change isolated Kubernetes pod estimates or establish whole-VM peak
+memory/headroom. A small estimate cannot make a job fit a measured worker that
+has insufficient memory. Qualify representative workloads before recommending
+smaller capacity sizes.
+
 ## Resource Protocol
 
 All requests authenticate with `Authorization: Bearer <token>`. Resource requests
