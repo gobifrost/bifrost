@@ -70,9 +70,26 @@ host ports. Evidence must be outside the checkout:
 python3 scripts/release/stable_2_upgrade_rehearsal.py \
   --run-id stable2-qualification \
   --target-api-image ghcr.io/gobifrost/bifrost-api@sha256:TARGET_DIGEST \
+  --target-client-image ghcr.io/gobifrost/bifrost-client@sha256:CLIENT_DIGEST \
+  --browser-runner-image sha256:LOCAL_PLAYWRIGHT_IMAGE_ID \
   --target-source FULL_SOURCE_COMMIT \
   --evidence-dir /absolute/existing/evidence-directory
 ```
+
+Build the browser runner from `client/Dockerfile.playwright` and use its local
+immutable image ID. The browser shares the production client's private network
+namespace and reaches its real NGINX at `http://localhost`; no host port or
+browser authentication bypass is used. The App is built once by 1.4.1 with its
+original SDK2, then its deployment pointer, source and served bundle hashes must
+remain unchanged throughout the upgrade.
+
+The browser fixture shortens one newly signed human access token to 90 seconds
+while preserving its durable session and current claims. It waits for real
+expiry, changes an unassigned role's permissions to advance the authority epoch,
+and revokes that browser family. A separate control family writes the table
+updates; it never rotates the browser's refresh cookie. Live values and local
+component state prove recovery without remounting, and a subsequent update must
+not reach the revoked subscriber. Production token lifetimes are unchanged.
 
 Qualification must cover direct migrations, a real 1.4.1 worker calling the new
 API, pending-work recovery exactly once, and populated organizations, users,

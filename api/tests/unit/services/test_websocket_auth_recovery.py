@@ -14,8 +14,8 @@ from src.services.authorization.tokens import RuntimeAuthResult, _encode_claims,
 from tests.helpers.human_tokens import human_claims
 
 
-def socket(token=None, *, query=False, site="same-origin", headers=None, cookies=None):
-    socket_headers = {"host": "bifrost.test", "sec-fetch-site": site, **(headers or {})}
+def socket(token=None, *, query=False, headers=None, cookies=None):
+    socket_headers = {"host": "bifrost.test", "origin": "https://bifrost.test", **(headers or {})}
     if token and not query:
         socket_headers["cookie"] = f"access_token={token}"
     if cookies:
@@ -97,11 +97,27 @@ async def test_legacy_query_retries_via_shared_bus_without_serializing_token(aut
     assert token not in repr(recovery.manager.broadcast.call_args)
 
 
-@pytest.mark.parametrize("site", ["cross-site", "same-site", "none", ""])
-async def test_cross_origin_query_does_not_request_host_refresh(authority, site):
+@pytest.mark.parametrize("origin", ["https://other.test", "https://bifrost.test:444", "null", "", "https://bifrost.test/path", "https://user@bifrost.test", "https://bifrost.test#fragment", "https://bifrost.test:bad"])
+async def test_cross_origin_or_malformed_query_does_not_request_host_refresh(authority, origin):
     claims, db, _ = authority
-    assert not await recovery.request_legacy_websocket_refresh(socket(_encode_claims(claims), query=True, site=site))
+    # A synthetic Fetch Metadata header cannot override the real browser Origin.
+    assert not await recovery.request_legacy_websocket_refresh(socket(_encode_claims(claims), query=True, headers={"origin": origin, "sec-fetch-site": "same-origin"}))
     db.scalar.assert_not_awaited()
+
+
+@pytest.mark.parametrize(("origin", "host"), [
+    ("https://bifrost.test", "bifrost.test:443"),
+    ("http://bifrost.test:80", "bifrost.test"),
+    ("http://localhost:31234", "localhost:31234"),
+    ("https://bifrost.test:8443", "bifrost.test:8443"),
+    ("http://[::1]:31234", "[::1]:31234"),
+])
+async def test_browser_without_fetch_metadata_recovers_with_public_authority(authority, origin, host):
+    claims, _, _ = authority
+    ws = socket(_encode_claims(claims), query=True, headers={"origin": origin, "host": host})
+    assert "sec-fetch-site" not in ws.headers
+    assert await recovery.request_legacy_websocket_refresh(ws)
+    recovery.manager.broadcast.assert_awaited_once()
 
 
 async def test_internal_control_closes_only_matching_stale_cookie_host(authority):

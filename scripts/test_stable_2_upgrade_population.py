@@ -131,6 +131,7 @@ class UpgradePopulationTests(unittest.TestCase):
 
     def test_http_error_reports_status_without_response_body(self) -> None:
         error = urllib.error.HTTPError("http://localhost:8000/private", 403, "forbidden", {}, io.BytesIO(b"response-secret"))
+        self.addCleanup(error.close)
         with patch.object(population.urllib.request, "urlopen", side_effect=error):
             with self.assertRaises(population.ScenarioError) as raised:
                 population.Http("verify").request("GET", "/private", token="token-secret")
