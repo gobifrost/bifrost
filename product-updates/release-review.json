@@ -1,0 +1,84 @@
+{
+  "target_ref": "5c3baf58443484602be5fd9778d11de54a95468c",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "Release coordinator draft under Jack's explicit authorization; final source inventory, populated rehearsal and copy review pending.",
+      "Compatibility repairs1276 and1277 merged; frozen runtime5c3baf58443484602be5fd9778d11de54a95468c has passed full nightly. Old bridge/manual App-rebuild requirements removed from draft; direct browser rehearsal, multi-replica policy and final inventory remain pending.",
+      "API-verified incremental inventory through1277:386commits/386mergedPRs; existing additional contributor evidence retained. Current runtime blocked by real-browser expiry recovery; follow-up repair not yet included."
+    ]
+  },
+  "security": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/advisories/GHSA-2883-xcg3-v3hh",
+      "https://github.com/advisories/GHSA-3589-pxp7-3gj8",
+      "https://github.com/advisories/GHSA-5h93-6whr-6q8j",
+      "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+      "https://github.com/advisories/GHSA-6688-9rhm-gjv2",
+      "https://github.com/advisories/GHSA-68fv-2mgg-jv7q",
+      "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "https://github.com/advisories/GHSA-834v-8h66-3h79",
+      "https://github.com/advisories/GHSA-84m7-p3x7-pcfv",
+      "https://github.com/advisories/GHSA-c6gr-qvv4-5v3f",
+      "https://github.com/advisories/GHSA-c8p4-j97h-3vg8",
+      "https://github.com/advisories/GHSA-cg2g-xh64-v4q7",
+      "https://github.com/advisories/GHSA-hvrp-rf83-w775",
+      "https://github.com/advisories/GHSA-jpw9-pfvf-9f58",
+      "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+      "https://github.com/advisories/GHSA-mrv2-3pqr-j5jr",
+      "https://github.com/advisories/GHSA-p98j-92pf-mc4p",
+      "https://github.com/advisories/GHSA-px8p-9vwx-vf98",
+      "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+      "https://github.com/advisories/GHSA-rwrf-2pqf-9j8j",
+      "https://github.com/advisories/GHSA-vj7q-gjh5-988w",
+      "https://github.com/advisories/GHSA-w4fh-qvv9-3v23",
+      "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
+      "https://github.com/advisories/GHSA-82r6-8w77-94w6",
+      "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+      "Closed advisory metadata reviewed against previous final v1.4.1 and current lockfiles. Root retained 33 source alert records; draft fixed-CVE list adds independently verified AnyIO advisory. Final source and copy review pending."
+    ],
+    "fixed_cves": [
+      "[CVE-2023-54404](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5): zod (scripts/docs/package-lock.json).",
+      "[CVE-2026-102276](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-102277](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-102278](https://github.com/advisories/GHSA-qhr7-859c-m2p7): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-114386](https://github.com/advisories/GHSA-3589-pxp7-3gj8): pydantic-ai-harness (pyproject.toml).",
+      "[CVE-2026-115895](https://github.com/advisories/GHSA-834v-8h66-3h79): happy-dom (client/package-lock.json).",
+      "[CVE-2026-116684](https://github.com/advisories/GHSA-w4fh-qvv9-3v23): mcp (pyproject.toml).",
+      "[CVE-2026-116685](https://github.com/advisories/GHSA-5h93-6whr-6q8j): mcp (pyproject.toml).",
+      "[CVE-2026-116686](https://github.com/advisories/GHSA-rwrf-2pqf-9j8j): mcp (pyproject.toml).",
+      "[CVE-2026-118660](https://github.com/advisories/GHSA-c8p4-j97h-3vg8): happy-dom (client/package-lock.json).",
+      "[CVE-2026-45820](https://github.com/advisories/GHSA-px8p-9vwx-vf98): fflate (client/package-lock.json).",
+      "[CVE-2026-52869](https://github.com/advisories/GHSA-jpw9-pfvf-9f58): mcp (pyproject.toml).",
+      "[CVE-2026-52870](https://github.com/advisories/GHSA-hvrp-rf83-w775): mcp (pyproject.toml).",
+      "[CVE-2026-59950](https://github.com/advisories/GHSA-vj7q-gjh5-988w): mcp (pyproject.toml).",
+      "[CVE-2026-59951](https://github.com/advisories/GHSA-84m7-p3x7-pcfv): mcp (pyproject.toml).",
+      "[CVE-2026-84375](https://github.com/advisories/GHSA-2883-xcg3-v3hh): js-yaml (client/package-lock.json, scripts/docs/package-lock.json).",
+      "[CVE-2026-93749](https://github.com/advisories/GHSA-68fv-2mgg-jv7q): source-map-js (api/src/services/app_compiler/package-lock.json, client/package-lock.json).",
+      "[CVE-2026-63374](https://github.com/advisories/GHSA-82r6-8w77-94w6): AnyIO TLS hostname validation; the Python runtime now pins AnyIO 4.14.2."
+    ],
+    "known_open": [
+      {
+        "advisory": "https://github.com/advisories/GHSA-g3hv-75wg-m249",
+        "cve": "CVE-2026-118764",
+        "package": "minimatch",
+        "scope": "development tooling via typescript-eslint; absent from the client production dependency tree",
+        "fixed": false
+      }
+    ]
+  },
+  "breaking_changes": {
+    "status": "draft",
+    "evidence": [
+      "docs/runbooks/stable-2-upgrade.md",
+      "docs/runbooks/human-auth-cutover.md",
+      "docs/runbooks/zero-trust-automation.md",
+      "docs/runbooks/application-sdk-update.md",
+      "Existing canonical action-required Product Updates and reviewed source dispositions; populated upgrade proof pending."
+    ],
+    "summary": "Update directly from 1.4.1 using the normal image update. Follow the [2.0 Upgrade Guide](https://github.com/gobifrost/bifrost/blob/5c3baf58443484602be5fd9778d11de54a95468c/docs/runbooks/stable-2-upgrade.md); the final multi-replica cutover disposition is still under review. Back up PostgreSQL and object storage together, preserve the platform secret, and account for queued work before retiring RabbitMQ.\n\nVerify every serving API finishes replacing the old authentication validator. People may need to sign in again in browsers, CLI and MCP clients. Existing supported SDK2 Apps work without a rebuild. Rollback below this authentication version is unsupported; use a forward repair build.\n\nUpgrade CLI and MCP clients with the server: the 1.4.1 CLI cannot parse the new execution responses, and renamed MCP tools require refreshed client discovery. Upgrade physical worker launchers to support the current remote-summary handlers. Resolve duplicate ad-hoc table names in each organization or global scope before their migration.\n\nUnattended file-synchronization scripts must explicitly acknowledge their changes with --force or BIFROST_NONINTERACTIVE. Generic OIDC providers that previously returned only user information must return a valid ID token before upgrading. Full Access remains the default workflow mode; converting workflows to Declared Permissions is optional.\n\n## Release Cadence Going Forward\n\nWe aim for a stable release roughly every month, with more frequent release candidates between stable releases. Release candidates are intended to be safer than dev builds. The dev channel remains bleeding edge and will contain bugs the maintainer intends to find in his own production first."
+  }
+}
