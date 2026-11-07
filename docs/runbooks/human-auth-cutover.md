@@ -15,6 +15,8 @@ claim format. A new Postgres migration alone does not prevent that bypass.
 
 1. Select the immutable PR2 release image and record the currently running image
    identities. Confirm dependencies are healthy and a recovery plan is available.
+   Inventory deployed V2 Apps and record active artifact/SDK provenance for
+   verification. Existing supported SDK2 bundles do not require a rebuild.
 2. Block API ingress and drain all API requests and WebSocket connections. Include
    direct API endpoints and separately exposed MCP endpoints, not just the web
    frontend. Stop old serving APIs before allowing new ones to issue credentials.
@@ -25,12 +27,12 @@ claim format. A new Postgres migration alone does not prevent that bypass.
    exposed MCP mount uses the same selected PR2 validation code; no old human
    issuer or validator may remain reachable behind ingress. Use deployment image
    digests, not a moving tag or a successful migration, as build evidence.
-5. Verify existing App bundles before any SDK rebuild. The currently implemented
-   contract 3 client refreshes after a 4001 close; the older client stops. This
-   remains a stable-release compatibility gate, not a required operator rebuild
-   procedure. See the [App compatibility gate](stable-2-upgrade.md#remaining-app-compatibility-gate).
-6. Restore ingress only after the homogeneous serving fleet is verified and
-   the release's App compatibility gate is satisfied. Every
+5. Verify existing V2 Apps with their original active deployment. SDK2 bundles
+   keep live subscriptions through the host's serialized refresh and a transient
+   retry; they do not require source or an SDK rebuild to remain supported.
+   Optional automatic SDK updates use the existing maintenance setting and
+   retained-source safety checks. See [Application SDK Updates](application-sdk-update.md).
+6. Restore ingress after the homogeneous serving fleet is verified. Every
    person signs in again in browsers, CLI and MCP clients. Passwords, enrolled
    MFA and passkeys are retained; legacy access JWTs and Redis-only refresh
    credentials are not migrated or accepted.

@@ -4,6 +4,7 @@ import {
 	EMBED_TOKEN_KEY,
 	setImpersonationToken,
 } from "@/lib/auth-token";
+import { useNotificationStore } from "@/stores/notificationStore";
 import { type PlatformJobUpdate, webSocketService } from "./websocket";
 
 class MockWebSocket {
@@ -63,6 +64,89 @@ afterEach(async () => {
 });
 
 describe("platform WebSocket authentication", () => {
+	it("reports a background handshake failure without an unhandled rejection", async () => {
+		vi.useFakeTimers();
+		const error = vi.spyOn(console, "error").mockImplementation(() => {});
+		const status = vi.fn();
+		const unsubscribe = webSocketService.onConnectionStatusChange(status);
+		try {
+			webSocketService.connectInBackground(["agent-runs"]);
+			MockWebSocket.instances[0].emit("close", { code: 1006 } as CloseEvent);
+			await vi.advanceTimersByTimeAsync(0);
+			expect(status).toHaveBeenCalledWith(false);
+			expect(webSocketService.isConnected()).toBe(false);
+			expect(error).toHaveBeenCalledExactlyOnceWith(
+				"[WebSocket] Background connection failed:",
+				expect.objectContaining({ message: "WebSocket closed before connection completed" }),
+			);
+		} finally {
+			unsubscribe();
+			error.mockRestore();
+			vi.useRealTimers();
+		}
+	});
+
+	it("rejects an explicitly awaited handshake failure", async () => {
+		const failure = expect(webSocketService.connect()).rejects.toThrow("WebSocket closed before connection completed");
+		MockWebSocket.instances[0].emit("close", { code: 1000 } as CloseEvent);
+		await failure;
+		expect(webSocketService.isConnected()).toBe(false);
+	});
+
+	it("reuses a rotated family and replaces another session without old frames", async () => {
+		const token = (sid: string, jti: string) => `header.${btoa(JSON.stringify({ sub: "person", sid, jti }))}.signature`;
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-a", "first"));
+		await webSocketService.connect(["execution:old"]);
+		const old = MockWebSocket.instances[0];
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-a", "rotated"));
+		await webSocketService.connect();
+		expect(MockWebSocket.instances).toHaveLength(1);
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("family-b", "fresh-login"));
+		await webSocketService.connect();
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(new URL(MockWebSocket.urls[1]).searchParams.getAll("channels")).toEqual([]);
+		old.onmessage?.({ data: JSON.stringify({ type: "connected", channels: [], userId: "old-person" }) } as MessageEvent);
+		expect(webSocketService.getUserId()).toBeNull();
+		MockWebSocket.instances[1].onmessage?.({ data: JSON.stringify({ type: "connected", channels: [], userId: "person" }) } as MessageEvent);
+		expect(webSocketService.getUserId()).toBe("person");
+		old.onclose?.({ code: 1000 } as CloseEvent);
+		expect(webSocketService.isConnected()).toBe(true);
+	});
+
+	it("replaces an in-flight previous session without canceling the new connection", async () => {
+		const token = (sid: string) => `header.${btoa(JSON.stringify({ sub: "person", sid }))}.signature`;
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("old-family"));
+		const oldConnection = webSocketService.connect(["execution:old"]);
+		localStorage.setItem(ACCESS_TOKEN_KEY, token("new-family"));
+		const newConnection = webSocketService.connect(["execution:new"]);
+		await Promise.all([oldConnection, newConnection]);
+		expect(MockWebSocket.instances).toHaveLength(2);
+		expect(new URL(MockWebSocket.urls[1]).searchParams.getAll("channels")).toEqual(["execution:new"]);
+		expect(webSocketService.isConnected()).toBe(true);
+	});
+
+	it("stores a notification without logging its untrusted payload", async () => {
+		const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+		useNotificationStore.getState().clearNotifications();
+		try {
+			await webSocketService.connect();
+			MockWebSocket.instances[0].onmessage?.({ data: JSON.stringify({
+				type: "notification_created", notification: {
+					id: "notice", category: "system", title: "User\ninput", description: null,
+					status: "completed", percent: null, error: null, result: null, metadata: null,
+					created_at: "2026-11-07T00:00:00Z", updated_at: "2026-11-07T00:00:00Z", user_id: "person",
+				},
+			}) } as MessageEvent);
+			expect(useNotificationStore.getState().notifications).toEqual([
+				expect.objectContaining({ id: "notice", title: "User\ninput", status: "completed" }),
+			]);
+			expect(warning).not.toHaveBeenCalled();
+		} finally {
+			warning.mockRestore();
+			useNotificationStore.getState().clearNotifications();
+		}
+	});
+
 	it("does not reconnect after a 4001 when session refresh fails", async () => {
 		vi.useFakeTimers();
 		vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(null, { status: 401 })));
