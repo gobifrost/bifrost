@@ -29,23 +29,21 @@ class RehearsalSafetyTests(unittest.TestCase):
         )
 
     def test_project_collision_never_cleans_up_the_existing_stack(self):
-        with (
-            patch.object(
-                self.rehearsal,
-                "run",
-                return_value=subprocess.CompletedProcess(
-                    [], 0, "existing-container", ""
-                ),
-            ),
-            patch.object(self.rehearsal, "dc") as compose,
-        ):
-            with self.assertRaisesRegex(RuntimeError, "existing Compose project"):
-                self.rehearsal.execute()
-            self.rehearsal.cleanup()
-            compose.assert_not_called()
+        for collision in range(3):
+            with self.subTest(resource=("container", "network", "volume")[collision]):
+                responses = [subprocess.CompletedProcess([], 0, "", "")] * collision
+                responses.append(subprocess.CompletedProcess([], 0, "existing-resource", ""))
+                with patch.object(self.rehearsal, "run", side_effect=responses), patch.object(
+                    self.rehearsal, "dc"
+                ) as compose:
+                    with self.assertRaisesRegex(RuntimeError, "existing Compose project"):
+                        self.rehearsal.execute()
+                    self.rehearsal.cleanup()
+                    compose.assert_not_called()
 
     def test_failed_cleanup_leaves_a_durable_failure_receipt(self):
         self.rehearsal.owns_project = True
+        self.rehearsal.report["passed"] = True
         with patch.object(
             self.rehearsal, "dc", side_effect=RuntimeError("Docker failed")
         ):

@@ -180,17 +180,11 @@ class Rehearsal:
         return json.loads(raw[raw.index("[") :])
 
     def execute(self) -> None:
-        existing = self.run(
-            [
-                "docker",
-                "ps",
-                "-aq",
-                "--filter",
-                f"label=com.docker.compose.project={self.project}",
-            ]
-        ).stdout
-        if existing.strip():
-            raise RuntimeError("Refusing to reuse an existing Compose project")
+        label = f"label=com.docker.compose.project={self.project}"
+        for inventory in (["ps", "-aq"], ["network", "ls", "-q"], ["volume", "ls", "-q"]):
+            existing = self.run(["docker", *inventory, "--filter", label]).stdout
+            if existing.strip():
+                raise RuntimeError("Refusing to reuse an existing Compose project")
         self.owns_project = True
         self.phase("Verify immutable images and target source")
         for image in (SOURCE, BRIDGE, self.args.target_api_image):
@@ -365,6 +359,9 @@ class Rehearsal:
                 self.report["cleanup_completed"] = False
                 self.dc("down", "--volumes", "--remove-orphans")
                 self.report["cleanup_completed"] = True
+        except BaseException:
+            self.report["passed"] = False
+            raise
         finally:
             self.save()
 
