@@ -1,6 +1,7 @@
 """Safety boundaries for the disposable release-image rehearsal driver."""
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 import subprocess
@@ -125,15 +126,31 @@ class RehearsalSafetyTests(unittest.TestCase):
 
     def test_old_worker_probe_waits_for_target_release_before_reading_secret(self):
         self.rehearsal.population_payload = {
-            "state": {"configs": {
-                "old_worker_secret_key": "secret-key",
-                "old_worker_secret_sha256": "expected-digest",
-            }}
+            "state": {
+                "configs": {"a_key": "org-config"},
+                "organizations": {"a": "11111111-1111-4111-8111-111111111111"},
+            }
         }
         code = self.rehearsal.old_worker_probe_code()
-        self.assertLess(code.index("STABLE_2_OLD_WORKER_BARRIER_REACHED"), code.index('await config.get("secret-key")'))
+        self.assertLess(code.index("STABLE_2_OLD_WORKER_BARRIER_REACHED"), code.index('await config.get("org-config", scope="11111111-1111-4111-8111-111111111111")'))
         self.assertIn('Path("/tmp/stable2-upgrade-release").exists()', code)
         self.assertIn("STABLE_2_OLD_WORKER_TARGET_CONFIG_SUCCESS", code)
+
+    def test_old_worker_proof_is_derived_privately_without_serialized_credentials(self):
+        from scripts.release.stable_2_upgrade_population import secret_value
+
+        self.rehearsal.population_payload = {
+            "state": {
+                "configs": {"a_key": "org-config"},
+                "organizations": {"a": "11111111-1111-4111-8111-111111111111"},
+            }
+        }
+        with patch.dict("os.environ", {"BIFROST_DEFAULT_USER_PASSWORD": self.rehearsal.password}):
+            fixture_value = secret_value("config-a")
+        code = self.rehearsal.old_worker_probe_code()
+        self.assertTrue(hashlib.sha256(fixture_value.encode()).hexdigest() in code, "Probe must compare the seeded fixture")
+        self.assertFalse(fixture_value in code, "Raw fixture values must not reach probe source")
+        self.assertFalse(self.rehearsal.password in code, "Controller credentials must not reach probe source")
 
     def test_pending_recovery_preflights_its_second_compose_project(self):
         with patch.object(self.rehearsal, "cleanup"), patch.object(

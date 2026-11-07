@@ -310,9 +310,6 @@ def seed() -> dict[str, Any]:
     config_a_secret, config_b_secret = secret_value("config-a"), secret_value("config-b")
     for key, value, org_id in ((config_a_key, config_a_secret, org_a_id), (config_b_key, config_b_secret, org_b_id)):
         http.request("POST", "/api/sdk/config/set", token=admin_token, payload={"key": key, "value": value, "is_secret": True, "scope": org_id}, expected=(204,))
-    old_worker_secret_key = "stable2_upgrade_old_worker_secret"
-    old_worker_secret = secret_value("old-worker")
-    http.request("POST", "/api/sdk/config/set", token=admin_token, payload={"key": old_worker_secret_key, "value": old_worker_secret, "is_secret": True, "scope": "global"}, expected=(204,))
     integration_a_id, mapping_a_id = create_integration(http, admin_token, name="Stable 2 Integration A", organization_id=org_a_id, entity_id="stable2-tenant-a", secret=secret_value("integration-a"))
     integration_b_id, mapping_b_id = create_integration(http, admin_token, name="Stable 2 Integration B", organization_id=org_b_id, entity_id="stable2-tenant-b", secret=secret_value("integration-b"))
 
@@ -355,14 +352,14 @@ async def {workflow_name}():
             "organizations": {"a": org_a_id, "b": org_b_id},
             "users": {"a": {"id": user_a_id, "email": user_a_email}, "b": {"id": user_b_id, "email": user_b_email}, "a_without_role": {"id": user_c_id, "email": user_c_email}},
             "roles": {"a": role_a_id, "b": role_b_id},
-            "configs": {"a_key": config_a_key, "b_key": config_b_key, "secret_length": len(config_a_secret), "old_worker_secret_key": old_worker_secret_key, "old_worker_secret_sha256": hashlib.sha256(old_worker_secret.encode()).hexdigest()},
+            "configs": {"a_key": config_a_key, "b_key": config_b_key, "secret_length": len(config_a_secret)},
             "integrations": {"a": integration_a_id, "b": integration_b_id, "a_mapping": mapping_a_id, "b_mapping": mapping_b_id},
             "workflow": {"id": workflow_id, "path": workflow_path, "name": workflow_name},
             "form": {"id": object_id(form, "seed", "/api/forms")},
             "agent": {"id": object_id(agent, "seed", "/api/agents")},
             "application": {"id": app_id, "slug": "stable-2-upgrade-app", "deployment_id": deployment_id, "deploy_job_id": job_id, "bundle": bundle},
         },
-        "evidence": {"seeded_two_orgs": True, "invites_registered": True, "role_memberships": True, "secret_configs_seeded": True, "secret_integration_configs_seeded": True, "old_worker_secret_seeded": True, "registered_tool_linked_to_form_and_agent": True, "retained_v2_source": True, "deploy_job_terminal": bool(deployed)},
+        "evidence": {"seeded_two_orgs": True, "invites_registered": True, "role_memberships": True, "secret_configs_seeded": True, "secret_integration_configs_seeded": True, "registered_tool_linked_to_form_and_agent": True, "retained_v2_source": True, "deploy_job_terminal": bool(deployed)},
         "legacy_access_token": legacy_access_token,
     }
 

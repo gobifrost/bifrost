@@ -198,9 +198,15 @@ print(json.dumps({{"execution_id": result["execution_id"], "status": result["sta
         return str(UUID(payload["execution_id"]))
 
     def old_worker_probe_code(self) -> str:
-        configs = self.population_payload["state"]["configs"]
-        secret = configs["old_worker_secret_key"]
-        expected = configs["old_worker_secret_sha256"]
+        state = self.population_payload["state"]
+        key = state["configs"]["a_key"]
+        scope = str(UUID(state["organizations"]["a"]))
+        # Derive the comparison in the private controller. The seed helper
+        # returns only the config key, never a credential-derived proof.
+        fixture_value = hashlib.pbkdf2_hmac(
+            "sha256", self.password.encode(), b"upgrade-secret:config-a", 600_000
+        ).hex()
+        expected = hashlib.sha256(fixture_value.encode()).hexdigest()
         return f'''import asyncio
 import hashlib
 import logging
@@ -214,7 +220,7 @@ for _ in range(180):
     await asyncio.sleep(1)
 else:
     raise RuntimeError("stable upgrade old worker barrier did not release")
-secret = await config.get("{secret}")
+secret = await config.get("{key}", scope="{scope}")
 secret_ok = hashlib.sha256(secret.encode()).hexdigest() == "{expected}"
 if not secret_ok:
     raise RuntimeError("old worker could not read preserved synthetic secret")
