@@ -12,7 +12,7 @@
     "status": "draft",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1271",
-      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Backend focused unit and SSO/OAuth e2e tests pass (101), including ES256/384/512 assertions, key/curve mismatch rejection, scope validation and settings readback. Client tsc, ESLint and component/page tests pass; the live Playwright acceptance journey has not been extended."
+      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Backend focused unit and SSO/OAuth e2e tests pass (109), including ES256/384/512 assertions via PyJWT, key/curve mismatch rejection, scope validation and settings readback. Client tsc, ESLint and component/page tests pass; the live Playwright SSO acceptance journey now exercises method selection, write-only key, kid, scopes and explicit revocation (2 passed / 26.2s locally)."
     ]
   }
 }
