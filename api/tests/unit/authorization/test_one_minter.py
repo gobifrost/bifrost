@@ -35,6 +35,9 @@ _TOKENS_MODULE = "src.services.authorization.tokens"
 
 # Module -> (jwt attributes it may use, functions that may call jwt.encode).
 _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
+    # External GitHub App identity only: fixed iss/iat/exp claims, RSA key,
+    # never the platform HMAC key or Bifrost runtime claims.
+    "shared.github_app_auth": (frozenset({"encode"}), frozenset({"issue_app_jwt"})),
     # Access, refresh and MFA tokens.
     "src.core.security": (
         frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),

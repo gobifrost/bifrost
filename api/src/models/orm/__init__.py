@@ -19,6 +19,7 @@ from src.models.orm.ai_models import AIEmbeddingConfig, AIModelAssignment, AIMod
 from src.models.orm.app_embed_secrets import AppEmbedSecret
 from src.models.orm.artifacts import Artifact
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.github_app import GitHubAppDelivery, GitHubAppInstallation, GitHubAppRegistration
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.scheduler_leases import SchedulerLease
 from src.models.orm.work_dispatches import WorkDispatch
@@ -84,6 +85,9 @@ from src.models.orm.services import ServiceAttempt, ServiceDefinition, ServiceLo
 from src.models.orm.worker_metric import WorkerMetric
 
 __all__ = [
+    "GitHubAppDelivery",
+    "GitHubAppInstallation",
+    "GitHubAppRegistration",
     "OAuthClientRegistration",
     "HomeCollection",
     "HomeResourcePreference",

@@ -1,0 +1,9 @@
+{
+  "key": "pr:1274",
+  "classification": "highlight",
+  "entry_ids": ["f8debd55-f60c-4732-a03c-91576bb64dfa"],
+  "review": {
+    "status": "draft",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1274", "Pending maintainer review of the feature announcement."]
+  }
+}

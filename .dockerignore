@@ -60,4 +60,4 @@ api/workspace/
 api/tmp/
 
 # Node modules (if any)
-node_modules/
+**/node_modules/

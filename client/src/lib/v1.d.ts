@@ -4333,6 +4333,77 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/github-app/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Read Config */
+        get: operations["read_config_api_github_app_config_get"];
+        /** Save Config */
+        put: operations["save_config_api_github_app_config_put"];
+        post?: never;
+        /** Delete Config */
+        delete: operations["delete_config_api_github_app_config_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github-app/installations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Installations */
+        get: operations["list_installations_api_github_app_installations_get"];
+        put?: never;
+        /** Bind Installation */
+        post: operations["bind_installation_api_github_app_installations_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github-app/installations/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect Installation */
+        delete: operations["disconnect_installation_api_github_app_installations__binding_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github-app/reconcile": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reconcile */
+        post: operations["reconcile_api_github_app_reconcile_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/jobs/{job_id}": {
         parameters: {
             query?: never;
@@ -20399,6 +20470,114 @@ export interface components {
          * @enum {string}
          */
         GitFileStatus: "M" | "A" | "D" | "U" | "C";
+        /** GitHubAppBind */
+        GitHubAppBind: {
+            /** Installation Id */
+            installation_id: number;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+        };
+        /** GitHubAppConfigView */
+        GitHubAppConfigView: {
+            /**
+             * Configured
+             * @default false
+             */
+            configured: boolean;
+            /** App Id */
+            app_id?: number | null;
+            /** Slug */
+            slug?: string | null;
+            /**
+             * Private Key Set
+             * @default false
+             */
+            private_key_set: boolean;
+            /**
+             * Webhook Secret Set
+             * @default false
+             */
+            webhook_secret_set: boolean;
+            /** Webhook Path */
+            webhook_path?: string | null;
+            /** Last Reconciled At */
+            last_reconciled_at?: string | null;
+            /**
+             * Recovery Gap
+             * @default false
+             */
+            recovery_gap: boolean;
+        };
+        /** GitHubAppConfigure */
+        GitHubAppConfigure: {
+            /** App Id */
+            app_id: number;
+            /** Private Key */
+            private_key?: string | null;
+            /** Webhook Secret */
+            webhook_secret?: string | null;
+        };
+        /** GitHubAppInstallationView */
+        GitHubAppInstallationView: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Installation Id */
+            installation_id: number;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Account Login */
+            account_login: string;
+            /** Status */
+            status: string;
+            /** Permissions */
+            permissions: {
+                [key: string]: string;
+            };
+            /** Repositories */
+            repositories: components["schemas"]["GitHubAppRepository"][];
+            /**
+             * Event Source Id
+             * Format: uuid
+             */
+            event_source_id: string;
+            /** Verified At */
+            verified_at: string | null;
+            /** Last Delivery At */
+            last_delivery_at: string | null;
+            /** Last Error */
+            last_error: string | null;
+            /** Available Events */
+            available_events: string[];
+            /** Quota Remaining */
+            quota_remaining?: number | null;
+            /** Quota Reset */
+            quota_reset?: number | null;
+            /** Retry After */
+            retry_after?: number | null;
+        };
+        /** GitHubAppInstallations */
+        GitHubAppInstallations: {
+            /** Installations */
+            installations: components["schemas"]["GitHubAppInstallationView"][];
+        };
+        /** GitHubAppRepository */
+        GitHubAppRepository: {
+            /** Id */
+            id: number;
+            /** Full Name */
+            full_name: string;
+            /** Private */
+            private: boolean;
+        };
         /**
          * GitHubBranchInfo
          * @description GitHub branch information
@@ -39859,6 +40038,194 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    read_config_api_github_app_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppConfigView"];
+                };
+            };
+        };
+    };
+    save_config_api_github_app_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubAppConfigure"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppConfigView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_config_api_github_app_config_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppConfigView"];
+                };
+            };
+        };
+    };
+    list_installations_api_github_app_installations_get: {
+        parameters: {
+            query: {
+                organization_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppInstallations"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    bind_installation_api_github_app_installations_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitHubAppBind"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppInstallationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_installation_api_github_app_installations__binding_id__delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                binding_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitHubAppInstallationView"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reconcile_api_github_app_reconcile_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PlatformJobAccepted"];
                 };
             };
         };

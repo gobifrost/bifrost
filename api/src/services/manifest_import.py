@@ -2949,6 +2949,15 @@ class ManifestResolver:
 
         es_id = UUID(mes.id)
 
+        from shared.github_app import assert_source_structure_mutable
+        from sqlalchemy.orm import selectinload
+
+        if mes.adapter_name == "github_app":
+            raise ValueError("GitHub App event sources are deployment-owned; configure them in GitHub App settings")
+        existing_source = await self.db.get(EventSource, es_id, options=[selectinload(EventSource.webhook_source)])
+        if existing_source is not None:
+            await assert_source_structure_mutable(self.db, existing_source)
+
         # Source parent field dict from the model; fix up organization_id to UUID and
         # name to the manifest key (resolver owns the upsert logic below).
         _direct = mes.to_orm_values(Destination.GIT_SYNC).direct

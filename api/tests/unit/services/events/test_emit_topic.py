@@ -299,8 +299,7 @@ async def test_process_webhook_marks_non_matching_filter_delivery_skipped():
     session.add = lambda obj: added_objects.append(obj)
     session.flush = AsyncMock()
 
-    result = await processor._process_delivery(
-        webhook_source=MagicMock(),
+    result = await processor.accept_verified_webhook(
         event_source=source,
         deliver=Deliver(
             data={"priority": "low"},

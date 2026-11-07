@@ -13,7 +13,7 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
 
     metadata = list_platform_job_metadata()
 
-    assert len(metadata) == 26
+    assert len(metadata) == 27
     assert {item.job_type for item in metadata} == {
         "agent.summary_backfill",
         "application.deploy",
@@ -24,6 +24,7 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
         "audit.query",
         "embedding.reindex",
         "files.move",
+        "github_app.reconcile",
         "model_catalog.refresh",
         "oauth.refresh",
         "run.retention",

@@ -23,6 +23,7 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.x509.oid import NameOID
 
 from scripts import scheduler_fixture_server
+from scripts.github_app_fixture import GitHubAppFixture
 
 VIDEO_BYTES = b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom"
 
@@ -63,7 +64,7 @@ def main() -> None:
     certificate = (x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
                    .public_key(key.public_key()).serial_number(x509.random_serial_number())
                    .not_valid_before(now - timedelta(minutes=1)).not_valid_after(now + timedelta(days=2))
-                   .add_extension(x509.SubjectAlternativeName([x509.DNSName("fixture.openrouter.ai")]), False)
+                   .add_extension(x509.SubjectAlternativeName([x509.DNSName("fixture.openrouter.ai"), x509.DNSName("api.github.com")]), False)
                    .add_extension(x509.BasicConstraints(ca=True, path_length=None), True)
                    .sign(key, hashes.SHA256()))
     key_path = directory / "key.pem"
@@ -73,6 +74,12 @@ def main() -> None:
     key_path.chmod(0o600)
     cert_path = directory / "cert.pem"
     cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    # Generated synthetic App material, readable only inside the disposable
+    # fixture/test volume. It has no authority at the real GitHub service.
+    app_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    (directory / "github-app-key.pem").write_bytes(app_key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+    (directory / "github-app-key.pem").chmod(0o644)
     default_ca = ssl.get_default_verify_paths().cafile
     assert default_ca is not None
     (directory / "trust.pem").write_bytes(Path(default_ca).read_bytes() + cert_path.read_bytes())
@@ -82,11 +89,16 @@ def main() -> None:
     tls_server = ThreadingHTTPServer(("0.0.0.0", 8443), VideoHandler)
     tls_server.socket = context.wrap_socket(tls_server.socket, server_side=True)
     threading.Thread(target=tls_server.serve_forever, daemon=True).start()
+    github_server = ThreadingHTTPServer(("0.0.0.0", 443), GitHubAppFixture)
+    github_server.socket = context.wrap_socket(github_server.socket, server_side=True)
+    threading.Thread(target=github_server.serve_forever, daemon=True).start()
     try:
         scheduler_fixture_server.main()
     finally:
         tls_server.shutdown()
         tls_server.server_close()
+        github_server.shutdown()
+        github_server.server_close()
 
 
 if __name__ == "__main__":

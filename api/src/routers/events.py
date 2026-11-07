@@ -158,13 +158,18 @@ async def _build_event_source_response(
     webhook_response = None
     if source.source_type == EventSourceType.WEBHOOK and source.webhook_source:
         ws = source.webhook_source
+        callback_url, has_secret = _build_callback_url(source.id), signing_secret_set(ws.state)
+        if ws.adapter_name == "github_app":
+            from shared.github_app import source_webhook_details
+            if details := await source_webhook_details(db, source.id):
+                callback_url, has_secret = details
         webhook_response = WebhookSourceResponse(
             adapter_name=ws.adapter_name,
             integration_id=ws.integration_id,
             integration_name=ws.integration.name if ws.integration else None,
             config=ws.config or {},
-            secret_set=signing_secret_set(ws.state),
-            callback_url=_build_callback_url(source.id),
+            secret_set=has_secret,
+            callback_url=callback_url,
             external_id=ws.external_id,
             provider_metadata=(
                 adapter.get_public_metadata(ws.config or {}, ws.state or {})
@@ -1019,6 +1024,11 @@ async def update_source(
     # mutating, rather than letting the before_flush backstop raise a 500.
     assert_not_solution_managed(source)
 
+    # Tenant subscription and source rate settings remain editable. Binding
+    # ownership, adapter credentials, and historical payload scope do not.
+    from shared.github_app import validate_event_source_update
+    app_managed = await validate_event_source_update(db, source, request)
+
     if request.webhook is not None and source.source_type != EventSourceType.WEBHOOK:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -1067,6 +1077,10 @@ async def update_source(
         adapter_changed = webhook_fields.intersection(
             {"adapter_name", "integration_id", "config"}
         )
+        # The editor sends unchanged config fields with rate/name edits.
+        # Managed structure was checked above; those echoes cannot resubscribe.
+        if app_managed:
+            adapter_changed = set()
         if adapter_changed:
             adapter = get_adapter_registry().get(desired_adapter_name)
             if adapter is None:
@@ -1186,6 +1200,8 @@ async def resubscribe_source(
     from src.services.solutions.guard import assert_not_solution_managed
 
     assert_not_solution_managed(source)
+    from shared.github_app import assert_source_structure_mutable
+    await assert_source_structure_mutable(db, source)
     if source.source_type != EventSourceType.WEBHOOK or not source.webhook_source:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1323,6 +1339,9 @@ async def delete_source(
     # this endpoint. Refuse with a clean 409 (the DELETE cascade would otherwise
     # strip a managed source's deploy-owned rows outside deploy).
     assert_not_solution_managed(source)
+
+    from shared.github_app import assert_source_structure_mutable
+    await assert_source_structure_mutable(db, source)
 
     # Confirm provider cleanup before deleting the local source. Retaining the
     # local record on failure keeps the orphan visible and retryable.

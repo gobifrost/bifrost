@@ -354,7 +354,10 @@ services:
       - thin-provider-tls:/fixture-tls
     networks:
       default:
-        aliases: [fixture.openrouter.ai]
+        # App tests exercise the fixed production hostname with local TLS.
+        # Separate explicitly authorized live-PAT qualification can opt out by
+        # setting BIFROST_GITHUB_FIXTURE_HOST=fixture.github-app.invalid.
+        aliases: [fixture.openrouter.ai, "${BIFROST_GITHUB_FIXTURE_HOST:-api.github.com}"]
     healthcheck:
       test: ["CMD", "python", "-c", "import ssl,urllib.request; urllib.request.urlopen('http://localhost:8080/health'); urllib.request.urlopen('https://fixture.openrouter.ai:8443/health', context=ssl.create_default_context(cafile='/fixture-tls/trust.pem'))"]
       interval: 2s
@@ -384,6 +387,7 @@ services:
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
       PYTHONPATH: /app
+      SSL_CERT_FILE: /fixture-tls/trust.pem
       # The hardened uid-1000 runner cannot write a root-owned named volume.
       # Keep coverage data beside the already-permissioned per-worktree results.
       COVERAGE_FILE: /tmp/bifrost/.coverage
@@ -413,6 +417,8 @@ services:
       - ./api/bifrost:/app/bifrost:ro
       - ./api/scripts:/app/scripts:ro  # Scripts for migration utilities
       - ./api/tests:/app/tests:ro
+      - ./examples/github-app:/app/examples/github-app:ro
+      - thin-provider-tls:/fixture-tls:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - ./api/pytest.ini:/app/pytest.ini:ro
@@ -549,8 +555,10 @@ services:
       CI: "true"
     volumes:
       - ./client/e2e:/app/e2e
+      - thin-provider-tls:/fixture-tls:ro
       # The migration pilot's happy path installs its actual portable source.
       - ./examples/rewst-migration:/app/examples/rewst-migration:ro
+      - ./examples/github-app:/app/examples/github-app:ro
       # SDK browser fixtures compile the current source with production React.
       - ./client/src/lib/app-sdk:/app/src/lib/app-sdk:ro
       - ./client/playwright.config.ts:/app/playwright.config.ts:ro

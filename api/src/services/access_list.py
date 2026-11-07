@@ -19,7 +19,7 @@
   falling back to `permission`). Running something that already exists (a
   workflow, an agent, AI) is a `permission`-class launch permission the User
   base role holds. If a route's correct class is genuinely unclear, leave a
-  `# QUESTION:` comment next to it and report it — never guess.
+  `# QUESTION:` comment next to it and report it â€” never guess.
 - Every elevated check names a permission. On a `permission`-class entry the
   permission gates the operation. On any other class a superuser or
   scope-bypass branch that widens what the caller reaches (other people's
@@ -33,12 +33,12 @@
    handling.
 2. Add one `AccessEntry` below (kept sorted by path/method, MCP tools last
    sorted by tool name). Set `current_gate` to what the route's DEPENDENCY
-   TREE mechanically enforces today (see `CurrentGate`) — never to what an
+   TREE mechanically enforces today (see `CurrentGate`) â€” never to what an
    inline check narrows it to; if the handler or a service it calls one
    level down does its own is_superuser/is_platform_admin/has_scope_bypass/
    is_provider_org/mcp_write_scope_bypass check beyond the dependency,
    record those tokens in `inline_checks` instead, and set `inline_effect`
-   (`InlineEffect`) to what that check does to the caller — read the handler
+   (`InlineEffect`) to what that check does to the caller â€” read the handler
    and the service it calls; a token can sit in a claim or a repository
    argument without gating anyone (`no_caller_effect`). A check the one-hop
    token scan cannot see (a module-local helper, a deeper service) still gets
@@ -65,7 +65,7 @@
    (default: "Provider-org non-admins lose this access at the R3 cutover;
    platform admins keep it.") unless `reason` already states why permanent
    provider-org access is intended.
-5. Run `./test.sh tests/unit/test_access_list.py -v` — it fails loudly if
+5. Run `./test.sh tests/unit/test_access_list.py -v` â€” it fails loudly if
    the entry is missing, duplicated, points at a route that no longer
    exists, disagrees with the route's actual dependency gate, or is missing
    a required `intended_change`. A separate transitive scan of the whole
@@ -362,6 +362,13 @@ ACCESS_LIST: list[AccessEntry] = [
     AccessEntry(method='POST', path='/api/forms/{form_id}/startup', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.AUTHENTICATED, permission='workflows.execute', boundary='organization', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
     AccessEntry(method='POST', path='/api/forms/{form_id}/submissions', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.AUTHENTICATED, permission='workflows.execute', boundary='organization', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
     AccessEntry(method='POST', path='/api/forms/{form_id}/upload', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.AUTHENTICATED, permission='forms.readbasic', boundary='organization', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
+    AccessEntry(method='DELETE', path='/api/github-app/config', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='settings.readwrite', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='GET', path='/api/github-app/config', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='settings.read', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='PUT', path='/api/github-app/config', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='settings.readwrite', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='GET', path='/api/github-app/installations', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='integrations.read', boundary='organization', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='POST', path='/api/github-app/installations', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.readwrite', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='DELETE', path='/api/github-app/installations/{binding_id}', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.readwrite', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
+    AccessEntry(method='POST', path='/api/github-app/reconcile', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.readwrite', boundary='platform', operation_id=None, reason='GitHub App administration is deployment-scoped; tenant inventory uses explicit organization permission and reach.', intended_change=None),
     AccessEntry(method='POST', path='/api/github/abort-merge', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.readwrite', boundary='platform', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
     AccessEntry(method='GET', path='/api/github/branches', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.read', boundary='platform', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
     AccessEntry(method='POST', path='/api/github/changes', access_class=AccessClass.PERMISSION, current_gate=CurrentGate.EVALUATOR, permission='platform.readwrite', boundary='platform', operation_id=None, reason='Current original-user permission and reach; resource sharing, parent-resource launch, and Solution boundaries remain independent.', intended_change=None),
@@ -386,6 +393,7 @@ ACCESS_LIST: list[AccessEntry] = [
     AccessEntry(method='DELETE', path='/api/home/collections/{collection_id}', access_class=AccessClass.PERSONAL, current_gate=CurrentGate.AUTHENTICATED, inline_effect=InlineEffect.WIDENS_FOR_PERMISSION, permission='home.readwrite', boundary='organization', operation_id=None, reason='Original-user ownership and shared audience; named permissions cover shared writes through shared.home, which the one-hop scan does not reach.', intended_change=None),
     AccessEntry(method='PUT', path='/api/home/collections/{collection_id}', access_class=AccessClass.PERSONAL, current_gate=CurrentGate.AUTHENTICATED, inline_effect=InlineEffect.WIDENS_FOR_PERMISSION, permission='home.readwrite', boundary='organization', operation_id=None, reason='Original-user ownership and shared audience; named permissions cover shared writes through shared.home, which the one-hop scan does not reach.', intended_change=None),
     AccessEntry(method='PUT', path='/api/home/preferences/{resource_key}', access_class=AccessClass.PERSONAL, current_gate=CurrentGate.AUTHENTICATED, permission=None, boundary=None, operation_id=None, reason='Original-user ownership and shared audience; named permissions cover shared writes and other private collections within reach.', intended_change=None),
+    AccessEntry(method='POST', path='/api/hooks/github-app/{app_id}', access_class=AccessClass.PUBLIC, current_gate=CurrentGate.NONE, permission=None, boundary=None, operation_id=None, reason='Public GitHub App ingress requires raw-body HMAC and explicit verified installation/repository bindings before tenant delivery.', intended_change=None),
     AccessEntry(method='GET', path='/api/hooks/health', access_class=AccessClass.PUBLIC, current_gate=CurrentGate.NONE, permission=None, boundary=None, operation_id=None, reason='Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook).', intended_change=None),
     AccessEntry(method='DELETE', path='/api/hooks/{source_id}', access_class=AccessClass.PUBLIC, current_gate=CurrentGate.NONE, permission=None, boundary=None, operation_id=None, reason='Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook).', intended_change=None),
     AccessEntry(method='GET', path='/api/hooks/{source_id}', access_class=AccessClass.PUBLIC, current_gate=CurrentGate.NONE, permission=None, boundary=None, operation_id=None, reason='Public/unauthenticated entry point (login, OAuth/device flow, health, CLI download, or inbound webhook).', intended_change=None),

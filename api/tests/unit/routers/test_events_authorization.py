@@ -11,11 +11,12 @@ from shared.builtin_roles import USER_ROLE_ID
 from src.core.principal import UserPrincipal
 from src.models.contracts.events import EventSourceUpdate, EventSubscriptionCreate
 from src.models.enums import EventSourceType
-from src.models.orm.events import EventSource
+from src.models.orm.events import EventSource, WebhookSource
+from src.models.orm.github_app import GitHubAppInstallation
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.models.orm.workflows import Workflow
-from src.routers.events import create_subscription, list_sources, update_source
+from src.routers.events import create_subscription, delete_source, list_sources, update_source
 from src.services.authorization.enforce import load_caller
 from src.services.webhooks.auth import build_webhook_integration_credentials
 
@@ -101,6 +102,57 @@ async def test_event_source_move_requires_destination_reach_before_mutation(db_s
 
     assert error.value.status_code == 404
     assert source.organization_id == home.id
+
+
+async def test_delegated_events_writer_cannot_move_or_delete_an_app_owned_source(db_session):
+    principal, home, _foreign = await _scoped_person(db_session, "events.readwrite")
+    source = await _source(db_session, home.id, "App installation")
+    source.source_type = EventSourceType.WEBHOOK
+    db_session.add(WebhookSource(event_source_id=source.id, adapter_name="github_app", config={}, state={}))
+    binding = GitHubAppInstallation(installation_id=998877, app_id=112233,
+        organization_id=home.id, event_source_id=source.id, account_id=998877, account_login="fixture")
+    db_session.add(binding)
+    await db_session.flush()
+
+    with pytest.raises(HTTPException) as moved:
+        await update_source(source.id, EventSourceUpdate(organization_id=None), SimpleNamespace(), principal, db_session)
+    assert moved.value.status_code == 409
+    with pytest.raises(HTTPException) as deleted:
+        await delete_source(source.id, SimpleNamespace(), principal, db_session)
+    assert deleted.value.status_code == 409
+    assert source.organization_id == home.id
+    assert await db_session.get(GitHubAppInstallation, binding.id) is binding
+
+
+async def test_app_source_editor_can_echo_ownership_and_config_while_changing_rate(db_session, monkeypatch):
+    principal, home, _foreign = await _scoped_person(db_session, "events.readwrite")
+    source = await _source(db_session, home.id, "App installation")
+    source.source_type = EventSourceType.WEBHOOK
+    source.webhook_source = WebhookSource(adapter_name="github_app", config={}, state={})
+    binding = GitHubAppInstallation(installation_id=998878, app_id=112233,
+        organization_id=home.id, event_source_id=source.id, account_id=998878, account_login="fixture")
+    db_session.add(binding)
+    await db_session.flush()
+    monkeypatch.setattr("src.routers.events._build_event_source_response", AsyncMock(return_value=None))
+
+    await update_source(source.id, EventSourceUpdate(name="Renamed installation", organization_id=home.id,
+        webhook={"config": {}, "rate_limit_per_minute": 12}), SimpleNamespace(), principal, db_session)
+    assert source.name == "Renamed installation"
+    assert source.webhook_source.rate_limit_per_minute == 12
+    assert source.organization_id == home.id and binding.event_source_id == source.id
+
+
+@pytest.mark.parametrize("webhook", [{"adapter_name": "generic"}, {"config": {"injected": True}}, {"integration_id": str(uuid4())}])
+async def test_app_source_rejects_actual_structural_changes(db_session, webhook):
+    from shared.github_app import validate_event_source_update
+
+    _principal, home, _foreign = await _scoped_person(db_session, "events.readwrite")
+    source = await _source(db_session, home.id, "App installation")
+    source.source_type = EventSourceType.WEBHOOK
+    source.webhook_source = WebhookSource(adapter_name="github_app", config={}, state={})
+    with pytest.raises(HTTPException) as error:
+        await validate_event_source_update(db_session, source, EventSourceUpdate(webhook=webhook))
+    assert error.value.status_code == 409
 
 
 async def test_subscription_target_uses_live_workflow_resource_admission(db_session):

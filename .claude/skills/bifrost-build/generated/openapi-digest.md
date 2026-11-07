@@ -259,6 +259,13 @@
 | POST | `/api/forms/{form_id}/startup` |
 | POST | `/api/forms/{form_id}/submissions` |
 | POST | `/api/forms/{form_id}/upload` |
+| DELETE | `/api/github-app/config` |
+| GET | `/api/github-app/config` |
+| PUT | `/api/github-app/config` |
+| GET | `/api/github-app/installations` |
+| POST | `/api/github-app/installations` |
+| DELETE | `/api/github-app/installations/{binding_id}` |
+| POST | `/api/github-app/reconcile` |
 | POST | `/api/github/abort-merge` |
 | GET | `/api/github/branches` |
 | POST | `/api/github/changes` |

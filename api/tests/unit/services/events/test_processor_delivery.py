@@ -27,13 +27,11 @@ async def test_process_delivery_returns_the_exact_persisted_event_id():
         return_value=[subscription]
     )
     processor._broadcast_event_update = AsyncMock()
-    event_source = SimpleNamespace(id=uuid.uuid4())
-    webhook_source = SimpleNamespace()
+    event_source = SimpleNamespace(id=uuid.uuid4(), organization_id=uuid.uuid4())
     incoming = Deliver(data={"id": 1}, event_type="ticket.created")
     request = WebhookRequest("POST", "/webhooks/source", {}, {}, b"{}")
 
-    result = await processor._process_delivery(
-        webhook_source=webhook_source,
+    result = await processor.accept_verified_webhook(
         event_source=event_source,
         deliver=incoming,
         request=request,
@@ -42,6 +40,7 @@ async def test_process_delivery_returns_the_exact_persisted_event_id():
     persisted_event = session.add.call_args_list[0].args[0]
     assert result.event_id == persisted_event.id
     assert persisted_event.raw_body == request.body
+    assert persisted_event.organization_id == event_source.organization_id
 
 
 @pytest.mark.asyncio
