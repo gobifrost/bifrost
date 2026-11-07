@@ -17,6 +17,8 @@ let reader: UserCredentials;
 let readerId: string;
 let organizationId: string;
 let workflowId: string;
+let operator: Awaited<ReturnType<typeof createFreshApiContext>>;
+let context: BrowserContext;
 const sourcePath = `github_app_example_${namespace}.py`;
 
 async function expectOk(response: APIResponse) {
@@ -45,38 +47,35 @@ test.beforeAll(async ({ browser }) => {
     await expectOk(granted);
     // Existing announcements have their own journey. Start this feature's
     // operator with receipts so a delayed onboarding dialog cannot cover it.
-    const operator = await createFreshApiContext(browser, reader);
-    try {
+    operator = await createFreshApiContext(browser, reader);
+    {
         const response = await operator.api.get("/api/product-updates");
         await expectOk(response);
         const feed = await response.json() as components["schemas"]["ProductUpdatesFeedResponse"];
         const entryIds = feed.bundle.entries.filter((entry) => entry.in_app !== false).map((entry) => entry.id);
         if (entryIds.length) await expectOk(await operator.api.post("/api/product-updates/receipts", { data: { entry_ids: entryIds } }));
-    } finally {
-        await operator.context.close();
     }
     const content = readFileSync("/app/examples/github-app/workflows/github_events.py", "utf8");
     await expectOk(await admin.put("/api/files/editor/content", { data: { path: sourcePath, content, encoding: "utf-8" } }));
     const registered = await admin.post("/api/workflows/register", { data: { path: sourcePath, function_name: "github_pr_triage", organization_id: organizationId } });
     await expectOk(registered);
     workflowId = (await registered.json()).id;
+    // Authentication is shared setup, already covered by the auth journeys.
+    // Keep its browser/API round trips outside this feature's action budget.
+    context = await createFreshBrowserContext(browser, reader);
 });
 
-test.afterAll(async ({ browser }) => {
-    if (reader) {
-        const fresh = await createFreshApiContext(browser, reader);
-        try { await expectOk(await fresh.api.delete("/api/github-app/config")); }
-        finally { await fresh.context.close(); }
-    }
+test.afterAll(async () => {
+    if (operator) await expectOk(await operator.api.delete("/api/github-app/config"));
     if (organizationId) await admin.delete(`/api/organizations/${organizationId}`);
     if (readerId) await admin.delete(`/api/users/${readerId}`);
     if (workflowId) await admin.delete("/api/files/editor", { params: { path: sourcePath } });
+    await context?.close();
+    await operator?.context.close();
     await adminContext?.close();
 });
 
-test("manually connects an App, verifies its inventory, and runs the read-only PR example", async ({ browser }) => {
-    const context = await createFreshBrowserContext(browser, reader);
-    const operator = await createFreshApiContext(browser, reader);
+test("manually connects an App, verifies its inventory, and runs the read-only PR example", async () => {
     let subscriptionId: string | undefined;
     try {
         const page = await context.newPage();
@@ -129,7 +128,5 @@ test("manually connects an App, verifies its inventory, and runs the read-only P
         await page.screenshot({ path: "playwright-results/github-app-setup-health.png", fullPage: true });
     } finally {
         if (subscriptionId) await operator.api.delete(`/api/events/subscriptions/${subscriptionId}`);
-        await operator.context.close();
-        await context.close();
     }
 });
