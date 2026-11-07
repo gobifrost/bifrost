@@ -194,7 +194,13 @@ export async function createFreshApiContext(
 	browser: Browser,
 	user: HumanAuthUser | UserCredentials,
 ): Promise<FreshApiContext> {
-	const context = await browser.newContext({ baseURL: API_URL });
+	// API consumers are idle while the browser drives the UI. Keep their
+	// setup/cleanup mutations off sockets racing Uvicorn's idle close; a reset
+	// cannot safely be replayed because the mutation may already have run.
+	const context = await browser.newContext({
+		baseURL: API_URL,
+		extraHTTPHeaders: { Connection: "close" },
+	});
 	try {
 		await loginHumanApi(context.request, credentialsFor(user));
 	} catch (error) {
