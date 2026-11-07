@@ -238,6 +238,10 @@ IDENTITY_MODELS: set[str] = {
     # looked up by id with requester/admin authorization, never name-resolved
     # through the org-to-global execution cascade.
     "PlatformJob",
+    # Installation claims are identities bound to exactly one org. Global
+    # administration verifies the provider identity; inventory reads require
+    # reach and permission at that exact org. They never use name/global cascade.
+    "GitHubAppInstallation",
     # Artifacts are opaque file identities authorized by creator/org and
     # workspace membership. They are never resolved through the name cascade.
     "Artifact",

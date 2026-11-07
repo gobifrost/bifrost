@@ -17,7 +17,7 @@ from src.services.authorization.evaluator import GLOBAL
 from src.services.audit import emit_audit
 
 
-async def errors() -> AsyncIterator[None]:
+async def errors(_user: CurrentActiveUser) -> AsyncIterator[None]:
     try:
         yield
     except GitHubAppError as exc:

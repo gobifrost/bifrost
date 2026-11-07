@@ -305,13 +305,19 @@ def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
     assert "profiles" not in fixture
     assert "thin-providers" not in services
     assert "thin-provider-tls:/fixture-tls" in fixture["volumes"]
-    assert fixture["networks"]["default"]["aliases"] == ["fixture.openrouter.ai"]
+    assert fixture["networks"]["default"]["aliases"] == [
+        "fixture.openrouter.ai", "${BIFROST_GITHUB_FIXTURE_HOST:-api.github.com}",
+    ]
 
     fixture_source = _find_repo_file("api/scripts/thin_provider_fixture.py").read_text()
     assert "scheduler_fixture_server.main()" in fixture_source
     assert "target=tls_server.serve_forever, daemon=True" in fixture_source
     assert "tls_server.shutdown()" in fixture_source
     assert "tls_server.server_close()" in fixture_source
+    assert 'ThreadingHTTPServer(("0.0.0.0", 443), GitHubAppFixture)' in fixture_source
+    assert 'x509.DNSName("api.github.com")' in fixture_source
+    assert "github_server.shutdown()" in fixture_source
+    assert "github_server.server_close()" in fixture_source
     assert 'ThreadingHTTPServer(("0.0.0.0", 8080)' not in fixture_source
 
     for executor_name in ("api", "worker", "scheduler"):

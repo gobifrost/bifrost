@@ -10691,7 +10691,7 @@
     "cli": 179,
     "manifest": 16,
     "mcp": 100,
-    "rest": 710,
+    "rest": 718,
     "sdk": 21
   },
   "schema_version": 1,
@@ -13018,6 +13018,55 @@
         "status": "missing_surface"
       },
       {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/github-app/config",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/github-app/config",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/github-app/config",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/github-app/installations",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/github-app/installations",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/github-app/installations/{binding_id}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/github-app/reconcile",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
         "method": "POST",
         "operation_id": "",
         "path": "/api/github/abort-merge",
@@ -13182,6 +13231,13 @@
         "method": "PUT",
         "operation_id": "",
         "path": "/api/home/preferences/{resource_key}",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/hooks/github-app/{app_id}",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },
