@@ -34,18 +34,19 @@ contract. Reauthentication does not upgrade a separately installed CLI binary.
 
 ## Remaining App Compatibility Gate
 
-The currently implemented SDK contract 3 refreshes and reconnects App WebSockets
-after an authentication close. Stable 1.4.1 App bundles contain contract 2 and
-stop on that close. Their ordinary HTTP transport can use the platform's current
-authentication bridge, but retrieving an unchanged bundle does not prove its live
-subscriptions continue through token expiry or an authority change.
+SDK2 bundles remain supported without a rebuild. The server denies stale
+protected operations, routes an internal refresh request to the matching host,
+and gives the old same-origin query-token transport a transient retry. The host
+uses the existing serialized refresh flow; the unchanged App reads the new
+bridge token and resubscribes. Invalid or revoked credentials remain terminal.
+See [Application SDK Updates](application-sdk-update.md) for this behavior and
+optional automatic source rebuilds.
 
-A required manual App rebuild does not meet the normal-image-update target.
-The full stable release remains unqualified until this contract is reconciled
-and verified with an existing bundle before any rebuild. Automatic source
-rebuilds alone cannot establish compatibility for Apps without retained source.
-See [Application SDK Updates](application-sdk-update.md) for the existing,
-separately available SDK-update operation.
+The full stable release still needs immutable-image qualification of an existing
+App through token expiry and an authority change before any rebuild. Retrieving
+an unchanged bundle, or rebuilding an App with retained source, alone does not
+prove that live-subscription boundary. The focused SDK2 fixture and live socket
+checks supplement that release gate; they do not replace the final image run.
 
 ## Human Authentication
 
