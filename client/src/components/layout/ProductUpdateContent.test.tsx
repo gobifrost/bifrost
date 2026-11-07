@@ -24,6 +24,7 @@ const entry: ProductUpdateEntry = {
 	area: "Administration",
 	type: "Security",
 	action_required: true,
+	pinned: false,
 	sources: [{ pr: 10 }],
 	contributors: [],
 	assets: [
@@ -73,6 +74,66 @@ describe("shared product update content", () => {
 				.getAllByRole("heading", { level: 4 })
 				.map((heading) => heading.textContent),
 		).toEqual(["Upgrade Notice", "Another Update", "Earlier Update"]);
+	});
+
+	it("shows visible pinned updates once before newer ordinary and security details", () => {
+		const pinned = {
+			...entry,
+			id: "pinned",
+			title: "Upgrade Overview",
+			type: "Improved" as const,
+			published_at: "2026-10-01T12:00:00Z",
+			pinned: true,
+		};
+		const ordinary = {
+			...entry,
+			id: "ordinary",
+			title: "Newer Ordinary Detail",
+			type: "New" as const,
+			published_at: "2026-10-07T12:00:00Z",
+		};
+		const security = {
+			...entry,
+			id: "security",
+			title: "Security Detail",
+			type: "Security" as const,
+			markdown: "Security detail copy.",
+			pinned: false,
+		};
+		const hidden = {
+			...pinned,
+			id: "hidden",
+			title: "Hidden Pinned Detail",
+			in_app: false,
+		};
+		renderWithProviders(
+			<UpdateGroups entries={[ordinary, security, pinned, hidden]} />,
+		);
+
+		const pinnedGroup = screen.getByRole("region", { name: "Pinned Updates" });
+		expect(
+			within(pinnedGroup)
+				.getAllByRole("heading", { level: 4 })
+				.map((heading) => heading.textContent),
+		).toEqual(["Upgrade Overview"]);
+		expect(
+			within(
+				screen.getByRole("region", {
+					name: "New Features and Functionality",
+				}),
+			)
+				.getAllByRole("heading", { level: 4 })
+				.map((heading) => heading.textContent),
+		).toEqual(["Newer Ordinary Detail"]);
+		expect(screen.getByText("Security detail copy.")).toBeVisible();
+		expect(screen.queryByText("Hidden Pinned Detail")).not.toBeInTheDocument();
+		expect(
+			pinnedGroup.compareDocumentPosition(
+				screen.getByRole("region", {
+					name: "New Features and Functionality",
+				}),
+			),
+		).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
 	});
 
 	it("keeps features as headlines and corrections in separate bullet lists, excluding release-only notes", () => {

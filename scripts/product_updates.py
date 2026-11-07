@@ -886,13 +886,16 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
             "release asset_base_url must be the pinned GitHub raw URL for bundle target_ref"
         )
     sections: dict[str, list[dict[str, Any]]] = {
+        "Pinned Updates": [],
         "Security": [],
         "Action Required": [],
         "What's New": [],
     }
     for entry in bundle.get("entries", []):
         section = (
-            "Security"
+            "Pinned Updates"
+            if entry.get("pinned")
+            else "Security"
             if entry.get("type") == "Security"
             else "Action Required"
             if entry.get("action_required")
@@ -901,7 +904,7 @@ def render_release(bundle: dict[str, Any], asset_base_url: str) -> str:
         sections[section].append(entry)
     lines = ["# Bifrost release notes", ""]
     credits: dict[str, dict[str, Any]] = {}
-    for title in ("Security", "Action Required", "What's New"):
+    for title in ("Pinned Updates", "Security", "Action Required", "What's New"):
         if not sections[title]:
             continue
         lines.extend([f"## {title}", ""])

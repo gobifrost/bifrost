@@ -45,6 +45,21 @@ def test_load_product_updates_bundle_preserves_the_approved_runtime_content(tmp_
     assert bundle.content_ref == "b" * 40
     assert bundle.entries[0].id == UUID(entry_id)
     assert bundle.entries[0].markdown == "Details"
+    assert bundle.entries[0].pinned is False
+
+
+def test_load_product_updates_bundle_preserves_explicit_pinning(tmp_path) -> None:
+    entry_id = "fd0c7319-fcc0-5d28-b89b-09ca20a59262"
+    bundle = _bundle(entry_id)
+    entries = bundle["entries"]
+    assert isinstance(entries, list)
+    entries[0]["pinned"] = True
+    bundle_path = tmp_path / "product-updates.bundle.json"
+    bundle_path.write_text(json.dumps(bundle), encoding="utf-8")
+
+    loaded = load_product_updates_bundle(bundle_path)
+
+    assert loaded.entries[0].pinned is True
 
 
 def test_load_product_updates_bundle_rejects_duplicate_entry_ids(tmp_path) -> None:
