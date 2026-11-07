@@ -1,0 +1,15 @@
+{
+  "key": "pr:1281",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Prepared stable-release aggregation, source/credit reconciliation, corrected existing notices and deterministic release body; no separate product feature announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1281",
+      "Release coordinator reviewed canonical source coverage, retained UUIDs and contributor evidence, scoped required actions, security/CVE records, retention defaults, agent prompts and compatibility corrections under delegated preparation authority. Source/disposition mappings keep the existing authentication and automation notices eligible in the actual rendered bundle.",
+      "Default Product Updates validation, actual release-material gate and deterministic full release-body preparation passed;50 pure tooling tests passed. The direct immutable1.4.1 upgrade and originalSDK2 browser proof passed on e7c953 source. Final qualification follow-up freeze and exact-source nightly remain explicit release gates.",
+      "This approves release material only. The PR remains draft with no auto-merge until final readiness and the user's later publication direction. It does not authorize a tag, GitHub Release, latest-image promotion or production rollout."
+    ]
+  }
+}
