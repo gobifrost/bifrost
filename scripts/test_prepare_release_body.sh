@@ -14,22 +14,8 @@ if [[ "$status" -eq 0 || "$output" != *"Usage:"* ]]; then
     exit 1
 fi
 
-target="$(jq -r .target_ref "$repo_root/product-updates/inventory.json")"
-content_ref="$(git -C "$repo_root" rev-parse HEAD)"
 body="${TMPDIR:-/tmp}/bifrost-release-body-$$.md"
 trap 'rm -f "$body"' EXIT
-set +e
-output="$(cd "$repo_root" && ./scripts/prepare-release-body.sh v999.0.0 "$(jq -r .base_ref "$repo_root/product-updates/inventory.json")" "$target" "$content_ref" "$body" 2>&1)"
-status=$?
-set -e
-
-# The checked-in backfill is intentionally draft. A release helper must reject
-# it rather than emitting a plausible-looking empty release body.
-if [[ "$status" -eq 0 || "$output" != *"missing required review record"* ]]; then
-    echo "prepare-release-body must block unreviewed release material" >&2
-    echo "$output" >&2
-    exit 1
-fi
 
 fixture="$(mktemp -d)"
 trap 'rm -rf "$fixture" "$body"' EXIT
@@ -46,6 +32,17 @@ fixture_base="$(git -C "$fixture" rev-parse HEAD)"
 git -C "$fixture" commit --quiet --allow-empty -m target
 fixture_target="$(git -C "$fixture" rev-parse HEAD)"
 fixture_base="$(git -C "$fixture" rev-parse HEAD^)"
+# Test refusal independently of whether this checkout already contains an
+# approved release review. A stable release must not break this guard.
+set +e
+output="$(cd "$fixture" && ./scripts/prepare-release-body.sh v999.0.0 "$fixture_base" "$fixture_target" "$fixture_target" "$body" 2>&1)"
+status=$?
+set -e
+if [[ "$status" -eq 0 || "$output" != *"missing required review record"* ]]; then
+    echo "prepare-release-body must block unreviewed release material" >&2
+    echo "$output" >&2
+    exit 1
+fi
 FIXTURE_TARGET="$fixture_target" FIXTURE_BASE="$fixture_base" python3 - "$fixture/product-updates" <<'PY'
 import json
 import os
