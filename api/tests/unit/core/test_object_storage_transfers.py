@@ -165,11 +165,14 @@ async def test_optional_read_does_not_hide_body_absence_or_consumer_failure():
         yield "body"
     store = SimpleNamespace(open_read=open_read)
     error = StorageError("not_found", provider_code="LateBodyFailure")
-    with pytest.raises(StorageError) as caught:
+    caught_error = None
+    try:
         async with optional_read(store, "key") as read:
             assert read == "body"
             raise error
-    assert caught.value is error
+    except StorageError as caught:
+        caught_error = caught
+    assert caught_error is error
 
 
 @pytest.mark.asyncio

@@ -117,11 +117,14 @@ async def test_consumer_errors_are_not_reclassified_as_storage_failures():
     def handle(request):
         return httpx.Response(200, headers={"etag": '"v1"', "content-length": "4"}, stream=stream)
 
+    caught_error = None
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        with pytest.raises(httpx.ConnectError) as caught:
+        try:
             async with _store(client).open_read("key"):
                 raise caller_error
-        assert caught.value is caller_error
+        except httpx.ConnectError as error:
+            caught_error = error
+    assert caught_error is caller_error
     assert stream.closed
 
 
