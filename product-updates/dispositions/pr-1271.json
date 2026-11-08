@@ -1,18 +1,19 @@
 {
   "key": "pr:1271",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "hardening",
-  "summary": "OIDC SSO settings now expose the token-endpoint client authentication method, a write-only RSA/EC private key with explicit revocation, and configurable scopes (defaults preserved, openid required). EC private-key JWT assertions (ES256/384/512) are supported alongside RSA, with key type and curve validated when saved.",
+  "classification": "highlight",
+  "entry_ids": [
+    "205b9bfd-2cc7-4c81-90a8-9b399e8d853a"
+  ],
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1271"
   },
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/pull/1271",
-      "Agent-drafted disposition for a draft PR; maintainer review and approval are intentionally not claimed. Backend focused unit and SSO/OAuth e2e tests pass (109), including ES256/384/512 assertions via PyJWT, key/curve mismatch rejection, scope validation and settings readback. Client tsc, ESLint and component/page tests pass; the live Playwright SSO acceptance journey now exercises method selection, write-only key, kid, scopes and explicit revocation (2 passed / 26.2s locally)."
+      "Jack approved the exact title, body, Settings link and Thomas Bray credit through resolved native user-input request async:call_9d804544eb6149489cf0a9e6a584bd0c (strong Codex reference), answer Approve This Text.",
+      "Codex reviewed auth/key storage and responses; independent auth review identified the Microsoft Graph scope guard, repaired in 08011ddbe. Focused backend 35 passed; API Pyright/Ruff passed; live SSO browser acceptance 2 passed. Defaults preserved; no required customer action.",
+      "Source PR author verified as MTG-Thomas (Thomas Bray), targeting gobifrost/bifrost main from MTG-Thomas/bifrost-upstream. Exact prose reviewed with General Writing and Humanizer; SSO Settings route verified as /settings/sso."
     ]
   }
 }
