@@ -290,27 +290,26 @@ async def test_delete_all_app_artifacts_deletes_legacy_and_versioned_paginated(
     }
     deleted: list[str] = []
 
-    class _FakeClient:
-        async def __aenter__(self):
-            return self
+    from src.core.storage.contracts import ObjectPage, ObjectSummary, ObjectVersion, PageCursor
 
-        async def __aexit__(self, exc_type, exc, tb):
-            return None
+    class _FakeStore:
+        async def list_page(self, requested_prefix, *, cursor=None, **kwargs):
+            assert requested_prefix == prefix
+            page = pages[cursor]
+            return ObjectPage(tuple(ObjectSummary(item["Key"], 1, ObjectVersion("v"), None)
+                                    for item in page["Contents"]), (),
+                              PageCursor(page["NextContinuationToken"]) if page["IsTruncated"] else None)
 
-        async def list_objects_v2(self, **kwargs):
-            assert kwargs["Prefix"] == prefix
-            return pages[kwargs.get("ContinuationToken")]
-
-        async def delete_object(self, **kwargs):
-            deleted.append(kwargs["Key"])
+        async def delete_many(self, keys):
+            deleted.extend(keys)
 
     b = SolutionAppBuilder()
 
     @asynccontextmanager
-    async def _client():
-        yield _FakeClient()
+    async def store():
+        yield _FakeStore()
 
-    monkeypatch.setattr(b, "_client", _client)
+    monkeypatch.setattr(b, "_get_store", store)
 
     await b.delete_all_app_artifacts(app_id)
 

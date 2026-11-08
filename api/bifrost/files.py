@@ -529,7 +529,8 @@ class files:
             expires_in: URL lifetime in seconds, from 1 second through 7 days.
 
         Returns:
-            dict with keys: url, path, expires_in
+            dict with keys: url, path, expires_in, headers. Send all returned headers
+            with the signed request; do not attach engine authorization headers.
 
         Example:
             >>> # Generate a download URL for a file written to workspace

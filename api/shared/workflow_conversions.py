@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.sdk_modules import ModuleSourceScope, resolve_module_name
 from shared.runtime_modules import RuntimeModuleInventory, read_runtime_modules
 from src.core.database import get_db_context
-from src.core.s3_transport import S3Error
+from src.core.storage.contracts import StorageError
 from src.core.principal import UserPrincipal
 from src.jobs.platform.base import (
     PlatformJobCancelled,
@@ -140,9 +140,8 @@ def _is_missing_source_error(exc: Exception) -> bool:
     """Recognize only storage providers' ordinary missing-object responses."""
     if isinstance(exc, FileNotFoundError):
         return True
-    if isinstance(exc, S3Error):
-        code = exc.code
-        return code in {"NoSuchKey", "404", "NotFound", "Not Found"}
+    if isinstance(exc, StorageError):
+        return exc.kind == "not_found"
     return False
 
 
@@ -853,7 +852,7 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
                     source = await _source_for_workflow(workflow)
                 except UnicodeDecodeError:
                     report = await _blocked_report_for_source(db, workflow)
-                except (FileNotFoundError, S3Error) as exc:
+                except (FileNotFoundError, StorageError) as exc:
                     if not _is_missing_source_error(exc):
                         raise
                     report = await _blocked_report_for_source(db, workflow)

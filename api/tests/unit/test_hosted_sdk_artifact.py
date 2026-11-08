@@ -4,6 +4,7 @@ from __future__ import annotations
 import base64
 import hashlib
 from types import SimpleNamespace
+from contextlib import asynccontextmanager
 
 import pytest
 from fastapi import HTTPException
@@ -23,41 +24,24 @@ class _Client:
         self.objects: dict[str, bytes] = {}
         self.puts: list[tuple[str, bytes, str | None]] = []
 
-    async def put_object(self, *, Bucket: str, Key: str, Body: bytes, ContentType: str | None = None, **_: object) -> None:
-        self.objects[Key] = Body
-        self.puts.append((Key, Body, ContentType))
+    async def __aenter__(self):
+        return self
 
-    async def get_object(self, *, Bucket: str, Key: str) -> dict[str, _Body]:
+    async def __aexit__(self, *_args):
+        return None
+
+    async def write(self, key, content, *, options):
+        self.objects[key] = content
+        self.puts.append((key, content, options.properties.content_type))
+
+    @asynccontextmanager
+    async def open_read(self, key):
+        from src.core.storage.contracts import StorageError
         try:
-            return {"Body": _Body(self.objects[Key])}
-        except KeyError as exc:
-            from src.core.s3_transport import S3NoSuchKey
-
-            raise S3NoSuchKey("NoSuchKey", 404) from exc
-
-
-class _Storage:
-    def __init__(self, client: _Client) -> None:
-        self._client = client
-        self._settings = SimpleNamespace(
-            s3_bucket="sdk-artifacts",
-            s3_endpoint_url=None,
-            s3_access_key="key",
-            s3_secret_key="secret",
-            s3_region="us-east-1",
-        )
-
-    def _get_client(self):
-        client = self._client
-
-        class _Context:
-            async def __aenter__(self):
-                return client
-
-            async def __aexit__(self, *_: object) -> None:
-                return None
-
-        return _Context()
+            content = self.objects[key]
+        except KeyError as error:
+            raise StorageError("not_found", provider_code="fixture") from error
+        yield SimpleNamespace(body=_Body(content))
 
 
 def _artifact(content: bytes = b"factory bytes"):
@@ -80,7 +64,7 @@ async def test_publish_then_read_uses_platform_prefix_and_exact_bytes() -> None:
 
     client = _Client()
     storage = HostedSdkArtifactStorage(settings=SimpleNamespace(s3_bucket="sdk-artifacts"))
-    storage._get_client = _Storage(client)._get_client  # type: ignore[method-assign]
+    storage._get_store = lambda: client  # type: ignore[method-assign]
     artifact = _artifact()
 
     await storage.publish(artifact)
@@ -101,7 +85,7 @@ async def test_read_rejects_tampered_or_missing_content() -> None:
 
     client = _Client()
     storage = HostedSdkArtifactStorage(settings=SimpleNamespace(s3_bucket="sdk-artifacts"))
-    storage._get_client = _Storage(client)._get_client  # type: ignore[method-assign]
+    storage._get_store = lambda: client  # type: ignore[method-assign]
     artifact = _artifact()
     client.objects[f"_platform/app-sdk/v1/{artifact.fingerprint}.js"] = b"tampered"
 

@@ -19543,6 +19543,13 @@ export interface components {
              */
             upload_url: string;
             /**
+             * Headers
+             * @description Required upload request headers
+             */
+            headers?: {
+                [key: string]: string;
+            };
+            /**
              * Blob Uri
              * @description Final file URI
              */
@@ -28187,6 +28194,10 @@ export interface components {
             method: "PUT" | "GET";
             /** Url */
             url?: string | null;
+            /** Headers */
+            headers?: {
+                [key: string]: string;
+            };
             /**
              * Expires In
              * @default 600
@@ -28248,9 +28259,16 @@ export interface components {
         SignedUrlResponse: {
             /**
              * Url
-             * @description Presigned S3 URL
+             * @description Signed object storage URL
              */
             url: string;
+            /**
+             * Headers
+             * @description Required signed-request headers
+             */
+            headers?: {
+                [key: string]: string;
+            };
             /**
              * Path
              * @description Full S3 path

@@ -8,7 +8,7 @@ from .models import (
     WriteResult,
 )
 from .entity_detector import detect_platform_entity_type, detect_python_entity_type
-from .s3_client import S3StorageClient
+from .object_storage import FileObjectStorage
 from .service import FileStorageService, get_file_storage_service
 
 __all__ = [
@@ -25,5 +25,5 @@ __all__ = [
     "detect_platform_entity_type",
     "detect_python_entity_type",
     # S3 Client
-    "S3StorageClient",
+    "FileObjectStorage",
 ]

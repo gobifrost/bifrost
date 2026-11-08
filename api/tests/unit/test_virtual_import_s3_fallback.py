@@ -13,7 +13,7 @@ def test_s3_fallback_on_redis_miss():
     from src.core.module_cache_sync import get_module_sync
 
     with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
+         patch("src.core.module_cache_sync._get_storage_module") as mock_s3:
 
         # Redis returns None (cache miss)
         mock_redis = MagicMock()
@@ -41,7 +41,7 @@ def test_redis_hit_skips_s3():
     cached = json.dumps({"content": "cached content", "path": "shared/utils.py", "hash": "abc"})
 
     with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
+         patch("src.core.module_cache_sync._get_storage_module") as mock_s3:
 
         mock_redis = MagicMock()
         mock_redis.get.return_value = cached
@@ -59,7 +59,7 @@ def test_s3_miss_returns_none():
     from src.core.module_cache_sync import get_module_sync
 
     with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-         patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
+         patch("src.core.module_cache_sync._get_storage_module") as mock_s3:
 
         mock_redis = MagicMock()
         mock_redis.get.return_value = None
@@ -275,10 +275,10 @@ class TestS3ClientCaching:
     @pytest.fixture(autouse=True)
     def reset_cache(self):
         """Reset S3 client cache before each test."""
-        from src.core.module_cache_sync import reset_s3_client
-        reset_s3_client()
+        from src.core.module_cache_sync import reset_storage_client
+        reset_storage_client()
         yield
-        reset_s3_client()
+        reset_storage_client()
 
     def test_nosuchkey_logs_debug_not_warning(self, caplog):
         """NoSuchKey errors should log at DEBUG level, not WARNING."""
@@ -286,12 +286,11 @@ class TestS3ClientCaching:
 
         # Set up a mock S3 client that raises NoSuchKey
         mock_client = MagicMock()
-        nosuchkey_error = Exception("NoSuchKey")
-        nosuchkey_error.response = {"Error": {"Code": "NoSuchKey"}}
-        mock_client.get_object.side_effect = nosuchkey_error
+        from src.core.storage.contracts import StorageError
+        mock_client.read.side_effect = StorageError("not_found", provider_code="fixture")
 
-        mod._s3_client = mock_client
-        mod._s3_available = True
+        mod._storage_reader.client = mock_client
+        mod._storage_reader.available = True
 
         env_vars = {
             "BIFROST_S3_ENDPOINT_URL": "http://localhost:8333",
@@ -302,24 +301,24 @@ class TestS3ClientCaching:
 
         with patch.dict("os.environ", env_vars):
             with caplog.at_level(logging.DEBUG, logger="src.core.module_cache_sync"):
-                result = mod._get_s3_module("missing/module.py")
+                result = mod._get_storage_module("missing/module.py")
 
         assert result is None
         # Should have a DEBUG log about not found, no WARNING
         debug_msgs = [r for r in caplog.records if r.levelno == logging.DEBUG]
         warning_msgs = [r for r in caplog.records if r.levelno == logging.WARNING]
-        assert any("not found in S3" in r.message for r in debug_msgs)
-        assert not any("S3 fallback error" in r.message for r in warning_msgs)
+        assert any("not found in object storage" in r.message for r in debug_msgs)
+        assert not any("Storage fallback error" in r.message for r in warning_msgs)
 
     def test_s3_unavailable_returns_none_gracefully(self):
         """When S3 client is unavailable, _get_s3_module should return None."""
         import src.core.module_cache_sync as mod
 
         # Simulate unavailable client
-        mod._s3_available = False
-        mod._s3_client = None
+        mod._storage_reader.available = False
+        mod._storage_reader.client = None
 
-        result = mod._get_s3_module("any/path.py")
+        result = mod._get_storage_module("any/path.py")
         assert result is None
 
     def test_module_index_populated_on_s3_fallback(self):
@@ -327,7 +326,7 @@ class TestS3ClientCaching:
         from src.core.module_cache_sync import get_module_sync
 
         with patch("src.core.module_cache_sync._get_sync_redis") as mock_redis_factory, \
-             patch("src.core.module_cache_sync._get_s3_module") as mock_s3:
+             patch("src.core.module_cache_sync._get_storage_module") as mock_s3:
 
             mock_redis = MagicMock()
             mock_redis.get.return_value = None

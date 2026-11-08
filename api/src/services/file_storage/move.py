@@ -40,9 +40,8 @@ from shared.file_paths import resolve_s3_key
 from src.services.file_policy_service import FilePolicyService
 
 from .move_names import candidate_prefix, matching_candidates, numbered_name
-from .s3_client import (
-    COPY_OBJECT_LIMIT,
-    ObjectHead,
+from src.core.storage.contracts import ObjectInfo, ObjectVersion
+from .object_storage import (
     ObjectMissing,
     ObjectPreconditionFailed,
     is_storage_unavailable,
@@ -56,6 +55,8 @@ MARK_ROW = "bifrost-move-row"
 MARK_SOURCE = "bifrost-move-source"
 MARK_ETAG = "bifrost-move-etag"
 MAX_RENAME_NUMBER = 1000
+# Preserve the existing lock-duration policy independently of provider multipart mechanics.
+LOCKED_COPY_LIMIT_BYTES = 5 * 1024**3
 
 OnConflict = Literal["error", "rename"]
 SessionFactory = Callable[[], AbstractAsyncContextManager[AsyncSession]]
@@ -67,8 +68,11 @@ CleanupFailed = Callable[[str, str], Awaitable[None]]
 AuthorizeRename = Callable[[str], Awaitable[bool]]
 
 
-class ObjectStore(Protocol):
-    async def head_object(self, key: str) -> ObjectHead | None:
+class MoveStorage(Protocol):
+    def serialize_version(self, version: ObjectVersion) -> str:
+        raise NotImplementedError
+
+    async def head_object(self, key: str) -> ObjectInfo | None:
         """The object's head, or None when no object is stored at ``key``."""
         raise NotImplementedError
 
@@ -77,10 +81,8 @@ class ObjectStore(Protocol):
         source_key: str,
         destination_key: str,
         *,
-        source: ObjectHead,
+        source: ObjectInfo,
         metadata: dict[str, str],
-        multipart_threshold: int = COPY_OBJECT_LIMIT,
-        part_size: int | None = None,
     ) -> None:
         """Copy ``source`` server-side, guarded by its ETag, with ``metadata``."""
         raise NotImplementedError
@@ -161,14 +163,13 @@ class FileMover:
 
     def __init__(
         self,
-        store: ObjectStore,
+        store: MoveStorage,
         target: MoveTarget,
         *,
         authorize_rename: AuthorizeRename,
         open_session: SessionFactory | None = None,
         on_cleanup_failed: CleanupFailed | None = None,
-        multipart_threshold: int = COPY_OBJECT_LIMIT,
-        part_size: int | None = None,
+        locked_copy_limit: int = LOCKED_COPY_LIMIT_BYTES,
     ) -> None:
         if open_session is None:
             from src.core.database import get_db_context
@@ -179,8 +180,7 @@ class FileMover:
         self._authorize_rename = authorize_rename
         self._open_session = open_session
         self._on_cleanup_failed = on_cleanup_failed
-        self._multipart_threshold = multipart_threshold
-        self._part_size = part_size
+        self._locked_copy_limit = locked_copy_limit
 
     async def move(self, request: MoveRequest, on_conflict: OnConflict) -> MoveOutcome:
         """Move one file; every failure is returned, never raised."""
@@ -212,7 +212,7 @@ class FileMover:
             if isinstance(chosen, MoveOutcome):
                 await db.rollback()
                 return chosen
-            if chosen.resume or source.size <= self._multipart_threshold:
+            if chosen.resume or source.size <= self._locked_copy_limit:
                 if not chosen.resume:
                     failure = await self._copy(source_key, chosen, source, row)
                     if failure is not None:
@@ -252,7 +252,7 @@ class FileMover:
         db: AsyncSession,
         request: MoveRequest,
         source_key: str,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
     ) -> tuple[MoveOutcome | None, _Row | None]:
         """After an unlocked copy: the source must be the object that was copied."""
@@ -262,7 +262,7 @@ class FileMover:
             # deleted file would reappear at the destination.
             return _fail(404, "not_found", "the source was deleted during the move"), None
         current_row = await self._row(db, request.source)
-        if current.etag != source.etag or _row_id(current_row) != _row_id(row):
+        if current.version != source.version or _row_id(current_row) != _row_id(row):
             return _fail(409, "source_changed"), current_row
         return None, current_row
 
@@ -273,7 +273,7 @@ class FileMover:
         db: AsyncSession,
         request: MoveRequest,
         source_key: str,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
         on_conflict: OnConflict,
     ) -> _Destination | MoveOutcome:
@@ -304,11 +304,11 @@ class FileMover:
         self,
         db: AsyncSession,
         targets: list[tuple[str, str]],
-        is_ours: Callable[[ObjectHead], bool],
+        is_ours: Callable[[ObjectInfo], bool],
         *,
         locked: str | None = None,
         limit: int | None = None,
-    ) -> list[tuple[str, str, ObjectHead]]:
+    ) -> list[tuple[str, str, ObjectInfo]]:
         """Targets holding this item's copy, each confirmed under its path lock.
 
         ``locked`` names a path whose lock is already held. Any other match is
@@ -316,7 +316,7 @@ class FileMover:
         the first look and the lock, and its file must never be resumed (and
         then cleaned up) or adopted. ``limit`` stops after that many matches.
         """
-        found: list[tuple[str, str, ObjectHead]] = []
+        found: list[tuple[str, str, ObjectInfo]] = []
         for path, key in targets:
             head = await self._store.head_object(key)
             if head is None or not is_ours(head):
@@ -367,14 +367,14 @@ class FileMover:
         self,
         source_key: str,
         destination: _Destination,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
     ) -> MoveOutcome | None:
         metadata = {
             **source.metadata,
             MARK_ROW: _row_marker(row),
             MARK_SOURCE: source_marker(source_key),
-            MARK_ETAG: source.etag,
+            MARK_ETAG: self._store.serialize_version(source.version),
         }
         try:
             await self._store.copy_object(
@@ -382,8 +382,6 @@ class FileMover:
                 destination.key,
                 source=source,
                 metadata=metadata,
-                multipart_threshold=self._multipart_threshold,
-                part_size=self._part_size,
             )
         except ObjectPreconditionFailed as exc:
             return _fail(409, "source_changed" if exc.side == "source" else "file_exists")
@@ -396,7 +394,7 @@ class FileMover:
         db: AsyncSession,
         request: MoveRequest,
         source_key: str,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
         destination: _Destination,
     ) -> MoveOutcome:
@@ -456,10 +454,10 @@ class FileMover:
     async def _verify_and_stage(
         self,
         db: AsyncSession,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
         destination: _Destination,
-        landed: ObjectHead,
+        landed: ObjectInfo,
     ) -> MoveOutcome | None:
         """Steps 5–6 on our copy (``landed``); a returned outcome needs cleanup."""
         if landed.size != source.size:
@@ -468,11 +466,11 @@ class FileMover:
         return None
 
     @staticmethod
-    def _recheck_before_delete(source: ObjectHead, current: ObjectHead | None) -> MoveOutcome | None:
+    def _recheck_before_delete(source: ObjectInfo, current: ObjectInfo | None) -> MoveOutcome | None:
         """Step 7's source re-check; a returned outcome needs cleanup."""
         if current is None:
             return _fail(404, "not_found", "the source was deleted during the move")
-        if current.etag != source.etag:
+        if current.version != source.version:
             # A presigned upload replaced the source mid-move; keep it.
             return _fail(409, "source_changed")
         return None
@@ -509,7 +507,7 @@ class FileMover:
         self,
         db: AsyncSession,
         destination: _Destination,
-        head: ObjectHead,
+        head: ObjectInfo,
         row: _Row | None,
     ) -> None:
         await FilePolicyService(db).move_metadata(
@@ -519,7 +517,7 @@ class FileMover:
             source_row_id=row.id if row is not None else None,
             destination_path=destination.path,
             s3_key=destination.key,
-            content_type=head.headers.get("ContentType"),
+            content_type=head.properties.content_type,
             size_bytes=head.size,
             updated_by=self._target.requested_by,
         )
@@ -693,7 +691,7 @@ class FileMover:
     def _key(self, path: str) -> str:
         return resolve_s3_key(self._target.location, self._target.scope, path)
 
-    def _is_copy_of(self, head: ObjectHead, source_key: str, row: _Row | None) -> bool:
+    def _is_copy_of(self, head: ObjectInfo, source_key: str, row: _Row | None) -> bool:
         """The object carries this item's markers (source key and source row)."""
         return (
             head.metadata.get(MARK_SOURCE) == source_marker(source_key)
@@ -702,19 +700,19 @@ class FileMover:
 
     def _is_orphan(
         self,
-        head: ObjectHead,
+        head: ObjectInfo,
         source_key: str,
-        source: ObjectHead,
+        source: ObjectInfo,
         row: _Row | None,
     ) -> bool:
         """An interrupted run's copy of exactly the current source bytes."""
         return (
             row is not None
             and self._is_copy_of(head, source_key, row)
-            and head.metadata.get(MARK_ETAG) == source.etag
+            and head.metadata.get(MARK_ETAG) == self._store.serialize_version(source.version)
         )
 
-    def _is_adoptable(self, head: ObjectHead, source_key: str, row: _Row | None) -> bool:
+    def _is_adoptable(self, head: ObjectInfo, source_key: str, row: _Row | None) -> bool:
         """This item's copy, finishable although the source object is gone.
 
         The size guard rejects a copy of an older version of a row that was

@@ -55,8 +55,8 @@ class TestModuleCacheAsync:
         mock_client.get.return_value = None
 
         mock_repo = AsyncMock()
-        from src.core.s3_transport import S3NoSuchKey
-        mock_repo.read.side_effect = S3NoSuchKey("NoSuchKey", 404)
+        from src.core.storage.contracts import StorageError
+        mock_repo.read.side_effect = StorageError("not_found", provider_code="NoSuchKey", status_code=404)
 
         with (
             patch("src.core.module_cache.get_redis_client", return_value=mock_client),
@@ -127,8 +127,8 @@ class TestModuleCacheAsync:
         mock_client.get.return_value = None
 
         mock_repo = AsyncMock()
-        from src.core.s3_transport import S3NoSuchKey
-        mock_repo.read.side_effect = S3NoSuchKey("NoSuchKey", 404)
+        from src.core.storage.contracts import StorageError
+        mock_repo.read.side_effect = StorageError("not_found", provider_code="NoSuchKey", status_code=404)
 
         with (
             patch("src.core.module_cache.get_redis_client", return_value=mock_client),
@@ -144,8 +144,8 @@ class TestModuleCacheAsync:
         mock_client, _ = mock_redis_client
         mock_client.get.return_value = None
         mock_repo = AsyncMock()
-        from src.core.s3_transport import S3Error
-        error = S3Error("ServiceUnavailable", 503)
+        from src.core.storage.contracts import StorageError
+        error = StorageError("unavailable", provider_code="ServiceUnavailable", status_code=503)
         mock_repo.read.side_effect = error
 
         with (
@@ -154,7 +154,7 @@ class TestModuleCacheAsync:
         ):
             from src.core.module_cache import get_module
 
-            with pytest.raises(S3Error) as raised:
+            with pytest.raises(StorageError) as raised:
                 await get_module("shared/unavailable.py")
 
         assert raised.value is error

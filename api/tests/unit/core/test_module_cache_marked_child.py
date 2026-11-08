@@ -39,7 +39,7 @@ def test_marked_network_child_uses_scoped_engine_transport_without_redis_or_s3(m
     )
     monkeypatch.setattr(
         module_cache_sync,
-        "_get_s3_module",
+        "_get_storage_module",
         lambda _: (_ for _ in ()).throw(AssertionError("child must not read S3")),
     )
 

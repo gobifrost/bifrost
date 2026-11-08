@@ -22,6 +22,8 @@ from uuid import UUID
 
 import redis
 
+from src.core.storage.contracts import StorageError, SyncObjectStore
+
 from src.core.module_cache_contract import (
     CachedModule,
     MODULE_INDEX_KEY,
@@ -166,9 +168,14 @@ def _candidate_storage_paths(path: str) -> list[str]:
     return [rooted]
 
 
-# Cached S3 client — reused across calls to avoid repeated setup
-_s3_client: Any = None
-_s3_available: bool | None = None
+# Cached parent storage reader — reused across calls to avoid repeated setup
+@dataclass
+class _StorageReaderState:
+    client: SyncObjectStore | None = None
+    available: bool | None = None
+
+
+_storage_reader = _StorageReaderState()
 _sync_redis_client: Any = None
 # Set only by TemplateProcess after fork. It is process-local by virtue of
 # fork's copy-on-write memory and never comes from workflow-controlled input.
@@ -579,41 +586,28 @@ def resolve_module_sync(name: str) -> ModuleResolution:
     return resolution
 
 
-def _get_s3_client() -> Any:
-    """Get or create the parent-only synchronous CRT S3 client."""
-    global _s3_client, _s3_available
-
-    if _s3_available is False:
+def _get_storage_client() -> SyncObjectStore | None:
+    """Get the parent-only synchronous reader for the selected provider."""
+    if _storage_reader.available is False:
         return None
-
-    if _s3_client is not None:
-        return _s3_client
-
-    endpoint_url = os.environ.get("BIFROST_S3_ENDPOINT_URL")
-    access_key = os.environ.get("BIFROST_S3_ACCESS_KEY")
-    secret_key = os.environ.get("BIFROST_S3_SECRET_KEY")
-    region = os.environ.get("BIFROST_S3_REGION", "us-east-1")
-
+    if _storage_reader.client is not None:
+        return _storage_reader.client
     try:
-        from src.core.s3_transport import SyncS3Transport
+        from src.config import get_settings
+        from src.core.storage import sync_object_store
 
-        client = SyncS3Transport(
-            endpoint_url=endpoint_url,
-            access_key_id=access_key,
-            secret_access_key=secret_key,
-            region=region,
-        )
-        _s3_client = client
-        _s3_available = True
-        return client
+        settings = get_settings()
+        _storage_reader.client = sync_object_store(settings)
+        _storage_reader.available = True
+        return _storage_reader.client
     except Exception:
-        _s3_available = False
-        logger.debug("S3 transport unavailable; S3 fallback disabled")
+        _storage_reader.available = False
+        logger.debug("Object storage reader unavailable; parent fallback disabled")
         return None
 
 
-def _storage_path_to_s3_key(storage_path: str) -> str:
-    """Map a storage path to its S3 key.
+def _storage_path_to_key(storage_path: str) -> str:
+    """Map a storage path to its object key.
 
     A bare relative path lives under the _repo/ prefix; a path already rooted at
     ``_solutions/`` is used verbatim (it already carries its full prefix).
@@ -623,36 +617,27 @@ def _storage_path_to_s3_key(storage_path: str) -> str:
     return f"{REPO_PREFIX}{storage_path}"
 
 
-def _get_s3_module(storage_path: str) -> bytes | None:
+def _get_storage_module(storage_path: str) -> bytes | None:
     """
-    Fetch a module from S3 by storage path (synchronous).
+    Fetch a module from object storage by storage path (synchronous).
 
     Bare paths resolve under _repo/; ``_solutions/{id}/...`` paths are used
     verbatim. This is available only to parent synchronous callers. Returns
     raw bytes or None if not found.
     """
-    bucket = os.environ.get("BIFROST_S3_BUCKET")
-    if not bucket:
-        return None
-
-    client = _get_s3_client()
+    client = _get_storage_client()
     if client is None:
         return None
-
     try:
-        key = _storage_path_to_s3_key(storage_path)
-        response = client.get_object(Bucket=bucket, Key=key)
-        return response["Body"].read()
-
-    except Exception as e:
-        # Check for S3 NoSuchKey specifically
-        resp = getattr(e, "response", None)
-        if isinstance(resp, dict):
-            code = resp.get("Error", {}).get("Code", "")
-            if code == "NoSuchKey":
-                logger.debug(f"Module not found in S3: {storage_path}")
-                return None
-        logger.warning(f"S3 fallback error for {storage_path}: {e}")
+        return client.read(_storage_path_to_key(storage_path))
+    except StorageError as error:
+        if error.kind == "not_found":
+            logger.debug("Module not found in object storage: %s", storage_path)
+            return None
+        logger.warning("Storage fallback error for %s: %s", storage_path, error)
+        return None
+    except Exception as error:
+        logger.warning("Storage fallback error for %s: %s", storage_path, error)
         return None
 
 
@@ -712,17 +697,17 @@ def get_module_sync(path: str) -> CachedModule | None:
                 api_module["storage_path"] = storage_path
                 return api_module
 
-            # --- Cold-cache fallback 2: direct S3 (legacy; not needed post-scrub) ---
-            s3_content = _get_s3_module(storage_path)
-            if s3_content is None:
+            # --- Cold-cache fallback 2: direct object storage (legacy; not needed post-scrub) ---
+            storage_content = _get_storage_module(storage_path)
+            if storage_content is None:
                 continue
             try:
-                content_str = s3_content.decode("utf-8")
+                content_str = storage_content.decode("utf-8")
             except UnicodeDecodeError:
-                logger.warning(f"Could not decode S3 module as UTF-8: {storage_path}")
+                logger.warning(f"Could not decode storage module as UTF-8: {storage_path}")
                 continue
 
-            content_hash = hashlib.sha256(s3_content).hexdigest()
+            content_hash = hashlib.sha256(storage_content).hexdigest()
             module: CachedModule = {
                 "content": content_str,
                 "path": path,
@@ -735,7 +720,7 @@ def get_module_sync(path: str) -> CachedModule | None:
                 client.setex(key, MODULE_CACHE_TTL, json.dumps(module))
                 client.sadd(MODULE_INDEX_KEY, storage_path)
             except redis.RedisError as e:
-                logger.warning(f"Failed to cache S3 module to Redis: {e}")
+                logger.warning(f"Failed to cache storage module to Redis: {e}")
 
             return module
 
@@ -757,11 +742,10 @@ def reset_sync_redis() -> None:
     _get_sync_redis.cache_clear()
 
 
-def reset_s3_client() -> None:
-    """Reset the cached S3 client. Used for testing."""
-    global _s3_client, _s3_available
-    if _s3_client is not None:
+def reset_storage_client() -> None:
+    """Reset the cached synchronous storage reader. Used for testing."""
+    if _storage_reader.client is not None:
         with suppress(Exception):
-            _s3_client.close()
-    _s3_client = None
-    _s3_available = None
+            _storage_reader.client.close()
+    _storage_reader.client = None
+    _storage_reader.available = None

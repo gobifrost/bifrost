@@ -260,9 +260,9 @@ class FileIndexService:
                 while chunk := handle.read(FILE_COPY_CHUNK_SIZE):
                     yield chunk
 
-        from src.services.file_storage.s3_client import S3StorageClient
+        from src.services.file_storage.object_storage import FileObjectStorage
 
-        storage = S3StorageClient(self.repo_storage._settings)
+        storage = FileObjectStorage(self.repo_storage._settings)
         content_hash, size = await storage.put_object_from_chunks(
             self.repo_storage._repo_key(path), chunks()
         )

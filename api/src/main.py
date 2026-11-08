@@ -14,7 +14,7 @@ from fastapi import FastAPI
 
 from src.config import get_settings
 from src.core.cache.redis_client import close_shared_redis, initialize_shared_redis
-from src.core.s3_transport import close_shared_s3_client
+from src.core.storage import close_shared_storage_clients
 from src.core.csrf import CSRFMiddleware
 from src.core.embed_middleware import EmbedScopeMiddleware
 from src.core.request_body_limit import RouteBodyLimitMiddleware
@@ -249,7 +249,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
 
     await close_ai_retry_http_client()
     await pubsub_manager.close()
-    await close_shared_s3_client()
+    await close_shared_storage_clients()
     await close_shared_redis()
     await close_health_check_clients()
     await close_db()

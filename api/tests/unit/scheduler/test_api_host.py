@@ -179,7 +179,7 @@ async def test_lifespan_hosts_control_and_remote_launchers(
     shared_s3_close = AsyncMock(side_effect=lambda: shutdown.append("s3"))
     monkeypatch.setattr(api_main, "initialize_shared_redis", shared_redis_start)
     monkeypatch.setattr(api_main, "close_shared_redis", shared_redis_close)
-    monkeypatch.setattr(api_main, "close_shared_s3_client", shared_s3_close)
+    monkeypatch.setattr(api_main, "close_shared_storage_clients", shared_s3_close)
     monkeypatch.setattr(
         api_main.pubsub_manager,
         "close",
@@ -242,7 +242,7 @@ async def test_lifespan_imports_kubernetes_settings_before_serving(
     monkeypatch.setattr(api_main, "record_protocol_start", AsyncMock())
     monkeypatch.setattr(api_main, "initialize_shared_redis", AsyncMock())
     monkeypatch.setattr(api_main, "close_shared_redis", AsyncMock())
-    monkeypatch.setattr(api_main, "close_shared_s3_client", AsyncMock())
+    monkeypatch.setattr(api_main, "close_shared_storage_clients", AsyncMock())
     monkeypatch.setattr(api_main.pubsub_manager, "close", AsyncMock())
     monkeypatch.setattr(api_main, "close_health_check_clients", AsyncMock())
     monkeypatch.setattr(api_host, "ApiControlHost", lambda: MagicMock(start=AsyncMock(), stop=AsyncMock()))

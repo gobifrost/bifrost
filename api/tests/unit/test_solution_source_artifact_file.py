@@ -40,29 +40,20 @@ async def test_write_from_path_streams_bounded_bytes_through_shared_storage(monk
     uploaded: list[bytes] = []
 
     class SharedStorage:
-        def __init__(self, settings) -> None:
-            assert settings.s3_bucket == "bucket"
+        async def __aenter__(self):
+            return self
 
-        async def put_object_from_chunks(self, path, chunks, *, content_type):
+        async def __aexit__(self, *_args):
+            return None
+
+        async def write_stream(self, path, chunks, *, options):
             assert path.endswith("/source.zip")
-            assert content_type == "application/zip"
+            assert options.properties.content_type == "application/zip"
             async for chunk in chunks:
                 assert isinstance(chunk, bytes)
                 uploaded.append(chunk)
-            return "digest", sum(map(len, uploaded))
 
-    class DirectTransport:
-        def __init__(self, **_kwargs) -> None:
-            pass
-
-        async def __aenter__(self):
-            raise AssertionError("write_from_path must use shared chunk storage")
-
-        async def __aexit__(self, *_args) -> None:
-            return None
-
-    monkeypatch.setattr(source_artifact, "S3StorageClient", SharedStorage)
-    monkeypatch.setattr(source_artifact, "S3Transport", DirectTransport)
+    monkeypatch.setattr(source_artifact, "object_store", lambda settings: SharedStorage())
     settings = SimpleNamespace(
         s3_bucket="bucket",
         s3_endpoint_url="http://s3.test",
