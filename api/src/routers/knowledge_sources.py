@@ -169,7 +169,7 @@ async def list_namespaces(
     visibility_clause = await _authorize_knowledge_list(
         db, user, KNOWLEDGE_NAMESPACES_LIST_OPERATION, scope
     )
-    repo = KnowledgeRepository(session=db)
+    repo = KnowledgeRepository(session=db, org_id=None)
     ns_list = await repo.list_namespaces(visibility_clause=visibility_clause)
 
     return [

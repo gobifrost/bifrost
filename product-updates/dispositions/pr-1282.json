@@ -1,0 +1,15 @@
+{
+  "key": "pr:1282",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Knowledge Sources lists authorized namespaces correctly.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1282",
+      "Codex reviewed this routine repair on2026-11-07 under delegated release-readiness authority. Supplying the required repository org_id fixes the namespace-list500; the caller-derived SQL visibility predicate remains unchanged. The live endpoint regression verifies own and Global namespace counts and exclusion of a foreign namespace.",
+      "The separate API-fixture transport change has no product announcement value. It prevents idle setup-socket reuse and never retries a reset mutation. The deterministic real-HTTP regression and live Home journey passed; full nightly remains required."
+    ]
+  }
+}

@@ -473,6 +473,50 @@ class ProductUpdatesTests(unittest.TestCase):
         )
         self.assertIn("A required release notice.", rendered)
 
+    def test_pinned_entry_is_preserved_and_rendered_once_before_all_normal_sections(
+        self,
+    ) -> None:
+        data = self.entry_data()
+        data["pinned"] = True
+        data["title"] = "Important upgrade guidance"
+        self.write_entry(data, "Follow these upgrade steps first.")
+        bundle = product_updates.build_bundle(
+            self.content, self.inventory, self.dispositions, TARGET, "/product-updates/"
+        )
+        pinned = bundle["entries"][0]
+        ordinary = {
+            **pinned,
+            "id": "22222222-2222-4222-8222-222222222222",
+            "title": "A newer ordinary update",
+            "published_at": "2026-10-07T12:00:00Z",
+            "pinned": False,
+        }
+        security = {
+            **ordinary,
+            "id": "33333333-3333-4333-8333-333333333333",
+            "title": "Security detail",
+            "type": "Security",
+        }
+
+        rendered = product_updates.render_release(
+            {**bundle, "entries": [ordinary, security, pinned]},
+            f"https://raw.githubusercontent.com/gobifrost/bifrost/{TARGET}/",
+        )
+
+        self.assertTrue(pinned["pinned"])
+        self.assertEqual(1, rendered.count("### Important upgrade guidance"))
+        self.assertLess(
+            rendered.index("### Important upgrade guidance"),
+            rendered.index("## Security"),
+        )
+        self.assertLess(
+            rendered.index("### Important upgrade guidance"),
+            rendered.index("## What's New"),
+        )
+        self.assertIn("### A newer ordinary update", rendered)
+        self.assertIn("### Security detail", rendered)
+        self.assertIn("Credits: [helper](https://github.com/helper) (#10)", rendered)
+
     def test_release_uses_app_link_labels_without_inventing_a_deployment_url(
         self,
     ) -> None:
@@ -606,6 +650,7 @@ class ProductUpdatesTests(unittest.TestCase):
         self.assertIn("contributors: BundleContributor[]", generated)
         self.assertNotIn("contributors: bundleContributor[]", generated)
         self.assertIn("target_ref: string", generated)
+        self.assertIn("pinned?: boolean", generated)
 
     def test_bundle_schema_drives_types_and_rejects_missing_output_fields(self) -> None:
         path = self.content / "schema.json"

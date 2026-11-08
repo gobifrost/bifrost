@@ -1,4 +1,4 @@
-"""Turn a typed runtime credential into a database-backed principal.
+"""Turn supported runtime credentials into database-backed principals.
 
 ``load_runtime_principal`` reads every authority fact for a runtime
 credential from the database. In-process callers (agent runs, MCP contexts,
@@ -7,9 +7,9 @@ also the parity oracle for claims minted by ``tokens.issue_access_token``.
 
 Signed runtime tokens minted by ``issue_access_token`` (``ver: 1``) are
 validated by ``tokens.authenticate_runtime_token`` instead. Older tokens,
-which carry no ``ver``, are bridged: they are validated exactly as before,
-through ``load_runtime_principal``, so they work only while their run is
-live. Token PR1c removes the bridge.
+which carry no ``ver``, resolve through ``load_runtime_principal`` only while
+their run is live. Both the typed legacy format and the exact v1.4.1 engine
+format use current database authority rather than signed privilege flags.
 """
 
 from __future__ import annotations
@@ -37,6 +37,24 @@ _RUNTIME_KINDS: frozenset[str] = frozenset({"workflow_execution", "service_attem
 _LEGACY_RUNTIME_CLAIMS: frozenset[str] = frozenset(
     {"engine_execution_id", "service_id", "service_attempt_id", "engine_agent_run_id"}
 )
+_PREVIOUS_STABLE_ENGINE_CLAIMS: frozenset[str] = frozenset(
+    {
+        "sub",
+        "email",
+        "name",
+        "is_superuser",
+        "engine_execution_id",
+        "engine_solution_id",
+        "engine_global_repo_access",
+        "exp",
+        "type",
+        "iss",
+        "aud",
+    }
+)
+_PREVIOUS_STABLE_ENGINE_SUBJECT = "00000000-0000-0000-0000-000000000001"
+_PREVIOUS_STABLE_ENGINE_EMAIL = "engine@bifrost.internal"
+_PREVIOUS_STABLE_ENGINE_NAME = "Bifrost Engine"
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +74,37 @@ def is_legacy_runtime_payload(payload: dict[str, Any]) -> bool:
     return is_runtime_credential_payload(payload) and "ver" not in payload
 
 
+def _previous_stable_engine_execution_id(payload: dict[str, Any]) -> UUID | None:
+    """Return the v1.4.1 engine execution ID only for its exact token shape.
+
+    This validates token *identity*, not authority.  Signature, expiry,
+    issuer, audience, and the access-token type have already been checked by
+    ``decode_token`` before this adapter runs.  The returned ID is resolved
+    entirely through the current durable runtime authority.
+    """
+    if frozenset(payload) != _PREVIOUS_STABLE_ENGINE_CLAIMS:
+        return None
+    if (
+        payload.get("sub") != _PREVIOUS_STABLE_ENGINE_SUBJECT
+        or payload.get("email") != _PREVIOUS_STABLE_ENGINE_EMAIL
+        or payload.get("name") != _PREVIOUS_STABLE_ENGINE_NAME
+        or payload.get("is_superuser") is not True
+        or type(payload.get("engine_global_repo_access")) is not bool
+        or payload.get("type") != "access"
+    ):
+        return None
+    solution_id = payload.get("engine_solution_id")
+    if solution_id is not None:
+        try:
+            UUID(str(solution_id))
+        except (TypeError, ValueError, AttributeError):
+            return None
+    try:
+        return UUID(str(payload.get("engine_execution_id")))
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
 def log_legacy_runtime_token_accepted(payload: dict[str, Any]) -> None:
     """Record one acceptance of a bridged legacy runtime token (counted from
     the log until token PR1c removes the bridge)."""
@@ -69,33 +118,41 @@ def log_legacy_runtime_token_accepted(payload: dict[str, Any]) -> None:
 async def load_runtime_principal(
     db: AsyncSession, payload: dict[str, Any]
 ) -> UserPrincipal | None:
-    """Resolve a typed runtime credential from the database, trusting none of
+    """Resolve a supported runtime credential from the database, trusting none of
     its authority claims.
 
-    ``None`` means the payload is not a valid typed runtime credential. The
+    ``None`` means the payload is not a valid supported runtime credential. The
     caller must reject it when :func:`is_runtime_credential_payload` is true;
     ordinary human and embed tokens simply continue through their own path.
     """
     kind = payload.get("credential_kind")
-    if kind not in _RUNTIME_KINDS:
-        return None
-    try:
-        credential_id = UUID(str(payload.get("sub")))
-    except (TypeError, ValueError, AttributeError):
-        return None
-    service_id: UUID | None = None
-    if kind == "service_attempt":
+    if kind in _RUNTIME_KINDS:
         try:
-            service_id = UUID(str(payload.get("service_id")))
+            credential_id = UUID(str(payload.get("sub")))
         except (TypeError, ValueError, AttributeError):
             return None
+        service_id: UUID | None = None
+        if kind == "service_attempt":
+            try:
+                service_id = UUID(str(payload.get("service_id")))
+            except (TypeError, ValueError, AttributeError):
+                return None
+        try:
+            authority = await load_runtime_authority(
+                db, cast(RuntimeKind, kind), credential_id, service_id=service_id
+            )
+        except RuntimeIdentityError:
+            return None
+    else:
+        execution_id = _previous_stable_engine_execution_id(payload)
+        if execution_id is None:
+            return None
+        try:
+            from src.services.authorization.runtime import load_previous_stable_workflow_authority
 
-    try:
-        authority = await load_runtime_authority(
-            db, cast(RuntimeKind, kind), credential_id, service_id=service_id
-        )
-    except RuntimeIdentityError:
-        return None
+            authority = await load_previous_stable_workflow_authority(db, execution_id)
+        except RuntimeIdentityError:
+            return None
     return await _principal_from_authority(db, authority)
 
 

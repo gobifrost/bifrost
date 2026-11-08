@@ -19,6 +19,9 @@ function NavigationStateProbe() {
 	);
 }
 
+// Realtime transport behavior is covered by the hook and socket-service suites.
+vi.mock("@/hooks/useAgentRunUpdates", () => ({ useAgentRunUpdates: vi.fn() }));
+
 const mockAuth = vi.fn();
 vi.mock("@/contexts/AuthContext", () => ({ useAuth: () => mockAuth() }));
 

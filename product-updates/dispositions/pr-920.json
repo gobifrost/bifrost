@@ -1,15 +1,17 @@
 {
   "key": "pr:920",
-  "classification": "omit",
-  "entry_ids": [],
+  "classification": "highlight",
+  "entry_ids": [
+    "a46aaf21-bcd9-47d9-9371-807f18801efc"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/920",
-      "Reviewed the isolated source-map-js 1.2.1 to 1.2.2 patch; user authorized tested dependency security fixes and merge on 2026-10-07."
+      "Reviewed the isolated source-map-js 1.2.1 to 1.2.2 patch; user authorized tested dependency security fixes and merge on 2026-10-07.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Routine app-compiler dependency security patch; no individual in-app announcement. Preserve canonical security notice review for formal publication."
     ]
   },
-  "reason": "Routine app-compiler dependency security patch; no individual in-app announcement. Preserve canonical security notice review for formal publication.",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/920"

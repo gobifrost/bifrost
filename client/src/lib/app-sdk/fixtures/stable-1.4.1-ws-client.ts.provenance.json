@@ -1,0 +1,6 @@
+{
+  "source_commit": "ade714a08b95c84daa285e859ebece55f45c6754",
+  "source_path": "client/src/lib/app-sdk/ws-client.ts",
+  "sha256": "6bb91c8a0f331269e009a1f830a8e170d1bc892a4e49afe04d16149e1d7be690",
+  "purpose": "Exact unchanged stable SDK2 socket implementation for compatibility regression coverage."
+}

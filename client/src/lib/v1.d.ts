@@ -25429,6 +25429,11 @@ export interface components {
             release?: string | null;
             /** In App */
             in_app?: boolean | null;
+            /**
+             * Pinned
+             * @default false
+             */
+            pinned: boolean;
         };
         /** ProductUpdateOtherChange */
         ProductUpdateOtherChange: {

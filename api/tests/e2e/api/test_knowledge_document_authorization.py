@@ -41,7 +41,7 @@ async def _seed_documents(
     return namespace, own.id, foreign.id
 
 
-async def _delete_documents(session_factory, document_ids: tuple[UUID, UUID]) -> None:
+async def _delete_documents(session_factory, document_ids: tuple[UUID, ...]) -> None:
     from sqlalchemy import delete
 
     from src.models.orm.knowledge import KnowledgeStore
@@ -49,6 +49,53 @@ async def _delete_documents(session_factory, document_ids: tuple[UUID, UUID]) ->
     async with session_factory() as session:
         await session.execute(delete(KnowledgeStore).where(KnowledgeStore.id.in_(document_ids)))
         await session.commit()
+
+
+async def _seed_namespace_visibility_documents(
+    session_factory, *, organization_id: UUID, foreign_organization_id: UUID
+) -> tuple[tuple[str, str, str], tuple[UUID, UUID, UUID]]:
+    """Seed scope-separated rows without invoking the embedding provider."""
+    from src.models.orm.knowledge import KnowledgeStore
+
+    own_namespace = f"knowledge-own-{uuid4().hex}"
+    global_namespace = f"knowledge-global-{uuid4().hex}"
+    foreign_namespace = f"knowledge-foreign-{uuid4().hex}"
+    documents = (
+        KnowledgeStore(
+            id=uuid4(),
+            namespace=own_namespace,
+            organization_id=organization_id,
+            key="own-guide",
+            content="Contoso-only knowledge",
+            doc_metadata={},
+            embedding=[0.1, 0.2, 0.3],
+        ),
+        KnowledgeStore(
+            id=uuid4(),
+            namespace=global_namespace,
+            organization_id=None,
+            key="global-guide",
+            content="Shared knowledge",
+            doc_metadata={},
+            embedding=[0.1, 0.2, 0.3],
+        ),
+        KnowledgeStore(
+            id=uuid4(),
+            namespace=foreign_namespace,
+            organization_id=foreign_organization_id,
+            key="foreign-guide",
+            content="Fabrikam-only knowledge",
+            doc_metadata={},
+            embedding=[0.1, 0.2, 0.3],
+        ),
+    )
+    async with session_factory() as session:
+        session.add_all(documents)
+        await session.commit()
+    return (
+        (own_namespace, global_namespace, foreign_namespace),
+        (documents[0].id, documents[1].id, documents[2].id),
+    )
 
 
 async def _set_role_permissions(
@@ -63,6 +110,45 @@ async def _set_role_permissions(
             permissions=permissions,
         )
         await session.commit()
+
+
+def test_namespace_listing_honors_authorized_visibility(
+    e2e_client,
+    org1,
+    org2,
+    org1_user,
+    async_session_factory,
+) -> None:
+    """The REST list route retains own and Global namespaces, never foreign ones."""
+    namespaces, document_ids = asyncio.run(
+        _seed_namespace_visibility_documents(
+            async_session_factory,
+            organization_id=UUID(org1["id"]),
+            foreign_organization_id=UUID(org2["id"]),
+        )
+    )
+    own_namespace, global_namespace, foreign_namespace = namespaces
+
+    try:
+        response = e2e_client.get("/api/knowledge-sources", headers=org1_user.headers)
+
+        assert response.status_code == 200, response.text
+        returned = {namespace["namespace"]: namespace for namespace in response.json()}
+        assert returned[own_namespace] == {
+            "namespace": own_namespace,
+            "document_count": 1,
+            "global_count": 0,
+            "org_count": 1,
+        }
+        assert returned[global_namespace] == {
+            "namespace": global_namespace,
+            "document_count": 1,
+            "global_count": 1,
+            "org_count": 0,
+        }
+        assert foreign_namespace not in returned
+    finally:
+        asyncio.run(_delete_documents(async_session_factory, document_ids))
 
 
 def test_document_mutations_conceal_foreign_ids(

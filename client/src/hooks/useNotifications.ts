@@ -63,7 +63,7 @@ export function useNotifications() {
 		const notificationChannel = `notification:${user.id}`;
 		// The server decides whether this caller currently holds platform.read.
 		// Keeping the request unconditional avoids trusting stale client role claims.
-		webSocketService.connect([notificationChannel, "notification:admins"]);
+		webSocketService.connectInBackground([notificationChannel, "notification:admins"]);
 
 		return () => {
 			webSocketService.unsubscribe(notificationChannel);

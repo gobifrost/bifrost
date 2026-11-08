@@ -249,6 +249,22 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     assert promotion["outputs"]["version"] == "${{ steps.version.outputs.version }}"
 
 
+def test_candidate_caches_use_separate_registry_refs_and_keep_export_errors_fatal() -> None:
+    """Keep candidate caches independent of GitHub Actions cache storage."""
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    for image in ("api", "client"):
+        job = jobs[f"build-dev-{image}-candidate"]
+        build = next(
+            step for step in job["steps"]
+            if str(step.get("uses", "")).startswith("docker/build-push-action@")
+        )
+        cache_ref = "ghcr.io/${{ env." + image.upper() + "_IMAGE }}:buildcache"
+        assert build["with"]["cache-from"] == f"type=registry,ref={cache_ref}"
+        assert build["with"]["cache-to"] == f"type=registry,ref={cache_ref},mode=max"
+        assert "continue-on-error" not in build
+        assert "ignore-error" not in build["with"]["cache-to"]
+
+
 def test_ci_publication_does_not_depend_on_an_operator_cluster() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
     assert "deploy-dev" not in jobs

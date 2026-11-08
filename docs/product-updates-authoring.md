@@ -45,6 +45,16 @@ body, bypass security review, or weaken the release gate. Necessary customer
 upgrade steps stay visible in the appropriate note. Do not describe strengthened
 access controls as an incident unless the evidence establishes an incident.
 
+Use optional `pinned: true` only for an approved, high-priority overview or
+upgrade guide that readers should see before the detailed entries. It appears
+once at the top of both the GitHub release notes and in-app What's New, ahead of
+Security, Action Required, and ordinary updates. Pinning is an ordering choice,
+not a sticky viewport treatment or a separate announcement: it retains the
+entry's UUID, sources, credits, visibility, and normal acknowledgment behavior.
+Omit the field (or set it to `false`) for ordinary entries.
+When a newer overview replaces an older one, unpin the older entry; do not
+change either entry's UUID, add automatic expiration, or reset receipts.
+
 ## Agent Prompts
 
 An entry can carry an `agent_prompt`: a reviewed, plain-text prompt an admin

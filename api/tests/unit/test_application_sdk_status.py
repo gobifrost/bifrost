@@ -258,3 +258,22 @@ def test_current_sdk_metadata_is_process_cached(monkeypatch) -> None:
     assert first.contract_version == 9
     assert calls == {"get_version": 1, "package": 1, "fingerprint": 1, "contract": 1}
     status.current_sdk_metadata.cache_clear()
+
+
+def test_supported_stable_wire_contract_needs_no_source_rebuild() -> None:
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata, application_sdk_status
+
+    target = CurrentApplicationSdkMetadata(
+        package_version="2.0.0", fingerprint="hosted-binding", contract_version=3,
+        binding_api_major=1, supported_binding_api_majors=frozenset({1}),
+        supported_contract_versions=frozenset({2, 3}),
+    )
+    app = _app(
+        sdk_fingerprint="stable-sdk", sdk_contract_version=2,
+        sdk_built_at=datetime(2026, 10, 30, tzinfo=timezone.utc),
+    )
+    assert application_sdk_status(app, target) == "update_available"
+    app.sdk_contract_version = 1
+    assert application_sdk_status(app, target) == "update_required"
+    app.sdk_contract_version = None
+    assert application_sdk_status(app, target) == "unknown"

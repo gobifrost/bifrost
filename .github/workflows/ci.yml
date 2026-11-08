@@ -103,6 +103,9 @@ jobs:
       - name: Check E2E shard allocation
         run: python3 -m unittest scripts.test_e2e_shard
 
+      - name: Check release upgrade rehearsal safety
+        run: python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population
+
       - name: Check stack lifecycle and ownership
         run: |
           python3 -m unittest scripts.test_stack_lifecycle scripts.test_memory_sampler
@@ -261,8 +264,10 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.API_IMAGE }}:candidate-${{ github.sha }}
           build-args: BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=dev-candidate-api
-          cache-to: type=gha,scope=dev-candidate-api,mode=max
+          # Keep build caches in the registry with the candidate artifacts.
+          # Actions cache export returned not_found after a successful image push.
+          cache-from: type=registry,ref=ghcr.io/${{ env.API_IMAGE }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.API_IMAGE }}:buildcache,mode=max
 
       - name: Exercise the exact API candidate artifact
         env:
@@ -329,8 +334,8 @@ jobs:
           push: true
           tags: ghcr.io/${{ env.CLIENT_IMAGE }}:candidate-${{ github.sha }}
           build-args: VITE_BIFROST_VERSION=${{ steps.version.outputs.version }}
-          cache-from: type=gha,scope=dev-candidate-client
-          cache-to: type=gha,scope=dev-candidate-client,mode=max
+          cache-from: type=registry,ref=ghcr.io/${{ env.CLIENT_IMAGE }}:buildcache
+          cache-to: type=registry,ref=ghcr.io/${{ env.CLIENT_IMAGE }}:buildcache,mode=max
 
       - name: Sign client candidate digest
         uses: ./.github/actions/sign-image

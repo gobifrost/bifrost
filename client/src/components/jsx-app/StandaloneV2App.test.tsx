@@ -17,6 +17,13 @@ const orgScopeState = vi.hoisted(() => ({
 
 const authState = vi.hoisted(() => ({ isPlatformAdmin: false }));
 
+const { mockHostConnect, mockHostDisconnect } = vi.hoisted(() => ({
+	mockHostConnect: vi.fn(), mockHostDisconnect: vi.fn(),
+}));
+vi.mock("@/services/websocket", () => ({
+	webSocketService: { connectInBackground: mockHostConnect, disconnect: mockHostDisconnect },
+}));
+
 const { mockAuthFetch } = vi.hoisted(() => ({ mockAuthFetch: vi.fn() }));
 const { mockPreloadHostedSdkFactory } = vi.hoisted(() => ({
 	mockPreloadHostedSdkFactory: vi.fn(),
@@ -112,6 +119,8 @@ beforeEach(() => {
 	authState.isPlatformAdmin = false;
 	delete window.__BIFROST_APP__;
 	delete window.__BIFROST_APP_MODULES__;
+	mockHostConnect.mockReset();
+	mockHostDisconnect.mockReset();
 	mockAuthFetch.mockReset();
 	mockPreloadHostedSdkFactory.mockReset();
 	mockPreloadHostedSdkFactory.mockResolvedValue(undefined);
@@ -141,6 +150,30 @@ afterEach(() => {
 });
 
 describe("StandaloneV2App", () => {
+	it("keeps the shared refresh host through rotation and App unmount", async () => {
+		localStorage.setItem("bifrost_access_token", "first");
+		const mount = vi.fn(() => vi.fn());
+		const view = render(<StandaloneV2App {...props("companion-host")} />);
+		await finishModuleLoad("companion-host", mount);
+		await waitFor(() => expect(mount).toHaveBeenCalledTimes(1));
+		expect(mockHostConnect).toHaveBeenCalledTimes(1);
+		localStorage.setItem("bifrost_access_token", "refreshed");
+		view.rerender(<StandaloneV2App {...props("companion-host")} />);
+		expect(mount).toHaveBeenCalledTimes(1);
+		expect(mockHostConnect).toHaveBeenCalledTimes(1);
+		view.unmount();
+		expect(mockHostDisconnect).not.toHaveBeenCalled();
+	});
+
+	it.each(["bifrost_embed_token", "bifrost_impersonation_token"])(
+		"does not borrow the human refresh host for %s", (key) => {
+			localStorage.setItem("bifrost_access_token", "operator");
+			(key === "bifrost_embed_token" ? sessionStorage : localStorage).setItem(key, "scoped");
+			render(<StandaloneV2App {...props(key)} />);
+			expect(mockHostConnect).not.toHaveBeenCalled();
+		},
+	);
+
 	it("preloads a migrated app's hosted SDK before evaluating its entry", async () => {
 		localStorage.setItem("bifrost_access_token", "tok-1");
 		let releaseSdk!: () => void;

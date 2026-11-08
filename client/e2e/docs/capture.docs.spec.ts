@@ -33,10 +33,10 @@ import {
   type ActionSpec,
 } from "./manifest";
 import { getSeeder } from "./seeders";
+import { writeCaptureResult } from "../support/docs-results.mjs";
 
 const DOCS_REPO_PATH = process.env.DOCS_REPO_PATH || "/docs";
 const TMP_DIR = path.join(DOCS_REPO_PATH, ".tmp-captures");
-const RESULTS_PATH = path.join(TMP_DIR, "results.json");
 const BASE_URL = process.env.TEST_BASE_URL || "http://client:80";
 
 function ensureTmpDir() {
@@ -50,24 +50,6 @@ interface CaptureResult {
   finalImagePath: string;
   route: string;
   message?: string;
-}
-
-function loadOrInitResults(): CaptureResult[] {
-  if (fs.existsSync(RESULTS_PATH)) {
-    try {
-      return JSON.parse(fs.readFileSync(RESULTS_PATH, "utf8")) as CaptureResult[];
-    } catch {
-      /* fall through */
-    }
-  }
-  return [];
-}
-
-function writeResult(result: CaptureResult) {
-  ensureTmpDir();
-  const all = loadOrInitResults().filter((r) => r.id !== result.id);
-  all.push(result);
-  fs.writeFileSync(RESULTS_PATH, JSON.stringify(all, null, 2));
 }
 
 function targetIds(): string[] | null {
@@ -170,8 +152,6 @@ if (!fs.existsSync(manifestPath)) {
   }
 } else {
   ensureTmpDir();
-  // Clear stale results from prior runs.
-  if (fs.existsSync(RESULTS_PATH)) fs.unlinkSync(RESULTS_PATH);
 
   const manifest = loadManifest(DOCS_REPO_PATH);
   // External entries (Azure portal, VS Code, etc.) are never captured by
@@ -318,7 +298,7 @@ if (!fs.existsSync(manifestPath)) {
           message: e instanceof Error ? e.message : String(e),
         };
       } finally {
-        writeResult(result);
+        writeCaptureResult(DOCS_REPO_PATH, result);
       }
 
       expect(result.status, result.message ?? "").toBe("captured");
