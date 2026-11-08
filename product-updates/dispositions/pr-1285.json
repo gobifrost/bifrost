@@ -1,0 +1,14 @@
+{
+  "key": "pr:1285",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Signed webhooks can reuse a retained event when their configured delivery ID is repeated.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1285",
+      "Pending maintainer review of this opt-in redelivery correction and its announcement."
+    ]
+  }
+}
