@@ -379,3 +379,37 @@ class TestLogoutAndRevocation:
 
 # NOTE: Rate limiting tests have been moved to test_security.py
 # They run last to avoid affecting other tests that need login
+
+
+@pytest.mark.e2e
+async def test_numeric_recovery_code_can_complete_mfa(private_client, platform_admin, db_session):
+    """Recovery codes may consist entirely of digits; TOTP codes have six digits."""
+    from sqlalchemy import delete
+    from src.core.security import get_password_hash
+    from src.models import MFARecoveryCode
+
+    recovery_id = uuid4()
+    recovery = MFARecoveryCode(
+        id=recovery_id, user_id=platform_admin.user_id,
+        code_hash=get_password_hash("12345678"),
+    )
+    db_session.add(recovery)
+    await db_session.commit()
+    try:
+        login = private_client.post(
+            "/auth/login",
+            data={"username": platform_admin.email, "password": platform_admin.password},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert login.status_code == 200
+        verified = private_client.post(
+            "/auth/mfa/login",
+            json={"mfa_token": login.json()["mfa_token"], "code": "1234-5678"},
+        )
+        assert verified.status_code == 200, verified.text
+        await db_session.refresh(recovery)
+        assert recovery.is_used is True
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(MFARecoveryCode).where(MFARecoveryCode.id == recovery_id))
+        await db_session.commit()

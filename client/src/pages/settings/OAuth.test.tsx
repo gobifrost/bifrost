@@ -19,7 +19,7 @@ const configData = {
 			configured: true,
 			client_id: "client-id",
 			client_secret_set: true,
-            trust_email_for_linking: false,
+			trust_email_for_linking: false,
 			tenant_id: "organizations",
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
@@ -28,7 +28,7 @@ const configData = {
 			provider: "google",
 			configured: false,
 			client_secret_set: false,
-            trust_email_for_linking: false,
+			trust_email_for_linking: false,
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
 		},
@@ -36,7 +36,7 @@ const configData = {
 			provider: "oidc",
 			configured: false,
 			client_secret_set: false,
-            trust_email_for_linking: false,
+			trust_email_for_linking: false,
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
 		},
@@ -74,7 +74,7 @@ describe("OAuth settings", () => {
 		refetch.mockResolvedValue({});
 		configData.providers.forEach((provider, index) => {
 			provider.configured = index === 0;
-            provider.trust_email_for_linking = false;
+			provider.trust_email_for_linking = false;
 		});
 	});
 
@@ -114,9 +114,7 @@ describe("OAuth settings", () => {
 			provider.configured = true;
 		});
 		const { user } = renderWithProviders(<OAuth />);
-		await user.click(
-			screen.getAllByRole("button", { name: "Edit" })[1]!,
-		);
+		await user.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
 
 		const scopes = screen.getByLabelText(/scopes/i);
 		await user.clear(scopes);

@@ -16,6 +16,7 @@ import type {
 } from "./fixtures/api-fixture";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 import { generateTOTP } from "./setup/totp";
+import { completeBrowserMfa } from "./setup/recovery-proofs";
 
 const UNIQUE = `${Date.now()}-${process.pid}-${randomUUID().slice(0, 8)}`;
 const USER_EMAIL = `acct-security-${UNIQUE}@gobifrost.dev`;
@@ -27,6 +28,8 @@ const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 type RegisteredUser = {
 	id: string;
 	totpSecret: string;
+	recoveryCodes: string[];
+	mfaSetupCounter: number;
 };
 
 type PasskeyList = {
@@ -77,13 +80,19 @@ async function registerIsolatedUser(
 	const setup = (await setupResp.json()) as { secret: string };
 	expect(setup.secret, "MFA setup returns TOTP secret").toBeTruthy();
 
+	const mfaSetupCounter = Math.floor(Date.now() / 30000);
 	const verifyResp = await request.post("/auth/mfa/verify", {
 		headers: { Authorization: `Bearer ${login.mfa_token}` },
-		data: { code: generateTOTP(setup.secret) },
+		data: { code: generateTOTP(setup.secret, mfaSetupCounter * 30000) },
 	});
 	await expectOk(verifyResp, "POST", "/auth/mfa/verify");
 
-	return { id: registered.id, totpSecret: setup.secret };
+	return {
+		id: registered.id,
+		totpSecret: setup.secret,
+		recoveryCodes: (await verifyResp.json()).recovery_codes,
+		mfaSetupCounter,
+	};
 }
 
 async function loginIsolatedUser(page: Page, user: RegisteredUser) {
@@ -95,8 +104,7 @@ async function loginIsolatedUser(page: Page, user: RegisteredUser) {
 
 	const mfaInput = page.getByLabel(/code|totp|verification/i);
 	await expect(mfaInput).toBeVisible();
-	await mfaInput.fill(generateTOTP(user.totpSecret));
-	await page.getByRole("button", { name: /verify|submit|continue/i }).click();
+	await completeBrowserMfa(page, { ...user, userId: user.id });
 	await page.waitForURL((url) => !url.pathname.startsWith("/login"));
 }
 
@@ -160,7 +168,9 @@ test.describe("Account security", () => {
 			userId = createdUserId;
 		});
 
-		const context = await browser.newContext({ storageState: { cookies: [], origins: [] } });
+		const context = await browser.newContext({
+			storageState: { cookies: [], origins: [] },
+		});
 		const page = await context.newPage();
 		const removeAuthenticator = await installVirtualAuthenticator(
 			context,

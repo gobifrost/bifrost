@@ -259,7 +259,6 @@ class OAuthProviderConfigResponse(BaseModel):
     scopes: list[str] = Field(
         default_factory=list,
         description="Requested OAuth scopes",
-
     )
     # Provider-specific fields
     tenant_id: str | None = Field(

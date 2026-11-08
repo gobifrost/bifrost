@@ -8,6 +8,13 @@ import {
 } from "../../e2e/fixtures/human-auth";
 import { REQUEST_REPLAY_BUDGET } from "../lib/app-sdk/transport";
 
+vi.mock("../../e2e/setup/recovery-proofs", () => ({
+	withRecoveryProof: async (
+		_credentials: unknown,
+		submit: (code: string) => Promise<string>,
+	) => submit("ABCD-EFGH"),
+}));
+
 function response(
 	status: number,
 	headers: Record<string, string> = {},
@@ -57,15 +64,21 @@ describe("challenge-aware E2E API context", () => {
 			response.setHeader("Content-Type", "application/json");
 			response.end(JSON.stringify({ mfa_required: false }));
 		});
-		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		await new Promise<void>((resolve) =>
+			server.listen(0, "127.0.0.1", resolve),
+		);
 		const address = server.address();
-		if (!address || typeof address === "string") throw new Error("No test port");
+		if (!address || typeof address === "string")
+			throw new Error("No test port");
 		const baseURL = `http://127.0.0.1:${address.port}`;
 		const browser = {
 			newContext: async (
 				options: Parameters<typeof playwrightRequest.newContext>[0],
 			) => {
-				const request = await playwrightRequest.newContext({ ...options, baseURL });
+				const request = await playwrightRequest.newContext({
+					...options,
+					baseURL,
+				});
 				return {
 					request,
 					cookies: async () => (await request.storageState()).cookies,
@@ -73,12 +86,16 @@ describe("challenge-aware E2E API context", () => {
 				};
 			},
 		};
-		let consumer: Awaited<ReturnType<typeof createFreshApiContext>> | undefined;
+		let consumer:
+			Awaited<ReturnType<typeof createFreshApiContext>> | undefined;
 		try {
-			consumer = await createFreshApiContext(browser as never, {
-				email: "human@example.test",
-				password: "synthetic",
-			} as never);
+			consumer = await createFreshApiContext(
+				browser as never,
+				{
+					email: "human@example.test",
+					password: "synthetic",
+				} as never,
+			);
 			expect((await consumer.api.post("/setup")).status()).toBe(200);
 			expect((await consumer.api.delete("/cleanup")).status()).toBe(200);
 			expect(cleanupRequests).toBe(1);
@@ -97,9 +114,15 @@ describe("challenge-aware E2E API context", () => {
 				post: vi
 					.fn()
 					.mockResolvedValueOnce(
-						response(200, {}, { mfa_required: true, mfa_token: "mfa" }),
+						response(
+							200,
+							{},
+							{ mfa_required: true, mfa_token: "mfa" },
+						),
 					)
-					.mockResolvedValueOnce(response(200)),
+					.mockResolvedValueOnce(
+						response(200, {}, { access_token: "access" }),
+					),
 				fetch: vi.fn(async () => response(200)),
 			},
 			cookies: vi.fn(async () => [
@@ -119,14 +142,22 @@ describe("challenge-aware E2E API context", () => {
 			password: "password",
 			name: "Human",
 			totpSecret: "JBSWY3DPEHPK3PXP",
+			recoveryCodes: ["ABCD-EFGH"],
+			mfaSetupCounter: 0,
 			userId: "human",
 			accessToken: "unused",
 			refreshToken: "unused",
 			isSuperuser: false,
 		};
 
-		const first = await createFreshApiContext(browser as never, credentials);
-		const second = await createFreshApiContext(browser as never, credentials);
+		const first = await createFreshApiContext(
+			browser as never,
+			credentials,
+		);
+		const second = await createFreshApiContext(
+			browser as never,
+			credentials,
+		);
 
 		expect(browser.newContext).toHaveBeenCalledTimes(2);
 		expect(contexts[0].request.post).toHaveBeenCalledTimes(2);
@@ -144,13 +175,17 @@ describe("challenge-aware E2E API context", () => {
 					generation = "after";
 					return response(200);
 				}
-				return raw.fetch.mock.calls.filter(([called]) => called === "/api/widgets")
-					.length === 1
+				return raw.fetch.mock.calls.filter(
+					([called]) => called === "/api/widgets",
+				).length === 1
 					? refreshRequired()
 					: response(200);
 			}),
 		};
-		const api = createChallengeAwareApi(raw as never, fakeContext(() => generation));
+		const api = createChallengeAwareApi(
+			raw as never,
+			fakeContext(() => generation),
+		);
 
 		await expect(api.get("/api/widgets")).resolves.toMatchObject({});
 		expect(raw.fetch.mock.calls.map(([url]) => url)).toEqual([
@@ -162,7 +197,10 @@ describe("challenge-aware E2E API context", () => {
 
 	it("does not refresh or replay a generic 401", async () => {
 		const raw = { fetch: vi.fn(async () => response(401)) };
-		const api = createChallengeAwareApi(raw as never, fakeContext(() => "stable"));
+		const api = createChallengeAwareApi(
+			raw as never,
+			fakeContext(() => "stable"),
+		);
 
 		const result = await api.get("/api/widgets");
 		expect(result.status()).toBe(401);
@@ -175,9 +213,14 @@ describe("challenge-aware E2E API context", () => {
 				throw new Error("socket hang up (ECONNRESET)");
 			}),
 		};
-		const api = createChallengeAwareApi(raw as never, fakeContext(() => "stable"));
+		const api = createChallengeAwareApi(
+			raw as never,
+			fakeContext(() => "stable"),
+		);
 
-		await expect(api.delete("/api/widgets/id")).rejects.toThrow("ECONNRESET");
+		await expect(api.delete("/api/widgets/id")).rejects.toThrow(
+			"ECONNRESET",
+		);
 		expect(raw.fetch).toHaveBeenCalledTimes(1);
 	});
 
@@ -189,12 +232,21 @@ describe("challenge-aware E2E API context", () => {
 					generation = "after";
 					return response(200);
 				}
-				return generation === "before" ? refreshRequired() : response(202);
+				return generation === "before"
+					? refreshRequired()
+					: response(202);
 			}),
 		};
-		const api = createChallengeAwareApi(raw as never, fakeContext(() => generation));
+		const api = createChallengeAwareApi(
+			raw as never,
+			fakeContext(() => generation),
+		);
 		const multipart = {
-			file: { name: "solution.zip", mimeType: "application/zip", buffer: Buffer.from("zip") },
+			file: {
+				name: "solution.zip",
+				mimeType: "application/zip",
+				buffer: Buffer.from("zip"),
+			},
 		};
 
 		const result = await api.post("/api/solutions/id/deploy", {
@@ -204,13 +256,29 @@ describe("challenge-aware E2E API context", () => {
 		});
 
 		expect(result.status()).toBe(202);
-		const uploads = raw.fetch.mock.calls.filter(([url]) => url.endsWith("/deploy"));
+		const uploads = raw.fetch.mock.calls.filter(([url]) =>
+			url.endsWith("/deploy"),
+		);
 		expect(uploads).toHaveLength(2);
 		for (const [, options] of uploads) {
-			expect(options).toMatchObject({ multipart, params: { force: true }, method: "POST" });
+			expect(options).toMatchObject({
+				multipart,
+				params: { force: true },
+				method: "POST",
+			});
 		}
-		expect(uploads[0][1]).toMatchObject({ headers: { "X-CSRF-Token": "csrf-before", "X-Upload-Trace": "fixture" } });
-		expect(uploads[1][1]).toMatchObject({ headers: { "X-CSRF-Token": "csrf-after", "X-Upload-Trace": "fixture" } });
+		expect(uploads[0][1]).toMatchObject({
+			headers: {
+				"X-CSRF-Token": "csrf-before",
+				"X-Upload-Trace": "fixture",
+			},
+		});
+		expect(uploads[1][1]).toMatchObject({
+			headers: {
+				"X-CSRF-Token": "csrf-after",
+				"X-Upload-Trace": "fixture",
+			},
+		});
 	});
 
 	it("stops after the shared replay budget for persistent refresh challenges", async () => {
@@ -253,10 +321,15 @@ describe("challenge-aware E2E API context", () => {
 					generation = "after";
 					return response(200);
 				}
-				return generation === "before" ? refreshRequired() : response(200);
+				return generation === "before"
+					? refreshRequired()
+					: response(200);
 			}),
 		};
-		const api = createChallengeAwareApi(raw as never, fakeContext(() => generation));
+		const api = createChallengeAwareApi(
+			raw as never,
+			fakeContext(() => generation),
+		);
 
 		const first = api.get("/api/one");
 		const second = api.get("/api/two");

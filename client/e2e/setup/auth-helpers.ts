@@ -10,6 +10,7 @@ import { Page, expect } from "@playwright/test";
 import * as path from "path";
 import { fileURLToPath } from "url";
 import { generateTOTP } from "./totp";
+import { withRecoveryProof, completeBrowserMfa } from "./recovery-proofs";
 import {
 	USERS,
 	ORGANIZATIONS,
@@ -155,7 +156,8 @@ export async function registerAndSetupMFA(
 	const totpSecret = mfaSetupData.secret;
 
 	// Verify MFA with TOTP code
-	const totpCode = generateTOTP(totpSecret);
+	const mfaSetupCounter = Math.floor(Date.now() / 30000);
+	const totpCode = generateTOTP(totpSecret, mfaSetupCounter * 30000);
 	const mfaVerifyRes = await fetch(`${API_URL}/auth/mfa/verify`, {
 		method: "POST",
 		headers: {
@@ -177,6 +179,8 @@ export async function registerAndSetupMFA(
 		password: user.password,
 		name: user.name,
 		totpSecret,
+		recoveryCodes: tokens.recovery_codes,
+		mfaSetupCounter,
 		userId,
 		accessToken: tokens.access_token,
 		refreshToken: tokens.refresh_token,
@@ -306,11 +310,7 @@ export async function authenticateInBrowser(
 		console.log(`Login error detected: ${errorContent}`);
 	}
 
-	console.log("MFA input found, entering TOTP code...");
-	const totpCode = generateTOTP(credentials.totpSecret);
-	await mfaInput.fill(totpCode);
-	await page.getByRole("button", { name: /verify|submit|continue/i }).click();
-	console.log("Clicked MFA verify button");
+	await completeBrowserMfa(page, credentials);
 
 	// Wait for redirect away from login page (authenticated)
 	// Could be / (dashboard), /forms (org users), or other authenticated routes
@@ -356,22 +356,21 @@ export async function loginUserViaAPI(
 	// Handle MFA if required
 	if (loginData.mfa_required) {
 		const mfaToken = loginData.mfa_token;
-		const totpCode = generateTOTP(credentials.totpSecret);
 
-		const mfaRes = await fetch(`${API_URL}/auth/mfa/login`, {
-			method: "POST",
-			headers: { "Content-Type": "application/json" },
-			body: JSON.stringify({ mfa_token: mfaToken, code: totpCode }),
+		let tokens: { access_token: string; refresh_token: string } | undefined;
+		await withRecoveryProof(credentials, async (code) => {
+			const result = await fetch(`${API_URL}/auth/mfa/login`, {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ mfa_token: mfaToken, code }),
+			});
+			if (!result.ok)
+				throw new Error(`MFA login failed: ${result.status}`);
+			tokens = await result.json();
+			return tokens!.access_token;
 		});
+		if (!tokens) throw new Error("MFA login omitted tokens");
 
-		if (!mfaRes.ok) {
-			const error = await mfaRes.text();
-			throw new Error(
-				`MFA login failed for ${credentials.email}: ${error}`,
-			);
-		}
-
-		const tokens = await mfaRes.json();
 		return {
 			...credentials,
 			accessToken: tokens.access_token,

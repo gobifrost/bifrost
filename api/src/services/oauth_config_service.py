@@ -741,7 +741,6 @@ class OAuthConfigService:
             OAUTH_OIDC_DISPLAY_NAME, config.display_name, updated_by=updated_by
         )
         await self._set_config_value(
-
             OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING,
             "true" if config.trust_email_for_linking else "false",
             updated_by=updated_by,
@@ -749,7 +748,6 @@ class OAuthConfigService:
         await self._set_config_value(
             _PROVIDER_SCOPES_KEY["oidc"],
             json.dumps(_validate_scopes("oidc", config.scopes)),
-
             updated_by=updated_by,
         )
         await self._store_client_auth("oidc", *auth, updated_by)
