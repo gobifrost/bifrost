@@ -79,6 +79,7 @@ async def _callback(
     get_user_info_side_effect: object | None = None,
     photo_side_effect: object | None = None,
     state_payload: dict | None = None,
+    trust_provider_email: bool = False,
 ):
     state = "callback-state"
     redis = _Redis(state, state_payload)
@@ -99,6 +100,10 @@ async def _callback(
         OAuthService,
         "get_user_info",
         AsyncMock(return_value=user_info, side_effect=get_user_info_side_effect),
+    )
+    monkeypatch.setattr(
+        OAuthService, "get_provider_config",
+        AsyncMock(return_value={"trust_email_for_linking": trust_provider_email}),
     )
     photo = AsyncMock(side_effect=photo_side_effect)
     monkeypatch.setattr(OAuthService, "find_user_by_oauth", lookup)
@@ -475,3 +480,19 @@ async def test_oauth_init_fails_closed_on_malformed_public_url(monkeypatch):
         )
 
     assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("trusted", [False, True])
+async def test_oidc_first_link_requires_claim_or_explicit_provider_trust(monkeypatch, trusted):
+    user = _user()
+    info = OAuthUserInfo("oidc", "subject", user.email, raw_data={"email_verified": False})
+    response, _, provision, _ = await _callback(
+        monkeypatch, user_info=info, tokens=OAuthTokens("access"),
+        existing_user=None, provision_result=user, trust_provider_email=trusted,
+    )
+    assert response.status_code == (200 if trusted else 400)
+    if trusted:
+        provision.assert_awaited_once()
+    else:
+        provision.assert_not_awaited()

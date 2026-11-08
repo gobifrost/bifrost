@@ -17,6 +17,7 @@ import { OAuthProviderCard } from "./oauth/OAuthProviderCard";
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
 	Accordion,
 	AccordionContent,
@@ -55,6 +56,7 @@ export function OAuth() {
 		client_id: "",
 		client_secret: "",
 		display_name: "SSO",
+		trust_email_for_linking: false,
 	});
 	const [loginPreferenceDraft, setLoginPreferenceDraft] =
 		useState<LoginPreferenceValue | null>(null);
@@ -503,6 +505,8 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: oidcConfig?.discovery_url ?? "",
 						display_name: oidcConfig?.display_name ?? "SSO",
+						trust_email_for_linking:
+							oidcConfig?.trust_email_for_linking ?? false,
 					})
 				}
 				onCancel={() =>
@@ -511,6 +515,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					})
 				}
 				title="OIDC Provider"
@@ -548,6 +553,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					});
 				}}
 				onDelete={async () => {
@@ -560,6 +566,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					});
 				}}
 				onTest={async () => {
@@ -643,6 +650,34 @@ export function OAuth() {
 						<p className="text-xs text-muted-foreground">
 							Text shown on the login button (e.g., "Okta",
 							"Auth0", "Company SSO")
+						</p>
+					</div>
+					<div className="space-y-2">
+						<div className="flex items-start justify-between gap-4">
+							<Label htmlFor="oidc-trust-email">
+								Trust Provider Email for Account Linking
+							</Label>
+							<Switch
+								id="oidc-trust-email"
+								aria-describedby="oidc-trust-email-description"
+								checked={oidcForm.trust_email_for_linking}
+								onCheckedChange={(checked) =>
+									setOidcForm((prev) => ({
+										...prev,
+										trust_email_for_linking: checked,
+									}))
+								}
+							/>
+						</div>
+						<p
+							id="oidc-trust-email-description"
+							className="text-sm text-muted-foreground"
+						>
+							Allow this provider’s email addresses to link
+							accounts and assign organizations without a
+							verified-email claim. Enable only if the provider
+							controls email addresses and prevents users from
+							choosing another person’s address.
 						</p>
 					</div>
 

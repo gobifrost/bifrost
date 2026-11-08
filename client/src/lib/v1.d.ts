@@ -24052,6 +24052,12 @@ export interface components {
              */
             private_key_alg?: string | null;
             /**
+             * Trust Email For Linking
+             * @description Whether the generic OIDC provider is trusted for email-based linking and provisioning
+             * @default false
+             */
+            trust_email_for_linking: boolean;
+            /**
              * Tenant Id
              * @description Microsoft tenant ID
              */
@@ -24124,6 +24130,12 @@ export interface components {
              * @default false
              */
             clear_private_key: boolean;
+            /**
+             * Trust Email For Linking
+             * @description Trust this configured provider as the authority for email-based account linking and organization provisioning even without email_verified=true. Enable only when the provider controls email addresses and prevents impersonation.
+             * @default false
+             */
+            trust_email_for_linking: boolean;
             /**
              * Discovery Url
              * @description OIDC discovery URL (must be HTTPS, e.g., https://provider.com/.well-known/openid-configuration)

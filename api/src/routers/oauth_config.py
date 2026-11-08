@@ -52,6 +52,7 @@ def _config_response(
         private_key_set=bool(config.private_key),
         private_key_kid=config.private_key_kid,
         private_key_alg=config.private_key_alg,
+        trust_email_for_linking=config.trust_email_for_linking if provider == "oidc" else False,
         tenant_id=config.tenant_id if provider == "microsoft" else None,
         discovery_url=config.discovery_url if provider == "oidc" else None,
         display_name=config.display_name if provider == "oidc" else None,

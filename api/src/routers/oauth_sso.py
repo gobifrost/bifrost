@@ -442,7 +442,13 @@ async def oauth_callback(
         # New user or linking new OAuth account. Existing mappings authenticate
         # by stable provider ID; email authority is only required to create one.
         try:
-            oauth_service.validate_email_for_linking(user_info, tokens)
+            trust_provider_email = False
+            if user_info.provider == "oidc":
+                config = await oauth_service.get_provider_config("oidc")
+                trust_provider_email = config["trust_email_for_linking"]
+            oauth_service.validate_email_for_linking(
+                user_info, tokens, trust_provider_email=trust_provider_email
+            )
         except OAuthError as e:
             logger.error(f"OAuth callback linking error: {log_safe(e)}")
             raise HTTPException(
