@@ -14,6 +14,7 @@ Key principles:
 import base64
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -218,6 +219,107 @@ def _has_workspace_files(root: Path) -> bool:
         if entry.is_file() or any(path.is_file() for path in entry.rglob("*")):
             return True
     return False
+
+
+def _workspace_path_candidate(root: Path, raw_path: str) -> Path:
+    """Return a safe workspace path without normalizing its Git spelling.
+
+    Desktop Git operations retain ``raw_path`` for Git, while filesystem work
+    uses this candidate so unlinking a safe symlink removes the link itself.
+    """
+    if not raw_path or "\0" in raw_path:
+        raise SyncError("Workspace path must name a file inside the workspace")
+
+    raw = Path(raw_path)
+    if ".git" in raw.parts:
+        raise SyncError("Workspace path may not access Git metadata")
+
+    candidate = root / raw
+    try:
+        resolved_root = root.resolve(strict=False)
+        resolved_candidate = candidate.resolve(strict=False)
+        relative = resolved_candidate.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SyncError("Workspace path must resolve inside the workspace") from error
+
+    if relative == Path("."):
+        raise SyncError("Workspace path must not target the workspace root")
+    if ".git" in relative.parts:
+        raise SyncError("Workspace path may not access Git metadata")
+    return candidate
+
+
+def _assert_safe_git_symlink_target(root: Path, relative_path: str, target: str) -> None:
+    """Reject a Git symlink blob that checkout would make escape ``root``."""
+    if "\0" in target:
+        raise SyncError("Git symlink target is invalid")
+    link_path = root / relative_path
+    target_path = Path(target)
+    candidate = target_path if target_path.is_absolute() else link_path.parent / target_path
+    try:
+        resolved_root = root.resolve(strict=False)
+        relative = candidate.resolve(strict=False).relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SyncError("Git symlink target must resolve inside the workspace") from error
+    if relative == Path(".") or ".git" in relative.parts:
+        raise SyncError("Git symlink target may not access Git metadata")
+
+
+def _git_symlink_entries(output: str, *, stage: int | None = None) -> list[tuple[str, str]]:
+    """Extract symlink blob object IDs from NUL-delimited Git tree records."""
+    entries: list[tuple[str, str]] = []
+    for record in output.split("\0"):
+        if not record:
+            continue
+        metadata, path = record.split("\t", 1)
+        fields = metadata.split()
+        if stage is None:
+            mode, _kind, object_id = fields
+        else:
+            mode, object_id, entry_stage = fields
+            if int(entry_stage) != stage:
+                continue
+        if mode == "120000":
+            entries.append((path, object_id))
+    return entries
+
+
+def _preflight_git_symlinks(
+    root: Path,
+    repo: GitRepo,
+    entries: Iterable[tuple[str, str]],
+) -> None:
+    """Validate selected symlink blobs before checkout can materialize them."""
+    for relative_path, object_id in entries:
+        target = os.fsdecode(
+            repo.odb.stream(bytes.fromhex(object_id)).read()
+        )
+        _assert_safe_git_symlink_target(root, relative_path, target)
+
+
+def _preflight_head_checkout_symlinks(root: Path, repo: GitRepo, paths: Iterable[str]) -> None:
+    """Check every HEAD symlink selected by a discard checkout pathspec."""
+    if not repo.head.is_valid():
+        return
+    with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+        for path in paths:
+            output = repo.git.ls_tree("-r", "-z", "HEAD", "--", path)
+            _preflight_git_symlinks(root, repo, _git_symlink_entries(output))
+
+
+def _preflight_conflict_checkout_symlinks(
+    root: Path,
+    repo: GitRepo,
+    resolutions: Mapping[str, str],
+) -> None:
+    """Check ours/theirs conflict blobs before resolution checkout materializes them."""
+    with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+        for path, resolution in resolutions.items():
+            stage = {"ours": 2, "theirs": 3}.get(resolution)
+            if stage is None:
+                continue
+            output = repo.git.ls_files("-u", "-z", "--", path)
+            _preflight_git_symlinks(root, repo, _git_symlink_entries(output, stage=stage))
 
 
 def _workspace_fingerprint(root: Path) -> str:
@@ -1413,6 +1515,15 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
+                # Validate the whole batch before opening or changing the repository.
+                for path in resolutions:
+                    _workspace_path_candidate(work_dir, path)
+                if (work_dir / ".git").exists():
+                    _preflight_conflict_checkout_symlinks(
+                        work_dir,
+                        GitRepo(str(work_dir)),
+                        resolutions,
+                    )
                 repo = self._open_or_init(work_dir)
 
                 # Check for merge state or unmerged entries (stash pop conflicts)
@@ -1426,17 +1537,20 @@ class GitHubSyncService:
                 # Apply resolutions
                 for cpath, resolution in resolutions.items():
                     try:
-                        if resolution == "ours":
-                            repo.git.checkout("--ours", cpath)
-                        elif resolution == "theirs":
-                            repo.git.checkout("--theirs", cpath)
-                        repo.git.add(cpath)
+                        with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                            if resolution == "ours":
+                                repo.git.checkout("--ours", "--", cpath)
+                            elif resolution == "theirs":
+                                repo.git.checkout("--theirs", "--", cpath)
+                            repo.git.add("--", cpath)
                     except Exception:
                         # DU/UD conflict — one side deleted, checkout fails
                         try:
-                            repo.git.rm(cpath)
+                            with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                repo.git.rm("--", cpath)
                         except Exception:
-                            repo.git.add(cpath)
+                            with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                repo.git.add("--", cpath)
 
                 # Complete the operation (merge commit is local)
                 if is_merge:
@@ -1472,6 +1586,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace(readonly=True) as work_dir:
+                working_path = _workspace_path_candidate(work_dir, path)
                 repo = self._open_or_init(work_dir)
 
                 # Get HEAD content
@@ -1484,7 +1599,6 @@ class GitHubSyncService:
 
                 # Get working tree content
                 working_content = None
-                working_path = work_dir / path
                 if working_path.exists():
                     working_content = working_path.read_text(errors="replace")
 
@@ -1503,7 +1617,16 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
+                for path in paths:
+                    _workspace_path_candidate(work_dir, path)
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
+                file_paths = [_workspace_path_candidate(work_dir, path) for path in paths]
+                if (work_dir / ".git").exists():
+                    _preflight_head_checkout_symlinks(
+                        work_dir,
+                        GitRepo(str(work_dir)),
+                        paths,
+                    )
                 repo = self._open_or_init(work_dir)
                 if merge_in_progress(work_dir, repo):
                     # Syncing up would publish the conflict markers to storage.
@@ -1516,13 +1639,13 @@ class GitHubSyncService:
                     )
                 discarded = []
 
-                for path in paths:
-                    file_path = work_dir / path
+                for path, file_path in zip(paths, file_paths, strict=True):
                     try:
                         if repo.head.is_valid():
                             try:
                                 # File exists in HEAD — restore it
-                                repo.git.checkout("HEAD", "--", path)
+                                with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                    repo.git.checkout("HEAD", "--", path)
                                 discarded.append(path)
                                 continue
                             except Exception as e:

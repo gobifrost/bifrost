@@ -6,6 +6,7 @@ Tests the GitHubSyncService data models and exceptions.
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from git import Repo
@@ -127,6 +128,47 @@ async def test_desktop_status_surfaces_invalid_repository(tmp_path: Path) -> Non
 
     with pytest.raises(GitStatusError, match="status failed"):
         await _status_service(tmp_path).desktop_status()
+
+
+@pytest.mark.asyncio
+async def test_desktop_diff_reads_only_from_the_workspace(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path)
+    inside = tmp_path / "inside.txt"
+    outside = tmp_path.parent / "diff-outside-sentinel.txt"
+    inside.write_text("inside\n")
+    outside.write_text("outside\n")
+    service = _status_service(tmp_path)
+    service._open_or_init = lambda work_dir: repo
+
+    inside_result = await service.desktop_diff("inside.txt")
+    outside_result = await service.desktop_diff("../diff-outside-sentinel.txt")
+
+    assert inside_result.working_content == "inside\n"
+    assert outside_result.working_content is None
+    assert outside.read_text() == "outside\n"
+
+
+@pytest.mark.asyncio
+async def test_desktop_discard_does_not_delete_outside_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core import module_cache
+
+    repo = Repo.init(tmp_path)
+    outside = tmp_path.parent / "discard-outside-sentinel.txt"
+    outside.write_text("outside\n")
+    service = _status_service(tmp_path)
+    service._open_or_init = lambda work_dir: repo
+    service.repo_manager.ensure_storage_unchanged = AsyncMock()
+    service.repo_manager.sync_up = AsyncMock()
+    service._update_file_index = AsyncMock()
+    service.db = AsyncMock()
+    monkeypatch.setattr(module_cache, "refresh_modules_from_directory", AsyncMock())
+
+    result = await service.desktop_discard(["../discard-outside-sentinel.txt"])
+
+    assert result.success is False
+    assert outside.read_text() == "outside\n"
 
 
 def _git_state(repo: Repo) -> tuple[bytes, bytes, bytes, tuple[tuple[str, bytes], ...]]:
