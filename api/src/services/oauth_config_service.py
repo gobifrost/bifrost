@@ -227,6 +227,14 @@ def _validate_scopes(provider: OAuthSSOProvider, scopes: list[str] | None) -> li
         raise OAuthConfigValidationError(
             "scopes must include 'openid' so the provider returns an id_token"
         )
+    if provider == "microsoft" and not any(
+        scope in {"User.Read", "https://graph.microsoft.com/User.Read"}
+        for scope in cleaned
+    ):
+        raise OAuthConfigValidationError(
+            "Microsoft scopes must include 'User.Read' so Bifrost can read "
+            "the signed-in user's profile from Microsoft Graph"
+        )
     return cleaned
 
 

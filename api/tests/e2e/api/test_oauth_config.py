@@ -403,6 +403,33 @@ def test_scopes_default_customize_and_require_openid(e2e_client, platform_admin)
 
 
 @pytest.mark.e2e
+def test_microsoft_scope_validation_preserves_saved_configuration(
+    e2e_client, platform_admin
+) -> None:
+    headers = platform_admin.headers
+    base = {"client_id": "scope-client", "client_secret": "scope-secret"}
+    try:
+        response = e2e_client.put(
+            "/api/settings/oauth/microsoft", headers=headers, json=base
+        )
+        assert response.status_code == 200
+        saved = response.json()
+
+        response = e2e_client.put(
+            "/api/settings/oauth/microsoft",
+            headers=headers,
+            json={**base, "client_id": "invalid-update", "scopes": ["openid"]},
+        )
+        assert response.status_code == 400
+        assert "User.Read" in response.json()["detail"]
+        response = e2e_client.get("/api/settings/oauth/microsoft", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == saved
+    finally:
+        e2e_client.delete("/api/settings/oauth/microsoft", headers=headers)
+
+
+@pytest.mark.e2e
 async def test_saved_scopes_are_used_in_the_authorization_url(
     e2e_client, platform_admin, db_session
 ) -> None:

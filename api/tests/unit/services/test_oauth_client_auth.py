@@ -239,6 +239,22 @@ def test_scopes_keep_defaults_dedupe_and_require_openid():
         _validate_scopes("google", ["openid", "email profile"])
 
 
+def test_microsoft_scopes_require_graph_profile_access():
+    with pytest.raises(OAuthConfigValidationError, match="User.Read"):
+        _validate_scopes("microsoft", ["openid", "email", "profile"])
+
+
+@pytest.mark.parametrize("scope", ["User.Read", "https://graph.microsoft.com/User.Read"])
+def test_microsoft_custom_scopes_keep_graph_profile_access(scope):
+    assert _validate_scopes("microsoft", ["openid", scope]) == ["openid", scope]
+
+
+def test_microsoft_default_scopes_keep_graph_profile_access():
+    assert _validate_scopes("microsoft", None) == [
+        "openid", "email", "profile", "User.Read",
+    ]
+
+
 def _ec_pem(curve) -> str:
     from cryptography.hazmat.primitives.asymmetric import ec
 
