@@ -35,6 +35,7 @@ function scopesPayload(value: string): string[] | null {
 import { useState } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import {
 	Accordion,
 	AccordionContent,
@@ -76,6 +77,7 @@ export function OAuth() {
 		client_id: "",
 		client_secret: "",
 		display_name: "SSO",
+		trust_email_for_linking: false,
 	});
 	const [loginPreferenceDraft, setLoginPreferenceDraft] =
 		useState<LoginPreferenceValue | null>(null);
@@ -215,8 +217,7 @@ export function OAuth() {
 						token_endpoint_auth_method:
 							microsoftConfig?.token_endpoint_auth_method ??
 							"client_secret_post",
-						private_key_kid:
-							microsoftConfig?.private_key_kid ?? "",
+						private_key_kid: microsoftConfig?.private_key_kid ?? "",
 						private_key_alg:
 							microsoftConfig?.private_key_alg ?? "RS256",
 						scopes: (microsoftConfig?.scopes ?? []).join(" "),
@@ -387,13 +388,17 @@ export function OAuth() {
 
 					<OAuthClientAuthFields
 						idPrefix="ms"
-						token_endpoint_auth_method={microsoftForm.token_endpoint_auth_method}
+						token_endpoint_auth_method={
+							microsoftForm.token_endpoint_auth_method
+						}
 						private_key={microsoftForm.private_key}
 						private_key_kid={microsoftForm.private_key_kid}
 						private_key_alg={microsoftForm.private_key_alg}
 						clear_private_key={microsoftForm.clear_private_key}
 						scopes={microsoftForm.scopes}
-						privateKeySet={microsoftConfig?.private_key_set || false}
+						privateKeySet={
+							microsoftConfig?.private_key_set || false
+						}
 						onChange={(patch) =>
 							setMicrosoftForm((prev) => ({ ...prev, ...patch }))
 						}
@@ -412,8 +417,7 @@ export function OAuth() {
 						token_endpoint_auth_method:
 							googleConfig?.token_endpoint_auth_method ??
 							"client_secret_post",
-						private_key_kid:
-							googleConfig?.private_key_kid ?? "",
+						private_key_kid: googleConfig?.private_key_kid ?? "",
 						private_key_alg:
 							googleConfig?.private_key_alg ?? "RS256",
 						scopes: (googleConfig?.scopes ?? []).join(" "),
@@ -552,7 +556,9 @@ export function OAuth() {
 
 					<OAuthClientAuthFields
 						idPrefix="google"
-						token_endpoint_auth_method={googleForm.token_endpoint_auth_method}
+						token_endpoint_auth_method={
+							googleForm.token_endpoint_auth_method
+						}
 						private_key={googleForm.private_key}
 						private_key_kid={googleForm.private_key_kid}
 						private_key_alg={googleForm.private_key_alg}
@@ -576,13 +582,15 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: oidcConfig?.discovery_url ?? "",
 						display_name: oidcConfig?.display_name ?? "SSO",
+
+						trust_email_for_linking:
+							oidcConfig?.trust_email_for_linking ?? false,
+
 						token_endpoint_auth_method:
 							oidcConfig?.token_endpoint_auth_method ??
 							"client_secret_post",
-						private_key_kid:
-							oidcConfig?.private_key_kid ?? "",
-						private_key_alg:
-							oidcConfig?.private_key_alg ?? "RS256",
+						private_key_kid: oidcConfig?.private_key_kid ?? "",
+						private_key_alg: oidcConfig?.private_key_alg ?? "RS256",
 						scopes: (oidcConfig?.scopes ?? []).join(" "),
 					})
 				}
@@ -593,6 +601,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					})
 				}
 				title="OIDC Provider"
@@ -626,6 +635,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					});
 				}}
 				onDelete={async () => {
@@ -639,6 +649,7 @@ export function OAuth() {
 						client_secret: "",
 						discovery_url: "",
 						display_name: "SSO",
+						trust_email_for_linking: false,
 					});
 				}}
 				onTest={async () => {
@@ -724,6 +735,34 @@ export function OAuth() {
 							"Auth0", "Company SSO")
 						</p>
 					</div>
+					<div className="space-y-2">
+						<div className="flex items-start justify-between gap-4">
+							<Label htmlFor="oidc-trust-email">
+								Trust Provider Email for Account Linking
+							</Label>
+							<Switch
+								id="oidc-trust-email"
+								aria-describedby="oidc-trust-email-description"
+								checked={oidcForm.trust_email_for_linking}
+								onCheckedChange={(checked) =>
+									setOidcForm((prev) => ({
+										...prev,
+										trust_email_for_linking: checked,
+									}))
+								}
+							/>
+						</div>
+						<p
+							id="oidc-trust-email-description"
+							className="text-sm text-muted-foreground"
+						>
+							Allow this provider’s email addresses to link
+							accounts and assign organizations without a
+							verified-email claim. Enable only if the provider
+							controls email addresses and prevents users from
+							choosing another person’s address.
+						</p>
+					</div>
 
 					<Accordion type="single" collapsible className="w-full">
 						<AccordionItem value="instructions">
@@ -776,7 +815,9 @@ export function OAuth() {
 
 					<OAuthClientAuthFields
 						idPrefix="oidc"
-						token_endpoint_auth_method={oidcForm.token_endpoint_auth_method}
+						token_endpoint_auth_method={
+							oidcForm.token_endpoint_auth_method
+						}
 						private_key={oidcForm.private_key}
 						private_key_kid={oidcForm.private_key_kid}
 						private_key_alg={oidcForm.private_key_alg}

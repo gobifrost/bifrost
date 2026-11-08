@@ -1,0 +1,25 @@
+{
+  "key": "pr:1284",
+  "classification": "highlight",
+  "entry_ids": [
+    "b8d9664c-0c0a-4909-b1ca-567d6b001284"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1284"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1284",
+      "Private owner review at head 2d2b31381474ec6bfc0f4773f437e310e533b0d0; Jack authorized scoped repairs, verification and protected merge with Send it in the existing owner task. Exact public prose approval remains pending.",
+      "Manual sensitive-path review and bounded independent Astra review found no additional auth regression. 53 focused tests passed, including PostgreSQL replay/concurrency and enrollment coverage.",
+      "Source author MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; original contribution retained.",
+      "Scoped follow-up verification: 90 targeted tests passed with zero failures, errors or skips, including auth and SSO-only API flows, deterministic helper regression tests, OAuth identity/redirect checks and PostgreSQL replay coverage. Real-time TOTP freshness waits dominate the live-test duration; no rejected request is retried.",
+      "Jack approved the provider-trust fix after comparing established OIDC platforms. Explicit opt-in grants configured issuer email authority for linking and organization provisioning even when mailbox verification is false or absent. Default-off policy requires verified email from UserInfo or matching verified ID-token claim only when UserInfo omitted verification. Bounded independent Astra review found no concrete auth/persistence findings in the revision. Exact revised public wording is pending approval; earlier blanket notice is superseded.",
+      "General Writing/Humanizer review: narrowed first-login wording to generic OIDC, named the exact default-off trust setting and its address-control condition, retained existing-link compatibility, configured callback origin and single-use authenticator behavior. Release-only visibility remains in_app=false. No agent prompt: enabling trust requires an administrator to assess the identity provider\u2019s authority rather than apply a universal configuration change. Current197-case backend,19-case component and13-case rendered checks passed; final33-case numeric recovery/replay checks and rebuilt API quality also passed. Exact prose remains draft pending native approval.",
+      "Native exact-public-text approval: Jack replied Send it to the immediately preceding complete PR description and release-only notice in the existing PR1284 owner task on 2026-11-08, after accepting the generic-OIDC compatibility behavior. This approves those exact texts; in_app remains false. Prior pending-approval evidence is superseded by this receipt."
+    ]
+  }
+}

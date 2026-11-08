@@ -24069,11 +24069,16 @@ export interface components {
              */
             private_key_alg?: string | null;
             /**
+             * Trust Email For Linking
+             * @description Whether the generic OIDC provider is trusted for email-based linking and provisioning
+             * @default false
+             */
+            trust_email_for_linking: boolean;
+            /**
              * Scopes
              * @description Requested OAuth scopes
-             * @default []
              */
-            scopes: string[];
+            scopes?: string[];
             /**
              * Tenant Id
              * @description Microsoft tenant ID
@@ -24152,6 +24157,12 @@ export interface components {
              * @description OAuth scopes to request. Omit for the provider default (openid email profile; Microsoft also requests User.Read). openid is required so an id_token is returned.
              */
             scopes?: string[] | null;
+            /**
+             * Trust Email For Linking
+             * @description Trust this configured provider as the authority for email-based account linking and organization provisioning even without email_verified=true. Enable only when the provider controls email addresses and prevents impersonation.
+             * @default false
+             */
+            trust_email_for_linking: boolean;
             /**
              * Discovery Url
              * @description OIDC discovery URL (must be HTTPS, e.g., https://provider.com/.well-known/openid-configuration)

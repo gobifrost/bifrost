@@ -15,7 +15,7 @@ import { test, expect } from "./fixtures/api-fixture";
 import * as fs from "fs";
 import * as path from "path";
 import { fileURLToPath } from "url";
-import { generateTOTP } from "./setup/totp";
+import { completeBrowserMfa } from "./setup/recovery-proofs";
 import { getCredentialsPath, type UserCredentials } from "./fixtures/users";
 
 // ESM equivalent of __dirname
@@ -114,16 +114,12 @@ test.describe("Login Flow", () => {
 			const mfaInput = page.getByLabel(/code|totp|verification/i);
 
 			await expect(mfaInput).toBeVisible();
-			const totpCode = generateTOTP(user.totpSecret);
-			await mfaInput.fill(totpCode);
 			const identity = page.waitForResponse(
 				(response) =>
 					new URL(response.url()).pathname === "/auth/me" &&
 					response.request().method() === "GET",
 			);
-			await page
-				.getByRole("button", { name: /verify|submit|continue/i })
-				.click();
+			await completeBrowserMfa(page, user);
 			expect((await identity).status()).toBe(200);
 
 			// Should redirect to dashboard (wait for not being on login page)
@@ -160,11 +156,7 @@ test.describe("Login Flow", () => {
 		// Handle MFA if required
 		const mfaInput = page.getByLabel(/code|totp|verification/i);
 		await expect(mfaInput).toBeVisible();
-		const totpCode = generateTOTP(user.totpSecret);
-		await mfaInput.fill(totpCode);
-		await page
-			.getByRole("button", { name: /verify|submit|continue/i })
-			.click();
+		await completeBrowserMfa(page, user);
 
 		// Should redirect back to workflows (the original destination)
 		await expect(page).toHaveURL(/\/workflows$/);

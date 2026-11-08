@@ -141,6 +141,8 @@ test.describe("Isolated account onboarding", () => {
 			data: { code: generateTOTP(secret) },
 		});
 		expect(verified.ok(), "persist seeded authenticator").toBe(true);
+		const recoveryCodes = (await verified.json())
+			.recovery_codes as string[];
 		const page = await context!.newPage();
 		await page.goto("/user-settings/basic-info");
 		const changedPassword = `Changed-${randomUUID()}!Aa1`;
@@ -179,7 +181,7 @@ test.describe("Isolated account onboarding", () => {
 			await passwordLogin(freshPage, email, changedPassword);
 			await freshPage
 				.getByLabel("Authentication Code", { exact: true })
-				.fill(generateTOTP(secret));
+				.fill(recoveryCodes[0]!);
 			await freshPage
 				.getByRole("button", { name: "Verify", exact: true })
 				.click();

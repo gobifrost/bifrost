@@ -15,8 +15,8 @@ import * as crypto from "crypto";
  * @param secret - Base32-encoded TOTP secret from MFA setup
  * @returns 6-digit TOTP code as string
  */
-export function generateTOTP(secret: string): string {
-	const epoch = Math.floor(Date.now() / 1000);
+export function generateTOTP(secret: string, at: number = Date.now()): string {
+	const epoch = Math.floor(at / 1000);
 	const timeStep = 30;
 	const counter = Math.floor(epoch / timeStep);
 

@@ -19,6 +19,7 @@ const configData = {
 			configured: true,
 			client_id: "client-id",
 			client_secret_set: true,
+			trust_email_for_linking: false,
 			tenant_id: "organizations",
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
@@ -27,6 +28,7 @@ const configData = {
 			provider: "google",
 			configured: false,
 			client_secret_set: false,
+			trust_email_for_linking: false,
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
 		},
@@ -34,6 +36,7 @@ const configData = {
 			provider: "oidc",
 			configured: false,
 			client_secret_set: false,
+			trust_email_for_linking: false,
 			token_endpoint_auth_method: "private_key_jwt",
 			private_key_alg: "RS384",
 		},
@@ -71,6 +74,7 @@ describe("OAuth settings", () => {
 		refetch.mockResolvedValue({});
 		configData.providers.forEach((provider, index) => {
 			provider.configured = index === 0;
+			provider.trust_email_for_linking = false;
 		});
 	});
 
@@ -110,9 +114,7 @@ describe("OAuth settings", () => {
 			provider.configured = true;
 		});
 		const { user } = renderWithProviders(<OAuth />);
-		await user.click(
-			screen.getAllByRole("button", { name: "Edit" })[1]!,
-		);
+		await user.click(screen.getAllByRole("button", { name: "Edit" })[1]!);
 
 		const scopes = screen.getByLabelText(/scopes/i);
 		await user.clear(scopes);
@@ -128,6 +130,43 @@ describe("OAuth settings", () => {
 				}),
 			}),
 		);
+	});
+
+	it("starts with email trust off and persists an explicit choice when editing", async () => {
+		configData.providers.forEach((provider) => {
+			provider.configured = true;
+		});
+		const { user } = renderWithProviders(<OAuth />);
+		await user.click(screen.getAllByRole("button", { name: "Edit" })[2]!);
+		const trust = screen.getByRole("switch", {
+			name: "Trust Provider Email for Account Linking",
+		});
+		expect(trust).toHaveAttribute("aria-checked", "false");
+		await user.click(trust);
+		await user.click(
+			screen.getByRole("button", { name: "Save Configuration" }),
+		);
+		await waitFor(() =>
+			expect(updateOidcConfig).toHaveBeenCalledWith({
+				body: expect.objectContaining({
+					trust_email_for_linking: true,
+				}),
+			}),
+		);
+	});
+
+	it("loads stored OIDC email trust instead of resetting it on edit", async () => {
+		configData.providers.forEach((provider) => {
+			provider.configured = true;
+		});
+		configData.providers[2]!.trust_email_for_linking = true;
+		const { user } = renderWithProviders(<OAuth />);
+		await user.click(screen.getAllByRole("button", { name: "Edit" })[2]!);
+		expect(
+			screen.getByRole("switch", {
+				name: "Trust Provider Email for Account Linking",
+			}),
+		).toHaveAttribute("aria-checked", "true");
 	});
 
 	it("saves a configured provider as the preferred first attempt", async () => {
