@@ -12,7 +12,7 @@ import pytest
 import redis
 
 from src.config import get_settings
-from src.core.s3_transport import S3NoSuchKey
+from src.core.storage.contracts import StorageError
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 from src.services.repo_storage import RepoStorage
 
@@ -45,7 +45,9 @@ async def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_
     object_key = "requirements.txt"
     try:
         original_object = await storage.read(object_key)
-    except S3NoSuchKey:
+    except StorageError as error:
+        if error.kind != "not_found":
+            raise
         original_object = None
     original = client.get(key)
     original_ttl = client.pttl(key)
