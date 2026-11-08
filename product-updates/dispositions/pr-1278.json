@@ -1,0 +1,13 @@
+{
+  "key": "pr:1278",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Compose worker stop grace period only. The worker service now uses the same 310s stop window the API service already has, so Docker's 10s default does not SIGKILL a draining worker. Container deployment configuration; no customer-facing capability, setting, or upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1278",
+      "Codex reviewed the 300-second launcher drain and 310-second Compose stop allowance on 2026-11-08 under Jack's explicit scoped repair and protected-merge approval in the existing PR task. No security, permission, customer migration or public announcement is required; original contribution remains credited to Thomas Bray (MTG-Thomas)."
+    ]
+  }
+}
