@@ -146,3 +146,45 @@ async def test_reregistering_into_another_organization_rechecks_its_identity(
 
     await db_session.refresh(workflow)
     assert (workflow.is_active, str(workflow.organization_id)) == (False, org1["id"])
+
+
+@pytest.mark.asyncio
+async def test_reregistering_without_scope_preserves_organization_and_identity(
+    e2e_client, platform_admin, org1, org2, db_session
+) -> None:
+    """An admin's default Global target must not relocate an inactive org row."""
+    identities = await _identities(db_session, org1, org2)
+    name = f"reactivation_scope_{uuid.uuid4().hex[:8]}"
+    path = f"workflows/{name}.py"
+    written = e2e_client.put(
+        "/api/files/editor/content", headers=platform_admin.headers,
+        json={"path": path, "content": _SOURCE.format(name=name), "encoding": "utf-8"},
+    )
+    assert written.status_code == 200, written.text
+    workflow = Workflow(
+        name=name, function_name=name, path=path, is_active=False,
+        organization_id=uuid.UUID(org1["id"]),
+        run_identity_id=uuid.UUID(identities["org1"]),
+    )
+    db_session.add(workflow)
+    await db_session.commit()
+    workflow_id = workflow.id
+    try:
+        response = e2e_client.post(
+            "/api/workflows/register", headers=platform_admin.headers,
+            json={"path": path, "function_name": name},
+        )
+        assert response.status_code == 201, response.text
+        assert response.json()["id"] == str(workflow_id)
+        assert response.json()["organization_id"] == org1["id"]
+        await db_session.refresh(workflow)
+        assert workflow.is_active
+        assert workflow.organization_id == uuid.UUID(org1["id"])
+        assert workflow.run_identity_id == uuid.UUID(identities["org1"])
+    finally:
+        await db_session.delete(workflow)
+        await db_session.commit()
+        removed = e2e_client.delete(
+            "/api/files/editor", headers=platform_admin.headers, params={"path": path},
+        )
+        assert removed.status_code in (200, 204), removed.text

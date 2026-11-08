@@ -654,7 +654,18 @@ async def register_workflow(
     from src.services.file_storage import FileStorageService
     from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
-    # Resolve and authorize the destination before revealing whether a source
+    # Include inactive rows so omission can preserve their stored scope.
+    existing = await db.execute(
+        select(WorkflowORM).where(
+            WorkflowORM.path == request.path,
+            WorkflowORM.function_name == request.function_name,
+        )
+    )
+    existing_wf = existing.scalar_one_or_none()
+    if existing_wf and not existing_wf.is_active:
+        await _require_workflow_permission(db, user, existing_wf, "workflows.readwrite")
+
+    # Resolve and authorize the final destination before revealing whether a source
     # file exists.  The actor only supplies attribution; Caller keeps original
     # user reach and current roles for this write decision.
     if "organization_id" in (request.model_fields_set or set()):
@@ -662,6 +673,8 @@ async def register_workflow(
             org_uuid = UUID(request.organization_id) if request.organization_id else None
         except (ValueError, TypeError):
             raise HTTPException(status_code=400, detail="organization_id must be a UUID or null") from None
+    elif existing_wf and not existing_wf.is_active:
+        org_uuid = existing_wf.organization_id
     else:
         caller = await load_caller(db, user)
         runtime = caller.principal.runtime_authority
@@ -720,15 +733,6 @@ async def register_workflow(
             detail=f"No decorated function '{request.function_name}' found in {request.path}",
         )
 
-    # 3. Check if already registered (include inactive rows for reactivation)
-    existing = await db.execute(
-        select(WorkflowORM).where(
-            WorkflowORM.path == request.path,
-            WorkflowORM.function_name == request.function_name,
-        )
-    )
-    existing_wf = existing.scalar_one_or_none()
-
     wf_type = "data_provider" if target_decorator_type == "data_provider" else (
         "tool" if target_decorator_type == "tool" else (
             "service" if target_decorator_type == "service" else "workflow"
@@ -776,7 +780,6 @@ async def register_workflow(
     if existing_wf and existing_wf.is_active:
         raise HTTPException(status_code=409, detail="Workflow already registered")
     elif existing_wf and not existing_wf.is_active:
-        await _require_workflow_permission(db, user, existing_wf, "workflows.readwrite")
         # Reactivate the existing inactive workflow, preserving its UUID
         workflow_id = existing_wf.id
         existing_wf.is_active = True

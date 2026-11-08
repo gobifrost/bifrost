@@ -183,7 +183,14 @@ class RegisterWorkflowRequest(BaseModel):
     """Request model for explicit workflow registration."""
     path: str = Field(..., description="Workspace-relative path to the .py file")
     function_name: str = Field(..., description="Name of the decorated function to register")
-    organization_id: str | None = Field(default=None, description="Organization ID to scope the workflow to, or null for global scope")
+    organization_id: str | None = Field(
+        default=None,
+        description=(
+            "Organization ID to scope the workflow to. Omit to preserve the stored "
+            "organization when reactivating; new registrations default to the caller's "
+            "runtime or home organization. Pass null for global scope."
+        ),
+    )
     access_level: str | None = Field(
         default=None,
         description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required). Omit to leave at the schema default.",

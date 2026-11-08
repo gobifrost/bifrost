@@ -26052,7 +26052,7 @@ export interface components {
             function_name: string;
             /**
              * Organization Id
-             * @description Organization ID to scope the workflow to, or null for global scope
+             * @description Organization ID to scope the workflow to. Omit to preserve the stored organization when reactivating; new registrations default to the caller's runtime or home organization. Pass null for global scope.
              */
             organization_id?: string | null;
             /**
