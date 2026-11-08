@@ -1,0 +1,20 @@
+{
+  "key": "pr:1284",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "SSO redirects are limited to the configured origin, generic OIDC requires a verified email before linking, and a one-time code cannot authenticate twice.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1284"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1284",
+      "Source contribution by MTG-Thomas (Thomas Bray), MTG-Thomas/bifrost-upstream; head 0b44d1969cb7fd78122a540c8a1b98e25e52eca0.",
+      "Independent peer and adversarial review against the candidate. Reproduced and fixed findings: attacker-controlled Host fallback in the redirect allowlist, enrollment step reuse, malformed TOTP and redirect input, origin normalization, SQL wildcard email lookup, concurrent recovery-code consumption, and missing database-backed replay coverage. Contributor editorial review is not maintainer approval or a security attestation.",
+      "112 focused unit and e2e tests passed in the Docker lane, including PostgreSQL-backed tests proving an accepted TOTP step is refused from a new transaction, two concurrent verifications accept exactly one, and enrollment consumes its step. Redirect tests cover hostile origins, hostile Host headers, malformed authorities, canonical origins and fail-closed configuration. Full ruff and hosted CI remain required."
+    ]
+  }
+}
