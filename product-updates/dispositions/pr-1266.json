@@ -1,0 +1,14 @@
+{
+  "key": "pr:1266",
+  "classification": "highlight",
+  "entry_ids": [
+    "ad98445c-6b52-45ee-93b7-c92e29e042bb"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1266",
+      "Release-only Fixed note for credential-refresh completion; internal nightly fixture corrections require no in-app announcement."
+    ]
+  }
+}

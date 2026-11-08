@@ -1,8 +1,9 @@
 {
   "key": "pr:1215",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Optional worker-control transport configuration and credential-isolation hardening. This adds no front-facing product capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted.",
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -19,7 +20,8 @@
       "Accepted limits: no live Cloudflare Access enrollment or Azure execution acceptance was exercised. Gateway policy, credential provisioning/rotation and scoped worker signing credentials remain separate deployment concerns.",
       "Replacement PR #1215 retains Thomas Bray's original contribution from #1208 and the scoped credential-logging repair. GitHub denied maintainer pushes to the organization-owned source fork with HTTP 403. Jack approved creating this same-repository replacement with the existing title and an empty body; public comments and review prose remain separately gated.",
       "Canonical disposition migrated to pr:1215 after GitHub assigned the replacement number. Product Updates validate and normalized merge-group validate-event for PR 1215 passed; the reviewed omit, security evidence and original contributor credit are retained.",
-      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41586355920 on initial draft head 113fd382ba10b64d88fceddab470bb126d3b7801 failed with missing canonical disposition for pr:1215. The replacement number was assigned only at creation. This follow-up replaces pr-1208.json with the approved pr-1215.json and passes normalized merge-group validation; no gate is bypassed and no blind retry is used."
+      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41586355920 on initial draft head 113fd382ba10b64d88fceddab470bb126d3b7801 failed with missing canonical disposition for pr:1215. The replacement number was assigned only at creation. This follow-up replaces pr-1208.json with the approved pr-1215.json and passes normalized merge-group validation; no gate is bypassed and no blind retry is used.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Optional worker-control transport configuration and credential-isolation hardening. This adds no front-facing product capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted."
     ]
   },
   "security_review": {

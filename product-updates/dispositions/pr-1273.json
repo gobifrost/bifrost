@@ -1,0 +1,14 @@
+{
+  "key": "pr:1273",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal documentation capture/evidence and merge-candidate build-cache repairs; no product runtime behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1273",
+      "Release coordinator traced lost capture records to import-time deletion on worker replacement. Once-per-run launcher initialization, atomic writes and fail-visible malformed JSON preserve complete evidence.9Nodechecks,clienttypes/lintandfourtargetedlivecapturespassed;no retry,timeoutincreaseorskipadded.",
+      "Merge queue run 42326862741 built and pushed the client candidate, then GitHub Actions cache export failed with error writing layer blob: not_found. Candidate API/client caches now use separate registry refs through existing package credentials. Cache failures remain fatal; signing, attestations and all quality gates remain required."
+    ]
+  }
+}

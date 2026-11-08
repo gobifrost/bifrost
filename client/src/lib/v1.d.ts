@@ -20619,7 +20619,7 @@ export interface components {
             private_key_kid?: string | null;
             /**
              * Private Key Alg
-             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @description JWT signing algorithm for private_key_jwt (RSA or EC)
              * @default RS256
              */
             private_key_alg: string;
@@ -20629,6 +20629,11 @@ export interface components {
              * @default false
              */
             clear_private_key: boolean;
+            /**
+             * Scopes
+             * @description OAuth scopes to request. Omit for the provider default (openid email profile; Microsoft also requests User.Read). openid is required so an id_token is returned.
+             */
+            scopes?: string[] | null;
             /**
              * Client Id
              * @description Google OAuth 2.0 Client ID
@@ -23327,7 +23332,7 @@ export interface components {
             private_key_kid?: string | null;
             /**
              * Private Key Alg
-             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @description JWT signing algorithm for private_key_jwt (RSA or EC)
              * @default RS256
              */
             private_key_alg: string;
@@ -23337,6 +23342,11 @@ export interface components {
              * @default false
              */
             clear_private_key: boolean;
+            /**
+             * Scopes
+             * @description OAuth scopes to request. Omit for the provider default (openid email profile; Microsoft also requests User.Read). openid is required so an id_token is returned.
+             */
+            scopes?: string[] | null;
             /**
              * Client Id
              * @description Azure AD Application (client) ID
@@ -24059,6 +24069,12 @@ export interface components {
              */
             private_key_alg?: string | null;
             /**
+             * Scopes
+             * @description Requested OAuth scopes
+             * @default []
+             */
+            scopes: string[];
+            /**
              * Tenant Id
              * @description Microsoft tenant ID
              */
@@ -24121,7 +24137,7 @@ export interface components {
             private_key_kid?: string | null;
             /**
              * Private Key Alg
-             * @description JWT signing algorithm for private_key_jwt (RSA only; EC is a documented follow-up)
+             * @description JWT signing algorithm for private_key_jwt (RSA or EC)
              * @default RS256
              */
             private_key_alg: string;
@@ -24131,6 +24147,11 @@ export interface components {
              * @default false
              */
             clear_private_key: boolean;
+            /**
+             * Scopes
+             * @description OAuth scopes to request. Omit for the provider default (openid email profile; Microsoft also requests User.Read). openid is required so an id_token is returned.
+             */
+            scopes?: string[] | null;
             /**
              * Discovery Url
              * @description OIDC discovery URL (must be HTTPS, e.g., https://provider.com/.well-known/openid-configuration)
@@ -25415,6 +25436,11 @@ export interface components {
             release?: string | null;
             /** In App */
             in_app?: boolean | null;
+            /**
+             * Pinned
+             * @default false
+             */
+            pinned: boolean;
         };
         /** ProductUpdateOtherChange */
         ProductUpdateOtherChange: {

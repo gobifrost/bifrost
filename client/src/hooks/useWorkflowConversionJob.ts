@@ -104,7 +104,9 @@ export function useWorkflowConversionJob(jobId: string | null) {
 		job: job?.id === jobId ? job : null,
 		report: report?.job_id === jobId ? report : null,
 		error: error?.jobId === jobId ? error.message : null,
-		loading: loadingJobId === jobId,
+		// Background refreshes must not replace an already loaded review with
+		// the initial-loading stage and detach its controls while a sheet is open.
+		loading: loadingJobId === jobId && report?.job_id !== jobId,
 		refresh,
 		setReport,
 	};

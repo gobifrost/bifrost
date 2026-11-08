@@ -1,0 +1,13 @@
+{
+  "key": "pr:1272",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Release qualification, operator documentation, verified source inventory and plugin version packaging; runtime changes are announced under their original source PRs. The existing authentication Action Required notice remains part of the final release review.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1272",
+      "Jack authorized autonomous preparation of the full stable2.0.0 release. Verified actual immutable-image upgrade, direct refusal, bridge startup, preserved lineage, exactly-once target execution and isolated cleanup.27 migration/drain tests and9 release-tooling/safety tests passed. No production deployment or publication is performed by this change."
+    ]
+  }
+}

@@ -14,19 +14,12 @@ from __future__ import annotations
 import json
 import uuid
 
-import httpx
 import pytest
 
-from tests.e2e.conftest import E2E_API_URL, execute_workflow_sync, write_and_register
+from tests.e2e.conftest import execute_workflow_sync, write_and_register
 
 
 pytestmark = pytest.mark.slow
-
-
-@pytest.fixture(scope="session")
-def e2e_client():
-    with httpx.Client(base_url=E2E_API_URL, timeout=120.0) as client:
-        yield client
 
 
 def test_sdk_config_roundtrips_use_shared_api_transport(

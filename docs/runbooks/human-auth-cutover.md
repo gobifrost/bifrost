@@ -1,8 +1,9 @@
 # Human Authentication Cutover
 
-This runbook describes a future PR2 release. It does not authorize deployment.
-Runtime-token PR1a/PR1b and their later PR1c prerequisites are unchanged; see
-[Authority Epoch](authz-epoch.md). The implementation/coverage ledger is
+This runbook describes the durable human-session semantics in 2.0. Stable
+1.4.1 upgrades directly; there is no intermediate token-release image. The
+normal-image-update compatibility target and remaining release gates are in
+[Upgrading From 1.4.1 to 2.0](stable-2-upgrade.md). The implementation/coverage ledger is
 [Authentication Consolidation](../plans/2026-10-30-authentication-consolidation.md).
 
 ## Required Maintenance Boundary
@@ -14,8 +15,8 @@ claim format. A new Postgres migration alone does not prevent that bypass.
 
 1. Select the immutable PR2 release image and record the currently running image
    identities. Confirm dependencies are healthy and a recovery plan is available.
-   Inventory deployed V2 Apps and verify retained source is available for SDK
-   updates, or obtain their original source for redeployment before maintenance.
+   Inventory deployed V2 Apps and record active artifact/SDK provenance for
+   verification. Existing supported SDK2 bundles do not require a rebuild.
 2. Block API ingress and drain all API requests and WebSocket connections. Include
    direct API endpoints and separately exposed MCP endpoints, not just the web
    frontend. Stop old serving APIs before allowing new ones to issue credentials.
@@ -26,20 +27,12 @@ claim format. A new Postgres migration alone does not prevent that bypass.
    exposed MCP mount uses the same selected PR2 validation code; no old human
    issuer or validator may remain reachable behind ingress. Use deployment image
    digests, not a moving tag or a successful migration, as build evidence.
-5. Rebuild existing V2 Apps with the selected release's SDK before reopening
-   those Apps. Their deployed bundles retain an older SDK after a platform
-   upgrade; that client stops on a 4001 socket close instead of refreshing and
-   reconnecting after an authority change. Use the supported
-   `bifrost apps sdk update APP` operation and verify its completed PlatformJob
-   and active SDK provenance. If source is unavailable, redeploy from the
-   original source. See [Application SDK Updates](application-sdk-update.md).
-   Run these operations through controlled operator access to the new serving
-   build while ordinary ingress remains blocked; the SDK build worker must also
-   use the selected release. Do not reconcile unrelated Solution entities.
-   This is SDK contract **3**: older recorded contracts become `update_required`,
-   rather than merely a newer fingerprint being available.
-6. Restore ingress only after the homogeneous serving fleet and App SDK updates
-   are verified. Every
+5. Verify existing V2 Apps with their original active deployment. SDK2 bundles
+   keep live subscriptions through the host's serialized refresh and a transient
+   retry; they do not require source or an SDK rebuild to remain supported.
+   Optional automatic SDK updates use the existing maintenance setting and
+   retained-source safety checks. See [Application SDK Updates](application-sdk-update.md).
+6. Restore ingress after the homogeneous serving fleet is verified. Every
    person signs in again in browsers, CLI and MCP clients. Passwords, enrolled
    MFA and passkeys are retained; legacy access JWTs and Redis-only refresh
    credentials are not migrated or accepted.

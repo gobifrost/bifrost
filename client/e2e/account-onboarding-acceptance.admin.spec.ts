@@ -164,10 +164,12 @@ test.describe("Isolated account onboarding", () => {
 		expect((await savedResponse).ok(), "persist password change").toBe(
 			true,
 		);
+		// Changing a password intentionally revokes every human session, including
+		// this one. The next page load must therefore return to sign-in rather than
+		// keep presenting the now-invalid settings form.
 		await page.reload();
-		await expect(
-			page.getByLabel("Current Password", { exact: true }),
-		).toBeVisible();
+		await expect(page).toHaveURL(/\/login\?returnTo=/);
+		await expect(page.getByLabel("Email", { exact: true })).toBeVisible();
 		const fresh = await browser.newContext({
 			baseURL,
 			storageState: { cookies: [], origins: [] },

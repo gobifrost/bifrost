@@ -16,8 +16,8 @@ name: bifrost
 #
 # Release pinning:
 #   BIFROST_VERSION     - release tag of the init, api, worker and client images
-#                         (default: latest). Set it in .env and upgrade one
-#                         release at a time: docs/runbooks/authz-epoch.md.
+#                         (default: latest). Set it in .env; stable 1.4.1 can
+#                         update directly to 2.0: docs/runbooks/stable-2-upgrade.md.
 #
 # The BIFROST_SECRET_KEY is critical - it's used for:
 #   - JWT token signing (HS256)

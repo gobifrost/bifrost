@@ -73,7 +73,7 @@ test.describe("Access Checks on a recorded check", () => {
 	let workflowId: string;
 
 	test.beforeAll(async ({ api }) => {
-		const authorization = await api.get("/api/auth/authorization");
+		const authorization = await api.get("/auth/authorization");
 		expect(authorization.ok()).toBe(true);
 		const providerId = (
 			(await authorization.json()) as { provider_organization_id: string }

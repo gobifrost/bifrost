@@ -98,7 +98,7 @@ vi.mock("@/services/agentRuns", () => ({
 
 vi.mock("@/services/websocket", () => ({
 	webSocketService: {
-		connect: vi.fn(async () => {}),
+		connectInBackground: vi.fn(),
 		onSummaryBackfillUpdate: hoisted.mockOnSummaryBackfillUpdate,
 	},
 }));

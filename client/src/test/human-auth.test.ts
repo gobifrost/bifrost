@@ -1,4 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
+import { createServer } from "node:http";
+import type { Socket } from "node:net";
+import { request as playwrightRequest } from "playwright-core";
 import {
 	createChallengeAwareApi,
 	createFreshApiContext,
@@ -36,6 +39,58 @@ function fakeContext(getGeneration: () => string) {
 }
 
 describe("challenge-aware E2E API context", () => {
+	it("does not reuse the setup connection for a later cleanup mutation", async () => {
+		// Model the server closing an idle setup connection as cleanup starts.
+		// A new connection succeeds; reusing the expired one resets the request.
+		let setupSocket: Socket | undefined;
+		let cleanupRequests = 0;
+		const server = createServer((request, response) => {
+			request.resume();
+			if (request.url === "/setup") setupSocket = request.socket;
+			if (request.url === "/cleanup") {
+				cleanupRequests += 1;
+				if (request.socket === setupSocket) {
+					request.socket.destroy();
+					return;
+				}
+			}
+			response.setHeader("Content-Type", "application/json");
+			response.end(JSON.stringify({ mfa_required: false }));
+		});
+		await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+		const address = server.address();
+		if (!address || typeof address === "string") throw new Error("No test port");
+		const baseURL = `http://127.0.0.1:${address.port}`;
+		const browser = {
+			newContext: async (
+				options: Parameters<typeof playwrightRequest.newContext>[0],
+			) => {
+				const request = await playwrightRequest.newContext({ ...options, baseURL });
+				return {
+					request,
+					cookies: async () => (await request.storageState()).cookies,
+					close: () => request.dispose(),
+				};
+			},
+		};
+		let consumer: Awaited<ReturnType<typeof createFreshApiContext>> | undefined;
+		try {
+			consumer = await createFreshApiContext(browser as never, {
+				email: "human@example.test",
+				password: "synthetic",
+			} as never);
+			expect((await consumer.api.post("/setup")).status()).toBe(200);
+			expect((await consumer.api.delete("/cleanup")).status()).toBe(200);
+			expect(cleanupRequests).toBe(1);
+		} finally {
+			await consumer?.context.close();
+			server.closeAllConnections();
+			await new Promise<void>((resolve, reject) =>
+				server.close((error) => (error ? reject(error) : resolve())),
+			);
+		}
+	});
+
 	it("logs every API consumer into an independent cookie context", async () => {
 		const contexts = ["first", "second"].map((generation) => ({
 			request: {
@@ -111,6 +166,18 @@ describe("challenge-aware E2E API context", () => {
 
 		const result = await api.get("/api/widgets");
 		expect(result.status()).toBe(401);
+		expect(raw.fetch).toHaveBeenCalledTimes(1);
+	});
+
+	it("surfaces a connection reset without replaying a mutation", async () => {
+		const raw = {
+			fetch: vi.fn(async () => {
+				throw new Error("socket hang up (ECONNRESET)");
+			}),
+		};
+		const api = createChallengeAwareApi(raw as never, fakeContext(() => "stable"));
+
+		await expect(api.delete("/api/widgets/id")).rejects.toThrow("ECONNRESET");
 		expect(raw.fetch).toHaveBeenCalledTimes(1);
 	});
 

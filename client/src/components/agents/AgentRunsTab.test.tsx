@@ -15,6 +15,9 @@ import { renderWithProviders, screen, waitFor } from "@/test-utils";
 // Mocks
 // -----------------------------------------------------------------------------
 
+// Realtime transport behavior is covered by the hook and socket-service suites.
+vi.mock("@/hooks/useAgentRunUpdates", () => ({ useAgentRunUpdates: vi.fn() }));
+
 const mockUseInfiniteAgentRuns = vi.fn();
 const mockUseAgentRun = vi.fn();
 const mockUseFlagConversation = vi.fn();

@@ -111,6 +111,37 @@ describe("useWorkflowConversionJob", () => {
 		act(() => connectionListener?.(true));
 		await waitFor(() => expect(getPlatformJob).toHaveBeenCalledTimes(2));
 	});
+
+	it("keeps a loaded review visible during a duplicate completion refresh", async () => {
+		const completed = { ...job("job-synthetic", 4), status: "succeeded" };
+		const report = { job_id: "job-synthetic", items: [] };
+		getPlatformJob.mockResolvedValue(completed);
+		getWorkflowConversionReport.mockResolvedValue(report);
+		const { result } = renderHook(() =>
+			useWorkflowConversionJob("job-synthetic"),
+		);
+		await waitFor(() => expect(result.current.report).toEqual(report));
+		let finishRefresh!: (value: typeof report) => void;
+		getWorkflowConversionReport.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					finishRefresh = resolve;
+				}),
+		);
+
+		await act(async () => {
+			jobListener?.(completed);
+		});
+		try {
+			expect(getWorkflowConversionReport).toHaveBeenCalledTimes(2);
+			expect(result.current.report).toEqual(report);
+			expect(result.current.loading).toBe(false);
+		} finally {
+			await act(async () => {
+				finishRefresh(report);
+			});
+		}
+	});
 });
 
 describe("useWorkflowConversionOperation", () => {

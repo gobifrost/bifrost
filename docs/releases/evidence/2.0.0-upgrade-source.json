@@ -1,0 +1,68 @@
+{
+  "source": "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0",
+  "bridge": "ghcr.io/gobifrost/bifrost-api@sha256:9ca80613869946a0fcad769cdfe355ccaa6968a624df9f38b232c1702a9bda9a",
+  "target": "ghcr.io/gobifrost/bifrost-api@sha256:db13348943b596648f83458b92957f0638b1c4c1766888f3945e522dfc2f5576",
+  "target_source": "4b8c2b224eefd39caa134de16d728b9fbd8bfaa7",
+  "phases": [
+    "Verify immutable images and target source",
+    "Boot actual 1.4.1 and enqueue one real HTTP execution",
+    "Prove a direct upgrade is rejected on a clone",
+    "Start the real bridge API and preserve recovered durable dispatch",
+    "Upgrade to target; prove dispatch lineage before worker admission",
+    "Start one target worker and verify terminal success",
+    "Rehearsal assertions passed"
+  ],
+  "passed": true,
+  "target_source_witnesses": {
+    "src/main.py": "bb8049f6ce6bd807e2ddf030b7ee5b277129fc8b3737e79a38018e5072432234",
+    "src/services/legacy_broker_drain.py": "ecd04ed8719923f060c5a6d41593f5bff781c5a7f8472a8a30978516d5abf867",
+    "alembic/versions/20261031_authz_claims_gate.py": "88d28ac049547ba681b040e4fe78792579fb9d83497a03c796c1236334054be1"
+  },
+  "execution_id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
+  "source_revision": "20260916_solution_inbound",
+  "source_queues": [
+    {
+      "messages": 0,
+      "name": "workflow-executions-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 1,
+      "name": "workflow-executions",
+      "messages_unacknowledged": 0
+    }
+  ],
+  "bridge_revision": "20261030_authz_versions",
+  "recovered_dispatch": {
+    "id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
+    "executed_by": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "run_user_id": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "started_by_user_id": "0dc03d32-f18d-4b48-a3ae-47f35b0db9a8",
+    "root_execution_id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
+    "status": "Pending",
+    "dispatch_id": "44c39b7d-d665-4f83-902f-ae32b06239e8"
+  },
+  "target_revision": "20261106_chat_execute",
+  "terminal_execution": {
+    "id": "241fbc06-3bcb-4d9b-b8ca-0e6a85e05593",
+    "status": "Success",
+    "result": {
+      "release_rehearsal": true
+    },
+    "completed_at": "2026-11-07T01:26:31.578175+00:00"
+  },
+  "execution_marker_count": 1,
+  "final_queues": [
+    {
+      "messages": 0,
+      "name": "workflow-executions-poison",
+      "messages_unacknowledged": 0
+    },
+    {
+      "messages": 0,
+      "name": "workflow-executions",
+      "messages_unacknowledged": 0
+    }
+  ],
+  "cleanup_completed": true
+}
