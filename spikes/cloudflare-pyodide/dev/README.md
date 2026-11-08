@@ -10,7 +10,9 @@ admission and abnormal physical termination remain unqualified (YELLOW).
 local-only overlay executes current agent/original-user metadata under the pinned
 Pyodide ABI. [Full refreshed worker/SDK acceptance](ENGINE-CONTEXT-SDK.md) now also
 passes actual run-scoped operations and canonical reconciliation locally. The
-accepted deployed artifact remains separate and unchanged.
+[refreshed deployed candidate](ENGINE-CONTEXT-CLOUD.md) now passes that canonical
+SDK fixture in Cloudflare too. Endpoints and temporary secrets were closed
+afterward; arbitrary-Python admission remains disabled.
 
 [Historical guarded local integration](GUARDED-LOCAL.md) preserves the earlier
 local engine/SDK fixture and failed controls. Its receipt is pinned to that source.
