@@ -1,15 +1,16 @@
 {
   "key": "pr:1283",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "fix",
-  "summary": "Upgrade guidance appears above detailed product updates.",
+  "classification": "highlight",
+  "entry_ids": [
+    "923a82e9-6f18-4c66-b87f-eafa8407d260"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1283",
       "Jack requested a pinned 2.0 overview/checklist and emphasized App SDK updates and worker build capacity. Codex reviewed the shared optional pin field, normal visibility and UUID receipt semantics, retained source credits, generated OpenAPI types and focused renderer/API/component/controlled-browser coverage. Publication remains held.",
-      "The recommended App update guide distinguishes local Solution prebuilds from server-side independent App builds, documents opt-in automatic eligibility, requires verifying update completion, and preserves replacement capacity and active/pending work before optional scheduler retirement. Existing supported Apps require no rebuild for the image upgrade."
+      "The recommended App update guide distinguishes local Solution prebuilds from server-side independent App builds, documents opt-in automatic eligibility, requires verifying update completion, and preserves replacement capacity and active/pending work before optional scheduler retirement. Existing supported Apps require no rebuild for the image upgrade.",
+      "The landed generic pinning implementation now sources the canonical reviewed2.0overview UUID; its summary is represented there instead of a duplicate Otherchanges row."
     ]
   }
 }

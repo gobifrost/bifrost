@@ -2,13 +2,15 @@
   "key": "pr:1264",
   "classification": "highlight",
   "entry_ids": [
-    "088bb7d2-21d1-44ef-b246-c381e5f0de0a"
+    "088bb7d2-21d1-44ef-b246-c381e5f0de0a",
+    "923a82e9-6f18-4c66-b87f-eafa8407d260"
   ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1264",
-      "Copy review against docs/product-updates-authoring.md: concise capability title, new-account scope and User Chat default stated, verified /settings/base-role-defaults link; optional settings changes require no upgrade action."
+      "Copy review against docs/product-updates-authoring.md: concise capability title, new-account scope and User Chat default stated, verified /settings/base-role-defaults link; optional settings changes require no upgrade action.",
+      "Also sources the reviewed pinned2.0 overview requested by Jack; existing source entries and contributor credit are retained."
     ]
   }
 }

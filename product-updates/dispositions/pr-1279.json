@@ -1,9 +1,10 @@
 {
   "key": "pr:1279",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "fix",
-  "summary": "Keep existing App live updates working when a browser session refreshes.",
+  "classification": "highlight",
+  "entry_ids": [
+    "68314b62-0ea3-4d44-8779-6241f77275f3",
+    "923a82e9-6f18-4c66-b87f-eafa8407d260"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -12,7 +13,9 @@
       "Release coordinator reviewed browser Origin/public Host authority comparison solely as a hosted retry selector, with default/nondefault ports, IPv6 and malformed/foreign origins covered. TLS may terminate upstream. Origin never supplies data authority: exact typed signed human claims, a current eligible durable family, matching host SID, expiry/epoch refusal and terminal revocation remain required. NGINX preserves the public Host port. No token rewrite, expired-data authorization, App rebuild or production token-lifetime change.",
       "41 focused socket/Redis/HTTP and family/origin tests passed without fabricated Fetch Metadata;25 performance/known-consumer tests and27 tooling safety tests passed, with zero skips. API pyright/Ruff, production NGINX configuration, runner-image Node syntax and diff checks passed. Fresh full Python and JavaScript CodeQL security-and-quality suites found zero findings in changed files/flow locations, including unchanged lines, with existing CI filters only.",
       "The original compiled App browser rehearsal uses independent private session families, real90-second fixture expiry, an epoch mutation, revocation, local-state and original bundle/source/deployment assertions. Credentials stay in memory-only IPC; reviewed typed proof fields enter receipts and failure diagnostics redact credentials. A preflight rejects missing helpers before creating resources. The real1.4.1 held-worker barrier uses its isolated container because execution logs flush only at completion.",
-      "The corrected immutable API/client browser rehearsal, independent pending-work recovery and final rollout/readiness review remain release gates. This PR does not claim a full direct-upgrade pass or production capacity and does not authorize stable publication. General Writing/Humanizer pass retained one concrete customer-facing fix sentence."
+      "The corrected immutable API/client browser rehearsal, independent pending-work recovery and final rollout/readiness review remain release gates. This PR does not claim a full direct-upgrade pass or production capacity and does not authorize stable publication. General Writing/Humanizer pass retained one concrete customer-facing fix sentence.",
+      "Stable2 release material links this implementation follow-up to the existing canonical notice UUIDs. All sources of an eligible entry must carry its highlight mapping; otherwise the deterministic bundler excludes it. No new feature UUID or repeat announcement is introduced. Reviewed compatibility/consent copy supersedes the earlier transitional update instructions.",
+      "Also sources the reviewed pinned2.0 overview requested by Jack; existing source entries and contributor credit are retained."
     ]
   }
 }

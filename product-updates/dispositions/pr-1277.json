@@ -1,9 +1,9 @@
 {
   "key": "pr:1277",
-  "classification": "other",
-  "entry_ids": [],
-  "category": "fix",
-  "summary": "Keep existing App subscriptions working across image updates without requiring an SDK rebuild.",
+  "classification": "highlight",
+  "entry_ids": [
+    "68314b62-0ea3-4d44-8779-6241f77275f3"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -12,7 +12,8 @@
       "115 focused combined-main backend tests,89 consumer checks and86 client checks passed, including exact SHA-256-pinned1.4.1 socket source, actual Redis/HTTP/socket recovery, family revocation and7database eligibility cases. The existing live automatic upgrade passed without policy override and retains one job/build; settings, source/lockfile and activation safeguards remain. API pyright/Ruff and client types/lint passed.",
       "Fresh full Python and JavaScript CodeQL suites reported0findings across changed files/flow locations with existing query exclusions. Replaced promise-identity guards with numeric generations and removed the redundant notification payload console dump; no new suppression. General Writing/Humanizer pass retained one concrete customer-facing fix sentence.",
       "This repair does not qualify a full direct immutable-image upgrade, final browser/nightly/performance results or mixed API-fleet deployment. Stable publication remains held.",
-      "CI run 42354461298 exposed 28 unhandled early-close rejections despite 4,223 passing assertions; its E2E check propagated the client failure without executing backend E2E. The same two original component fixtures reproduced the problem, then passed 28 assertions without unhandled errors after the product repair. Advisory callers and reconnects now use one shared background connection mode that reports failure; explicitly awaited connections still reject. Independent hook/service tests cover ownership, and component fixtures isolate realtime IO. All 135 targeted tests and the complete client suite (636 files, 4,226 tests) passed. Client types/lint passed and fresh full JavaScript CodeQL found zero scoped findings. No added retries, timeout inflation, skips or suppressions."
+      "CI run 42354461298 exposed 28 unhandled early-close rejections despite 4,223 passing assertions; its E2E check propagated the client failure without executing backend E2E. The same two original component fixtures reproduced the problem, then passed 28 assertions without unhandled errors after the product repair. Advisory callers and reconnects now use one shared background connection mode that reports failure; explicitly awaited connections still reject. Independent hook/service tests cover ownership, and component fixtures isolate realtime IO. All 135 targeted tests and the complete client suite (636 files, 4,226 tests) passed. Client types/lint passed and fresh full JavaScript CodeQL found zero scoped findings. No added retries, timeout inflation, skips or suppressions.",
+      "Stable2 release material links this implementation follow-up to the existing canonical notice UUIDs. All sources of an eligible entry must carry its highlight mapping; otherwise the deterministic bundler excludes it. No new feature UUID or repeat announcement is introduced. Reviewed compatibility/consent copy supersedes the earlier transitional update instructions."
     ]
   }
 }

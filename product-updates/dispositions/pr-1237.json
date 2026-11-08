@@ -1,9 +1,9 @@
 {
   "key": "pr:1237",
-  "classification": "other",
-  "entry_ids": [],
-  "summary": "Require explicit approval before connecting external apps to your Bifrost account.",
-  "category": "hardening",
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -16,7 +16,8 @@
       "Security and any formal release notice retain the separate release review requirement. Actual Claude/Copilot desktop clients were not exercised; the standard protocol and shipped MCP SDK were verified. Public catalog reply and acceptance remain separate.",
       "CI failure disposition: Unit Tests on 1baafa99b (https://github.com/gobifrost/bifrost/actions/runs/41826794725/job/126563468552) exposed three reference-drift failures caused by the two new consent endpoints. Both endpoints are now explicitly classified as authentication transport, the observed REST count is refreshed from 695 to 697, and the operation inventory plus canonical/public OpenAPI skill digests are regenerated. Authentication behavior is unchanged by this follow-up.",
       "Compatibility follow-up after merging current main (MCP 2.3.0): the official SDK integration test now uses its required httpx2 transport and AuthorizationCodeResult callback contract. All 83 focused inventory, freshness, approval, OAuth-binding, protocol, refresh-tool visibility, and official SDK tests pass; API type/lint checks pass. No authentication runtime change was required for the SDK upgrade.",
-      "Merge-conflict follow-up: preserved additive app-consent models and main Global-scope DTO description; refreshed the combined contract fingerprint without raising minimum CLI version. After current main, 119 access/consent checks passed; the updated fingerprint plus SSO-only and CLI device suites passed all 27 checks. The CLI tests now explicitly obtain a fresh browser credential pair through human_minter: challenge-driven bearer refresh alone otherwise leaves their explicit cookie stale. Runtime browser/session checks remain unchanged."
+      "Merge-conflict follow-up: preserved additive app-consent models and main Global-scope DTO description; refreshed the combined contract fingerprint without raising minimum CLI version. After current main, 119 access/consent checks passed; the updated fingerprint plus SSO-only and CLI device suites passed all 27 checks. The CLI tests now explicitly obtain a fresh browser credential pair through human_minter: challenge-driven bearer refresh alone otherwise leaves their explicit cookie stale. Runtime browser/session checks remain unchanged.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Require explicit approval before connecting external apps to your Bifrost account."
     ]
   },
   "security_review": {

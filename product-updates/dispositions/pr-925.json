@@ -1,15 +1,17 @@
 {
   "key": "pr:925",
-  "classification": "omit",
-  "entry_ids": [],
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/925",
-      "User authorized verified security-maintenance repairs and merge on 2026-10-07; 37 focused backend tests and API quality checks passed."
+      "User authorized verified security-maintenance repairs and merge on 2026-10-07; 37 focused backend tests and API quality checks passed.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal execution and cache log-format hardening; no user workflow change. Retain canonical security notice review for formal releases."
     ]
   },
-  "reason": "Internal execution and cache log-format hardening; no user workflow change. Retain canonical security notice review for formal releases.",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/925"

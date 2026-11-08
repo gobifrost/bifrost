@@ -1,0 +1,84 @@
+{
+  "target_ref": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "Release coordinator draft under Jack's explicit authorization; final source inventory, populated rehearsal and copy review pending.",
+      "Compatibility repairs1276 and1277 merged; frozen runtime5c3baf58443484602be5fd9778d11de54a95468c has passed full nightly. Old bridge/manual App-rebuild requirements removed from draft; direct browser rehearsal, multi-replica policy and final inventory remain pending.",
+      "API-verified incremental inventory through1277:386commits/386mergedPRs; existing additional contributor evidence retained. Current runtime blocked by real-browser expiry recovery; follow-up repair not yet included.",
+      "API-verified inventory387commits/387mergedPRs through1279; protected exact-candidate gate passed and immutable images identified. Direct browser qualification on corrected images and exact-source nightly42407182661 in progress. Publication held.",
+      "Release coordinator completed content/security/default-change review and validated387source coverage records through1279, retaining existing approved UUIDs and additional contributor evidence. The actual1.4.1 direct-image rehearsal passed originalSDK2expiry/epoch/revocation, data/secret preservation, old-worker SDK transport and exactly-one queued workflow recovery. This is material approval only; final nightly, qualification follow-up source freeze and user publication hold remain separate gates.",
+      "Final source ab536cd521506afa6dd1b5e17631559bdcd1a62a:389 API-verified commits/merged PRs through1282, retained additional contributor records. Protected merge gate42412871889, CodeQL42414035661 and complete nightly42416250332 passed.1280 records the actual earlier immutable-image direct-upgrade proof;1282 fixes the observed test transport race and Knowledge Sources listing500. Canonical coverage and reviewed prose reconciled; publication remains explicitly held. Final immutable-image upgrade receipt is recorded separately.",
+      "Final immutable-image rehearsal stable2-direct-ab536cd-01 passed and both disposable projects were cleaned up. Actual1.4.1 upgraded directly to API sha256:e6a1044e49c84203f90a16be09be74c670be3c98d8acd4be24feeae40b043092 and client sha256:6d416fa74eb6ca0dd9f0dbe907c8e44cdecb90876a52cede4af83a4510c10080 fromab536cd. Representative populated data and encrypted credentials survived; the active old worker completed and one source queued workflow recovered exactly once. The originalSDK2 App recovered expiry and authority-epoch changes with local state retained, no rebuild, and no data after revocation. Receipt SHA256:ec5705b5ce55a9e8840b015e410fb576bc90eaf36c9b6781313fe1858fd580d2. This qualifies the recorded singleAPI/synthetic-data scope; mixed-validator rolling fleets, third-party provider calls and production capacity are not claimed. Final nightly42416250332 passed209browsercases. Publication is held.",
+      "Jack requested the pinned2.0overview and emphasized AppSDKupdates/buildcapacity. Canonical390PR inventory retains all7additionalcontributorrecords. Overview and optionalworker-retirement copy reviewed; pinning appears once ahead of detail in release renderer and sharedUI.1283 passed focusedrenderer/API/receipt/component/controlledfeedbrowser checks and fullprotectedmergegate42424094998. Baselineab536cd actualimmutable-image upgrade and209-testnightly remain scoped compatibilityevidence; the later change adds ProductUpdates presentation metadata/UI only, with App SDK, workflow execution and authentication implementation unchanged. Publicationheld."
+    ]
+  },
+  "security": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/advisories/GHSA-2883-xcg3-v3hh",
+      "https://github.com/advisories/GHSA-3589-pxp7-3gj8",
+      "https://github.com/advisories/GHSA-5h93-6whr-6q8j",
+      "https://github.com/advisories/GHSA-5p4m-2wfm-xmqj",
+      "https://github.com/advisories/GHSA-6688-9rhm-gjv2",
+      "https://github.com/advisories/GHSA-68fv-2mgg-jv7q",
+      "https://github.com/advisories/GHSA-6j4f-fj2g-mc7p",
+      "https://github.com/advisories/GHSA-834v-8h66-3h79",
+      "https://github.com/advisories/GHSA-84m7-p3x7-pcfv",
+      "https://github.com/advisories/GHSA-c6gr-qvv4-5v3f",
+      "https://github.com/advisories/GHSA-c8p4-j97h-3vg8",
+      "https://github.com/advisories/GHSA-cg2g-xh64-v4q7",
+      "https://github.com/advisories/GHSA-hvrp-rf83-w775",
+      "https://github.com/advisories/GHSA-jpw9-pfvf-9f58",
+      "https://github.com/advisories/GHSA-mrhx-c7xc-m3w5",
+      "https://github.com/advisories/GHSA-mrv2-3pqr-j5jr",
+      "https://github.com/advisories/GHSA-p98j-92pf-mc4p",
+      "https://github.com/advisories/GHSA-px8p-9vwx-vf98",
+      "https://github.com/advisories/GHSA-q2hr-2g5m-vwhr",
+      "https://github.com/advisories/GHSA-qhr7-859c-m2p7",
+      "https://github.com/advisories/GHSA-rgj7-g3m4-5g8c",
+      "https://github.com/advisories/GHSA-rwrf-2pqf-9j8j",
+      "https://github.com/advisories/GHSA-vj7q-gjh5-988w",
+      "https://github.com/advisories/GHSA-w4fh-qvv9-3v23",
+      "https://github.com/advisories/GHSA-wq5f-xc86-pv6w",
+      "https://github.com/advisories/GHSA-82r6-8w77-94w6",
+      "https://github.com/advisories/GHSA-6q48-6c7w-9gw2",
+      "Closed advisory metadata reviewed against previous final v1.4.1 and current lockfiles. Root retained 33 source alert records; draft fixed-CVE list adds independently verified AnyIO advisory. Final source and copy review pending.",
+      "Final preparation review retained the18 verified fixedCVEs and33 original advisory records, with dependency/lockfile scope. Open moderate105/minimatch is development-only and is explicitly not claimed fixed. No new runtime dependency changes since reviewed source;1279 auth recovery passed scoped freshPython/JavaScriptCodeQL and full protectedCI.",
+      "Known open, not fixed: {\"advisory\": \"https://github.com/advisories/GHSA-g3hv-75wg-m249\", \"cve\": \"CVE-2026-118764\", \"fixed\": false, \"package\": \"minimatch\", \"scope\": \"development tooling via typescript-eslint; absent from the client production dependency tree\"}",
+      "1282 supplies a required KnowledgeRepository constructor argument without changing caller-derived visibility predicates. Focused live tenant/Global/foreign checks and full protectedCI/CodeQL passed. No runtime dependency or permission changes since prior review."
+    ],
+    "fixed_cves": [
+      "[CVE-2023-54404](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5): zod (scripts/docs/package-lock.json).",
+      "[CVE-2026-102276](https://github.com/advisories/GHSA-6j4f-fj2g-mc7p): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-102277](https://github.com/advisories/GHSA-q2hr-2g5m-vwhr): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-102278](https://github.com/advisories/GHSA-qhr7-859c-m2p7): brace-expansion (client/package-lock.json).",
+      "[CVE-2026-114386](https://github.com/advisories/GHSA-3589-pxp7-3gj8): pydantic-ai-harness (pyproject.toml).",
+      "[CVE-2026-115895](https://github.com/advisories/GHSA-834v-8h66-3h79): happy-dom (client/package-lock.json).",
+      "[CVE-2026-116684](https://github.com/advisories/GHSA-w4fh-qvv9-3v23): mcp (pyproject.toml).",
+      "[CVE-2026-116685](https://github.com/advisories/GHSA-5h93-6whr-6q8j): mcp (pyproject.toml).",
+      "[CVE-2026-116686](https://github.com/advisories/GHSA-rwrf-2pqf-9j8j): mcp (pyproject.toml).",
+      "[CVE-2026-118660](https://github.com/advisories/GHSA-c8p4-j97h-3vg8): happy-dom (client/package-lock.json).",
+      "[CVE-2026-45820](https://github.com/advisories/GHSA-px8p-9vwx-vf98): fflate (client/package-lock.json).",
+      "[CVE-2026-52869](https://github.com/advisories/GHSA-jpw9-pfvf-9f58): mcp (pyproject.toml).",
+      "[CVE-2026-52870](https://github.com/advisories/GHSA-hvrp-rf83-w775): mcp (pyproject.toml).",
+      "[CVE-2026-59950](https://github.com/advisories/GHSA-vj7q-gjh5-988w): mcp (pyproject.toml).",
+      "[CVE-2026-59951](https://github.com/advisories/GHSA-84m7-p3x7-pcfv): mcp (pyproject.toml).",
+      "[CVE-2026-84375](https://github.com/advisories/GHSA-2883-xcg3-v3hh): js-yaml (client/package-lock.json, scripts/docs/package-lock.json).",
+      "[CVE-2026-93749](https://github.com/advisories/GHSA-68fv-2mgg-jv7q): source-map-js (api/src/services/app_compiler/package-lock.json, client/package-lock.json).",
+      "[CVE-2026-63374](https://github.com/advisories/GHSA-82r6-8w77-94w6): AnyIO TLS hostname validation; the Python runtime now pins AnyIO 4.14.2."
+    ]
+  },
+  "breaking_changes": {
+    "status": "approved",
+    "evidence": [
+      "docs/runbooks/stable-2-upgrade.md",
+      "docs/runbooks/human-auth-cutover.md",
+      "docs/runbooks/zero-trust-automation.md",
+      "docs/runbooks/application-sdk-update.md",
+      "Existing canonical action-required Product Updates and reviewed source dispositions; populated upgrade proof pending.",
+      "Current source runbooks and passing direct image receipt supersede the intermediate bridge, mandatory App rebuild and universal automation-drain notices. The qualified case uses a single API replacement; multi-replica deployments retain the documented coordinated human-validator cutover. CLI binaries, physical launchers, duplicate names, unattended sync and userinfo-onlyOIDC actions are conditional on those affected installations. Existing FullAccess workflows retain their mode and approvals; only new/changed Solution requests require approval."
+    ],
+    "summary": "Update directly from 1.4.1 using the normal image update. Follow the [2.0 Upgrade Guide](https://github.com/gobifrost/bifrost/blob/e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a/docs/runbooks/stable-2-upgrade.md) for the API-fleet cutover boundary. Back up PostgreSQL and object storage together, preserve the platform secret, and account for queued work before retiring RabbitMQ.\n\nVerify every serving API finishes replacing the old authentication validator. People may need to sign in again in browsers, CLI and MCP clients. Existing supported SDK2 Apps work without a rebuild. Rollback below this authentication version is unsupported; use a forward repair build.\n\nUpgrade CLI and MCP clients with the server: the 1.4.1 CLI cannot parse the new execution responses, and renamed MCP tools require refreshed client discovery. If you use physical worker launchers, upgrade them for the current remote-summary handlers. Installations with duplicate ad-hoc table names must resolve those duplicates within their organization or global scope before migration.\n\nUnattended file-synchronization scripts must explicitly acknowledge their changes with --force or BIFROST_NONINTERACTIVE. Generic OIDC providers that previously returned only user information must return a valid ID token before upgrading. Full Access remains the default workflow mode; converting workflows to Declared Permissions is optional.\n\n## Release Cadence Going Forward\n\nWe aim for a stable release roughly every month, with more frequent release candidates between stable releases. Release candidates are intended to be safer than dev builds. The dev channel remains bleeding edge and will contain bugs the maintainer intends to find in his own production first."
+  }
+}
