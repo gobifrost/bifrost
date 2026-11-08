@@ -7,9 +7,10 @@ endpoints are now closed, expiry0, temporary secrets removed. Arbitrary/untruste
 admission and abnormal physical termination remain unqualified (YELLOW).
 
 [Current engine/context closure](../backend/ENGINE-CONTEXT-REFRESH.md): a separate
-local-only overlay now executes current agent/original-user metadata under the
-pinned Pyodide ABI. It does not replace the accepted cloud artifact or qualify
-its SDK/worker path.
+local-only overlay executes current agent/original-user metadata under the pinned
+Pyodide ABI. [Full refreshed worker/SDK acceptance](ENGINE-CONTEXT-SDK.md) now also
+passes actual run-scoped operations and canonical reconciliation locally. The
+accepted deployed artifact remains separate and unchanged.
 
 [Historical guarded local integration](GUARDED-LOCAL.md) preserves the earlier
 local engine/SDK fixture and failed controls. Its receipt is pinned to that source.
