@@ -168,6 +168,9 @@ async def receive_webhook(
     try:
         result = await processor.process_webhook(event_source, webhook_source, webhook_request)
     except Exception as e:
+        # DbSession commits on a normal response, including this 500. Failed
+        # admission must not retain a partial event/identity without fan-out.
+        await db.rollback()
         logger.error(f"Error processing webhook: {log_safe(e)}", exc_info=True)
         # Return 500 but don't expose internal error details
         return Response(

@@ -551,18 +551,28 @@ class EventProcessor:
         and queues workflow executions.
         """
         # Create event record
-        event = Event(
-            id=uuid.uuid4(),
-            event_source_id=event_source.id,
-            event_type=deliver.event_type,
-            received_at=datetime.now(timezone.utc),
-            headers=deliver.raw_headers,
-            data=deliver.data,
-            raw_body=request.body,
-            source_ip=request.client_ip,
-            status=EventStatus.RECEIVED,
-        )
-        self.session.add(event)
+        if deliver.delivery_id is not None:
+            from shared.webhook_delivery_identity import accept_identified_webhook
+
+            accepted = await accept_identified_webhook(self.session, event_source, deliver, request)
+            if isinstance(accepted, Rejected):
+                return accepted
+            event, created = accepted
+            if not created:
+                return Deliver(data=event.data, event_type=event.event_type, event_id=event.id)
+        else:
+            event = Event(
+                id=uuid.uuid4(),
+                event_source_id=event_source.id,
+                event_type=deliver.event_type,
+                received_at=datetime.now(timezone.utc),
+                headers=deliver.raw_headers,
+                data=deliver.data,
+                raw_body=request.body,
+                source_ip=request.client_ip,
+                status=EventStatus.RECEIVED,
+            )
+            self.session.add(event)
         await self.session.flush()
 
         logger.info(
