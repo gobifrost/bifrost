@@ -9,7 +9,16 @@
       "https://github.com/gobifrost/bifrost/pull/1262",
       "Contributor editorial disposition under Thomas Bray's scoped landing instruction; this is not maintainer approval or a waiver of required code/security review.",
       "The S3-only review tip passed 738 focused backend tests, API quality and a stricter storage type diagnostic; generated client types matched the served API, client typing/lint and 19 tests passed, and the production browser file-access journey passed.",
-      "No customer-facing backend selection, deployment, storage cutover or required upgrade action is introduced. Sensitive move, Git concurrency, source-import and signed-request paths remain subject to manual maintainer review."
+      "No customer-facing backend selection, deployment, storage cutover or required upgrade action is introduced. Sensitive move, Git concurrency, source-import and signed-request paths remain subject to manual maintainer review.",
+      "Maintainer-directed review and repair authorized by Jack on 2026-11-08 in the private PR task. Reviewed omit: shared S3 adapter/consumer maintenance, without Azure activation, deployment change or required customer action.",
+      "Verified contributor: Thomas Bray (MTG-Thomas), source MTG-Thomas/bifrost-upstream, target gobifrost/bifrost main. Original contribution commits and author credit are retained.",
+      "Manual review traced managed-file authorization and recovery, opaque persisted Git/move versions, conditional writes, source-import routing, signed-request headers and error classification. Repaired the missed workflow-conversion error consumer; no permission boundary is widened. Azure identity, provider cutover and PR #1245 remain separate scope.",
+      "No security disclosure, CVE or changed authorization boundary was identified. The sensitive storage paths received manual review; this refactor does not add Azure identity or provider activation.",
+      "Maintainer repair on current main 54fbca9d8: 525 focused backend unit/live-service tests passed with zero failures/errors/skips, including the missing-source continuation regression, file moves, Git witnesses/checkpoints, source isolation, signed access, DTO/CLI compatibility and the existing conversion worker journey. Full API Pyright/Ruff passed. Owned Docker resources were removed after verification. Full backend/browser suites remain protected merge-queue gates; real R2/browser CORS and physical transfers above 5 GiB are not certified.",
+      "Client verification on the repaired branch: all 19 focused form-upload/App SDK file tests passed; TypeScript and ESLint passed. ESLint retained its existing no-console warning in unchanged client/e2e/support/seed-review-pack.ts (zero errors). Normalized merge-group Product Updates eligibility passed with the reviewed omit disposition. No full local client or browser suite was run."
     ]
+  },
+  "security_review": {
+    "status": "not_required"
   }
 }
