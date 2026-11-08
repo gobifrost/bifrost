@@ -6,6 +6,11 @@ duplicate/fencing/reconciliation fixture in deployed Python Workers. Both public
 endpoints are now closed, expiry0, temporary secrets removed. Arbitrary/untrusted
 admission and abnormal physical termination remain unqualified (YELLOW).
 
+[Current engine/context closure](../backend/ENGINE-CONTEXT-REFRESH.md): a separate
+local-only overlay now executes current agent/original-user metadata under the
+pinned Pyodide ABI. It does not replace the accepted cloud artifact or qualify
+its SDK/worker path.
+
 [Historical guarded local integration](GUARDED-LOCAL.md) preserves the earlier
 local engine/SDK fixture and failed controls. Its receipt is pinned to that source.
 
