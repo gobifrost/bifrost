@@ -52,6 +52,7 @@ const bundle: ProductUpdatesBundle = {
 		area: "Platform",
 		type: "New",
 		action_required: false,
+		pinned: false,
 		sources: [],
 		contributors: [],
 		assets: [],
@@ -191,7 +192,9 @@ describe("ProductUpdatesDialog", () => {
 
 		currentBundle = {
 			...currentBundle,
-			entries: [{ ...currentBundle.entries[0], revision: 2 }],
+			entries: [
+				{ ...currentBundle.entries[0], revision: 2, pinned: true },
+			],
 		};
 		const second = renderWithProviders(
 			<ProductUpdatesDialog adminId="admin-a" adapter={source} />,

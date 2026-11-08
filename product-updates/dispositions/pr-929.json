@@ -1,13 +1,15 @@
 {
   "key": "pr:929",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Internal build-toolchain integrity verification and private-reporting documentation; no customer-facing functionality change. Retain formal-release security notice review.",
+  "classification": "highlight",
+  "entry_ids": [
+    "c24ccbdd-bdfe-4c97-8fd9-c14b1adef2fb"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/929",
-      "User authorized verified backend security repairs and merge on 2026-10-07; focused tests, quality checks, and both Docker install paths passed."
+      "User authorized verified backend security repairs and merge on 2026-10-07; focused tests, quality checks, and both Docker install paths passed.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal build-toolchain integrity verification and private-reporting documentation; no customer-facing functionality change. Retain formal-release security notice review."
     ]
   },
   "security_review": {

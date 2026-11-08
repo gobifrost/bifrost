@@ -6,7 +6,7 @@ Data access for user entities.
 
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import User
@@ -33,8 +33,11 @@ class UserRepository(BaseRepository[User]):  # type: ignore[type-var]
         Returns:
             User or None if not found
         """
+        # Literal, case-insensitive equality: ``ilike`` would treat ``_`` and
+        # ``%`` in an identity's email as wildcards, allowing one verified
+        # address to match a different account.
         result = await self.session.execute(
-            select(User).where(User.email.ilike(email))
+            select(User).where(func.lower(User.email) == email.lower())
         )
         return result.scalar_one_or_none()
 

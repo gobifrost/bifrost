@@ -1,7 +1,7 @@
 import { test, expect } from "./fixtures/api-fixture";
 import { readFileSync } from "node:fs";
 import type { UserCredentials } from "./fixtures/users";
-import { generateTOTP } from "./setup/totp";
+import { completeBrowserMfa } from "./setup/recovery-proofs";
 
 test("connects the CLI only after sign-in and explicit approval", async ({
 	page,
@@ -24,8 +24,7 @@ test("connects the CLI only after sign-in and explicit approval", async ({
 	await page.getByRole("button", { name: "Sign In", exact: true }).click();
 	const mfaInput = page.getByLabel(/code|totp|verification/i);
 	await expect(mfaInput).toBeVisible();
-	await mfaInput.fill(generateTOTP(account.totpSecret));
-	await page.getByRole("button", { name: /verify|submit|continue/i }).click();
+	await completeBrowserMfa(page, account);
 	await expect(
 		page.getByRole("heading", { name: "Connect Bifrost CLI" }),
 	).toBeVisible();

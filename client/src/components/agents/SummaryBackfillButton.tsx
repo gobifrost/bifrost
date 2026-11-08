@@ -587,7 +587,7 @@ function SummaryBackfillProgress({
 	} | null>(null);
 
 	useEffect(() => {
-		void webSocketService.connect([`summary-backfill:${jobId}`]);
+		webSocketService.connectInBackground([`summary-backfill:${jobId}`]);
 		const unsubscribe = webSocketService.onSummaryBackfillUpdate(
 			jobId,
 			(update) => {

@@ -126,16 +126,23 @@ def test_google_requires_an_explicitly_verified_email_for_a_new_link(verified):
         service.validate_email_for_linking(service._parse_user_info("google", _google(email_verified=verified)), _tokens())
 
 
-def test_oidc_trusts_a_missing_verification_claim_but_refuses_explicit_false():
+@pytest.mark.parametrize("verified", [False, None])
+def test_oidc_requires_an_explicitly_verified_email_for_a_new_link(verified):
     service = _service()
+
     service.validate_email_for_linking(
-        service._parse_user_info("oidc", {"sub": "o-1", "email": "Kim@ClientCo.com"}), _tokens()
+        service._parse_user_info(
+            "oidc",
+            {"sub": "o-1", "email": "kim@clientco.com", "email_verified": True},
+        ),
+        _tokens(),
     )
 
     with pytest.raises(OAuthError, match="verified"):
         service.validate_email_for_linking(
             service._parse_user_info(
-                "oidc", {"sub": "o-1", "email": "kim@clientco.com", "email_verified": False}
+                "oidc",
+                {"sub": "o-1", "email": "kim@clientco.com", "email_verified": verified},
             ),
             _tokens(),
         )
@@ -184,3 +191,62 @@ def test_microsoft_is_keyed_on_the_graph_id_and_cross_checked_with_oid():
 
     with pytest.raises(OAuthError, match="account identifier"):
         service._parse_user_info("microsoft", data, {"sub": "pairwise-sub"})
+
+
+@pytest.mark.parametrize("verified", [None, False, "true", 1])
+def test_explicit_oidc_trust_delegates_email_authority_without_claim(verified):
+    service = _service()
+    info = service._parse_user_info("oidc", {
+        "sub": "o-1", "email": "kim@clientco.com", "email_verified": verified,
+    })
+    service.validate_email_for_linking(info, _tokens(), trust_provider_email=True)
+
+
+@pytest.mark.parametrize("verified", ["true", 1, "false"])
+def test_non_boolean_claim_does_not_establish_email_authority(verified):
+    service = _service()
+    info = service._parse_user_info("oidc", {
+        "sub": "o-1", "email": "kim@clientco.com", "email_verified": verified,
+    })
+    with pytest.raises(OAuthError, match="verified"):
+        service.validate_email_for_linking(info, _tokens())
+
+
+@pytest.mark.parametrize("token_email,verified,allowed", [
+    ("Kim@ClientCo.com", True, True),
+    ("other@clientco.com", True, False),
+    (None, True, False),
+    ("kim@clientco.com", "true", False),
+])
+def test_verified_id_token_proof_must_match_the_userinfo_address(token_email, verified, allowed):
+    service = _service()
+    info = service._parse_user_info("oidc", {"sub": "o-1", "email": "kim@clientco.com"})
+    tokens = OAuthTokens("access", id_token_claims={"email": token_email, "email_verified": verified})
+    if allowed:
+        service.validate_email_for_linking(info, tokens)
+    else:
+        with pytest.raises(OAuthError, match="verified"):
+            service.validate_email_for_linking(info, tokens)
+
+
+@pytest.mark.parametrize("provider", ["google", "microsoft"])
+def test_oidc_trust_does_not_bypass_other_provider_rules(provider):
+    service = _service()
+    info = service._parse_user_info(provider, {
+        "sub": "id", "id": "id", "email": "kim@clientco.com",
+        "userPrincipalName": "kim#EXT#@tenant.onmicrosoft.com", "email_verified": False,
+    })
+    with pytest.raises(OAuthError):
+        service.validate_email_for_linking(info, _tokens(), trust_provider_email=True)
+
+
+def test_userinfo_denial_is_not_overridden_by_an_id_token_claim():
+    service = _service()
+    info = service._parse_user_info("oidc", {
+        "sub": "o-1", "email": "kim@clientco.com", "email_verified": False,
+    })
+    tokens = OAuthTokens("access", id_token_claims={
+        "email": "kim@clientco.com", "email_verified": True,
+    })
+    with pytest.raises(OAuthError, match="verified"):
+        service.validate_email_for_linking(info, tokens)

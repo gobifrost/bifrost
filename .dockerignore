@@ -65,3 +65,6 @@ node_modules/
 # Companion Pyodide build environments and captured experiments never enter images.
 spikes/cloudflare-pyodide/
 .cloudflare/
+# Browser credentials and generated results never belong in API build contexts.
+client/e2e/.auth/
+client/playwright-results/

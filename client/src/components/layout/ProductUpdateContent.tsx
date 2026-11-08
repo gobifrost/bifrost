@@ -44,11 +44,23 @@ export function UpdateGroups({
 		.sort(
 			(a, b) => Date.parse(b.published_at) - Date.parse(a.published_at),
 		);
-	const features = updates.filter(
+	const pinned = updates.filter((entry) => entry.pinned);
+	const ordinary = updates.filter((entry) => !entry.pinned);
+	const features = ordinary.filter(
 		(entry) => entry.type === "New" || entry.type === "Improved",
 	);
 	return (
 		<div className="space-y-8">
+			{pinned.length > 0 && (
+				<section aria-label="Pinned Updates">
+					<h3 className="mb-4 text-sm font-semibold">Pinned Updates</h3>
+					<div className="divide-y divide-border">
+						{pinned.map((entry) => (
+							<UpdateEntry key={entry.id} entry={entry} />
+						))}
+					</div>
+				</section>
+			)}
 			{features.length > 0 && (
 				<section aria-label="New Features and Functionality">
 					<h3 className="mb-4 text-sm font-semibold">
@@ -64,7 +76,7 @@ export function UpdateGroups({
 					</div>
 				</section>
 			)}
-			<CorrectionLists entries={updates} changes={changes} />
+			<CorrectionLists entries={ordinary} changes={changes} />
 		</div>
 	);
 }

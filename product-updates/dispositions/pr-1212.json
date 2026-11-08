@@ -1,8 +1,9 @@
 {
   "key": "pr:1212",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Internal workspace, policy-scope, and packaging hardening; excluded from the in-app update modal.",
+  "classification": "highlight",
+  "entry_ids": [
+    "c24ccbdd-bdfe-4c97-8fd9-c14b1adef2fb"
+  ],
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1201"
@@ -20,8 +21,8 @@
       "CI failure disposition: the per-organization cache test still expected a two-element key after the Solution-scoped key change (https://github.com/gobifrost/bifrost/actions/runs/41548095765 and https://github.com/gobifrost/bifrost/actions/runs/41548396965). The obsolete assertion was updated in f602bada2b18cd413023b0b25d3e496362697aae, and 7e434c13ffd9289ea441e5fe9abf14f9c3035962 adds behavioral isolation coverage.",
       "CI failure disposition: the initial Product Updates run lacked a canonical disposition (https://github.com/gobifrost/bifrost/actions/runs/41546193526). This file was introduced in 21d35e2be83bd8257fc2b675f9166e1f943ce51d. Jack approved omitting the modal entry; review.status is approved and security_review remains required.",
       "Replacement for the organization-fork PR #1201; @MTG-Thomas retains original implementation credit and original commits. Jack approved the replacement and protected merge lifecycle.",
-      "CI failure disposition: the replacement PR number was assigned after its initial head was pushed, so Product Updates initially reported missing canonical disposition for pr:1212 (https://github.com/gobifrost/bifrost/actions/runs/41577771997/job/125725180606). This file was added in 1784df9259ba6b724f6823163db3ab7e9a2e5e0a; the subsequent Product Updates check and local merge-group eligibility validation pass."
+      "CI failure disposition: the replacement PR number was assigned after its initial head was pushed, so Product Updates initially reported missing canonical disposition for pr:1212 (https://github.com/gobifrost/bifrost/actions/runs/41577771997/job/125725180606). This file was added in 1784df9259ba6b724f6823163db3ab7e9a2e5e0a; the subsequent Product Updates check and local merge-group eligibility validation pass.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal workspace, policy-scope, and packaging hardening; excluded from the in-app update modal."
     ]
-  },
-  "category": "hardening"
+  }
 }

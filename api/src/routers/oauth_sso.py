@@ -12,6 +12,7 @@ import json
 import logging
 import secrets
 from datetime import datetime, timezone
+from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel
@@ -25,6 +26,7 @@ from src.core.log_safety import log_safe
 from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
 from src.models import User
+from src.config import get_settings
 from src.services.oauth_sso import OAuthError, OAuthService
 from src.services.user_provisioning import ensure_user_provisioned
 from shared.auth_cookies import set_auth_cookies
@@ -37,6 +39,97 @@ router = APIRouter(prefix="/auth/oauth", tags=["oauth"])
 
 # Bumped when the Redis state payload changes shape. v2 added the OIDC nonce.
 OAUTH_STATE_VERSION = 2
+
+_LOOPBACK_HOSTS = {"localhost", "127.0.0.1", "::1"}
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+
+
+def _origin(value: str) -> tuple[str, str, int] | None:
+    """Return a canonical ``(scheme, host, port)`` origin, or None.
+
+    Canonicalising the origin means a configured ``https://Example.com`` also
+    matches the browser's ``https://example.com:443`` while still refusing a
+    different host, scheme or port. Malformed input returns None instead of
+    raising.
+    """
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError:
+        return None
+
+    scheme = parsed.scheme.lower()
+    host = (parsed.hostname or "").lower().rstrip(".")
+    if (
+        scheme not in _DEFAULT_PORTS
+        or not host
+        or parsed.username is not None
+        or parsed.password is not None
+    ):
+        return None
+    return scheme, host, port if port is not None else _DEFAULT_PORTS[scheme]
+
+
+def _invalid_redirect_uri() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid OAuth redirect URI",
+    )
+
+
+def _validate_redirect_uri(request: Request, provider: str, redirect_uri: str) -> None:
+    """Allow only this provider's frontend callback on a trusted origin."""
+    try:
+        parsed = urlsplit(redirect_uri)
+        # Validating the port here turns malformed authorities into a 400
+        # instead of an uncaught ValueError.
+        parsed.port
+    except ValueError as exc:
+        raise _invalid_redirect_uri() from exc
+
+    if (
+        parsed.scheme.lower() not in _DEFAULT_PORTS
+        or not parsed.hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or parsed.query
+        or parsed.fragment
+        or parsed.path != f"/auth/callback/{provider}"
+    ):
+        raise _invalid_redirect_uri()
+
+    requested = _origin(redirect_uri)
+    if requested is None:
+        raise _invalid_redirect_uri()
+
+    configured = get_settings().public_url.strip()
+    public = _origin(configured) if configured else None
+    request_origin = _origin(str(request.url))
+    request_host = (request.url.hostname or "").lower()
+    request_is_loopback = request_host in _LOOPBACK_HOSTS
+
+    trusted: set[tuple[str, str, int]] = set()
+    if configured:
+        # A configured deployment origin is authoritative. If it is malformed,
+        # fail closed rather than trusting an attacker-controlled Host header.
+        if public is not None:
+            trusted.add(public)
+            if (
+                public[1] in _LOOPBACK_HOSTS
+                and request_is_loopback
+                and request_origin is not None
+            ):
+                # Local deployments may reach the API on a different loopback
+                # origin (for example the Vite dev server) than PUBLIC_URL.
+                trusted.add(request_origin)
+    elif request_is_loopback and request_origin is not None:
+        # With no deployment origin configured, only a loopback request
+        # origin is trusted so local development works without accepting an
+        # arbitrary Host header.
+        trusted.add(request_origin)
+
+    if requested not in trusted:
+        raise _invalid_redirect_uri()
 
 
 async def _save_microsoft_profile_photo(
@@ -144,6 +237,7 @@ async def get_oauth_providers(db: DbSession) -> OAuthProvidersResponse:
 @router.get("/init/{provider}", response_model=OAuthInitResponse)
 async def init_oauth(
     provider: str,
+    request: Request,
     db: DbSession,
     redirect_uri: str = Query(..., description="Frontend callback URL"),
 ) -> OAuthInitResponse:
@@ -165,6 +259,7 @@ async def init_oauth(
         - PKCE verifier is stored server-side (never sent to client)
         - State can only be used once and expires after 10 minutes
     """
+    _validate_redirect_uri(request, provider, redirect_uri)
     oauth_service = OAuthService(db)
 
     try:
@@ -347,7 +442,13 @@ async def oauth_callback(
         # New user or linking new OAuth account. Existing mappings authenticate
         # by stable provider ID; email authority is only required to create one.
         try:
-            oauth_service.validate_email_for_linking(user_info, tokens)
+            trust_provider_email = False
+            if user_info.provider == "oidc":
+                config = await oauth_service.get_provider_config("oidc")
+                trust_provider_email = config["trust_email_for_linking"]
+            oauth_service.validate_email_for_linking(
+                user_info, tokens, trust_provider_email=trust_provider_email
+            )
         except OAuthError as e:
             logger.error(f"OAuth callback linking error: {log_safe(e)}")
             raise HTTPException(

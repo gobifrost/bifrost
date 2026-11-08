@@ -1,7 +1,9 @@
 {
   "key": "pr:1214",
-  "classification": "omit",
-  "entry_ids": [],
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1214"
@@ -21,8 +23,8 @@
       "Local verification on current-main-based review/1203-jwks-throttle: ./test.sh tests/unit/services/test_webhook_adapters.py -q passed 49 tests (JUnit: zero failures/errors/skips); ./test.sh quality api passed Pyright with zero errors/warnings and Ruff. Product Updates validate and normalized merge-group validate-event passed. Full suites and live Microsoft authentication were not run. An initial overlapping quality invocation was rejected by the test-stack lock before checks ran; quality passed after the test owner finished.",
       "Release visibility review: Jack directed internal security hardening to use a reviewed omit disposition. No in-app entry or release-only entry is proposed; required security review, original source links, contributor credit, and verification evidence remain recorded.",
       "Replacement PR #1214 carries the identical reviewed adapter and regression tests from #1203 on a same-repository branch; the original contributor commits and explicit co-author credit are retained. The source fork denied maintainer writes, so this replacement avoids requiring fork management. The disposition is approved omit under Jack's release visibility policy.",
-      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41582158958 on initial draft head 9967328f85746f5dd3071f8a0c56657d99f2c061 reported missing canonical disposition for pr:1214. The actual replacement number was assigned only after PR creation. Commit 9a9426683ff1bd18ce4c2d2b4409a4325a66f7fb replaced pr-1203.json with the approved pr-1214.json; local normalized merge-group validation passed. This corrects the missing metadata rather than retrying or bypassing the gate."
+      "CI failure disposition: https://github.com/gobifrost/bifrost/actions/runs/41582158958 on initial draft head 9967328f85746f5dd3071f8a0c56657d99f2c061 reported missing canonical disposition for pr:1214. The actual replacement number was assigned only after PR creation. Commit 9a9426683ff1bd18ce4c2d2b4409a4325a66f7fb replaced pr-1203.json with the approved pr-1214.json; local normalized merge-group validation passed. This corrects the missing metadata rather than retrying or bypassing the gate.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal Bot Framework authentication hardening bounds unknown-key JWKS refresh traffic. This adds no front-facing capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted for this scoped implementation repair."
     ]
-  },
-  "reason": "Internal Bot Framework authentication hardening bounds unknown-key JWKS refresh traffic. This adds no front-facing capability and requires no customer action; omit it from the in-app Product Updates feed. No separate release-only announcement is warranted for this scoped implementation repair."
+  }
 }

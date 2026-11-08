@@ -644,7 +644,7 @@ async def verify_mfa_login(
 
     # Check if code is a recovery code (longer format)
     code = mfa_request.code.replace("-", "").upper()
-    is_recovery = len(code) == 8 and not code.isdigit()
+    is_recovery = len(code) == 8
 
     if is_recovery:
         # Verify recovery code

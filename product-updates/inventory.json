@@ -2,9 +2,9 @@
   "schema_version": 1,
   "repository": "gobifrost/bifrost",
   "base_ref": "ade714a08b95c84daa285e859ebece55f45c6754",
-  "target_ref": "4b8c2b224eefd39caa134de16d728b9fbd8bfaa7",
-  "collected_at": "2026-11-07T01:12:24Z",
-  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...4b8c2b224eefd39caa134de16d728b9fbd8bfaa7",
+  "target_ref": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+  "collected_at": "2026-11-07T23:41:36Z",
+  "source_ref": "https://api.github.com/repos/gobifrost/bifrost/compare/ade714a08b95c84daa285e859ebece55f45c6754...10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
   "commits": [
     {
       "sha": "2399fbb049e6b6c121ca07980ffa649844c0d477",
@@ -2671,6 +2671,69 @@
       "subject": "Fix Session Refresh and Conversion Review Races (#1266)",
       "prs": [
         1266
+      ]
+    },
+    {
+      "sha": "e0a7323af7269331e05873d702cb944cb0b1f66e",
+      "subject": "Qualify the stable 2.0 upgrade and release packaging (#1272)",
+      "prs": [
+        1272
+      ]
+    },
+    {
+      "sha": "e33eb5a4607cab1d7c36a877dd8eff3e3ec93b59",
+      "subject": "Preserve documentation capture evidence and stabilize candidate caches (#1273)",
+      "prs": [
+        1273
+      ]
+    },
+    {
+      "sha": "b815dc922bfe629043b058ba4bef300216785afe",
+      "subject": "Qualify the populated 1.4.1 to 2.0 upgrade (#1275)",
+      "prs": [
+        1275
+      ]
+    },
+    {
+      "sha": "ff93dcb47f9aac602021b170a8b5eb8497490bb2",
+      "subject": "fix(release): support direct stable upgrades and existing workers (#1276)",
+      "prs": [
+        1276
+      ]
+    },
+    {
+      "sha": "5c3baf58443484602be5fd9778d11de54a95468c",
+      "subject": "fix(apps): preserve existing bundles through session refresh (#1277)",
+      "prs": [
+        1277
+      ]
+    },
+    {
+      "sha": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
+      "subject": "Recover existing App subscriptions in real browsers (#1279)",
+      "prs": [
+        1279
+      ]
+    },
+    {
+      "sha": "55cab41e3eddc28852cc27a13ee756520028efff",
+      "subject": "Record passing direct 1.4.1 upgrade and original App qualification (#1280)",
+      "prs": [
+        1280
+      ]
+    },
+    {
+      "sha": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+      "subject": "Fix nightly cleanup transport and Knowledge Sources listing (#1282)",
+      "prs": [
+        1282
+      ]
+    },
+    {
+      "sha": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+      "subject": "Pin release overviews above detailed product updates (#1283)",
+      "prs": [
+        1283
       ]
     }
   ],
@@ -7146,7 +7209,16 @@
       "merged_at": "2026-11-03T04:47:35Z",
       "merge_commit": "5d3daf0e99d593e20dd44a1e26f184aa8fc9df24",
       "body": "Preserves @MTG-Thomas\u2019s #1201 commits, adds regression coverage, and omits this hardening from the updates modal. Verified: 72 focused tests and API lint/type checks passed.",
-      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1212"
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1212",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1212,
+          "role": "implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/b46354a1f52065109ef9c017b309af31d44b6a03"
+        }
+      ]
     },
     {
       "number": 1213,
@@ -7159,7 +7231,16 @@
       "merged_at": "2026-11-03T05:30:35Z",
       "merge_commit": "ed09411f55d0811213093b501460e2094ec3e2b1",
       "body": "",
-      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1213"
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1213",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1213,
+          "role": "implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/2bc2d39d2d34768a5fcb12878e8d34ca9123d4bc"
+        }
+      ]
     },
     {
       "number": 1214,
@@ -7172,7 +7253,16 @@
       "merged_at": "2026-11-03T05:35:06Z",
       "merge_commit": "5bf8716789a49801f42faf22d69e3a414592a883",
       "body": "Carries forward @MTG-Thomas\u2019s fix from #1203 and Midtown-Technology-Group/bifrost#1224, preserving original authorship. Concurrent unknown-key requests share one refresh, and failed refresh attempts start a five-minute cooldown.\n\nIncludes the reviewed security disposition and contributor credit. Verification: 49 focused tests, API type/lint checks, and Product Updates validation passed. Full suites and live Microsoft authentication were not run locally.\n\nSupersedes #1203. Refs #1196.\n",
-      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1214"
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1214",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1214,
+          "role": "implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/288f96e04b8c5832dd067eb44e16857fc6fcdbd5"
+        }
+      ]
     },
     {
       "number": 1215,
@@ -7185,7 +7275,16 @@
       "merged_at": "2026-11-03T06:15:48Z",
       "merge_commit": "63530d6cbf632377feb5a0c0300c9749b6c1ab42",
       "body": "",
-      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1215"
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1215",
+      "contributions": [
+        {
+          "login": "MTG-Thomas",
+          "profile_url": "https://github.com/MTG-Thomas",
+          "source_pr": 1215,
+          "role": "implementation",
+          "evidence_ref": "https://github.com/gobifrost/bifrost/commit/c40440eecd2589da9b03b8d43849950942eb91ab"
+        }
+      ]
     },
     {
       "number": 1216,
@@ -7654,6 +7753,123 @@
       "merge_commit": "4b8c2b224eefd39caa134de16d728b9fbd8bfaa7",
       "body": "Role and bulk-user updates reported success while authority refresh was still running. Reloading after the success message could cancel a refresh after its one-use credential had been consumed, leaving the next page signed out. Keep these mutations pending through the required authority/list refresh; regression tests fail with the old callbacks and pass with the repair.\n\nThe November 6 nightly also exposed stale test contracts: performance tests bypassed the canonical refreshing HTTP client, the fork test reconstructed only part of the expanded context, a password-change test expected a revoked session to survive, an audit test used the wrong direct-API route, and impersonation decoded identity from obsolete JWT claims. Reuse the canonical contracts and compare complete context, including provenance.\n\nRefs #603. This is the first bounded 2.0 release-readiness repair; it does not close the broader pipeline program.\n\nValidation:\n\n- `./test.sh tests/performance/test_agent_dispatch_latency.py tests/performance/test_sdk_ai_footprint.py tests/performance/test_sdk_config_throughput.py tests/performance/test_workflow_dispatch_latency.py tests/unit/execution/test_sdk_forms_context_local_fork.py -m slow -v --durations=0` \u2014 5 passed.\n- `./test.sh client unit src/hooks/useUsers.test.tsx` \u2014 8 passed; restoring the old callbacks fails exactly the two new pending-completion cases.\n- `./test.sh client e2e e2e/account-onboarding-acceptance.admin.spec.ts e2e/audit-log.admin.spec.ts e2e/impersonation.admin.spec.ts e2e/role-assignments.admin.spec.ts e2e/self-role-assignment.admin.spec.ts e2e/workflow-conversion.admin.spec.ts e2e/users.bulk.spec.ts` \u2014 12 passed, zero retries/skips. A temporary metadata diagnostic was removed afterward; the focus assertion remains unchanged.\n- `./test.sh quality api`, `npm run tsc`, and `npm run lint` passed. Lint retains the existing console warning in `e2e/support/seed-review-pack.ts`.\n\nThe mobile review-focus failure is also repaired. A terminal-job notification started a background report refresh; loading switched the conversion page back to the initial analysis stage, detaching the button saved for focus restoration. A deterministic regression fails on the old hook. Preserve the loaded review while its report refreshes;24 related hook/component tests and the original rendered conversion journey pass after this fix. No focus assertion was relaxed.\n\nFull local backend/Vitest/Playwright suites were not run. The first manual full nightly on the earlier candidate was canceled after this cause was identified and reproduced. The replacement full nightly [42289964908](https://github.com/gobifrost/bifrost/actions/runs/42289964908) passed on corrected source `43543f240`: slow backend contracts, API unit coverage, the complete product Playwright suite, and uncached production image builds all succeeded. Current main, including the separately verified OIDC PR #1265, was then merged without conflicts; the focused hook/component regression set was rechecked before queueing. The protected queue validates the combined candidate. This replaces known-bad code rather than rerunning unchanged tests until green. No retry, timeout increase, skip, or speculative focus patch is included.\n",
       "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1266"
+    },
+    {
+      "number": 1272,
+      "title": "Qualify the stable 2.0 upgrade and release packaging",
+      "url": "https://github.com/gobifrost/bifrost/pull/1272",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T01:57:04Z",
+      "merge_commit": "e0a7323af7269331e05873d702cb944cb0b1f66e",
+      "body": "Prepare the full 2.0.0 release from the merged OIDC and nightly repairs. Existing1.4.1 installations require a real PR1a API startup before the claims migration; the new operator runbook provides the exact bridge pin and authentication maintenance steps. A disposable image rehearsal now proves that chain with genuine old HTTP-queued work, preserving its user lineage and completing it once on the target.\n\nThe checked-in receipt qualifies immutable runtime source4b8c2b224, not the future versioned2.0.0 artifact. It records direct-upgrade refusal on a database clone, protocol1 from real bridge startup, recovery into PostgreSQL, successful target execution, one persisted marker, empty queues and complete project cleanup. No production deployment was performed.\n\nAlso bump all3 plugin manifests to2.0.0, refresh the cumulative verified Product Updates inventory through the merged runtime source, and move the release-body refusal test into its own fixture so an actual approved stable-release review will not break that guard.\n\nRefs #603. Final reviewed release-body material will follow on the landed source; this PR does not create a tag, publish a release, or close the broader pipeline issue.\n\nValidation:\n\n- Real immutable-image1.4.1\u2192PR1a\u2192target rehearsal passed, including cleanup. Source and digest witnesses are retained in docs/releases/evidence/2.0.0-upgrade-source.json.\n- `./test.sh tests/unit/services/test_legacy_broker_drain.py tests/e2e/platform/test_authz_migrations.py -q --durations=0` \u201427 passed, no skips.\n- Controller safety tests \u20144 passed in the Docker Python runtime: project collision cannot delete an existing stack, failed cleanup retains a receipt, and command errors redact generated credentials.\n- `python3 -m unittest scripts.test_release_gate scripts.test_stable_2_upgrade_rehearsal -v` \u201410 passed.\n- `bash scripts/test_prepare_release_body.sh`, shell syntax, Python compilation, Compose configuration and scoped Ruff checks passed.\n- Product Updates validation passed.381 commits map to381 API-verified landed PRs; three additional subject references (#769,#1052,#1263) name issues, not missing source PRs. Historical entry credit metadata is retained.\n- Plugin version helper is idempotent at2.0.0.\n\nFull suites were not repeated locally. The protected merge queue remains the combined-candidate gate. The complete corrected-source nightly and both blocker PR merge queues are green. Public upgrade/feature documentation and screenshot refresh are proceeding separately.\n\nCodeQL follow-up: the first head wrote generated synthetic credentials to a temporary dotenv file. That storage was removed; Compose now receives them through its child environment and reads `/dev/null` as its env-file. A regression fails before the repair and passes afterward. The real image-chain rehearsal passed again with this credential path, including exactly-once execution and full cleanup; its updated receipt is committed. `scripts/codeql-local.sh --rebuild --changed-only --fail-on-alerts` passed with no new Python findings. No suppression, alert dismissal, or plaintext replacement file was added.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1272"
+    },
+    {
+      "number": 1273,
+      "title": "Preserve documentation capture evidence and stabilize candidate caches",
+      "url": "https://github.com/gobifrost/bifrost/pull/1273",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T02:43:48Z",
+      "merge_commit": "e33eb5a4607cab1d7c36a877dd8eff3e3ec93b59",
+      "body": "Documentation captures lost earlier successes and failures whenever Playwright replaced a failed worker: importing the spec deleted the shared results index. Initialize the index once in the launcher, write updates atomically, and reject malformed existing JSON. The regression proves replacement worker imports retain both successful captures and errors.\n\nThe protected merge-queue build also exposed an infrastructure failure: the client image built and pushed successfully, then GitHub Actions cache export failed with `error writing layer blob: not_found` (run 42326862741, job 128264057937). Use separate registry cache refs for the API and client candidates through their existing GHCR credentials. Cache export errors remain fatal. Image build, signing, provenance and complete-suite gates remain required.\n\nRefs #603. Internal documentation evidence and CI repairs; public documentation selectors and prose are updated separately in gobifrost/public-docs#12 (merged).\n\nValidation:\n\n- `node --test client/e2e/support/acceptance-report.test.mjs client/e2e/support/docs-results.test.mjs` \u2014 9 passed.\n- Existing client types/lint passed; lint retains the existing console warning in `e2e/support/seed-review-pack.ts`.\n- Targeted live documentation captures for Home, version menu, Users and Solution source picker \u2014 5 passed including setup, no retries. All four capture records retained.\n- Original full capture report accounted for 90 entries: 86 successful PNGs recovered and postprocessed, four selector/flow failures repaired. Recovery produced 57 changed images and 29 visual no-ops, with no missing images or processing errors.\n- `./test.sh tests/unit/test_ci_workflow_contract.py -q --durations=0` \u2014 16 passed, zero skipped. The new contract verifies separate registry caches and fatal export errors.\n- `./test.sh quality api` passed (Pyright and Ruff). Scoped Ruff, Product Updates validation and `git diff --check` also passed.\n\nThe protected merge queue verifies the new registry-cache exports and the combined candidate. No test retries, longer timeouts, skips, ignored errors or extra compatibility paths were added.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1273"
+    },
+    {
+      "number": 1275,
+      "title": "Qualify the populated 1.4.1 to 2.0 upgrade",
+      "url": "https://github.com/gobifrost/bifrost/pull/1275",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T05:51:35Z",
+      "merge_commit": "b815dc922bfe629043b058ba4bef300216785afe",
+      "body": "The prior upgrade proof covered one queued inline execution. Extend the same pinned-image rehearsal with a populated 1.4.1 installation so 2.0 qualification checks existing data, access and deployed App source across the real bridge.\n\nThe fixture creates two organizations, three invite-registered humans (including a same-organization non-member), two additional roles, two organization secret configs, two integration credentials with organization mappings, a registered tool linked to a form and agent, and an independently deployed SDK-2 V2 App. All seed mutations use the actual 1.4.1 API. A read-only query observes the App activation pointer because the public DTO omits it.\n\nThe target verifies fresh login and rejection of a still-unexpired old human token, role/org isolation, original resource IDs and bindings, unchanged secret-row checksums, and real workflow SDK decryption. It rebuilds the existing App through application.sdk_update, verifies contract 2 \u2192 3 and current fingerprint/binding provenance, fetches the active bundle, and confirms access stayed scoped. Retained source files are compared byte-for-byte. The original queued-work proof remains: guarded direct-upgrade refusal, real bridge startup/drain, preserved user lineage, one successful execution marker, empty queues and consumed durable dispatch.\n\nThe committed non-secret receipt records immutable images, source witnesses, seeded IDs, checksums, execution results and SDK deployment IDs. Only synthetic data is used. This qualifies the selected source build; it does not claim a production rollout, final-tag artifact qualification, browser/MFA/SSO acceptance, or an external AI-provider call. Agent bindings are preserved without invoking a provider.\n\nRefs #603.\n\nValidation:\n\n- Full real-image chain stable2-populated-05 passed with complete cleanup, using actual 1.4.1 \u2192 pinned PR1a bridge \u2192 immutable e33eb5a target. No protocol row was synthesized and no migration guard was bypassed.\n- python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population -v: 14 passed on the host and in the selected target Docker runtime.\n- ./test.sh tests/unit/test_ci_workflow_contract.py -q --durations=0: 16 passed, zero skipped. The 14 rehearsal safety tests are wired into the normal CI lint gate and repository preflight.\n- Scoped Ruff, Python compilation, bash -n test.sh and git diff --check passed. Fresh local Python CodeQL scanned all 2,880 Python files and reported zero findings after the repository filters (including the changed-line gate).\n- Four real jobs per rehearsal: the old App deploy; recovered pending execution; target registered workflow; target App SDK rebuild. Builds/worker boundaries are the contracts being qualified. The source deploy measured 17.18 seconds in the final run; the canonical bridge adds its required 120-second quiet interval. These are rehearsal costs, not capacity claims.\n\nKnown failures received concrete fixture repairs: metadata GET uses an App slug; activation ID is an internal field rather than a public DTO property; and observer database pools must be disposed before their event loop closes. The last defect has a deterministic failing-before/passing-after two-read regression test. The successful final chain exercised the corrections. Local security analysis also required password KDFs for deterministic fixture credentials; the fixture now uses PBKDF2-HMAC-SHA256 with distinct purpose labels and repeatability/separation coverage. No retries, inflated timeouts, skips or ignored failures were added.\n\nFull backend/browser suites were not repeated locally for this scripts/docs change; the protected merge queue remains the authoritative combined gate.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1275"
+    },
+    {
+      "number": 1276,
+      "title": "fix(release): support direct stable upgrades and existing workers",
+      "url": "https://github.com/gobifrost/bifrost/pull/1276",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T07:46:15Z",
+      "merge_commit": "ff93dcb47f9aac602021b170a8b5eb8497490bb2",
+      "body": "## Summary\n\nA stable 1.4.1 installation currently cannot migrate directly: the claims gate requires an intermediate development API start, and the runtime loader rejects the actual stable engine-token format. Remove that staged prerequisite and resolve exact stable worker credentials from current durable run authority. Fill absent live-run lineage without changing historical actors, and choose the existing scoped identity when a new worker admits an old unattended queued run.\n\nKeep versioned token validation and human session revocation intact. Partial or absent authority fails closed; signed legacy admin, Solution and repository flags do not grant access. Shared migration rehearsals now upgrade directly instead of inserting an intermediate API-start record.\n\nThe image rehearsal now targets direct source\u2192target, an active source worker calling the new API, pending recovery exactly once, and the existing App artifact before any rebuild. It retains private in-memory old-token rejection, populated data/role/tenant checks and isolated cleanup. The revised full image chain has **not yet run**; it needs the immutable repaired candidate image. Existing staged receipts remain narrowly labeled.\n\n## Validation\n\nExact targeted commands:\n\n```bash\n./test.sh tests/e2e/platform/test_authz_migrations.py tests/e2e/platform/test_running_run_lineage_migration_rehearsal.py tests/unit/authorization/test_runtime.py tests/unit/test_run_lineage.py tests/unit/authorization/test_challenge_precedes_effects.py -q --durations=0\n./test.sh tests/e2e/platform/test_running_run_lineage_migration_rehearsal.py -q --durations=0\n./test.sh tests/unit/authorization/test_runtime.py::test_previous_stable_unattended_run_uses_its_scoped_default_identity -q --durations=0\n./test.sh tests/e2e/platform/test_runtime_token_claims.py -k legacy_token -q --durations=0\n./test.sh tests/unit/jobs/consumers/test_workflow_execution_lineage.py tests/unit/services/test_legacy_broker_drain.py -q --durations=0\n./test.sh quality api\n./test.sh tests/unit/test_access_list.py tests/unit/test_router_import_boundary.py tests/unit/authorization/test_runtime.py tests/unit/jobs/consumers/test_workflow_execution_lineage.py -q --durations=0\npython3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population -v\n```\n\n- 67 focused Docker migration/runtime/lineage/auth-boundary checks passed, plus final migration preservation and unattended identity cases.\n- Real HTTP: both typed legacy and exact 1.4.1 engine credentials work while live and fail after completion (2 passed).\n- Consumer and broker recovery: 29 passed in the final focused run, including a real current credential mint after legacy unattended dispatch recovery. Runtime checks also passed in the earlier scoped batches.\n- Release tooling: 21 pure tests passed on host Python and production Python3.14; archive/bundle fingerprints detect mutation, secrets stay out of receipts, project collisions never clean up someone else's stack.\n- API pyright: 0 errors/warnings; Ruff: all checks passed on the final reviewed source.\n- Full backend/browser suites and the new immutable-image rehearsal were not run locally. The protected merge queue remains the broad gate.\n\nCodeQL follow-up: removed a redundant secret-named fixture key and comparison digest from seed output. The probe reuses the existing tenant config and derives its expected result privately. A fresh full Python CodeQL database/suite has zero findings across all changed PR files with existing CI exclusions, including unchanged sink lines; hosted recheck is pending. No new suppression or exclusion.\n\nUnit-tripwire follow-up: register the exact new authorization check counts, classifying legacy header validation as credential schema with no permission grant. Defer the lineage import until actual legacy recovery. Full access-inventory/import/runtime/consumer coverage passed (119 tests, no skips), and API pyright/Ruff passed. The failing checks were reproduced before this repair.\n\n## Release Scope\n\nStable tagging and publication are on hold at the user\u2019s direction while readiness work is completed.\n\nThis repairs backend compatibility; it does **not** declare the entire stable upgrade qualified or publish a release. Existing App live-subscription compatibility and automatic SDK upgrade coverage remain release gates. The current hosted transition is undeclared, optional upgrades default off, and legitimate retained source can lack the lockfile required for automatic builds. Do not replace those gaps with a mandatory manual-redeploy procedure.\n\n## Product Updates\n\n- [x] Other \u2014 Allow direct stable database upgrades and keep existing workflow credentials usable during image replacement.\n- [ ] Highlight\n- [ ] Omit\n\nCanonical disposition: product-updates/dispositions/pr-1276.json.\n\nRefs #603.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1276"
+    },
+    {
+      "number": 1277,
+      "title": "fix(apps): preserve existing bundles through session refresh",
+      "url": "https://github.com/gobifrost/bifrost/pull/1277",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T08:59:52Z",
+      "merge_commit": "5c3baf58443484602be5fd9778d11de54a95468c",
+      "body": "## Summary\n\nExisting stable 1.4.1 App bundles lose live subscriptions after a 4001 authentication close. Keep their original SDK2 transport usable when authentication expires or its authority epoch changes, without requiring retained source or a rebuild.\n\nThe server still refuses every stale protected operation. For a same-origin query transport with an exact signed human token and a live durable family, it requests refresh through the existing Redis user channel and closes the query socket with 1012. Only the matching stale cookie host closes with 4001 and refreshes through the existing serialized coordinator. Internal requests never reach browser subscribers; a valid newer host ignores old requests. Invalid or revoked families and nonhuman credentials remain terminal.\n\nStandalone Apps connect the shared host even outside the notification shell. The shared transport reuses a rotating family, replaces another session, and ignores late callbacks from the old socket. Token rotation preserves the mounted App. Advisory callers and reconnects use one shared background connection mode that reports failure; explicitly awaited connection attempts still reject.\n\nDeclare supported wire contracts 2 and 3, so supported SDK2 bundles show an available update. Enable the reviewed optional SDK2-to-hosted migration in metadata and remove the eligibility override from its existing live test. Automatic updates remain opt-in and retain lockfile/dependency and atomic-activation safeguards. Correct the runbooks' mandatory-rebuild guidance.\n\n## Validation\n\n115 tests passed on current main (ff93dcb47), no skips:\n\n```bash\n./test.sh tests/unit/services/test_websocket_auth_recovery.py tests/unit/core/test_auth_platform.py tests/unit/test_access_list.py tests/unit/test_router_import_boundary.py tests/e2e/api/test_websocket_legacy_app_recovery.py tests/e2e/platform/test_automatic_app_sdk_upgrade.py -q --durations=0\n```\n\n89 backend consumer tests also passed:\n\n```bash\n./test.sh tests/unit/services/test_websocket_auth_recovery.py tests/unit/core/test_auth_platform.py tests/unit/routers/test_websocket_table_messages.py tests/unit/shared/test_automatic_app_sdk_upgrades.py tests/e2e/api/test_websocket.py::TestWebSocketConnection tests/e2e/api/test_websocket_read_visibility.py tests/e2e/platform/test_file_websocket_subscriptions.py tests/e2e/api/test_websocket_legacy_app_recovery.py -q --durations=0\n```\n\nThe complete client suite passed: 636 files and 4,226 tests, with no unhandled errors. The 135-test focused set covers the SHA-256-pinned exact 1.4.1 socket implementation, early retry, resubscription, session replacement, background handshake failure and affected consumers:\n\n```bash\n./test.sh client unit src/services/websocket.test.ts src/hooks/useAgentRunUpdates.test.tsx src/hooks/useNotifications.test.tsx src/components/agents/AgentRunsTab.test.tsx src/components/agents/AgentOverviewTab.test.tsx src/components/agents/SummaryBackfillButton.test.tsx src/components/jsx-app/StandaloneV2App.test.tsx src/lib/app-sdk/stable-ws-compatibility.test.ts src/lib/app-sdk/ws-client.test.ts src/lib/api-client.test.ts\n./test.sh client unit\n./test.sh quality api\n(cd client && npm run tsc)\n(cd client && npm run lint)\n```\n\nAPI pyright reported 0 errors/warnings; Ruff and final client types/lint passed. SDK status/fingerprint cases passed in the earlier focused batch.\n\nCI exposed 28 unhandled early-close rejections despite 4,223 passing client assertions. The same 28 original agent-tab tests reproduced the errors, then passed without them after the product fix, before adding fixture isolation. Independent service/hook tests cover background failure ownership and retained awaited rejection. The E2E check propagated the client unit failure; it did not execute a failing backend E2E case. No added retries, longer timeouts or skips.\n\nThe live recovery test uses no deploy/build jobs (5.2s for HTTP/socket/Redis/session behavior). The existing automatic-upgrade test retains exactly one real PlatformJob/Vite build (29.2s on the combined-main run) to prove optional migration and atomic activation; it no longer overrides eligibility. Seven direct database cases cover current family/user eligibility without additional jobs.\n\nFresh full Python and JavaScript security-and-quality suites have zero findings in any changed file, including flow locations and unchanged sink lines, under existing query exclusions. Replaced two promise-identity guards with numeric generation checks and removed three pre-existing notification payload logging findings. No new suppression or exclusion.\n\nFull backend/browser suites, the final immutable-image browser rehearsal and final nightly/benchmark replay were not run locally. The protected merge queue remains the broad gate. This PR does not settle mixed old/new API-fleet deployment or qualify a complete stable upgrade.\n\n## Product Updates\n\n- [x] Other \u2014 Keep existing App subscriptions working across image updates without requiring an SDK rebuild.\n- [ ] Highlight\n- [ ] Omit\n\nCanonical disposition: `product-updates/dispositions/pr-1277.json`.\n\nStable tagging, publication and production rollout remain held at the user's direction. Refs #603.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1277"
+    },
+    {
+      "number": 1279,
+      "title": "Recover existing App subscriptions in real browsers",
+      "url": "https://github.com/gobifrost/bifrost/pull/1279",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T18:17:08Z",
+      "merge_commit": "e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a",
+      "body": "Existing SDK2 Apps stop receiving live updates after access expiry because the recovery selector requires `Sec-Fetch-Site`, which the real Chromium WebSocket handshake omits. Use the browser's HTTP(S) Origin and public WebSocket Host authority to select hosted recovery, and preserve the public port through NGINX. Signed human credentials, current durable-family eligibility, expiry, epoch, revocation and protected-data checks remain enforced.\n\nExtend the existing real 1.4.1 image rehearsal with an original SDK2 React App, a live tenant-scoped table, real signed 90-second fixture expiry, an authority change, family revocation and local-state preservation. The App's active deployment, retained source and served bundle must remain unchanged. Browser and control session families stay separate; private credentials use memory-only IPC and proof fields are whitelisted. Fix the source-worker barrier observation: 1.4.1 persists execution logs only after completion, so a held run must signal through its isolated container instead.\n\nThe committed evidence records the predecessor image's successful backend/data checks and failed browser boundary; it explicitly does not claim a full upgrade pass. After this lands, qualify the corrected immutable API/client artifacts before release. Stable publication remains held by the user's direction.\n\nValidation:\n- `./test.sh tests/unit/services/test_websocket_auth_recovery.py tests/e2e/api/test_websocket_legacy_app_recovery.py -v`: 41 passed, no skips; the real Redis/socket test no longer fabricates Fetch Metadata.\n- `./test.sh tests/performance/test_sdk_config_throughput.py tests/performance/test_workflow_dispatch_latency.py tests/unit/routers/test_websocket_human_claims.py tests/unit/routers/test_websocket_table_messages.py tests/unit/test_websocket_table_resolution.py -s -v`: 25 passed, no skips. Bounded development-stack observations; no production-capacity or controlled before/after claim.\n- `python3 -m unittest scripts.test_stable_2_upgrade_rehearsal scripts.test_stable_2_upgrade_population -q`: 27 passed.\n- `./test.sh quality api`, production NGINX configuration test, runner-image Node syntax check and diff checks passed.\n- Fresh full Python and JavaScript CodeQL security-and-quality suites: zero findings across changed files/flow locations, including unchanged lines; existing CI filters only.\n- Full backend/client suites were not repeated locally; the protected exact-candidate merge queue is the complete-suite gate.\n\nRefs #603; follows #1277.\n\nProduct Updates proposal: Other / fix \u2014 Keep existing App live updates working when a browser session refreshes. Canonical disposition: `product-updates/dispositions/pr-1279.json` (approved).",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1279"
+    },
+    {
+      "number": 1280,
+      "title": "Record passing direct 1.4.1 upgrade and original App qualification",
+      "url": "https://github.com/gobifrost/bifrost/pull/1280",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T20:18:10Z",
+      "merge_commit": "55cab41e3eddc28852cc27a13ee756520028efff",
+      "body": "Record the passing direct upgrade from the actual stable 1.4.1 image to the immutable API/client artifacts built from e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a. No intermediate image or SDK rebuild was used.\n\nThe receipt verifies representative organizations/users/roles, resource IDs and workflow/form/agent links, four preserved encrypted credential records, a real source worker completing its SDK call through the target API, and one old queued workflow recovered and completed exactly once. The original SDK2 App recovered real signed access expiry and a global authority-epoch change, kept local component state, and refused data after family revocation. Its deployment pointer, retained source and served bundle hashes stayed unchanged. Both isolated Compose projects were removed.\n\nCorrect the rehearsal's role-editor fixture from non-editable `workflows.read` to the advertised User-base permission `workflows.execute`, and include its numeric status in safe failure diagnostics. Production runtime/authentication code and images are unchanged. Controller-file hashes identify the exact harness used; the runbook now links the passing receipt and states its single-API/synthetic-data limits.\n\nValidation: actual immutable-image rehearsal `stable2-direct-e7c953-02` passed with complete cleanup; 27 tooling tests passed; runner-image Node syntax and diff checks passed. Previous failed fixture attempt is retained with its durable disposition; no retries, timeout increases or skips. The full exact-source nightly on e7c953 is running as workflow 42407182661. This PR neither claims mixed-validator API-fleet coverage nor publishes a stable release.\n\nRefs #603; follows #1279. Product Updates proposal: Omit \u2014 internal release qualification, safe synthetic evidence, fixture correction and operator documentation; no product runtime behavior change.",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1280"
+    },
+    {
+      "number": 1282,
+      "title": "Fix nightly cleanup transport and Knowledge Sources listing",
+      "url": "https://github.com/gobifrost/bifrost/pull/1282",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T21:03:48Z",
+      "merge_commit": "ab536cd521506afa6dd1b5e17631559bdcd1a62a",
+      "body": "The final release nightly completed the Home collection UI journey but failed its API-fixture cleanup when Playwright reused a connection at Uvicorn's five-second idle cutoff. API-only fixture contexts now close each request connection; browser behavior and authentication are unchanged, and reset mutations are never retried. A real HTTP-peer regression reproduces the old ECONNRESET and verifies one successful cleanup attempt with the repair.\n\nThe same run's logs exposed a Knowledge Sources namespace-list 500: its repository constructor omitted the required organization argument. Supply that argument while retaining the existing authorized visibility predicate, with a live regression proving own/Global visibility and foreign-organization exclusion.\n\nValidation:\n- `./test.sh client unit src/test/human-auth.test.ts` \u2014 8 passed; Node26.\n- `./test.sh client e2e e2e/home.admin.spec.ts --project=platform-admin` \u2014 setup plus3Home cases passed,31.4s; production client, zero retries; stack cleaned.\n- `(cd client && npm run tsc && npm run lint)` \u2014 passed; lint reports the existing seed-review-pack console warning, no errors.\n- `./test.sh tests/e2e/api/test_knowledge_document_authorization.py -v --durations=0` \u2014 2 passed, including the live own/Global/foreign namespace regression.\n- `./test.sh quality api` \u2014 pyright0errors/0warnings; Ruff passed.\n\nThe failed nightly42407182661 has a durable disposition in `docs/releases/evidence/2.0.0-nightly-disposition.md`. The complete nightly must pass on the repaired frozen source before release readiness. Broader suites are left to the protected merge queue and final nightly.\n\nProduct Updates: Other \u2014 Fixed: Knowledge Sources lists authorized namespaces correctly.\n\nRefs #603. Stable2.0 publication remains held; this PR does not create a tag, release, latest promotion or rollout.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1282"
+    },
+    {
+      "number": 1283,
+      "title": "Pin release overviews above detailed product updates",
+      "url": "https://github.com/gobifrost/bifrost/pull/1283",
+      "author": {
+        "login": "jackmusick",
+        "type": "User"
+      },
+      "merged_at": "2026-11-07T23:24:41Z",
+      "merge_commit": "10ff88c118a0c0522b35e9bfa8c04b0fe94480c1",
+      "body": "Release overview entries can be pinned above detailed updates in both the What\u2019s New dialog/history and generated release notes. Pinning preserves existing visibility, UUID acknowledgments and source credits; the detailed entries remain scrollable below.\n\nDocument the recommended App SDK update and capacity checks, including the local Solution build versus server-side independent App build distinction. Existing supported Apps still require no rebuild to survive the image upgrade. The 2.0 overview itself remains in held release-notes PR #1281; publication remains held.\n\nValidation:\n- Focused renderer/schema tests: 2 passed.\n- Backend bundle/receipt unit and live API tests: 8 passed.\n- Four focused client test files: 26 passed.\n- Controlled-feed Playwright: setup and page scenario passed; verifies pin order, hidden entries, coherent receipt fixture and scrolling. This is UI fixture coverage, not a claim of a generated-bundle end-to-end journey.\n- Generated OpenAPI types from this worktree\u2019s API; client type/lint checks and Dockerized API Pyright/Ruff passed. No CLI contract fingerprint change. Full suites were not run locally; the protected merge queue remains the full gate.\n\nProduct Updates: Other \u2014 Upgrade guidance appears above detailed product updates.\n\nRefs #603.\n",
+      "metadata_ref": "https://api.github.com/repos/gobifrost/bifrost/pulls/1283"
     }
   ]
 }

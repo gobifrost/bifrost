@@ -60,6 +60,7 @@ class ProductUpdateEntry(BaseModel):
     additional_areas: list[str] | None = None
     release: str | None = None
     in_app: bool | None = None
+    pinned: bool = False
 
 
 class ProductUpdateOtherChange(BaseModel):

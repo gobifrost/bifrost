@@ -15,8 +15,9 @@ import { getAppLoadErrorMessage } from "./app-load-error";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
-import { clearAuthTokens, getActiveToken } from "@/lib/auth-token";
+import { clearAuthTokens, getActiveToken, isEmbedSession, isImpersonating } from "@/lib/auth-token";
 import { ImpersonationBanner } from "@/components/layout/ImpersonationBanner";
+import { webSocketService } from "@/services/websocket";
 import { preloadHostedSdkFactory } from "@/lib/app-sdk/hosted-loader";
 
 export interface BifrostAppBootstrap {
@@ -294,6 +295,16 @@ export function StandaloneV2App({
 
 	const token = getActiveToken();
 	const isAuthenticated = Boolean(token);
+	const needsRefreshHost = isAuthenticated && !isEmbedSession() && !isImpersonating();
+	useEffect(() => {
+		if (!needsRefreshHost) return;
+		// Immutable bundled SDKs cannot refresh terminal auth closures. Keep the
+		// shared cookie-authenticated host connected even outside the platform
+		// notification shell. It owns refresh; the App tree stays mounted.
+		webSocketService.connectInBackground();
+		// The singleton also serves other consumers; App unmount does not own
+		// its lifetime; the server still checks authentication before all data.
+	}, [needsRefreshHost]);
 	if (loadedSourceKey !== sourceKey) {
 		setLoadedSourceKey(sourceKey);
 		setIsBootstrapping(true);

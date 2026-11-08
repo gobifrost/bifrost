@@ -65,6 +65,8 @@ services:
       interval: 3s
       timeout: 3s
       retries: 60
+  client:
+    image: ${REHEARSAL_CLIENT_IMAGE:?immutable client image required}
   worker:
     <<: *api
     command: [python, -m, src.worker.main]

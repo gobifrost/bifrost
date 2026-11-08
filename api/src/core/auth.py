@@ -668,20 +668,8 @@ async def get_current_user_from_db(
     return user
 
 
-async def get_current_user_ws(websocket) -> UserPrincipal | None:
-    """
-    Get current user from WebSocket connection.
-
-    Checks explicit credentials before the ordinary access-token cookie:
-    Authorization header, then query token, then cookie. The query form is
-    needed for browser WebSockets, whose API cannot set Authorization headers.
-
-    Args:
-        websocket: FastAPI WebSocket connection
-
-    Returns:
-        UserPrincipal if authenticated, None otherwise
-    """
+def select_websocket_auth_token(websocket) -> str | None:
+    """Select the original handshake credential with HTTP-equivalent precedence."""
     explicit_token = None
 
     # Try Authorization header (some WebSocket clients support this)
@@ -707,6 +695,25 @@ async def get_current_user_ws(websocket) -> UserPrincipal | None:
             and (is_runtime_credential_payload(selected_payload) or selected_payload.get("embed"))
         ):
             token = marker
+
+    return token
+
+
+async def get_current_user_ws(websocket) -> UserPrincipal | None:
+    """
+    Get current user from WebSocket connection.
+
+    Checks explicit credentials before the ordinary access-token cookie:
+    Authorization header, then query token, then cookie. The query form is
+    needed for browser WebSockets, whose API cannot set Authorization headers.
+
+    Args:
+        websocket: FastAPI WebSocket connection
+
+    Returns:
+        UserPrincipal if authenticated, None otherwise
+    """
+    token = select_websocket_auth_token(websocket)
 
     if not token:
         return None

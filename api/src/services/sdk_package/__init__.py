@@ -155,6 +155,20 @@ def sdk_contract_version() -> int:
 
 
 @functools.lru_cache(maxsize=1)
+def sdk_supported_contract_versions() -> frozenset[int]:
+    """Wire contracts whose deployed bundles remain usable without rebuilding."""
+    contract = json.loads((_SDK_SRC / "sdk-contract.json").read_text())
+    versions = contract["supported_versions"]
+    if (
+        not isinstance(versions, list)
+        or any(type(version) is not int or not 0 < version <= contract["version"] for version in versions)
+        or contract["version"] not in versions
+    ):
+        raise ValueError("Invalid SDK supported-contract declaration")
+    return frozenset(versions)
+
+
+@functools.lru_cache(maxsize=1)
 def sdk_automatic_upgrade_contracts() -> frozenset[int]:
     """Reviewed source contracts that can rebuild without developer changes.
 

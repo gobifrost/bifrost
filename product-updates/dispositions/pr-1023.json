@@ -1,8 +1,9 @@
 {
   "key": "pr:1023",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Internal execution-origin hardening and shared CI image-signing maintenance; no new customer capability or required customer action. Original implementation and authorship remain credited to Jack Musick (@jackmusick) in PR #1023 and commit 4ee2fb5612314dc0d1bc3bae3fd99288552bc111.",
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -13,7 +14,8 @@
       "Jack explicitly approved expanding this PR to repair shared image signing in the native reply \"Yes.\" to the preceding scope request on 2026-11-05.",
       "https://github.com/sigstore/sigstore-go/pull/647",
       "https://github.com/sigstore/cosign/blob/v3.1.4/go.mod",
-      "Shared signer pins cosign v3.1.4 (sigstore-go v1.3.0 includes Rekor v1 duplicate-entry recovery), retains keyless signing and transparency verification, and verifies the immutable image digest with the exact GitHub workflow identity and GitHub OIDC issuer. Release-asset blob signing retains its existing bundle contract."
+      "Shared signer pins cosign v3.1.4 (sigstore-go v1.3.0 includes Rekor v1 duplicate-entry recovery), retains keyless signing and transparency verification, and verifies the immutable image digest with the exact GitHub workflow identity and GitHub OIDC issuer. Release-asset blob signing retains its existing bundle contract.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal execution-origin hardening and shared CI image-signing maintenance; no new customer capability or required customer action. Original implementation and authorship remain credited to Jack Musick (@jackmusick) in PR #1023 and commit 4ee2fb5612314dc0d1bc3bae3fd99288552bc111."
     ]
   },
   "security_review": {

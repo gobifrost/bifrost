@@ -32,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.core.log_safety import log_safe
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
+from src.services.oauth_client_assertion import encode_ec_client_assertion
 from src.services.oauth_provider import append_query_params
 from src.services.oidc_rp import (
     GOOGLE_CLAIMS_OPTIONS,
@@ -182,7 +183,7 @@ class OAuthService:
                 "authorize_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/authorize",
                 "token_url": f"https://login.microsoftonline.com/{tenant}/oauth2/v2.0/token",
                 "userinfo_url": "https://graph.microsoft.com/v1.0/me",
-                "scopes": ["openid", "email", "profile", "User.Read"],
+                "scopes": config.scopes,
                 **_client_auth_fields(config),
             }
 
@@ -196,7 +197,7 @@ class OAuthService:
                 "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth",
                 "token_url": "https://oauth2.googleapis.com/token",
                 "userinfo_url": "https://www.googleapis.com/oauth2/v3/userinfo",
-                "scopes": ["openid", "email", "profile"],
+                "scopes": config.scopes,
                 **_client_auth_fields(config),
             }
 
@@ -217,8 +218,9 @@ class OAuthService:
                 "authorize_url": discovery["authorization_endpoint"],
                 "token_url": discovery["token_endpoint"],
                 "userinfo_url": discovery.get("userinfo_endpoint"),
-                "scopes": ["openid", "email", "profile"],
+                "scopes": config.scopes,
                 "display_name": config.display_name or "SSO",
+                "trust_email_for_linking": config.trust_email_for_linking,
                 **_client_auth_fields(config),
             }
 
@@ -487,7 +489,10 @@ class OAuthService:
             raw_data=data,
         )
 
-    def validate_email_for_linking(self, user_info: OAuthUserInfo, tokens: OAuthTokens) -> None:
+    def validate_email_for_linking(
+        self, user_info: OAuthUserInfo, tokens: OAuthTokens,
+        *, trust_provider_email: bool = False,
+    ) -> None:
         """Require a provider-authoritative email before creating a new OAuth link.
 
         A linked account is authenticated solely by its provider ID, so current
@@ -518,9 +523,21 @@ class OAuthService:
                 raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
             return
 
-        # Generic OIDC is a trusted issuer selected through platform settings.
-        # Preserve its existing email policy unless it explicitly denies verification.
-        if data.get("email_verified") is False:
+        # Email can attach this identity to an existing user or organization.
+        # An administrator may explicitly delegate that authority to a curated
+        # provider, independently of whether it verifies mailbox ownership.
+        # Otherwise only an affirmative verification claim permits linking.
+        claims = tokens.id_token_claims or {}
+        token_email_verified = (
+            "email_verified" not in data
+            and claims.get("email_verified") is True
+            and _normalized_email(claims.get("email")) == user_info.email
+        )
+        if not (
+            trust_provider_email
+            or data.get("email_verified") is True
+            or token_email_verified
+        ):
             raise OAuthError("Your identity provider hasn't verified this account's email address.")
 
     # ========================================================================
@@ -686,10 +703,31 @@ def _token_request_auth(
         if not private_key:
             raise OAuthError("private_key_jwt requires a private key")
         kid = config.get("private_key_kid")
+        alg = config.get("private_key_alg") or "RS256"
+        if alg.startswith("ES"):
+            # Authlib 1.9.5's client-assertion signer is RSA-only.
+            assertion = encode_ec_client_assertion(
+                client_id=client_id,
+                token_endpoint=token_url,
+                private_key=private_key,
+                alg=alg,
+                kid=kid,
+            )
+            body = {
+                **data,
+                "client_id": client_id,
+                "client_assertion_type": (
+                    "urn:ietf:params:oauth:client-assertion-type:jwt-bearer"
+                ),
+                "client_assertion": assertion,
+            }
+            return dict(body), {
+                "Content-Type": "application/x-www-form-urlencoded"
+            }
         assertion = PrivateKeyJWT(
             token_endpoint=token_url,
             headers={"kid": kid} if kid else None,
-            alg=config.get("private_key_alg") or "RS256",
+            alg=alg,
         )
         client_auth = ClientAuth(client_id, private_key, assertion)
     elif method in {"client_secret_post", "client_secret_basic"}:

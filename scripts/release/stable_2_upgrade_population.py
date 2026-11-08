@@ -4,9 +4,9 @@
 HTTP requests use the standard library in the pinned API images. A read-only
 database probe observes the activation pointer omitted from public App metadata.
 It writes only compact JSON to stdout: credentials and HTTP response bodies
-never appear in diagnostics. The one exception is the legacy access token in
-the seed result, which the driver keeps only in memory to prove that target
-authentication rejects it.
+never appear in diagnostics. Seed and browser-bootstrap results use private
+stdout IPC for credentials kept only in controller/runner memory; they are
+never written to release evidence.
 """
 
 from __future__ import annotations
@@ -206,9 +206,26 @@ def active_deployment_id(app_id: str, phase: str) -> str:
 
 def source_zip() -> bytes:
     files = {
-        "package.json": json.dumps({"name": "stable-2-upgrade-probe", "private": True, "scripts": {"build": "vite build"}, "devDependencies": {"vite": "6.2.2"}}),
+        "package.json": json.dumps({"name": "stable-2-upgrade-probe", "private": True, "scripts": {"build": "vite build"}, "dependencies": {"react": "18.3.1", "react-dom": "18.3.1"}, "devDependencies": {"vite": "6.2.2"}}),
         "index.html": '<meta name="bifrost-app-runtime" content="mount-v1"><div id="root"></div><script type="module" src="/src/main.js"></script>',
-        "src/main.js": "import { tables } from 'bifrost';\nexport function mount(mountEl) { mountEl.textContent = `stable-2 upgrade fixture sdk=${Boolean(tables)}`; return () => mountEl.replaceChildren(); }\n(window.__BIFROST_APP_MODULES__ ??= new Map()).set(import.meta.url, { mount });\n",
+        "src/main.js": """import React, { useState } from 'react';
+import { createRoot } from 'react-dom/client';
+import { BifrostProvider, useTable } from 'bifrost';
+function Probe() {
+  const [count, setCount] = useState(0);
+  const { rows, loading, error } = useTable('stable_2_upgrade_live', { pageSize: 1 });
+  return React.createElement('main', null,
+    React.createElement('h1', null, 'stable-2 upgrade fixture'),
+    React.createElement('output', { 'aria-label': 'Live Value' }, error ? 'error' : loading ? 'loading' : String(rows[0]?.value ?? 'missing')),
+    React.createElement('button', { onClick: () => setCount(value => value + 1) }, `Local Count ${count}`));
+}
+export function mount(mountEl, bootstrap) {
+  const root = createRoot(mountEl);
+  root.render(React.createElement(BifrostProvider, bootstrap, React.createElement(Probe)));
+  return () => root.unmount();
+}
+(window.__BIFROST_APP_MODULES__ ??= new Map()).set(import.meta.url, { mount });
+""",
     }
     buffer = io.BytesIO()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
@@ -330,6 +347,14 @@ async def {workflow_name}():
     form = http.json("POST", "/api/forms", token=admin_token, payload={"name": "Stable 2 Upgrade Form", "workflow_id": workflow_id, "form_schema": {"fields": [{"name": "message", "type": "text", "label": "Message", "required": True}]}, "access_level": "role_based", "organization_id": None, "role_ids": [role_a_id]}, expected=(201,))
     agent = http.json("POST", "/api/agents", token=admin_token, payload={"name": "Stable 2 Upgrade Agent", "system_prompt": "Validate the preserved tool binding.", "channels": ["chat"], "access_level": "role_based", "organization_id": None, "tool_ids": [workflow_id], "role_ids": [role_a_id]}, expected=(201,))
 
+    table = http.json("POST", "/api/tables", token=admin_token, payload={
+        "name": "stable_2_upgrade_live", "description": "Original SDK 2 live subscription",
+        "organization_id": org_a_id,
+        "policies": {"policies": [{"name": "upgrade_probe", "actions": ["read", "create", "update", "delete"], "when": None}]},
+    }, expected=(201,))
+    table_id = object_id(table, "seed", "/api/tables")
+    document = http.json("POST", f"/api/tables/{table_id}/documents", token=admin_token, payload={"data": {"value": 0}}, expected=(201,))
+    document_id = object_id(document, "seed", "/api/tables/documents")
     app = http.json("POST", "/api/applications", token=admin_token, payload={"name": "Stable 2 Upgrade App", "slug": "stable-2-upgrade-app", "app_model": "standalone_v2", "organization_id": org_a_id, "access_level": "authenticated"}, expected=(201,))
     app_id = object_id(app, "seed", "/api/applications")
     accepted = http.json("POST", f"/api/applications/{app_id}/deploy", token=admin_token, multipart=("source", "stable-2-source.zip", source_zip()), expected=(202,))
@@ -357,6 +382,7 @@ async def {workflow_name}():
             "workflow": {"id": workflow_id, "path": workflow_path, "name": workflow_name},
             "form": {"id": object_id(form, "seed", "/api/forms")},
             "agent": {"id": object_id(agent, "seed", "/api/agents")},
+            "live_table": {"id": table_id, "document_id": document_id, "name": "stable_2_upgrade_live"},
             "application": {"id": app_id, "slug": "stable-2-upgrade-app", "deployment_id": deployment_id, "deploy_job_id": job_id, "bundle": bundle},
         },
         "evidence": {"seeded_two_orgs": True, "invites_registered": True, "role_memberships": True, "secret_configs_seeded": True, "secret_integration_configs_seeded": True, "registered_tool_linked_to_form_and_agent": True, "retained_v2_source": True, "deploy_job_terminal": bool(deployed)},
@@ -376,6 +402,9 @@ def verify(seed_payload: dict[str, Any]) -> dict[str, Any]:
     user_c_token = login(http, users["a_without_role"]["email"], fixture_password("human-a-without-role"))
     admin_token = login(http, os.environ["BIFROST_DEFAULT_USER_EMAIL"], default_password())
     legacy_bundle = assert_active_legacy_bundle(http, state, phase, admin_token)
+    live_table = state["live_table"]
+    document = http.json("GET", f"/api/tables/{live_table['id']}/documents/{live_table['document_id']}", token=admin_token)
+    require(document.get("data", {}).get("value") == 0, phase, "/api/tables/documents", "seeded live document changed")
     require(legacy_token_expiry(legacy_token) > time.time(), phase, "legacy token", "legacy token expired before rejection check")
     legacy_status = http.status("GET", "/api/organizations", token=legacy_token)
     require(legacy_status == 401, phase, "/api/organizations", "legacy access token was not rejected as unauthenticated")
@@ -420,18 +449,55 @@ def verify(seed_payload: dict[str, Any]) -> dict[str, Any]:
     }}
 
 
+def browser_bootstrap(seed_payload: dict[str, Any]) -> dict[str, Any]:
+    """Private IPC only: two independent durable human session families.
+
+    Shorten just the browser access token to 90 seconds, preserving its signed
+    claims, authorization epoch and durable session. No production TTL changes.
+    The control family never refreshes or replaces the browser's cookies.
+    """
+    from src.core.security import decode_token
+    from src.services.authorization.tokens import _encode_claims, parse_human_claims
+
+    http = Http("browser-bootstrap")
+    form = {"username": os.environ["BIFROST_DEFAULT_USER_EMAIL"], "password": default_password()}
+    setup_token = login(http, form["username"], form["password"])
+    role = http.json("POST", "/api/roles", token=setup_token, payload={"name": "Stable 2 Browser Epoch Probe", "description": "Unassigned role for epoch recovery qualification"}, expected=(201,))
+    browser = http.json("POST", "/auth/login", form=form)
+    control = http.json("POST", "/auth/login", form=form)
+    payload = decode_token(browser["access_token"], expected_type="access")
+    claims = parse_human_claims(payload) if payload else None
+    require(claims is not None and claims.sid is not None, http.phase, "human claims", "fixture login omitted durable human family")
+    expires_at = int(time.time()) + 90
+    short_access = _encode_claims(claims.model_copy(update={"exp": expires_at}))
+    require(len(short_access) < 3600, http.phase, "access cookie", "fixture needs canonical cookie fragmentation")
+    return {
+        "access_token": short_access, "refresh_token": browser["refresh_token"],
+        "control_access_token": control["access_token"], "control_refresh_token": control["refresh_token"],
+        "expires_at": expires_at,
+        "application": seed_payload["state"]["application"],
+        "live_table": seed_payload["state"]["live_table"],
+        "epoch_role_id": object_id(role, http.phase, "/api/roles"),
+    }
+
+
+def verify_app(seed_payload: dict[str, Any]) -> dict[str, Any]:
+    http = Http("verify-app")
+    token = login(http, os.environ["BIFROST_DEFAULT_USER_EMAIL"], default_password())
+    proof = assert_active_legacy_bundle(http, seed_payload["state"], http.phase, token)
+    return {"evidence": {"original_legacy_app_after_browser": proof}}
+
+
 def main(argv: list[str]) -> None:
-    if len(argv) != 2 or argv[1] not in {"seed", "verify"}:
-        raise ScenarioError("setup", "argv", "usage: stable_2_upgrade_population.py seed|verify")
+    if len(argv) != 2 or argv[1] not in {"seed", "verify", "browser-bootstrap", "verify-app"}:
+        raise ScenarioError("setup", "argv", "usage: stable_2_upgrade_population.py seed|verify|browser-bootstrap|verify-app")
     try:
         incoming = json.load(sys.stdin)
     except json.JSONDecodeError as error:
         raise ScenarioError("setup", "stdin", "input was not JSON") from error
-    if argv[1] == "seed":
-        result = seed()
-    else:
-        require(isinstance(incoming, dict), "verify", "stdin", "seed payload was not an object")
-        result = verify(incoming)
+    require(isinstance(incoming, dict), "setup", "stdin", "seed payload was not an object")
+    handlers = {"seed": lambda _payload: seed(), "verify": verify, "browser-bootstrap": browser_bootstrap, "verify-app": verify_app}
+    result = handlers[argv[1]](incoming)
     print(json.dumps(result, separators=(",", ":")))
 
 
@@ -440,4 +506,9 @@ if __name__ == "__main__":
         main(sys.argv)
     except ScenarioError as error:
         print(str(error), file=sys.stderr)
+        raise SystemExit(1) from None
+    except Exception as error:
+        # Even unexpected decoding/client exceptions must not echo a private
+        # token, response body or frame into the controller's diagnostics.
+        print(f"Upgrade population helper failed ({type(error).__name__})", file=sys.stderr)
         raise SystemExit(1) from None
