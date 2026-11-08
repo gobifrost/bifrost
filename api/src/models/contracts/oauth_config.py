@@ -53,6 +53,7 @@ OAUTH_OIDC_DISCOVERY_URL = "oidc_discovery_url"
 OAUTH_OIDC_CLIENT_ID = "oidc_client_id"
 OAUTH_OIDC_CLIENT_SECRET = "oidc_client_secret"
 OAUTH_OIDC_DISPLAY_NAME = "oidc_display_name"
+OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING = "oidc_trust_email_for_linking"
 OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD = "oidc_token_endpoint_auth_method"
 OAUTH_OIDC_PRIVATE_KEY = "oidc_private_key"
 OAUTH_OIDC_PRIVATE_KEY_KID = "oidc_private_key_kid"
@@ -183,6 +184,15 @@ class GoogleOAuthConfigRequest(ProviderConfigRequest):
 class OIDCConfigRequest(ProviderConfigRequest):
     """Request model for configuring a generic OIDC provider."""
 
+    trust_email_for_linking: bool = Field(
+        default=False,
+        description=(
+            "Trust this configured provider as the authority for email-based account "
+            "linking and organization provisioning even without email_verified=true. "
+            "Enable only when the provider controls email addresses and prevents impersonation."
+        ),
+    )
+
     discovery_url: str = Field(
         ...,
         min_length=1,
@@ -241,6 +251,10 @@ class OAuthProviderConfigResponse(BaseModel):
     private_key_alg: str | None = Field(
         default=None,
         description="JWT signing algorithm for private_key_jwt",
+    )
+    trust_email_for_linking: bool = Field(
+        default=False,
+        description="Whether the generic OIDC provider is trusted for email-based linking and provisioning",
     )
     scopes: list[str] = Field(
         default_factory=list,

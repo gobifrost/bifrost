@@ -13,7 +13,11 @@ import pytest
 from uuid import uuid4
 
 from tests.e2e.fixtures.setup import _login_user
-from tests.helpers.totp import generate_totp_code
+from tests.helpers.totp import (
+    complete_mfa_login,
+    last_accepted_totp_code,
+    login_with_totp,
+)
 
 
 @pytest.mark.e2e
@@ -138,15 +142,45 @@ class TestMFAFlow:
         mfa_token = data["mfa_token"]
 
         # Complete MFA
-        totp_code = generate_totp_code(platform_admin.totp_secret)
-        response = private_client.post(
-            "/auth/mfa/login",
-            json={"mfa_token": mfa_token, "code": totp_code},
+        response = complete_mfa_login(
+            private_client, mfa_token, platform_admin.totp_secret
         )
         assert response.status_code == 200
         tokens = response.json()
         assert "access_token" in tokens
         assert "refresh_token" in tokens
+
+    def test_accepted_totp_code_cannot_authenticate_twice(
+        self, private_client, platform_admin
+    ):
+        """An accepted TOTP code is single-use; resubmitting it is refused."""
+        accepted = login_with_totp(
+            private_client,
+            platform_admin.email,
+            platform_admin.password,
+            platform_admin.totp_secret,
+        )
+        assert accepted.status_code == 200, accepted.text
+        code = last_accepted_totp_code(platform_admin.totp_secret)
+        assert code, "Helper should record the accepted code"
+
+        login = private_client.post(
+            "/auth/login",
+            data={
+                "username": platform_admin.email,
+                "password": platform_admin.password,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert login.status_code == 200
+        mfa_token = login.json()["mfa_token"]
+
+        replay = private_client.post(
+            "/auth/mfa/login",
+            json={"mfa_token": mfa_token, "code": code},
+        )
+        assert replay.status_code == 401
+        assert replay.json()["detail"] == "Invalid MFA code"
 
 
 @pytest.mark.e2e
@@ -167,26 +201,14 @@ class TestTokenSecurity:
         Security: Refresh tokens should be rejected when used as access tokens.
         """
         # Get a fresh refresh token
-        response = private_client.post(
-            "/auth/login",
-            data={
-                "username": platform_admin.email,
-                "password": platform_admin.password,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        response = login_with_totp(
+            private_client,
+            platform_admin.email,
+            platform_admin.password,
+            platform_admin.totp_secret,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()
-
-        # Complete MFA if required
-        if data.get("mfa_required"):
-            totp_code = generate_totp_code(platform_admin.totp_secret)
-            mfa_response = private_client.post(
-                "/auth/mfa/login",
-                json={"mfa_token": data["mfa_token"], "code": totp_code},
-            )
-            assert mfa_response.status_code == 200
-            data = mfa_response.json()
 
         refresh_token = data.get("refresh_token")
         assert refresh_token, "Should receive refresh token"
@@ -203,26 +225,14 @@ class TestTokenSecurity:
         Security: Refresh token should be rotated on use (old token invalidated).
         """
         # Login to get fresh tokens
-        response = private_client.post(
-            "/auth/login",
-            data={
-                "username": platform_admin.email,
-                "password": platform_admin.password,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        response = login_with_totp(
+            private_client,
+            platform_admin.email,
+            platform_admin.password,
+            platform_admin.totp_secret,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()
-
-        # Complete MFA if required
-        if data.get("mfa_required"):
-            totp_code = generate_totp_code(platform_admin.totp_secret)
-            mfa_response = private_client.post(
-                "/auth/mfa/login",
-                json={"mfa_token": data["mfa_token"], "code": totp_code},
-            )
-            assert mfa_response.status_code == 200
-            data = mfa_response.json()
 
         old_refresh_token = data.get("refresh_token")
         assert old_refresh_token, "Should receive refresh token"
@@ -298,26 +308,14 @@ class TestLogoutAndRevocation:
     def test_logout_revokes_refresh_token(self, private_client, platform_admin):
         """Logout should revoke the refresh token."""
         # Login to get fresh tokens
-        response = private_client.post(
-            "/auth/login",
-            data={
-                "username": platform_admin.email,
-                "password": platform_admin.password,
-            },
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        response = login_with_totp(
+            private_client,
+            platform_admin.email,
+            platform_admin.password,
+            platform_admin.totp_secret,
         )
-        assert response.status_code == 200
+        assert response.status_code == 200, f"Login failed: {response.text}"
         data = response.json()
-
-        # Complete MFA if required
-        if data.get("mfa_required"):
-            totp_code = generate_totp_code(platform_admin.totp_secret)
-            mfa_response = private_client.post(
-                "/auth/mfa/login",
-                json={"mfa_token": data["mfa_token"], "code": totp_code},
-            )
-            assert mfa_response.status_code == 200
-            data = mfa_response.json()
 
         access_token = data.get("access_token")
         refresh_token = data.get("refresh_token")
@@ -342,26 +340,14 @@ class TestLogoutAndRevocation:
         """Revoke-all should invalidate all refresh tokens."""
         try:
             # Login to get fresh tokens
-            response = private_client.post(
-                "/auth/login",
-                data={
-                    "username": platform_admin.email,
-                    "password": platform_admin.password,
-                },
-                headers={"Content-Type": "application/x-www-form-urlencoded"},
+            response = login_with_totp(
+                private_client,
+                platform_admin.email,
+                platform_admin.password,
+                platform_admin.totp_secret,
             )
-            assert response.status_code == 200
+            assert response.status_code == 200, f"Login failed: {response.text}"
             data = response.json()
-
-            # Complete MFA if required
-            if data.get("mfa_required"):
-                totp_code = generate_totp_code(platform_admin.totp_secret)
-                mfa_response = private_client.post(
-                    "/auth/mfa/login",
-                    json={"mfa_token": data["mfa_token"], "code": totp_code},
-                )
-                assert mfa_response.status_code == 200
-                data = mfa_response.json()
 
             access_token = data.get("access_token")
             refresh_token = data.get("refresh_token")
@@ -393,3 +379,37 @@ class TestLogoutAndRevocation:
 
 # NOTE: Rate limiting tests have been moved to test_security.py
 # They run last to avoid affecting other tests that need login
+
+
+@pytest.mark.e2e
+async def test_numeric_recovery_code_can_complete_mfa(private_client, platform_admin, db_session):
+    """Recovery codes may consist entirely of digits; TOTP codes have six digits."""
+    from sqlalchemy import delete
+    from src.core.security import get_password_hash
+    from src.models import MFARecoveryCode
+
+    recovery_id = uuid4()
+    recovery = MFARecoveryCode(
+        id=recovery_id, user_id=platform_admin.user_id,
+        code_hash=get_password_hash("12345678"),
+    )
+    db_session.add(recovery)
+    await db_session.commit()
+    try:
+        login = private_client.post(
+            "/auth/login",
+            data={"username": platform_admin.email, "password": platform_admin.password},
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        assert login.status_code == 200
+        verified = private_client.post(
+            "/auth/mfa/login",
+            json={"mfa_token": login.json()["mfa_token"], "code": "1234-5678"},
+        )
+        assert verified.status_code == 200, verified.text
+        await db_session.refresh(recovery)
+        assert recovery.is_used is True
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(MFARecoveryCode).where(MFARecoveryCode.id == recovery_id))
+        await db_session.commit()

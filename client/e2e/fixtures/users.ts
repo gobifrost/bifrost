@@ -32,6 +32,8 @@ export interface UserCredentials {
 	password: string;
 	name: string;
 	totpSecret: string;
+	recoveryCodes: string[];
+	mfaSetupCounter: number;
 	userId: string;
 	organizationId?: string;
 	accessToken: string;

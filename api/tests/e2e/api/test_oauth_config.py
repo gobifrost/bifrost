@@ -373,6 +373,33 @@ def test_private_key_lifecycle_keeps_and_revokes_key_predictably(
 
 
 @pytest.mark.e2e
+def test_oidc_email_trust_is_explicit_persisted_and_removed(e2e_client, platform_admin, org1_user):
+    path = "/api/settings/oauth/oidc"
+    config = {
+        "discovery_url": "https://idp.example/.well-known/openid-configuration",
+        "client_id": "trust-test", "client_secret": "trust-test-secret",
+    }
+    try:
+        response = e2e_client.put(path, headers=org1_user.headers, json={**config, "trust_email_for_linking": True})
+        assert response.status_code == 403
+        for trusted in (False, True, False):
+            response = e2e_client.put(path, headers=platform_admin.headers, json={**config, "trust_email_for_linking": trusted})
+            assert response.status_code == 200, response.text
+            assert response.json()["trust_email_for_linking"] is trusted
+            saved = e2e_client.get("/api/settings/oauth", headers=platform_admin.headers)
+            assert saved.status_code == 200
+            oidc = next(p for p in saved.json()["providers"] if p["provider"] == "oidc")
+            assert oidc["trust_email_for_linking"] is trusted
+        response = e2e_client.delete(path, headers=platform_admin.headers)
+        assert response.status_code == 204
+        response = e2e_client.put(path, headers=platform_admin.headers, json=config)
+        assert response.status_code == 200
+        assert response.json()["trust_email_for_linking"] is False
+    finally:
+        e2e_client.delete(path, headers=platform_admin.headers)
+
+
+@pytest.mark.e2e
 def test_scopes_default_customize_and_require_openid(e2e_client, platform_admin) -> None:
     headers = platform_admin.headers
     base = {"client_id": "scope-client", "client_secret": "scope-secret"}

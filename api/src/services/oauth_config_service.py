@@ -46,6 +46,7 @@ from src.models.contracts.oauth_config import (
     OAUTH_OIDC_CLIENT_SECRET,
     OAUTH_OIDC_DISCOVERY_URL,
     OAUTH_OIDC_DISPLAY_NAME,
+    OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING,
     OAUTH_OIDC_PRIVATE_KEY,
     OAUTH_OIDC_PRIVATE_KEY_ALG,
     OAUTH_OIDC_PRIVATE_KEY_KID,
@@ -142,6 +143,7 @@ class OAuthProviderConfig:
     # OIDC-specific
     discovery_url: str | None = None
     display_name: str | None = None
+    trust_email_for_linking: bool = False
     # Token-endpoint client authentication
     token_endpoint_auth_method: str = "client_secret_post"
     private_key: str | None = None
@@ -647,6 +649,9 @@ class OAuthConfigService:
                 client_secret=client_secret or "",
                 discovery_url=discovery_url,
                 display_name=display_name or "SSO",
+                trust_email_for_linking=(
+                    await self._get_config_value(OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING)
+                ) == "true",
                 token_endpoint_auth_method=method,
                 private_key=private_key,
                 private_key_kid=kid,
@@ -736,6 +741,11 @@ class OAuthConfigService:
             OAUTH_OIDC_DISPLAY_NAME, config.display_name, updated_by=updated_by
         )
         await self._set_config_value(
+            OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING,
+            "true" if config.trust_email_for_linking else "false",
+            updated_by=updated_by,
+        )
+        await self._set_config_value(
             _PROVIDER_SCOPES_KEY["oidc"],
             json.dumps(_validate_scopes("oidc", config.scopes)),
             updated_by=updated_by,
@@ -792,6 +802,7 @@ class OAuthConfigService:
                 OAUTH_OIDC_CLIENT_ID,
                 OAUTH_OIDC_CLIENT_SECRET,
                 OAUTH_OIDC_DISPLAY_NAME,
+                OAUTH_OIDC_TRUST_EMAIL_FOR_LINKING,
                 *_PROVIDER_AUTH_KEYS["oidc"],
                 OAUTH_OIDC_SCOPES,
             ]
@@ -833,7 +844,11 @@ class OAuthConfigService:
                         private_key_set=bool(config.private_key),
                         private_key_kid=config.private_key_kid,
                         private_key_alg=config.private_key_alg,
+
+                        trust_email_for_linking=config.trust_email_for_linking if provider == "oidc" else False,
+
                         scopes=config.scopes or [],
+
                         tenant_id=config.tenant_id if provider == "microsoft" else None,
                         discovery_url=config.discovery_url
                         if provider == "oidc"

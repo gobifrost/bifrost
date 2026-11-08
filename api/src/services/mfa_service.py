@@ -6,6 +6,7 @@ Handles TOTP secret generation, verification, recovery codes, and trusted device
 
 import hashlib
 import secrets
+import time
 from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
@@ -18,6 +19,33 @@ from src.config import get_settings
 from src.core.security import decrypt_secret, encrypt_secret, get_password_hash, verify_password
 from src.models import MFARecoveryCode, TrustedDevice, User, UserMFAMethod
 from src.models.enums import MFAMethodStatus, MFAMethodType
+
+
+def _totp_counter_for_code(
+    totp: pyotp.TOTP,
+    code: str,
+    valid_window: int,
+    now: float | None = None,
+) -> int | None:
+    """Return the time-step matching ``code`` within the accepted window.
+
+    ``pyotp`` only reports valid/invalid, so the matching step is located
+    explicitly. Callers persist it to reject replay of an accepted code.
+    """
+    if not isinstance(code, str):
+        return None
+    candidate = code.strip()
+    # ``secrets.compare_digest`` raises TypeError on non-ASCII input, and the
+    # request contract accepts any string. Reject anything that is not exactly
+    # one TOTP code's worth of ASCII digits.
+    if len(candidate) != totp.digits or not (candidate.isascii() and candidate.isdigit()):
+        return None
+    now = time.time() if now is None else now
+    current = int(now // totp.interval)
+    for step in range(current - valid_window, current + valid_window + 1):
+        if secrets.compare_digest(totp.at(step * totp.interval), candidate):
+            return step
+    return None
 
 
 class MFAService:
@@ -128,12 +156,16 @@ class MFAService:
 
         # Use wider window for enrollment to accommodate clock skew
         enrollment_window = self.settings.mfa_totp_enrollment_window
-        if not totp.verify(code, valid_window=enrollment_window):
+        step = _totp_counter_for_code(totp, code, enrollment_window)
+        if step is None:
             raise ValueError("Invalid TOTP code")
 
-        # Activate method
+        # Activate method. Enrollment issues a session, so the accepted code's
+        # time-step is consumed here too; it must not authenticate again.
         mfa_method.status = MFAMethodStatus.ACTIVE
         mfa_method.verified_at = datetime.now(timezone.utc)
+        mfa_method.last_used_counter = step
+        mfa_method.last_used_at = datetime.now(timezone.utc)
 
         # Enable MFA on user
         user.mfa_enabled = True
@@ -170,10 +202,18 @@ class MFAService:
 
         # Use standard window for login verification
         login_window = self.settings.mfa_totp_login_window
-        if not totp.verify(code, valid_window=login_window):
+        step = _totp_counter_for_code(totp, code, login_window)
+        if step is None:
+            return False
+        # Reject replay of an already-accepted code (including within the
+        # validity window). ``last_used_counter`` stores the accepted step.
+        if (
+            mfa_method.last_used_counter is not None
+            and step <= mfa_method.last_used_counter
+        ):
             return False
 
-        # Update last used
+        mfa_method.last_used_counter = step
         mfa_method.last_used_at = datetime.now(timezone.utc)
         await self.db.flush()
 
@@ -480,7 +520,11 @@ class MFAService:
     # ========================================================================
 
     async def _get_pending_totp(self, user_id: UUID) -> UserMFAMethod | None:
-        """Get pending TOTP method for user (most recent if multiple exist)."""
+        """Get pending TOTP method for user (most recent if multiple exist).
+
+        The row is locked so two concurrent enrollment verifications cannot
+        both activate the same pending method and consume the same code.
+        """
         result = await self.db.execute(
             select(UserMFAMethod)
             .where(
@@ -490,11 +534,16 @@ class MFAService:
             )
             .order_by(UserMFAMethod.created_at.desc())
             .limit(1)
+            .with_for_update()
         )
         return result.scalar_one_or_none()
 
     async def _get_active_totp(self, user_id: UUID) -> UserMFAMethod | None:
-        """Get active TOTP method for user (most recent if multiple exist)."""
+        """Get active TOTP method for user (most recent if multiple exist).
+
+        The row is locked so a concurrent login cannot read the same
+        ``last_used_counter`` and accept the same code twice.
+        """
         result = await self.db.execute(
             select(UserMFAMethod)
             .where(
@@ -504,6 +553,7 @@ class MFAService:
             )
             .order_by(UserMFAMethod.created_at.desc())
             .limit(1)
+            .with_for_update()
         )
         return result.scalar_one_or_none()
 
@@ -545,12 +595,18 @@ class MFAService:
         )
 
     async def _get_unused_recovery_codes(self, user_id: UUID) -> list[MFARecoveryCode]:
-        """Get unused recovery codes for user."""
+        """Get unused recovery codes for user.
+
+        Rows are locked so two concurrent verifications cannot both consume
+        the same recovery code.
+        """
         result = await self.db.execute(
-            select(MFARecoveryCode).where(
+            select(MFARecoveryCode)
+            .where(
                 MFARecoveryCode.user_id == user_id,
                 MFARecoveryCode.is_used == False  # noqa: E712
             )
+            .with_for_update()
         )
         return list(result.scalars().all())
 

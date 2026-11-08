@@ -10,15 +10,13 @@ import {
 	isRefreshRequiredChallenge,
 	REQUEST_REPLAY_BUDGET,
 } from "../../src/lib/app-sdk/transport";
-import { generateTOTP } from "../setup/totp";
+import { withRecoveryProof } from "../setup/recovery-proofs";
 import type { UserCredentials } from "./users";
 
 const API_URL = process.env.TEST_API_URL || "http://api:8000";
 const BROWSER_URL = process.env.TEST_BASE_URL || "http://localhost:3000";
 
-type RequestOptions = NonNullable<
-	Parameters<APIRequestContext["fetch"]>[1]
->;
+type RequestOptions = NonNullable<Parameters<APIRequestContext["fetch"]>[1]>;
 
 export type HumanAuthUser = "platform_admin" | "org1_user" | "org2_user";
 
@@ -78,7 +76,10 @@ function isRefreshRequiredApiChallenge(response: APIResponse): boolean {
 	});
 }
 
-async function assertOk(response: APIResponse, operation: string): Promise<void> {
+async function assertOk(
+	response: APIResponse,
+	operation: string,
+): Promise<void> {
 	if (!response.ok()) {
 		throw new Error(
 			`${operation} failed: ${response.status()} ${await response.text()}`,
@@ -106,13 +107,14 @@ export async function loginHumanApi(
 	if (!loginBody.mfa_token) {
 		throw new Error(`login ${credentials.email} omitted its MFA token`);
 	}
-	const mfa = await request.post("/auth/mfa/login", {
-		data: {
-			mfa_token: loginBody.mfa_token,
-			code: generateTOTP(credentials.totpSecret),
-		},
+
+	await withRecoveryProof(credentials, async (code) => {
+		const mfa = await request.post("/auth/mfa/login", {
+			data: { mfa_token: loginBody.mfa_token, code },
+		});
+		await assertOk(mfa, `MFA login ${credentials.email}`);
+		return (await mfa.json()).access_token;
 	});
-	await assertOk(mfa, `MFA login ${credentials.email}`);
 }
 
 /**
@@ -128,7 +130,8 @@ export function createChallengeAwareApi(
 
 	const refresh = async (observedGeneration: string): Promise<boolean> => {
 		const currentGeneration = await credentialGeneration(context);
-		if (currentGeneration !== observedGeneration) return currentGeneration !== "";
+		if (currentGeneration !== observedGeneration)
+			return currentGeneration !== "";
 		if (refreshInFlight) return refreshInFlight;
 
 		refreshInFlight = (async () => {
@@ -155,7 +158,11 @@ export function createChallengeAwareApi(
 			...(requiresCsrf(method) ? await csrfHeader(context) : {}),
 			...(options.headers ?? {}),
 		};
-		let response = await request.fetch(url, { ...options, method, headers });
+		let response = await request.fetch(url, {
+			...options,
+			method,
+			headers,
+		});
 		let remaining = REQUEST_REPLAY_BUDGET;
 		while (remaining > 0 && isRefreshRequiredApiChallenge(response)) {
 			remaining -= 1;
@@ -178,7 +185,9 @@ export function createChallengeAwareApi(
 			if (property === "fetch") return send;
 			if (typeof property === "string") {
 				const method = property.toUpperCase();
-				if (["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)) {
+				if (
+					["GET", "POST", "PUT", "PATCH", "DELETE"].includes(method)
+				) {
 					return (url: string, options: RequestOptions = {}) =>
 						send(url, { ...options, method });
 				}
