@@ -1,6 +1,6 @@
 """Live API coverage for platform OAuth login preferences."""
 
-from urllib.parse import parse_qs
+from urllib.parse import parse_qs, urlparse
 
 import httpx
 import pytest
@@ -370,3 +370,88 @@ def test_private_key_lifecycle_keeps_and_revokes_key_predictably(
         assert "not a valid PEM" in response.json()["detail"]
     finally:
         e2e_client.delete("/api/settings/oauth/google", headers=headers)
+
+
+@pytest.mark.e2e
+def test_scopes_default_customize_and_require_openid(e2e_client, platform_admin) -> None:
+    headers = platform_admin.headers
+    base = {"client_id": "scope-client", "client_secret": "scope-secret"}
+    try:
+        response = e2e_client.put(
+            "/api/settings/oauth/google", headers=headers, json=base
+        )
+        assert response.status_code == 200
+        assert response.json()["scopes"] == ["openid", "email", "profile"]
+
+        response = e2e_client.put(
+            "/api/settings/oauth/google",
+            headers=headers,
+            json={**base, "scopes": ["openid", "email", "groups"]},
+        )
+        assert response.status_code == 200
+        assert response.json()["scopes"] == ["openid", "email", "groups"]
+
+        response = e2e_client.put(
+            "/api/settings/oauth/google",
+            headers=headers,
+            json={**base, "scopes": ["email"]},
+        )
+        assert response.status_code == 400
+        assert "openid" in response.json()["detail"]
+    finally:
+        e2e_client.delete("/api/settings/oauth/google", headers=headers)
+
+
+@pytest.mark.e2e
+def test_microsoft_scope_validation_preserves_saved_configuration(
+    e2e_client, platform_admin
+) -> None:
+    headers = platform_admin.headers
+    base = {"client_id": "scope-client", "client_secret": "scope-secret"}
+    try:
+        response = e2e_client.put(
+            "/api/settings/oauth/microsoft", headers=headers, json=base
+        )
+        assert response.status_code == 200
+        saved = response.json()
+
+        response = e2e_client.put(
+            "/api/settings/oauth/microsoft",
+            headers=headers,
+            json={**base, "client_id": "invalid-update", "scopes": ["openid"]},
+        )
+        assert response.status_code == 400
+        assert "User.Read" in response.json()["detail"]
+        response = e2e_client.get("/api/settings/oauth/microsoft", headers=headers)
+        assert response.status_code == 200
+        assert response.json() == saved
+    finally:
+        e2e_client.delete("/api/settings/oauth/microsoft", headers=headers)
+
+
+@pytest.mark.e2e
+async def test_saved_scopes_are_used_in_the_authorization_url(
+    e2e_client, platform_admin, db_session
+) -> None:
+    headers = platform_admin.headers
+    try:
+        response = e2e_client.put(
+            "/api/settings/oauth/google",
+            headers=headers,
+            json={
+                "client_id": "scope-url-client",
+                "client_secret": "scope-url-secret",
+                "scopes": ["openid", "email", "groups"],
+            },
+        )
+        assert response.status_code == 200
+
+        service = OAuthService(db_session)
+        url = await service.get_authorization_url(
+            "google", "https://app.test/callback", "state-1", "verifier", "nonce-1"
+        )
+    finally:
+        e2e_client.delete("/api/settings/oauth/google", headers=headers)
+
+    query = parse_qs(urlparse(url).query)
+    assert query["scope"] == ["openid email groups"]

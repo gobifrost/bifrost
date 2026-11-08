@@ -37,6 +37,7 @@ class Rehearsal:
             REHEARSAL_IMAGE=SOURCE,
             REHEARSAL_DATABASE="bifrost",
             REHEARSAL_OLD_WORKER_IMAGE=SOURCE,
+            REHEARSAL_CLIENT_IMAGE=args.target_client_image,
             REHEARSAL_PASSWORD=self.password,
             REHEARSAL_SECRET=self.secret,
         )
@@ -54,6 +55,8 @@ class Rehearsal:
             "source": SOURCE,
             "target": args.target_api_image,
             "target_source": args.target_source,
+            "target_client": args.target_client_image,
+            "browser_runner": args.browser_runner_image,
             "phases": [],
             "passed": False,
         }
@@ -67,6 +70,7 @@ class Rehearsal:
         stdin: str | None = None,
         check: bool = True,
         timeout: int = 600,
+        private_stdout: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         result = subprocess.run(
             command,
@@ -79,7 +83,7 @@ class Rehearsal:
         if check and result.returncode:
             # Some product exceptions include connection URLs. Sanitize before evidence.
             detail = (
-                (result.stdout + result.stderr)
+                (("[private helper stdout omitted]\n" if private_stdout else result.stdout) + result.stderr)
                 .replace(self.password, "[redacted]")
                 .replace(self.secret, "[redacted]")
             )
@@ -170,6 +174,7 @@ class Rehearsal:
         result = self.dc(
             "exec", "-T", "api", "python", "-c", helper, helper_phase,
             stdin=json.dumps(self.population_payload),
+            private_stdout=True,
         )
         payload = json.loads(result.stdout)
         if helper_phase == "seed":
@@ -177,6 +182,41 @@ class Rehearsal:
             self.report["seeded_entities"] = payload["state"]
         self.report.setdefault("population", {})[phase] = payload["evidence"]
         self.save()
+
+    def browser(self) -> None:
+        self.dc("up", "-d", "--no-deps", "client")
+        client_id = self.dc("ps", "-q", "client").stdout.strip()
+        if not re.fullmatch(r"[0-9a-f]{64}", client_id):
+            raise RuntimeError("Expected one isolated production client container")
+        helper = Path(__file__).with_name("stable_2_upgrade_population.py").read_text()
+        bootstrap = self.dc(
+            "exec", "-T", "api", "python", "-c", helper, "browser-bootstrap",
+            stdin=json.dumps(self.population_payload),
+            private_stdout=True,
+        ).stdout
+        # Keep private bootstrap IPC out of argv, evidence, logs and disk. The
+        # browser helper emits safe phase diagnostics, never request details.
+        result = self.run([
+            "docker", "run", "--rm", "-i", "--network", f"container:{client_id}",
+            "--entrypoint", "node", self.args.browser_runner_image, "--input-type=module", "-e",
+            Path(__file__).with_name("stable_2_upgrade_browser.mjs").read_text(),
+        ], stdin=bootstrap, timeout=240, private_stdout=True)
+        self.record_browser_proof(json.loads(result.stdout))
+        self.save()
+        self.population("verify-app")
+
+    def record_browser_proof(self, proof: dict) -> None:
+        assertions = (
+            "passed", "initial_sdk2_query_token_verified", "expiry_recovered",
+            "epoch_recovered", "local_state_preserved", "revoked_family_refused",
+        )
+        if not all(proof.get(key) is True for key in assertions):
+            raise RuntimeError("Original App browser qualification omitted a required assertion")
+        counters = {"browser_refreshes": 2, "table_subscription_acks": 3}
+        if any(type(proof.get(key)) is not int or proof[key] < minimum for key, minimum in counters.items()) or proof.get("page_errors") != 0:
+            raise RuntimeError("Original App browser qualification has insufficient observations")
+        # Only the reviewed, typed, non-secret proof fields enter evidence.
+        self.report["original_app_browser"] = {key: proof[key] for key in (*assertions, *counters, "page_errors")}
 
     def enqueue_execution(self, name: str, code: str) -> str:
         """Submit a durable source-API execution without emitting its credentials."""
@@ -214,6 +254,7 @@ from pathlib import Path
 from bifrost import config
 
 logging.info("STABLE_2_OLD_WORKER_BARRIER_REACHED")
+Path("/tmp/stable2-upgrade-reached").touch()
 for _ in range(180):
     if Path("/tmp/stable2-upgrade-release").exists():
         break
@@ -232,6 +273,20 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
         return int(self.sql(
             f"SELECT count(*) FROM execution_logs WHERE execution_id='{execution_id}' AND message LIKE '%{marker}%'"
         ))
+
+    def old_worker_at_barrier(self, execution_id: str) -> bool:
+        # Stable 1.4.1 flushes execution logs to PostgreSQL only at completion.
+        # A file in this isolated source container observes the running child
+        # without waiting on the very completion that the barrier prevents.
+        status = self.sql(f"SELECT status FROM executions WHERE id='{execution_id}'")
+        if status in ("Failed", "Cancelled", "Timeout", "Success"):
+            self.report["old_worker_barrier_terminal_status"] = status
+            self.save()
+            raise RuntimeError(f"Source worker ended before release as {status}")
+        return self.dc(
+            "exec", "-T", "old-worker", "test", "-f", "/tmp/stable2-upgrade-reached",
+            check=False,
+        ).returncode == 0
 
     def assert_project_unused(self) -> None:
         label = f"label=com.docker.compose.project={self.project}"
@@ -275,6 +330,7 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
             os.environ,
             REHEARSAL_IMAGE=SOURCE,
             REHEARSAL_OLD_WORKER_IMAGE=SOURCE,
+            REHEARSAL_CLIENT_IMAGE=self.args.target_client_image,
             REHEARSAL_DATABASE="bifrost",
             REHEARSAL_PASSWORD=self.password,
             REHEARSAL_SECRET=self.secret,
@@ -344,6 +400,9 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
         self.dc("rm", "-f", "worker")
 
     def execute(self) -> None:
+        for name in ("stable_2_upgrade_population.py", "stable_2_upgrade_browser.mjs", "stable_2_upgrade_compose.yml"):
+            if not Path(__file__).with_name(name).is_file():
+                raise RuntimeError(f"Missing qualification helper: {name}")
         self.assert_project_unused()
         self.owns_project = True
         self.phase("Verify immutable images and target source")
@@ -369,6 +428,9 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
             "api/src/jobs/consumers/workflow_execution.py",
             "api/shared/run_lineage.py",
             "api/alembic/versions/20261107_running_run_lineage.py",
+            "api/src/core/auth.py",
+            "api/src/routers/websocket.py",
+            "api/src/services/websocket_auth_recovery.py",
         ]
         expected = {
             p.removeprefix("api/"): hashlib.sha256(
@@ -414,14 +476,13 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
             "stable_2_upgrade_old_worker",
             self.old_worker_probe_code(),
         )
+        self.report["active_old_worker_execution_id"] = active_execution_id
+        self.save()
         self.wait(
-            lambda: self.execution_marker_count(
-                active_execution_id, "STABLE_2_OLD_WORKER_BARRIER_REACHED"
-            ) == 1,
+            lambda: self.old_worker_at_barrier(active_execution_id),
             "source worker barrier",
             timeout=120,
         )
-        self.report["active_old_worker_execution_id"] = active_execution_id
         self.report["source_revision"] = self.sql(
             "SELECT version_num FROM alembic_version"
         )
@@ -474,6 +535,8 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
         self.phase("Verify populated data and its active legacy App without rebuilding")
         self.dc("up", "-d", "--no-deps", "worker", "scheduler")
         self.population("verify")
+        self.phase("Exercise the original App through expiry, epoch change and revocation")
+        self.browser()
         self.phase("Qualify isolated pending source dispatch recovery")
         self.rehearse_pending_recovery()
         self.report["passed"] = True
@@ -494,11 +557,23 @@ result = {{"old_worker_target_secret_ok": secret_ok}}
         finally:
             self.save()
 
+    def capture_failure_diagnostics(self) -> None:
+        if not self.owns_project:
+            return
+        result = self.dc("logs", "--no-color", "--tail", "120", "api", "worker", "old-worker", "client", check=False)
+        detail = result.stdout + result.stderr
+        detail = detail.replace(self.password, "[redacted]").replace(self.secret, "[redacted]")
+        detail = re.sub(r"\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b", "[redacted-jwt]", detail)
+        detail = re.sub(r"([?&]token=)[^&\s\"']+", r"\1[redacted]", detail)
+        (self.evidence / "service-diagnostics.log").write_text(detail)
+
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--target-api-image", required=True)
+    parser.add_argument("--target-client-image", required=True)
+    parser.add_argument("--browser-runner-image", required=True)
     parser.add_argument("--target-source", required=True)
     parser.add_argument("--evidence-dir", type=Path, required=True)
     args = parser.parse_args()
@@ -510,6 +585,10 @@ def main() -> None:
         parser.error("target must be an immutable Bifrost API digest")
     if not re.fullmatch(r"[0-9a-f]{40}", args.target_source):
         parser.error("target-source must be a full commit SHA")
+    if not re.fullmatch(r"ghcr.io/gobifrost/bifrost-client@sha256:[0-9a-f]{64}", args.target_client_image):
+        parser.error("client target must be an immutable Bifrost client digest")
+    if not re.fullmatch(r"sha256:[0-9a-f]{64}", args.browser_runner_image):
+        parser.error("browser runner must be an immutable local image ID")
     if (
         not args.evidence_dir.is_absolute()
         or not args.evidence_dir.is_dir()
@@ -529,6 +608,10 @@ def main() -> None:
         rehearsal.execute()
     except BaseException as error:
         rehearsal.report["error"] = str(error)
+        try:
+            rehearsal.capture_failure_diagnostics()
+        except Exception as diagnostic_error:
+            rehearsal.report["diagnostics_error"] = type(diagnostic_error).__name__
         raise
     finally:
         rehearsal.cleanup()

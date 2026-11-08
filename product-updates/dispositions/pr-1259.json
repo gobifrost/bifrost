@@ -1,9 +1,9 @@
 {
   "key": "pr:1259",
-  "classification": "other",
-  "category": "hardening",
-  "entry_ids": [],
-  "summary": "Integration credential refresh preserves organization scope.",
+  "classification": "highlight",
+  "entry_ids": [
+    "7daa4cb1-9702-43e6-a0b0-b88004b6f390"
+  ],
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1259"
@@ -15,7 +15,8 @@
       "https://github.com/gobifrost/bifrost/issues/1194",
       "https://github.com/Midtown-Technology-Group/bifrost/pull/1198",
       "https://github.com/gobifrost/bifrost/commit/54c325e22972b2bf2c18004f48f75a2c150ea791",
-      "https://github.com/gobifrost/bifrost/commit/e10c14f9d3acb9861582ecfa62e785e94102ca45"
+      "https://github.com/gobifrost/bifrost/commit/e10c14f9d3acb9861582ecfa62e785e94102ca45",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Integration credential refresh preserves organization scope."
     ]
   }
 }

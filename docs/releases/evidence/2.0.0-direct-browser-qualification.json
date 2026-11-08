@@ -1,0 +1,75 @@
+{
+  "status": "blocked_waiting_corrected_immutable_images",
+  "publication": "Held by user direction; no stable tag, GitHub Release, latest promotion or production rollout.",
+  "tested_source": "5c3baf58443484602be5fd9778d11de54a95468c",
+  "source_image": "ghcr.io/gobifrost/bifrost-api@sha256:ff8c8aee94c594678f9fe7254e297bad9e1f04c04f9029f8c1e6a66a8d7521c0",
+  "target_api_image": "ghcr.io/gobifrost/bifrost-api@sha256:ed12ab3fb4ef1f056b1d1db13fd2bcf783acce944761d01041dbbae7f311b3d6",
+  "target_client_image": "ghcr.io/gobifrost/bifrost-client@sha256:fadcc71a760519db8a05c0faa69b42f9dae661c52207ca2f7a3274f1ad0367f4",
+  "backend_direct_upgrade": {
+    "old_worker": {
+      "terminal_execution": {
+        "id": "16726fa5-5f11-41ba-90f6-513376ceb2e8",
+        "status": "Success",
+        "result": {
+          "old_worker_target_secret_ok": true
+        },
+        "completed_at": "2026-11-07T17:40:12.902065+00:00"
+      },
+      "target_config_marker_count": 1
+    },
+    "secret_record_fingerprints_preserved": true,
+    "authorization_protocols": {
+      "protocol_1": 0,
+      "protocol_2": 1
+    },
+    "population": {
+      "new_human_logins": true,
+      "legacy_token_future_before_rejection": true,
+      "legacy_access_rejected": true,
+      "role_and_org_isolation": true,
+      "resource_ids_and_links_preserved": true,
+      "integration_mapping_ids_preserved": true,
+      "worker_decrypted_synthetic_credentials": true,
+      "registered_automation_succeeded": true,
+      "legacy_app_active_bundle_verified_before_rebuild": true,
+      "registered_execution": {
+        "id": "f9fd546b-4cf4-44c8-bf4e-273134965f5d",
+        "status": "Success",
+        "result": {
+          "entity": "stable2-tenant-a",
+          "config_ok": true,
+          "integration_ok": true
+        }
+      },
+      "legacy_active_bundle": {
+        "deployment_id": "c6541672-2359-441f-8b1c-de25ca6e9ef3",
+        "sdk_contract_version": 2,
+        "entry": "assets/index-DlxD2Pwn.js",
+        "artifact_sha256": "4ef5c0c758f330fd5985986ef00b87cfa6b28fc08ef65578f66e7dc5c7aef30d",
+        "artifact_bytes": 154274
+      }
+    }
+  },
+  "browser_failure": {
+    "phase": "expiry_visible_value",
+    "observations": {
+      "legacy_socket_opens": 1,
+      "legacy_table_acks": 1,
+      "browser_refreshes": 1,
+      "browser_refresh_status": 200,
+      "control_status": 200,
+      "page_errors": 0,
+      "live_value": "0"
+    },
+    "cause": "Real Chromium156 WebSocket requests send Origin but omit Sec-Fetch-Site. The old retry selector required the absent metadata, closing the SDK2 subscription terminally after real access expiry.",
+    "repair": "Compare browser HTTP(S) Origin with the public WebSocket Host authority; preserve its port through NGINX. Typed signed human credentials, current durable-family eligibility and protected-operation checks remain unchanged.",
+    "focused_verification": "41 tests passed: real socket/Redis/refresh/revocation without fabricated metadata, family eligibility, foreign/malformed origin, default/nondefault ports and IPv6. Corrected immutable App/browser qualification remains pending."
+  },
+  "cleanup_completed": true,
+  "limits": [
+    "No full direct-upgrade pass: the failing browser boundary blocks release qualification.",
+    "Pending legacy broker recovery is a later independent project and was not reached by this attempt.",
+    "Only synthetic representative data; no external provider agent call, production replay or general capacity claim.",
+    "Single API replacement; mixed old/new human validators remain a separate rollout-policy disposition."
+  ]
+}

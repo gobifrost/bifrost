@@ -1,15 +1,17 @@
 {
   "key": "pr:1072",
-  "classification": "omit",
-  "entry_ids": [],
+  "classification": "highlight",
+  "entry_ids": [
+    "a46aaf21-bcd9-47d9-9371-807f18801efc"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1072",
-      "https://github.com/gobifrost/bifrost/blob/6da0464321b770158a3706bae2b59a283d3f52eb/docs/product-updates-authoring.md"
+      "https://github.com/gobifrost/bifrost/blob/6da0464321b770158a3706bae2b59a283d3f52eb/docs/product-updates-authoring.md",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
     ]
   },
-  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required.",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1072"

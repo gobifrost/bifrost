@@ -22,6 +22,8 @@ class RehearsalSafetyTests(unittest.TestCase):
                 run_id="test",
                 evidence_dir=root,
                 target_api_image="unused",
+                target_client_image="unused-client",
+                browser_runner_image="sha256:" + "a" * 64,
                 target_source="unused",
             ),
         )
@@ -31,7 +33,7 @@ class RehearsalSafetyTests(unittest.TestCase):
             with self.subTest(resource=("container", "network", "volume")[collision]):
                 responses = [subprocess.CompletedProcess([], 0, "", "")] * collision
                 responses.append(subprocess.CompletedProcess([], 0, "existing-resource", ""))
-                with patch.object(self.rehearsal, "run", side_effect=responses), patch.object(
+                with patch.object(Path, "is_file", return_value=True), patch.object(self.rehearsal, "run", side_effect=responses), patch.object(
                     self.rehearsal, "dc"
                 ) as compose:
                     with self.assertRaisesRegex(RuntimeError, "existing Compose project"):
@@ -116,8 +118,45 @@ class RehearsalSafetyTests(unittest.TestCase):
         self.assertNotIn("legacy_access_token", receipt)
         self.assertEqual(json.loads(receipt)["population"]["seed"], payload["evidence"])
 
+    def test_private_helper_partial_stdout_is_never_saved_on_failure(self):
+        with patch("subprocess.run", return_value=subprocess.CompletedProcess([], 1, '{"access_token":"synthetic-token"}', "safe-phase-failure")):
+            with self.assertRaisesRegex(RuntimeError, "sanitized diagnostics"):
+                self.rehearsal.run(["unused"], private_stdout=True)
+        saved = (self.rehearsal.evidence / "failure.log").read_text()
+        self.assertNotIn("synthetic-token", saved)
+        self.assertIn("safe-phase-failure", saved)
+
+    def test_service_diagnostics_redact_query_credentials_and_signed_tokens(self):
+        self.rehearsal.owns_project = True
+        raw = f'GET /ws/connect?token=opaque-private-token Bearer eyJhbGciOiJIUzI1NiJ9.cHJpdmF0ZQ.c2lnbmF0dXJl database={self.rehearsal.password}'
+        with patch.object(self.rehearsal, "dc", return_value=subprocess.CompletedProcess([], 0, raw, "")):
+            self.rehearsal.capture_failure_diagnostics()
+        saved = (self.rehearsal.evidence / "service-diagnostics.log").read_text()
+        self.assertNotIn("opaque-private-token", saved)
+        self.assertNotIn("eyJhbGci", saved)
+        self.assertNotIn(self.rehearsal.password, saved)
+        self.assertIn("/ws/connect?token=[redacted]", saved)
+
     def test_direct_qualification_does_not_describe_a_bridge_release(self):
         self.assertNotIn("bridge", self.rehearsal.report)
+
+    def test_missing_helper_refuses_before_creating_resources(self):
+        with patch.object(Path, "is_file", return_value=False), patch.object(self.rehearsal, "run") as run:
+            with self.assertRaisesRegex(RuntimeError, "Missing qualification helper"):
+                self.rehearsal.execute()
+        run.assert_not_called()
+        self.assertFalse(self.rehearsal.owns_project)
+
+    def test_browser_receipt_requires_all_observations_and_excludes_private_fields(self):
+        proof = {key: True for key in ("passed", "initial_sdk2_query_token_verified", "expiry_recovered", "epoch_recovered", "local_state_preserved", "revoked_family_refused")}
+        proof.update(browser_refreshes=2, table_subscription_acks=3, page_errors=0, access_token="private-test-value")
+        self.rehearsal.record_browser_proof(proof)
+        self.assertNotIn("access_token", self.rehearsal.report["original_app_browser"])
+        for key in ("expiry_recovered", "epoch_recovered", "revoked_family_refused"):
+            with self.subTest(key=key), self.assertRaisesRegex(RuntimeError, "required assertion"):
+                self.rehearsal.record_browser_proof({**proof, key: False})
+        with self.assertRaisesRegex(RuntimeError, "insufficient observations"):
+            self.rehearsal.record_browser_proof({**proof, "browser_refreshes": 1})
 
     def test_compose_defines_a_distinct_pinned_old_worker(self):
         compose = (Path(__file__).parent / "release" / "stable_2_upgrade_compose.yml").read_text()
@@ -151,6 +190,29 @@ class RehearsalSafetyTests(unittest.TestCase):
         self.assertTrue(hashlib.sha256(fixture_value.encode()).hexdigest() in code, "Probe must compare the seeded fixture")
         self.assertFalse(fixture_value in code, "Raw fixture values must not reach probe source")
         self.assertFalse(self.rehearsal.password in code, "Controller credentials must not reach probe source")
+
+    def test_running_source_barrier_does_not_depend_on_completed_execution_logs(self):
+        with patch.object(self.rehearsal, "sql", return_value="Running") as sql, patch.object(
+            self.rehearsal, "dc", return_value=subprocess.CompletedProcess([], 0, "", "")
+        ) as compose:
+            self.assertTrue(self.rehearsal.old_worker_at_barrier("run-id"))
+        self.assertNotIn("execution_logs", sql.call_args.args[0])
+        self.assertEqual(compose.call_args.args, ("exec", "-T", "old-worker", "test", "-f", "/tmp/stable2-upgrade-reached"))
+        self.assertIn('Path("/tmp/stable2-upgrade-reached").touch()', self._probe_code())
+
+    def _probe_code(self):
+        self.rehearsal.population_payload = {"state": {
+            "configs": {"a_key": "org-config"},
+            "organizations": {"a": "11111111-1111-4111-8111-111111111111"},
+        }}
+        return self.rehearsal.old_worker_probe_code()
+
+    def test_barrier_refuses_a_source_execution_that_already_ended(self):
+        for status in ("Failed", "Cancelled", "Timeout", "Success"):
+            with self.subTest(status=status), patch.object(self.rehearsal, "sql", return_value=status), patch.object(self.rehearsal, "dc") as compose:
+                with self.assertRaisesRegex(RuntimeError, "ended before release"):
+                    self.rehearsal.old_worker_at_barrier("run-id")
+                compose.assert_not_called()
 
     def test_pending_recovery_preflights_its_second_compose_project(self):
         with patch.object(self.rehearsal, "cleanup"), patch.object(

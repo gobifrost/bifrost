@@ -108,9 +108,10 @@ changing the App deployment or rebuilding its Solution. Already open documents
 retain their loaded code until reload; there is no live hook replacement.
 
 The **App SDK Upgrades** setting controls reviewed automatic binding rebuilds.
-It does not pin the hosted implementation. The initial hosted-delivery release
-does not declare an automatic migration; update Apps manually after the normal
-instance upgrade while that migration is dogfooded. See
+It does not pin the hosted implementation. The reviewed SDK2 transition permits eligible retained-source Apps to migrate
+when automatic updates are explicitly enabled. The setting defaults to off;
+manual SDK updates remain available after the image update. Existing supported
+bundles keep working even when automatic rebuilds are ineligible. See
 [Application SDK updates](application-sdk-update.md).
 
 Prebuilt disconnected Solution packages carry the binding major and build

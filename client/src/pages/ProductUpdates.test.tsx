@@ -25,6 +25,7 @@ const bundle: ProductUpdatesBundle = {
 			area: "Platform",
 			type: "New",
 			action_required: false,
+			pinned: false,
 			sources: [],
 			contributors: [],
 			assets: [],

@@ -1,0 +1,15 @@
+{
+  "key": "pr:1280",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal direct-release qualification, synthetic evidence receipt, corrected role-editor fixture and operator runbook; no product runtime behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1280",
+      "The actual stable1.4.1 image upgraded directly to immutable API/client artifacts from e7c95328aa87bc3a9313ca05c694b5e8c02f0a4a. Representative entities, links, tenant isolation and four encrypted credential records were preserved; a held old worker completed its SDK call against the new API, and one source workflow message recovered exactly once with empty final queues.",
+      "The original SDK2 App recovered real access expiry and an authority-epoch change, retained local component state, and received no update after family revocation. Its original deployment, source and served bundle hashes stayed unchanged. Both disposable projects were cleaned up. Controller hashes and explicit single-API/synthetic-data limits are in docs/releases/evidence/2.0.0-direct-upgrade.json.",
+      "Fixed only the test's invalid runtime-editor value workflows.read to the canonical editable workflows.execute; the API correctly refused the former with422. Added numeric status diagnostics. Production authentication, permissions and token lifetimes are unchanged.27 tooling tests, runner-image Node syntax and diff checks passed; the full real-image rehearsal passed. Stable publication remains held."
+    ]
+  }
+}
