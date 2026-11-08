@@ -118,13 +118,10 @@ async def test_consumer_errors_are_not_reclassified_as_storage_failures():
         return httpx.Response(200, headers={"etag": '"v1"', "content-length": "4"}, stream=stream)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handle)) as client:
-        try:
+        with pytest.raises(httpx.ConnectError) as caught:
             async with _store(client).open_read("key"):
                 raise caller_error
-        except httpx.ConnectError as caught:
-            assert caught is caller_error
-        else:
-            pytest.fail("Consumer errors must propagate")
+        assert caught.value is caller_error
     assert stream.closed
 
 
