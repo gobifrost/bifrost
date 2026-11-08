@@ -6,7 +6,8 @@
   "review": {
     "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/pull/1278"
+      "https://github.com/gobifrost/bifrost/pull/1278",
+      "Codex reviewed the 300-second launcher drain and 310-second Compose stop allowance on 2026-11-08 under Jack's explicit scoped repair and protected-merge approval in the existing PR task. No security, permission, customer migration or public announcement is required; original contribution remains credited to Thomas Bray (MTG-Thomas)."
     ]
   }
 }
