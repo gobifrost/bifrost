@@ -1,0 +1,21 @@
+{
+  "key": "pr:1289",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal worker-capacity correctness repair; no new operator control or required customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1289",
+      "https://github.com/gobifrost/bifrost/issues/1288",
+      "https://github.com/gobifrost/bifrost/pull/1253",
+      "Jack approved the replacement and idle-worker capacity handoff in the private contribution task, subject to tests; he separately approved the exact public issue and PR wording. Jack Musick owns this replacement; Thomas Bray (MTG-Thomas) retains credit for identifying the problem.",
+      "Reviewed the shared managed-worker controller, immutable environment-qualified startup measurement, serialized publication, worker-count ceiling, readiness and memory-pressure protections. No new permissions or security disclosure identified; isolated-job sizing is unchanged.",
+      "214 focused worker-capacity tests, the live healthy-service lifecycle, and API Pyright/Ruff passed. Coverage includes single-slot warm/cold replacement, startup recovery, stale measurements and concurrent publication. No finite-memory production Kubernetes/external-host qualification is claimed; full suites remain protected merge-queue gates.",
+      "Initial Product Updates run 42537397523 failed because the newly numbered PR lacked its canonical disposition. This reviewed file supplies that missing decision; no workflow or gate bypass."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}
