@@ -1,0 +1,19 @@
+{
+  "key": "pr:1271",
+  "classification": "highlight",
+  "entry_ids": [
+    "205b9bfd-2cc7-4c81-90a8-9b399e8d853a"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1271"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "Jack approved the exact title, body, Settings link and Thomas Bray credit through resolved native user-input request async:call_9d804544eb6149489cf0a9e6a584bd0c (strong Codex reference), answer Approve This Text.",
+      "Codex reviewed auth/key storage and responses; independent auth review identified the Microsoft Graph scope guard, repaired in 08011ddbe. Focused backend 35 passed; API Pyright/Ruff passed; live SSO browser acceptance 2 passed. Defaults preserved; no required customer action.",
+      "Source PR author verified as MTG-Thomas (Thomas Bray), targeting gobifrost/bifrost main from MTG-Thomas/bifrost-upstream. Exact prose reviewed with General Writing and Humanizer; SSO Settings route verified as /settings/sso."
+    ]
+  }
+}

@@ -1,3 +1,4 @@
+import { generateKeyPairSync } from "node:crypto";
 import type { Locator, Page } from "./fixtures/api-fixture";
 import type { AuthedApi } from "./fixtures/api-fixture";
 import { expect, test } from "./fixtures/api-fixture";
@@ -14,6 +15,10 @@ type OAuthProviderConfig = {
 	configured: boolean;
 	client_id?: string | null;
 	client_secret_set?: boolean;
+	token_endpoint_auth_method?: string;
+	private_key_set?: boolean;
+	private_key_kid?: string | null;
+	scopes?: string[];
 };
 
 type OAuthConfigList = {
@@ -25,6 +30,17 @@ const UNIQUE = `sso-${Date.now().toString(36)}-${Math.random().toString(36).slic
 const GOOGLE_CLIENT_ID_INITIAL = `${UNIQUE}-initial.apps.googleusercontent.com`;
 const GOOGLE_CLIENT_ID_EDITED = `${UNIQUE}-edited.apps.googleusercontent.com`;
 const GOOGLE_CLIENT_SECRET = `secret-${UNIQUE}`;
+const GOOGLE_KID = `kid-${UNIQUE}`;
+const GOOGLE_SCOPES = ["openid", "email", "groups"];
+
+function testPrivateKeyPem(): string {
+	const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+	return privateKey.export({ type: "pkcs8", format: "pem" }).toString();
+}
+
+async function chooseClientAuth(page: Page, label: string): Promise<void> {
+	await page.getByRole("option", { name: label }).click();
+}
 
 async function readOAuthSettings(api: AuthedApi): Promise<OAuthConfigList> {
 	const response = await api.get("/api/settings/oauth");
@@ -145,6 +161,34 @@ test.describe.serial("SSO settings acceptance", () => {
 
 		persisted = googleConfig(await readOAuthSettings(api));
 		expect(persisted?.client_id).toBe(GOOGLE_CLIENT_ID_EDITED);
+
+		// Switch to private_key_jwt, supply a write-only key and custom scopes.
+		await card.getByRole("button", { name: "Edit" }).click();
+		await card.getByLabel("Client authentication").click();
+		await chooseClientAuth(page, "Private key JWT");
+		await card.getByLabel("Private key (PEM)").fill(testPrivateKeyPem());
+		await card.getByLabel("Key ID (kid)").fill(GOOGLE_KID);
+		await card.getByLabel("Scopes").fill(GOOGLE_SCOPES.join(" "));
+		await saveGoogleConfig(page, card);
+
+		persisted = googleConfig(await readOAuthSettings(api));
+		expect(persisted?.token_endpoint_auth_method).toBe("private_key_jwt");
+		expect(persisted?.private_key_set).toBe(true);
+		expect(persisted?.private_key_kid).toBe(GOOGLE_KID);
+		expect(persisted?.scopes).toEqual(GOOGLE_SCOPES);
+
+		// Revoke the stored key explicitly, back on a client-secret method.
+		await card.getByRole("button", { name: "Edit" }).click();
+		await card.getByLabel("Client authentication").click();
+		await chooseClientAuth(page, "Client secret (POST body)");
+		await card.getByLabel("Client Secret").fill(GOOGLE_CLIENT_SECRET);
+		await card.getByLabel("Remove the stored private key").check();
+		await saveGoogleConfig(page, card);
+
+		persisted = googleConfig(await readOAuthSettings(api));
+		expect(persisted?.token_endpoint_auth_method).toBe("client_secret_post");
+		expect(persisted?.private_key_set).toBe(false);
+		expect(persisted?.private_key_kid ?? null).toBeNull();
 
 		await page.reload();
 		const reloadedCard = googleCard(page);

@@ -6,7 +6,9 @@ Handles encryption of client secrets and provides a unified interface for
 accessing OAuth provider settings.
 """
 
+import json
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
@@ -14,6 +16,7 @@ from uuid import UUID
 import httpx
 from cryptography.exceptions import UnsupportedAlgorithm
 from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import ec
 from cryptography.hazmat.primitives.asymmetric.rsa import RSAPrivateKey
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,12 +31,14 @@ from src.models.contracts.oauth_config import (
     OAUTH_GOOGLE_PRIVATE_KEY,
     OAUTH_GOOGLE_PRIVATE_KEY_ALG,
     OAUTH_GOOGLE_PRIVATE_KEY_KID,
+    OAUTH_GOOGLE_SCOPES,
     OAUTH_GOOGLE_TOKEN_ENDPOINT_AUTH_METHOD,
     OAUTH_MICROSOFT_CLIENT_ID,
     OAUTH_MICROSOFT_CLIENT_SECRET,
     OAUTH_MICROSOFT_PRIVATE_KEY,
     OAUTH_MICROSOFT_PRIVATE_KEY_ALG,
     OAUTH_MICROSOFT_PRIVATE_KEY_KID,
+    OAUTH_MICROSOFT_SCOPES,
     OAUTH_MICROSOFT_TENANT_ID,
     OAUTH_MICROSOFT_TOKEN_ENDPOINT_AUTH_METHOD,
     OAUTH_LOGIN_PREFERENCE,
@@ -44,6 +49,7 @@ from src.models.contracts.oauth_config import (
     OAUTH_OIDC_PRIVATE_KEY,
     OAUTH_OIDC_PRIVATE_KEY_ALG,
     OAUTH_OIDC_PRIVATE_KEY_KID,
+    OAUTH_OIDC_SCOPES,
     OAUTH_OIDC_TOKEN_ENDPOINT_AUTH_METHOD,
     GoogleOAuthConfigRequest,
     MicrosoftOAuthConfigRequest,
@@ -77,6 +83,18 @@ _TOKEN_ENDPOINT_AUTH_METHODS: tuple[OAuthTokenEndpointAuthMethod, ...] = (
     "client_secret_basic",
     "private_key_jwt",
 )
+
+_DEFAULT_SCOPES: dict[str, list[str]] = {
+    "microsoft": ["openid", "email", "profile", "User.Read"],
+    "google": ["openid", "email", "profile"],
+    "oidc": ["openid", "email", "profile"],
+}
+
+_PROVIDER_SCOPES_KEY: dict[str, str] = {
+    "microsoft": OAUTH_MICROSOFT_SCOPES,
+    "google": OAUTH_GOOGLE_SCOPES,
+    "oidc": OAUTH_OIDC_SCOPES,
+}
 
 _PROVIDER_SECRET_KEYS: dict[str, str] = {
     "microsoft": OAUTH_MICROSOFT_CLIENT_SECRET,
@@ -129,6 +147,8 @@ class OAuthProviderConfig:
     private_key: str | None = None
     private_key_kid: str | None = None
     private_key_alg: str | None = None
+    # Requested OAuth scopes
+    scopes: list[str] | None = None
 
     @property
     def is_complete(self) -> bool:
@@ -149,12 +169,19 @@ class OAuthProviderConfig:
         return False
 
 
-def _validate_rsa_private_key(pem: str, alg: str) -> None:
-    """Reject unusable key material at save time.
+# OAuth 2.0 scope-token grammar (RFC 6749 §3.3): visible ASCII minus space,
+# quote and backslash.
+_SCOPE_TOKEN = re.compile(r"^[\x21\x23-\x5B\x5D-\x7E]+$")
 
-    Authlib 1.9.5's PrivateKeyJWT signer is RSA-only. EC algorithms are
-    intentionally unsupported until the signer moves to joserfc.
-    """
+_EC_CURVES = {
+    "ES256": ec.SECP256R1,
+    "ES384": ec.SECP384R1,
+    "ES512": ec.SECP521R1,
+}
+
+
+def _validate_private_key(pem: str, alg: str) -> None:
+    """Reject unusable key material and alg/key mismatches at save time."""
     if alg not in OAUTH_PRIVATE_KEY_ALGS:
         raise OAuthConfigValidationError(f"Unsupported private_key_alg: {alg}")
     try:
@@ -167,11 +194,48 @@ def _validate_rsa_private_key(pem: str, alg: str) -> None:
         raise OAuthConfigValidationError(
             "private key is not a valid PEM private key"
         ) from exc
-    if not isinstance(key, RSAPrivateKey):
+
+    if alg.startswith("RS"):
+        if not isinstance(key, RSAPrivateKey):
+            raise OAuthConfigValidationError(f"{alg} requires an RSA private key")
+        return
+    if not isinstance(key, ec.EllipticCurvePrivateKey):
+        raise OAuthConfigValidationError(f"{alg} requires an EC private key")
+    expected_curve = _EC_CURVES[alg]
+    if not isinstance(key.curve, expected_curve):
         raise OAuthConfigValidationError(
-            "private_key_jwt currently supports RSA private keys only "
-            "(RS256/RS384/RS512); EC keys are a documented follow-up"
+            f"{alg} requires a {expected_curve.name} key"
         )
+
+
+def _validate_scopes(provider: OAuthSSOProvider, scopes: list[str] | None) -> list[str]:
+    """Normalize scopes, keeping provider defaults and requiring openid."""
+    if scopes is None:
+        return list(_DEFAULT_SCOPES[provider])
+    cleaned: list[str] = []
+    for scope in scopes:
+        value = scope.strip()
+        if not value:
+            raise OAuthConfigValidationError("scopes must not contain empty values")
+        if not _SCOPE_TOKEN.fullmatch(value):
+            raise OAuthConfigValidationError(
+                "scopes must be space-delimited OAuth scope tokens"
+            )
+        if value not in cleaned:
+            cleaned.append(value)
+    if "openid" not in cleaned:
+        raise OAuthConfigValidationError(
+            "scopes must include 'openid' so the provider returns an id_token"
+        )
+    if provider == "microsoft" and not any(
+        scope in {"User.Read", "https://graph.microsoft.com/User.Read"}
+        for scope in cleaned
+    ):
+        raise OAuthConfigValidationError(
+            "Microsoft scopes must include 'User.Read' so Bifrost can read "
+            "the signed-in user's profile from Microsoft Graph"
+        )
+    return cleaned
 
 
 class OAuthConfigService:
@@ -398,6 +462,17 @@ class OAuthConfigService:
     # Provider Configuration CRUD
     # =========================================================================
 
+    async def _get_scopes(self, provider: OAuthSSOProvider) -> list[str]:
+        raw = await self._get_config_value(_PROVIDER_SCOPES_KEY[provider])
+        if raw:
+            try:
+                value = json.loads(raw)
+            except (TypeError, ValueError):
+                value = None
+            if isinstance(value, list) and value:
+                return [str(scope) for scope in value]
+        return list(_DEFAULT_SCOPES[provider])
+
     async def _get_client_auth_settings(
         self, provider: OAuthSSOProvider
     ) -> tuple[str, str | None, str | None, str | None]:
@@ -457,7 +532,7 @@ class OAuthConfigService:
         _, existing_key, existing_kid, _ = await self._get_client_auth_settings(provider)
         effective_key = None if clear_key else (provided_key or existing_key)
         if effective_key:
-            _validate_rsa_private_key(effective_key, alg)
+            _validate_private_key(effective_key, alg)
         if method == "private_key_jwt" and not effective_key:
             raise OAuthConfigValidationError(
                 "private_key_jwt requires a private key (PEM)"
@@ -503,6 +578,7 @@ class OAuthConfigService:
 
         Returns None if the provider is not configured.
         """
+        scopes = await self._get_scopes(provider)
         if provider == "microsoft":
             client_id = await self._get_config_value(OAUTH_MICROSOFT_CLIENT_ID)
             client_secret = await self._get_secret_value(OAUTH_MICROSOFT_CLIENT_SECRET)
@@ -525,6 +601,7 @@ class OAuthConfigService:
                 private_key=private_key,
                 private_key_kid=kid,
                 private_key_alg=alg,
+                scopes=scopes,
             )
 
         elif provider == "google":
@@ -547,6 +624,7 @@ class OAuthConfigService:
                 private_key=private_key,
                 private_key_kid=kid,
                 private_key_alg=alg,
+                scopes=scopes,
             )
 
         elif provider == "oidc":
@@ -573,6 +651,7 @@ class OAuthConfigService:
                 private_key=private_key,
                 private_key_kid=kid,
                 private_key_alg=alg,
+                scopes=scopes,
             )
 
         return None
@@ -598,6 +677,11 @@ class OAuthConfigService:
         await self._set_config_value(
             OAUTH_MICROSOFT_TENANT_ID, config.tenant_id, updated_by=updated_by
         )
+        await self._set_config_value(
+            _PROVIDER_SCOPES_KEY["microsoft"],
+            json.dumps(_validate_scopes("microsoft", config.scopes)),
+            updated_by=updated_by,
+        )
         await self._store_client_auth("microsoft", *auth, updated_by)
         logger.info(f"Microsoft OAuth config updated by {updated_by}")
 
@@ -619,6 +703,11 @@ class OAuthConfigService:
                 is_secret=True,
                 updated_by=updated_by,
             )
+        await self._set_config_value(
+            _PROVIDER_SCOPES_KEY["google"],
+            json.dumps(_validate_scopes("google", config.scopes)),
+            updated_by=updated_by,
+        )
         await self._store_client_auth("google", *auth, updated_by)
         logger.info(f"Google OAuth config updated by {updated_by}")
 
@@ -645,6 +734,11 @@ class OAuthConfigService:
             )
         await self._set_config_value(
             OAUTH_OIDC_DISPLAY_NAME, config.display_name, updated_by=updated_by
+        )
+        await self._set_config_value(
+            _PROVIDER_SCOPES_KEY["oidc"],
+            json.dumps(_validate_scopes("oidc", config.scopes)),
+            updated_by=updated_by,
         )
         await self._store_client_auth("oidc", *auth, updated_by)
         logger.info(f"OIDC config updated by {updated_by}")
@@ -683,12 +777,14 @@ class OAuthConfigService:
                 OAUTH_MICROSOFT_CLIENT_SECRET,
                 OAUTH_MICROSOFT_TENANT_ID,
                 *_PROVIDER_AUTH_KEYS["microsoft"],
+                OAUTH_MICROSOFT_SCOPES,
             ]
         elif provider == "google":
             keys = [
                 OAUTH_GOOGLE_CLIENT_ID,
                 OAUTH_GOOGLE_CLIENT_SECRET,
                 *_PROVIDER_AUTH_KEYS["google"],
+                OAUTH_GOOGLE_SCOPES,
             ]
         elif provider == "oidc":
             keys = [
@@ -697,6 +793,7 @@ class OAuthConfigService:
                 OAUTH_OIDC_CLIENT_SECRET,
                 OAUTH_OIDC_DISPLAY_NAME,
                 *_PROVIDER_AUTH_KEYS["oidc"],
+                OAUTH_OIDC_SCOPES,
             ]
         else:
             return False
@@ -736,6 +833,7 @@ class OAuthConfigService:
                         private_key_set=bool(config.private_key),
                         private_key_kid=config.private_key_kid,
                         private_key_alg=config.private_key_alg,
+                        scopes=config.scopes or [],
                         tenant_id=config.tenant_id if provider == "microsoft" else None,
                         discovery_url=config.discovery_url
                         if provider == "oidc"
