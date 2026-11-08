@@ -1,0 +1,15 @@
+{
+  "key": "pr:1287",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Re-registering an inactive workflow preserves its organization unless a new scope is explicitly supplied.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1287",
+      "https://github.com/gobifrost/bifrost/issues/1194",
+      "https://github.com/Midtown-Technology-Group/bifrost/pull/1199"
+    ]
+  }
+}
