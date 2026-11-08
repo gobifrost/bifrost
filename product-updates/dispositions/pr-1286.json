@@ -1,0 +1,21 @@
+{
+  "key": "pr:1286",
+  "classification": "highlight",
+  "entry_ids": [
+    "a21cb2c7-311d-4544-bd32-682936066307"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1286"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1286",
+      "https://github.com/gobifrost/bifrost/issues/1193",
+      "https://github.com/Midtown-Technology-Group/bifrost/pull/1183",
+      "Exact title and entry body repeat the PR text approved by Jack in the private owner conversation. The formal release security review remains required.",
+      "The initial Product Updates check lacked a canonical disposition because the PR number was assigned after the first push: https://github.com/gobifrost/bifrost/actions/runs/42529665321/job/128880862523. This disposition and canonical notice supply the missing coverage."
+    ]
+  }
+}
