@@ -12,7 +12,7 @@ import pytest
 
 from tests.e2e.fixtures.setup import _register_and_authenticate_user
 from tests.e2e.fixtures.users import E2EUser
-from tests.helpers.totp import generate_totp_code
+from tests.helpers.totp import complete_mfa_login, generate_totp_code
 
 MICROSOFT_CONFIG = {
     "client_id": "sso-only-client",
@@ -148,12 +148,8 @@ class TestSSOOnlyPasswordGates:
             assert allowed.status_code == 200
             body = allowed.json()
             assert body.get("mfa_required") is True
-            mfa_response = private_client.post(
-                "/auth/mfa/login",
-                json={
-                    "mfa_token": body["mfa_token"],
-                    "code": generate_totp_code(platform_admin.totp_secret),
-                },
+            mfa_response = complete_mfa_login(
+                private_client, body["mfa_token"], platform_admin.totp_secret
             )
             assert mfa_response.status_code == 200
             assert mfa_response.json()["access_token"]

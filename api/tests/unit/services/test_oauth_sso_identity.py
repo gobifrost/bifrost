@@ -126,16 +126,23 @@ def test_google_requires_an_explicitly_verified_email_for_a_new_link(verified):
         service.validate_email_for_linking(service._parse_user_info("google", _google(email_verified=verified)), _tokens())
 
 
-def test_oidc_trusts_a_missing_verification_claim_but_refuses_explicit_false():
+@pytest.mark.parametrize("verified", [False, None])
+def test_oidc_requires_an_explicitly_verified_email_for_a_new_link(verified):
     service = _service()
+
     service.validate_email_for_linking(
-        service._parse_user_info("oidc", {"sub": "o-1", "email": "Kim@ClientCo.com"}), _tokens()
+        service._parse_user_info(
+            "oidc",
+            {"sub": "o-1", "email": "kim@clientco.com", "email_verified": True},
+        ),
+        _tokens(),
     )
 
     with pytest.raises(OAuthError, match="verified"):
         service.validate_email_for_linking(
             service._parse_user_info(
-                "oidc", {"sub": "o-1", "email": "kim@clientco.com", "email_verified": False}
+                "oidc",
+                {"sub": "o-1", "email": "kim@clientco.com", "email_verified": verified},
             ),
             _tokens(),
         )

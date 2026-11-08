@@ -21,7 +21,7 @@ import httpx
 import pytest
 
 from tests.e2e.fixtures.users import E2EUser
-from tests.helpers.totp import generate_totp_code
+from tests.helpers.totp import complete_mfa_login, generate_totp_code
 
 logger = logging.getLogger(__name__)
 
@@ -136,11 +136,7 @@ def _login_user(user: E2EUser) -> E2EUser:
         if login_data.get("mfa_required"):
             mfa_token = login_data["mfa_token"]
             assert user.totp_secret is not None, "TOTP secret not set for login"
-            totp_code = generate_totp_code(user.totp_secret)
-            response = client.post(
-                "/auth/mfa/login",
-                json={"mfa_token": mfa_token, "code": totp_code},
-            )
+            response = complete_mfa_login(client, mfa_token, user.totp_secret)
             assert response.status_code == 200, f"MFA login failed: {response.text}"
             login_data = response.json()
 

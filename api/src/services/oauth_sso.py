@@ -518,9 +518,9 @@ class OAuthService:
                 raise OAuthError(f"Sign in with your {domain} Google Workspace account.")
             return
 
-        # Generic OIDC is a trusted issuer selected through platform settings.
-        # Preserve its existing email policy unless it explicitly denies verification.
-        if data.get("email_verified") is False:
+        # Generic OIDC must prove email ownership before a new account link is
+        # created. A missing claim is untrusted, not an implicit pass.
+        if data.get("email_verified") is not True:
             raise OAuthError("Your identity provider hasn't verified this account's email address.")
 
     # ========================================================================

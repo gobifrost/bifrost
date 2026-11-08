@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import Context, CurrentActiveUser
+from src.config import get_settings
 from src.core.database import get_db
 from src.core.log_safety import log_safe
 from src.models.contracts.oauth_config import (
@@ -77,8 +78,14 @@ async def _authorize_oauth_settings(
 
 
 def _get_callback_url(request: Request) -> str:
-    """Get the OAuth callback URL based on the request origin."""
-    # Use X-Forwarded headers if behind a proxy, otherwise use request base URL
+    """Return the deployment-owned OAuth callback URL.
+
+    Prefer ``BIFROST_PUBLIC_URL``; fall back to request headers only for local
+    development where no public URL is configured.
+    """
+    configured = get_settings().public_url.strip()
+    if configured:
+        return f"{configured.rstrip('/')}/auth/oauth/callback"
     proto = request.headers.get("x-forwarded-proto", request.url.scheme)
     host = request.headers.get(
         "x-forwarded-host", request.headers.get("host", "localhost")
