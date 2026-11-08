@@ -1,15 +1,17 @@
 {
   "key": "pr:924",
-  "classification": "omit",
-  "entry_ids": [],
+  "classification": "highlight",
+  "entry_ids": [
+    "a46aaf21-bcd9-47d9-9371-807f18801efc"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/924",
-      "Verified client/docs npm audits report zero vulnerabilities; user authorized tested security fixes and merge on 2026-10-07."
+      "Verified client/docs npm audits report zero vulnerabilities; user authorized tested security fixes and merge on 2026-10-07.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Routine dependency patches; no separate in-app announcement. Retain CVE review and canonical security notice during formal release preparation."
     ]
   },
-  "reason": "Routine dependency patches; no separate in-app announcement. Retain CVE review and canonical security notice during formal release preparation.",
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/924"

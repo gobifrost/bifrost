@@ -2,13 +2,15 @@
   "key": "pr:1158",
   "classification": "highlight",
   "entry_ids": [
-    "a978b8c0-cde0-4b05-bf6d-7cb333ed914a"
+    "a978b8c0-cde0-4b05-bf6d-7cb333ed914a",
+    "923a82e9-6f18-4c66-b87f-eafa8407d260"
   ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1158",
-      "Independent Astra implementation and Product Updates copy review approved on 2026-10-31. General Writing and Humanizer applied. Optional New highlight; existing Apps need no action to keep their current behavior. The one-time migration and subsequent reload behavior passed focused worker and browser checks. /apps route verified."
+      "Independent Astra implementation and Product Updates copy review approved on 2026-10-31. General Writing and Humanizer applied. Optional New highlight; existing Apps need no action to keep their current behavior. The one-time migration and subsequent reload behavior passed focused worker and browser checks. /apps route verified.",
+      "Also sources the reviewed pinned2.0 overview requested by Jack; existing source entries and contributor credit are retained."
     ]
   }
 }

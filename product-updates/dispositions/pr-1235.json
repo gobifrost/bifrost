@@ -1,9 +1,9 @@
 {
   "key": "pr:1235",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Internal Python/container certificate security maintenance; no new front-facing capability or customer configuration change. Retain security evidence for formal release review.",
-  "category": "hardening",
+  "classification": "highlight",
+  "entry_ids": [
+    "c24ccbdd-bdfe-4c97-8fd9-c14b1adef2fb"
+  ],
   "security_review": {
     "status": "required",
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1235"
@@ -17,7 +17,8 @@
       "https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576",
       "Jack conditionally approved scoped repairs and protected merge on 2026-11-04; merge requires existing private-CA installations to work without customer configuration changes.",
       "Original contribution: Thomas Bray (@MTG-Thomas), https://github.com/gobifrost/bifrost/pull/1235. Maintainer repair preserves system trust selection and disables only retired distro roots by certificate identity.",
-      "Maintainer security review: production-image default and pip trust reject retired anchors; directory pruning persists across update-ca-certificates. Production TLS controls accept installed private CAs and existing explicit file/directory settings. Focused trust-pruning and SDK tests pass; Python and CA-package pins retain verified upstream provenance."
+      "Maintainer security review: production-image default and pip trust reject retired anchors; directory pruning persists across update-ca-certificates. Production TLS controls accept installed private CAs and existing explicit file/directory settings. Focused trust-pruning and SDK tests pass; Python and CA-package pins retain verified upstream provenance.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Internal Python/container certificate security maintenance; no new front-facing capability or customer configuration change. Retain security evidence for formal release review."
     ]
   }
 }

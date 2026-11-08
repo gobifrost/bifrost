@@ -1,8 +1,9 @@
 {
   "key": "pr:1135",
-  "classification": "omit",
-  "entry_ids": [],
-  "reason": "Routine client dependency updates and dependency security maintenance; formal release security review remains required.",
+  "classification": "highlight",
+  "entry_ids": [
+    "a46aaf21-bcd9-47d9-9371-807f18801efc"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
@@ -14,7 +15,8 @@
       "https://github.com/gobifrost/bifrost/pull/840",
       "https://github.com/capricorn86/happy-dom/security/advisories/GHSA-834v-8h66-3h79",
       "https://github.com/cure53/DOMPurify/releases/tag/3.4.17",
-      "Root reviewed dependency diffs and sanitizer consumers, independently verified 35 focused tests; no consumer configuration or authority changes."
+      "Root reviewed dependency diffs and sanitizer consumers, independently verified 35 focused tests; no consumer configuration or authority changes.",
+      "Formal-release canonical notice added with in_app:false; prior visibility/copy disposition retained: Routine client dependency updates and dependency security maintenance; formal release security review remains required."
     ]
   },
   "security_review": {
