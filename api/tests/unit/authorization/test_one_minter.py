@@ -44,6 +44,11 @@ _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
     _TOKENS_MODULE: (frozenset({"encode"}), frozenset({"_encode_claims", "_encode_legacy"})),
     # Local Solution development context tokens.
     "shared.solution_dev": (frozenset({"encode"}), frozenset({"_mint_solution_dev_token"})),
+    # OAuth token-endpoint client assertions (RFC 7523), not access tokens.
+    "src.services.oauth_client_assertion": (
+        frozenset({"encode"}),
+        frozenset({"encode_ec_client_assertion"}),
+    ),
     # OAuth state parameters.
     "src.services.oauth_state_core": (
         frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),

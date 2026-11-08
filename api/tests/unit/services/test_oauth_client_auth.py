@@ -13,7 +13,8 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from src.services import oauth_sso
 from src.services.oauth_config_service import (
     OAuthConfigValidationError,
-    _validate_rsa_private_key,
+    _validate_private_key,
+    _validate_scopes,
 )
 from src.services.oauth_sso import OAuthError, OAuthService
 
@@ -176,14 +177,14 @@ def _public_key_pem(private_key) -> str:
 
 def test_malformed_private_key_is_rejected():
     with pytest.raises(OAuthConfigValidationError, match="not a valid PEM"):
-        _validate_rsa_private_key("not-a-pem", "RS256")
+        _validate_private_key("not-a-pem", "RS256")
 
 
 def test_public_only_private_key_is_rejected():
     key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
 
     with pytest.raises(OAuthConfigValidationError, match="not a valid PEM"):
-        _validate_rsa_private_key(_public_key_pem(key), "RS256")
+        _validate_private_key(_public_key_pem(key), "RS256")
 
 
 def test_password_protected_private_key_is_rejected():
@@ -195,18 +196,116 @@ def test_password_protected_private_key_is_rejected():
     ).decode()
 
     with pytest.raises(OAuthConfigValidationError, match="password-protected"):
-        _validate_rsa_private_key(pem, "RS256")
+        _validate_private_key(pem, "RS256")
 
 
-def test_ec_private_key_is_rejected_as_an_alg_mismatch():
+def test_alg_and_key_type_must_match():
     from cryptography.hazmat.primitives.asymmetric import ec
 
-    key = ec.generate_private_key(ec.SECP256R1())
-    pem = key.private_bytes(
+    rsa_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    rsa_pem = rsa_key.private_bytes(
+        serialization.Encoding.PEM,
+        serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ).decode()
+    ec_key = ec.generate_private_key(ec.SECP256R1())
+    ec_pem = ec_key.private_bytes(
         serialization.Encoding.PEM,
         serialization.PrivateFormat.PKCS8,
         serialization.NoEncryption(),
     ).decode()
 
-    with pytest.raises(OAuthConfigValidationError, match="RSA private keys only"):
-        _validate_rsa_private_key(pem, "RS256")
+    _validate_private_key(rsa_pem, "RS256")
+    _validate_private_key(ec_pem, "ES256")
+
+    with pytest.raises(OAuthConfigValidationError, match="requires an EC private key"):
+        _validate_private_key(rsa_pem, "ES256")
+    with pytest.raises(OAuthConfigValidationError, match="requires an RSA private key"):
+        _validate_private_key(ec_pem, "RS256")
+    with pytest.raises(OAuthConfigValidationError, match="secp384r1"):
+        _validate_private_key(ec_pem, "ES384")
+
+
+def test_scopes_keep_defaults_dedupe_and_require_openid():
+    assert _validate_scopes("google", None) == ["openid", "email", "profile"]
+    assert _validate_scopes(
+        "google", ["openid", "email", "email", "groups"]
+    ) == ["openid", "email", "groups"]
+    with pytest.raises(OAuthConfigValidationError, match="openid"):
+        _validate_scopes("google", ["email"])
+    with pytest.raises(OAuthConfigValidationError, match="empty"):
+        _validate_scopes("google", ["openid", ""])
+    with pytest.raises(OAuthConfigValidationError, match="scope tokens"):
+        _validate_scopes("google", ["openid", "email profile"])
+
+
+def test_microsoft_scopes_require_graph_profile_access():
+    with pytest.raises(OAuthConfigValidationError, match="User.Read"):
+        _validate_scopes("microsoft", ["openid", "email", "profile"])
+
+
+@pytest.mark.parametrize("scope", ["User.Read", "https://graph.microsoft.com/User.Read"])
+def test_microsoft_custom_scopes_keep_graph_profile_access(scope):
+    assert _validate_scopes("microsoft", ["openid", scope]) == ["openid", scope]
+
+
+def test_microsoft_default_scopes_keep_graph_profile_access():
+    assert _validate_scopes("microsoft", None) == [
+        "openid", "email", "profile", "User.Read",
+    ]
+
+
+def _ec_pem(curve) -> str:
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    return (
+        ec.generate_private_key(curve)
+        .private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+        .decode()
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("alg", "curve_name"),
+    [("ES256", "SECP256R1"), ("ES384", "SECP384R1"), ("ES512", "SECP521R1")],
+)
+async def test_private_key_jwt_ec_assertion_is_signed_for_each_curve(
+    monkeypatch, alg, curve_name
+):
+    from cryptography.hazmat.primitives.asymmetric import ec
+
+    captured = _capture(monkeypatch)
+    pem = _ec_pem(getattr(ec, curve_name)())
+
+    await _exchange(
+        _service(),
+        "private_key_jwt",
+        private_key=pem,
+        private_key_kid="ec-key",
+        private_key_alg=alg,
+    )
+
+    request = captured["request"]
+    body = parse_qs(request.content.decode())
+    assertion = body["client_assertion"][0]
+    header = jwt.get_unverified_header(assertion)
+    assert header["alg"] == alg
+    assert header["kid"] == "ec-key"
+    public_pem = (
+        serialization.load_pem_private_key(pem.encode(), password=None)
+        .public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+    )
+    claims = jwt.decode(
+        assertion, public_pem, algorithms=[alg], audience=_TOKEN_URL
+    )
+    assert claims["iss"] == "client-id"
+    assert claims["sub"] == "client-id"
