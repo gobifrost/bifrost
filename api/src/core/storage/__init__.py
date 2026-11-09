@@ -8,11 +8,19 @@ from src.core.storage.contracts import ObjectPage, ObjectRead, ObjectStore, Page
 
 
 def storage_configured(settings: Settings) -> bool:
-    return settings.s3_configured
+    return settings.storage_configured
 
 
 def storage_identity(settings: Settings) -> Hashable:
     """Connection-cache identity; never log this credential-bearing value."""
+    if settings.object_storage_provider == "azure_blob":
+        return (
+            "azure_blob",
+            settings.azure_blob_account_url, settings.azure_blob_container,
+            settings.azure_blob_account_name, settings.azure_blob_auth,
+            settings.azure_blob_account_key,
+            settings.azure_blob_managed_identity_client_id,
+        )
     return (
         "s3",
         settings.s3_endpoint_url, settings.s3_bucket, settings.s3_access_key,
@@ -22,6 +30,10 @@ def storage_identity(settings: Settings) -> Hashable:
 
 
 def object_store(settings: Settings) -> ObjectStore:
+    if settings.object_storage_provider == "azure_blob":
+        from src.core.storage.azure import AzureObjectStore
+
+        return AzureObjectStore.from_settings(settings)
     from src.core.storage.s3 import S3ObjectStore
 
     return S3ObjectStore.from_settings(settings)
@@ -58,12 +70,22 @@ async def optional_read(store: ObjectStore, key: str) -> AsyncIterator[ObjectRea
 
 
 def sync_object_store(settings: Settings) -> SyncObjectStore:
+    if settings.object_storage_provider == "azure_blob":
+        from src.core.storage.azure import SyncAzureObjectStore
+
+        return SyncAzureObjectStore(
+            settings.azure_blob_container or "", settings,
+        )
     from src.core.storage.s3 import SyncS3ObjectStore
 
     return SyncS3ObjectStore.from_settings(settings)
 
 
 def workspace_mirror(settings: Settings) -> WorkspaceMirror:
+    if settings.object_storage_provider == "azure_blob":
+        from src.core.storage.azure_mirror import AzureWorkspaceMirror
+
+        return AzureWorkspaceMirror(settings)
     from src.core.storage.s3_mirror import S3WorkspaceMirror
 
     return S3WorkspaceMirror(settings)
