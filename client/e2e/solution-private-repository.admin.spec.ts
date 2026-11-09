@@ -76,7 +76,8 @@ test("authorizes a read-only private source and installs a Solution", async ({
 			.getByRole("button", { name: "Use Selected Repository" })
 			.click();
 		await expect(
-			page.getByText("thin-git-app/solutions", { exact: true }),
+			page.getByRole("region", { name: "Solution GitHub Sources" })
+                .getByRole("listitem").filter({ hasText: "thin-git-app/solutions" }),
 		).toBeVisible();
 		await page.goto("/solutions");
 		await page
