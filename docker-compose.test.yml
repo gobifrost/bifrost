@@ -17,7 +17,7 @@
 services:
   # Both storage contracts run against real local services in every test lane.
   azurite:
-    image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8b800aab803436e1fc85f5b285e7ce830a82ee5d666c9cf37
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
     command: [azurite-blob, --blobHost, 0.0.0.0, --location, /data, --skipApiVersionCheck, --silent]
     environment:
       # Public local fixture account; has no Azure authority.
