@@ -41,10 +41,11 @@ from src.services.kubernetes_execution import (
 from src.services.memory_requests import (
     DEFAULT_WORKFLOW_REQUEST_BYTES,
     LAUNCHABLE_KEY,
+    LAUNCHABLE_GENERATION_KEY,
     MIB,
     WORKFLOW_REQUEST_MARGIN_BYTES,
 )
-from src.services.worker_pool import claims, controller, liveness, maintenance, recovery, sizing
+from src.services.worker_pool import calibration, claims, controller, liveness, maintenance, recovery, sizing
 from src.services.worker_pool.manifest import WorkerJobSpec, build_worker_job_manifest
 
 GIB = 1024 * MIB
@@ -155,7 +156,7 @@ async def db(async_session_factory: async_sessionmaker[AsyncSession], monkeypatc
             yield session
             await session.commit()
 
-    for module in (claims, controller, liveness, maintenance, recovery, work_dispatch, workflow_dispatch):
+    for module in (calibration, claims, controller, liveness, maintenance, recovery, work_dispatch, workflow_dispatch):
         monkeypatch.setattr(module, "get_db_context", context)
     monkeypatch.setattr(claims, "get_liveness_db_context", context)
     # These controllers have long reached the database (liveness.Reachability).
@@ -201,7 +202,7 @@ async def _clear_pool_state(sessions) -> None:  # type: ignore[no-untyped-def]
     # What a worker controller last published it can launch, and which
     # controllers are live.
     async with get_redis() as redis:
-        await redis.delete(LAUNCHABLE_KEY, controller.CONTROLLERS_KEY)
+        await redis.delete(LAUNCHABLE_KEY, LAUNCHABLE_GENERATION_KEY, controller.CONTROLLERS_KEY)
 
 
 @pytest.fixture(autouse=True)
@@ -241,9 +242,32 @@ async def _set_request(sessions, execution_id: str, request: int, *, age: timede
 
 
 async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = False) -> str | None:
+    from src.services.memory_requests import MemoryBudget
+
+    # Reproduce the owner's immutable startup report before its first heartbeat.
+    async with calibration.get_db_context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        if worker.form in ("job", "external"):
+            limit = worker.memory_limit_bytes or POLICY.worker_memory_mib * MIB
+            if not worker.memory_calibration:
+                worker.version = worker.version or get_version()
+                worker.memory_limit_bytes = limit
+                worker.memory_calibration = {"environment": {
+                    "form": worker.form, "version": worker.version,
+                    "package_generation": 0, "threshold": SETTINGS.memory_pressure_threshold,
+                    **({"image": SPEC.image} if worker.form == "job" else {"scope": worker.capacity_scope}),
+                }}
+            await session.commit()
+        else:
+            limit = GIB
+    await calibration.record_memory_calibration(worker_id, MemoryBudget(
+        limit_bytes=limit, baseline_bytes=int(limit * SETTINGS.memory_pressure_threshold) - budget,
+        threshold=SETTINGS.memory_pressure_threshold,
+    ), 0)
     return await claims.heartbeat_worker(
         worker_id, active_runs=0, runs_handled=0, package_generation=0,
         memory_pressured=pressured, memory_budget_bytes=budget, memory_reserved_bytes=0,
+        active_handler_counts={},
     )
 
 
@@ -499,6 +523,7 @@ async def test_a_sized_job_drains_when_idle_and_is_never_the_warm_minimum(db) ->
         )
         await session.commit()
 
+    await _report_budget(sized.id, 4 * GIB)
     warm = replace(POLICY, warm_workers=1)
     await _store_policy(db.sessions, warm)
     launched = await controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC).launch_for_demand(warm)  # type: ignore[arg-type]
@@ -516,12 +541,16 @@ async def test_demand_launches_bounded_workers_and_binds_before_start(db) -> Non
     replicas = [controller.WorkerPoolController(cluster, SETTINGS, SPEC) for _ in range(2)]  # type: ignore[arg-type]
 
     await asyncio.gather(*(replica.reconcile() for replica in replicas))
+    async with db.sessions() as session:
+        [bootstrap] = (await session.scalars(select(ExecutionWorker))).all()
+    await _admit(db.sessions, bootstrap.id)
     await asyncio.gather(*(replica.reconcile() for replica in replicas))
 
     async with db.sessions() as session:
         workers = (await session.execute(select(ExecutionWorker))).scalars().all()
     assert len(workers) == POLICY.max_workers
-    assert all(w.state == "starting" and w.kubernetes_job_uid for w in workers)
+    assert sorted(w.state for w in workers) == ["ready", "starting"]
+    assert all(w.kubernetes_job_uid for w in workers)
     assert sorted(cluster.created) == sorted(w.kubernetes_job_name for w in workers)
     assert set(cluster.started) == set(cluster.created)
     manifest = cluster.jobs[cluster.created[0]]
@@ -1114,6 +1143,10 @@ async def test_a_max_workers_change_in_settings_applies_on_the_next_pass(db) -> 
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
 
     await pool.reconcile()
+    async with db.sessions() as session:
+        [bootstrap] = (await session.scalars(select(ExecutionWorker))).all()
+    await _admit(db.sessions, bootstrap.id)
+    await pool.reconcile()
     assert len(cluster.created) == POLICY.max_workers
 
     await _store_policy(db.sessions, replace(POLICY, max_workers=3))
@@ -1570,30 +1603,33 @@ def test_agent_work_fits_only_free_budgets_of_workers_that_claim_agent_runs() ->
 
 
 async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
-    from src.services.memory_requests import job_budget_bytes, sized_job_limit_bytes
+    from src.services.memory_requests import sized_job_limit_bytes
 
     execution_id = await _accept_pool_run()
     await _set_request(db.sessions, execution_id, 3 * GIB)
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
 
+    [bootstrap_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(bootstrap_id, POLICY)
+    await _admit(db.sessions, bootstrap_id)
     [worker_id] = await pool.launch_for_demand(POLICY)
     assert await pool.launch_for_demand(POLICY) == [], "its dispatch is already covered"
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
-        dispatch_id = await session.scalar(
-            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
-        )
-    baseline = 768 * MIB  # no standard worker has reported its budget yet
+        bootstrap = await session.get(ExecutionWorker, bootstrap_id)
+    baseline = int(bootstrap.memory_limit_bytes * SETTINGS.memory_pressure_threshold) - GIB
     assert worker.resource_class == "sized"
-    assert worker.reserved_for_dispatch_id == dispatch_id
+    assert worker.reserved_for_dispatch_id is None, "an unmeasured size must not bypass fit"
     assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline, 8192 * MIB)
-    # Every reconcile publishes the largest budget it could launch.
+    # A projection from a smaller worker cannot reject oversized demand.
     await pool.reconcile()
     async with get_redis() as redis:
-        launchable = int(await redis.get(LAUNCHABLE_KEY))
-    assert launchable == job_budget_bytes(8192 * MIB, 0.85, baseline)
+        assert await redis.get(LAUNCHABLE_KEY) == ""
+    await _admit(db.sessions, worker_id, pool_up=False)
+    await _report_budget(worker_id, 4 * GIB)
+    assert await _claim(worker_id, fits=4 * GIB, budget=4 * GIB) is not None
 
 
 async def test_a_job_worker_counts_its_expected_budget_until_it_reports_one(db) -> None:
@@ -1656,7 +1692,7 @@ async def test_a_standard_job_keeps_the_limit_it_was_reserved_with(db) -> None:
 async def test_raising_worker_memory_does_not_shrink_what_can_be_launched(db) -> None:
     """A running 2 GiB Job's baseline is measured against its own limit, not
     the new Worker memory, or large work it could launch for fails as too large."""
-    from src.services.memory_requests import job_budget_bytes
+    from src.services.worker_pool.calibration import measured_budget
 
     warm = replace(POLICY, warm_workers=1)
     await _store_policy(db.sessions, warm)
@@ -1670,8 +1706,10 @@ async def test_raising_worker_memory_does_not_shrink_what_can_be_launched(db) ->
     await pool.reconcile()
 
     async with get_redis() as redis:
-        launchable = int(await redis.get(LAUNCHABLE_KEY))
-    assert launchable == job_budget_bytes(8192 * MIB, SETTINGS.memory_pressure_threshold, baseline)
+        assert await redis.get(LAUNCHABLE_KEY) == ""
+    async with db.sessions() as session:
+        measured = measured_budget(await session.get(ExecutionWorker, worker_id), pool._memory_environment(0))
+        assert measured.baseline_bytes == baseline
 
 
 async def test_a_standard_job_reserved_before_the_upgrade_takes_the_current_worker_memory(db) -> None:
@@ -2103,8 +2141,10 @@ async def _pass(pool: controller.WorkerPoolController, policy: KubernetesPolicy 
 async def _admit(sessions, worker_id: UUID, *, pool_up: bool = True) -> None:  # type: ignore[no-untyped-def]
     """Admit a launched Job's pod; ``pool_up``: its pool started and it reported its budget."""
     async with sessions() as session:
-        job_uid = (await session.get(ExecutionWorker, worker_id)).kubernetes_job_uid
-    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=get_version()) is not None
+        worker = await session.get(ExecutionWorker, worker_id)
+        job_uid = worker.kubernetes_job_uid
+        version = ((worker.memory_calibration or {}).get("environment") or {}).get("version", get_version())
+    assert await claims.admit_worker(worker_id, job_uid=job_uid, pod_uid=f"pod-{worker_id}", version=version) is not None
     if pool_up:
         await _report_budget(worker_id, GIB)
 

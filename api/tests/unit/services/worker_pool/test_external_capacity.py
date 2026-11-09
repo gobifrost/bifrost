@@ -432,3 +432,39 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.state == "lost"
         assert worker.capacity_resource_deleted_at is not None
+
+
+async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db, capacity):
+    from src.services import work_dispatch
+    from tests.unit.services.worker_pool.test_worker_pool import MIB, _claim, _report_budget, _set_request
+
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"memory_limit_bytes": GIB})
+    capacity.pool.profile = capacity.provider.profile
+    policy = replace(capacity.policy, worker_memory_mib=1024, largest_worker_mib=1024)
+    await _store_policy(db.sessions, policy)
+    run_id = await _accept_pool_run()
+    await _set_request(db.sessions, run_id, 128 * MIB)
+    other = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
+    results = await asyncio.gather(
+        capacity.pool.launch_for_demand(policy), other.launch_for_demand(policy),
+    )
+    assert sorted(len(ids) for ids in results) == [0, 1]
+    worker_id = next(ids[0] for ids in results if ids)
+    await capacity.pool.reconcile_worker(worker_id, policy)
+    assert len(capacity.provider.starts) == 1
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.memory_limit_bytes == GIB
+        assert worker.reserved_for_dispatch_id is None
+        assert await work_dispatch.largest_budget(session) is None
+    assert await _claim(worker_id) is None
+    uid = capacity.provider.resources[str(worker_id)]["resource_uid"]
+    assert await claims.admit_external_worker(
+        worker_id, resource_uid=uid, launcher_id=uuid4(),
+        version=capacity.provider.profile.worker_version, hostname="cold-provider-worker",
+    ) is not None
+    await _report_budget(worker_id, 512 * MIB)
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        assert await work_dispatch.largest_budget(session) == 512 * MIB
+    assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None
