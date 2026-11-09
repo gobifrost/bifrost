@@ -268,6 +268,8 @@ def _stream(chunks, properties):
 
 @pytest.mark.asyncio
 async def test_open_read_verifies_version_atomically(store):
+    from azure.core import MatchConditions
+
     blob = store._container.get_blob_client.return_value
     observed = _stream([b"abc"], _props())
 
