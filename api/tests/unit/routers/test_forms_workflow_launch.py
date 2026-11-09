@@ -172,6 +172,7 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
     launch.assert_awaited_once_with(
         db, ctx, form, requested_organization_id=selected_org
     )
+    assert storage.generate_signed_upload_request.await_args.kwargs["content_length"] == 12
     assert captured["location"] == "uploads"
     assert captured["scope"] == str(selected_org)
 

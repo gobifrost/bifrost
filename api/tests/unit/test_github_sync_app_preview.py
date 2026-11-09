@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
+from bifrost.manifest import Manifest, ManifestApp
+
 from src.models.contracts.github import PushResult, WorkspaceSyncPlan
 from src.services.app_resource_limits import AppSourceCompilationError, AppSourceLimitError
 from src.services.github_sync import AppPreviewSyncError, GitHubSyncService
@@ -17,11 +19,11 @@ def _service() -> GitHubSyncService:
     return service
 
 
-def _manifest() -> SimpleNamespace:
-    return SimpleNamespace(
+def _manifest() -> Manifest:
+    return Manifest(
         apps={
-            "first": SimpleNamespace(id="app-1", path="apps/first"),
-            "second": SimpleNamespace(id="app-2", path="apps/second"),
+            "first": ManifestApp(id="app-1", path="apps/first"),
+            "second": ManifestApp(id="app-2", path="apps/second"),
         }
     )
 

@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import Settings
 from .object_storage import FileObjectStorage
 from src.models.orm.file_index import FileIndex
+from src.services.repo_storage import RepoStorage
 
 logger = logging.getLogger(__name__)
 
@@ -67,10 +68,30 @@ class FolderOperationsService:
     ) -> None:
         """Create a folder by writing a .gitkeep placeholder in S3."""
         from src.services.file_index_service import FileIndexService
+        from src.services.editor.file_filter import normalize_workspace_folder_path
 
-        clean_path = path.strip("/")
+        clean_path = normalize_workspace_folder_path(path)
+        conflict_paths = [
+            "/".join(clean_path.split("/")[:index])
+            for index in range(1, len(clean_path.split("/")) + 1)
+        ]
+        indexed_conflict = await self.db.scalar(
+            select(FileIndex.path).where(FileIndex.path.in_(conflict_paths)).limit(1)
+        )
+        if indexed_conflict is not None:
+            raise ValueError(f"A file already exists at {indexed_conflict}")
+
+        repo = RepoStorage(self.settings)
+        for candidate in conflict_paths:
+            if await repo.exists(candidate):
+                raise ValueError(f"A file already exists at {candidate}")
+
         gitkeep_path = f"{clean_path}/.gitkeep"
-        await FileIndexService(self.db).write(gitkeep_path, b"", updated_by=updated_by)
+        if await repo.exists(gitkeep_path):
+            return
+        await FileIndexService(self.db, repo_storage=repo).write(
+            gitkeep_path, b"", updated_by=updated_by,
+        )
 
     async def list_files(
         self,

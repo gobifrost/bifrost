@@ -44,7 +44,6 @@ from src.models.contracts.github import (
 from src.services.git_repo_manager import (
     GitRepoManager,
     hash_file,
-    iter_tree_metadata,
     merge_in_progress,
 )
 from src.services.github_sync_entity_metadata import extract_entity_metadata
@@ -71,6 +70,7 @@ from bifrost.manifest import (
     Manifest,
     get_all_entity_ids,
     read_manifest_from_dir,
+    validate_manifest_paths,
 )
 from src.services.manifest_import import (
     ManifestResolver,
@@ -216,9 +216,41 @@ def _has_workspace_files(root: Path) -> bool:
     for entry in root.iterdir():
         if entry.name in (".git", ".bifrost"):
             continue
-        if entry.is_file() or any(path.is_file() for path in entry.rglob("*")):
+        resolved_entry = _confined_workspace_entry(root, entry.name)
+        if resolved_entry is not None and resolved_entry.is_file():
             return True
+        for path in entry.rglob("*"):
+            relative = path.relative_to(root).as_posix()
+            resolved = _confined_workspace_entry(root, relative)
+            if resolved is not None and resolved.is_file():
+                return True
     return False
+
+
+def _has_stored_manifest(root: Path) -> bool:
+    """Whether checkout storage contains an authored split or legacy manifest."""
+    from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE
+
+    return any(
+        (entry := _confined_workspace_entry(root, f".bifrost/{filename}")) is not None
+        and entry.is_file()
+        for filename in (*MANIFEST_FILES.values(), MANIFEST_LEGACY_FILE)
+    )
+
+
+def _validate_manifest_paths_or_raise(manifest: Manifest) -> None:
+    """Reject unsafe declared entity paths before workspace filesystem access."""
+    errors = validate_manifest_paths(manifest)
+    if errors:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=".bifrost/",
+                location=(),
+                code="unsafe_manifest_path",
+                message=error,
+            )
+            for error in errors
+        ])
 
 
 def _workspace_path_candidate(root: Path, raw_path: str) -> Path:
@@ -1098,12 +1130,12 @@ class GitHubSyncService:
                 "A": "create",
                 "D": "delete",
             }.get(status[0], "update")
-            source = work_dir / path
+            source = _confined_workspace_entry(work_dir, path)
             changes.append(
                 WorkspaceFileChange(
                     path=path,
                     action=action,
-                    sha256=None if action == "delete" or not source.is_file() else hash_file(source)[1],
+                    sha256=None if action == "delete" or source is None or not source.is_file() else hash_file(source)[1],
                 )
             )
         return changes
@@ -1150,10 +1182,11 @@ class GitHubSyncService:
     @staticmethod
     async def _regenerate_manifest_to_dir(db, work_dir) -> None:
         """Generate manifest from DB and write split files to work_dir/.bifrost/."""
-        from bifrost.manifest import serialize_manifest_dir, MANIFEST_FILES
+        from bifrost.manifest import MANIFEST_FILES, serialize_manifest_dir
         from src.services.manifest_generator import generate_manifest
 
         manifest = await generate_manifest(db)
+        _validate_manifest_paths_or_raise(manifest)
 
         # Filter out entities whose files don't exist in work_dir.
         # The DB may contain entities from other workspaces or deleted files;
@@ -1162,11 +1195,11 @@ class GitHubSyncService:
         # required companion file, so they are NOT filtered by file existence.
         manifest.workflows = {
             k: v for k, v in manifest.workflows.items()
-            if (work_dir / v.path).exists()
+            if (entry := _confined_workspace_entry(work_dir, v.path)) is not None and entry.is_file()
         }
         manifest.apps = {
             k: v for k, v in manifest.apps.items()
-            if (work_dir / v.path).is_dir()
+            if (entry := _confined_workspace_entry(work_dir, v.path)) is not None and entry.is_dir()
         }
 
         # Filter configs to only include those whose integration_id is present
@@ -1179,17 +1212,21 @@ class GitHubSyncService:
         }
 
         files = serialize_manifest_dir(manifest)
-
-        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir = _confined_workspace_entry(work_dir, ".bifrost")
+        if bifrost_dir is None:
+            bifrost_dir = work_dir / ".bifrost"
         bifrost_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in files.items():
-            (bifrost_dir / filename).write_text(content)
+            path = _confined_workspace_entry(work_dir, f".bifrost/{filename}")
+            (path or bifrost_dir / filename).write_text(content)
 
-        # Remove files for now-empty entity types
+        # Remove files for now-empty entity types.
         for filename in MANIFEST_FILES.values():
-            path = bifrost_dir / filename
-            if filename not in files and path.exists():
+            if filename in files:
+                continue
+            path = _confined_workspace_entry(work_dir, f".bifrost/{filename}")
+            if path is not None and path.exists():
                 path.unlink()
 
         remove_legacy_entity_files(work_dir)
@@ -1208,9 +1245,8 @@ class GitHubSyncService:
         count = 0
 
         for py_path in paths:
-            full_path = work_dir / py_path
-            if full_path.exists():
-                content = full_path.read_bytes()
+            content = _read_confined_workspace_bytes(work_dir, py_path)
+            if content is not None:
                 await indexer.index_python_file(py_path, content)
                 count += 1
 
@@ -1742,6 +1778,7 @@ class GitHubSyncService:
 
         bifrost_dir = work_dir / ".bifrost"
         manifest = read_manifest_from_dir(bifrost_dir)
+        _validate_manifest_paths_or_raise(manifest)
         _validate_workspace_python_decorators(work_dir)
 
         has_entities = (
@@ -1795,10 +1832,12 @@ class GitHubSyncService:
         from src.models.orm.workflows import Workflow as WfORM
         from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
-        wf_paths = {
-            mwf.path for mwf in manifest.workflows.values()
-            if (work_dir / mwf.path).exists() and mwf.id in changed_ids
+        workflow_sources = {
+            mwf.path: _read_confined_workspace_bytes(work_dir, mwf.path)
+            for mwf in manifest.workflows.values()
+            if mwf.id in changed_ids
         }
+        wf_paths = {path for path, source in workflow_sources.items() if source is not None}
         if wf_paths:
             # _repo/-scoped (solution_id IS NULL): the workspace indexer manages
             # _repo/ workflows only, and a solution-managed workflow sharing a path
@@ -1820,15 +1859,13 @@ class GitHubSyncService:
         for _wf_name, mwf in manifest.workflows.items():
             if mwf.id not in changed_ids:
                 continue
-            wf_path = work_dir / mwf.path
-            if wf_path.exists():
-                content = wf_path.read_bytes()
+            content = workflow_sources.get(mwf.path)
+            if content is not None:
                 await workflow_indexer.index_python_file(mwf.path, content)
 
         # Index forms from manifest
         async def _read_work_dir(path: str) -> bytes | None:
-            p = work_dir / path
-            return p.read_bytes() if p.exists() else None
+            return _read_confined_workspace_bytes(work_dir, path)
 
         await self._resolver._index_forms_from_manifest(manifest, _read_work_dir, changed_ids)
 
@@ -1851,6 +1888,7 @@ class GitHubSyncService:
 
         bifrost_dir = work_dir / ".bifrost"
         manifest = read_manifest_from_dir(bifrost_dir)
+        _validate_manifest_paths_or_raise(manifest)
 
         if not manifest.apps:
             return
@@ -1905,10 +1943,17 @@ class GitHubSyncService:
         async with self.repo_manager.checkout(isolated=True) as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
 
-            # Regenerate manifest from current DB state
-            await self._regenerate_manifest_to_dir(self.db, work_dir)
+            # An authored manifest is source data.  Regenerate only for legacy
+            # workspaces that have source files but no manifest at all.
+            if not _has_stored_manifest(work_dir):
+                await self._regenerate_manifest_to_dir(self.db, work_dir)
+            else:
+                _validate_manifest_paths_or_raise(
+                    read_manifest_from_dir(work_dir / ".bifrost")
+                )
 
-            # The regenerated manifest drops entities whose files are missing.
+            # The authored (or legacy-generated) manifest identifies missing
+            # source without applying deletions during reimport.
             pending_deletes = [
                 change
                 for change in await self._resolver._resolve_deletions(
@@ -2010,7 +2055,16 @@ class GitHubSyncService:
         )
 
         index = FileIndexService(self.db)
-        files = iter_tree_metadata(work_dir)
+        files: list[tuple[str, int, str]] = []
+        for candidate in work_dir.rglob("*"):
+            rel_path = candidate.relative_to(work_dir).as_posix()
+            if ".git" in candidate.relative_to(work_dir).parts:
+                continue
+            resolved = _confined_workspace_entry(work_dir, rel_path)
+            if resolved is None or not resolved.is_file():
+                continue
+            size, sha256 = hash_file(resolved)
+            files.append((rel_path, size, sha256))
         repo_paths: set[str] = set()
 
         # Prefetch all existing (path, content_hash) in one query
@@ -2036,19 +2090,21 @@ class GitHubSyncService:
             pending_bytes = 0
 
         for entry in files:
-            rel_path = entry.path
+            rel_path, entry_size, entry_sha256 = entry
             if not is_tracked_path(rel_path):
                 continue
             repo_paths.add(rel_path)
-            if existing_hashes.get(rel_path) == entry.sha256:
+            if existing_hashes.get(rel_path) == entry_sha256:
                 continue
             # Oversized files get a path-only row without loading them.
-            content = (
-                indexable_text((work_dir / rel_path).read_bytes())
-                if entry.size <= MAX_INDEXABLE_TEXT_BYTES
-                else None
-            )
-            row_bytes = entry.size if content is not None else 0
+            if entry_size <= MAX_INDEXABLE_TEXT_BYTES:
+                source = _read_confined_workspace_bytes(work_dir, rel_path)
+                if source is None:
+                    continue
+                content = indexable_text(source)
+            else:
+                content = None
+            row_bytes = entry_size if content is not None else 0
             if pending_upserts and (
                 len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
                 or pending_bytes + row_bytes > FILE_INDEX_UPSERT_MAX_BYTES
@@ -2057,7 +2113,7 @@ class GitHubSyncService:
             pending_upserts.append({
                 "path": rel_path,
                 "content": content,
-                "content_hash": entry.sha256,
+                "content_hash": entry_sha256,
             })
             pending_bytes += row_bytes
             if (
@@ -2085,21 +2141,32 @@ class GitHubSyncService:
         # 1. Check manifest validity
         bifrost_dir = repo_dir / ".bifrost"
         manifest: Manifest | None = None
+        path_errors: list[str] = []
         if bifrost_dir.exists():
             try:
                 manifest = read_manifest_from_dir(bifrost_dir)
+                path_errors = validate_manifest_paths(manifest)
+                for error in path_errors:
+                    issues.append(PreflightIssue(
+                        path=".bifrost/",
+                        message=error,
+                        severity="error",
+                        category="manifest",
+                        fix_hint="Use a relative POSIX workspace path outside .git and .bifrost.",
+                    ))
                 # Verify all paths exist
                 from bifrost.manifest import get_all_paths
-                for path in get_all_paths(manifest):
-                    if not (repo_dir / path).exists():
-                        issues.append(PreflightIssue(
-                            path=".bifrost/",
-                            message=f"Manifest references missing file: {path}",
-                            severity="error",
-                            category="manifest",
-                            fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
-                            auto_fixable=True,
-                        ))
+                if not path_errors:
+                    for path in get_all_paths(manifest):
+                        if _confined_workspace_entry(repo_dir, path) is None:
+                            issues.append(PreflightIssue(
+                                path=".bifrost/",
+                                message=f"Manifest references missing file: {path}",
+                                severity="error",
+                                category="manifest",
+                                fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
+                                auto_fixable=True,
+                            ))
             except DefinitionValidationError as error:
                 for issue in error.issues:
                     field = ".".join(map(str, issue.location))
@@ -2176,11 +2243,11 @@ class GitHubSyncService:
             """
             if mform.workflow_id is not None or mform.launch_workflow_id is not None:
                 return mform.workflow_id, mform.launch_workflow_id
-            if mform.path:
-                form_path = repo_dir / mform.path
-                if form_path.exists():
+            if mform.path and not path_errors:
+                content = _read_confined_workspace_bytes(repo_dir, mform.path)
+                if content is not None:
                     try:
-                        data = yaml.safe_load(form_path.read_text()) or {}
+                        data = yaml.safe_load(content.decode("utf-8")) or {}
                         return (
                             data.get("workflow_id") or data.get("workflow"),
                             data.get("launch_workflow_id") or data.get("launch_workflow"),
@@ -2232,6 +2299,8 @@ class GitHubSyncService:
             from bifrost.manifest import validate_manifest
             ref_errors = validate_manifest(manifest)
             for err in ref_errors:
+                if err in path_errors:
+                    continue
                 issues.append(PreflightIssue(
                     path=".bifrost/",
                     message=err,
@@ -2278,8 +2347,8 @@ class GitHubSyncService:
         return PreflightResult(valid=not has_errors, issues=issues)
 
 
-def _candidate_python_source(work_dir: Path, path: str) -> str | None:
-    """Read a candidate Python source only when it stays inside its tree."""
+def _confined_workspace_entry(work_dir: Path, path: str) -> Path | None:
+    """Resolve a workspace file only when it remains inside its tree."""
     candidate = work_dir / path
     try:
         root = work_dir.resolve()
@@ -2294,9 +2363,25 @@ def _candidate_python_source(work_dir: Path, path: str) -> str | None:
                 path=path,
                 location=(),
                 code="unsafe_source_path",
-                message="Python source must resolve inside the workspace candidate.",
+                message="Workspace source must resolve inside the workspace candidate.",
             )
         ]) from exc
+    return resolved
+
+
+def _read_confined_workspace_bytes(work_dir: Path, path: str) -> bytes | None:
+    """Read a workspace file only after its resolved target stays in-tree."""
+    resolved = _confined_workspace_entry(work_dir, path)
+    if resolved is None or not resolved.is_file():
+        return None
+    return resolved.read_bytes()
+
+
+def _candidate_python_source(work_dir: Path, path: str) -> str | None:
+    """Read a candidate Python source only when it stays inside its tree."""
+    resolved = _confined_workspace_entry(work_dir, path)
+    if resolved is None:
+        return None
     if not resolved.is_file():
         return None
     try:

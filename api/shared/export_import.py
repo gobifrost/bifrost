@@ -570,18 +570,19 @@ async def import_configs(
                 await _require_config_secret_write(db, caller, org_id, item.key, item.config_type == "secret")
                 value = item.value
 
-                # Re-encrypt secrets
+                # Secret exports are encrypted with the source instance key.
+                # Never persist that ciphertext into this instance unchanged.
+                if item.config_type == "secret" and value and not source_secret_key:
+                    raise HTTPException(
+                        400,
+                        "Provide source_secret_key to re-encrypt imported secrets",
+                    )
                 if item.config_type == "secret" and value and source_secret_key:
                     try:
                         plaintext = decrypt_with_key(value, source_secret_key)
                         value = encrypt_secret(plaintext)
-                    except Exception as e:
-                        result.errors += 1
-                        result.details.append(ImportResultItem(
-                            name=item.key, status="error",
-                            error=f"Failed to re-encrypt secret: {e}",
-                        ))
-                        continue
+                    except Exception as exc:
+                        raise ValueError("Could not re-encrypt the imported secret") from exc
 
                 # Resolve integration_id from name
                 integration_id = None

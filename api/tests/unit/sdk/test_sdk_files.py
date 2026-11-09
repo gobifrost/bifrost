@@ -562,6 +562,9 @@ def _allow_write_policy(monkeypatch) -> None:
     monkeypatch.setattr(
         "shared.sdk_files.require_file_policy", AsyncMock(return_value=None)
     )
+    monkeypatch.setattr(
+        "shared.sdk_files.authorize_file_policy", AsyncMock(return_value=True)
+    )
 
 
 def _deny_all_policies(monkeypatch) -> AsyncMock:
@@ -570,6 +573,74 @@ def _deny_all_policies(monkeypatch) -> AsyncMock:
         "shared.file_access.authorize_file_policy", AsyncMock(return_value=False)
     )
     return AsyncMock()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readable", [False, True])
+@pytest.mark.parametrize("operation", ["create", "write", "delete", "missing-delete"])
+async def test_guarded_conflicts_disclose_metadata_only_to_readers(monkeypatch, readable, operation):
+    caller = _mutation_caller()
+    data = {} if operation == "missing-delete" else {("a.txt", str(ORG_ID)): b"old"}
+    backend, store = _rw_backend(monkeypatch, files=data)
+    _allow_write_policy(monkeypatch)
+    probe = AsyncMock(return_value=readable)
+    monkeypatch.setattr("shared.sdk_files.authorize_file_policy", probe)
+
+    with pytest.raises(FileServiceError) as caught:
+        if operation in {"delete", "missing-delete"}:
+            await sdk_delete_file(caller, path="a.txt", location="reports", scope=None, expected_version="stale")
+        else:
+            await sdk_write_file(
+                caller, path="a.txt", content="new", binary=False,
+                location="reports", scope=None,
+                create_only=operation == "create", expected_version=None if operation == "create" else "stale",
+            )
+
+    assert caught.value.status_code == 409
+    if readable:
+        assert caught.value.detail["reason"] == {
+            "create": "file_exists", "write": "version_conflict", "delete": "version_conflict",
+            "missing-delete": "file_missing",
+        }[operation]
+    else:
+        assert caught.value.detail == {"reason": "precondition_failed", "message": "File mutation precondition failed."}
+    probe.assert_awaited_once_with(caller, action="read", location="reports", scope=str(ORG_ID), path="a.txt", solution_id=None)
+    assert store == data
+    backend.write.assert_not_awaited()
+    backend.delete.assert_not_awaited()
+    caller.db.commit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("readable", [False, True])
+async def test_workspace_conflict_read_probe_keeps_the_authorized_mutation_status(monkeypatch, readable):
+    from src.models import FileStatResponse
+
+    caller = _mutation_caller()
+    backend, _ = _rw_backend(monkeypatch, files={})
+    _allow_write_policy(monkeypatch)
+    monkeypatch.setattr("shared.sdk_files.get_file_stat", AsyncMock(return_value=FileStatResponse(
+        path="a.txt", exists=True, version="current", size=3,
+    )))
+    principal = object()
+    monkeypatch.setattr("src.services.authorization.enforce.load_caller", AsyncMock(return_value=principal))
+    from src.services.authorization.evaluator import Decision
+
+    permission = MagicMock(return_value=Decision(readable, "test:disclosure"))
+    monkeypatch.setattr("src.services.authorization.enforce.decide_for", permission)
+
+    with pytest.raises(FileServiceError) as caught:
+        await sdk_write_file(caller, path="a.txt", content="new", binary=False,
+                             location="workspace", scope=None, create_only=True)
+
+    assert caught.value.status_code == 409
+    assert caught.value.detail["reason"] == ("file_exists" if readable else "precondition_failed")
+    assert permission.call_count == 1
+    actual_caller, entry, target = permission.call_args.args
+    assert actual_caller is principal
+    assert entry.permission == "repository.read"
+    assert target.organization_id is None
+    backend.write.assert_not_awaited()
 
 
 class TestSdkWriteFile:

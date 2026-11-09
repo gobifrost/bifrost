@@ -764,7 +764,12 @@ class S3Transport:
         # ``httpx.Request`` supplies ``Content-Length: 0`` for a PUT with no
         # body. A browser uploads a real body, so binding that synthetic header
         # would make an otherwise-valid presigned URL unusable.
-        if "content-length" in request.headers:
+        if "ContentLength" in Params:
+            length = Params["ContentLength"]
+            if operation != "PUT" or isinstance(length, bool) or not isinstance(length, int) or length < 0:
+                raise ValueError("ContentLength must be a nonnegative integer for a signed upload")
+            request.headers["content-length"] = str(length)
+        elif "content-length" in request.headers:
             del request.headers["content-length"]
         signed = _sign_request(request, access_key_id=self.access_key_id, secret_access_key=self.secret_access_key, session_token=self.session_token, region=self.region, presign=True, expires=ExpiresIn, now=self._now())
         return str(signed.url)

@@ -134,7 +134,9 @@ from src.repositories.applications import ApplicationRepository  # noqa: E402
 from src.services.operation_catalog import operation_route  # noqa: E402
 from src.services.authorization.enforce import (  # noqa: E402
     Caller,
+    decide_for,
     load_caller,
+    org_target,
     require_named_permission,
     user_reach,
 )
@@ -162,12 +164,27 @@ def _application_logo_url(application: Application) -> str | None:
     return None
 
 
+def _can_view_application_repo_path(caller: Caller, application: Application) -> bool:
+    """Whether this caller may inspect the App's workspace source location."""
+    from src.services.authorization.explain import permission_entry
+
+    target = org_target(application.organization_id)
+    # Optional response fields use current authority, never additional grants
+    # inferred for a workflow that performs the operation.
+    return decide_for(
+        caller, permission_entry("apps.read"), target,
+    ).allowed or decide_for(
+        caller, permission_entry("apps.readwrite"), target,
+    ).allowed
+
+
 async def application_to_public(
     application: Application,
     repo: "ApplicationRepository",
     *,
     current_sdk: CurrentApplicationSdkMetadata,
     include_inline_logo: bool = True,
+    include_repo_path: bool = False,
 ) -> ApplicationPublic:
     """Convert Application ORM to ApplicationPublic with role_ids."""
     role_ids = await repo.get_role_ids(application.id)
@@ -188,7 +205,7 @@ async def application_to_public(
         access_level=application.access_level,
         app_model=application.app_model,
         role_ids=role_ids,
-        repo_path=application.repo_path,
+        repo_path=application.repo_path if include_repo_path else None,
         logo=(
             _logo_data_url(
                 application.logo_thumbnail_data or application.logo_data,
@@ -481,6 +498,7 @@ async def create_application(
             application,
             repo,
             current_sdk=current_sdk,
+            include_repo_path=_can_view_application_repo_path(caller, application),
         )
         await emit_audit(
             ctx.db,
@@ -562,6 +580,7 @@ async def list_applications(
             repo,
             current_sdk=current_sdk,
             include_inline_logo=False,
+            include_repo_path=_can_view_application_repo_path(caller, app),
         )
         for app in applications
     ]
@@ -649,7 +668,12 @@ async def get_application(
     repo = await _application_repository(ctx, caller)
     application = await get_application_or_404(ctx, slug)
     current_sdk = await load_current_sdk_metadata()
-    return await application_to_public(application, repo, current_sdk=current_sdk)
+    return await application_to_public(
+        application,
+        repo,
+        current_sdk=current_sdk,
+        include_repo_path=_can_view_application_repo_path(caller, application),
+    )
 
 
 @router.patch(
@@ -727,7 +751,12 @@ async def update_application(
     )
 
     current_sdk = await load_current_sdk_metadata()
-    return await application_to_public(application, repo, current_sdk=current_sdk)
+    return await application_to_public(
+        application,
+        repo,
+        current_sdk=current_sdk,
+        include_repo_path=_can_view_application_repo_path(caller, application),
+    )
 
 
 @router.delete(
@@ -1201,7 +1230,12 @@ async def replace_application_endpoint(
     )
 
     current_sdk = await load_current_sdk_metadata()
-    return await application_to_public(application, repo, current_sdk=current_sdk)
+    return await application_to_public(
+        application,
+        repo,
+        current_sdk=current_sdk,
+        include_repo_path=_can_view_application_repo_path(caller, application),
+    )
 
 
 @router.post(
@@ -1235,8 +1269,18 @@ async def swap_application_slugs(
 
     current_sdk = await load_current_sdk_metadata()
     apps = [
-        await application_to_public(app_a, repo, current_sdk=current_sdk),
-        await application_to_public(app_b, repo, current_sdk=current_sdk),
+        await application_to_public(
+            app_a,
+            repo,
+            current_sdk=current_sdk,
+            include_repo_path=_can_view_application_repo_path(caller, app_a),
+        ),
+        await application_to_public(
+            app_b,
+            repo,
+            current_sdk=current_sdk,
+            include_repo_path=_can_view_application_repo_path(caller, app_b),
+        ),
     ]
     return ApplicationListResponse(applications=apps, total=len(apps))
 
@@ -1461,6 +1505,11 @@ async def export_application(
     repo = await _application_repository(ctx, caller)
     application = await get_application_by_id_or_404(ctx, app_id, permission="apps.read")
     export_data = await repo.export_application(application, version_id)
+    export_data["repo_path"] = (
+        export_data.get("repo_path")
+        if _can_view_application_repo_path(caller, application)
+        else None
+    )
 
     return ApplicationPublic.model_validate(export_data)
 
@@ -1499,7 +1548,12 @@ async def rollback_application(
         await ctx.db.refresh(application)
         logger.info(f"Rolled back application {log_safe(app_id)} to version {log_safe(data.version_id)}")
         current_sdk = await load_current_sdk_metadata()
-        return await application_to_public(application, repo, current_sdk=current_sdk)
+        return await application_to_public(
+            application,
+            repo,
+            current_sdk=current_sdk,
+            include_repo_path=_can_view_application_repo_path(caller, application),
+        )
     except ValueError as e:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

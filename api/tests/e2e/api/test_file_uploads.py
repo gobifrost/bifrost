@@ -98,13 +98,14 @@ class TestFileUploads:
     def test_upload_file_via_presigned_url(self, e2e_client, platform_admin, test_form):
         """Upload file directly to S3 via presigned URL."""
         # Generate presigned URL
+        file_content = b"Test file content for E2E upload test.\nLine 2."
         response = e2e_client.post(
             f"/api/forms/{test_form['id']}/upload",
             headers=platform_admin.headers,
             json={
                 "file_name": "test_upload.txt",
                 "content_type": "text/plain",
-                "file_size": 47,  # Actual size of content below
+                "file_size": len(file_content),
             },
         )
         assert response.status_code == 200, (
@@ -115,7 +116,6 @@ class TestFileUploads:
         # blob_uri available in data["blob_uri"] if needed
 
         # Upload file content using presigned URL
-        file_content = b"Test file content for E2E upload test.\nLine 2."
 
         # Use a separate httpx client for direct S3 upload
         with httpx.Client(timeout=30.0) as s3_client:
@@ -124,6 +124,12 @@ class TestFileUploads:
                 content=file_content,
                 headers={"Content-Type": "text/plain"},
             )
+        # A different body size must not satisfy the same signed upload.
+        with httpx.Client(timeout=30.0) as s3_client:
+            oversized = s3_client.put(
+                upload_url, content=file_content + b"extra", headers={"Content-Type": "text/plain"},
+            )
+        assert oversized.status_code == 403, oversized.text
         # S3/Minio accepts 200, 201, or 204 for successful upload
         assert response.status_code in [200, 201, 204], (
             f"S3 upload failed with status {response.status_code}: {response.text}"
@@ -134,13 +140,14 @@ class TestFileUploads:
     ):
         """Create workflow that reads uploaded file and verify it can access the content."""
         # First, upload a file
+        file_content = b"Test file content for E2E upload test.\nLine 2."
         response = e2e_client.post(
             f"/api/forms/{test_form['id']}/upload",
             headers=platform_admin.headers,
             json={
                 "file_name": "workflow_test.txt",
                 "content_type": "text/plain",
-                "file_size": 47,
+                "file_size": len(file_content),
             },
         )
         assert response.status_code == 200, (
@@ -163,7 +170,6 @@ class TestFileUploads:
         )
 
         # Upload file content
-        file_content = b"Test file content for E2E upload test.\nLine 2."
         with httpx.Client(timeout=30.0) as s3_client:
             s3_response = s3_client.put(
                 upload_url,

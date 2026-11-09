@@ -22,7 +22,14 @@ async def test_complete_upload_request_retains_provider_headers(monkeypatch):
     ticket = SignedRequest("PUT", "https://example.invalid?sig=fixture", {"x-ms-blob-type": "BlockBlob", "Content-Type": "text/plain"}, 600)
     storage, store = facade(monkeypatch, ticket)
     assert await storage.generate_signed_upload_request("key", "text/plain") is ticket
-    store.signed_request.assert_awaited_once_with("key", "PUT", content_type="text/plain", expires_in=600)
+    store.signed_request.assert_awaited_once_with("key", "PUT", content_type="text/plain", expires_in=600, content_length=None)
+
+
+async def test_size_bound_upload_passes_the_declared_length(monkeypatch):
+    ticket = SignedRequest("PUT", "fixture", {"Content-Length": "12"}, 600)
+    storage, store = facade(monkeypatch, ticket)
+    assert await storage.generate_signed_upload_request("key", "text/plain", content_length=12) is ticket
+    store.signed_request.assert_awaited_once_with("key", "PUT", content_type="text/plain", expires_in=600, content_length=12)
 
 
 async def test_download_link_refuses_headers_but_complete_request_preserves_them(monkeypatch):

@@ -247,6 +247,20 @@ class TestListContent:
             mock_repo.list.assert_called_once_with("")
 
     @pytest.mark.asyncio
+    async def test_list_root_prefix_is_normalized(self, platform_admin_context):
+        from src.services.mcp_server.tools.code_editor import list_content
+
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list = AsyncMock(return_value=[])
+            mock_repo_cls.return_value = mock_repo
+
+            result = await list_content(context=platform_admin_context, path_prefix="/")
+
+        assert get_result_data(result)["count"] == 0
+        mock_repo.list.assert_awaited_once_with("")
+
+    @pytest.mark.asyncio
     async def test_list_content_denied_for_org_user(self, org_user_context, monkeypatch):
         """Workspace listing requires the Global repository read grant."""
         from src.services.mcp_server.tools.code_editor import list_content
@@ -263,6 +277,38 @@ class TestListContent:
 
         assert isinstance(result, ToolResult)
         assert is_error_result(result)
+
+    @pytest.mark.asyncio
+    async def test_list_filters_excluded_and_invalid_raw_storage_keys(self, platform_admin_context):
+        from src.services.mcp_server.tools.code_editor import list_content
+
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.list = AsyncMock(return_value=[
+                ".git/config",
+                "../outside.txt",
+                "C:/workspace.txt",
+                "safe/%2e%2e.txt",
+                ".bifrost/forms.yaml",
+            ])
+            mock_repo_cls.return_value = mock_repo
+
+            result = await list_content(context=platform_admin_context)
+
+        assert [file["path"] for file in get_result_data(result)["files"]] == [
+            ".bifrost/forms.yaml",
+            "safe/%2e%2e.txt",
+        ]
+
+    @pytest.mark.asyncio
+    async def test_list_rejects_invalid_prefix_before_storage(self, platform_admin_context):
+        from src.services.mcp_server.tools.code_editor import list_content
+
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            result = await list_content(context=platform_admin_context, path_prefix="../outside")
+
+        assert is_error_result(result)
+        mock_repo_cls.assert_not_called()
 
 
 _PAGE = {
@@ -793,6 +839,57 @@ class TestDeleteContent:
         assert "path" in data["error"]
 
     @pytest.mark.asyncio
+    async def test_delete_rejects_invalid_path_before_storage(self, platform_admin_context):
+        """Invalid targets must not reach storage probes or deletion side effects."""
+        from src.services.mcp_server.tools.code_editor import delete_content
+
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            result = await delete_content(context=platform_admin_context, path="../outside")
+
+        assert is_error_result(result)
+        mock_repo_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_denied_before_existence_probe(self, org_user_context, monkeypatch):
+        """A caller without write scope must not learn whether a path exists."""
+        from src.services.mcp_server.tools.code_editor import delete_content
+
+        monkeypatch.setattr(
+            "src.services.mcp_server.tools.code_editor._has_workspace_permission",
+            AsyncMock(return_value=False),
+        )
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            result = await delete_content(context=org_user_context, path="workflows/test.py")
+
+        assert is_error_result(result)
+        mock_repo_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_delete_uses_canonical_trailing_slash_path(self, platform_admin_context):
+        """A single trailing slash is normalized before the existence check and delete."""
+        from src.services.mcp_server.tools.code_editor import delete_content
+
+        with patch("src.services.mcp_server.tools.code_editor.RepoStorage") as mock_repo_cls:
+            mock_repo = MagicMock()
+            mock_repo.exists = AsyncMock(return_value=True)
+            mock_repo_cls.return_value = mock_repo
+            with patch("src.services.mcp_server.tools.code_editor.get_tool_db") as mock_db:
+                mock_db.return_value.__aenter__.return_value = AsyncMock()
+                with patch("src.services.mcp_server.tools.code_editor.FileStorageService") as mock_fs_cls:
+                    mock_fs = MagicMock()
+                    mock_fs.delete_file = AsyncMock()
+                    mock_fs_cls.return_value = mock_fs
+
+                    result = await delete_content(
+                        context=platform_admin_context,
+                        path="workflows/test.py/",
+                    )
+
+        assert get_result_data(result)["path"] == "workflows/test.py"
+        mock_repo.exists.assert_awaited_once_with("workflows/test.py")
+        mock_fs.delete_file.assert_awaited_once_with("workflows/test.py")
+
+    @pytest.mark.asyncio
     async def test_delete_denied_for_org_user(self, org_user_context, monkeypatch):
         """Deleting a `_repo/` file requires Global repository write."""
         from src.services.mcp_server.tools.code_editor import delete_content
@@ -963,3 +1060,20 @@ class TestFormatDeactivationResult:
         assert "execution history" in text
         assert "API endpoint" in text
         assert "Ticket Sync Form" in text
+
+
+@pytest.mark.parametrize("path", ["../escape.txt", "/absolute.txt", "a/../escape.txt", "a\\b.txt", ".git/config", "folder/"])
+async def test_mcp_file_read_and_write_reject_unsafe_targets_before_storage(platform_admin_context, path):
+    from src.services.mcp_server.tools import code_editor
+
+    with patch.object(code_editor, "_read_from_s3", new_callable=AsyncMock) as read, \
+         patch.object(code_editor, "get_tool_db") as db:
+        for operation in (
+            code_editor.get_content(platform_admin_context, path),
+            code_editor.read_content_lines(platform_admin_context, path),
+            code_editor.replace_content(platform_admin_context, path, "new content"),
+            code_editor.patch_content(platform_admin_context, path, "old", "new"),
+        ):
+            assert is_error_result(await operation)
+        read.assert_not_awaited()
+        db.assert_not_called()

@@ -15,6 +15,7 @@ import pytest
 from bifrost.refs import (
     AmbiguousRefError,
     RefNotFoundError,
+    RefResolutionError,
     identity_label,
     resolve_ref,
 )
@@ -297,10 +298,9 @@ async def test_resolve_app_by_slug_direct_hit() -> None:
 @pytest.mark.asyncio
 async def test_resolve_app_by_name_fallback() -> None:
     app_id = str(uuid4())
-    # Slug lookup 404s, then name match against the list endpoint.
+    # A non-slug name goes straight to the exact list match.
     client = FakeClient(
         {
-            "/api/applications/Invoices App": (404, {"detail": "not found"}),
             "/api/applications": {
                 "applications": [
                     {
@@ -315,6 +315,83 @@ async def test_resolve_app_by_name_fallback() -> None:
         }
     )
     assert await resolve_ref(client, "app", "Invoices App") == app_id
+    assert client.calls == ["/api/applications"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "name",
+    ["../../organizations", "東京", "sales%2F..%2Forganizations", "a" * 256],
+)
+async def test_resolve_app_name_never_becomes_a_path_segment(name: str) -> None:
+    app_id = str(uuid4())
+    client = FakeClient(
+        {
+            "/api/applications": {
+                "applications": [
+                    {
+                        "id": app_id,
+                        "slug": "safe-app",
+                        "name": name,
+                        "organization_id": None,
+                    }
+                ],
+                "total": 1,
+            }
+        }
+    )
+
+    assert await resolve_ref(client, "app", name) == app_id
+    assert client.calls == ["/api/applications"]
+
+
+@pytest.mark.asyncio
+async def test_resolve_app_canonical_name_falls_back_after_slug_not_found() -> None:
+    app_id = str(uuid4())
+    client = FakeClient(
+        {
+            "/api/applications/invoices": (404, {"detail": "not found"}),
+            "/api/applications": {
+                "applications": [
+                    {
+                        "id": app_id,
+                        "slug": "invoices-app",
+                        "name": "invoices",
+                        "organization_id": None,
+                    }
+                ],
+                "total": 1,
+            },
+        }
+    )
+
+    assert await resolve_ref(client, "app", "invoices") == app_id
+    assert client.calls == ["/api/applications/invoices", "/api/applications"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        pytest.param({"id": str(uuid4())}, id="missing-slug"),
+        pytest.param({"id": str(uuid4()), "slug": "other-app"}, id="wrong-slug"),
+        pytest.param({"id": "not-a-uuid", "slug": "invoices"}, id="non-uuid-id"),
+        pytest.param([], id="non-object"),
+    ],
+)
+async def test_resolve_app_rejects_malformed_direct_response(payload: Any) -> None:
+    client = FakeClient({"/api/applications/invoices": payload})
+
+    with pytest.raises(RefResolutionError, match="Invalid application response"):
+        await resolve_ref(client, "app", "invoices")
+
+
+@pytest.mark.asyncio
+async def test_resolve_app_propagates_direct_slug_errors() -> None:
+    client = FakeClient({"/api/applications/invoices": (500, {"detail": "failure"})})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await resolve_ref(client, "app", "invoices")
 
 
 @pytest.mark.asyncio
