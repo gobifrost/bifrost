@@ -8,6 +8,9 @@ working until an administrator explicitly migrates them.
 
 - Configure `BIFROST_PUBLIC_URL` as the deployment's external HTTPS origin,
   without a path or query. Loopback HTTP is supported for local development.
+- Keep query strings for `/settings/github` out of any additional ingress or
+  reverse-proxy logs. The shipped client suppresses callback access logs and
+  sends no-store and no-referrer headers.
 - Upgrade API and workers together. New `workspace.git` jobs use payload version
   3; older executors cannot process App-aware jobs. Requeue an older unbound job
   after migrating its connection.
