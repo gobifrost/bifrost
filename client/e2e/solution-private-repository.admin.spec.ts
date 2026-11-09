@@ -99,7 +99,7 @@ test("authorizes a read-only private source and installs a Solution", async ({
 		await page
 			.getByRole("button", { name: "Resolve", exact: true })
 			.click();
-		await expect(page.getByText(slug, { exact: true })).toBeVisible();
+		await expect(page.getByText(`(${slug})`, { exact: true })).toBeVisible();
 		await page
 			.getByRole("button", { name: "Install", exact: true })
 			.click();
