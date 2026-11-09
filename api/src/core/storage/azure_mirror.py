@@ -12,7 +12,7 @@ from src.config import Settings
 from src.core.storage import object_pages
 from src.core.storage.azure import AzureObjectStore
 from src.core.storage.contracts import (
-    ObjectVersion, SnapshotGuard, StorageConfigurationError, StorageError, WriteOptions,
+    ObjectStore, ObjectVersion, SnapshotGuard, StorageConfigurationError, StorageError, WriteOptions,
 )
 
 
@@ -127,7 +127,7 @@ class AzureWorkspaceMirror:
                             # further requests until the file is no longer in use.
                             pass
 
-    async def _listing(self, store: AzureObjectStore, prefix: str) -> dict[str, ObjectVersion]:
+    async def _listing(self, store: ObjectStore, prefix: str) -> dict[str, ObjectVersion]:
         result = {}
         async for page in object_pages(store, prefix):
             for item in page.objects:
