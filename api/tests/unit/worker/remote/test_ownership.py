@@ -26,7 +26,7 @@ async def test_active_owner_blocks_replacement_and_stale_generation_cannot_renew
     worker_id = uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(
-            id=worker_id, form="job", state="ready", resource_class="standard", slots=1,
+            id=worker_id, form="job", state="ready", resource_class="standard",
         ))
         await session.commit()
     owner, replacement, launcher = uuid4(), uuid4(), uuid4()
@@ -87,7 +87,7 @@ async def test_terminal_ack_holds_owner_lock_until_its_bounded_send_finishes(
     monkeypatch.setattr("src.worker.remote.host.get_db_context", context)
     async with async_session_factory() as db:
         db.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=1,
+            id=worker_id, form="static", state="ready", resource_class="standard",
             remote_owner_id=owner_id, remote_launcher_id=launcher_id, remote_session_generation=1,
             remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
         ))

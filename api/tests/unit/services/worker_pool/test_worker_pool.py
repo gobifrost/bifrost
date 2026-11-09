@@ -258,7 +258,7 @@ async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker: 
     worker_id = uuid4()
     async with sessions() as session:
         worker = ExecutionWorker(
-            id=worker_id, form="job", state=state, resource_class="standard", slots=2,
+            id=worker_id, form="job", state=state, resource_class="standard",
             kubernetes_namespace="test", kubernetes_job_name=f"bifrost-worker-{worker_id.hex[:24]}",
             kubernetes_job_uid="job-uid",
         )
@@ -296,7 +296,7 @@ async def test_only_the_first_pod_of_the_bound_job_is_admitted(db) -> None:
     worker = await _job_worker(db.sessions)
 
     assert await claims.admit_worker(worker.id, job_uid="other-job", pod_uid="p0", version=get_version()) is None
-    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=get_version()) == 2
+    assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p1", version=get_version()) == worker.id
     assert await claims.admit_worker(worker.id, job_uid="job-uid", pod_uid="p2", version=get_version()) is None
 
 
@@ -2213,7 +2213,6 @@ def test_lifetime_handoff_targets_only_ready_standard_jobs() -> None:
             form=form,
             state=state,
             resource_class=resource_class,
-            slots=1,
             ready_at=ready_at,
         )
 

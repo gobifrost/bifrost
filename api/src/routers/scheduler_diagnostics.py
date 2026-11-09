@@ -119,7 +119,7 @@ async def get_scheduler_diagnostics(
             id=row.id,
             hostname=row.hostname,
             pid=row.pid,
-            runs_platform_jobs=row.job_slots > 0,
+            runs_platform_jobs=row.runs_platform_jobs,
             is_leader=row.id == leader_owner,
             online=row.last_heartbeat_at >= online_cutoff,
             started_at=row.started_at,

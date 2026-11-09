@@ -28,7 +28,7 @@ async def test_adopts_live_and_unacknowledged_workflow_routes_with_original_meta
     executions = [uuid4(), uuid4()]
     async with async_session_factory() as session:
         session.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=0,
+            id=worker_id, form="static", state="ready", resource_class="standard",
         ))
         session.add_all([Execution(
             id=subject, workflow_name="recovery", executed_by_name="test",

@@ -137,7 +137,7 @@ async def test_a_run_whose_fork_was_refused_goes_back_to_waiting(
     worker_id = uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=0,
+            id=worker_id, form="static", state="ready", resource_class="standard",
         ))
         await session.flush()
         session.add(ExecutionWorkerClaim(

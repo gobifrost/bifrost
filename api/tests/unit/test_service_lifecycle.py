@@ -218,7 +218,6 @@ async def test_stale_remote_owner_cannot_complete_a_live_service_attempt(db_sess
             form="static",
             state="ready",
             resource_class="standard",
-            slots=0,
             supported_handlers=["workflow.execute"],
             remote_owner_id=current_owner,
             remote_launcher_id=launcher,
