@@ -540,13 +540,13 @@ class AzureObjectStore:
                 yield data
 
             try:
-                streamed = await self.write_stream(
+                uploaded = await self.write_stream(
                     destination_key, streamed(),
                     options=WriteOptions(properties=properties, metadata=dict(metadata),
                                          create_only=opts.create_only,
                                          expected_version=opts.expected_version),
                 )
-                return WriteResult(streamed.version)
+                return WriteResult(uploaded.version)
             except StorageError as write_error:
                 if write_error.kind == "precondition_failed":
                     raise CopyConditionFailed("destination") from write_error
