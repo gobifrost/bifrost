@@ -208,7 +208,8 @@ def test_transport_failures_are_unavailable_without_leaking_detail():
     assert "private detail" not in str(error)
 
 
-def test_missing_blob_and_missing_container_are_distinct(store):
+@pytest.mark.asyncio
+async def test_missing_blob_and_missing_container_are_distinct(store):
     from azure.core.exceptions import ResourceNotFoundError
 
     blob = store._container.get_blob_client.return_value
@@ -225,7 +226,7 @@ def test_missing_blob_and_missing_container_are_distinct(store):
     missing_container.status_code = 404
     blob.get_blob_properties.side_effect = missing_container
     with pytest.raises(StorageError) as raised:
-        store.stat("key")
+        await store.stat("key")
     assert raised.value.kind == "namespace_not_found"
 
 
