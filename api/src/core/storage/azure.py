@@ -3,7 +3,7 @@
 import base64
 import hashlib
 import json
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
 from types import TracebackType
@@ -40,10 +40,14 @@ def _service_error(error: Any) -> StorageError:
     code = str(getattr(raw_code, "value", raw_code) or status)
     if code == "ContainerNotFound":
         return StorageError("namespace_not_found", provider_code=code, status_code=status)
+    if code == "BlobAlreadyExists":
+        # A conditional create (If-None-Match *) lost a create race. Azure
+        # reports 409 where S3 reports 412; the contract kind stays uniform.
+        return StorageError("precondition_failed", provider_code=code, status_code=status)
     kinds: dict[int, ErrorKind] = {
         404: "not_found", 401: "permission_denied", 403: "permission_denied",
-        412: "precondition_failed", 409: "conflict",
-        429: "unavailable",
+        412: "precondition_failed", 409: "conflict", 429: "unavailable",
+        501: "unsupported",
     }
     kind = kinds.get(status, "unavailable" if status >= 500 else "backend_error")
     if code == "BlobNotFound" and kind != "not_found":
@@ -506,6 +510,32 @@ class AzureObjectStore:
                                      create_only=opts.create_only,
                                      expected_version=opts.expected_version),
             )
+        try:
+            return await self._copy_server(blob, source, destination_key, properties, metadata, conditions)
+        except StorageError as error:
+            if error.kind != "unsupported" or error.provider_code != "APINotImplemented":
+                raise
+            # Emulators such as Azurite do not implement Put Block From URL.
+            # Fall back to a conditional read plus ordinary block upload, like
+            # S3's stream copy mode for providers without conditional part copy.
+            async with self.open_read(source.key, expected_version=source.version) as read:
+                data = await read.body.read()
+
+            async def streamed() -> AsyncIterator[bytes]:
+                yield data
+
+            return await self.write_stream(
+                destination_key, streamed(),
+                options=WriteOptions(properties=properties, metadata=dict(metadata),
+                                     create_only=opts.create_only,
+                                     expected_version=opts.expected_version),
+            )
+
+    async def _copy_server(
+        self, blob: Any, source: ObjectInfo, destination_key: str,
+        properties: ContentProperties, metadata: dict[str, str] | Mapping[str, str],
+        conditions: dict[str, Any],
+    ) -> WriteResult:
         block_ids: list[str] = []
         try:
             async with _errors():
@@ -526,6 +556,8 @@ class AzureObjectStore:
 
                         if isinstance(error, (HttpResponseError, ServiceRequestError, ServiceResponseError)):
                             mapped = _service_error(error)
+                            if mapped.kind == "unsupported":
+                                raise mapped from error
                             if mapped.kind in ("precondition_failed", "not_found"):
                                 raise CopyConditionFailed("source") from error
                             raise mapped from error

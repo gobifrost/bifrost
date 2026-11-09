@@ -190,15 +190,16 @@ def _failure(status_code, error_code):
     (404, "BlobNotFound", "not_found"),
     (404, "ContainerNotFound", "namespace_not_found"),
     (412, "ConditionNotMet", "precondition_failed"),
+    (409, "BlobAlreadyExists", "precondition_failed"),
+    (409, "LeaseAlreadyPresent", "conflict"),
     (401, "InvalidAuthenticationInfo", "permission_denied"),
     (403, "AuthorizationPermissionMismatch", "permission_denied"),
-    (409, "BlobAlreadyExists", "conflict"),
     (503, "ServerBusy", "unavailable"),
     (500, "InternalError", "unavailable"),
+    (501, "APINotImplemented", "unsupported"),
 ])
 def test_status_maps_to_a_stable_kind(status_code, error_code, kind):
     assert _service_error(_failure(status_code, error_code)).kind == kind
-
 
 def test_transport_failures_are_unavailable_without_leaking_detail():
     from azure.core.exceptions import ServiceRequestError
@@ -483,6 +484,36 @@ async def test_copy_stages_block_ranges_with_source_condition(store, monkeypatch
     assert calls[1].kwargs["source_offset"] == 256 * 1024**2
     assert all(call.kwargs["headers"] == {"x-ms-source-if-match": '"source"'} for call in calls)
     assert all(block.state == BlockState.UNCOMMITTED for block in blob.commit_block_list.call_args.args[0])
+
+
+@pytest.mark.asyncio
+async def test_copy_falls_back_to_streaming_when_server_copy_is_unimplemented(store, monkeypatch):
+    from src.core.storage.contracts import ObjectInfo
+
+    blob = store._container.get_blob_client.return_value
+    blob.stage_block_from_url = AsyncMock(side_effect=_failure(501, "APINotImplemented"))
+    blob.download_blob = AsyncMock(
+        return_value=_stream([b"12345678"], _props(size=8, etag='"source"'))
+    )
+    blob.upload_blob = AsyncMock(return_value={"etag": '"streamed"'})
+    monkeypatch.setattr(store, "_read_sas_url", AsyncMock(return_value="https://fixture/source"))
+    source = ObjectInfo(
+        key="source", size=8, version=ObjectVersion('"source"'),
+        modified_at=None, properties=ContentProperties(), metadata={}, http_etag='"source"',
+    )
+    result = await store.copy(source, "dest", options=CopyOptions(create_only=True))
+    assert result.version == '"streamed"'
+    blob.stage_block_from_url.assert_awaited_once()
+    blob.upload_blob.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_create_only_violation_is_a_precondition_failure(store):
+    blob = store._container.get_blob_client.return_value
+    blob.upload_blob = AsyncMock(side_effect=_failure(409, "BlobAlreadyExists"))
+    with pytest.raises(StorageError) as raised:
+        await store.write("key", b"duplicate", options=WriteOptions(create_only=True))
+    assert raised.value.kind == "precondition_failed"
 
 
 @pytest.mark.asyncio
