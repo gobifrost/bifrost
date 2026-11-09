@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, waitForPlatformJob } from "./fixtures/api-fixture";
 
 test("creates an App, authorizes it and connects the workspace", async ({
 	page,
@@ -82,18 +82,7 @@ test("creates an App, authorizes it and connects the workspace", async ({
 			.getByRole("button", { name: "Connect GitHub", exact: true })
 			.click();
 		const operation = await (await queued).json();
-		await expect
-			.poll(
-				async () =>
-					(
-						await (
-							await api.get(
-								`/api/platform-jobs/${operation.job_id}`,
-							)
-						).json()
-					).status,
-			)
-			.toBe("succeeded");
+		await waitForPlatformJob(api, operation.job_id);
 		await page.reload();
 		await expect(
 			page.getByText("Git sync uses your GitHub App installation."),

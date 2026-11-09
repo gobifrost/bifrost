@@ -107,12 +107,20 @@ export async function publishAppAndWait(
 		);
 	}
 	const accepted = (await enqueue.json()) as { job_id: string };
+	return waitForPlatformJob(api, accepted.job_id, timeoutMs);
+}
+
+export async function waitForPlatformJob(
+	api: AuthedApi,
+	jobId: string,
+	timeoutMs = 2 * 60 * 1000,
+): Promise<Record<string, unknown>> {
 	const startedAt = Date.now();
 	for (;;) {
-		const response = await api.get(`/api/platform-jobs/${accepted.job_id}`);
+		const response = await api.get(`/api/platform-jobs/${jobId}`);
 		if (!response.ok()) {
 			throw new Error(
-				`read application publish ${accepted.job_id} failed: ${response.status()} ${await response.text()}`,
+				`read platform job ${jobId} failed: ${response.status()} ${await response.text()}`,
 			);
 		}
 		const job = (await response.json()) as Record<string, unknown> & {
@@ -122,12 +130,12 @@ export async function publishAppAndWait(
 		if (job.status === "succeeded") return job;
 		if (job.status === "failed" || job.status === "cancelled") {
 			throw new Error(
-				job.error?.message || `Application publish ${appId} failed`,
+				job.error?.message || `Platform job ${jobId} failed`,
 			);
 		}
 		if (Date.now() - startedAt >= timeoutMs) {
 			throw new Error(
-				`Application publish ${appId} remained ${job.status} after ${timeoutMs}ms`,
+				`Platform job ${jobId} remained ${job.status} after ${timeoutMs}ms`,
 			);
 		}
 		await new Promise((resolve) => setTimeout(resolve, 500));
