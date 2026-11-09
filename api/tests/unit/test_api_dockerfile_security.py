@@ -1,6 +1,9 @@
 """Security contracts for the API container images."""
 
+import re
 from pathlib import Path
+
+import pytest
 
 
 def _api_dir() -> Path:
@@ -42,3 +45,20 @@ def test_production_image_drops_privileges_before_serving():
     entrypoint = _entrypoint_path().read_text()
 
     assert starts_unprivileged or "gosu bifrost" in entrypoint
+
+
+@pytest.mark.parametrize("filename", ["Dockerfile", "Dockerfile.dev"])
+def test_package_copy_matches_python_image_minor(filename):
+    """A runtime upgrade must also copy the installed packages for that interpreter."""
+    text = (_api_dir() / filename).read_text()
+    versions = re.findall(r"^FROM python:(\d+\.\d+)\.", text, re.MULTILINE)
+    assert len(versions) == 2
+    assert versions[0] == versions[1]
+    paths = re.findall(
+        r"^COPY --from=builder (/usr/local/lib/python[^ ]+/site-packages) "
+        r"(/usr/local/lib/python[^ ]+/site-packages)$",
+        text,
+        re.MULTILINE,
+    )
+    expected = f"/usr/local/lib/python{versions[0]}/site-packages"
+    assert paths == [(expected, expected)]
