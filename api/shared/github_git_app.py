@@ -352,18 +352,27 @@ async def selected_config(db: AsyncSession, setup_id: UUID, installation_id: int
         raise fail("This repository is not accessible to the authorizing user.", 403)
     payload.update(repository=repository, stage="ready")
     await _save(db, row, payload)
-    config = GitHubConfig(repo_url="https://github.com/" + repository["full_name"], token=None, branch=repository["default_branch"], status="pending",
-                         auth_kind="app", generation=str(setup_id), app={**payload["app"], "installation_id": installation_id,
-                         "repository_id": repository_id, "workflows": payload["workflows"]}, setup_id=setup_id, setup_user_id=str(user_id), scope=scope)
+    config = _selected_config(setup_id, payload, user_id, scope)
     await GitAppCredentials(db, config).get_token()
     return config
+
+
+def _selected_config(setup_id: UUID, payload: dict, user_id: str, scope: UUID | None) -> GitHubConfig:
+    repository = payload["repository"]
+    return GitHubConfig(repo_url="https://github.com/" + repository["full_name"], token=None, branch=repository["default_branch"], status="pending",
+                         auth_kind="app", generation=str(setup_id), app={**payload["app"], "installation_id": payload["installation_id"],
+                         "repository_id": repository["id"], "workflows": payload["workflows"]}, setup_id=setup_id, setup_user_id=str(user_id), scope=scope)
 
 
 async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None) -> GitHubConfig:
     _, payload = await _row(db, setup_id, user_id, scope)
     if payload["stage"] != "ready":
         raise fail("Select and verify a repository before connecting.", 409)
-    return await selected_config(db, setup_id, payload["installation_id"], payload["repository"]["id"], user_id, scope)
+    # Selection already verified the user's access. Queued work must use the
+    # installation binding, independently of the temporary OAuth user token.
+    config = _selected_config(setup_id, payload, user_id, scope)
+    await GitAppCredentials(db, config).get_token()
+    return config
 
 
 async def select_repository(db: AsyncSession, setup_id: UUID, installation_id: int, repository_id: int, user_id: str, scope: UUID | None, updated_by: str) -> GitAppSetupResponse:

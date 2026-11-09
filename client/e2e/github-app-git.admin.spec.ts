@@ -101,7 +101,7 @@ test("creates an App, authorizes it and connects the workspace", async ({
 		await expect(
 			page.getByRole("region", { name: "Connected GitHub repository" }),
 		).toContainText("thin-git-app/workspace");
-		await expect(setup).not.toContainText("fixture-secret");
+		await expect(page.locator("body")).not.toContainText("fixture-secret");
 	} finally {
 		await api.post("/api/github/disconnect");
 	}

@@ -97,6 +97,23 @@ def test_authorization_callback_is_single_use_and_repository_binding_is_verified
     assert forged.status_code == 403
 
 
+@pytest.mark.asyncio
+async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration):
+    from shared.github_git_app import pending_config
+    from src.core.cache.redis_client import get_shared_redis
+    setup, _ = register(e2e_client, platform_admin)
+    authorize(e2e_client, platform_admin, setup["setup_id"])
+    selected = e2e_client.post("/api/github/app/select", headers=platform_admin.headers, json={"setup_id": setup["setup_id"], "installation_id": 2718, "repository_id": 1618})
+    assert selected.status_code == 200, selected.text
+    assert selected.json()["stage"] == "ready"
+    redis = await get_shared_redis()
+    await redis.delete(f"github:setup-user-token:{setup['setup_id']}")
+    config = await pending_config(db_session, UUID(setup["setup_id"]), str(platform_admin.user_id), preserve_git_configuration)
+    assert config.auth_kind == "app"
+    assert config.app["repository_id"] == 1618
+    assert config.token is None
+
+
 def test_uncertain_registration_does_not_repeat_conversion(e2e_client, platform_admin):
     setup, state = start(e2e_client, platform_admin)
     response = e2e_client.post("/api/github/app/manifest/complete", headers=platform_admin.headers, json={"code": "unconfirmed-code", "state": state})
