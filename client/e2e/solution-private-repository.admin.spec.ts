@@ -57,7 +57,7 @@ test("authorizes a read-only private source and installs a Solution", async ({
 		await page
 			.getByRole("combobox", { name: "Source Organization" })
 			.click();
-		await page.getByRole("option", { name: "Global", exact: true }).click();
+		await page.getByRole("option", { name: /^Global\b/ }).click();
 		const setup = page.getByRole("region", { name: "GitHub App Setup" });
 		await setup
 			.getByLabel("GitHub Owner", { exact: true })
@@ -89,7 +89,7 @@ test("authorizes a read-only private source and installs a Solution", async ({
 		await page
 			.getByRole("combobox", { name: "Install Organization" })
 			.click();
-		await page.getByRole("option", { name: "Global", exact: true }).click();
+		await page.getByRole("option", { name: /^Global\b/ }).click();
 		await page
 			.getByRole("combobox", { name: "Repository Access" })
 			.selectOption({
