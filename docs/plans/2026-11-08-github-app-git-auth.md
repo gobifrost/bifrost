@@ -289,3 +289,19 @@ above. `./test.sh quality api` passed Pyright with zero errors/warnings and Ruff
 Full backend/client suites, Playwright and a live GitHub App rehearsal
 were not repeated for this follow-up; the protected merge queue remains the
 complete-suite gate.
+
+### Maintainer Review
+
+The maintainer-directed review traced callback user/scope/step binding and
+single-use nonces, fixed GitHub transport destinations, RSA assertions,
+encrypted App and temporary token storage, repository-limited installation
+tokens, token refresh and connection-generation fencing, PAT migration, and
+REST/Git/PlatformJob consumers. The two connection-transition findings above
+were repaired in `7234a8af9`. All executed hosted CI and CodeQL checks passed
+on that head, and the prior CodeQL thread is resolved.
+
+The maintainer reviewed the setup UI and GitHub's documented manifest flow and
+approved merging. The canonical disposition and Product Update now record
+approved review status, including the entry prose and agent prompt. Thomas
+Bray's original commits, verified source attribution and contributor credit
+are preserved. Live GitHub registration/install qualification remains separate.
