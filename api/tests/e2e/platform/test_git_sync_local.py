@@ -153,6 +153,11 @@ async def write_manifest_to_repo(db_session: AsyncSession, persistent_dir: Path)
         k: v for k, v in manifest.apps.items()
         if (persistent_dir / v.path).exists()
     }
+    integration_ids = {item.id for item in manifest.integrations.values()}
+    manifest.configs = {
+        key: item for key, item in manifest.configs.items()
+        if item.integration_id is None or item.integration_id in integration_ids
+    }
     # Non-file entities (integrations, configs, etc.) are included as-is from DB
     write_manifest_to_dir(manifest, persistent_dir / ".bifrost")
 
@@ -613,6 +618,28 @@ class TestPushToEmptyRepo:
         assert result.success, result.preflight
         # Scoping this fixture's manifest must not delete another fixture's data.
         assert await db_session.get(EventSubscription, subscription_id) is not None
+
+    async def test_partial_repo_omits_configs_for_deleted_integrations(
+        self, db_session: AsyncSession, sync_service,
+    ):
+        from src.models.orm.config import Config
+        from src.models.orm.integrations import Integration
+
+        integration = Integration(name="Test excluded integration", is_deleted=True)
+        db_session.add(integration)
+        await db_session.flush()
+        config = Config(
+            key="excluded_fixture_value", value={"value": "fixture"},
+            integration_id=integration.id, updated_by="test",
+        )
+        db_session.add(config)
+        await db_session.commit()
+        write_entity_to_repo(sync_service._persistent_dir, "modules/fixture.py", "VALUE = 1\n")
+
+        result = await sync_service.desktop_commit("exclude deleted integration config")
+
+        assert result.success, result.preflight
+        assert await db_session.get(Config, config.id) is not None
 
     async def test_push_to_empty_repo(
         self,
