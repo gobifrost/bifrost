@@ -3,7 +3,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20261109_solution_git_source"
-down_revision = "20261109_deprecate_slot_fields"
+down_revision = "20261109_merge_calibration"
 branch_labels = None
 depends_on = None
 
