@@ -59,6 +59,27 @@ def key_pair():
     return key, pem
 
 
+@pytest.mark.asyncio
+async def test_readonly_tokens_are_coalesced_and_separate_from_workspace_writes(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    async def mint(*args, data):
+        return {"token": data["permissions"]["contents"], "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+    provider = AsyncMock(side_effect=mint)
+    monkeypatch.setattr(app, "_request", provider)
+    config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="generation",
+                         app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": 91, "workflows": True})
+    reader = app.GitAppCredentials(None, config, contents="read")
+    writer = app.GitAppCredentials(None, config)
+    monkeypatch.setattr(reader, "_current", AsyncMock())
+    monkeypatch.setattr(writer, "_current", AsyncMock())
+    assert await asyncio.gather(*(reader.get_token() for _ in range(8))) == ["read"] * 8
+    assert await writer.get_token() == "write"
+    assert provider.await_count == 2
+    assert provider.await_args_list[0].kwargs["data"] == {"repository_ids": [91], "permissions": {"contents": "read"}}
+    assert provider.await_args_list[1].kwargs["data"]["permissions"] == {"contents": "write", "workflows": "write"}
+
+
 def test_app_jwt_is_short_lived_rsa_and_has_app_identity(key_pair):
     key, pem = key_pair
     token = app.app_jwt({"id": 42, "private_key": pem})

@@ -243,6 +243,7 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
+      - ./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
       interval: 10s
@@ -317,6 +318,7 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
+      - ./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
       interval: 10s

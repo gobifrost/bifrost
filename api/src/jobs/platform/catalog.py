@@ -113,6 +113,7 @@ _METADATA = MappingProxyType(
                 "src.jobs.platform.system_maintenance",
                 "SOLUTION_UPDATE_CHECK_DEFINITION",
                 PlatformJobPolicy(30 * 60, max_attempts=2, max_concurrency=1),
+                payload_version=2,
             ),
             _metadata(
                 "workspace.file_index_reconcile",
@@ -219,6 +220,7 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="Solution Git Syncs",
+                payload_version=2,
                 description="Pulls and compiles connected Solution apps in an isolated pod.",
             ),
             _metadata(

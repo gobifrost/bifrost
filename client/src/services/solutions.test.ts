@@ -20,6 +20,7 @@ vi.mock("@/lib/api-client", () => ({
 
 import {
 	deleteSolution,
+	getSolutionGitSources,
 	createSolutionExportJob,
 	downloadSolutionExportJob,
 	disconnectSolutionGit,
@@ -55,7 +56,10 @@ beforeEach(() => {
 
 describe("solutions service", () => {
 	it("previews a workspace bundle as multipart content", async () => {
-		mockAuthFetch.mockResolvedValue({ ok: true, json: async () => ({ items: [] }) });
+		mockAuthFetch.mockResolvedValue({
+			ok: true,
+			json: async () => ({ items: [] }),
+		});
 
 		await previewWorkspaceBundle(new File(["zip"], "bundle.zip"));
 
@@ -66,17 +70,27 @@ describe("solutions service", () => {
 	});
 
 	it("enqueues reviewed workspace decisions", async () => {
-		mockPost.mockResolvedValue({ data: { job_id: "job-1", status: "queued", reused: false } });
-
-		await importWorkspaceBundle({ preview_token: "preview-1", decisions: [] });
-
-		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace", {
-			body: { preview_token: "preview-1", decisions: [] },
+		mockPost.mockResolvedValue({
+			data: { job_id: "job-1", status: "queued", reused: false },
 		});
+
+		await importWorkspaceBundle({
+			preview_token: "preview-1",
+			decisions: [],
+		});
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/import-workspace",
+			{
+				body: { preview_token: "preview-1", decisions: [] },
+			},
+		);
 	});
 
 	it("previews a workspace bundle from repository coordinates", async () => {
-		mockPost.mockResolvedValue({ data: { preview_token: "preview-2", items: [] } });
+		mockPost.mockResolvedValue({
+			data: { preview_token: "preview-2", items: [] },
+		});
 
 		const out = await previewWorkspaceBundleFromRepo({
 			repo_url: "https://example.com/repo.git",
@@ -84,25 +98,40 @@ describe("solutions service", () => {
 			repo_subpath: "packages/demo",
 		});
 
-		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
-			body: {
-				repo_url: "https://example.com/repo.git",
-				git_ref: "main",
-				repo_subpath: "packages/demo",
-				organization_id: null,
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/import-workspace/preview-repo",
+			{
+				body: {
+					repo_url: "https://example.com/repo.git",
+					git_ref: "main",
+					repo_subpath: "packages/demo",
+					organization_id: null,
+				},
 			},
-		});
+		);
 		expect(out).toEqual({ preview_token: "preview-2", items: [] });
 	});
 
 	it("normalizes empty workspace repo coordinates to null", async () => {
-		mockPost.mockResolvedValue({ data: { preview_token: "preview-3", items: [] } });
-
-		await previewWorkspaceBundleFromRepo({ repo_url: "https://example.com/repo.git" });
-
-		expect(mockPost).toHaveBeenCalledWith("/api/solutions/import-workspace/preview-repo", {
-			body: { repo_url: "https://example.com/repo.git", git_ref: null, repo_subpath: null, organization_id: null },
+		mockPost.mockResolvedValue({
+			data: { preview_token: "preview-3", items: [] },
 		});
+
+		await previewWorkspaceBundleFromRepo({
+			repo_url: "https://example.com/repo.git",
+		});
+
+		expect(mockPost).toHaveBeenCalledWith(
+			"/api/solutions/import-workspace/preview-repo",
+			{
+				body: {
+					repo_url: "https://example.com/repo.git",
+					git_ref: null,
+					repo_subpath: null,
+					organization_id: null,
+				},
+			},
+		);
 	});
 	it("lists solutions", async () => {
 		mockGet.mockResolvedValue({ data: { solutions: [] } });
@@ -809,4 +838,45 @@ describe("solution export jobs", () => {
 			click.mockRestore();
 		}
 	});
+});
+
+it("loads private sources in the explicit target scope", async () => {
+	mockGet.mockResolvedValue({ data: { sources: [] } });
+	await getSolutionGitSources(null);
+	await getSolutionGitSources("org");
+	await getSolutionGitSources(undefined);
+	expect(mockGet.mock.calls).toEqual([
+		[
+			"/api/solutions/git-sources",
+			{ params: { query: { organization_id: "" } } },
+		],
+		[
+			"/api/solutions/git-sources",
+			{ params: { query: { organization_id: "org" } } },
+		],
+		["/api/solutions/git-sources", { params: { query: {} } }],
+	]);
+});
+
+it("forwards the explicit private binding for workspace snapshots", async () => {
+	mockPost.mockResolvedValue({
+		data: { preview_token: "preview", items: [] },
+	});
+	await previewWorkspaceBundleFromRepo({
+		repo_url: "https://github.com/acme/private",
+		git_source_id: "source",
+		organization_id: "org",
+	});
+	expect(mockPost).toHaveBeenCalledWith(
+		"/api/solutions/import-workspace/preview-repo",
+		{
+			body: {
+				repo_url: "https://github.com/acme/private",
+				git_source_id: "source",
+				organization_id: "org",
+				repo_subpath: null,
+				git_ref: null,
+			},
+		},
+	);
 });

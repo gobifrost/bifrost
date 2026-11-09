@@ -18,6 +18,7 @@ vi.mock("@/services/githubGitApp", () => ({
 	selectGitAppRepository: vi.fn(),
 }));
 const ready = {
+	purpose: "workspace" as const,
 	setup_id: "id",
 	stage: "repository" as const,
 	expires_at: "2030-01-01",
@@ -32,13 +33,17 @@ beforeEach(() => {
 	vi.mocked(service.takeGitAppCallback).mockReturnValue(null);
 });
 
-it("scrubs a late callback without changing an already connected App", async () => {
+it("routes a Solution callback even when workspace Git is already connected", async () => {
 	vi.mocked(service.takeGitAppCallback).mockReturnValue({
 		code: "late",
 		state: "manifest.state",
 	});
+	const callbackSetup = { ...ready, purpose: "solution" as const };
+	vi.mocked(service.completeGitAppCallback).mockResolvedValue(callbackSetup);
+	const onPurposeDetected = vi.fn();
 	render(
 		<GitHubAppSetup
+			onPurposeDetected={onPurposeDetected}
 			onReady={vi.fn()}
 			onMigrated={vi.fn()}
 			connectedWithApp={true}
@@ -47,7 +52,16 @@ it("scrubs a late callback without changing an already connected App", async () 
 	await waitFor(() =>
 		expect(service.takeGitAppCallback).toHaveBeenCalledOnce(),
 	);
-	expect(service.completeGitAppCallback).not.toHaveBeenCalled();
+	expect(service.completeGitAppCallback).toHaveBeenCalledWith({
+		code: "late",
+		state: "manifest.state",
+	});
+	await waitFor(() =>
+		expect(onPurposeDetected).toHaveBeenCalledWith(
+			"solution",
+			callbackSetup,
+		),
+	);
 	expect(service.getGitAppSetup).not.toHaveBeenCalled();
 });
 
@@ -71,6 +85,7 @@ it("creates an App with least permissions and explicit visibility", async () => 
 			name: "Bifrost Git Sync",
 			public: false,
 			workflows: false,
+			purpose: "workspace",
 		}),
 	);
 });

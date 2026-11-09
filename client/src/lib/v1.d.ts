@@ -4106,6 +4106,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/github/app/reuse": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Reuse Solution App */
+        post: operations["reuse_solution_app_api_github_app_reuse_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/app/solution-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Solution Sources */
+        get: operations["get_solution_sources_api_github_app_solution_sources_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/github/app/solution-sources/{source_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Disconnect Solution Source */
+        delete: operations["disconnect_solution_source_api_github_app_solution_sources__source_id__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/github/config": {
         parameters: {
             query?: never;
@@ -9622,6 +9673,23 @@ export interface paths {
         put?: never;
         /** Create a Solution install (admin only) */
         post: operations["solutions.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/solutions/git-sources": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Available Git Sources */
+        get: operations["available_git_sources_api_solutions_git_sources_get"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -20500,6 +20568,14 @@ export interface components {
         };
         /** GitAppExistingRequest */
         GitAppExistingRequest: {
+            /**
+             * Purpose
+             * @default workspace
+             * @enum {string}
+             */
+            purpose: "workspace" | "solution";
+            /** Organization Id */
+            organization_id?: string | null;
             /** App Id */
             app_id: number;
             /** Client Id */
@@ -20534,6 +20610,14 @@ export interface components {
         };
         /** GitAppManifestRequest */
         GitAppManifestRequest: {
+            /**
+             * Purpose
+             * @default workspace
+             * @enum {string}
+             */
+            purpose: "workspace" | "solution";
+            /** Organization Id */
+            organization_id?: string | null;
             /** Owner */
             owner: string;
             /**
@@ -20557,6 +20641,16 @@ export interface components {
         };
         /** GitAppManifestResponse */
         GitAppManifestResponse: {
+            /**
+             * Purpose
+             * @default workspace
+             * @enum {string}
+             */
+            purpose: "workspace" | "solution";
+            /** Source Organization Id */
+            source_organization_id?: string | null;
+            /** Source Id */
+            source_id?: string | null;
             /**
              * Setup Id
              * Format: uuid
@@ -20610,6 +20704,13 @@ export interface components {
             /** Repository Id */
             repository_id: number;
         };
+        /** GitAppReuseRequest */
+        GitAppReuseRequest: {
+            /** Source Id */
+            source_id?: string | null;
+            /** Organization Id */
+            organization_id?: string | null;
+        };
         /** GitAppSetupRequest */
         GitAppSetupRequest: {
             /**
@@ -20620,6 +20721,16 @@ export interface components {
         };
         /** GitAppSetupResponse */
         GitAppSetupResponse: {
+            /**
+             * Purpose
+             * @default workspace
+             * @enum {string}
+             */
+            purpose: "workspace" | "solution";
+            /** Source Organization Id */
+            source_organization_id?: string | null;
+            /** Source Id */
+            source_id?: string | null;
             /**
              * Setup Id
              * Format: uuid
@@ -28671,6 +28782,8 @@ export interface components {
             git_connected: boolean;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Git Source Id */
+            git_source_id?: string | null;
             /** Repo Subpath */
             repo_subpath?: string | null;
             /** Git Ref */
@@ -29480,6 +29593,29 @@ export interface components {
             /** Size */
             size?: number | null;
         };
+        /** SolutionGitSource */
+        SolutionGitSource: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** App Name */
+            app_name: string;
+            /** Installation Id */
+            installation_id: number;
+            /** Organization Id */
+            organization_id: string | null;
+            /** Enabled */
+            enabled: boolean;
+            /** Repositories */
+            repositories: components["schemas"]["GitAppRepository"][];
+        };
+        /** SolutionGitSources */
+        SolutionGitSources: {
+            /** Sources */
+            sources: components["schemas"]["SolutionGitSource"][];
+        };
         /**
          * SolutionInstallPreview
          * @description Parse-only preview of a Solution install zip — what it would create + its
@@ -29572,6 +29708,8 @@ export interface components {
         SolutionRepoPreviewRequest: {
             /** Repo Url */
             repo_url: string;
+            /** Git Source Id */
+            git_source_id?: string | null;
             /** Repo Subpath */
             repo_subpath?: string | null;
             /** Git Ref */
@@ -29742,6 +29880,8 @@ export interface components {
             git_connected?: boolean | null;
             /** Git Repo Url */
             git_repo_url?: string | null;
+            /** Git Source Id */
+            git_source_id?: string | null;
             /** Repo Subpath */
             repo_subpath?: string | null;
             /** Git Ref */
@@ -32617,6 +32757,8 @@ export interface components {
         WorkspaceBundleRepoPreviewRequest: {
             /** Repo Url */
             repo_url: string;
+            /** Git Source Id */
+            git_source_id?: string | null;
             /** Git Ref */
             git_ref?: string | null;
             /** Repo Subpath */
@@ -39679,7 +39821,9 @@ export interface operations {
     };
     get_app_setup_api_github_app_setup_get: {
         parameters: {
-            query?: never;
+            query?: {
+                purpose?: "workspace" | "solution";
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -39693,6 +39837,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["GitAppSetupResponse"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
@@ -39949,6 +40102,101 @@ export interface operations {
                 content: {
                     "application/json": components["schemas"]["GitAppSetupResponse"];
                 };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    reuse_solution_app_api_github_app_reuse_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["GitAppReuseRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["GitAppSetupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_solution_sources_api_github_app_solution_sources_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionGitSources"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    disconnect_solution_source_api_github_app_solution_sources__source_id__delete: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path: {
+                source_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
             /** @description Validation Error */
             422: {
@@ -50241,6 +50489,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["Solution"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    available_git_sources_api_solutions_git_sources_get: {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SolutionGitSources"];
                 };
             };
             /** @description Validation Error */

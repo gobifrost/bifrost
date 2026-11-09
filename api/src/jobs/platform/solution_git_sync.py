@@ -93,5 +93,6 @@ async def run_solution_git_sync(
 
 
 SOLUTION_GIT_SYNC_DEFINITION = define_platform_job(
-    "solution.git_sync", SolutionGitSyncPayload, run_solution_git_sync
+    "solution.git_sync", SolutionGitSyncPayload, run_solution_git_sync,
+    historical_payload_models={1: SolutionGitSyncPayload},
 )

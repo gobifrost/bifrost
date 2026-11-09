@@ -436,3 +436,20 @@ def test_production_client_assets_are_world_readable():
     dockerfile = _find_repo_file("client/Dockerfile").read_text()
     assert "find dist -type d -exec chmod 755 {} +" in dockerfile
     assert "find dist -type f -exec chmod 644 {} +" in dockerfile
+
+
+def test_github_app_fixture_transport_reaches_isolated_job_runners():
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    mount = "./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro"
+    for service in ("worker", "scheduler"):
+        assert mount in compose["services"][service]["volumes"]
+    assert mount not in compose["services"]["api"]["volumes"]
+
+
+def test_github_app_transport_does_not_preload_workflow_templates_or_health_probes():
+    source = _find_repo_file("api/scripts/test_github_app_sitecustomize.py").read_text()
+    import ast
+    module = ast.parse(source)
+    assert [type(node).__name__ for node in module.body] == ["Expr", "Import", "If"]
+    gate = module.body[2]
+    assert ast.unparse(gate.test) == "'src.jobs.platform.runner' in sys.orig_argv"

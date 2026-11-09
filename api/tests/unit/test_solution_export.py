@@ -137,6 +137,16 @@ def _response_bytes(response) -> bytes:  # noqa: ANN001
         path.unlink(missing_ok=True)
 
 
+def test_export_omits_instance_private_source_authority() -> None:
+    bundle = _bundle()
+    source_id = uuid.uuid4()
+    bundle.solution.git_source_id = source_id
+    with zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as archive:
+        exported = b"\n".join(archive.read(name) for name in archive.namelist())
+    assert b"git_source_id" not in exported
+    assert str(source_id).encode() not in exported
+
+
 def test_export_round_trips_through_preview() -> None:
     data = build_workspace_zip(_bundle())
     result = preview_zip(data)

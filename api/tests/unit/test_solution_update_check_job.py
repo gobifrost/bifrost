@@ -64,7 +64,7 @@ async def _make_install(
 
 
 def _patch_remote(monkeypatch, version: str | None) -> None:
-    async def _fake_fetch(*, repo_url, repo_subpath, ref):
+    async def _fake_fetch(*, repo_url, repo_subpath, ref, db, git_source_id, organization_id):
         return version
 
     monkeypatch.setattr(mod, "fetch_remote_version", _fake_fetch)

@@ -2,6 +2,9 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { authFetch } from "@/lib/api-client";
 import {
 	getGitAppSetup,
+	listSolutionGitSources,
+	disconnectSolutionGitSource,
+	reuseSolutionGitApp,
 	createGitApp,
 	authorizeGitApp,
 	configureExistingGitApp,
@@ -29,6 +32,7 @@ describe("GitHub App setup service", () => {
 		);
 		await getGitAppSetup();
 		await createGitApp({
+			purpose: "workspace",
 			owner: "org",
 			name: "App",
 			owner_type: "organization",
@@ -36,6 +40,7 @@ describe("GitHub App setup service", () => {
 			workflows: false,
 		});
 		await configureExistingGitApp({
+			purpose: "workspace",
 			app_id: 1,
 			client_id: "client",
 			private_key: "key",
@@ -100,6 +105,7 @@ describe("GitHub App setup service", () => {
 				);
 			});
 		submitGitAppManifest({
+			purpose: "workspace",
 			setup_id: "id",
 			stage: "registration",
 			expires_at: "later",
@@ -116,6 +122,7 @@ describe("GitHub App setup service", () => {
 	it("rejects external registration and authorization destinations", () => {
 		expect(() =>
 			submitGitAppManifest({
+				purpose: "workspace",
 				setup_id: "id",
 				stage: "registration",
 				expires_at: "later",
@@ -140,4 +147,25 @@ describe("GitHub App setup service", () => {
 		);
 		await expect(getGitAppSetup()).rejects.toThrow("Authorize again");
 	});
+});
+
+it("selects an explicit source scope and disconnects without exposing credentials", async () => {
+	vi.mocked(authFetch).mockImplementation(
+		async () => new Response(JSON.stringify({ sources: [] })),
+	);
+	await getGitAppSetup("solution");
+	await listSolutionGitSources(null);
+	await reuseSolutionGitApp("org", "source");
+	vi.mocked(authFetch).mockResolvedValue(new Response(null, { status: 204 }));
+	await disconnectSolutionGitSource("source", null);
+	expect(vi.mocked(authFetch).mock.calls.map((call) => call[0])).toEqual([
+		"/api/github/app/setup?purpose=solution",
+		"/api/github/app/solution-sources?organization_id=GLOBAL",
+		"/api/github/app/reuse",
+		"/api/github/app/solution-sources/source?organization_id=GLOBAL",
+	]);
+	expect(
+		JSON.parse(vi.mocked(authFetch).mock.calls[2][1]?.body as string),
+	).toEqual({ organization_id: "org", source_id: "source" });
+	expect(vi.mocked(authFetch).mock.calls[3][1]?.method).toBe("DELETE");
 });

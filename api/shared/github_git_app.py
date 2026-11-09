@@ -142,14 +142,20 @@ async def get_setup(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID 
     return setup_response(setup_id, payload)
 
 
-async def latest_setup(db: AsyncSession, user_id: str, scope: UUID | None) -> GitAppSetupResponse | None:
-    row = (await db.execute(select(SystemConfig).where(
+async def latest_setup(db: AsyncSession, user_id: str, scope: UUID | None, purpose: str = "workspace") -> GitAppSetupResponse | None:
+    rows = (await db.execute(select(SystemConfig).where(
         SystemConfig.category == "github_setup", SystemConfig.organization_id == scope,
         SystemConfig.created_by == str(user_id),
-    ).order_by(SystemConfig.created_at.desc()).limit(1))).scalar_one_or_none()
-    if row is None:
+    ).order_by(SystemConfig.created_at.desc()).limit(50))).scalars().all()
+    current = None
+    for row in rows:
+        _, candidate = await _row(db, UUID(row.key), user_id, scope, expired_ok=True)
+        if candidate.get("purpose", "workspace") == purpose:
+            current = (row, candidate)
+            break
+    if current is None:
         return None
-    _, payload = await _row(db, UUID(row.key), user_id, scope, expired_ok=True)
+    row, payload = current
     if payload["stage"] == "registration":
         # The browser may have registered the App without returning to Bifrost.
         # Project recovery in the UI while allowing the original callback once.
@@ -163,6 +169,7 @@ def setup_response(setup_id: UUID, payload: dict) -> GitAppSetupResponse:
     if slug and not _NAME.fullmatch(slug):
         raise fail("GitHub returned an invalid App identity.", 502)
     return GitAppSetupResponse(
+        purpose=payload.get("purpose", "workspace"), source_id=payload.get("source_id"), source_organization_id=payload.get("source_scope"),
         setup_id=setup_id, stage=payload["stage"], expires_at=payload["expires_at"],
         app_name=app.get("name"), install_url=f"https://github.com/apps/{slug}/installations/new" if slug else None,
         installations=payload.get("installations", []), repositories=payload.get("repositories", []),
@@ -194,14 +201,17 @@ async def start_manifest(db: AsyncSession, request: GitAppManifestRequest, user_
     setup_id = uuid4()
     config = await get_github_config(db, scope)
     payload = {"stage": "registration", "expires_at": (datetime.now(timezone.utc) + SETUP_TTL).isoformat(),
-               "workflows": request.workflows, "prior_generation": config.generation if config else None}
+               "purpose": request.purpose, "workflows": request.workflows if request.purpose == "workspace" else False,
+               "prior_generation": config.generation if config else None}
+    target_scope = request.organization_id if "organization_id" in request.model_fields_set else scope
+    payload["source_scope"] = str(target_scope) if target_scope is not None else None
     row = SystemConfig(category="github_setup", key=str(setup_id), organization_id=scope, created_by=str(user_id))
     db.add(row)
     await _save(db, row, payload)
     state = await _state(setup_id, user_id, scope, "manifest")
     action = "https://github.com/settings/apps/new" if request.owner_type == "user" else f"https://github.com/organizations/{request.owner}/settings/apps/new"
-    permissions = {"contents": "write"}
-    if request.workflows:
+    permissions = {"contents": "read" if request.purpose == "solution" else "write"}
+    if payload["workflows"]:
         permissions["workflows"] = "write"
     return {**setup_response(setup_id, payload).model_dump(mode="json"),
             "registration_url": action + "?" + urlencode({"state": state}),
@@ -242,15 +252,16 @@ async def complete_manifest(db: AsyncSession, code: str, state: str, user_id: st
         return setup_response(setup_id, payload)
 
 
-async def existing_app(db: AsyncSession, app: dict, user_id: str, scope: UUID | None) -> GitAppSetupResponse:
+async def existing_app(db: AsyncSession, app: dict, user_id: str, scope: UUID | None, purpose: str = "workspace", *, source_scope: UUID | None = None) -> GitAppSetupResponse:
     identity = await _request("GET", "/app", app_jwt(app))
     if int(identity["id"]) != int(app["id"]):
         raise fail("The private key does not belong to this App.", 403)
     setup_id = uuid4()
     config = await get_github_config(db, scope)
     app.update(slug=identity["slug"], name=identity["name"])
-    payload = {"app": app, "stage": "authorization", "workflows": identity.get("permissions", {}).get("workflows") == "write",
+    payload = {"app": app, "purpose": purpose, "stage": "authorization", "workflows": purpose == "workspace" and identity.get("permissions", {}).get("workflows") == "write",
                "expires_at": (datetime.now(timezone.utc) + SETUP_TTL).isoformat(), "prior_generation": config.generation if config else None}
+    payload["source_scope"] = str(source_scope) if source_scope is not None else None
     row = SystemConfig(category="github_setup", key=str(setup_id), organization_id=scope, created_by=str(user_id))
     db.add(row)
     await _save(db, row, payload)
@@ -339,8 +350,10 @@ async def setup_repositories(db: AsyncSession, setup_id: UUID, installation_id: 
     if installation_id not in {item["id"] for item in payload["installations"]}:
         raise fail("This installation is not accessible to the authorizing user.", 403)
     installation = await _request("GET", f"/app/installations/{installation_id}", app_jwt(payload["app"]))
-    if installation.get("suspended_at") or installation["permissions"].get("contents") != "write":
-        raise fail("The installation must grant Contents read/write access.", 403)
+    contents = installation["permissions"].get("contents")
+    allowed = {"read", "write"} if payload.get("purpose") == "solution" else {"write"}
+    if installation.get("suspended_at") or contents not in allowed:
+        raise fail("The installation does not grant the required Contents access.", 403)
     repos = await _pages(f"/user/installations/{installation_id}/repositories", await _user_token(setup_id), "repositories")
     payload.update(installation_id=installation_id, repositories=[{key: repo[key] for key in ("id", "full_name", "private", "default_branch")} for repo in repos])
     await _save(db, row, payload)
@@ -356,7 +369,7 @@ async def selected_config(db: AsyncSession, setup_id: UUID, installation_id: int
     payload.update(repository=repository, stage="ready")
     await _save(db, row, payload)
     config = _selected_config(setup_id, payload, user_id, scope)
-    await GitAppCredentials(db, config).get_token()
+    await GitAppCredentials(db, config, contents="read" if payload.get("purpose") == "solution" else "write").get_token()
     return config
 
 
@@ -369,6 +382,8 @@ def _selected_config(setup_id: UUID, payload: dict, user_id: str, scope: UUID | 
 
 async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None) -> GitHubConfig:
     _, payload = await _row(db, setup_id, user_id, scope)
+    if payload.get("purpose", "workspace") != "workspace":
+        raise fail("This setup is for Solution repositories.", 409)
     if payload["stage"] != "ready":
         raise fail("Select and verify a repository before connecting.", 409)
     # Selection already verified the user's access. Queued work must use the
@@ -379,7 +394,23 @@ async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: 
 
 
 async def select_repository(db: AsyncSession, setup_id: UUID, installation_id: int, repository_id: int, user_id: str, scope: UUID | None, updated_by: str) -> GitAppSetupResponse:
+    _, previous = await _row(db, setup_id, user_id, scope)
+    if previous.get("purpose") == "solution" and previous["stage"] == "connected":
+        if previous["installation_id"] != installation_id or previous["repository"]["id"] != repository_id:
+            raise fail("This setup has already saved a different Solution repository.", 409)
+        return setup_response(setup_id, previous)
     candidate = await selected_config(db, setup_id, installation_id, repository_id, user_id, scope)
+    row, payload = await _row(db, setup_id, user_id, scope)
+    if payload.get("purpose") == "solution":
+        from shared.solution_git_sources import save_verified_source
+        target_scope = UUID(payload["source_scope"]) if payload.get("source_scope") else None
+        source = await save_verified_source(db, payload, target_scope, updated_by)
+        payload.update(source_id=str(source.id), stage="connected")
+        payload["app"] = {key: value for key, value in payload["app"].items() if key not in {"private_key", "client_secret"}}
+        await _save(db, row, payload)
+        redis = await get_shared_redis()
+        await redis.delete(f"github:setup-user-token:{setup_id}")
+        return setup_response(setup_id, payload)
     current = await get_github_config(db, scope)
     if current and current.repo_url:
         if current.repo_url.removesuffix(".git").rstrip("/") != candidate.repo_url:
@@ -410,7 +441,8 @@ async def activate(db: AsyncSession, config: GitHubConfig, branch: str, updated_
 
 
 class GitAppCredentials:
-    def __init__(self, db: AsyncSession, config: GitHubConfig):
+    def __init__(self, db: AsyncSession, config: GitHubConfig, *, contents: str = "write"):
+        self.contents = contents
         self.db, self.config = db, config
 
     async def _current(self) -> None:
@@ -429,7 +461,7 @@ class GitAppCredentials:
     async def get_token(self) -> str:
         await self._current()
         app = self.config.app
-        identity = f"{self.config.generation}:{app['installation_id']}:{app['repository_id']}:{app.get('workflows', False)}"
+        identity = f"{self.config.generation}:{app['installation_id']}:{app['repository_id']}:{self.contents}:{app.get('workflows', False)}"
         cache_key = "github:git-token:" + hashlib.sha256(identity.encode()).hexdigest()
         cooldown_key = f"github:git-cooldown:{app['id']}:{app['installation_id']}"
         redis = await get_shared_redis()
@@ -440,8 +472,8 @@ class GitAppCredentials:
             cached = await redis.get(cache_key)
             if cached:
                 return _get_fernet().decrypt(cached.encode()).decode()
-            permissions = {"contents": "write"}
-            if app.get("workflows"):
+            permissions = {"contents": self.contents}
+            if self.contents == "write" and app.get("workflows"):
                 permissions["workflows"] = "write"
             try:
                 result = await _request("POST", f"/app/installations/{app['installation_id']}/access_tokens", app_jwt(app),
