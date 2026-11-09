@@ -25,6 +25,7 @@ if TYPE_CHECKING:
 from bifrost.manifest import (
     Manifest,
     read_manifest_from_dir,
+    validate_manifest_paths,
 )
 from bifrost.decorator_validation import validate_python_decorators
 from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
@@ -32,8 +33,8 @@ from bifrost.definition_validation import DefinitionIssue, DefinitionValidationE
 logger = logging.getLogger(__name__)
 
 
-def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
-    """Read a manifest source only when it resolves inside its worktree."""
+def _confined_worktree_entry(work_dir: Path, path: str) -> Path | None:
+    """Resolve one declared manifest path without leaving its worktree."""
     candidate = work_dir / path
     try:
         root = work_dir.resolve()
@@ -48,9 +49,17 @@ def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
                 path=path,
                 location=(),
                 code="unsafe_source_path",
-                message="Workflow source must resolve inside the workspace candidate.",
+                message="Manifest source must resolve inside the workspace candidate.",
             )
         ]) from exc
+    return resolved
+
+
+def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
+    """Read a manifest Python source only when it resolves inside its worktree."""
+    resolved = _confined_worktree_entry(work_dir, path)
+    if resolved is None:
+        return None
     if not resolved.is_file():
         return None
     try:
@@ -64,6 +73,29 @@ def _read_confined_worktree_source(work_dir: Path, path: str) -> str | None:
                 message="Python source must be valid UTF-8.",
             )
         ]) from exc
+
+
+def _read_confined_worktree_bytes(work_dir: Path, path: str) -> bytes | None:
+    """Read a declared legacy companion file without following escaping links."""
+    resolved = _confined_worktree_entry(work_dir, path)
+    if resolved is None or not resolved.is_file():
+        return None
+    return resolved.read_bytes()
+
+
+def _validate_manifest_paths_or_raise(manifest: Manifest) -> None:
+    """Reject unsafe entity paths before a manifest reader creates side effects."""
+    errors = validate_manifest_paths(manifest)
+    if errors:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=".bifrost/",
+                location=(),
+                code="unsafe_manifest_path",
+                message=error,
+            )
+            for error in errors
+        ])
 
 
 @dataclass(frozen=True)
@@ -779,6 +811,8 @@ class ManifestResolver:
         if not work_dir and not repo:
             raise ValueError("plan_import requires either work_dir or repo")
 
+        _validate_manifest_paths_or_raise(manifest)
+
         # Source must be accepted before this importer creates a DB operation.
         # This reads bytes only; it never imports submitted Python.
         for workflow in manifest.workflows.values():
@@ -809,7 +843,7 @@ class ManifestResolver:
             if repo:
                 return await repo.exists(path)
             elif work_dir:
-                return (work_dir / path).exists()
+                return _confined_worktree_entry(work_dir, path) is not None
             return False
 
         async def _file_read(path: str) -> bytes | None:
@@ -819,9 +853,7 @@ class ManifestResolver:
                 except Exception:
                     return None
             elif work_dir:
-                p = work_dir / path
-                if p.exists():
-                    return p.read_bytes()
+                return _read_confined_worktree_bytes(work_dir, path)
             return None
 
         # Count total entities for progress tracking
@@ -1087,8 +1119,7 @@ class ManifestResolver:
             self._workspace_organization_id = None
 
         async def read_workspace(path: str) -> bytes | None:
-            candidate = work_dir / path
-            return candidate.read_bytes() if candidate.is_file() else None
+            return _read_confined_worktree_bytes(work_dir, path)
 
         # Unlike full git sync, this bounded entry point owns its indexer phase.
         await self._index_workflows_from_manifest(rewritten, read_workspace, changed_ids)
@@ -1644,6 +1675,8 @@ class ManifestResolver:
             else:
                 raise ValueError("Either manifest or work_dir must be provided")
 
+        _validate_manifest_paths_or_raise(manifest)
+
         # Build existence-check helpers based on repo or work_dir
         if repo:
             all_s3_paths = set(await repo.list(""))
@@ -1656,10 +1689,11 @@ class ManifestResolver:
                 return any(sp.startswith(prefix) for sp in all_s3_paths)
         elif work_dir:
             def _path_exists(p: str) -> bool:
-                return (work_dir / p).exists()
+                return _confined_worktree_entry(work_dir, p) is not None
 
             def _dir_exists(p: str) -> bool:
-                return (work_dir / p).is_dir()
+                resolved = _confined_worktree_entry(work_dir, p)
+                return resolved is not None and resolved.is_dir()
         else:
             def _path_exists(p: str) -> bool:
                 return True

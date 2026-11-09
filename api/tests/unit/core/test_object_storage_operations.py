@@ -122,6 +122,27 @@ async def test_origin_relative_proxy_prefix_preserves_the_internal_signature():
     assert "X-Amz-Signature" in httpx.URL(signed.url).params
     assert signed.headers == {"Content-Type": "text/plain"}
 
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("length", [0, 12])
+async def test_signed_upload_binds_the_exact_content_length(length):
+    from urllib.parse import parse_qs, urlsplit
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as client:
+        signed = await S3ObjectStore("bucket", _transport(client)).signed_request("upload.txt", "PUT", content_type="text/plain", content_length=length)
+        headers = parse_qs(urlsplit(signed.url).query)["X-Amz-SignedHeaders"][0].split(";")
+        assert "content-length" in headers
+        assert signed.headers["Content-Length"] == str(length)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,length", [("GET", 12), ("PUT", -1), ("PUT", True)])
+async def test_signed_content_length_rejects_invalid_options(method, length):
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda r: httpx.Response(500))) as client:
+        with pytest.raises(ValueError):
+            await S3ObjectStore("bucket", _transport(client)).signed_request("key", method, content_length=length)
+
+
 @pytest.mark.asyncio
 async def test_bulk_delete_batches_native_requests_and_does_not_hide_partial_failure():
     requests = []

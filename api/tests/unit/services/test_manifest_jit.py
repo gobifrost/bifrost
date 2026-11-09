@@ -56,8 +56,8 @@ async def test_desktop_commit_regenerates_manifest_before_staging():
 
 
 @pytest.mark.asyncio
-async def test_reimport_regenerates_manifest_and_reindexes_workflows():
-    """reimport_from_repo() should regenerate manifest and re-run workflow indexer."""
+async def test_reimport_regenerates_manifest_only_for_legacy_workspace(tmp_path):
+    """A workspace without any manifest keeps the legacy bootstrap behavior."""
     from src.services.github_sync import GitHubSyncService
 
     mock_db = AsyncMock()
@@ -65,11 +65,12 @@ async def test_reimport_regenerates_manifest_and_reindexes_workflows():
     service.db = mock_db
     service.branch = "main"
 
-    mock_work_dir = MagicMock(spec=Path)
+    (tmp_path / "workflows").mkdir()
+    (tmp_path / "workflows" / "legacy.py").write_text("def legacy(): pass\n")
 
     # Set repo_manager before patching (bypass __init__)
     mock_rm = MagicMock()
-    mock_rm.checkout.return_value.__aenter__ = AsyncMock(return_value=mock_work_dir)
+    mock_rm.checkout.return_value.__aenter__ = AsyncMock(return_value=tmp_path)
     mock_rm.checkout.return_value.__aexit__ = AsyncMock(return_value=False)
     service.repo_manager = mock_rm
 
@@ -93,7 +94,7 @@ async def test_reimport_regenerates_manifest_and_reindexes_workflows():
 
         result = await service.reimport_from_repo()
 
-        mock_regen.assert_called_once()
+        mock_regen.assert_called_once_with(mock_db, tmp_path)
         mock_reindex.assert_called_once()
         assert result.entities_imported == 5
         # Reimport only previews deletions; it never applies them.
@@ -101,3 +102,52 @@ async def test_reimport_regenerates_manifest_and_reindexes_workflows():
             call.kwargs.get("dry_run") is True
             for call in mock_resolver._resolve_deletions.await_args_list
         )
+
+
+@pytest.mark.asyncio
+async def test_reimport_preserves_checked_out_manifest_when_database_differs(tmp_path):
+    """An authored workspace manifest is imported instead of being regenerated from DB."""
+    from bifrost.manifest import Manifest, ManifestWorkflow, write_manifest_to_dir
+    from src.services.github_sync import GitHubSyncService
+    from uuid import uuid4
+
+    workflow_id = str(uuid4())
+    source_path = "workflows/authored.py"
+    source = tmp_path / source_path
+    source.parent.mkdir()
+    source.write_text("def authored(): pass\n")
+    write_manifest_to_dir(
+        Manifest(workflows={
+            workflow_id: ManifestWorkflow(
+                id=workflow_id, name="authored", path=source_path, function_name="authored",
+            )
+        }),
+        tmp_path / ".bifrost",
+    )
+
+    mock_db = AsyncMock()
+    service = GitHubSyncService.__new__(GitHubSyncService)
+    service.db = mock_db
+    service.branch = "main"
+    mock_rm = MagicMock()
+    mock_rm.checkout.return_value.__aenter__ = AsyncMock(return_value=tmp_path)
+    mock_rm.checkout.return_value.__aexit__ = AsyncMock(return_value=False)
+    service.repo_manager = mock_rm
+    nested = MagicMock()
+    nested.__aenter__ = AsyncMock()
+    nested.__aexit__ = AsyncMock(return_value=False)
+    mock_db.begin_nested = MagicMock(return_value=nested)
+    mock_db.commit = AsyncMock()
+    resolver = MagicMock()
+    resolver._resolve_deletions = AsyncMock(return_value=[])
+    service._resolver = resolver
+
+    with patch.object(service, "_regenerate_manifest_to_dir") as regenerate, \
+         patch.object(service, "_reindex_registered_workflows"), \
+         patch.object(service, "_import_all_entities", return_value=(1, [])), \
+         patch.object(service, "_update_file_index"), \
+         patch.object(service, "_sync_app_previews"):
+        result = await service.reimport_from_repo()
+
+    regenerate.assert_not_called()
+    assert result.entities_imported == 1

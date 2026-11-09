@@ -50,9 +50,9 @@ class FileObjectStorage:
     def guess_content_type(path: str) -> str:
         return mimetypes.guess_type(path)[0] or "application/octet-stream"
 
-    async def generate_signed_upload_request(self, path: str, content_type: str, expires_in: int = 600) -> SignedRequest:
+    async def generate_signed_upload_request(self, path: str, content_type: str, expires_in: int = 600, *, content_length: int | None = None) -> SignedRequest:
         async with self.get_store() as store:
-            return await store.signed_request(path, "PUT", content_type=content_type, expires_in=expires_in)
+            return await store.signed_request(path, "PUT", content_type=content_type, expires_in=expires_in, content_length=content_length)
 
     async def generate_signed_download_request(
         self, path: str, expires_in: int = 600, *, response_content_type: str | None = None,

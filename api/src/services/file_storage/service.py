@@ -167,8 +167,8 @@ class FileStorageService:
     # S3 Direct Operations (delegate to FileObjectStorage)
     # ========================================================================
 
-    async def generate_signed_upload_request(self, path: str, content_type: str, expires_in: int = 600) -> SignedRequest:
-        return await self._object_storage.generate_signed_upload_request(path, content_type, expires_in)
+    async def generate_signed_upload_request(self, path: str, content_type: str, expires_in: int = 600, *, content_length: int | None = None) -> SignedRequest:
+        return await self._object_storage.generate_signed_upload_request(path, content_type, expires_in, content_length=content_length)
 
     async def generate_signed_download_request(self, path: str, expires_in: int = 600) -> SignedRequest:
         return await self._object_storage.generate_signed_download_request(path, expires_in)
