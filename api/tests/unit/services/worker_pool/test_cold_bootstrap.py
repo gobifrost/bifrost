@@ -235,7 +235,7 @@ async def test_capacity_publication_cannot_overtake_a_locked_decision(db, monkey
         assert published == [None]
     finally:
         resume.set()
-        await first
+        assert len(await first) == 1
 
 
 @pytest.mark.parametrize("busy", ["runs", "reservation", "handler", "unknown"])
