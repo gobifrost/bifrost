@@ -38,3 +38,42 @@ real provider, transport and signer with synthetic HTTP responses. It does not
 prove R2 backend conditional DELETE, actual competing completion winner state,
 browser CORS, CLI acceleration or physical transfers above 5 GiB. Live backend
 acceptance requires its own exact source/configuration evidence.
+
+## Azure Blob provider (opt-in)
+
+`BIFROST_OBJECT_STORAGE_PROVIDER=azure_blob` selects the native Blob adapter in
+`src/core/storage/azure.py`, with bulk Git transfer in `azure_mirror.py`. S3
+remains the default. Selection is per installation; changing providers does not
+migrate data, and cross-container operations stay outside the
+configured-container contract.
+
+Authentication explicitly selects a managed identity or an account key. The
+adapter never discovers developer credentials, provisions resources, grants
+roles or migrates objects. Signed PUT responses carry
+`x-ms-blob-type: BlockBlob`; browser, App SDK and manual PUT callers must forward
+every returned header. Blob CORS must allow the actual browser origin, methods
+and request headers. Workflow environment scrubbing keeps Blob configuration
+parent-only, but an ambient host identity or metadata endpoint is not isolated;
+treat workflow-code trust as a deployment security concern.
+
+Multipart upload state and block receipts live in the uploading context only;
+cross-context or cross-process resumption is unsupported. Current upload and
+copy consumers complete each sequence inside one context. The workspace mirror
+rejects symbolic links; the S3 CLI mirror can follow them.
+
+Blob has no native HTTP Expires object property. Such writes fail explicitly
+instead of silently dropping the property; this non-parity requires maintainer
+acceptance. Unknown write options fail explicitly rather than being ignored.
+
+Unit coverage uses fakes. The provider-neutral
+`tests/e2e/platform/test_object_storage.py` suite also runs against pinned
+Azurite with `BIFROST_TEST_OBJECT_STORAGE_PROVIDER=azure_blob` and
+`BIFROST_TEST_AZURE_BLOB_RESET=1` on a disposable container. The
+`api/tests/azure_qualification/` lane covers explicit real-Azure identity,
+boundaries and probes; its results are source-bound and never transfer across
+candidates. Hosted CI and manual maintainer/security review remain gates.
+
+The Blob adapter is adapted from the AGPL-3.0
+[MTG fork at 162d3f477](https://github.com/Midtown-Technology-Group/bifrost/tree/162d3f47722baf2992e60d11a6026cb95b9dbf04),
+retaining its operation ownership, credential lifecycle, listing and signing
+lessons behind the object-store contract.

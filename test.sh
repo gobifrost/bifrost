@@ -125,6 +125,11 @@ require_stack_up() {
 }
 
 reset_state() {
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ] && \
+        [ "${BIFROST_TEST_AZURE_BLOB_RESET:-0}" != "1" ]; then
+        echo "ERROR: Blob tests clear the configured container. Select a disposable target and set BIFROST_TEST_AZURE_BLOB_RESET=1." >&2
+        return 1
+    fi
     echo "Resetting state..."
 
     # Reload scheduler-fixtures too: its source is bind-mounted but its simple
@@ -168,6 +173,12 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
     docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli FLUSHDB > /dev/null
     docker compose -f "$COMPOSE_FILE" rm -sf seaweedfs > /dev/null
     docker compose -f "$COMPOSE_FILE" up -d seaweedfs > /dev/null
+
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ]; then
+        docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps \
+            -e BIFROST_TEST_AZURE_BLOB_RESET=1 \
+            test-runner python scripts/reset_test_blob_storage.py
+    fi
 
     clear_browser_auth_state
 
