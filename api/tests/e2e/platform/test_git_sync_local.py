@@ -6038,7 +6038,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_sync(confirm_deletes=True)).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             write_entity_to_repo(work_dir, "README.md", "stale plan\n")
             repo.index.add(["README.md"])
@@ -6066,7 +6066,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_sync(confirm_deletes=True)).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             write_entity_to_repo(work_dir, "uncommitted.txt", "not in the plan\n")
             sync_service._sync_up_calls.clear()
@@ -6109,7 +6109,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_commit("remove approved workflow")).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             concurrent = Workflow(
                 id=uuid4(),
@@ -6145,7 +6145,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_commit("retryable push")).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             original_push = sync_service._do_push
             sync_service._sync_up_calls.clear()
@@ -6184,7 +6184,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_commit("retryable storage")).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             original_sync_up = sync_service.repo_manager.sync_up
 
@@ -6237,7 +6237,7 @@ class TestSyncPublicationOrdering:
         assert (await sync_service.desktop_commit("remove retry deletion workflow")).success
 
         async with sync_service.repo_manager.lock() as work_dir:
-            repo = sync_service._open_or_init(work_dir)
+            repo = await sync_service._open_or_init(work_dir)
             plan = await sync_service.prepare_desktop_sync(work_dir, repo)
             original_push = sync_service._do_push
             monkeypatch.setattr(
@@ -6332,7 +6332,7 @@ class TestSyncPublicationOrdering:
         working_clone.remotes.origin.push()
 
         async with sync_service.repo_manager.lock() as persistent_dir:
-            repo = sync_service._open_or_init(persistent_dir)
+            repo = await sync_service._open_or_init(persistent_dir)
             plan = await sync_service.prepare_desktop_sync(persistent_dir, repo)
 
         assert any(change.entity_type == "claims" for change in plan.entity_changes)

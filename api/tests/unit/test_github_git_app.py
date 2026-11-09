@@ -1,0 +1,197 @@
+from __future__ import annotations
+
+import asyncio
+import json
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
+
+import httpx
+import jwt
+import pytest
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric import rsa
+from fastapi import HTTPException
+
+from shared import github_git_app as app
+from src.services.github_config import GitHubConfig, _get_fernet
+
+
+@pytest.fixture
+def key_pair():
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()).decode()
+    return key, pem
+
+
+def test_app_jwt_is_short_lived_rsa_and_has_app_identity(key_pair):
+    key, pem = key_pair
+    token = app.app_jwt({"id": 42, "private_key": pem})
+    claims = jwt.decode(token, key.public_key(), algorithms=["RS256"])
+    assert claims["iss"] == "42"
+    assert claims["exp"] - claims["iat"] == 600
+
+
+@pytest.mark.parametrize("pem", ["not a key", "-----BEGIN PRIVATE KEY-----\ninvalid"])
+def test_bad_private_key_error_does_not_echo_material(pem):
+    with pytest.raises(HTTPException) as error:
+        app.app_jwt({"id": 42, "private_key": pem})
+    assert pem not in error.value.detail
+
+
+@pytest.mark.parametrize("url", ["https://safe.example/path", "https://user:password@safe.example", "https://safe.example?other=host", "http://public.example", "javascript:alert(1)"])
+def test_callback_origin_must_be_an_explicit_https_origin(monkeypatch, url):
+    monkeypatch.setattr(app, "get_settings", lambda: SimpleNamespace(public_url=url))
+    with pytest.raises(HTTPException):
+        app.external_origin()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("path", ["//evil.example/app", "/app/../user", "/app/installations/0/access_tokens", "/app/installations/1/access_tokens?next=evil", "/user/installations/1/repositories/extra"])
+async def test_app_transport_rejects_bad_paths_before_network(monkeypatch, path):
+    client = AsyncMock()
+    monkeypatch.setattr(app.httpx, "AsyncClient", client)
+    with pytest.raises(HTTPException):
+        await app._request("GET", path, "private-token")
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_app_transport_never_exposes_provider_body(monkeypatch):
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def request(self, *args, **kwargs):
+            return httpx.Response(403, json={"message": "private-token or private key"})
+    monkeypatch.setattr(app.httpx, "AsyncClient", lambda **_: Client())
+    with pytest.raises(HTTPException) as error:
+        await app._request("GET", "/app", "private-token")
+    assert "private-token" not in error.value.detail
+
+
+class Redis:
+    def __init__(self):
+        self.values = {}
+        self.locks = {}
+
+    def lock(self, name, **_):
+        return self.locks.setdefault(name, asyncio.Lock())
+
+    async def get(self, key): return self.values.get(key)
+
+    async def setex(self, key, ttl, value):
+        assert ttl > 0
+        self.values[key] = value
+
+
+@pytest.mark.asyncio
+async def test_tokens_are_repository_scoped_encrypted_and_coalesced(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    provider = AsyncMock(return_value={"token": "installation-secret", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+    monkeypatch.setattr(app, "_request", provider)
+    config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="generation",
+                         app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": 91, "workflows": False})
+    resolver = app.GitAppCredentials(None, config)
+    monkeypatch.setattr(resolver, "_current", AsyncMock())
+    assert await asyncio.gather(*(resolver.get_token() for _ in range(8))) == ["installation-secret"] * 8
+    assert provider.await_count == 1
+    assert provider.call_args.kwargs["data"] == {"repository_ids": [91], "permissions": {"contents": "write"}}
+    assert "installation-secret" not in json.dumps(redis.values)
+    assert _get_fernet().decrypt(next(iter(redis.values.values())).encode()).decode() == "installation-secret"
+
+
+@pytest.mark.asyncio
+async def test_token_expiry_and_configuration_change_do_not_reuse_credentials(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    provider = AsyncMock(side_effect=[
+        {"token": token, "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+        for token in ["first", "refreshed"]
+    ])
+    monkeypatch.setattr(app, "_request", provider)
+    config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="generation",
+                         app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": 91})
+    resolver = app.GitAppCredentials(None, config)
+    current = AsyncMock()
+    monkeypatch.setattr(resolver, "_current", current)
+    assert await resolver.get_token() == "first"
+    redis.values.clear()  # Simulate Redis TTL expiry, not a timing sleep.
+    assert await resolver.get_token() == "refreshed"
+    current.side_effect = HTTPException(409, "connection changed")
+    with pytest.raises(HTTPException):
+        await resolver.get_token()
+    assert provider.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rest_client_resolves_credentials_for_every_request(monkeypatch):
+    from src.services.github_api import GitHubAPIClient
+    seen = []
+    class Client:
+        async def __aenter__(self): return self
+        async def __aexit__(self, *_): pass
+        async def request(self, *args, **kwargs):
+            seen.append(kwargs["headers"]["Authorization"])
+            return httpx.Response(200, json={"repositories": []}, request=httpx.Request("GET", "https://api.github.com/installation/repositories"))
+    monkeypatch.setattr("src.services.github_api.httpx.AsyncClient", lambda **_: Client())
+    tokens = AsyncMock(side_effect=["first", "refreshed"])
+    client = GitHubAPIClient(token_provider=tokens, installation_auth=True)
+    await client.list_repositories()
+    await client.list_repositories()
+    assert seen == ["Bearer first", "Bearer refreshed"]
+
+
+@pytest.mark.asyncio
+async def test_installation_cooldown_is_shared_across_repository_tokens(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    provider = AsyncMock(side_effect=HTTPException(429, "limited", headers={"Retry-After": "20"}))
+    monkeypatch.setattr(app, "_request", provider)
+    for repository_id in [91, 92]:
+        config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation=str(repository_id),
+                             app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": repository_id})
+        resolver = app.GitAppCredentials(None, config)
+        monkeypatch.setattr(resolver, "_current", AsyncMock())
+        with pytest.raises(HTTPException) as error:
+            await resolver.get_token()
+        assert error.value.status_code == 429
+    assert provider.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_removed_app_repository_is_not_treated_as_an_empty_remote(tmp_path):
+    from git import GitCommandError
+    from unittest.mock import Mock
+    from src.services.github_sync import GitHubSyncService, SyncError
+    repo = Mock()
+    repo.remotes.origin.fetch.side_effect = GitCommandError(["git", "fetch"], 128, "remote: Repository not found")
+    service = GitHubSyncService(None, "https://github.com/owner/repo", token_provider=AsyncMock(return_value="installation-secret"), app_auth=True)
+    with pytest.raises(SyncError, match="repository access was denied"):
+        await service._do_fetch(tmp_path, repo)
+
+
+@pytest.mark.asyncio
+async def test_revoked_installation_never_uses_a_personal_token(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    monkeypatch.setattr(app, "_request", AsyncMock(side_effect=HTTPException(403, "revoked")))
+    config = GitHubConfig("https://github.com/owner/repo", "personal-token", "main", "connected", auth_kind="app", generation="generation",
+                         app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": 91})
+    resolver = app.GitAppCredentials(None, config)
+    monkeypatch.setattr(resolver, "_current", AsyncMock())
+    with pytest.raises(HTTPException) as error:
+        await resolver.get_token()
+    assert error.value.status_code == 403
+    assert not redis.values
+
+
+@pytest.mark.asyncio
+async def test_a_running_pat_operation_cannot_reuse_credentials_after_migration(monkeypatch):
+    previous = GitHubConfig("https://github.com/owner/repo", "personal-token", "main", "connected", generation="pat")
+    current = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="app", app={"id": 42})
+    monkeypatch.setattr(app, "get_github_config", AsyncMock(return_value=current))
+    provider = app.credential_provider(None, previous)
+    with pytest.raises(HTTPException) as error:
+        await provider()
+    assert error.value.status_code == 409

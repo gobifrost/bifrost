@@ -27,6 +27,9 @@ test.describe("GitHub settings acceptance (admin)", () => {
 		page,
 	}) => {
 		const config = unconfiguredConfig();
+		await page.route("**/api/github/app/setup", (route) =>
+			route.fulfill({ json: null }),
+		);
 		let validateCalls = 0;
 		let previewPayload: unknown;
 		let connectPayload: unknown;
