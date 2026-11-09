@@ -217,7 +217,7 @@ async def test_the_handler_counts_a_claimed_summary_against_its_backfill(world, 
     message["claim_id"] = str(claim_id)
     world.workers.append(worker_id)
     async with world.sessions() as db:
-        db.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+        db.add(ExecutionWorker(id=worker_id, form="static", state="ready"))
         await db.flush()
         db.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family=FAMILY, subject_id=run_id))
         await db.commit()
@@ -237,7 +237,7 @@ async def test_a_lost_executor_s_summary_is_requested_again(world) -> None:  # t
     worker_id = uuid4()
     world.workers.append(worker_id)
     async with world.sessions() as db:
-        db.add(ExecutionWorker(id=worker_id, form="static", state="lost", slots=1))
+        db.add(ExecutionWorker(id=worker_id, form="static", state="lost"))
         await db.flush()
         db.add(ExecutionWorkerClaim(worker_id=worker_id, family=FAMILY, subject_id=run_id))
         await db.commit()
@@ -272,7 +272,7 @@ async def test_lost_worker_reports_a_committed_summary_without_running_it_again(
     worker_id = uuid4()
     world.workers.append(worker_id)
     async with world.sessions() as db:
-        db.add(ExecutionWorker(id=worker_id, form="static", state="lost", slots=1))
+        db.add(ExecutionWorker(id=worker_id, form="static", state="lost"))
         await db.flush()
         db.add(ExecutionWorkerClaim(worker_id=worker_id, family=FAMILY, subject_id=run_id))
         await db.commit()

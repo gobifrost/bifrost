@@ -40,7 +40,7 @@ async def test_viewer_receives_positions_after_subscribe_and_remote_queue_change
             # A live assigned executor keeps the real pool/reconciler from
             # consuming these queue fixtures. No launcher or job is started.
             db.add(ExecutionWorker(
-                id=holding_worker, form="static", state="ready", slots=0,
+                id=holding_worker, form="static", state="ready",
                 supported_handlers=[], heartbeat_at=datetime.now(timezone.utc),
             ))
             for index, execution_id in enumerate((first, watched)):

@@ -11974,6 +11974,8 @@ export interface components {
             success: boolean;
             /** Message */
             message: string;
+            /** Warnings */
+            warnings?: string[];
             /** Models */
             models?: components["schemas"]["LLMModelInfo"][] | null;
         };
@@ -12320,6 +12322,8 @@ export interface components {
             success: boolean;
             /** Message */
             message: string;
+            /** Warnings */
+            warnings?: string[];
         };
         /** AIModelsResponse */
         AIModelsResponse: {

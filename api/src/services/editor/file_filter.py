@@ -90,23 +90,75 @@ def is_excluded_path(path: str | Path) -> bool:
     return False
 
 
-def normalize_workspace_delete_path(path: str) -> str:
-    """Validate a destructive editor target, allowing one trailing folder slash.
+def _normalize_workspace_path(
+    path: str,
+    *,
+    allow_root: bool,
+    preserve_trailing_slash: bool,
+    operation: str,
+) -> str:
+    """Validate a raw workspace spelling without decoding or normalizing it.
 
-    Inspect the raw spelling before pathlib can collapse empty/dot components.
-    Root listings are valid for reads, but must never be deletion targets.
+    Workspace object keys are opaque strings. In particular, percent-encoded
+    characters must stay opaque rather than being decoded into a traversal
+    component before reaching object storage.
     """
-    if "\x00" in path or "\\" in path:
-        raise ValueError("Invalid workspace delete path")
+    if not isinstance(path, str) or "\x00" in path or "\\" in path:
+        raise ValueError(f"Invalid workspace {operation} path")
+    if path in {"", "/"}:
+        if allow_root:
+            return ""
+        raise ValueError(f"Workspace {operation} path must name a file or folder")
     if path.startswith("/") or PureWindowsPath(path).drive:
-        raise ValueError("Workspace delete path must be relative")
+        raise ValueError(f"Workspace {operation} path must be relative")
 
-    target = path.removesuffix("/")
+    trailing_slash = path.endswith("/")
+    target = path[:-1] if trailing_slash else path
     if any(part in {"", ".", ".."} for part in target.split("/")):
-        raise ValueError("Workspace delete path must name a normalized file or folder")
+        raise ValueError(f"Workspace {operation} path must be normalized")
     if is_excluded_path(target):
         raise ValueError("Path is excluded from workspace operations")
+    return path if preserve_trailing_slash and trailing_slash else target
+
+
+def normalize_workspace_delete_path(path: str) -> str:
+    """Validate a destructive editor target, allowing one trailing folder slash."""
+    return _normalize_workspace_path(
+        path,
+        allow_root=False,
+        preserve_trailing_slash=False,
+        operation="delete",
+    )
+
+
+def normalize_workspace_file_path(path: str) -> str:
+    """Validate a single workspace file target before reads or writes."""
+    target = _normalize_workspace_path(
+        path, allow_root=False, preserve_trailing_slash=False, operation="file",
+    )
+    if path.endswith("/"):
+        raise ValueError("Workspace file path must name a file")
     return target
+
+
+def normalize_workspace_folder_path(path: str) -> str:
+    """Validate a folder creation target, allowing one trailing slash."""
+    return _normalize_workspace_path(
+        path,
+        allow_root=False,
+        preserve_trailing_slash=False,
+        operation="folder",
+    )
+
+
+def normalize_workspace_list_prefix(path: str | None) -> str:
+    """Validate an optional workspace listing prefix, including the root."""
+    return _normalize_workspace_path(
+        "" if path is None else path,
+        allow_root=True,
+        preserve_trailing_slash=True,
+        operation="list",
+    )
 
 
 def is_allowed_path(path: str | Path) -> bool:

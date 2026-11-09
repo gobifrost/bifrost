@@ -1,0 +1,15 @@
+{
+  "key": "pr:1294",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal slot-field deprecation preserves existing admission, diagnostics and upgrade behavior; no customer-facing announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1294",
+      "https://github.com/gobifrost/bifrost/issues/1053",
+      "Jack approved this preparatory refactor and protected merge in the native issue task; the original columns remain.",
+      "380 focused checks passed; after the current-main migration update, 144 focused upgrade/admission/diagnostics checks and API quality passed. Mixed legacy/new writers and prior-schema upgrade/downgrade were verified."
+    ]
+  }
+}

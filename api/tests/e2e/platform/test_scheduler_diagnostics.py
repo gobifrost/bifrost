@@ -150,7 +150,7 @@ async def test_api_control_replicas_are_listed_but_not_counted_as_capacity(
             id=replica_id,
             hostname="api-control-diagnostics-test",
             pid=1,
-            job_slots=0,
+            runs_platform_jobs=False,
             started_at=now,
             last_heartbeat_at=now,
             memory_current_bytes=900,

@@ -124,7 +124,7 @@ async def test_loop_executor(async_session_factory):
     worker_id = uuid4()
     async with async_session_factory() as db:
         db.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=1,
+            id=worker_id, form="static", state="ready", resource_class="standard",
             hostname="e2e-test-loop", memory_budget_bytes=2 * TARGET_REQUEST_BYTES,
             heartbeat_at=func.now(),
         ))

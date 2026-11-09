@@ -128,6 +128,27 @@ def test_application_to_public_populates_solution_id(sol_id) -> None:
     )
     assert app.solution_id == sol_id
     assert app.is_solution_managed is (sol_id is not None)
+    assert app.repo_path is None
+
+
+def test_application_to_public_includes_repo_path_when_requested() -> None:
+    from src.routers.applications import application_to_public
+    from src.services.application_sdk_status import CurrentApplicationSdkMetadata
+
+    app = asyncio.run(
+        application_to_public(
+            _FakeAppRow(None),
+            _FakeAppRepo(),
+            current_sdk=CurrentApplicationSdkMetadata(
+                package_version="1.0.1",
+                fingerprint="current-fp",
+                contract_version=1,
+            ),
+            include_repo_path=True,
+        )
+    )
+
+    assert app.repo_path == "apps/my-app"
 
 
 def test_application_to_public_populates_sdk_fields(monkeypatch) -> None:

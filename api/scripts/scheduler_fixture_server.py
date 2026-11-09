@@ -127,7 +127,7 @@ def _chat_content(request: dict[str, object]) -> str:
 
 
 def chat_completion_payload(request: dict[str, object]) -> dict[str, object]:
-    return {
+    payload: dict[str, object] = {
         "id": "chatcmpl-fixture",
         "object": "chat.completion",
         "created": 0,
@@ -145,13 +145,16 @@ def chat_completion_payload(request: dict[str, object]) -> dict[str, object]:
             "total_tokens": 2,
         },
     }
+    if request.get("model") == "fixture-missing-usage":
+        del payload["usage"]
+    return payload
 
 
 def chat_completion_stream_events(
     request: dict[str, object],
 ) -> list[dict[str, object] | str]:
     model = request.get("model", "fixture-chat")
-    return [
+    events: list[dict[str, object] | str] = [
         {
             "id": "chatcmpl-fixture",
             "object": "chat.completion.chunk",
@@ -198,6 +201,11 @@ def chat_completion_stream_events(
         },
         "[DONE]",
     ]
+    if model == "fixture-missing-usage":
+        for event in events:
+            if isinstance(event, dict):
+                event.pop("usage", None)
+    return events
 
 
 def encode_sse_events(events: list[dict[str, object] | str]) -> bytes:

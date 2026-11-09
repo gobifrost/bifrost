@@ -247,7 +247,7 @@ class S3ObjectStore:
 
     async def signed_request(
         self, key: str, method: Literal["GET", "PUT"], *, expires_in: int = 3600,
-        content_type: str | None = None, response_content_type: str | None = None,
+        content_type: str | None = None, content_length: int | None = None, response_content_type: str | None = None,
         response_content_disposition: str | None = None,
     ) -> SignedRequest:
         if not 1 <= expires_in <= 604800:
@@ -258,9 +258,14 @@ class S3ObjectStore:
             raise ValueError("Response overrides apply only to signed downloads")
         if method == "GET" and content_type is not None:
             raise ValueError("Content type is an upload request header; use a download response override")
-        params = {"Bucket": self._namespace, "Key": key}
+        if content_length is not None:
+            if method != "PUT" or isinstance(content_length, bool) or not isinstance(content_length, int) or content_length < 0:
+                raise ValueError("Content length must be a nonnegative integer for a signed upload")
+        params: dict[str, object] = {"Bucket": self._namespace, "Key": key}
         if content_type is not None:
             params["ContentType"] = content_type
+        if content_length is not None:
+            params["ContentLength"] = content_length
         if response_content_type is not None:
             params["ResponseContentType"] = response_content_type
         if response_content_disposition is not None:
@@ -273,7 +278,10 @@ class S3ObjectStore:
             # Existing local/browser proxy changes Host to the private S3 endpoint.
             parts = urlsplit(url)
             url = f"{self._public_prefix.rstrip('/')}{parts.path}?{parts.query}"
-        return SignedRequest(method, url, {"Content-Type": content_type} if content_type is not None else {}, expires_in)
+        headers = {"Content-Type": content_type} if content_type is not None else {}
+        if content_length is not None:
+            headers["Content-Length"] = str(content_length)
+        return SignedRequest(method, url, headers, expires_in)
 
 
 class SyncS3ObjectStore:

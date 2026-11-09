@@ -64,7 +64,7 @@ async def test_summarize_failure_marks_run_failed(
     db_session.add(run)
     worker_id = uuid4()
     claim_id = uuid4()
-    db_session.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+    db_session.add(ExecutionWorker(id=worker_id, form="static", state="ready"))
     await db_session.flush()
     db_session.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family="agent_summary", subject_id=run.id))
     # Use commit so the handler's separate session sees the row.

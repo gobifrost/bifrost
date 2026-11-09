@@ -1186,15 +1186,17 @@ class AIModelService:
                 listing.models,
             )
         failures = []
+        warnings = []
         for profile_id, name in profiles:
             result = await self.verify_profile(profile_id)
+            warnings.extend(f"{name}: {warning}" for warning in result.warnings)
             if not result.success:
                 failures.append(f"{name}: {result.message}")
         if failures:
-            return ProviderTestResult(False, " ".join(failures))
+            return ProviderTestResult(False, " ".join(failures), warnings=warnings)
         names = [name for _, name in profiles]
         subject = names[0] if len(names) == 1 else f"All {len(names)} profiles"
-        return ProviderTestResult(True, f"{subject} answered a test request.")
+        return ProviderTestResult(True, f"{subject} answered a test request.", warnings=warnings)
 
     async def verify_profile(self, profile_id: UUID) -> ProviderTestResult:
         """Send one short request through the profile's own runtime path.
@@ -1213,7 +1215,7 @@ class AIModelService:
         try:
             config = await self._config_for_profile(profile)
             async with asyncio.timeout(PROFILE_VERIFY_TIMEOUT_SECONDS):
-                await PydanticAIClient(config).complete(
+                response = await PydanticAIClient(config).complete(
                     [LLMMessage(role="user", content="Reply with the word OK.")]
                 )
         except TimeoutError:
@@ -1232,7 +1234,14 @@ class AIModelService:
                 },
             )
             return ProviderTestResult(False, describe_provider_error(error))
-        return ProviderTestResult(True, "The model answered a test request.")
+        warnings = []
+        if not response.input_tokens or not response.output_tokens:
+            warnings.append(
+                "Token usage was unavailable or incomplete for this test. "
+                "Usage totals and cost estimates may be incomplete, and token budgets "
+                "may not be fully enforced. You can still use this model."
+            )
+        return ProviderTestResult(True, "The model answered a test request.", warnings=warnings)
 
     async def list_models(self, connection_id: UUID) -> list[LLMModelInfo] | None:
         """Catalog models for a catalog-linked connection, else the live list.

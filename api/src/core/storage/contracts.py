@@ -215,7 +215,7 @@ class ObjectStore(Protocol):
     @abstractmethod
     async def signed_request(
         self, key: str, method: Literal["GET", "PUT"], *, expires_in: int = 3600,
-        content_type: str | None = None, response_content_type: str | None = None,
+        content_type: str | None = None, content_length: int | None = None, response_content_type: str | None = None,
         response_content_disposition: str | None = None,
     ) -> SignedRequest:
         raise NotImplementedError

@@ -147,10 +147,9 @@ class FileOperationsService:
         Raises:
             ValueError: If path is excluded (system files, caches, etc.)
         """
-        # Check if path is excluded (system files, caches, metadata, etc.)
-        from src.services.editor.file_filter import is_excluded_path
-        if is_excluded_path(path):
-            raise ValueError(f"Path is excluded from workspace: {path}")
+        from src.services.editor.file_filter import normalize_workspace_file_path
+
+        path = normalize_workspace_file_path(path)
 
         # New Python source must be accepted before any durable write or side
         # effect.  Runtime decorators keep their historical ``**kwargs``

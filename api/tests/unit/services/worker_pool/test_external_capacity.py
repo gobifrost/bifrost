@@ -159,7 +159,7 @@ async def test_external_admission_binds_only_the_first_process(db, capacity):
         ) is None
     assert await claims.admit_external_worker(
         worker_id, resource_uid=uid, launcher_id=launcher_id, version="test-worker", hostname="physical-worker",
-    ) == 0
+    ) == worker_id
     assert await claims.admit_external_worker(
         worker_id, resource_uid=uid, launcher_id=uuid4(), version="test-worker", hostname="replacement",
     ) is None
@@ -306,7 +306,7 @@ async def test_lost_provider_resource_fences_its_running_work_before_cleanup(db,
 async def test_managed_provider_forms_share_the_worker_ceiling(db, capacity):
     async with db.context() as session:
         session.add_all([
-            ExecutionWorker(form=form, state="draining", slots=0, memory_limit_bytes=2 * GIB)
+            ExecutionWorker(form=form, state="draining", memory_limit_bytes=2 * GIB)
             for form in ("job", "external")
         ])
     await _accept_pool_run()
@@ -316,13 +316,13 @@ async def test_managed_provider_forms_share_the_worker_ceiling(db, capacity):
 async def test_external_workers_preserve_the_shared_warm_minimum(db, capacity):
     await _store_policy(db.sessions, replace(capacity.policy, warm_workers=1))
     async with db.context() as session:
-        first = ExecutionWorker(form="external", state="ready", slots=0)
+        first = ExecutionWorker(form="external", state="ready")
         session.add(first)
         await session.flush()
         first_id = first.id
     assert not await claims.begin_idle_drain(first_id)
     async with db.context() as session:
-        session.add(ExecutionWorker(form="external", state="ready", slots=0))
+        session.add(ExecutionWorker(form="external", state="ready"))
     assert await claims.begin_idle_drain(first_id)
 
 

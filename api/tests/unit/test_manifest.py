@@ -381,6 +381,70 @@ forms:
     assert "forms/form1.form.yaml" in paths
 
 
+@pytest.mark.parametrize(
+    "path",
+    ["", ".", "..", "workflows/../escape.py", "/tmp/escape.py", "C:escape.py", "forms\\legacy.yaml", ".git/config", ".bifrost/forms.yaml", "forms/\0legacy.yaml"],
+)
+def test_declared_entity_paths_are_rejected_without_changing_manifest_models(path):
+    """Entity paths must remain portable workspace-relative spellings."""
+    from bifrost.manifest import Manifest, ManifestWorkflow, get_all_paths, validate_manifest
+
+    manifest = Manifest(workflows={
+        "workflow": ManifestWorkflow(
+            id=str(uuid4()), name="workflow", path=path, function_name="run",
+        )
+    })
+
+    assert any("unsafe workspace path" in error for error in validate_manifest(manifest))
+    with pytest.raises(ValueError, match="unsafe workspace path"):
+        get_all_paths(manifest)
+
+
+def test_declared_entity_paths_allow_normal_paths_and_missing_legacy_companions():
+    """Normal POSIX paths and deprecated absent form/agent paths remain valid."""
+    from bifrost.manifest import (
+        Manifest, ManifestAgent, ManifestApp, ManifestForm, ManifestWorkflow,
+        get_all_paths, validate_manifest,
+    )
+
+    manifest = Manifest(
+        workflows={"workflow": ManifestWorkflow(id=str(uuid4()), path="workflows/run.py", function_name="run")},
+        forms={"form": ManifestForm(id=str(uuid4()), path=None)},
+        agents={"agent": ManifestAgent(id=str(uuid4()), path=None)},
+        apps={"app": ManifestApp(id=str(uuid4()), path="apps/dashboard")},
+    )
+
+    assert validate_manifest(manifest) == []
+    assert get_all_paths(manifest) == {"workflows/run.py", "apps/dashboard"}
+
+
+def test_manifest_reader_refuses_a_manifest_symlink_outside_its_workspace(tmp_path):
+    """Manifest parsing itself must not follow an external .bifrost symlink."""
+    from bifrost.manifest import read_manifest_from_dir
+
+    outside = tmp_path.parent / f"outside-manifest-{uuid4()}"
+    outside.mkdir()
+    (outside / "workflows.yaml").write_text("workflows: {}\n")
+    (tmp_path / ".bifrost").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(ValueError, match="resolve inside the workspace"):
+        read_manifest_from_dir(tmp_path / ".bifrost")
+
+
+def test_manifest_reader_refuses_an_external_split_file_symlink(tmp_path):
+    """Individual split manifest files receive the same confinement check."""
+    from bifrost.manifest import read_manifest_from_dir
+
+    outside = tmp_path.parent / f"outside-workflows-{uuid4()}.yaml"
+    outside.write_text("workflows: {}\n")
+    manifest_dir = tmp_path / ".bifrost"
+    manifest_dir.mkdir()
+    (manifest_dir / "workflows.yaml").symlink_to(outside)
+
+    with pytest.raises(ValueError, match="resolve inside the workspace"):
+        read_manifest_from_dir(manifest_dir)
+
+
 # =============================================================================
 # Split manifest (per-entity-type files) tests
 # =============================================================================
