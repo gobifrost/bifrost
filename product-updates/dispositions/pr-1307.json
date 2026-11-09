@@ -1,0 +1,18 @@
+{
+  "key": "pr:1307",
+  "classification": "highlight",
+  "entry_ids": [
+    "f6c52c7d-f3dd-4d34-9381-d9188b0faa49"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1307"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1307",
+      "Draft copy prepared under Thomas Bray's publication authorization. Human copy review under docs/product-updates-authoring.md and maintainer/security review remain pending; no approval is attested."
+    ]
+  }
+}
