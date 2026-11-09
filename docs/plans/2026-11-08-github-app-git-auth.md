@@ -246,6 +246,7 @@ passed without skips or retries; the feature took 16.9 seconds. The final
 screenshot was inspected. Type checking and lint passed, with one existing
 console warning in `e2e/support/seed-review-pack.ts`. OpenAPI types were generated
 from the running API, and action pins and generated skill mirrors passed.
+`./test.sh quality api` passed Pyright with zero errors/warnings and Ruff.
 
 The initial combined browser/job case exceeded its timing budget. Its durable
 job was moved to the backend E2E above; all original contracts remain covered.
