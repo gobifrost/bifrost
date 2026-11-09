@@ -206,3 +206,50 @@ permission change, ownership transfer or production deployment.
 - [Installation setup URL and verification](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/about-the-setup-url)
 - [Installation authentication](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation)
 - [App permissions](https://docs.github.com/en/apps/creating-github-apps/registering-a-github-app/choosing-permissions-for-a-github-app)
+
+## Local Qualification
+
+The focused backend and contract run passed 294 cases with no skips:
+
+```bash
+./test.sh tests/unit/test_github_git_app.py \
+  tests/unit/test_github_connect.py tests/unit/services/test_github_api.py \
+  tests/unit/services/test_github_sync.py tests/unit/test_git_operation_platform_job.py \
+  tests/unit/routers/test_github_sync_retry.py tests/unit/test_github_sync_app_preview.py \
+  tests/unit/test_compose_test_harness.py tests/unit/test_contract_version.py \
+  tests/unit/test_dto_flags.py tests/unit/services/test_operation_inventory.py \
+  tests/unit/test_skill_appendix_fresh.py tests/e2e/api/test_github_git_app.py \
+  tests/e2e/platform/test_git_sync_local.py::TestFirstGitConnection \
+  tests/e2e/platform/test_git_sync_local.py::TestRoundTrip::test_workflow_survives_round_trip \
+  -q --durations=6
+```
+
+After extending the connection case to execute the real job, the five endpoint
+tests passed again with `./test.sh tests/e2e/api/test_github_git_app.py -q
+--durations=0`. Exactly one `workspace.git` job completed on its first attempt;
+its case took 14.7 seconds, primarily durable worker startup and Git publication.
+It verified a commit in the local bare remote and App configuration activation
+after removing the setup user token. The other endpoint cases use no jobs.
+
+Client verification:
+
+```bash
+./test.sh client unit -- src/services/githubGitApp.test.ts \
+  src/pages/settings/GitHubAppSetup.test.tsx src/pages/settings/GitHub.test.tsx \
+  --pool=threads
+./test.sh client e2e --screenshots e2e/github-app-git.admin.spec.ts
+(cd client && npm run tsc && npm run lint)
+```
+
+The three unit files passed 15 cases. Browser setup and the feature journey
+passed without skips or retries; the feature took 16.9 seconds. The final
+screenshot was inspected. Type checking and lint passed, with one existing
+console warning in `e2e/support/seed-review-pack.ts`. OpenAPI types were generated
+from the running API, and action pins and generated skill mirrors passed.
+
+The initial combined browser/job case exceeded its timing budget. Its durable
+job was moved to the backend E2E above; all original contracts remain covered.
+No retries, skips or longer test deadlines were added. GitHub consent and HTTP
+responses are synthetic throughout. Full local suites were not run. Local
+CodeQL could not run because its CLI is absent; hosted CodeQL, manual sensitive
+path review and the normal complete-suite merge-queue gate remain required.
