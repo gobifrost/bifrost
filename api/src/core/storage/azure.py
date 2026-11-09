@@ -21,14 +21,6 @@ from src.core.storage.contracts import (
 STREAM_PART_SIZE = 8 * 1024**2
 COPY_PART_SIZE = 256 * 1024**2
 
-_CONTENT_HEADERS = {
-    "ContentType": "content_type",
-    "ContentDisposition": "content_disposition",
-    "ContentEncoding": "content_encoding",
-    "ContentLanguage": "content_language",
-    "CacheControl": "cache_control",
-}
-
 
 def _service_error(error: Any) -> StorageError:
     from azure.core.exceptions import ServiceRequestError, ServiceResponseError

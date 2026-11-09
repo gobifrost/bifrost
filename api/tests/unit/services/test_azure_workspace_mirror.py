@@ -260,8 +260,6 @@ async def _chunks(content):
 
 @pytest.fixture
 def backed(monkeypatch):
-    import src.core.storage.azure_mirror as mirror_module
-
     backing = FakeStore()
 
     class Factory:
@@ -271,7 +269,7 @@ def backed(monkeypatch):
         def from_settings(self, settings):
             return backing
 
-    monkeypatch.setattr(mirror_module, "AzureObjectStore", Factory())
+    monkeypatch.setattr("src.core.storage.azure_mirror.AzureObjectStore", Factory())
     return backing
 
 

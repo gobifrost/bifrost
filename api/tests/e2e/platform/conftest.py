@@ -404,6 +404,7 @@ def _ensure_azure_test_container():
             try:
                 await service.create_container(settings.azure_blob_container)
             except ResourceExistsError:
+                # The disposable container persists across resets; reuse it.
                 pass
 
     loop = asyncio.new_event_loop()
