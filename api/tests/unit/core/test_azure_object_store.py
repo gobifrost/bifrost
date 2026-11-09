@@ -534,13 +534,15 @@ async def test_copy_reports_destination_collisions_on_every_path(store, monkeypa
         modified_at=None, properties=ContentProperties(), metadata={}, http_etag='"source"',
     )
     # Empty-source path: the conditional destination write loses the race.
+    from dataclasses import replace
+
     blob.download_blob = AsyncMock(
         return_value=_stream([b""], _props(size=0, etag='"source"'))
     )
     blob.upload_blob = AsyncMock(side_effect=_failure(409, "BlobAlreadyExists"))
     with pytest.raises(CopyConditionFailed) as raised:
         await store.copy(
-            source._replace(size=0), "dest", options=CopyOptions(create_only=True),
+            replace(source, size=0), "dest", options=CopyOptions(create_only=True),
         )
     assert raised.value.side == "destination"
     # Streaming fallback path: the conditional single-part upload loses the race.
