@@ -1,0 +1,19 @@
+{
+  "key": "pr:1290",
+  "classification": "highlight",
+  "entry_ids": [
+    "717904df-f539-49ec-9944-085985ce826c"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1290"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1290",
+      "https://github.com/gobifrost/bifrost/issues/1193",
+      "Jack directed the combined remaining compatible PR and protected merge in the private owner conversation: \u201cSo one big PR? If so just send it.\u201d The notice repeats the published PR title and opening paragraph. Formal release security review remains required."
+    ]
+  }
+}
