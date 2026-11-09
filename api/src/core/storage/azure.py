@@ -571,10 +571,10 @@ class AzureObjectStore:
             # Azure's async pager advances continuation_token while the page is
             # consumed. Reading it before iterating the page silently truncates
             # listings at the first service page.
-            if hasattr(page, "__aiter__"):
-                blobs = [blob async for blob in page]
-            else:
+            if isinstance(page, list):
                 blobs = list(page)
+            else:
+                blobs = [blob async for blob in cast(AsyncIterator[Any], page)]
             next_token = getattr(pager, "continuation_token", None)
         from azure.storage.blob.aio import BlobPrefix
 

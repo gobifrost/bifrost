@@ -97,7 +97,7 @@ def test_s3_remains_default_and_azure_selects_blob_store():
 
 
 def test_provider_identity_covers_every_credential_bearing_field():
-    base = storage_identity(settings())
+    base: tuple = storage_identity(settings())
     assert base[0] == "azure_blob"
     assert storage_identity(settings(azure_blob_container="other")) != base
     assert storage_identity(settings(azure_blob_account_url="https://other.blob.core.windows.net")) != base
