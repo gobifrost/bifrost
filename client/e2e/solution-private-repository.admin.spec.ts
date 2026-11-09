@@ -147,7 +147,7 @@ test("installs a Solution from a read-only private source", async ({
 					(
 						await api.delete(
 							`/api/github/app/solution-sources/${sourceId}`,
-							{ params: { organization_id: "" } },
+							{ params: { organization_id: "GLOBAL" } },
 						)
 					).ok(),
 				)
