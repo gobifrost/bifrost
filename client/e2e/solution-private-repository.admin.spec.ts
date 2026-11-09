@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/api-fixture";
 
-test("authorizes a read-only private source and installs a Solution", async ({
+test("installs a Solution from a read-only private source", async ({
 	page,
 	api,
 }) => {
@@ -12,73 +12,64 @@ test("authorizes a read-only private source and installs a Solution", async ({
 	expect(fixture.ok()).toBeTruthy();
 	const { slug } = await fixture.json();
 	let solutionId: string | undefined;
+	let sourceId: string | undefined;
 	try {
-		await page.goto("/settings/github");
-		const origin = new URL(page.url()).origin;
-		await page.route(
-			"https://github.com/organizations/*/settings/apps/new?*",
-			async (route) => {
-				const state =
-					new URL(route.request().url()).searchParams.get("state") ??
-					"";
-				const manifest = JSON.parse(
-					new URLSearchParams(route.request().postData() ?? "").get(
-						"manifest",
-					) ?? "{}",
-				);
-				expect(manifest.default_permissions).toEqual({
-					contents: "read",
-				});
-				await route.fulfill({
-					status: 302,
-					headers: {
-						location: `${origin}/settings/github?code=fixture-manifest-${slug}&state=${encodeURIComponent(state)}`,
-					},
-				});
+		// Browser consent is covered by github-app-git.admin.spec.ts; source
+		// authorization and scope refusals are covered by backend E2E. Prepare
+		// this source through the real API so this journey owns only the new
+		// private-repository picker -> staged bytes -> install boundary.
+		const manifestResponse = await api.post("/api/github/app/manifest", {
+			data: {
+				owner: "thin-git-app",
+				name: "Solution Fixture App",
+				purpose: "solution",
+				organization_id: null,
 			},
-		);
-		await page.route(
-			"https://github.com/login/oauth/authorize?*",
-			async (route) => {
-				const state =
-					new URL(route.request().url()).searchParams.get("state") ??
-					"";
-				await route.fulfill({
-					status: 302,
-					headers: {
-						location: `${origin}/settings/github?code=fixture-oauth-code&state=${encodeURIComponent(state)}`,
+		});
+		expect(manifestResponse.ok()).toBeTruthy();
+		const manifest = await manifestResponse.json();
+		expect(manifest.manifest.default_permissions).toEqual({
+			contents: "read",
+		});
+		const registrationState = new URL(
+			manifest.registration_url,
+		).searchParams.get("state");
+		expect(
+			(
+				await api.post("/api/github/app/manifest/complete", {
+					data: {
+						code: `fixture-manifest-${slug}`,
+						state: registrationState,
 					},
-				});
+				})
+			).ok(),
+		).toBeTruthy();
+		const authorize = await api.post("/api/github/app/authorize", {
+			data: { setup_id: manifest.setup_id },
+		});
+		expect(authorize.ok()).toBeTruthy();
+		const authorizationState = new URL(
+			(await authorize.json()).authorization_url,
+		).searchParams.get("state");
+		expect(
+			(
+				await api.post("/api/github/app/authorize/complete", {
+					data: {
+						code: "fixture-oauth-code",
+						state: authorizationState,
+					},
+				})
+			).ok(),
+		).toBeTruthy();
+		const select = await api.post("/api/github/app/select", {
+			data: {
+				setup_id: manifest.setup_id,
+				installation_id: 2718,
+				repository_id: 1619,
 			},
-		);
-		await page
-			.getByRole("button", { name: "Solution Repositories", exact: true })
-			.click();
-		await page
-			.getByRole("combobox", { name: "Source Organization" })
-			.click();
-		await page.getByRole("option", { name: /^Global\b/ }).click();
-		const setup = page.getByRole("region", { name: "GitHub App Setup" });
-		await setup
-			.getByLabel("GitHub Owner", { exact: true })
-			.fill("thin-git-app");
-		await setup
-			.getByRole("button", { name: "Create GitHub App", exact: true })
-			.click();
-		await setup
-			.getByRole("button", { name: "Authorize With GitHub" })
-			.click();
-		await setup
-			.getByLabel("Installation", { exact: true })
-			.selectOption("2718");
-		await setup.getByLabel("App Repository").selectOption("1619");
-		await setup
-			.getByRole("button", { name: "Use Selected Repository" })
-			.click();
-		await expect(
-			page.getByRole("region", { name: "Solution GitHub Sources" })
-                .getByRole("listitem").filter({ hasText: "thin-git-app/solutions" }),
-		).toBeVisible();
+		});
+		expect(select.ok()).toBeTruthy();
+		sourceId = (await select.json()).source_id;
 		await page.goto("/solutions");
 		await page
 			.getByRole("button", { name: "Install Solution", exact: true })
@@ -99,10 +90,26 @@ test("authorizes a read-only private source and installs a Solution", async ({
 		await page
 			.getByRole("button", { name: "Resolve", exact: true })
 			.click();
-		await expect(page.getByText(`(${slug})`, { exact: true })).toBeVisible();
+		await expect(
+			page.getByText(`(${slug})`, { exact: true }),
+		).toBeVisible();
+		// Observe the UI's existing status transport; do not start a second job
+		// or assert the detail page while deployment is still running.
+		const deployed = page.waitForResponse(async (response) => {
+			if (
+				!response.url().includes("/api/solutions/deploy-jobs/") ||
+				!response.ok()
+			)
+				return false;
+			const job = await response.json();
+			if (job.status === "failed")
+				throw new Error(job.error || "Solution installation failed");
+			return job.status === "succeeded";
+		});
 		await page
 			.getByRole("button", { name: "Install", exact: true })
 			.click();
+		await deployed;
 		await expect(
 			page.getByRole("heading", {
 				name: "Private Browser Fixture",
@@ -125,15 +132,34 @@ test("authorizes a read-only private source and installs a Solution", async ({
 			)?.id;
 		}
 		if (solutionId)
-			expect(
-				(await api.delete(`/api/solutions/${solutionId}`)).ok(),
-			).toBeTruthy();
-		expect(
-			(
-				await api.post("/__fixture/solution-repository", {
-					data: { action: "delete", slug },
-				})
-			).ok(),
-		).toBeTruthy();
+			expect
+				.soft(
+					(
+						await api.delete(`/api/solutions/${solutionId}`, {
+							params: { confirm: slug },
+						})
+					).ok(),
+				)
+				.toBeTruthy();
+		if (sourceId)
+			expect
+				.soft(
+					(
+						await api.delete(
+							`/api/github/app/solution-sources/${sourceId}`,
+							{ params: { organization_id: "" } },
+						)
+					).ok(),
+				)
+				.toBeTruthy();
+		expect
+			.soft(
+				(
+					await api.post("/__fixture/solution-repository", {
+						data: { action: "delete", slug },
+					})
+				).ok(),
+			)
+			.toBeTruthy();
 	}
 });
