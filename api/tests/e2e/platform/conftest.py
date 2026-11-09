@@ -371,8 +371,8 @@ async def run_retention_lease(db_session: AsyncSession):
     await db_session.commit()
 
 
-@pytest_asyncio.fixture(scope="session", autouse=True)
-async def _ensure_azure_test_container():
+@pytest.fixture(scope="session", autouse=True)
+def _ensure_azure_test_container():
     """Create the configured Blob container once for the Azure test lane.
 
     SeaweedFS accepts writes to missing buckets, but Blob requires the
@@ -385,22 +385,30 @@ async def _ensure_azure_test_container():
     if settings.object_storage_provider != "azure_blob":
         yield
         return
-    from urllib.parse import urlparse
 
-    from azure.core.credentials import AzureNamedKeyCredential
-    from azure.core.exceptions import ResourceExistsError
-    from azure.storage.blob.aio import BlobServiceClient
+    async def _create() -> None:
+        from urllib.parse import urlparse
 
-    key = settings.azure_blob_account_key
-    account = settings.azure_blob_account_name or urlparse(
-        settings.azure_blob_account_url or ""
-    ).hostname.split(".", 1)[0]
-    async with BlobServiceClient(
-        settings.azure_blob_account_url,
-        credential=AzureNamedKeyCredential(account, key.get_secret_value()),
-    ) as service:
-        try:
-            await service.create_container(settings.azure_blob_container)
-        except ResourceExistsError:
-            pass
+        from azure.core.credentials import AzureNamedKeyCredential
+        from azure.core.exceptions import ResourceExistsError
+        from azure.storage.blob.aio import BlobServiceClient
+
+        key = settings.azure_blob_account_key
+        account = settings.azure_blob_account_name or urlparse(
+            settings.azure_blob_account_url or ""
+        ).hostname.split(".", 1)[0]
+        async with BlobServiceClient(
+            settings.azure_blob_account_url,
+            credential=AzureNamedKeyCredential(account, key.get_secret_value()),
+        ) as service:
+            try:
+                await service.create_container(settings.azure_blob_container)
+            except ResourceExistsError:
+                pass
+
+    loop = asyncio.new_event_loop()
+    try:
+        loop.run_until_complete(_create())
+    finally:
+        loop.close()
     yield
