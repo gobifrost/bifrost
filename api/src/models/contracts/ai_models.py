@@ -171,12 +171,14 @@ class AIModelAssignmentResponse(BaseModel):
 class AIConnectionTestResponse(BaseModel):
     success: bool
     message: str
+    warnings: list[str] = Field(default_factory=list)
     models: list[LLMModelInfo] | None = None
 
 
 class AIModelProfileVerifyResponse(BaseModel):
     success: bool
     message: str
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AIModelsResponse(BaseModel):
