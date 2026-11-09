@@ -5,9 +5,10 @@ the OAuth user token. Other cases own callback and credential-migration contract
 """
 
 import copy
+import json
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
@@ -19,7 +20,7 @@ from sqlalchemy import delete, select
 
 from src.models.orm.config import SystemConfig
 from src.models.orm.users import User
-from src.services.github_config import get_github_config, save_github_config
+from src.services.github_config import _get_fernet, get_github_config, save_github_config
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -176,3 +177,43 @@ async def test_verified_pat_migration_replaces_secret_and_keeps_repository(e2e_c
     assert response.json()["auth_kind"] == "app"
     assert "fixture-git-app-installation" not in response.text
     assert "PRIVATE KEY" not in response.text
+
+
+@pytest.mark.asyncio
+async def test_rejected_repository_selection_cannot_be_previewed(e2e_client, platform_admin, db_session, preserve_git_configuration):
+    scope = preserve_git_configuration
+    await save_github_config(db_session, scope, "old-fixture-pat", "https://github.com/thin-git-app/connected", "main", platform_admin.email)
+    before = await get_github_config(db_session, scope)
+    setup, _ = register(e2e_client, platform_admin)
+    authorize(e2e_client, platform_admin, setup["setup_id"])
+
+    selected = e2e_client.post("/api/github/app/select", headers=platform_admin.headers, json={"setup_id": setup["setup_id"], "installation_id": 2718, "repository_id": 1618})
+    assert selected.status_code == 409, selected.text
+    row = (await db_session.execute(select(SystemConfig).where(SystemConfig.key == setup["setup_id"], SystemConfig.category == "github_setup"))).scalar_one()
+    assert json.loads(_get_fernet().decrypt(row.value_bytes))["stage"] == "repository"
+
+    preview = e2e_client.post("/api/github/connect/preview", headers=platform_admin.headers, json={"repository_url": "https://github.com/thin-git-app/workspace", "branch": "main", "app_setup_id": setup["setup_id"]})
+    assert preview.status_code == 409, preview.text
+    current = await get_github_config(db_session, scope)
+    assert current.repo_url == before.repo_url
+    assert current.generation == before.generation
+    assert current.token == "old-fixture-pat"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["/api/github/connect/preview", "/api/github/connect"])
+async def test_expired_setup_cannot_admit_new_connections(e2e_client, platform_admin, db_session, endpoint):
+    setup, _ = register(e2e_client, platform_admin)
+    authorize(e2e_client, platform_admin, setup["setup_id"])
+    selected = e2e_client.post("/api/github/app/select", headers=platform_admin.headers, json={"setup_id": setup["setup_id"], "installation_id": 2718, "repository_id": 1618})
+    assert selected.status_code == 200, selected.text
+    row = (await db_session.execute(select(SystemConfig).where(SystemConfig.key == setup["setup_id"], SystemConfig.category == "github_setup"))).scalar_one()
+    payload = json.loads(_get_fernet().decrypt(row.value_bytes))
+    payload["expires_at"] = (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat()
+    row.value_bytes = _get_fernet().encrypt(json.dumps(payload).encode())
+    await db_session.commit()
+
+    body = ({"repository_url": "https://github.com/thin-git-app/workspace", "branch": "main"}
+            if endpoint.endswith("preview") else {"preview_token": "valid-preview", "strategy": "publish_local"})
+    response = e2e_client.post(endpoint, headers=platform_admin.headers, json={**body, "app_setup_id": setup["setup_id"]})
+    assert response.status_code == 410, response.text
