@@ -509,12 +509,17 @@ class AzureObjectStore:
                 if error.kind == "precondition_failed":
                     raise CopyConditionFailed("source") from error
                 raise
-            return await self.write(
-                destination_key, data,
-                options=WriteOptions(properties=properties, metadata=dict(metadata),
-                                     create_only=opts.create_only,
-                                     expected_version=opts.expected_version),
-            )
+            try:
+                return await self.write(
+                    destination_key, data,
+                    options=WriteOptions(properties=properties, metadata=dict(metadata),
+                                         create_only=opts.create_only,
+                                         expected_version=opts.expected_version),
+                )
+            except StorageError as error:
+                if error.kind == "precondition_failed":
+                    raise CopyConditionFailed("destination") from error
+                raise
         try:
             return await self._copy_server(blob, source, destination_key, properties, metadata, conditions)
         except StorageError as error:
@@ -534,12 +539,17 @@ class AzureObjectStore:
             async def streamed() -> AsyncIterator[bytes]:
                 yield data
 
-            return await self.write_stream(
-                destination_key, streamed(),
-                options=WriteOptions(properties=properties, metadata=dict(metadata),
-                                     create_only=opts.create_only,
-                                     expected_version=opts.expected_version),
-            )
+            try:
+                return await self.write_stream(
+                    destination_key, streamed(),
+                    options=WriteOptions(properties=properties, metadata=dict(metadata),
+                                         create_only=opts.create_only,
+                                         expected_version=opts.expected_version),
+                )
+            except StorageError as write_error:
+                if write_error.kind == "precondition_failed":
+                    raise CopyConditionFailed("destination") from write_error
+                raise
 
     async def _copy_server(
         self, blob: Any, source: ObjectInfo, destination_key: str,
