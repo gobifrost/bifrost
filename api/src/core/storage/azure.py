@@ -502,8 +502,13 @@ class AzureObjectStore:
         conditions = _conditions(opts)
         blob = self._container.get_blob_client(destination_key)
         if source.size == 0:
-            async with self.open_read(source.key, expected_version=source.version) as read:
-                data = await read.body.read()
+            try:
+                async with self.open_read(source.key, expected_version=source.version) as read:
+                    data = await read.body.read()
+            except StorageError as error:
+                if error.kind == "precondition_failed":
+                    raise CopyConditionFailed("source") from error
+                raise
             return await self.write(
                 destination_key, data,
                 options=WriteOptions(properties=properties, metadata=dict(metadata),
@@ -518,8 +523,13 @@ class AzureObjectStore:
             # Emulators such as Azurite do not implement Put Block From URL.
             # Fall back to a conditional read plus ordinary block upload, like
             # S3's stream copy mode for providers without conditional part copy.
-            async with self.open_read(source.key, expected_version=source.version) as read:
-                data = await read.body.read()
+            try:
+                async with self.open_read(source.key, expected_version=source.version) as read:
+                    data = await read.body.read()
+            except StorageError as read_error:
+                if read_error.kind == "precondition_failed":
+                    raise CopyConditionFailed("source") from read_error
+                raise
 
             async def streamed() -> AsyncIterator[bytes]:
                 yield data

@@ -508,6 +508,23 @@ async def test_copy_falls_back_to_streaming_when_server_copy_is_unimplemented(st
 
 
 @pytest.mark.asyncio
+async def test_streaming_fallback_reports_a_stale_source(store, monkeypatch):
+    from src.core.storage.contracts import CopyConditionFailed, ObjectInfo
+
+    blob = store._container.get_blob_client.return_value
+    blob.stage_block_from_url = AsyncMock(side_effect=_failure(501, "APINotImplemented"))
+    blob.download_blob = AsyncMock(side_effect=_failure(412, "ConditionNotMet"))
+    monkeypatch.setattr(store, "_read_sas_url", AsyncMock(return_value="https://fixture/source"))
+    source = ObjectInfo(
+        key="source", size=8, version=ObjectVersion('"source"'),
+        modified_at=None, properties=ContentProperties(), metadata={}, http_etag='"source"',
+    )
+    with pytest.raises(CopyConditionFailed) as raised:
+        await store.copy(source, "dest")
+    assert raised.value.side == "source"
+
+
+@pytest.mark.asyncio
 async def test_create_only_violation_is_a_precondition_failure(store):
     blob = store._container.get_blob_client.return_value
     blob.upload_blob = AsyncMock(side_effect=_failure(409, "BlobAlreadyExists"))
