@@ -49,6 +49,8 @@ _JWT_MODULES: dict[str, tuple[frozenset[str], frozenset[str]]] = {
         frozenset({"encode"}),
         frozenset({"encode_ec_client_assertion"}),
     ),
+    # External GitHub App assertions only; never Bifrost access tokens.
+    "shared.github_git_app": (frozenset({"encode"}), frozenset({"app_jwt"})),
     # OAuth state parameters.
     "src.services.oauth_state_core": (
         frozenset({"encode", "decode", "ExpiredSignatureError", "InvalidTokenError"}),
@@ -227,6 +229,8 @@ def test_each_known_bypass_is_flagged() -> None:
         ("shared.browser_impersonation", "import jwt\ndef f(c):\n    signer = jwt.PyJWT()\n    return signer.encode(c, 'k')\n"),
         ("shared.browser_impersonation", "import jwt\ndef f(c):\n    return jwt.encode(c, 'k')\n"),
         ("src.core.security", "import jwt\ndef sneaky(c):\n    return jwt.encode(c, 'k')\n"),
+        ("shared.github_git_app", "import jwt\ndef sneaky(c):\n    return jwt.encode(c, 'k')\n"),
+        ("shared.github_git_app", "import jwt\ndef app_jwt(c):\n    return jwt.decode(c, 'k')\n"),
         # Re-exports of PyJWT through a reviewed module.
         (outside, "from src.core.security import jwt\ndef f(c):\n    return jwt.encode(c, 'k')\n"),
         (outside, "from src.core import security\ndef f(c):\n    return security.jwt.encode(c, 'k')\n"),
@@ -260,6 +264,7 @@ def test_each_known_bypass_is_flagged() -> None:
 
 def test_reviewed_uses_pass() -> None:
     assert _jwt_violations("shared.browser_impersonation", "import jwt\ndef f(t):\n    return jwt.decode(t, 'k')\n") == []
+    assert _jwt_violations("shared.github_git_app", "import jwt\ndef app_jwt(c):\n    return jwt.encode(c, 'k')\n") == []
     assert _encode_claims_violations(_TOKENS_MODULE, "def issue_access_token(c):\n    return _encode_claims(c)\n") == []
     assert _jwt_violations(
         "src.services.sneaky", "import json as signing\ndef f(x):\n    return signing.dumps(x).encode()\n"
