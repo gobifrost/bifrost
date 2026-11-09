@@ -6,6 +6,7 @@ import { GitHub } from "./GitHub";
 import { toast } from "sonner";
 
 vi.mock("sonner", () => ({ toast: { error: vi.fn(), success: vi.fn() } }));
+vi.mock("./GitHubAppSetup", () => ({ GitHubAppSetup: () => null }));
 
 const {
 	mockUseGitHubConfig,
@@ -157,6 +158,7 @@ describe("GitHub settings", () => {
 		await waitFor(() =>
 			expect(mockListGitHubBranches).toHaveBeenCalledWith(
 				"fixture-owner/app",
+				undefined,
 			),
 		);
 
@@ -240,6 +242,7 @@ describe("GitHub settings", () => {
 		await waitFor(() =>
 			expect(mockListGitHubBranches).toHaveBeenCalledWith(
 				"fixture-owner/new-repo",
+				undefined,
 			),
 		);
 	});

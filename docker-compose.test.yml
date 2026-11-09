@@ -154,6 +154,7 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
+      - ./api/scripts/test_github_app_api.py:/app/git_app_fixture_api.py:ro
       # Share ONLY the fixture subdir the test-runner stages file:// git repos
       # in, so install/preview-repo can clone them server-side. Do NOT bind the
       # whole LOG_DIR over the api's /tmp/bifrost: the api runs as root and its
@@ -186,7 +187,8 @@ services:
       start_period: 180s
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
-    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # The wrapper supplies only the synthetic App provider; PAT transport stays real.
+    command: ["uvicorn", "git_app_fixture_api:app", "--host", "0.0.0.0", "--port", "8000"]
 
   # Background Worker (Test) - Only started for E2E tests
   # Note: Discovery service has been removed - workflow/form extraction

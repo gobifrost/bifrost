@@ -410,10 +410,16 @@ export async function validateGitHubToken(token: string) {
 /**
  * List branches for a repository (imperative)
  */
-export async function listGitHubBranches(repoFullName: string) {
+export async function listGitHubBranches(
+	repoFullName: string,
+	appSetupId?: string,
+) {
 	const response = await apiClient.GET("/api/github/branches", {
 		params: {
-			query: { repo: repoFullName },
+			query: {
+				repo: repoFullName,
+				...(appSetupId ? { app_setup_id: appSetupId } : {}),
+			},
 		},
 	});
 

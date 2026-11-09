@@ -17,6 +17,7 @@ from src.models.contracts.github import (
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.models.orm.platform_jobs import PlatformJob
 from src.routers import github
+from src.services.github_config import GitHubConfig
 
 
 def test_git_operation_routes_explicitly_return_accepted_platform_jobs() -> None:
@@ -60,12 +61,12 @@ async def test_connect_refuses_unconfirmed_destructive_remote_start(
     monkeypatch.setattr(
         github,
         "get_github_config",
-        AsyncMock(return_value=SimpleNamespace(token="token", repo_url=None)),
+        AsyncMock(return_value=GitHubConfig(token="token", repo_url=None, branch="main", status="connected")),
     )
     monkeypatch.setattr(
         github.GitHubSyncService,
         "load_connect_preview",
-        AsyncMock(return_value=SimpleNamespace(items=[GitConnectItem(
+        AsyncMock(return_value=SimpleNamespace(app_setup_id=None, items=[GitConnectItem(
             path="modules/local.py", classification="local_only", local_sha256="local",
         )])),
     )
@@ -98,6 +99,7 @@ async def test_connect_enqueue_sets_shared_platform_job_location(
     monkeypatch.setattr(github, "enqueue_platform_job", enqueue)
     monkeypatch.setattr(github, "ensure_platform_job_notification", notification)
     monkeypatch.setattr(github, "publish_platform_job_update", AsyncMock())
+    monkeypatch.setattr(github, "get_github_config", AsyncMock(return_value=None))
     response = Response()
 
     accepted = await github._enqueue_git_operation(
@@ -153,7 +155,7 @@ async def test_sync_retry_loads_the_callers_durable_publication_plan(
     monkeypatch.setattr(
         github,
         "get_github_config",
-        AsyncMock(return_value=SimpleNamespace(token="token", repo_url="owner/repo")),
+        AsyncMock(return_value=GitHubConfig(token="token", repo_url="owner/repo", branch="main", status="connected")),
     )
     monkeypatch.setattr(github, "enqueue_platform_job", enqueue)
     monkeypatch.setattr(github, "publish_platform_job_update", AsyncMock())
@@ -187,7 +189,7 @@ async def test_sync_retry_rejects_another_callers_job(
     monkeypatch.setattr(
         github,
         "get_github_config",
-        AsyncMock(return_value=SimpleNamespace(token="token", repo_url="owner/repo")),
+        AsyncMock(return_value=GitHubConfig(token="token", repo_url="owner/repo", branch="main", status="connected")),
     )
     monkeypatch.setattr(github, "enqueue_platform_job", enqueue)
 

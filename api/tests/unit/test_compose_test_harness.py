@@ -49,6 +49,13 @@ def _find_compose() -> pathlib.Path:
 _COMPOSE = _find_compose()
 
 
+def test_github_app_fixture_asgi_module_is_mounted_in_the_api():
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    api = compose["services"]["api"]
+    assert api["command"] == ["uvicorn", "git_app_fixture_api:app", "--host", "0.0.0.0", "--port", "8000"]
+    assert "./api/scripts/test_github_app_api.py:/app/git_app_fixture_api.py:ro" in api["volumes"]
+
+
 def _find_repo_file(path: str) -> pathlib.Path:
     """Locate a repo-root file in-container or on host."""
     candidates = [
@@ -413,6 +420,15 @@ def test_embed_csp_is_not_lost_to_an_internal_index_redirect():
         assert "try_files /index.html =404;" in location
         assert "try_files $uri /index.html;" not in location
         assert "add_header Content-Security-Policy" in location
+
+
+def test_github_callback_does_not_log_cache_or_forward_codes_in_referrers():
+    nginx = _find_repo_file("client/nginx.conf").read_text()
+    location = nginx.split("location = /settings/github {", 1)[1].split("\n    }", 1)[0]
+    assert "access_log off;" in location
+    assert 'add_header Cache-Control "no-store" always;' in location
+    assert 'add_header Referrer-Policy "no-referrer" always;' in location
+    assert "try_files /index.html =404;" in location
 
 
 def test_production_client_assets_are_world_readable():

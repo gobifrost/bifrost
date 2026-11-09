@@ -1,0 +1,19 @@
+{
+  "key": "pr:1295",
+  "classification": "highlight",
+  "entry_ids": [
+    "b862c593-3954-4d65-955d-05e3d7cfba79"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1295"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1295",
+      "https://github.com/gobifrost/bifrost/blob/7234a8af955b5fb1d3aa5902a8cee5495e85ef40/docs/plans/2026-11-08-github-app-git-auth.md#maintainer-follow-up-2026-11-09",
+      "Maintainer-directed review covered callback actor/scope/nonce binding, encrypted App and temporary token custody, repository-limited installation credentials, generation fencing, and Git consumers. Both findings were repaired in 7234a8af9; 233 backend tests, 15 client tests, API/client quality checks, and hosted CI/CodeQL passed. The maintainer approved the feature and merge after reviewing the UI and GitHub's supported manifest registration flow. Entry prose and agent prompt are approved; Thomas Bray's verified contributor credit is retained."
+    ]
+  }
+}
