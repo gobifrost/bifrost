@@ -32,6 +32,25 @@ beforeEach(() => {
 	vi.mocked(service.takeGitAppCallback).mockReturnValue(null);
 });
 
+it("scrubs a late callback without changing an already connected App", async () => {
+	vi.mocked(service.takeGitAppCallback).mockReturnValue({
+		code: "late",
+		state: "manifest.state",
+	});
+	render(
+		<GitHubAppSetup
+			onReady={vi.fn()}
+			onMigrated={vi.fn()}
+			connectedWithApp={true}
+		/>,
+	);
+	await waitFor(() =>
+		expect(service.takeGitAppCallback).toHaveBeenCalledOnce(),
+	);
+	expect(service.completeGitAppCallback).not.toHaveBeenCalled();
+	expect(service.getGitAppSetup).not.toHaveBeenCalled();
+});
+
 it("creates an App with least permissions and explicit visibility", async () => {
 	const user = userEvent.setup();
 	render(

@@ -164,7 +164,11 @@ do not carry forward the broad native integration architecture from #1274.
 
 - One browser happy path proves manifest submission, mocked GitHub conversion,
   OAuth authorization, installation/repository selection and the existing
-  connect preview/confirmation. It requires no manually copied credentials.
+  connection-review UI. It requires no manually copied credentials. One backend
+  E2E runs the real `workspace.git` connection job with the temporary OAuth token
+  removed, verifies the remote commit and active App configuration, and checks
+  exported bytes for secret material. Exactly one job proves the API-to-worker
+  boundary; browser setup and durable work retain their existing test budgets.
 - Focused endpoint/database tests prove encrypted credential persistence,
   registration-callback replay/concurrency, uncertain conversion, restart/resume,
   denied/pending installation, expired/mismatched state, authorization changes,

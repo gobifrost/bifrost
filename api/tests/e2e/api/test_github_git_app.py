@@ -1,7 +1,7 @@
 """Real settings endpoints and storage with the test-stack GitHub provider.
 
-No worker jobs here: the single browser journey covers first-connect dispatch.
-These cases own the callback, secret-storage and credential-migration contracts.
+Exactly one workspace.git job proves first-connect dispatch without retaining
+the OAuth user token. Other cases own callback and credential-migration contracts.
 """
 
 import copy
@@ -99,8 +99,11 @@ def test_authorization_callback_is_single_use_and_repository_binding_is_verified
 
 @pytest.mark.asyncio
 async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration):
-    from shared.github_git_app import pending_config
+    import asyncio
+    from pathlib import Path
+    from git import Repo
     from src.core.cache.redis_client import get_shared_redis
+    from tests.e2e.platform.thin_live_helpers import wait_for_job
     setup, _ = register(e2e_client, platform_admin)
     authorize(e2e_client, platform_admin, setup["setup_id"])
     selected = e2e_client.post("/api/github/app/select", headers=platform_admin.headers, json={"setup_id": setup["setup_id"], "installation_id": 2718, "repository_id": 1618})
@@ -108,10 +111,24 @@ async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(
     assert selected.json()["stage"] == "ready"
     redis = await get_shared_redis()
     await redis.delete(f"github:setup-user-token:{setup['setup_id']}")
-    config = await pending_config(db_session, UUID(setup["setup_id"]), str(platform_admin.user_id), preserve_git_configuration)
-    assert config.auth_kind == "app"
-    assert config.app["repository_id"] == 1618
-    assert config.token is None
+    preview = e2e_client.post("/api/github/connect/preview", headers=platform_admin.headers, json={"repository_url": "https://github.com/thin-git-app/workspace", "branch": "main", "app_setup_id": setup["setup_id"]})
+    assert preview.status_code == 200, preview.text
+    queued = e2e_client.post("/api/github/connect", headers=platform_admin.headers, json={"preview_token": preview.json()["token"], "strategy": "publish_local", "app_setup_id": setup["setup_id"]})
+    assert queued.status_code == 202, queued.text
+    try:
+        job = await asyncio.to_thread(wait_for_job, e2e_client, platform_admin.headers, queued.json()["job_id"], "workspace.git")
+        assert job["attempt"] == 1
+        config = await get_github_config(db_session, preserve_git_configuration)
+        assert config.auth_kind == "app" and config.token is None
+        assert config.app["repository_id"] == 1618
+        remote = Repo(Path("/tmp/bifrost/solution-repo-fixtures/thin-github/thin-git-app/workspace.git"))
+        exported = b"\n".join(item.data_stream.read() for item in remote.heads.main.commit.tree.traverse() if item.type == "blob")
+        for secret in [b"PRIVATE KEY", b"fixture-secret", b"fixture-git-app-installation"]:
+            assert secret not in exported
+            assert secret.decode() not in str(job)
+    finally:
+        disconnected = e2e_client.post("/api/github/disconnect", headers=platform_admin.headers)
+        assert disconnected.status_code == 200, disconnected.text
 
 
 def test_uncertain_registration_does_not_repeat_conversion(e2e_client, platform_admin):

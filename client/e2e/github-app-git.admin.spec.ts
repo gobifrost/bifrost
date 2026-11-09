@@ -1,10 +1,11 @@
-import { test, expect, waitForPlatformJob } from "./fixtures/api-fixture";
+import { test, expect } from "./fixtures/api-fixture";
 
-test("creates an App, authorizes it and connects the workspace", async ({
+test("registers and authorizes an App for connection review", async ({
 	page,
 	api,
 }) => {
-	// Exactly one workspace.git job proves the existing UI-to-worker connection.
+	// The backend E2E owns the one real workspace.git job. This journey proves
+	// GitHub browser handoffs through the existing connection-review UI.
 	// The provider fixture supplies synthetic credentials; only GitHub's browser
 	// consent pages are replaced here. Bifrost API calls use live services.
 	const settingsResponse = await page.goto("/settings/github");
@@ -72,24 +73,7 @@ test("creates an App, authorizes it and connects the workspace", async ({
 		const review = page.getByRole("region", {
 			name: "Review workspace connection",
 		});
-		await review.getByRole("radio", { name: /publish local/i }).click();
-		const queued = page.waitForResponse(
-			(response) =>
-				response.url().endsWith("/api/github/connect") &&
-				response.request().method() === "POST",
-		);
-		await review
-			.getByRole("button", { name: "Connect GitHub", exact: true })
-			.click();
-		const operation = await (await queued).json();
-		await waitForPlatformJob(api, operation.job_id);
-		await page.reload();
-		await expect(
-			page.getByText("Git sync uses your GitHub App installation."),
-		).toBeVisible();
-		await expect(
-			page.getByRole("region", { name: "Connected GitHub repository" }),
-		).toContainText("thin-git-app/workspace");
+		await expect(review).toContainText("Publish local workspace");
 		await expect(page.locator("body")).not.toContainText("fixture-secret");
 	} finally {
 		await api.post("/api/github/disconnect");

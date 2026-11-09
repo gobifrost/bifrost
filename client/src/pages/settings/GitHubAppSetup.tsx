@@ -75,10 +75,11 @@ export function GitHubAppSetup({
 	}
 
 	useEffect(() => {
-		if (initialized.current || connectedWithApp) return;
-		initialized.current = true;
+		if (initialized.current) return;
+		if (!connectedWithApp) initialized.current = true;
 		void perform(async () => {
 			const callback = takeGitAppCallback();
+			if (connectedWithApp) return;
 			const current = callback
 				? await completeGitAppCallback(callback)
 				: await getGitAppSetup();
@@ -298,7 +299,9 @@ export function GitHubAppSetup({
 								<p className="text-sm text-muted-foreground">
 									GitHub will ask you to approve Contents
 									read/write
-									{workflows ? " and Workflows write" : ""}{" "}
+									{workflows
+										? " and Workflows write"
+										: ""}{" "}
 									access.
 								</p>
 								<Button
