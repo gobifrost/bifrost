@@ -314,10 +314,6 @@ class AzureObjectStore:
         self._service = BlobServiceClient(settings.azure_blob_account_url, credential=credential)
         self._container = self._service.get_container_client(self._namespace)
 
-    def _check_namespace(self, namespace: str) -> None:
-        if namespace != self._namespace:
-            raise ValueError("Azure Blob request must use the configured container")
-
     def serialize_version(self, version: ObjectVersion) -> str:
         # Versions are already opaque quoted entity-tags; persist them verbatim.
         if not version:
@@ -494,8 +490,6 @@ class AzureObjectStore:
     async def copy(
         self, source: ObjectInfo, destination_key: str, *, options: CopyOptions | None = None,
     ) -> WriteResult:
-        from azure.core import MatchConditions
-
         opts = options if options is not None else CopyOptions()
         if not source.version or source.size < 0:
             raise ValueError("Copy requires a valid source snapshot")
