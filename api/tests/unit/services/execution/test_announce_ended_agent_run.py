@@ -144,7 +144,7 @@ async def test_agent_exit_write_rechecks_ownership_in_its_transaction(
     monkeypatch.setattr(ownership, "get_liveness_db_context", context)
     async with async_session_factory() as db:
         db.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=1,
+            id=worker_id, form="static", state="ready", resource_class="standard",
             remote_owner_id=owner_id, remote_launcher_id=launcher_id, remote_session_generation=1,
             remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
         ))

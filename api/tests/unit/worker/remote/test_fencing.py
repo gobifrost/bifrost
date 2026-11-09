@@ -46,7 +46,6 @@ async def test_fence_holds_the_worker_row_lock_until_the_result_transaction_comm
                 form="static",
                 state="ready",
                 resource_class="standard",
-                slots=0,
                 remote_owner_id=owner_id,
                 remote_launcher_id=launcher_id,
                 remote_session_generation=1,

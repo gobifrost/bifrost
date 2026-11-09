@@ -560,7 +560,6 @@ class WorkerCapacityController(ABC):
                 form=self.worker_form,
                 state="reserved",
                 resource_class=resource_class,
-                slots=0,
                 memory_limit_bytes=memory_limit_bytes,
                 reserved_for_dispatch_id=reserved_for,
                 supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),

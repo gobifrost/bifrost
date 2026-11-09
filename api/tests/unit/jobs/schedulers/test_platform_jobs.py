@@ -415,7 +415,6 @@ async def test_stale_remote_owner_cannot_requeue_a_live_platform_job(
             form="static",
             state="ready",
             resource_class="standard",
-            slots=0,
             supported_handlers=["workflow.execute"],
             remote_owner_id=current_owner,
             remote_launcher_id=launcher,

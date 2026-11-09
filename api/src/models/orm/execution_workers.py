@@ -31,7 +31,6 @@ class ExecutionWorker(Base):
     form: Mapped[str] = mapped_column(String(20), nullable=False, default="job")
     state: Mapped[str] = mapped_column(String(20), nullable=False, default="reserved")
     resource_class: Mapped[str] = mapped_column(String(50), nullable=False, default="standard")
-    slots: Mapped[int] = mapped_column(Integer, nullable=False)
     kubernetes_namespace: Mapped[str | None] = mapped_column(String(63), nullable=True)
     kubernetes_job_name: Mapped[str | None] = mapped_column(String(63), nullable=True, unique=True)
     hostname: Mapped[str | None] = mapped_column(String(255), nullable=True)

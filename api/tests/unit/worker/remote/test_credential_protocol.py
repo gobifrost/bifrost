@@ -114,7 +114,7 @@ async def test_the_protocol_is_persisted_with_each_owner_generation(async_sessio
     monkeypatch.setattr(ownership, "get_liveness_db_context", context)
     worker_id = uuid4()
     async with async_session_factory() as session:
-        session.add(ExecutionWorker(id=worker_id, form="job", state="ready", resource_class="standard", slots=1))
+        session.add(ExecutionWorker(id=worker_id, form="job", state="ready", resource_class="standard"))
         await session.commit()
     owner, launcher = uuid4(), uuid4()
     try:
