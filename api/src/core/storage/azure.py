@@ -3,7 +3,6 @@
 import base64
 import hashlib
 import json
-import logging
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
@@ -18,8 +17,6 @@ from src.core.storage.contracts import (
     SignedRequest, StorageConfigurationError, StorageError, StreamWriteResult,
     WriteOptions, WriteResult,
 )
-
-logger = logging.getLogger(__name__)
 
 STREAM_PART_SIZE = 8 * 1024**2
 COPY_PART_SIZE = 256 * 1024**2
@@ -90,11 +87,6 @@ def _conditions(options: WriteOptions | CopyOptions) -> dict[str, Any]:
     if options.create_only:
         return {"match_condition": MatchConditions.IfMissing}
     return {}
-
-
-def _require_options(values: dict[str, Any], supported: set[str]) -> None:
-    if unknown := values.keys() - supported:
-        raise ValueError(f"Unsupported Azure Blob options: {sorted(unknown)}")
 
 
 def _metadata(values: dict[str, str] | None) -> dict[str, str]:
