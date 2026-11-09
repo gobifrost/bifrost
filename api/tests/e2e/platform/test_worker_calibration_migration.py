@@ -41,7 +41,7 @@ async def test_both_upgrade_paths_converge(prior):
                 "WHERE table_schema='public' AND table_name='solutions' AND column_name='git_source_id'"
             )) == "YES"
             assert await connection.scalar(sa.text(
-                "SELECT confdeltype FROM pg_constraint WHERE conname='fk_solutions_git_source'"
+                "SELECT confdeltype::text FROM pg_constraint WHERE conname='fk_solutions_git_source'"
             )) == "a"  # Source deletion must not erase an install's binding.
 
         await _run_in_database(url, verify)
