@@ -8,13 +8,12 @@ import pytest
 import pytest_asyncio
 from sqlalchemy import delete, select
 
-from src.core.cache.redis_client import get_redis
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.organizations import Organization
 from src.models.orm.services import ServiceAttempt, ServiceDefinition
 from src.models.orm.workflows import Workflow
 from src.services import work_dispatch
-from src.services.memory_requests import LAUNCHABLE_KEY, MIB
+from src.services.memory_requests import MIB
 from src.services.worker_pool import claims, controller
 from tests.unit.services.worker_pool.test_worker_pool import (
     GIB,
@@ -23,6 +22,7 @@ from tests.unit.services.worker_pool.test_worker_pool import (
     SPEC,
     FakeCluster,
     _accept_pool_run,
+    _admit,
     _clean as _clean,
     db as db_fixture,
 )
@@ -78,12 +78,21 @@ async def test_large_pending_service_launches_a_sized_worker(db, pending_service
         workflow.memory_request_mib = 4096
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
 
+    [bootstrap_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(bootstrap_id, POLICY)
+    await _admit(db.sessions, bootstrap_id)
     [worker_id] = await pool.launch_for_demand(POLICY)
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.resource_class == "sized"
         assert worker.reserved_for_dispatch_id is None
-        assert pool._sizing(POLICY, []).budget_bytes(worker.memory_limit_bytes) >= 4096 * MIB
+        assert worker.memory_limit_bytes == POLICY.largest_worker_mib * MIB
+    # The largest-size probe measures instead of claiming an estimated fit.
+    from tests.unit.services.worker_pool.test_worker_pool import _report_budget
+    await pool.reconcile_worker(worker_id, POLICY)
+    await _admit(db.sessions, worker_id, pool_up=False)
+    await _report_budget(worker_id, 5 * GIB)
+    assert await pool.launch_for_demand(POLICY) == []
 
 
 @pytest.mark.parametrize("reason", [
@@ -171,7 +180,10 @@ async def test_each_new_worker_covers_only_one_live_summary(db) -> None:
     await _dispatch(db, "agent.summarize", 16 * MIB)
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
 
-    assert len(await pool.launch_for_demand(POLICY)) == 2
+    [bootstrap_id] = await pool.launch_for_demand(POLICY)
+    await pool.reconcile_worker(bootstrap_id, POLICY)
+    await _admit(db.sessions, bootstrap_id)
+    assert len(await pool.launch_for_demand(POLICY)) == 1
     assert await pool.launch_for_demand(POLICY) == []
 
 
@@ -251,8 +263,7 @@ async def test_summary_fits_a_capable_physical_worker(db) -> None:
 async def test_largest_budget_counts_launchable_workers_for_agent_runs(db) -> None:
     await _executor(db, "api-agent", ["agent.summarize"], 512 * MIB)
     await _executor(db, "launcher", ["workflow.execute", "agent.run"], 2 * GIB)
-    async with get_redis() as redis:
-        await redis.set(LAUNCHABLE_KEY, str(4 * GIB))
+    await controller._publish_launchable(4 * GIB, 0)
 
     async with db.context() as session:
         assert await work_dispatch.largest_budget(session, "agent.run") == 4 * GIB
@@ -278,3 +289,58 @@ async def test_reconciler_reports_an_agent_run_larger_than_any_worker(db, monkey
         from src.models.orm.work_dispatches import WorkDispatch
 
         assert await session.scalar(select(WorkDispatch.id).where(WorkDispatch.id == dispatch_id)) is None
+
+
+@pytest.mark.parametrize("warm", [0, 1])
+@pytest.mark.parametrize("request_bytes", [128 * MIB, 2 * GIB])
+async def test_single_worker_handoff_admits_a_pending_service(db, pending_service, warm, request_bytes, monkeypatch):
+    from dataclasses import replace
+    from types import SimpleNamespace
+    from src.services import service_lifecycle
+    from tests.unit.services.worker_pool.test_cold_bootstrap import _replace_idle_capacity
+    from tests.unit.services.worker_pool.test_worker_pool import _store_policy
+
+    service_id, workflow_id = pending_service
+    policy = replace(POLICY, max_workers=1, warm_workers=warm, largest_worker_mib=4096)
+    await _store_policy(db.sessions, policy)
+    async with db.context() as session:
+        workflow = await session.get(Workflow, workflow_id)
+        workflow.memory_request_mib = request_bytes // MIB
+    # This test owns memory placement. Identity resolution is covered by the
+    # service lifecycle tests and the real service E2E, not a synthetic user.
+    monkeypatch.setattr(service_lifecycle, "unattended_lineage", AsyncMock(
+        return_value=SimpleNamespace(run_user_id=None),
+    ))
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)
+    worker_id, available = await _replace_idle_capacity(db, pool, policy, request_bytes)
+    async with db.context() as session:
+        attempt = await service_lifecycle.claim_eligible_service(
+            session, worker_id=str(worker_id), fits_bytes=available,
+        )
+        assert attempt is not None and attempt.service_id == service_id
+
+
+async def test_service_is_blocked_only_after_the_largest_worker_is_measured(db, pending_service, monkeypatch):
+    from dataclasses import replace
+    from src.services.worker_pool import unfit
+    from tests.unit.services.worker_pool.test_worker_pool import _report_budget, _store_policy
+
+    service_id, workflow_id = pending_service
+    policy = replace(POLICY, worker_memory_mib=1024, largest_worker_mib=1024)
+    await _store_policy(db.sessions, policy)
+    monkeypatch.setattr(unfit, "get_db_context", db.context)
+    async with db.context() as session:
+        workflow = await session.get(Workflow, workflow_id)
+        workflow.memory_request_mib = 128
+    pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)
+    [worker_id] = await pool.launch_for_demand(policy)
+    await unfit.settle_work_that_never_fits()
+    async with db.context() as session:
+        assert (await session.get(ServiceDefinition, service_id)).blocked_reason is None
+    await pool.reconcile_worker(worker_id, policy)
+    await _admit(db.sessions, worker_id, pool_up=False)
+    await _report_budget(worker_id, 64 * MIB)
+    await pool.launch_for_demand(policy)
+    await unfit.settle_work_that_never_fits()
+    async with db.context() as session:
+        assert (await session.get(ServiceDefinition, service_id)).blocked_reason == "too_large"
