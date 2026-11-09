@@ -1,6 +1,6 @@
 # GitHub App Authentication for Git Sync
 
-Status: scoped design, 2026-11-08. Thomas reports maintainer approval for
+Status: implemented for review, 2026-11-08. Thomas reports maintainer approval for
 replacing the PAT used by Bifrost's own GitHub integration. Manifest registration
 and OAuth-assisted connection are required in the first deliverable.
 
@@ -105,8 +105,10 @@ service. Manifest setup is the primary path, not a deferred enhancement.
   scheduler, job-status endpoint or browser polling loop.
 - Existing PAT connections continue until explicitly migrated. A successful
   switch removes the replaced PAT credential. An App error never falls back to
-  personal credentials. Disconnection clears local credentials and caches; it
-  does not silently uninstall or delete the GitHub App.
+  personal credentials. Disconnection deletes the active configuration and
+  immediately invalidates cached credential authority through generation checks;
+  encrypted token cache entries expire before their provider tokens. It does not
+  silently uninstall or delete the GitHub App.
 
 ## Setup State and Recovery
 

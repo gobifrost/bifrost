@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
 import httpx
 import jwt
@@ -16,6 +17,30 @@ from fastapi import HTTPException
 
 from shared import github_git_app as app
 from src.services.github_config import GitHubConfig, _get_fernet
+
+
+@pytest.mark.parametrize("mismatch", ["user", "scope", "step", "expired"])
+def test_callback_state_rejects_another_actor_scope_step_or_expiry(mismatch):
+    scope = uuid4()
+    claims = {"setup_id": str(uuid4()), "user_id": "actor", "scope": str(scope), "step": "oauth"}
+    token, _ = app.encode_state_jwt(audience=app.STATE_AUDIENCE, claims=claims,
+                                  ttl=timedelta(seconds=-1) if mismatch == "expired" else timedelta(minutes=1))
+    with pytest.raises(HTTPException) as error:
+        app._decode_state("oauth." + token, "other" if mismatch == "user" else "actor",
+                          uuid4() if mismatch == "scope" else scope, "manifest" if mismatch == "step" else "oauth")
+    assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_disconnect_prevents_even_a_cached_app_token_from_being_used(monkeypatch):
+    monkeypatch.setattr(app, "get_github_config", AsyncMock(return_value=None))
+    redis = AsyncMock()
+    monkeypatch.setattr(app, "get_shared_redis", redis)
+    config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="old")
+    with pytest.raises(HTTPException) as error:
+        await app.GitAppCredentials(None, config).get_token()
+    assert error.value.status_code == 409
+    redis.assert_not_awaited()
 
 
 @pytest.mark.asyncio
