@@ -1,0 +1,18 @@
+{
+  "key": "pr:1308",
+  "classification": "highlight",
+  "entry_ids": [
+    "5fc1ad99-8e17-47d0-a12c-0e8044aab59b"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1308"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1308",
+      "Manual maintainer review of authentication, secret custody, tenant isolation and entry prose is pending."
+    ]
+  }
+}
