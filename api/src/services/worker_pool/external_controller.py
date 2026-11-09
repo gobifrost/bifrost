@@ -44,6 +44,9 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
         self.cleanup_states = ("lost", "retired")
 
+    def _memory_environment(self, generation: int) -> dict[str, Any]:
+        return {**super()._memory_environment(generation), "scope": self.profile.scope}
+
     def _managed_scope(self) -> Any:
         return and_(ExecutionWorker.form == "external", ExecutionWorker.capacity_scope == self.profile.scope)
 

@@ -142,9 +142,21 @@ async def write_manifest_to_repo(db_session: AsyncSession, persistent_dir: Path)
         k: v for k, v in manifest.workflows.items()
         if (persistent_dir / v.path).exists()
     }
+    # This fixture exports a partial workspace. Keep its subscriptions within
+    # that same workflow subset, rather than referencing another fixture's files.
+    for source in manifest.events.values():
+        source.subscriptions = [
+            sub for sub in source.subscriptions
+            if sub.workflow_id is None or sub.workflow_id in manifest.workflows
+        ]
     manifest.apps = {
         k: v for k, v in manifest.apps.items()
         if (persistent_dir / v.path).exists()
+    }
+    integration_ids = {item.id for item in manifest.integrations.values()}
+    manifest.configs = {
+        key: item for key, item in manifest.configs.items()
+        if item.integration_id is None or item.integration_id in integration_ids
     }
     # Non-file entities (integrations, configs, etc.) are included as-is from DB
     write_manifest_to_dir(manifest, persistent_dir / ".bifrost")
@@ -273,6 +285,9 @@ async def sync_service(db_session: AsyncSession, bare_repo, tmp_path, monkeypatc
     service.repo_manager.delete_workspace_checkpoint = delete_workspace_checkpoint  # type: ignore[assignment]
     # The simulated storage is the persistent dir itself, so it is never stale.
     service.repo_manager.ensure_storage_unchanged = AsyncMock()  # type: ignore[assignment]
+    # Commits regenerate metadata too: use the same partial-workspace boundary
+    # as the fixture's initial manifest instead of reintroducing unrelated refs.
+    service._regenerate_manifest_to_dir = write_manifest_to_repo  # type: ignore[method-assign]
     service._sync_up_calls = sync_up_calls  # type: ignore[attr-defined]
     # Patch the module-level PERSISTENT_WORK_DIR so is_initialized checks the test dir
     import src.services.git_repo_manager as grm_mod
@@ -563,6 +578,68 @@ class TestFirstGitConnection:
 @pytest.mark.asyncio
 class TestPushToEmptyRepo:
     """Push platform state to an empty repo (initial git connect)."""
+
+    async def test_partial_repo_omits_subscriptions_to_workflows_outside_it(
+        self, db_session: AsyncSession, sync_service,
+    ):
+        """The local-repo fixture must not retain references it excluded."""
+        from src.models.orm.events import EventSource, EventSubscription
+
+        included_id, outside_id, source_id, subscription_id = [uuid4() for _ in range(4)]
+        db_session.add_all([
+            Workflow(
+                id=included_id, name="Git Sync Test Workflow",
+                function_name="git_sync_test_wf", path="workflows/git_sync_test_wf.py",
+                is_active=True,
+            ),
+            Workflow(
+                id=outside_id, name="Other fixture workflow",
+                function_name="other_fixture", path="workflows/git_sync_test_outside.py",
+                is_active=True,
+            ),
+            EventSource(
+                id=source_id, name="Other fixture event", source_type="topic",
+                event_type="workflow.completed", created_by="git-sync",
+            ),
+        ])
+        await db_session.flush()
+        db_session.add(EventSubscription(
+            id=subscription_id, event_source_id=source_id, workflow_id=outside_id,
+            created_by="git-sync",
+        ))
+        await db_session.commit()
+        write_entity_to_repo(
+            sync_service._persistent_dir, "workflows/git_sync_test_wf.py", SAMPLE_WORKFLOW_PY,
+        )
+        await write_manifest_to_repo(db_session, sync_service._persistent_dir)
+
+        result = await sync_service.desktop_commit("partial fixture workspace")
+
+        assert result.success, result.preflight
+        # Scoping this fixture's manifest must not delete another fixture's data.
+        assert await db_session.get(EventSubscription, subscription_id) is not None
+
+    async def test_partial_repo_omits_configs_for_deleted_integrations(
+        self, db_session: AsyncSession, sync_service,
+    ):
+        from src.models.orm.config import Config
+        from src.models.orm.integrations import Integration
+
+        integration = Integration(name="Test excluded integration", is_deleted=True)
+        db_session.add(integration)
+        await db_session.flush()
+        config = Config(
+            key="excluded_fixture_value", value={"value": "fixture"},
+            integration_id=integration.id, updated_by="test",
+        )
+        db_session.add(config)
+        await db_session.commit()
+        write_entity_to_repo(sync_service._persistent_dir, "modules/fixture.py", "VALUE = 1\n")
+
+        result = await sync_service.desktop_commit("exclude deleted integration config")
+
+        assert result.success, result.preflight
+        assert await db_session.get(Config, config.id) is not None
 
     async def test_push_to_empty_repo(
         self,

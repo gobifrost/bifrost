@@ -29,7 +29,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid4
@@ -46,11 +46,12 @@ from src.jobs.platform.kubernetes_client import (
 )
 from src.models.orm.execution_workers import MANAGED_WORKER_FORMS, ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.package_changes import PackageChange
 from src.models.orm.services import ServiceDefinition
 from src.models.orm.work_dispatches import WorkDispatch
 from src.models.orm.workflows import Workflow
 from src.services.kubernetes_execution import KubernetesPolicy, load_kubernetes_policy
-from src.services.memory_requests import LAUNCHABLE_KEY, workflow_request_sql
+from src.services.memory_requests import LAUNCHABLE_GENERATION_KEY, LAUNCHABLE_KEY, workflow_request_sql
 from src.services.service_lifecycle import pending_service_statement
 from src.services.work_dispatch import (
     DISPATCH_WAKE_FAMILIES,
@@ -79,6 +80,7 @@ from src.services.worker_pool.recovery import (
     end_runs_of_lost_worker,
 )
 from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
+from src.services.worker_pool.calibration import measured_budget
 from src.worker.remote.protocol import HANDLER_CONCURRENCY_LIMITS
 
 logger = logging.getLogger(__name__)
@@ -172,18 +174,9 @@ class WorkerCapacityController(ABC):
         )
 
     async def reconcile(self) -> None:
-        # Before anything that can fail on the Kubernetes API, so the
-        # reconciler never mistakes a struggling controller for none.
-        async with get_db_context() as db:
-            workers = (
-                await db.execute(
-                    select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
-                )
-            ).scalars().all()
-            policy = await load_kubernetes_policy(db)
-            await _publish_launchable(self._sizing(policy, workers).largest_budget_bytes)
         self.live = await _publish_live(self.id, self.version)
         async with get_db_context() as db:
+            policy = await load_kubernetes_policy(db)
             ids = (
                 await db.scalars(
                     select(ExecutionWorker.id).where(
@@ -197,9 +190,11 @@ class WorkerCapacityController(ABC):
         for worker_id in set(self._evictable) - set(ids):
             self._evictable.pop(worker_id, None)
             self._idle_since.pop(worker_id, None)
-        for worker_id in ids:
-            await self._reconcile_one(worker_id, policy)
-        for worker_id in await self.launch_for_demand(policy):
+        # Refresh capacity under its lock before any provider I/O can stall.
+        # New rows are included in this pass; provider losses free their slots
+        # for the next bounded reconciliation pass.
+        launched = await self.launch_for_demand(policy)
+        for worker_id in dict.fromkeys([*ids, *launched]):
             await self._reconcile_one(worker_id, policy)
         await self.replace_outdated(policy)
 
@@ -287,8 +282,8 @@ class WorkerCapacityController(ABC):
         executors that can claim (a Job that has not reported its budget
         counts as the one expected). What does not fit goes into new
         standard Jobs, or a Job sized for one request a standard Job cannot
-        hold (reserved for it when it is a dispatch). The warm minimum is
-        kept, and Jobs never exceed Max workers.
+        hold. Actual claims always wait for measured fit. Idle insufficient
+        workers can yield the warm minimum; Jobs never exceed Max workers.
         """
         async with get_db_context() as db:
             locked = (
@@ -306,7 +301,6 @@ class WorkerCapacityController(ABC):
                         WorkDispatch.id.label("id"),
                         WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                         WorkDispatch.created_at.label("created_at"),
-                        literal(True).label("is_dispatch"),
                         WorkDispatch.handler.label("handler"),
                     )
                     .where(
@@ -320,7 +314,6 @@ class WorkerCapacityController(ABC):
                             PlatformJob.id,
                             PlatformJob.memory_required_bytes,
                             PlatformJob.created_at,
-                            literal(False),
                             # Any physical worker runs local platform jobs.
                             literal(None),
                         ).where(
@@ -333,7 +326,6 @@ class WorkerCapacityController(ABC):
                             ServiceDefinition.id,
                             workflow_request_sql(Workflow),
                             ServiceDefinition.updated_at,
-                            literal(False),
                             # Every physical executor supervises services.
                             literal(None),
                         ),
@@ -341,13 +333,34 @@ class WorkerCapacityController(ABC):
                     .order_by(text("created_at"))
                 )
             ).all()
-            dispatch_ids = {row.id for row in waiting if row.is_dispatch}
             workers = (
                 await db.execute(
-                    select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES))
+                    select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES)).with_for_update()
                 )
             ).scalars().all()
-            sizing = self._sizing(policy, workers)
+            generation = int(await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0)
+            environment = self._memory_environment(generation)
+            history = (await db.scalars(select(ExecutionWorker).where(
+                self._managed_scope(),
+                ExecutionWorker.state.in_((*LIVE_STATES, "retired")),
+                ExecutionWorker.memory_calibration["environment"] == environment,
+                ExecutionWorker.memory_calibration["measurement"].is_not(None),
+            ).distinct(ExecutionWorker.memory_limit_bytes).order_by(
+                ExecutionWorker.memory_limit_bytes, ExecutionWorker.created_at.desc(),
+            ))).all()
+            measurements = [sample for worker in history
+                            if (sample := measured_budget(worker, environment)) is not None]
+            sizing = self._sizing(policy, [])
+            if measurements:
+                sizing = replace(sizing, baseline_bytes=max(sample.baseline_bytes for sample in measurements))
+            standard_reports = [sample.budget_bytes for sample in measurements
+                                if sample.limit_bytes == sizing.standard_limit_bytes]
+            largest_reports = [sample.budget_bytes for sample in measurements
+                               if sample.limit_bytes == sizing.largest_limit_bytes]
+            confirmed_largest = largest_reports[-1] if largest_reports else None
+            # Publication and decisions share one ordered snapshot. Predictions
+            # choose resources; only a measured largest size can reject work.
+            await _publish_launchable(confirmed_largest, generation)
 
             requests = {row.id: row.memory_request_bytes for row in waiting}
             request_handlers = {row.id: row.handler for row in waiting}
@@ -397,8 +410,9 @@ class WorkerCapacityController(ABC):
                     if row.id not in covered
                 ],
                 free,
-                standard_budget=sizing.standard_budget_bytes,
-                largest_budget=sizing.largest_budget_bytes,
+                standard_budget=standard_reports[-1] if standard_reports else sizing.standard_budget_bytes,
+                largest_budget=confirmed_largest if confirmed_largest is not None else sizing.largest_budget_bytes,
+                cold=not measurements, probe_largest=confirmed_largest is None,
             )
             jobs = sum(1 for worker in workers if worker.form in MANAGED_WORKER_FORMS)
             now = _now()
@@ -418,19 +432,89 @@ class WorkerCapacityController(ABC):
             )
             warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
             room = max(0, policy.max_workers - jobs)
+            # First initialization is singular; it may be sized by the hint,
+            # but an uncertain prediction can never veto that initial attempt.
+            if not measurements and any(
+                (worker.state in ("reserved", "starting") or
+                 (worker.state == "ready" and worker.memory_budget_bytes is None))
+                and worker.memory_calibration
+                and worker.memory_calibration.get("environment") == environment
+                for worker in workers if worker.form in MANAGED_WORKER_FORMS
+            ):
+                return []
+            # Pace failures per resource size without disabling recovery. An
+            # unmeasured size gets only one probe at a time, even after another
+            # size has already calibrated the environment.
+            failed_limits = set((await db.scalars(select(ExecutionWorker.memory_limit_bytes).where(
+                self._managed_scope(), ExecutionWorker.state == "lost",
+                ExecutionWorker.memory_budget_bytes.is_(None),
+                ExecutionWorker.version == self.version,
+                ExecutionWorker.memory_calibration["environment"] == environment,
+                ExecutionWorker.ended_at > _now() - timedelta(seconds=self.settings.pool_start_timeout_seconds),
+            ))).all())
+            known_limits = {sample.limit_bytes for sample in measurements}
+            probing_limits = {
+                worker.memory_limit_bytes for worker in workers
+                if worker.form in MANAGED_WORKER_FORMS and worker.memory_budget_bytes is None
+                and worker.memory_calibration
+                and worker.memory_calibration.get("environment") == environment
+                and worker.memory_limit_bytes not in known_limits
+            }
+            blocked_limits = failed_limits | probing_limits
+            plan = LaunchPlan(
+                standard=0 if sizing.standard_limit_bytes in blocked_limits else plan.standard,
+                sized=[(identity, request) for identity, request in plan.sized
+                       if (sizing.pod_limit_bytes(request) or sizing.largest_limit_bytes) not in blocked_limits],
+            )
+            if sizing.standard_limit_bytes in blocked_limits:
+                warm = 0
+            if room == 0 and (plan.sized or plan.standard):
+                # An idle undersized worker may yield the warm minimum, but it
+                # still occupies its slot until the canonical owner retires it.
+                owned = set((await db.scalars(select(ExecutionWorker.id).where(self._managed_scope(), ExecutionWorker.state == "ready"))).all())
+                ready = [worker for worker in workers
+                         if worker.id in owned and worker.state == "ready"
+                         and worker.active_runs == 0 and worker.memory_reserved_bytes == 0
+                         and worker.active_handler_counts is not None
+                         and not any(worker.active_handler_counts.values())
+                         and not worker.reserved_for_dispatch_id
+                         and worker.memory_budget_bytes is not None]
+                needed = [row for row in waiting if row.id not in covered]
+                for worker in ready:
+                    if not any(row.memory_request_bytes > worker.memory_budget_bytes
+                               and (row.handler is None or row.handler in worker.supported_handlers)
+                               for row in needed):
+                        continue
+                    await db.execute(update(ExecutionWorker).where(
+                        ExecutionWorker.id == worker.id, ExecutionWorker.state == "ready",
+                        ExecutionWorker.active_runs == 0, ExecutionWorker.memory_reserved_bytes == 0,
+                    ).values(state="draining", end_reason="capacity_replacement"))
+                    break
+                await db.commit()
+                return []
             launched: list[UUID] = []
-            for dispatch_id, request in plan.sized:
+            for _dispatch_id, request in plan.sized:
                 if len(launched) >= room:
                     break
+                limit = sizing.pod_limit_bytes(request) or sizing.largest_limit_bytes
+                if limit in probing_limits:
+                    continue
+                if limit not in known_limits:
+                    probing_limits.add(limit)
                 launched.append(
                     self._reserve(
                         db,
-                        resource_class="sized",
-                        memory_limit_bytes=sizing.sized_limit_bytes(request),
-                        reserved_for=dispatch_id if dispatch_id in dispatch_ids else None,
+                        resource_class="standard" if limit == sizing.standard_limit_bytes else "sized",
+                        memory_limit_bytes=limit,
+                        # New workers claim through measured fit, including
+                        # sized workers whose actual overhead differs.
+                        environment=environment,
                     )
                 )
-            for _ in range(plan.standard + warm):
+            standard_launches = plan.standard + warm
+            if sizing.standard_limit_bytes not in known_limits:
+                standard_launches = min(1, standard_launches)
+            for _ in range(standard_launches):
                 if len(launched) >= room:
                     break
                 launched.append(
@@ -438,7 +522,7 @@ class WorkerCapacityController(ABC):
                         db,
                         resource_class="standard",
                         memory_limit_bytes=sizing.standard_limit_bytes,
-                        reserved_for=None,
+                        environment=environment,
                     )
                 )
             await db.commit()
@@ -543,13 +627,17 @@ class WorkerCapacityController(ABC):
             )
         return drained
 
+    def _memory_environment(self, generation: int) -> dict[str, Any]:
+        return {"form": self.worker_form, "version": self.version,
+                "package_generation": generation, "threshold": self.settings.memory_pressure_threshold}
+
     def _reserve(
         self,
         db: Any,
         *,
         resource_class: str,
         memory_limit_bytes: int,
-        reserved_for: UUID | None,
+        environment: dict[str, Any],
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -561,7 +649,7 @@ class WorkerCapacityController(ABC):
                 state="reserved",
                 resource_class=resource_class,
                 memory_limit_bytes=memory_limit_bytes,
-                reserved_for_dispatch_id=reserved_for,
+                memory_calibration={"environment": environment},
                 supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
                 **self._binding_fields(worker_id),
             )
@@ -579,6 +667,9 @@ class WorkerPoolController(WorkerCapacityController):
         self.client = client
         self.spec = spec
 
+    def _memory_environment(self, generation: int) -> dict[str, Any]:
+        return {**super()._memory_environment(generation), "image": self.spec.image}
+
     def _managed_scope(self) -> Any:
         return and_(
             ExecutionWorker.form == "job",
@@ -589,6 +680,9 @@ class WorkerPoolController(WorkerCapacityController):
         return {
             "kubernetes_namespace": self.client.namespace,
             "kubernetes_job_name": worker_job_name(worker_id),
+            # Remember the intended build even if startup fails before hello.
+            # Admission still replaces it with the physical worker's report.
+            "version": self.version,
         }
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
@@ -727,13 +821,17 @@ def _plan_launches(
     *,
     standard_budget: int,
     largest_budget: int,
+    cold: bool = False,
+    probe_largest: bool = False,
 ) -> LaunchPlan:
     """Place requests (oldest first) into free budgets, then into new Jobs.
 
     First fit: each request takes the first budget that holds it, on an
     executor that can claim its handler. A request no standard Job can hold
     gets its own sized Job; one larger than the largest launchable budget is
-    left for the reconciler to fail. New Jobs claim every handler.
+    left for the reconciler to fail only after the largest size was measured.
+    Cold planning chooses one initial resource; uncertain large requests probe
+    the largest configured size. New Jobs claim every handler.
     """
     bins = list(free)
     rooms = [budget.bytes for budget in bins]
@@ -755,8 +853,11 @@ def _plan_launches(
                 break
         if placed:
             continue
+        if cold:
+            return (LaunchPlan(standard=1, sized=[]) if request <= standard_budget
+                    else LaunchPlan(standard=0, sized=[(dispatch_id, request)]))
         if request > standard_budget:
-            if request <= largest_budget:
+            if request <= largest_budget or probe_largest:
                 sized.append((dispatch_id, request))
             continue
         bins.append(FreeBudget(standard_budget, frozenset(REMOTE_WORKER_HANDLER_NAMES)))
@@ -768,12 +869,19 @@ def _plan_launches(
     return LaunchPlan(standard=len(bins) - len(free), sized=sized)
 
 
-async def _publish_launchable(largest_budget: int) -> None:
+async def _publish_launchable(largest_budget: int | None, generation: int) -> None:
     """Tell the dispatch reconciler the largest budget this controller can launch."""
     from src.core.cache.redis_client import get_redis
 
     async with get_redis() as redis:
-        await redis.set(LAUNCHABLE_KEY, str(largest_budget), ex=LAUNCHABLE_TTL_SECONDS)
+        # Empty means a managed provider is present but its capacity is not
+        # measured yet. It is distinct from no active capacity controller.
+        async with redis.pipeline(transaction=True) as pipe:
+            pipe.set(LAUNCHABLE_KEY, "" if largest_budget is None else str(largest_budget),
+                     ex=LAUNCHABLE_TTL_SECONDS)
+            value = "" if largest_budget is None else str(largest_budget)
+            pipe.set(LAUNCHABLE_GENERATION_KEY, f"{generation}:{value}", ex=LAUNCHABLE_TTL_SECONDS)
+            await pipe.execute()
 
 
 async def _publish_live(controller_id: UUID, version: str) -> LiveControllers:
