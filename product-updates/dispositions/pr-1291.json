@@ -1,0 +1,14 @@
+{
+  "key": "pr:1291",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Fix Windows Solution deployments failing to find npm during build preparation.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1291",
+      "Contributor editorial review: this routine CLI launcher repair has no required upgrade action or security disclosure. This is not maintainer code approval or a waiver of CI."
+    ]
+  }
+}

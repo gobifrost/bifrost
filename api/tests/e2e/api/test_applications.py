@@ -85,6 +85,7 @@ class TestApplicationCRUD:
         assert app.get("id"), "App should have an ID"
         assert app["is_published"] is False, "New app should not be published"
         assert app["has_unpublished_changes"] is True, "New app should have unpublished changes from scaffolded files"
+        assert app["repo_path"] == "apps/e2e-test-app"
 
         # Cleanup
         _delete_app(e2e_client, platform_admin.headers, app["id"])
@@ -470,6 +471,56 @@ class TestApplicationAccess:
 
         # Cleanup
         _delete_app(e2e_client, platform_admin.headers, app["id"], params={"scope": "global"})
+
+    def test_basic_reader_cannot_see_repo_paths_but_admin_can(
+        self, e2e_client, platform_admin, org1_user, org1
+    ):
+        """Source paths require inspection or edit authority at each App's scope."""
+        suffix = uuid.uuid4().hex[:8]
+        global_app = _create_app(
+            e2e_client,
+            platform_admin.headers,
+            f"repo-path-global-{suffix}",
+            app_model="inline_v1",
+            organization_id=None,
+        )
+        org_app = _create_app(
+            e2e_client,
+            platform_admin.headers,
+            f"repo-path-org-{suffix}",
+            app_model="inline_v1",
+            organization_id=org1["id"],
+        )
+
+        try:
+            for app in (global_app, org_app):
+                admin_response = e2e_client.get(
+                    f"/api/applications/{app['slug']}",
+                    headers=platform_admin.headers,
+                )
+                assert admin_response.status_code == 200, admin_response.text
+                assert admin_response.json()["repo_path"] == f"apps/{app['slug']}"
+
+                basic_response = e2e_client.get(
+                    f"/api/applications/{app['slug']}",
+                    headers=org1_user.headers,
+                )
+                assert basic_response.status_code == 200, basic_response.text
+                assert basic_response.json()["repo_path"] is None
+
+            basic_list = e2e_client.get(
+                "/api/applications", headers=org1_user.headers
+            )
+            assert basic_list.status_code == 200, basic_list.text
+            paths_by_slug = {
+                app["slug"]: app["repo_path"]
+                for app in basic_list.json()["applications"]
+            }
+            assert paths_by_slug[global_app["slug"]] is None
+            assert paths_by_slug[org_app["slug"]] is None
+        finally:
+            _delete_app(e2e_client, platform_admin.headers, global_app["id"])
+            _delete_app(e2e_client, platform_admin.headers, org_app["id"])
 
 
 @pytest.mark.e2e

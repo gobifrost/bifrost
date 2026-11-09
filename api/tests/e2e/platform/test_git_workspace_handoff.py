@@ -157,25 +157,25 @@ async def test_commit_is_published_by_another_executor(
     assert committed.success, committed.error
     assert committed.commit_sha
     if warm_executor:
-        # Force regenerated manifest bytes to differ without adding an entity
+        # Change authored manifest bytes without adding an entity
         # absent from the pending commit (which correctly needs delete review).
         from src.services.git_workspace_state import GitWorkspaceState, tree_fingerprint
 
         pending_fingerprint = tree_fingerprint(first)
         receipt_path = GitWorkspaceState._receipt_path(first)
         receipt = receipt_path.read_bytes()
-        regenerate = service._regenerate_manifest_to_dir
-        manifest_paths = []
+        manifest_paths = [path for path in await storage.list(".bifrost/") if path.endswith(".yaml")]
+        assert manifest_paths, "The pending commit must publish a manifest"
+        manifest_path = manifest_paths[0]
+        authored_manifest = await storage.read(manifest_path) + b"\n# Reimport regression\n"
+        await storage.write(manifest_path, authored_manifest)
 
-        async def regenerate_with_comment(db, work_dir):
-            await regenerate(db, work_dir)
-            manifest = next((work_dir / ".bifrost").glob("*.yaml"))
-            manifest.write_text(manifest.read_text() + "\n# Reimport regression\n")
-            manifest_paths.append(manifest.relative_to(work_dir).as_posix())
+        async def refuse_regeneration(*_args):
+            raise AssertionError("Reimport must preserve the authored manifest")
 
-        monkeypatch.setattr(service, "_regenerate_manifest_to_dir", regenerate_with_comment)
+        monkeypatch.setattr(service, "_regenerate_manifest_to_dir", refuse_regeneration)
         await service.reimport_from_repo()
-        assert b"# Reimport regression" in await storage.read(manifest_paths[0])
+        assert await storage.read(manifest_path) == authored_manifest
         assert tree_fingerprint(first) == pending_fingerprint
         assert receipt_path.read_bytes() == receipt
         assert (await service.desktop_status()).commits_ahead == 1

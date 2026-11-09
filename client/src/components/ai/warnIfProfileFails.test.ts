@@ -23,6 +23,15 @@ describe("warnIfProfileFails", () => {
 		expect(warning).not.toHaveBeenCalled();
 	});
 
+	it("warns about missing usage while returning a successful test result", async () => {
+		const result = { success: true, message: "The model answered.", warnings: ["Token budgets may not be fully enforced."] };
+		verifyModelProfile.mockResolvedValue(result);
+		await expect(warnIfProfileFails("p1", "Fast")).resolves.toEqual(result);
+		expect(warning).toHaveBeenCalledWith("Fast answered with a usage warning", {
+			description: result.warnings[0],
+		});
+	});
+
 	it("warns with the provider's error when the profile fails", async () => {
 		verifyModelProfile.mockResolvedValue({
 			success: false,

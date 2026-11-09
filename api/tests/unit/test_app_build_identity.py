@@ -117,3 +117,55 @@ def test_lock_aware_recipes_do_not_reuse_unlocked_builds():
         old_recipe = {**RECIPE, "variant": old}
         new_recipe = {**RECIPE, "variant": new}
         assert build_identity("app", files, {}, old_recipe) != build_identity("app", files, {}, new_recipe)
+
+
+def test_build_recipe_resolves_windows_launchers_using_build_path(monkeypatch):
+    from types import SimpleNamespace
+    from bifrost.app_build_identity import build_recipe, valid_recipe
+
+    environment = {"PATH": "build-tools", "VITE_LABEL": "example"}
+    executables = {"node": "C:/node/node.exe", "npm": "C:/node/npm.cmd"}
+    calls = []
+
+    def which(tool, *, path):
+        assert path == environment["PATH"]
+        return executables[tool]
+
+    def run(argv, **kwargs):
+        assert kwargs["env"] == environment
+        assert kwargs["check"] is True
+        assert kwargs["timeout"] == 30
+        assert not kwargs.get("shell", False)
+        calls.append(argv)
+        return SimpleNamespace(stdout=b"{}" if "config" in argv else "v1\n")
+
+    monkeypatch.setattr("bifrost.app_build_identity.shutil.which", which)
+    monkeypatch.setattr("bifrost.app_build_identity.subprocess.run", run)
+    recipe = build_recipe(
+        _sdk([("package/index.js", b"code")], 1),
+        variant="cli-install-v2",
+        environment=environment,
+    )
+    assert valid_recipe(recipe)
+    assert calls == [
+        [executables["node"], "--version"],
+        [executables["npm"], "--version"],
+        [executables["npm"], "config", "list", "--json", "--location=global"],
+    ]
+
+
+def test_build_recipe_missing_tool_still_fails(monkeypatch):
+    from bifrost.app_build_identity import build_recipe
+
+    monkeypatch.setattr("bifrost.app_build_identity.shutil.which", lambda *a, **k: None)
+
+    def missing(argv, **kwargs):
+        raise FileNotFoundError(argv[0])
+
+    monkeypatch.setattr("bifrost.app_build_identity.subprocess.run", missing)
+    with pytest.raises(FileNotFoundError):
+        build_recipe(
+            _sdk([("package/index.js", b"code")], 1),
+            variant="cli-install-v2",
+            environment={},
+        )

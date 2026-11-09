@@ -226,6 +226,7 @@ async def verify_provider_connection(
     return AIConnectionTestResponse(
         success=result.success,
         message=result.message,
+        warnings=result.warnings,
         models=[
             LLMModelInfo(
                 id=model.id,
@@ -291,6 +292,7 @@ async def test_provider_connection(connection_id: UUID, db: DbSession, user: Cur
     return AIConnectionTestResponse(
         success=result.success,
         message=result.message,
+        warnings=result.warnings,
         models=[LLMModelInfo(id=model.id, display_name=model.display_name, output_modalities=model.output_modalities) for model in result.models]
         if result.models else None,
     )
@@ -449,7 +451,9 @@ async def verify_model_profile(
         result = await AIModelService(db).verify_profile(profile_id)
     except LookupError as error:
         _raise_service_error(error)
-    return AIModelProfileVerifyResponse(success=result.success, message=result.message)
+    return AIModelProfileVerifyResponse(
+        success=result.success, message=result.message, warnings=result.warnings
+    )
 
 
 @router.delete("/profiles/{profile_id}", status_code=status.HTTP_204_NO_CONTENT)

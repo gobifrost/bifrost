@@ -1,7 +1,7 @@
 """Credential validation and model discovery for saved provider connections."""
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from urllib.parse import urlparse
 
 from shared.ai_http_retry import MAX_ATTEMPTS, RETRYABLE_STATUS_CODES
@@ -26,6 +26,7 @@ class ProviderTestResult:
     success: bool
     message: str
     models: list[ProviderModelInfo] | None = None
+    warnings: list[str] = field(default_factory=list)
 
 
 def _model_output_modalities(model: object) -> list[str] | None:

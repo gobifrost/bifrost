@@ -1,5 +1,6 @@
 """Workspace transfer preserves current scope, Secrets, and row-policy gates."""
 
+import base64
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 from uuid import uuid4
@@ -7,6 +8,7 @@ from uuid import uuid4
 import pytest
 import pytest_asyncio
 from fastapi import HTTPException
+from cryptography.fernet import Fernet
 from sqlalchemy import delete, select
 
 from shared import export_import as service
@@ -58,6 +60,7 @@ async def authority(db_session, async_session_factory):
         async with async_session_factory() as cleanup:
             for user_id, role_ids, org_ids in owned:
                 # Import owns its commit; use exact IDs in an independent session.
+                await cleanup.execute(delete(Config).where(Config.organization_id.in_(org_ids)))
                 await cleanup.execute(delete(Table).where(Table.organization_id.in_(org_ids)))
                 await cleanup.execute(delete(User).where(User.id == user_id))
                 await cleanup.execute(delete(Role).where(Role.id.in_(role_ids)))
@@ -131,6 +134,43 @@ async def test_secret_import_refuses_before_decryption_even_without_archive_flag
         await service.import_configs(db_session, caller, content, source_secret_key="test source key")
     assert error.value.status_code == 403
     decrypt.assert_not_called()
+
+
+async def test_secret_config_import_requires_source_key_and_only_persists_reencrypted_value(
+    db_session, authority
+):
+    """Config imports match integration/OAuth's fail-closed source-key contract."""
+    from src.core.security import decrypt_secret, derive_fernet_key
+
+    caller, home, _foreign = await authority("configs.readwrite", "secrets.read")
+    source_key = "source-instance-key"
+    ciphertext = base64.urlsafe_b64encode(
+        Fernet(derive_fernet_key(source_key)).encrypt(b"portable credential")
+    ).decode()
+    content = ConfigExportFile(items=[ConfigExportItem(
+        key="credential", config_type="secret", value=ciphertext,
+        organization_id=str(home.id),
+    )]).model_dump_json().encode()
+
+    with pytest.raises(HTTPException, match="source_secret_key") as missing_key:
+        await service.import_configs(db_session, caller, content)
+    assert missing_key.value.status_code == 400
+    assert (await db_session.execute(select(Config).where(Config.key == "credential"))).scalar_one_or_none() is None
+
+    wrong_key = await service.import_configs(
+        db_session, caller, content, source_secret_key="wrong-source-key"
+    )
+    assert wrong_key.errors == 1
+    assert wrong_key.created == wrong_key.updated == 0
+    assert (await db_session.execute(select(Config).where(Config.key == "credential"))).scalar_one_or_none() is None
+
+    imported = await service.import_configs(
+        db_session, caller, content, source_secret_key=source_key
+    )
+    assert imported.created == 1
+    stored = (await db_session.execute(select(Config).where(Config.key == "credential"))).scalar_one()
+    assert stored.value["value"] != ciphertext
+    assert decrypt_secret(stored.value["value"]) == "portable credential"
 
 
 async def test_table_import_row_refusal_rolls_back_metadata_and_data(db_session, authority):

@@ -16,6 +16,7 @@ import { ModelProfileCard } from "@/components/ai/ModelProfileCard";
 import { useMemo, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+	AlertTriangle,
 	Bot,
 	GitMerge,
 	KeyRound,
@@ -33,6 +34,7 @@ import { ProviderDeleteDialog } from "@/components/ai/ProviderDeleteDialog";
 import { ModelSettingsReadError } from "@/components/ai/ModelSettingsReadError";
 import { ProviderConnectionCard } from "@/components/ai/ProviderConnectionCard";
 import { ModelCatalogStatus } from "@/components/ai/ModelCatalogStatus";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -155,8 +157,23 @@ const DEFAULT_PROVIDER_DRAFT: ProviderConnectionDraft = {
 	endpoint: "https://api.openai.com/v1",
 };
 
+function ModelTestWarnings({ warnings }: { warnings?: string[] }) {
+	if (!warnings?.length) return null;
+	return (
+		<Alert className="border-[var(--bf-warning)]/30 bg-[var(--bf-warning-soft)]">
+			<AlertTriangle className="text-[var(--bf-warning)]" aria-hidden="true" />
+			<AlertTitle>Usage Reporting Incomplete</AlertTitle>
+			<AlertDescription>
+				{warnings.map((warning) => <p key={warning}>{warning}</p>)}
+			</AlertDescription>
+		</Alert>
+	);
+}
+
 export function AIModelSettings() {
 	const queryClient = useQueryClient();
+	const [providerWarnings, setProviderWarnings] = useState<Record<string, string[]>>({});
+	const [profileWarnings, setProfileWarnings] = useState<Record<string, string[]>>({});
 	const [providerCreateOpen, setProviderCreateOpen] = useState(false);
 	const [profileCreateOpen, setProfileCreateOpen] = useState(false);
 	const [providerName, setProviderName] = useState("OpenAI");
@@ -317,33 +334,52 @@ export function AIModelSettings() {
 
 	const testProviderMutation = useMutation({
 		mutationFn: testProviderConnection,
-		onSuccess: (result) =>
+		onMutate: (id) => {
+			setProviderWarnings((current) => ({ ...current, [id]: [] }));
+			setProfileWarnings((current) => {
+				const next = { ...current };
+				for (const profile of profiles) {
+					if (profile.connection_id === id) delete next[profile.id];
+				}
+				return next;
+			});
+		},
+		onSuccess: (result, id) => {
+			setProviderWarnings((current) => ({ ...current, [id]: result.warnings ?? [] }));
 			toast[result.success ? "success" : "error"](
 				result.success ? "Provider verified" : "Provider test failed",
 				{ description: result.message },
-			),
+			);
+		},
 		onError: (error) =>
 			toast.error("Provider test failed", {
-				description:
-					error instanceof Error
-						? error.message
-						: "Confirm credentials and endpoint.",
+				description: error instanceof Error ? error.message : "Confirm credentials and endpoint.",
 			}),
 	});
 	const testProfileMutation = useMutation({
 		mutationFn: (profile: AIModelProfile) => verifyModelProfile(profile.id),
-		onSuccess: (result, profile) =>
+		onMutate: (profile) => {
+			setProfileWarnings((current) => ({ ...current, [profile.id]: [] }));
+			setProviderWarnings((current) => ({ ...current, [profile.connection_id]: [] }));
+		},
+		onSuccess: (result, profile) => {
+			setProfileWarnings((current) => ({ ...current, [profile.id]: result.warnings ?? [] }));
 			toast[result.success ? "success" : "error"](
-				result.success
-					? `${profile.name} answered a test request`
-					: `${profile.name} could not answer a test request`,
+				result.success ? `${profile.name} answered a test request` : `${profile.name} could not answer a test request`,
 				{ description: result.success ? undefined : result.message },
-			),
+			);
+		},
 		onError: (error, profile) =>
 			toast.error(`${profile.name} could not be tested`, {
 				description: error instanceof Error ? error.message : undefined,
 			}),
 	});
+	const checkSavedProfile = async (profile: AIModelProfile) => {
+		setProfileWarnings((current) => ({ ...current, [profile.id]: [] }));
+		setProviderWarnings({});
+		const result = await warnIfProfileFails(profile.id, profile.name);
+		setProfileWarnings((current) => ({ ...current, [profile.id]: result?.warnings ?? [] }));
+	};
 	const updateProviderMutation = useMutation({
 		mutationFn: (edit: NonNullable<typeof providerEdit>) =>
 			updateProviderConnection(edit.id, {
@@ -352,6 +388,8 @@ export function AIModelSettings() {
 				...(edit.apiKey.trim() ? { api_key: edit.apiKey } : {}),
 			}),
 		onSuccess: () => {
+			setProviderWarnings({});
+			setProfileWarnings({});
 			setProviderEdit(null);
 			invalidateAI();
 			toast.success("Provider connection updated");
@@ -384,7 +422,7 @@ export function AIModelSettings() {
 					? "First profile created and assigned everywhere"
 					: "Model profile created",
 			);
-			void warnIfProfileFails(profile.id, profile.name);
+			void checkSavedProfile(profile);
 		},
 	});
 
@@ -423,7 +461,7 @@ export function AIModelSettings() {
 			setProfileEdit(null);
 			invalidateAI();
 			toast.success("Model profile updated");
-			void warnIfProfileFails(profile.id, profile.name);
+			void checkSavedProfile(profile);
 		},
 		onError: (error) =>
 			toast.error("Could not update profile", {
@@ -637,7 +675,7 @@ export function AIModelSettings() {
 							</span>
 						</button>
 					)}
-					{providers.map((provider) => <ProviderConnectionCard key={provider.id} provider={provider} catalogProvider={provider.catalog_provider_id ? catalogProviders.get(provider.catalog_provider_id) : undefined} testing={testProviderMutation.isPending && testProviderMutation.variables === provider.id} onEdit={() => { updateProviderMutation.reset(); setProviderEdit({ id: provider.id, name: provider.name, catalogProviderId: provider.catalog_provider_id ?? CUSTOM_PROVIDER, provider: provider.provider, endpoint: provider.endpoint ?? "", apiKey: "" }); }} onTest={() => testProviderMutation.mutate(provider.id)} onDelete={() => { deleteProviderMutation.reset(); setDeletingProvider(provider); }} />)}
+					{providers.map((provider) => <div key={provider.id} className="min-w-0 space-y-2"><ProviderConnectionCard provider={provider} catalogProvider={provider.catalog_provider_id ? catalogProviders.get(provider.catalog_provider_id) : undefined} testing={testProviderMutation.isPending && testProviderMutation.variables === provider.id} onEdit={() => { updateProviderMutation.reset(); setProviderEdit({ id: provider.id, name: provider.name, catalogProviderId: provider.catalog_provider_id ?? CUSTOM_PROVIDER, provider: provider.provider, endpoint: provider.endpoint ?? "", apiKey: "" }); }} onTest={() => testProviderMutation.mutate(provider.id)} onDelete={() => { deleteProviderMutation.reset(); setDeletingProvider(provider); }} /><ModelTestWarnings warnings={providerWarnings[provider.id]} /></div>)}
 				</div>
 			</section>
 
@@ -732,7 +770,7 @@ export function AIModelSettings() {
 							</span>
 						</button>
 					)}
-					{profiles.map((profile) => <ModelProfileCard key={profile.id}
+					{profiles.map((profile) => <div key={profile.id} className="min-w-0 space-y-2"><ModelProfileCard
 						profile={profile} description={profileLine(profile, modelName)} assignments={(profile.assignment_keys ?? []).filter((key) => key !== "primary").map(assignmentLabel)}
 						selectionMode={profileSelectionMode} selected={selectedProfileIds.has(profile.id)} isDefault={defaultProfileId === profile.id}
 						chatPending={updateProfileMutation.isPending && updateProfileMutation.variables?.profileId === profile.id}
@@ -745,7 +783,7 @@ export function AIModelSettings() {
 						onDelete={() => { deleteProfileMutation.reset(); setDeletingProfile(profile); }}
 						onChatChange={(enabledForChat) => updateProfileMutation.mutate({ profileId: profile.id, enabledForChat })}
 						onSetDefault={() => assignMutation.mutate({ assignmentKey: "primary", profileId: profile.id })}
-					/>)}
+					/><ModelTestWarnings warnings={profileWarnings[profile.id]} /></div>)}
 				</div>
 			</section>
 

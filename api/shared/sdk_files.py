@@ -29,7 +29,7 @@ import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import cast
+from typing import Any, cast
 from uuid import UUID
 
 from shared.file_access import (
@@ -319,6 +319,55 @@ async def sdk_file_stat(
         raise FileServiceError(400, str(exc)) from exc
 
 
+async def _mutation_conflict_detail(
+    caller: FileCaller, current: Any, *, location: str, scope: str | None,
+    path: str, solution_id: UUID | None, create_only: bool = False,
+    expected_version: str | None = None,
+) -> dict[str, object] | None:
+    if create_only and current.exists:
+        detail: dict[str, object] = {
+            "reason": "file_exists", "path": path,
+            "message": "File already exists; read it before replacing it.",
+            "current_version": current.version,
+            "current_last_modified": current.last_modified,
+            "current_updated_by": current.updated_by,
+        }
+    elif expected_version is not None and not current.exists:
+        detail = {"reason": "file_missing", "path": path,
+                  "expected_version": expected_version, "message": "File no longer exists."}
+    elif expected_version is not None and current.version != expected_version:
+        detail = {
+            "reason": "version_conflict", "path": path,
+            "expected_version": expected_version, "current_version": current.version,
+            "message": "File changed after it was read.",
+            "current_last_modified": current.last_modified,
+            "current_updated_by": current.updated_by,
+        }
+    else:
+        return None
+
+    if location == "workspace":
+        # Workspace's final authorizer raises on denial. This is only a probe:
+        # an allowed mutation still returns a conflict when read is unavailable.
+        from src.services.authorization.enforce import decide_for, load_caller, org_target
+        from src.services.authorization.explain import permission_entry
+
+        # Inspect existing authority for disclosure only. This is a decision,
+        # not a named operation guard from which conversion should grant powers.
+        readable = decide_for(
+            await load_caller(caller.db, caller.user),
+            permission_entry("repository.read"), org_target(None),
+        ).allowed
+    else:
+        readable = await authorize_file_policy(
+            caller, action="read", location=location, scope=scope,
+            path=path, solution_id=solution_id,
+        )
+    if readable:
+        return detail
+    return {"reason": "precondition_failed", "message": "File mutation precondition failed."}
+
+
 async def sdk_write_file(
     caller: FileCaller,
     *,
@@ -378,42 +427,13 @@ async def sdk_write_file(
                 effective_scope,
                 mode,
             )
-            if create_only and current_stat.exists:
-                raise FileServiceError(
-                    409,
-                    {
-                        "reason": "file_exists",
-                        "path": path,
-                        "message": "File already exists; read it before replacing it.",
-                        "current_version": current_stat.version,
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
-            if expected_version is not None:
-                if not current_stat.exists:
-                    raise FileServiceError(
-                        409,
-                        {
-                            "reason": "file_missing",
-                            "path": path,
-                            "expected_version": expected_version,
-                            "message": "File no longer exists.",
-                        },
-                    )
-                if current_stat.version != expected_version:
-                    raise FileServiceError(
-                        409,
-                        {
-                            "reason": "version_conflict",
-                            "path": path,
-                            "expected_version": expected_version,
-                            "current_version": current_stat.version,
-                            "message": "File changed after it was read.",
-                            "current_last_modified": current_stat.last_modified,
-                            "current_updated_by": current_stat.updated_by,
-                        },
-                    )
+            conflict = await _mutation_conflict_detail(
+                caller, current_stat, location=location, scope=effective_scope,
+                path=path, solution_id=solution_id, create_only=create_only,
+                expected_version=expected_version,
+            )
+            if conflict is not None:
+                raise FileServiceError(409, conflict)
 
         if binary:
             content_bytes = base64.b64decode(content)
@@ -520,29 +540,12 @@ async def sdk_delete_file(
                 effective_scope,
                 mode,
             )
-            if not current_stat.exists:
-                raise FileServiceError(
-                    409,
-                    {
-                        "reason": "file_missing",
-                        "path": path,
-                        "expected_version": expected_version,
-                        "message": "File no longer exists.",
-                    },
-                )
-            if current_stat.version != expected_version:
-                raise FileServiceError(
-                    409,
-                    {
-                        "reason": "version_conflict",
-                        "path": path,
-                        "expected_version": expected_version,
-                        "current_version": current_stat.version,
-                        "message": "File changed after it was read.",
-                        "current_last_modified": current_stat.last_modified,
-                        "current_updated_by": current_stat.updated_by,
-                    },
-                )
+            conflict = await _mutation_conflict_detail(
+                caller, current_stat, location=location, scope=effective_scope,
+                path=path, solution_id=solution_id, expected_version=expected_version,
+            )
+            if conflict is not None:
+                raise FileServiceError(409, conflict)
         await backend.delete(path, location, scope=effective_scope)
         if mode == "cloud":
             from src.core.pubsub import publish_file_change

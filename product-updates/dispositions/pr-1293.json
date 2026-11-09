@@ -1,0 +1,16 @@
+{
+  "key": "pr:1293",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Model tests now warn when token usage is missing or incomplete.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1293",
+      "https://github.com/gobifrost/bifrost/issues/1196",
+      "Jack approved the desktop/phone UI and this exact product-update wording in native request async:call_796fa57e88284379a8aa819a917e3755, resolved 2026-11-09T02:26:38.161Z.",
+      "Implementation 5d975628e1535b9a7d083061b1409f838a23716b passed focused backend, component and browser checks. This warning preserves successful tests/saves and does not change budget enforcement or unlimited settings. Reporter: MTG-Thomas."
+    ]
+  }
+}

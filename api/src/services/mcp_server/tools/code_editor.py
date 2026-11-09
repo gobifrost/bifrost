@@ -184,6 +184,12 @@ async def _get_content_by_path(
         - If successful: (content_str, {"path": ...}, None)
         - If error: (None, None, "error message")
     """
+    from src.services.editor.file_filter import normalize_workspace_file_path
+
+    try:
+        path = normalize_workspace_file_path(path)
+    except ValueError as error:
+        return None, None, str(error)
     content = await _read_from_s3(path)
     if content is None:
         return None, None, f"File not found: {path}"
@@ -221,6 +227,9 @@ async def _replace_workspace_file(
     Returns:
         WorkspaceWriteResult with created status and any pending deactivations
     """
+    from src.services.editor.file_filter import normalize_workspace_file_path
+
+    path = normalize_workspace_file_path(path)
     async with get_tool_db(context) as db:
         # Write scope: a non-bypass caller may only write a path that maps
         # to an owning entity (Application or Workflow) in their own
@@ -302,9 +311,21 @@ async def list_content(
         return error_result(denial)
 
     try:
+        from src.services.editor.file_filter import (
+            normalize_workspace_delete_path,
+            normalize_workspace_list_prefix,
+        )
+
+        prefix = normalize_workspace_list_prefix(path_prefix)
         repo = RepoStorage()
-        paths = await repo.list(path_prefix or "")
-        files = [{"path": p} for p in sorted(paths)]
+        paths = await repo.list(prefix)
+        files = []
+        for raw_path in sorted(paths):
+            try:
+                normalize_workspace_delete_path(raw_path)
+            except ValueError:
+                continue
+            files.append({"path": raw_path})
 
         if not files:
             display = "No files found"
@@ -561,6 +582,13 @@ async def patch_content(
     """
     logger.info(f"MCP patch_content: path={path}")
 
+    from src.services.editor.file_filter import normalize_workspace_file_path
+
+    try:
+        path = normalize_workspace_file_path(path)
+    except ValueError as error:
+        return error_result(str(error))
+
     denial = await _check_write_scope(context, path)
     if denial is not None:
         return error_result(denial)
@@ -727,35 +755,38 @@ async def delete_content(
     """Delete a file."""
     logger.info(f"MCP delete_content: path={path}")
 
-    if not path:
-        return error_result("path is required")
+    try:
+        from src.services.editor.file_filter import normalize_workspace_delete_path
+
+        target_path = normalize_workspace_delete_path(path)
+    except ValueError as error:
+        return error_result(str(error))
 
     try:
+        # Do not reveal whether a path exists to callers outside the Global
+        # repository write boundary.
+        denial = await _check_write_scope(context, target_path)
+        if denial is not None:
+            return error_result(denial)
+
         async with get_tool_db(context) as db:
             # Verify file exists in S3 before deleting
             repo = RepoStorage()
-            if not await repo.exists(path):
-                return error_result(f"File not found: {path}")
-
-            # Write scope: a non-bypass caller may only delete a path that
-            # maps to an owning entity (Application or Workflow) in their
-            # own organization.
-            denial = await _check_write_scope(context, path)
-            if denial is not None:
-                return error_result(denial)
+            if not await repo.exists(target_path):
+                return error_result(f"File not found: {target_path}")
 
             # Use FileStorageService.delete_file() for all deletions
             # It handles: S3 cleanup, file_index cleanup, app pubsub,
             # metadata removal (workflow deactivation, form/agent deletion),
             # and module cache invalidation
             service = FileStorageService(db)
-            await service.delete_file(path)
+            await service.delete_file(target_path)
 
         return success_result(
-            f"Deleted {path}",
+            f"Deleted {target_path}",
             {
                 "success": True,
-                "path": path,
+                "path": target_path,
             },
         )
 
