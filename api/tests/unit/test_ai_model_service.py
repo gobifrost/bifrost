@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from src.models.orm.agents import Agent
+from src.services.llm.base import LLMResponse
 from src.services.ai_model_service import (
     AIModelService,
     OPENCODE_GO_DEFAULT_ENDPOINT,
@@ -908,16 +909,40 @@ async def test_verify_profile_sends_one_request_through_the_profile_config(db_se
             built.append((config, fallback_configs))
 
         async def complete(self, messages, **kwargs):
-            return None
+            return LLMResponse(content="OK", input_tokens=5, output_tokens=1)
 
     with patch("src.services.llm.pydantic_client.PydanticAIClient", FakeClient):
         result = await service.verify_profile(profile.id)
 
     assert result.success is True
+    assert result.warnings == []
     [(config, fallbacks)] = built
     assert config.model == "openai/gpt-4o-mini"
     assert config.endpoint == OPENROUTER_DEFAULT_ENDPOINT
     assert fallbacks is None  # the profile alone, not its failover chain
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("input_tokens", "output_tokens"), [(None, None), (0, 0), (5, 0), (0, 1)])
+async def test_verify_profile_warns_for_incomplete_usage_without_failing(
+    db_session, input_tokens, output_tokens
+):
+    service = AIModelService(db_session)
+    profile = await _profile(service)
+    completion = AsyncMock(return_value=LLMResponse(
+        content="OK", input_tokens=input_tokens, output_tokens=output_tokens
+    ))
+
+    with patch("src.services.llm.pydantic_client.PydanticAIClient.complete", completion):
+        result = await service.verify_profile(profile.id)
+
+    assert result.success is True
+    assert result.message == "The model answered a test request."
+    assert len(result.warnings) == 1
+    assert "unavailable or incomplete" in result.warnings[0]
+    assert "token budgets may not be fully enforced" in result.warnings[0]
+    completion.assert_awaited_once()
+    assert (await service.get_profile(profile.id)).id == profile.id
 
 
 @pytest.mark.asyncio
@@ -977,7 +1002,7 @@ async def test_connection_test_checks_every_profile_on_the_connection(db_session
         enabled_for_chat=False,
     )
     outcomes = {
-        profile.id: ProviderTestResult(True, "The model answered a test request."),
+        profile.id: ProviderTestResult(True, "The model answered a test request.", warnings=["Usage is incomplete."]),
         second.id: ProviderTestResult(False, "The provider rejected the API key."),
     }
     listing = AsyncMock(side_effect=AssertionError("listing is only for profile-less connections"))
@@ -994,6 +1019,7 @@ async def test_connection_test_checks_every_profile_on_the_connection(db_session
     assert failed.message == f"{second.name}: The provider rejected the API key."
     assert passed.success is True
     assert passed.message == "All 2 profiles answered a test request."
+    assert failed.warnings == passed.warnings == [f"{profile.name}: Usage is incomplete."]
 
 
 @pytest.mark.asyncio

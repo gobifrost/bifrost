@@ -377,3 +377,46 @@ def test_profile_verification_reports_a_rejected_key_without_undoing_the_save(
     assert connection_test.json()["message"].startswith(
         "Rejected Key Profile E2E: The provider rejected the API key."
     )
+
+
+def test_missing_usage_warns_without_failing_profile_or_provider_test(
+    e2e_client, platform_admin, async_session_factory
+):
+    import asyncio
+
+    from tests.e2e.fixtures.llm_setup import _delete_model_profile
+
+    connection = e2e_client.post(
+        "/api/admin/ai/connections", headers=platform_admin.headers,
+        json={"name": "Usage Warning E2E", "provider": "openai_compatible",
+              "api_key": "fixture-key", "endpoint": "http://scheduler-fixtures:8080/v1"},
+    )
+    assert connection.status_code == 201, connection.text
+    connection_id = connection.json()["id"]
+    profile_id = None
+    try:
+        profile = e2e_client.post(
+            "/api/admin/ai/profiles", headers=platform_admin.headers,
+            json={"name": "Usage Warning Model E2E", "connection_id": connection_id,
+                  "model": "fixture-missing-usage"},
+        )
+        assert profile.status_code == 201, profile.text
+        profile_id = profile.json()["id"]
+        result = e2e_client.post(f"/api/admin/ai/profiles/{profile_id}/verify", headers=platform_admin.headers)
+        assert result.status_code == 200, result.text
+        assert result.json()["success"] is True
+        assert "token budgets may not be fully enforced" in result.json()["warnings"][0]
+        provider = e2e_client.post(f"/api/admin/ai/connections/{connection_id}/test", headers=platform_admin.headers)
+        assert provider.status_code == 200, provider.text
+        assert provider.json()["success"] is True
+        assert provider.json()["warnings"] == [f"Usage Warning Model E2E: {result.json()['warnings'][0]}"]
+        saved = e2e_client.get("/api/admin/ai/profiles", headers=platform_admin.headers)
+        assert any(p["id"] == profile_id for p in saved.json())
+    finally:
+        if profile_id:
+            # First-profile bootstrap may assign this profile globally. Remove
+            # only this test's rows, using the existing LLM fixture cleanup.
+            asyncio.run(_delete_model_profile(async_session_factory, profile_id, connection_id))
+        else:
+            deleted = e2e_client.delete(f"/api/admin/ai/connections/{connection_id}", headers=platform_admin.headers)
+            assert deleted.status_code == 204, deleted.text

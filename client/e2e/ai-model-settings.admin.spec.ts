@@ -184,6 +184,14 @@ test.describe("AI model settings", () => {
 			}
 			await route.fulfill({ json: connections });
 		});
+		await page.route("**/api/admin/ai/profiles/*/verify", async (route) => {
+			await route.fulfill({ json: {
+				success: true,
+				message: "The model answered a test request.",
+				warnings: ["Token usage was unavailable or incomplete for this test. Usage totals and cost estimates may be incomplete, and token budgets may not be fully enforced. You can still use this model."],
+			} });
+		});
+
 		await page.route("**/api/admin/ai/profiles", async (route) => {
 			if (route.request().method() === "POST") {
 				const body = route.request().postDataJSON();
@@ -327,6 +335,13 @@ test.describe("AI model settings", () => {
 		await expect(
 			page.getByRole("button", { name: "Edit Support Chat" }),
 		).toBeVisible();
+		const usageWarning = page.getByRole("alert").filter({ hasText: "Usage Reporting Incomplete" });
+		await expect(usageWarning).toBeVisible();
+		await expect(usageWarning).toContainText("token budgets may not be fully enforced");
+		await testInfo.attach("Saved model — usage warning", {
+			body: await page.screenshot({ fullPage: true }),
+			contentType: "image/png",
+		});
 		const supportProfileCard = page
 			.locator('[data-slot="card"]')
 			.filter({ hasText: "Support Chat" })

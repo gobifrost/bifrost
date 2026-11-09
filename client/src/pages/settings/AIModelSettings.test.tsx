@@ -212,7 +212,28 @@ describe("AIModelSettings", () => {
 		);
 	});
 
+	it("keeps a profile's usage warning visible and clears it after a clean retest", async () => {
+		aiModels.verifyModelProfile.mockResolvedValueOnce({ success: true, message: "Answered", warnings: ["Token budgets may not be fully enforced."] });
+		const { user } = renderWithProviders(<AIModelSettings />);
+		await user.click(await screen.findByRole("button", { name: "Test Balanced" }));
+		expect(await screen.findByText("Usage Reporting Incomplete")).toBeInTheDocument();
+		expect(screen.getByText("Token budgets may not be fully enforced.")).toBeInTheDocument();
+		expect(screen.getByRole("switch", { name: "Enable Balanced for Chat" })).toBeEnabled();
+		await user.click(screen.getByRole("button", { name: "Test Balanced" }));
+		await waitFor(() => expect(screen.queryByText("Usage Reporting Incomplete")).not.toBeInTheDocument());
+	});
+
+	it("shows provider warnings with the affected model profile name", async () => {
+		aiModels.testProviderConnection.mockResolvedValueOnce({ success: true, message: "Answered", warnings: ["Balanced: Token usage is incomplete."] });
+		const { user } = renderWithProviders(<AIModelSettings />);
+		await user.click(await screen.findByRole("button", { name: "Test Default" }));
+		expect(await screen.findByText("Balanced: Token usage is incomplete.")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Test Balanced" }));
+		await waitFor(() => expect(screen.queryByText("Balanced: Token usage is incomplete.")).not.toBeInTheDocument());
+	});
+
 	it("creates provider connections and model profiles", async () => {
+		aiModels.verifyModelProfile.mockResolvedValueOnce({ success: true, message: "Answered", warnings: ["Token usage is incomplete after saving."] });
 		const { user } = renderWithProviders(<AIModelSettings />);
 
 		await user.click(
@@ -283,6 +304,7 @@ describe("AIModelSettings", () => {
 		await waitFor(() =>
 			expect(aiModels.verifyModelProfile).toHaveBeenCalledWith(profile.id),
 		);
+		expect(await screen.findByText("Token usage is incomplete after saving.")).toBeInTheDocument();
 	});
 
 	it("adds a community provider and a profile with a catalog reasoning choice", async () => {
