@@ -27,7 +27,8 @@ if "src.jobs.platform.runner" in sys.orig_argv:
                 try:
                     fixture = jwt.decode(token, options={"verify_signature": False}).get("iss") == "314159"
                 except jwt.InvalidTokenError:
-                    pass
+                    # Opaque or malformed credentials do not identify the fixture.
+                    fixture = False
             if not fixture:
                 return await self.external.handle_async_request(request)
             async with httpx.AsyncClient(timeout=20) as client:

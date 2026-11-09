@@ -124,19 +124,18 @@ async def job_provider(request: Request):
     return {"status": result.status_code, "body": result.json()}
 
 
-_solution_fixture_slug: str | None = None
+app.state.solution_fixture_slug = None
 
 
 @fixture_router.post("/__fixture/solution-repository", include_in_schema=False)
 async def solution_repository(request: Request):
     """Own one tiny browser-test remote; never overwrite another fixture."""
-    global _solution_fixture_slug
     body = await request.json()
     path = Path("/tmp/bifrost/solution-repo-fixtures/thin-github/thin-git-app/solutions.git")
     if body["action"] == "delete":
-        assert body["slug"] == _solution_fixture_slug and _solution_fixture_slug is not None
+        assert body["slug"] == app.state.solution_fixture_slug and app.state.solution_fixture_slug is not None
         shutil.rmtree(path)
-        _solution_fixture_slug = None
+        app.state.solution_fixture_slug = None
         return {"deleted": True}
     assert body["action"] == "create" and not path.exists()
     slug = "private-browser-" + uuid4().hex[:8]
@@ -149,7 +148,7 @@ async def solution_repository(request: Request):
         work.git.push(str(path), "main")
         work.close()
     remote.close()
-    _solution_fixture_slug = slug
+    app.state.solution_fixture_slug = slug
     return {"slug": slug, "repo_url": "https://github.com/thin-git-app/solutions"}
 
 
