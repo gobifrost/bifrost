@@ -79,6 +79,8 @@ NON_ORM_TABLES = {
     "solution_file_jobs",  # Solution file jobs, managed outside the ORM
 }
 NON_ORM_COLUMNS = {
+    ("execution_workers", "slots"),  # #1053: retained for older rolling-upgrade readers
+    ("scheduler_replicas", "job_slots"),  # #1053: retained for older heartbeat readers/writers
     ("agent_runs", "search_tsv"),  # generated tsvector column
     ("workflows", "schedule"),
     ("agents", "is_coding_mode"),

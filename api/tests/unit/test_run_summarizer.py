@@ -88,7 +88,7 @@ async def test_stale_summary_cannot_overwrite_a_replacement_result(async_session
     worker_id = uuid4()
     claim_id = uuid4()
     async with async_session_factory() as db:
-        db.add(ExecutionWorker(id=worker_id, form="static", state="ready", slots=1))
+        db.add(ExecutionWorker(id=worker_id, form="static", state="ready"))
         await db.flush()
         db.add(ExecutionWorkerClaim(id=claim_id, worker_id=worker_id, family="agent_summary", subject_id=seed_completed_run.id))
         await db.commit()
