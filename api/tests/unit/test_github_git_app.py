@@ -289,3 +289,111 @@ async def test_a_running_pat_operation_cannot_reuse_credentials_after_migration(
     with pytest.raises(HTTPException) as error:
         await provider()
     assert error.value.status_code == 409
+
+
+@pytest.fixture
+def pending_setup(key_pair):
+    return uuid4(), {
+        "stage": "ready", "prior_generation": None,
+        "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        "app": {"id": 42, "private_key": key_pair[1]},
+        "installation_id": 7, "workflows": False,
+        "repository": {"id": 91, "full_name": "owner/repo", "default_branch": "main"},
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purpose", ["workspace", "solution"])
+async def test_repository_selection_respects_workspace_and_solution_boundaries(monkeypatch, pending_setup, purpose):
+    setup_id, payload = pending_setup
+    payload.update(purpose=purpose, stage="repository", expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat())
+    payload["repositories"] = [payload.pop("repository")]
+    monkeypatch.setattr(app, "setup_repositories", AsyncMock())
+    monkeypatch.setattr(app, "_row", AsyncMock(return_value=(SimpleNamespace(), payload)))
+    current = GitHubConfig("https://github.com/owner/connected", "personal", "main", "connected", generation="changed")
+    workspace = AsyncMock(return_value=current)
+    monkeypatch.setattr(app, "get_github_config", workspace)
+    save = AsyncMock()
+    monkeypatch.setattr(app, "_save", save)
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=Redis()))
+    provider = AsyncMock(return_value={"token": "installation-secret", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+    monkeypatch.setattr(app, "_request", provider)
+
+    if purpose == "workspace":
+        with pytest.raises(HTTPException) as error:
+            await app.selected_config(None, setup_id, 7, 91, "actor", None)
+        assert error.value.status_code == 409
+        assert payload["stage"] == "repository"
+        save.assert_not_awaited()
+        provider.assert_not_awaited()
+    else:
+        config = await app.selected_config(None, setup_id, 7, 91, "actor", None)
+        assert config.repo_url == "https://github.com/owner/repo"
+        assert payload["stage"] == "ready"
+        workspace.assert_not_awaited()
+        assert provider.await_args.kwargs["data"] == {"repository_ids": [91], "permissions": {"contents": "read"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("executing", [False, True])
+async def test_solution_setup_cannot_be_used_for_workspace_connection(monkeypatch, pending_setup, executing):
+    setup_id, payload = pending_setup
+    payload["purpose"] = "solution"
+    monkeypatch.setattr(app, "_row", AsyncMock(return_value=(SimpleNamespace(), payload)))
+    provider = AsyncMock()
+    monkeypatch.setattr(app.GitAppCredentials, "get_token", provider)
+    with pytest.raises(HTTPException) as error:
+        await app.pending_config(None, setup_id, "actor", None, executing=executing)
+    assert error.value.status_code == 409
+    provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["credentials", "activation"])
+async def test_ready_setup_cannot_replace_another_connected_repository(monkeypatch, pending_setup, operation):
+    setup_id, payload = pending_setup
+    payload["prior_generation"] = "original"
+    monkeypatch.setattr(app, "_row", AsyncMock(return_value=(SimpleNamespace(), payload)))
+    current = GitHubConfig("https://github.com/owner/connected", "personal", "main", "connected", generation="original")
+    monkeypatch.setattr(app, "get_github_config", AsyncMock(return_value=current))
+    monkeypatch.setattr(app, "lock_github_config", AsyncMock())
+    save = AsyncMock()
+    monkeypatch.setattr("src.services.github_config.save_app_github_config", save)
+    redis = AsyncMock()
+    monkeypatch.setattr(app, "get_shared_redis", redis)
+
+    with pytest.raises(HTTPException) as error:
+        if operation == "credentials":
+            await app.pending_config(None, setup_id, "actor", None)
+        else:
+            await app.activate(None, app._selected_config(setup_id, payload, "actor", None), "main", "actor@example.com")
+
+    assert error.value.status_code == 409
+    assert "disconnect before changing repositories" in error.value.detail
+    save.assert_not_awaited()
+    redis.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("executing", [False, True])
+@pytest.mark.parametrize("replaced", [False, True])
+async def test_expired_setup_credentials_require_admitted_execution_and_unchanged_connection(monkeypatch, pending_setup, executing, replaced):
+    setup_id, payload = pending_setup
+    row = SimpleNamespace(created_by="actor", value_bytes=_get_fernet().encrypt(json.dumps(payload).encode()))
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: row)))
+    current = GitHubConfig("https://github.com/owner/repo", "personal", "main", "connected", generation="new") if replaced else None
+    monkeypatch.setattr(app, "get_github_config", AsyncMock(return_value=current))
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=Redis()))
+    provider = AsyncMock(return_value={"token": "installation-secret", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+    monkeypatch.setattr(app, "_request", provider)
+
+    if executing and not replaced:
+        config = await app.pending_config(db, setup_id, "actor", None, executing=True)
+        assert config.setup_executing
+        assert await app.GitAppCredentials(db, config).get_token() == "installation-secret"
+        provider.assert_awaited_once()
+    else:
+        with pytest.raises(HTTPException) as error:
+            await app.pending_config(db, setup_id, "actor", None, executing=executing)
+        assert error.value.status_code == (409 if executing else 410)
+        provider.assert_not_awaited()

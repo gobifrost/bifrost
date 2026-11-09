@@ -2,6 +2,8 @@
 
 from contextlib import asynccontextmanager
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
+import json
 from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, Mock
 from uuid import uuid4
@@ -15,7 +17,7 @@ from src.jobs.platform.git_operation import (
     run_git_operation,
 )
 from src.models.contracts.github import GitConnectRequest, SyncResult, WorkspaceSyncPlan
-from src.services.github_config import GitHubConfig
+from src.services.github_config import GitHubConfig, _get_fernet
 
 
 def test_git_payload_version_fences_old_executors_and_retains_queued_schema():
@@ -232,6 +234,47 @@ async def test_connect_job_revalidates_its_preview_and_persists_the_connection(
         branch="main",
         updated_by="admin@example.com",
     )
+
+
+@pytest.mark.asyncio
+async def test_admitted_connect_job_survives_setup_expiry_before_execution(monkeypatch):
+    setup_id = uuid4()
+    payload = {
+        "stage": "ready", "expires_at": (datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+        "app": {"id": 42}, "installation_id": 7, "workflows": False,
+        "repository": {"id": 91, "full_name": "owner/repo", "default_branch": "main"},
+    }
+    row = SimpleNamespace(created_by="requester", value_bytes=_get_fernet().encrypt(json.dumps(payload).encode()))
+    db = SimpleNamespace(execute=AsyncMock(return_value=SimpleNamespace(scalar_one_or_none=lambda: row)))
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
+    monkeypatch.setattr("src.jobs.platform.git_operation.get_db_context", db_context)
+    monkeypatch.setattr("src.jobs.platform.git_operation.get_github_config", AsyncMock(return_value=None))
+    monkeypatch.setattr("shared.github_git_app.GitAppCredentials.get_token", AsyncMock(return_value="installation-secret"))
+    connect = AsyncMock(return_value=SyncResult(success=True))
+
+    class ServiceFactory:
+        load_connect_preview = AsyncMock(return_value=SimpleNamespace(
+            repository_url="https://github.com/owner/repo", branch="main", app_setup_id=setup_id,
+        ))
+
+        def __new__(cls, **_kwargs):
+            return SimpleNamespace(desktop_connect=connect)
+
+    monkeypatch.setattr("src.jobs.platform.git_operation.GitHubSyncService", ServiceFactory)
+    activate = AsyncMock()
+    monkeypatch.setattr("src.jobs.platform.git_operation.activate", activate)
+    context = SimpleNamespace(organization_id=None, requested_by_user_id="requester", requested_by_email="actor@example.com", report=AsyncMock())
+    result = await run_git_operation(context, GitOperationPayload(operation="connect", options={"request": {
+        "app_setup_id": str(setup_id), "preview_token": "valid-preview", "strategy": "publish_local",
+    }}))
+
+    assert result["success"]
+    assert activate.await_args.args[1].setup_executing
+    connect.assert_awaited_once()
 
 
 PAT = "ghp_jobTestSecretToken0123456789"

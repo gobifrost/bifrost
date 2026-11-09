@@ -254,3 +254,54 @@ No retries, skips or longer test deadlines were added. GitHub consent and HTTP
 responses are synthetic throughout. Full local suites were not run. Local
 CodeQL could not run because its CLI is absent; hosted CodeQL, manual sensitive
 path review and the normal complete-suite merge-queue gate remain required.
+
+### Maintainer Follow-Up (2026-11-09)
+
+Thomas Bray (@MTG-Thomas) remains the author of the GitHub App implementation.
+The maintainer follow-up preserves his commits and Product Update contributor
+credit, merges current main, and addresses two review findings:
+
+- Reject a different connected repository before saving a ready setup, and
+  recheck that boundary before issuing credentials or activating a connection.
+- Resolve an admitted `workspace.git` job with durable setup lifetime before
+  acquiring its credentials. Browser preview and enqueue requests still reject
+  expired setups; actor, scope, stage and connection-generation checks remain.
+
+Focused verification passed 233 backend tests with no failures or skips:
+
+```bash
+./test.sh tests/unit/test_github_git_app.py \
+  tests/unit/test_git_operation_platform_job.py tests/unit/test_contract_version.py \
+  tests/unit/test_dto_flags.py tests/unit/services/test_github_sync.py \
+  tests/unit/services/test_github_sync_path_guard.py \
+  tests/unit/test_github_sync_app_preview.py tests/e2e/api/test_github_git_app.py \
+  tests/e2e/platform/test_git_sync_local.py::TestFirstGitConnection -q --durations=0
+```
+
+The run retains one real connection job (9.23 seconds in its test call).
+New endpoint cases enqueue no jobs and take less than 0.2 seconds each. Unit
+coverage also rejects previously ready setups for another connected repository
+and verifies that admitted jobs still reject replaced connection generations.
+
+The same three client test files passed 15 tests after the main merge. Client
+TypeScript and ESLint passed using Node 26, with the existing console warning
+above. `./test.sh quality api` passed Pyright with zero errors/warnings and Ruff.
+Full backend/client suites, Playwright and a live GitHub App rehearsal
+were not repeated for this follow-up; the protected merge queue remains the
+complete-suite gate.
+
+### Maintainer Review
+
+The maintainer-directed review traced callback user/scope/step binding and
+single-use nonces, fixed GitHub transport destinations, RSA assertions,
+encrypted App and temporary token storage, repository-limited installation
+tokens, token refresh and connection-generation fencing, PAT migration, and
+REST/Git/PlatformJob consumers. The two connection-transition findings above
+were repaired in `7234a8af9`. All executed hosted CI and CodeQL checks passed
+on that head, and the prior CodeQL thread is resolved.
+
+The maintainer reviewed the setup UI and GitHub's documented manifest flow and
+approved merging. The canonical disposition and Product Update now record
+approved review status, including the entry prose and agent prompt. Thomas
+Bray's original commits, verified source attribution and contributor credit
+are preserved. Live GitHub registration/install qualification remains separate.

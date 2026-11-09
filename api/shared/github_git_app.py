@@ -366,6 +366,8 @@ async def selected_config(db: AsyncSession, setup_id: UUID, installation_id: int
     repository = next((repo for repo in payload["repositories"] if repo["id"] == repository_id), None)
     if repository is None:
         raise fail("This repository is not accessible to the authorizing user.", 403)
+    if payload.get("purpose", "workspace") == "workspace":
+        _check_connected_repository(await get_github_config(db, scope), "https://github.com/" + repository["full_name"])
     payload.update(repository=repository, stage="ready")
     await _save(db, row, payload)
     config = _selected_config(setup_id, payload, user_id, scope)
@@ -380,8 +382,9 @@ def _selected_config(setup_id: UUID, payload: dict, user_id: str, scope: UUID | 
                          "repository_id": repository["id"], "workflows": payload["workflows"]}, setup_id=setup_id, setup_user_id=str(user_id), scope=scope)
 
 
-async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None) -> GitHubConfig:
-    _, payload = await _row(db, setup_id, user_id, scope)
+async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None, *, executing: bool = False) -> GitHubConfig:
+    """Resolve a verified setup; only admitted PlatformJobs use ``executing``."""
+    _, payload = await _row(db, setup_id, user_id, scope, expired_ok=executing)
     if payload.get("purpose", "workspace") != "workspace":
         raise fail("This setup is for Solution repositories.", 409)
     if payload["stage"] != "ready":
@@ -389,8 +392,14 @@ async def pending_config(db: AsyncSession, setup_id: UUID, user_id: str, scope: 
     # Selection already verified the user's access. Queued work must use the
     # installation binding, independently of the temporary OAuth user token.
     config = _selected_config(setup_id, payload, user_id, scope)
+    config.setup_executing = executing
     await GitAppCredentials(db, config).get_token()
     return config
+
+
+def _check_connected_repository(current: GitHubConfig | None, repository_url: str | None) -> None:
+    if current and current.repo_url and current.repo_url.removesuffix(".git").rstrip("/") != repository_url:
+        raise fail("Select the connected repository to migrate authentication, or disconnect before changing repositories.", 409)
 
 
 async def select_repository(db: AsyncSession, setup_id: UUID, installation_id: int, repository_id: int, user_id: str, scope: UUID | None, updated_by: str) -> GitAppSetupResponse:
@@ -413,8 +422,7 @@ async def select_repository(db: AsyncSession, setup_id: UUID, installation_id: i
         return setup_response(setup_id, payload)
     current = await get_github_config(db, scope)
     if current and current.repo_url:
-        if current.repo_url.removesuffix(".git").rstrip("/") != candidate.repo_url:
-            raise fail("Select the connected repository to migrate authentication, or disconnect before changing repositories.", 409)
+        _check_connected_repository(current, candidate.repo_url)
         from src.services.github_api import GitHubAPIClient
         assert candidate.repo_url is not None
         client = GitHubAPIClient(token_provider=GitAppCredentials(db, candidate).get_token, installation_auth=True)
@@ -431,6 +439,7 @@ async def activate(db: AsyncSession, config: GitHubConfig, branch: str, updated_
     current = await get_github_config(db, config.scope)
     if (current.generation if current else None) != payload["prior_generation"]:
         raise fail("The GitHub connection changed during setup. Review it before connecting.", 409)
+    _check_connected_repository(current, config.repo_url)
     from src.services.github_config import save_app_github_config
     await save_app_github_config(db, config, branch, updated_by, commit=False)
     payload["stage"] = "connected"
@@ -450,9 +459,11 @@ class GitAppCredentials:
             _, payload = await _row(self.db, self.config.setup_id, self.config.setup_user_id or "", self.config.scope, expired_ok=self.config.setup_executing)
             if payload["stage"] != "ready" or payload["repository"]["id"] != self.config.app["repository_id"]:
                 raise fail("The pending GitHub connection changed.", 409)
-            current = await get_github_config(self.db, self.config.scope)
-            if (current.generation if current else None) != payload["prior_generation"]:
-                raise fail("The GitHub connection changed during setup.", 409)
+            if payload.get("purpose", "workspace") == "workspace":
+                current = await get_github_config(self.db, self.config.scope)
+                if (current.generation if current else None) != payload["prior_generation"]:
+                    raise fail("The GitHub connection changed during setup.", 409)
+                _check_connected_repository(current, self.config.repo_url)
         else:
             current = await get_github_config(self.db, self.config.scope)
             if not current or current.generation != self.config.generation or current.auth_kind != "app":

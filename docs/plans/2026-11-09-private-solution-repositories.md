@@ -135,6 +135,20 @@ lands, retarget/rebase the child on main and requalify its diff and gates.
 
 Reference: https://docs.github.com/en/pull-requests/reference/stacked-pull-requests
 
+## Parent connection-safety follow-up
+
+Incorporate #1295's maintainer fixes through `a04da06a3`: workspace repository
+changes are rejected before readiness, credential issuance and activation.
+Request-time setup expiry remains enforced; an already admitted Git PlatformJob
+may complete after that expiry while retaining the connection-generation fence.
+
+These checks apply to workspace connections. A Solution setup independently
+verifies its selected repository and obtains a Contents-read token; an existing
+or changed workspace connection does not constrain its repository. Solution
+setups remain ineligible for workspace connection admission, including execution
+of an already admitted job. Focused regressions cover both setup purposes and
+retain the parent's transition and expiry tests.
+
 ## Rolling upgrades
 
 `solution.git_sync` and `solution.update_check` enqueue payload version 2 so old

@@ -140,10 +140,9 @@ async def run_git_operation(
         config = await get_github_config(db, organization_id)
         setup_id = payload.options.get("request", {}).get("app_setup_id") if payload.operation == "connect" else None
         if setup_id:
-            config = await pending_config(db, UUID(setup_id), context.requested_by_user_id, organization_id)
             # Browser setup must be live when accepted; an admitted durable job
             # may refresh its credentials throughout the normal job lifetime.
-            config.setup_executing = True
+            config = await pending_config(db, UUID(setup_id), context.requested_by_user_id, organization_id, executing=True)
         elif config and config.auth_kind == "app" and "connection_generation" not in payload.options:
             raise PlatformJobFailure("github_connection_changed", "Requeue this Git operation after the App migration.")
         elif config and "connection_generation" in payload.options and (
