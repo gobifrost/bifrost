@@ -732,8 +732,6 @@ async def test_async_identity_selection_and_closure(monkeypatch):
 
 
 def test_sync_read_validates_and_maps_errors():
-    from io import BytesIO
-
     client = SyncAzureObjectStore.__new__(SyncAzureObjectStore)
     client._credential = None
     stream = SimpleNamespace(
