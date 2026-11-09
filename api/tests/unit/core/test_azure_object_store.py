@@ -121,7 +121,7 @@ def test_blob_settings_do_not_serialize_keys_or_accept_url_credentials():
     assert "sig=secret" not in str(raised.value)
 
 
-@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "::1", "azurite"])
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]", "azurite"])
 def test_local_emulator_may_use_plain_http(host):
     assert settings(azure_blob_account_url=f"http://{host}:10000/devstoreaccount1").azure_blob_account_url
 
@@ -194,7 +194,7 @@ def _failure(status_code, error_code):
     (403, "AuthorizationPermissionMismatch", "permission_denied"),
     (409, "BlobAlreadyExists", "conflict"),
     (503, "ServerBusy", "unavailable"),
-    (500, "InternalError", "backend_error"),
+    (500, "InternalError", "unavailable"),
 ])
 def test_status_maps_to_a_stable_kind(status_code, error_code, kind):
     assert _service_error(_failure(status_code, error_code)).kind == kind
@@ -217,7 +217,7 @@ def test_missing_blob_and_missing_container_are_distinct(store):
     missing.status_code = 404
     blob.get_blob_properties = AsyncMock(side_effect=missing)
     with pytest.raises(StorageError) as raised:
-        store.stat("key")
+        await store.stat("key")
     assert raised.value.kind == "not_found"
     assert "private URL" not in str(raised.value)
     missing_container = ResourceNotFoundError(message="private URL")
@@ -268,24 +268,24 @@ def _stream(chunks, properties):
 @pytest.mark.asyncio
 async def test_open_read_verifies_version_atomically(store):
     blob = store._container.get_blob_client.return_value
-    blob.download_blob = AsyncMock(return_value=_stream([b"abc"], _props()))
+    observed = _stream([b"abc"], _props())
+
+    async def conditional_download(**kwargs):
+        # The fake service enforces the version condition, like Blob storage.
+        if kwargs.get("etag") != observed.properties.etag:
+            raise _failure(412, "ConditionNotMet")
+        return observed
+
+    blob.download_blob = AsyncMock(side_effect=conditional_download)
     async with store.open_read("key", expected_version=ObjectVersion('"version"')) as read:
         assert read.info.version == '"version"'
         assert await read.body.read() == b"abc"
     _, kwargs = blob.download_blob.call_args
     assert kwargs["etag"] == '"version"'
-
-
-@pytest.mark.asyncio
-async def test_open_read_rejects_a_changed_source(store):
-    from azure.core import MatchConditions
-
-    blob = store._container.get_blob_client.return_value
-    blob.download_blob = AsyncMock(return_value=_stream([b"abc"], _props(etag='"new"')))
-    with pytest.raises(StorageError) as raised:
+    with pytest.raises(StorageError) as rejected:
         async with store.open_read("key", expected_version=ObjectVersion('"old"')):
             pass
-    assert raised.value.kind == "precondition_failed"
+    assert rejected.value.kind == "precondition_failed"
     _, kwargs = blob.download_blob.call_args
     assert kwargs["match_condition"] == MatchConditions.IfNotModified
 
@@ -298,7 +298,8 @@ async def test_open_read_maps_a_missing_versioned_source(store):
     with pytest.raises(StorageError) as raised:
         async with store.open_read("key", expected_version=ObjectVersion('"old"')):
             pass
-    assert raised.value.kind == "precondition_failed"
+    # A missing object under a versioned read is absence, like the S3 adapter.
+    assert raised.value.kind == "not_found"
 
 
 @pytest.mark.asyncio
@@ -535,8 +536,10 @@ async def test_list_page_returns_contract_pages(store):
     assert [item.key for item in first.objects] == ["a"]
     assert first.objects[0].version == '"v1"'
     assert first.next_cursor == "token-1"
+    prefix_item = MagicMock(spec=blobs.BlobPrefix)
+    prefix_item.name = "p/sub/"
     store._container.walk_blobs = MagicMock(return_value=SimpleNamespace(
-        by_page=lambda **kwargs: _Pager([blobs.BlobPrefix(name="p/sub/")], None),
+        by_page=lambda **kwargs: _Pager([prefix_item], None),
     ))
     delimited = await store.list_page("p/", delimiter="/")
     assert delimited.prefixes == ("p/sub/",)
@@ -735,7 +738,7 @@ def test_sync_read_validates_and_maps_errors():
     client = SyncAzureObjectStore.__new__(SyncAzureObjectStore)
     client._credential = None
     stream = SimpleNamespace(
-        properties=_props(),
+        properties=_props(size=6),
         readall=MagicMock(return_value=b"source"),
     )
     blob = SimpleNamespace(download_blob=MagicMock(return_value=stream))

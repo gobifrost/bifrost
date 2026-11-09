@@ -28,15 +28,21 @@ def settings(**overrides):
     )
 
 
-def test_workspace_fingerprint_agrees_for_quoted_and_bare_tokens():
+def test_workspace_fingerprint_is_deterministic_and_provider_opaque():
     from src.services.git_repo_manager import workspace_version_fingerprint
 
-    assert workspace_version_fingerprint(
-        {"file": '"OpaqueVersion"'}
-    ) == workspace_version_fingerprint({"file": "OpaqueVersion"})
-    assert workspace_version_fingerprint(
-        {"file": "OpaqueVersion"}
-    ) != workspace_version_fingerprint({"file": "opaqueversion"})
+    versions = {"b.txt": '"v2"', "a.txt": '"v1"'}
+    assert workspace_version_fingerprint(versions) == workspace_version_fingerprint(
+        {"a.txt": '"v1"', "b.txt": '"v2"'}
+    )
+    assert workspace_version_fingerprint(versions) != workspace_version_fingerprint(
+        {"a.txt": '"v1"', "b.txt": '"v3"'}
+    )
+    # Azure's quoted entity-tags and S3's raw tokens hash verbatim; the
+    # provider canonicalizes, the fingerprint never interprets.
+    assert workspace_version_fingerprint({"file": '"v"'}) != workspace_version_fingerprint(
+        {"file": "v"}
+    )
 
 
 @pytest.mark.parametrize(
@@ -259,7 +265,7 @@ def backed(monkeypatch):
     backing = FakeStore()
 
     class Factory:
-        def __init__(self, settings):
+        def __init__(self, settings=None):
             pass
 
         def from_settings(self, settings):
