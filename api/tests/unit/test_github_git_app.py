@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -15,6 +16,15 @@ from fastapi import HTTPException
 
 from shared import github_git_app as app
 from src.services.github_config import GitHubConfig, _get_fernet
+
+
+@pytest.mark.asyncio
+async def test_httpx_logs_redact_manifest_conversion_codes(caplog):
+    caplog.set_level(logging.INFO, logger="httpx")
+    async with httpx.AsyncClient(transport=httpx.MockTransport(lambda _: httpx.Response(201, json={}))) as client:
+        await client.post("https://api.github.com/app-manifests/one-use-private-code/conversions")
+    assert "app-manifests/[redacted]/conversions" in caplog.text
+    assert "one-use-private-code" not in caplog.text
 
 
 @pytest.fixture

@@ -4,11 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import quote, urlencode, urlsplit
 from uuid import UUID, uuid4
 
 import httpx
@@ -31,6 +32,18 @@ from src.services.oauth_state_core import (
 SETUP_TTL = timedelta(minutes=30)
 STATE_AUDIENCE = "bifrost-git-app"
 _NAME = re.compile(r"[A-Za-z0-9_.-]+\Z")
+
+
+class _ManifestCodeLogFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # HTTPX logs request URLs at INFO; manifest conversion codes are secrets.
+        record.msg = re.sub(r"(https://api\.github\.com/app-manifests/)[^/\s]+(/conversions)",
+                            r"\1[redacted]\2", record.getMessage())
+        record.args = ()
+        return True
+
+
+logging.getLogger("httpx").addFilter(_ManifestCodeLogFilter())
 
 
 def http_client() -> httpx.AsyncClient:
@@ -212,7 +225,7 @@ async def complete_manifest(db: AsyncSession, code: str, state: str, user_id: st
             raise fail("Invalid GitHub registration code.")
         async with http_client() as client:
             try:
-                response = await client.post(f"https://api.github.com/app-manifests/{code}/conversions", headers={"Accept": "application/vnd.github+json"})
+                response = await client.post(f"https://api.github.com/app-manifests/{quote(code, safe='')}/conversions", headers={"Accept": "application/vnd.github+json"})
             except httpx.HTTPError as exc:
                 raise fail("Registration may have completed. Review the App in GitHub; do not create another App.", 502) from exc
         if not response.is_success:
