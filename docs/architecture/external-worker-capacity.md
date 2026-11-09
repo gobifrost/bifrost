@@ -136,3 +136,37 @@ acceptance observations. Record the provider deployment version, canonical
 worker UUID, resource UID and independently observed physical image alongside
 the job receipt. A newer source or image does not inherit an older build's
 runtime acceptance merely because its tests pass.
+
+## Measuring Cold Worker Capacity
+
+The shared Kubernetes/external controller uses predicted overhead to choose an
+initial resource size, never to establish that queued work is impossible. With
+no compatible measurement, it starts one standard or sized worker within the
+configured limits. If the prediction says no size fits, it probes the configured
+largest size. Existing static capacity can still satisfy demand without a launch.
+
+After runtime initialization, the canonical owner records an immutable memory
+measurement on the worker incarnation. It is qualified by the intended image or
+provider scope, reported build, package generation and pressure threshold. A
+heartbeat reporting a later package generation cannot relabel that snapshot.
+Compatible measurements survive retirement and controller restart within the
+existing worker-record retention period; changed runtime identity requires a new
+measurement. No operator-supplied overhead estimate is needed.
+
+Predictions plan additional resources. A permanent memory-capacity rejection
+requires a compatible measurement of the configured largest size. Unmeasured
+sizes receive one probe at a time, and probes do not reserve a workflow in a way
+that bypasses its measured fit. Isolated-job sizing remains unchanged.
+
+When the worker-count ceiling prevents a necessary larger launch, an idle,
+insufficient worker may drain even if it supplies the warm minimum. Its slot
+remains occupied until canonical retirement, and existing active work finishes
+through the normal drain lifecycle. The replacement reuses a qualified
+measurement rather than repeating the cold-start cycle. The warm target may be
+unmet during this bounded handoff; the hard worker-count ceiling is preserved.
+
+Capacity publication and planning share the capacity lock. Unknown capacity
+cannot be replaced by another controller's older unlocked snapshot. Unmeasured
+startup failures remain visible in the existing lost-worker state; another
+attempt at that size is paced by the configured startup window, rather than
+being disabled permanently. Other resource sizes can still make progress.
