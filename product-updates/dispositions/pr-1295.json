@@ -1,0 +1,18 @@
+{
+  "key": "pr:1295",
+  "classification": "highlight",
+  "entry_ids": [
+    "b862c593-3954-4d65-955d-05e3d7cfba79"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1295"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1295",
+      "Maintainer review of authentication, secret custody and the entry prose is pending."
+    ]
+  }
+}
