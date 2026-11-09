@@ -9,6 +9,7 @@ import hashlib
 import io
 import json
 import platform
+import shutil
 import subprocess
 import tarfile
 from pathlib import PurePosixPath
@@ -56,10 +57,14 @@ def build_recipe(
 ) -> dict[str, Any]:
     # Hash the complete environment actually passed to the build. This includes
     # arbitrary build-plugin inputs without serializing any environment values.
+    # Resolve Windows npm.cmd through PATHEXT before CreateProcess. Use the
+    # same PATH as the build, rather than selecting a different host toolchain.
+    node = shutil.which("node", path=environment.get("PATH")) or "node"
+    npm = shutil.which("npm", path=environment.get("PATH")) or "npm"
     versions = {}
-    for tool in ("node", "npm"):
+    for tool, executable in (("node", node), ("npm", npm)):
         versions[tool] = subprocess.run(
-            [tool, "--version"],
+            [executable, "--version"],
             check=True,
             capture_output=True,
             text=True,
@@ -67,7 +72,7 @@ def build_recipe(
             env=dict(environment),
         ).stdout.strip()
     npm_config = subprocess.run(
-        ["npm", "config", "list", "--json", "--location=global"],
+        [npm, "config", "list", "--json", "--location=global"],
         check=True,
         capture_output=True,
         timeout=30,
