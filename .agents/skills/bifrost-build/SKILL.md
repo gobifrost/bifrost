@@ -64,9 +64,9 @@ Compare `Current connection` and `Default connection` from `bifrost auth default
 
 ### 2. Understand and plan the change
 
-If this is an App, state its local project, selected instance, bound App, and intended runtime organizations. If this is a Solution, state its name/slug, selected instance, resolved install, and install scope. Then confirm the requested outcome and intended users.
+If this is an App, state its local project, selected instance, bound App, and intended runtime organizations. If this is a Solution, state its name/slug, selected instance, resolved install, and install scope.
 
-For every material change, present a concise plan and get confirmation before editing. A small, well-bounded bug fix does not need ceremony. The plan must identify:
+For every material change, write the plan as your first message. A small, well-bounded bug fix needs no plan. The plan is the record of intent, not a gate. The plan must identify:
 
 - user outcome and acceptance criteria;
 - source files and platform entities involved;
@@ -74,6 +74,19 @@ For every material change, present a concise plan and get confirmation before ed
 - integrations, configs, tables, and managed file locations;
 - live-instance or deployment effects;
 - for apps: information hierarchy, primary interactions, visual direction, theme behavior, responsive behavior, and non-happy-path states.
+
+Proceed without a second confirmation when the net covers the real effect:
+
+- App or Solution local source: edit, then preview and apply the exact reviewed
+  candidate. The net must cover changed data and external effects, not only
+  source restoration.
+- A live Workspace entity change with a documented capture, export, or revert
+  path: run the capture first, then apply.
+
+Confirm once, with the exact commands and rollback, when a live Workspace
+mutation replaces or deletes existing live data, when the preview cannot show
+the affected data or external effects, or when no capture, export, or revert
+path exists. Every action remains subject to the global reserved gates.
 
 Keep the access tuple `(organization, access_level, role_ids)` compatible across an app and every workflow, form, or agent it calls, unless a specific entity intentionally requires different access than the rest. Record that exception and verify that every intended caller can still traverse the dependency chain. Runtime access never bypasses organization, role, policy, or external-user checks.
 
