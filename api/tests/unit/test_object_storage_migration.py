@@ -62,7 +62,6 @@ class FakeStore:
 
         if key not in self.objects:
             raise StorageError("not_found", provider_code="NoSuchKey")
-        from src.core.storage.contracts import ObjectVersion
 
         content, version, properties = self.objects[key]
         return SimpleNamespace(key=key, version=version, size=len(content),
