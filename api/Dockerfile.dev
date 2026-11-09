@@ -9,7 +9,7 @@ FROM node:26.13.0-bookworm-slim@sha256:bc0a2afd3b74ce12222fc8bab99271e66257f0210
 # Stage 1: Builder
 # =============================================================================
 # Python security patch: interpreter denylist and patched bundled pip.
-FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS builder
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58 AS builder
 
 WORKDIR /app
 
@@ -36,7 +36,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
 # Stage 2: Runtime
 # =============================================================================
 # Python security patch: interpreter denylist and patched bundled pip.
-FROM python:3.14.10-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966
+FROM python:3.15.0-slim@sha256:f5b92f2a669a4c347044f29367f31983280b648250ca94dea66f98c53bc87e58
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
