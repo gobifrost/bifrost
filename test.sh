@@ -282,6 +282,36 @@ stack_up() {
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
 
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ]; then
+        echo "Creating disposable Azurite container..."
+        docker compose -f "$COMPOSE_FILE" up -d azurite
+        docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner python -c '
+import os, socket, time
+from azure.core.credentials import AzureNamedKeyCredential
+from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import BlobServiceClient
+from urllib.parse import urlsplit
+url = os.environ["BIFROST_AZURE_BLOB_ACCOUNT_URL"]
+host, port = urlsplit(url).hostname, urlsplit(url).port or 10000
+deadline = time.time() + 60
+while True:
+    try:
+        socket.create_connection((host, port), timeout=2).close()
+        break
+    except OSError:
+        if time.time() > deadline:
+            raise
+        time.sleep(1)
+account = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_NAME") or host.split(".", 1)[0]
+client = BlobServiceClient(url, credential=AzureNamedKeyCredential(
+    account, os.environ["BIFROST_AZURE_BLOB_ACCOUNT_KEY"]))
+try:
+    client.create_container(os.environ["BIFROST_AZURE_BLOB_CONTAINER"])
+except ResourceExistsError:
+    pass
+'
+    fi
+
     echo "Starting API + Worker + Scheduler..."
     docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build
     echo "Waiting for API to be serving traffic on /health/ready..."
