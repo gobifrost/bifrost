@@ -18,7 +18,7 @@ from src.core.storage.azure import (
 )
 from src.core.storage.azure_mirror import AzureWorkspaceMirror
 from src.core.storage.contracts import (
-    ContentProperties, ObjectVersion, StorageConfigurationError,
+    ContentProperties, CopyOptions, ObjectVersion, StorageConfigurationError,
     StorageError, WriteOptions,
 )
 from src.core.storage.s3 import S3ObjectStore
