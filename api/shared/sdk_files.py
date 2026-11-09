@@ -349,9 +349,15 @@ async def _mutation_conflict_detail(
     if location == "workspace":
         # Workspace's final authorizer raises on denial. This is only a probe:
         # an allowed mutation still returns a conflict when read is unavailable.
-        from src.services.authorization.enforce import allows_permission, load_caller
+        from src.services.authorization.enforce import decide_for, load_caller, org_target
+        from src.services.authorization.explain import permission_entry
 
-        readable = allows_permission(await load_caller(caller.db, caller.user), "repository.read", None)
+        # Inspect existing authority for disclosure only. This is a decision,
+        # not a named operation guard from which conversion should grant powers.
+        readable = decide_for(
+            await load_caller(caller.db, caller.user),
+            permission_entry("repository.read"), org_target(None),
+        ).allowed
     else:
         readable = await authorize_file_policy(
             caller, action="read", location=location, scope=scope,

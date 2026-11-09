@@ -134,8 +134,9 @@ from src.repositories.applications import ApplicationRepository  # noqa: E402
 from src.services.operation_catalog import operation_route  # noqa: E402
 from src.services.authorization.enforce import (  # noqa: E402
     Caller,
-    allows_permission,
+    decide_for,
     load_caller,
+    org_target,
     require_named_permission,
     user_reach,
 )
@@ -165,9 +166,16 @@ def _application_logo_url(application: Application) -> str | None:
 
 def _can_view_application_repo_path(caller: Caller, application: Application) -> bool:
     """Whether this caller may inspect the App's workspace source location."""
-    return allows_permission(
-        caller, "apps.read", application.organization_id
-    ) or allows_permission(caller, "apps.readwrite", application.organization_id)
+    from src.services.authorization.explain import permission_entry
+
+    target = org_target(application.organization_id)
+    # Optional response fields use current authority, never additional grants
+    # inferred for a workflow that performs the operation.
+    return decide_for(
+        caller, permission_entry("apps.read"), target,
+    ).allowed or decide_for(
+        caller, permission_entry("apps.readwrite"), target,
+    ).allowed
 
 
 async def application_to_public(

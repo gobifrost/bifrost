@@ -789,3 +789,16 @@ def test_attempted_personal_resource_route_is_a_candidate_not_a_confirmed_check(
     ])
     assert permissions == ["artifacts.read.all"]
     assert unknowns == []
+
+
+@pytest.mark.parametrize("call,path,expected", [
+    ("bifrost.api.post", "/api/applications", ["apps.readwrite"]),
+    ("bifrost.api.post", "/api/files/write", ["repository.readwrite"]),
+    ("bifrost.api.post", "/api/files/delete", ["repository.readwrite"]),
+])
+def test_optional_response_metadata_never_requests_additional_read_grants(call, path, expected):
+    permissions, unknowns = permissions_for_sdk_calls([call], invocations=[{
+        "call": call, "selectors": {"path": path}, "dynamic_selectors": [],
+    }])
+    assert permissions == expected
+    assert unknowns == []

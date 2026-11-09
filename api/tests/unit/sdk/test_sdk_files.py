@@ -624,8 +624,10 @@ async def test_workspace_conflict_read_probe_keeps_the_authorized_mutation_statu
     )))
     principal = object()
     monkeypatch.setattr("src.services.authorization.enforce.load_caller", AsyncMock(return_value=principal))
-    permission = MagicMock(return_value=readable)
-    monkeypatch.setattr("src.services.authorization.enforce.allows_permission", permission)
+    from src.services.authorization.evaluator import Decision
+
+    permission = MagicMock(return_value=Decision(readable, "test:disclosure"))
+    monkeypatch.setattr("src.services.authorization.enforce.decide_for", permission)
 
     with pytest.raises(FileServiceError) as caught:
         await sdk_write_file(caller, path="a.txt", content="new", binary=False,
@@ -633,7 +635,11 @@ async def test_workspace_conflict_read_probe_keeps_the_authorized_mutation_statu
 
     assert caught.value.status_code == 409
     assert caught.value.detail["reason"] == ("file_exists" if readable else "precondition_failed")
-    permission.assert_called_once_with(principal, "repository.read", None)
+    assert permission.call_count == 1
+    actual_caller, entry, target = permission.call_args.args
+    assert actual_caller is principal
+    assert entry.permission == "repository.read"
+    assert target.organization_id is None
     backend.write.assert_not_awaited()
 
 
