@@ -25266,7 +25266,7 @@ export interface components {
             requirements_total?: number | null;
             /**
              * Memory Current Bytes
-             * @description Working-set memory of the worker container in bytes (cgroup anon + active_file, matches kubelet/kubectl top)
+             * @description Working-set memory of the worker container in bytes (cgroup memory.current - inactive_file, matches kubelet/kubectl top)
              */
             memory_current_bytes?: number | null;
             /**
@@ -30931,7 +30931,7 @@ export interface components {
             worker_id: string;
             /**
              * Memory Current
-             * @description Working-set memory in bytes (cgroup anon + active_file)
+             * @description Working-set memory in bytes (cgroup memory.current - inactive_file)
              */
             memory_current: number;
             /**
