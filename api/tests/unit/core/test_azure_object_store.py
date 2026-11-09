@@ -97,11 +97,12 @@ def test_s3_remains_default_and_azure_selects_blob_store():
 
 
 def test_provider_identity_covers_every_credential_bearing_field():
-    base: tuple = storage_identity(settings())
-    assert base[0] == "azure_blob"
+    base = storage_identity(settings())
+    assert isinstance(base, tuple) and base[0] == "azure_blob"
     assert storage_identity(settings(azure_blob_container="other")) != base
     assert storage_identity(settings(azure_blob_account_url="https://other.blob.core.windows.net")) != base
-    assert storage_identity(s3_settings())[0] == "s3"
+    s3_base = storage_identity(s3_settings())
+    assert isinstance(s3_base, tuple) and s3_base[0] == "s3"
 
 
 def test_managed_identity_never_accepts_an_explicit_key():
