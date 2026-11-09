@@ -87,9 +87,17 @@ test("installs a Solution from a read-only private source", async ({
 			.selectOption({
 				label: "Bifrost Fixture App · thin-git-app/solutions",
 			});
+		const resolved = page.waitForResponse(
+			(response) =>
+				new URL(response.url()).pathname ===
+					"/api/solutions/install/preview-repo" &&
+				response.request().method() === "POST",
+		);
 		await page
 			.getByRole("button", { name: "Resolve", exact: true })
 			.click();
+		const previewResponse = await resolved;
+		expect(previewResponse.status(), await previewResponse.text()).toBe(200);
 		await expect(
 			page.getByText(`(${slug})`, { exact: true }),
 		).toBeVisible();
