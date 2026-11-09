@@ -5,13 +5,16 @@ the OAuth user token. Other cases own callback and credential-migration contract
 """
 
 import copy
+import shutil
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
+from pathlib import Path
 from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import pytest
 import pytest_asyncio
+from git import Repo
 from sqlalchemy import delete, select
 
 from src.models.orm.config import SystemConfig
@@ -34,6 +37,21 @@ async def preserve_git_configuration(db_session, platform_admin):
     else:
         await db_session.execute(delete(SystemConfig).where(SystemConfig.category == "github", SystemConfig.key == "integration", SystemConfig.organization_id == scope))
     await db_session.commit()
+
+
+@pytest.fixture
+def empty_app_remote():
+    """Own the bare fixture, whose bind mount survives test-stack teardown."""
+    path = Path("/tmp/bifrost/solution-repo-fixtures/thin-github/thin-git-app/workspace.git")
+    if path.exists():
+        shutil.rmtree(path)
+    remote = Repo.init(path, bare=True, initial_branch="main")
+    try:
+        assert not remote.heads
+        yield remote
+    finally:
+        remote.close()
+        shutil.rmtree(path)
 
 
 def start(client, admin):
@@ -98,10 +116,8 @@ def test_authorization_callback_is_single_use_and_repository_binding_is_verified
 
 
 @pytest.mark.asyncio
-async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration):
+async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration, empty_app_remote):
     import asyncio
-    from pathlib import Path
-    from git import Repo
     from src.core.cache.redis_client import get_shared_redis
     from tests.e2e.platform.thin_live_helpers import wait_for_job
     setup, _ = register(e2e_client, platform_admin)
@@ -121,8 +137,7 @@ async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(
         config = await get_github_config(db_session, preserve_git_configuration)
         assert config.auth_kind == "app" and config.token is None
         assert config.app["repository_id"] == 1618
-        remote = Repo(Path("/tmp/bifrost/solution-repo-fixtures/thin-github/thin-git-app/workspace.git"))
-        exported = b"\n".join(item.data_stream.read() for item in remote.heads.main.commit.tree.traverse() if item.type == "blob")
+        exported = b"\n".join(item.data_stream.read() for item in empty_app_remote.heads.main.commit.tree.traverse() if item.type == "blob")
         for secret in [b"PRIVATE KEY", b"fixture-secret", b"fixture-git-app-installation"]:
             assert secret not in exported
             assert secret.decode() not in str(job)

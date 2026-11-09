@@ -82,13 +82,51 @@ def test_callback_origin_must_be_an_explicit_https_origin(monkeypatch, url):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("path", ["//evil.example/app", "/app/../user", "/app/installations/0/access_tokens", "/app/installations/1/access_tokens?next=evil", "/user/installations/1/repositories/extra"])
+@pytest.mark.parametrize("path", [
+    "https://evil.example/app", "//evil.example/app", "/app/../user",
+    "/app/installations/0/access_tokens", "/app/installations/1/access_tokens?next=evil",
+    "/user/installations/1/repositories/extra", "/app/installations/1/../../user",
+    "/app/installations/1%2f..%2fuser", "/app/installations/1\\user",
+    "/app/installations/1#fragment", "/app/installations/1\r\nInjected: true",
+])
 async def test_app_transport_rejects_bad_paths_before_network(monkeypatch, path):
     client = AsyncMock()
     monkeypatch.setattr(app.httpx, "AsyncClient", client)
     with pytest.raises(HTTPException):
         await app._request("GET", path, "private-token")
     client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method", ["POST", "DELETE", "TRACE"])
+async def test_app_transport_rejects_unapproved_methods_before_network(monkeypatch, method):
+    client = AsyncMock()
+    monkeypatch.setattr(app, "http_client", client)
+    with pytest.raises(HTTPException):
+        await app._request(method, "/user/installations", "private-token")
+    client.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,path", [
+    ("GET", "/app"), ("GET", "/user/installations"),
+    ("GET", "/installation/repositories"), ("GET", "/app/installations/7"),
+    ("GET", "/user/installations/7/repositories"),
+    ("POST", "/app/installations/7/access_tokens"),
+])
+async def test_app_transport_keeps_allowed_requests_on_the_exact_provider_endpoint(monkeypatch, method, path):
+    requests = []
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+    monkeypatch.setattr(app, "http_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(respond)))
+    result = await app._request(method, path, "private-token", params={"page": 2})
+    assert result == {"ok": True}
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == method
+    assert str(request.url) == f"https://api.github.com{path}?page=2"
+    assert request.headers["Authorization"] == "Bearer private-token"
 
 
 @pytest.mark.asyncio

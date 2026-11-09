@@ -87,14 +87,17 @@ def external_origin() -> str:
 
 async def _request(method: str, path: str, token: str, *, data: dict | None = None, params: dict | None = None) -> dict:
     """Only fixed App endpoints and numeric installation IDs reach this transport."""
-    allowed = (method == "GET" and re.fullmatch(r"/(?:app|user/installations|installation/repositories|app/installations/[1-9][0-9]*|user/installations/[1-9][0-9]*/repositories)", path)) or (
-        method == "POST" and re.fullmatch(r"/app/installations/[1-9][0-9]*/access_tokens", path)
-    )
-    if not allowed:
+    if method not in {"GET", "POST"}:
         raise fail("Invalid GitHub App operation.")
+    pattern = (r"/(?:app|user/installations|installation/repositories|app/installations/[1-9][0-9]*|user/installations/[1-9][0-9]*/repositories)"
+               if method == "GET" else r"/app/installations/[1-9][0-9]*/access_tokens")
+    if not re.fullmatch(pattern, path):
+        raise fail("Invalid GitHub App operation.")
+    # Keep the endpoint allowlist, then encode input before URL construction.
+    url = "https://api.github.com" + quote(path, safe="/")
     async with http_client() as client:
         try:
-            response = await client.request(method, "https://api.github.com" + path, headers={
+            response = await client.request(method, url, headers={
                 "Authorization": f"Bearer {token}", "Accept": "application/vnd.github+json",
                 "X-GitHub-Api-Version": "2022-11-28",
             }, json=data, params=params)
