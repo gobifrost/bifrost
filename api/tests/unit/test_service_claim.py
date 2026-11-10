@@ -463,6 +463,111 @@ async def test_stop_mirror_notifies_child_once(db_session, redis_holder):
     pool.stop_service_child.assert_awaited_once_with(attempt_id)
 
 
+@pytest.mark.parametrize("control", ["stop", "disable", "park"])
+async def test_supervision_stops_a_claim_committed_after_empty_control_lookup(
+    db_session, monkeypatch, control
+):
+    """The claimant commits inside the control request's unflushed window."""
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    request_stop = service_lifecycle._request_attempt_stop
+
+    async def claim_after_empty_lookup(db, service_id):
+        live = await request_stop(db, service_id)
+        assert live is None
+        await loop._claim_available()
+        return live
+
+    # Production sessions disable autoflush; the shared test fixture does not.
+    with db_session.no_autoflush, monkeypatch.context() as patcher:
+        patcher.setattr(service_lifecycle, "_request_attempt_stop", claim_after_empty_lookup)
+        if control == "stop":
+            await service_lifecycle.stop_service(db_session, definition)
+        elif control == "disable":
+            await service_lifecycle.set_enabled(db_session, definition, False)
+        else:
+            await service_lifecycle.park_definition(db_session, definition, reason="source_removed")
+        await db_session.commit()
+
+    attempt_id = pool.route_service.await_args.kwargs["attempt_id"]
+    await loop.tick()
+
+    pool.stop_service_child.assert_awaited_once_with(attempt_id)
+
+
+@pytest.mark.parametrize("cancel_at", ["redis", "child"])
+async def test_interrupted_stop_dispatch_is_retried(db_session, redis_holder, cancel_at):
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    await loop.tick()
+    attempt_id = pool.route_service.await_args.kwargs["attempt_id"]
+    await service_lifecycle.stop_service(db_session, definition)
+    await db_session.commit()
+
+    redis = redis_holder["redis"]
+    setex = redis.setex
+    if cancel_at == "redis":
+        redis.setex = AsyncMock(side_effect=asyncio.CancelledError())
+    else:
+        pool.stop_service_child.side_effect = [asyncio.CancelledError(), True]
+    with pytest.raises(asyncio.CancelledError):
+        await loop.tick()
+    if cancel_at == "redis":
+        redis.setex = setex
+
+    await loop.tick()
+
+    assert pool.stop_service_child.await_args.args == (attempt_id,)
+    assert pool.stop_service_child.await_count == (1 if cancel_at == "redis" else 2)
+
+
+async def test_failed_child_stop_dispatch_is_retried(db_session):
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    await loop.tick()
+    attempt_id = pool.route_service.await_args.kwargs["attempt_id"]
+    await service_lifecycle.stop_service(db_session, definition)
+    await db_session.commit()
+    pool.stop_service_child.side_effect = [RuntimeError("signal failed"), True]
+
+    await loop.tick()
+    await loop.tick()
+
+    assert pool.stop_service_child.await_count == 2
+    assert pool.stop_service_child.await_args.args == (attempt_id,)
+
+
+@pytest.mark.parametrize("control", ["stop", "disable"])
+async def test_completion_honors_stopped_intent_without_attempt_stop_flag(db_session, control):
+    from src.models.orm.services import ServiceAttempt
+
+    definition, _, _ = await _ensure_service(db_session)
+    await db_session.commit()
+    pool = StubPool()
+    loop = _loop(pool)
+    await loop.tick()
+    attempt = pool.route_service.await_args.kwargs
+    if control == "stop":
+        definition.desired_state = "stopped"
+    else:
+        definition.enabled = False
+    await db_session.commit()
+
+    await loop.handle_service_result({
+        "success": False, "error": "shutdown interrupted",
+        "service": {"attempt_id": attempt["attempt_id"], "lease_token": attempt["lease_token"]},
+    })
+
+    row = await db_session.get(ServiceAttempt, attempt["attempt_id"])
+    assert row.state == "stopped"
+
+
 async def test_stop_mirror_closes_tick_database_context_before_child_termination(
     db_session, redis_holder, monkeypatch
 ):

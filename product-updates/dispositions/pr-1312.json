@@ -1,0 +1,18 @@
+{
+  "key": "pr:1312",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Repair module reads, service stops, and affected dependencies",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1312",
+      "https://github.com/gobifrost/bifrost/issues/1198"
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1312"
+  }
+}
