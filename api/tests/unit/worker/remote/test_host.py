@@ -17,7 +17,7 @@ from sqlalchemy.exc import OperationalError
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
 from src.worker.remote.ownership import RemoteOwnerLease
-from src.worker.remote.protocol import ControlEnvelope, FragmentAssembler, Hello, sign_hello
+from src.worker.remote.protocol import AuthenticationError, ControlEnvelope, FragmentAssembler, Hello, sign_hello
 from src.worker.pool_main import PoolWorker
 
 
@@ -27,6 +27,28 @@ LEASE = RemoteOwnerLease(
     launcher_id=UUID("cccccccc-cccc-4ccc-8ccc-cccccccccccc"),
     session_generation=1,
 )
+
+
+@pytest.mark.asyncio
+async def test_external_fast_path_hello_is_refused_before_admission() -> None:
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="external-fast", form="external",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+        resource_uid="external-capacity-1", execution_lane="fast_path",
+    )
+    socket = AsyncMock()
+    socket.receive_text.return_value = json.dumps({
+        "event": "hello", "hello": sign_hello("test-control-key", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100},
+    })
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(secret_key="test-control-key")),
+        patch("src.worker.remote.host.admit_external_worker", new=AsyncMock()) as admit,
+    ):
+        with pytest.raises(AuthenticationError, match="only support the Normal lane"):
+            await RemoteControlHost().connect(socket)
+    admit.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -304,7 +326,10 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
 
     @asynccontextmanager
     async def database():
-        yield Mock(scalar=AsyncMock(return_value=None))
+        yield Mock(
+            scalar=AsyncMock(return_value=None),
+            execute=AsyncMock(return_value=Mock(one_or_none=Mock(return_value=None))),
+        )
 
     with (
         patch("src.worker.remote.host.get_settings", return_value=Mock(secret_key="secret", memory_pressure_threshold=.85)),
@@ -806,3 +831,43 @@ async def test_pool_owns_session_fails_closed_on_db_error() -> None:
         remote_owner_context(LeaseRef(LEASE)),
     ):
         assert await pool._owns_session() is False
+
+
+@pytest.mark.asyncio
+async def test_fast_path_hello_requires_lane_aware_handler() -> None:
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="old-fast", form="static",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1, execution_lane="fast_path",
+    )
+    socket = AsyncMock()
+    socket.receive_text.return_value = json.dumps({
+        "event": "hello", "hello": sign_hello("test-control-key", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100},
+    })
+    with patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(secret_key="test-control-key")):
+        with pytest.raises(AuthenticationError, match="version 2"):
+            await RemoteControlHost().connect(socket)
+
+
+@pytest.mark.parametrize("lane", ["normal", "fast_path"])
+async def test_each_lane_reconciles_inventory_before_opening_claims(lane) -> None:
+    executor = object.__new__(ApiExecutor)
+    executor.execution_lane = lane
+    executor.admission = object()
+    executor._admission_prepared = False
+    executor.bridge = SimpleNamespace(admission=None, reconciliation_complete=AsyncMock())
+    executor._reconcile_transport_inventory = AsyncMock(return_value={})
+    executor._apply_reconciled_snapshot = AsyncMock()
+    with patch.object(PoolWorker, "_start_service_claim_loop", new_callable=AsyncMock) as services:
+        await executor._prepare_admission()
+    assert services.await_count == (1 if lane == "normal" else 0)
+    executor._reconcile_transport_inventory.assert_awaited_once_with()
+    executor._apply_reconciled_snapshot.assert_awaited_once_with({})
+    assert executor.bridge.admission is executor.admission
+    assert executor._admission_prepared
+    executor.bridge.reconciliation_complete.assert_awaited_once_with()
+    executor._reconcile_transport_inventory.reset_mock()
+    await executor.reconcile_transport_inventory()
+    executor._reconcile_transport_inventory.assert_awaited_once_with(None)
+    assert executor.bridge.reconciliation_complete.await_count == 2

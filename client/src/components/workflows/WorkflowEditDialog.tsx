@@ -127,6 +127,9 @@ export function WorkflowEditDialog({
 
 	// Execution tab state
 	const [timeoutSeconds, setTimeoutSeconds] = useState(1800);
+	const [executionLane, setExecutionLane] = useState<
+		NonNullable<Workflow["execution_lane"]>
+	>("auto");
 	// Empty: runs request the memory learned from recent runs.
 	const [memoryRequestMib, setMemoryRequestMib] = useState("");
 
@@ -230,6 +233,7 @@ export function WorkflowEditDialog({
 
 			// Execution
 			setTimeoutSeconds(workflow.timeout_seconds ?? 1800);
+			setExecutionLane(workflow.execution_lane ?? "auto");
 			setMemoryRequestMib(workflow.memory_request_mib?.toString() ?? "");
 
 			// Economics
@@ -307,6 +311,7 @@ export function WorkflowEditDialog({
 				category: category || "General",
 				tags: tags,
 				timeout_seconds: timeoutSeconds,
+				execution_lane: executionLane,
 				memory_request_mib:
 					memoryRequestMib === "" ? null : Number(memoryRequestMib),
 				execution_mode: executionMode,
@@ -582,6 +587,48 @@ export function WorkflowEditDialog({
 
 						{/* Execution Tab */}
 						<TabsContent value="execution" className="mt-0 space-y-4">
+							<div className="space-y-2">
+								<Label htmlFor="workflow-priority">
+									Priority
+								</Label>
+								<Select
+									value={executionLane}
+									onValueChange={(
+										value: NonNullable<
+											Workflow["execution_lane"]
+										>,
+									) => setExecutionLane(value)}
+								>
+									<SelectTrigger
+										id="workflow-priority"
+										aria-describedby="workflow-priority-help"
+									>
+										<SelectValue />
+									</SelectTrigger>
+									<SelectContent>
+										<SelectItem value="auto">
+											Automatic
+										</SelectItem>
+										<SelectItem value="normal">
+											Normal
+										</SelectItem>
+										<SelectItem value="fast_path">
+											Fast Path
+										</SelectItem>
+									</SelectContent>
+								</Select>
+								<p
+									id="workflow-priority-help"
+									className="text-xs text-muted-foreground"
+								>
+									Automatic uses Normal unless App priority is
+									enabled for this call. Choose Normal for
+									long imports, including calls from Apps.
+									Fast Path uses reserved workers and requires
+									configured capacity. Changes apply to new
+									runs.
+								</p>
+							</div>
 							<div className="space-y-2">
 								<Label htmlFor="timeout">Timeout (seconds)</Label>
 								<Input

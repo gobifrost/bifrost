@@ -422,7 +422,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Default-base-role commands and optional explicit identity base roles are additive.
     # Additive GitHub App setup models and optional Git connection fields.
     # Existing CLI requests and MIN_CLI_VERSION remain compatible.
-    "0a90f9b35bbd636e314f050df8c78db8fb5a1d55b85d1accc1e85547a2481daa"
+    # Workflow admission priority is an optional update field. Existing CLIs
+    # omit it and retain automatic/legacy-normal scheduling.
+    "66b0cbcf6d8083951ca13bbc98def8fe0fcee302d8c53d27b73f17d9583b924e"
 )
 
 

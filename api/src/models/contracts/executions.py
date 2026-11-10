@@ -3,7 +3,7 @@ Execution contract models for Bifrost.
 """
 
 from datetime import datetime, timedelta, timezone
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_serializer, model_validator
@@ -92,6 +92,7 @@ class ExecutionSummary(BaseModel):
     executed_by_name: str  # Display name of user who executed
     executed_by_email: str | None = None  # Email of user who executed
     status: ExecutionStatus
+    execution_lane: Literal["normal", "fast_path"] = "normal"
     result_type: str | None = None  # How to render result (json, html, text)
     error_message: str | None = None
     duration_ms: int | None = None

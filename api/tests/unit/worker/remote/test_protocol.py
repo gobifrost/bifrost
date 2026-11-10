@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import hmac
 from dataclasses import replace
 from datetime import date, datetime, timezone
 from decimal import Decimal
@@ -11,12 +13,14 @@ from uuid import UUID
 import pytest
 
 from src.worker.remote.protocol import (
+    AUTH_DOMAIN,
     MAX_FRAME_BYTES,
     AuthenticationError,
     ControlEnvelope,
     FragmentAssembler,
     Hello,
     ProtocolError,
+    SignedHello,
     sign_hello,
     verify_hello,
     fragment,
@@ -29,7 +33,10 @@ from src.worker.remote.protocol import (
 def test_handler_negotiation_keeps_old_launchers_out_of_summary_claims() -> None:
     assert hello_execution_handlers({}) == LEGACY_EXECUTION_HANDLERS
     assert hello_execution_handlers({"handlers": [list(pair) for pair in EXECUTION_HANDLERS], "summary_claim_protocol": 1}) == EXECUTION_HANDLERS
-    assert hello_execution_handlers({"handlers": [list(pair) for pair in EXECUTION_HANDLERS]}) == LEGACY_EXECUTION_HANDLERS
+    assert hello_execution_handlers({"handlers": [list(pair) for pair in EXECUTION_HANDLERS]}) == (
+        *LEGACY_EXECUTION_HANDLERS,
+        ("workflow.execute", 2),
+    )
     assert hello_execution_handlers({"handlers": [["agent.summarize", 2], ["agent.run", 1]]}) == (("agent.run", 1),)
 
 
@@ -64,6 +71,42 @@ def test_hello_signature_binds_every_identity_field() -> None:
     tampered = replace(signed, pod_uid="other-pod")
     with pytest.raises(AuthenticationError):
         verify_hello("platform-secret", tampered, now=hello.issued_at + 1)
+
+    with pytest.raises(AuthenticationError):
+        verify_hello(
+            "platform-secret", replace(signed, execution_lane="fast_path"), now=hello.issued_at + 1
+        )
+
+    fast = _hello(execution_lane="fast_path")
+    fast_signed = sign_hello("platform-secret", fast)
+    assert verify_hello("platform-secret", fast_signed, now=fast.issued_at + 1) == fast
+    with pytest.raises(AuthenticationError):
+        verify_hello(
+            "platform-secret", replace(fast_signed, execution_lane="normal"), now=fast.issued_at + 1
+        )
+
+
+def test_old_normal_hello_proof_without_a_lane_still_verifies() -> None:
+    hello = _hello()
+    legacy = {
+        "incarnation_id": str(hello.incarnation_id),
+        "issued_at": hello.issued_at,
+        "form": hello.form,
+        "job_uid": hello.job_uid,
+        "launcher_id": str(hello.launcher_id),
+        "nonce": hello.nonce,
+        "pod_uid": hello.pod_uid,
+        "hostname": hello.hostname,
+        "hello_sequence": hello.hello_sequence,
+    }
+    proof = hmac.new(
+        b"platform-secret",
+        AUTH_DOMAIN + json.dumps(legacy, separators=(",", ":"), sort_keys=True).encode(),
+        hashlib.sha256,
+    ).hexdigest()
+    signed = SignedHello.from_dict({**legacy, "proof": proof})
+
+    assert verify_hello("platform-secret", signed, now=hello.issued_at + 1) == hello
 
 
 def test_external_hello_signature_binds_the_prepared_resource() -> None:

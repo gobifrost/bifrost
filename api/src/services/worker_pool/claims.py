@@ -52,7 +52,8 @@ def _now() -> datetime:
 
 
 async def admit_worker(
-    incarnation_id: UUID, *, job_uid: str, pod_uid: str, version: str | None
+    incarnation_id: UUID, *, job_uid: str, pod_uid: str, version: str | None,
+    execution_lane: str = "normal",
 ) -> UUID | None:
     """Bind this pod to its incarnation once; None if it was refused.
 
@@ -72,6 +73,7 @@ async def admit_worker(
                 ExecutionWorker.state == "starting",
                 ExecutionWorker.kubernetes_job_uid == job_uid,
                 ExecutionWorker.kubernetes_pod_uid.is_(None),
+                ExecutionWorker.execution_lane == execution_lane,
             )
             .values(
                 state="ready",
@@ -117,6 +119,7 @@ async def register_static_worker(
     supported_handlers: list[str] | None = None,
     incarnation_id: UUID | None = None,
     version: str | None = None,
+    execution_lane: str = "normal",
 ) -> UUID:
     """A long-running executor joins the pool as ``starting``.
 
@@ -138,6 +141,7 @@ async def register_static_worker(
             else [handler for handler, _version in SUPPORTED_HANDLERS]
         ),
         version=version,
+        execution_lane=execution_lane,
         heartbeat_at=func.now(),
     )
     async with get_db_context() as db:
@@ -209,6 +213,8 @@ async def claim_next(
     pairs = [pair for pair in handlers if pair in SUPPORTED_HANDLERS]
     unassigned = (
         WorkDispatch.assigned_worker_id.is_(None),
+        WorkDispatch.execution_lane == select(ExecutionWorker.execution_lane)
+        .where(ExecutionWorker.id == incarnation_id).scalar_subquery(),
         tuple_(WorkDispatch.handler, WorkDispatch.handler_version).in_(pairs),
     )
     reserved_for = (
@@ -404,19 +410,29 @@ async def begin_idle_drain(incarnation_id: UUID) -> bool:
         # this order while changing worker state, so reversing it can deadlock.
         if not await fence_remote_owner(db, for_update=True):
             return False
-        keep_ready = (await load_kubernetes_policy(db)).warm_workers
+        policy = await load_kubernetes_policy(db)
         # A sized Job always drains once idle: only standard Jobs make up the
         # warm minimum.
-        sized = await db.scalar(
-            select(ExecutionWorker.resource_class == "sized").where(
+        worker = await db.execute(
+            select(ExecutionWorker.resource_class, ExecutionWorker.execution_lane).where(
                 ExecutionWorker.id == incarnation_id
             )
+        )
+        worker_row = worker.one_or_none()
+        if worker_row is None:
+            return False
+        sized = worker_row.resource_class == "sized"
+        keep_ready = (
+            policy.reserved_fast_path_workers
+            if worker_row.execution_lane == "fast_path"
+            else policy.warm_workers
         )
         ready_jobs = await db.scalar(
             select(func.count(ExecutionWorker.id)).where(
                 ExecutionWorker.form.in_(MANAGED_WORKER_FORMS),
                 ExecutionWorker.resource_class == "standard",
                 ExecutionWorker.state == "ready",
+                ExecutionWorker.execution_lane == worker_row.execution_lane,
             )
         ) or 0
         if not sized and ready_jobs <= keep_ready:

@@ -1782,6 +1782,7 @@ def _install_roundtrip_specs():
         endpoint_enabled=True,
         public_endpoint=True,
         timeout_seconds=4242,
+        execution_lane="fast_path",
         category="CAT_SENTINEL",
         tags=["t_sentinel"],
         access_level="role_based",
@@ -1882,3 +1883,14 @@ def test_install_view_preserves_every_imported_field(model, reconstruct, install
         f"  before={ {k: before.get(k) for k in dropped} }\n"
         f"  after = { {k: after.get(k) for k in dropped} }"
     )
+
+
+@pytest.mark.parametrize("lane", ["auto", "normal", "fast_path"])
+def test_workflow_priority_survives_portable_views_and_import(lane):
+    from bifrost.manifest import ManifestWorkflow
+    from bifrost.manifest_codec import Destination
+
+    workflow = ManifestWorkflow(id="11111111-1111-1111-1111-111111111111", path="lane.py", function_name="lane", execution_lane=lane)
+    for destination in (Destination.GIT_SYNC, Destination.INSTALL):
+        imported = ManifestWorkflow.model_validate(workflow.view(destination))
+        assert imported.to_orm_values(destination).direct["execution_lane"] == lane

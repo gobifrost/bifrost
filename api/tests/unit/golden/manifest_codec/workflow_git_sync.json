@@ -7,6 +7,7 @@
   "category": "TestCat",
   "description": "parity test desc",
   "endpoint_enabled": true,
+  "execution_lane": "auto",
   "function_name": "rt_parity",
   "id": "<volatile>",
   "name": "rt_wf_parity",

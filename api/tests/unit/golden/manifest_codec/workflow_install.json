@@ -6,6 +6,7 @@
   "category": "InstallCat",
   "description": "install parity desc",
   "endpoint_enabled": true,
+  "execution_lane": "auto",
   "function_name": "rt_install_parity",
   "id": "<volatile>",
   "name": "rt_wf_install_parity",

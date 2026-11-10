@@ -35,6 +35,10 @@ class WorkDispatch(Base):
     memory_request_bytes: Mapped[int] = mapped_column(
         BigInteger, nullable=False, server_default=text("67108864")
     )
+    # Resolved at acceptance; settings changes cannot alter an accepted run.
+    execution_lane: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="normal", server_default=text("'normal'")
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("NOW()")
     )
@@ -42,4 +46,5 @@ class WorkDispatch(Base):
     __table_args__ = (
         UniqueConstraint("family", "subject_id", name="uq_work_dispatches_subject"),
         Index("ix_work_dispatches_created", "created_at"),
+        Index("ix_work_dispatches_lane_created", "execution_lane", "created_at"),
     )

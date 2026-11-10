@@ -64,6 +64,7 @@ def _pending_run(
     file_path: str | None,
     event: dict[str, Any] | None = None,
     dispatch_metadata: dict[str, Any] | None = None,
+    trusted_app_context: bool = False,
     artifact_workspace_id: str | None = None,
     is_agent: bool = False,
     execution_origin: str = "unknown",
@@ -107,6 +108,9 @@ def _pending_run(
     }
     if dispatch_metadata is not None:
         message["dispatch_metadata"] = dispatch_metadata
+    if trusted_app_context:
+        # Set only by a server authorization path, never from request JSON.
+        message["trusted_app_context"] = True
     # Include file_path for fast direct loading (avoids filesystem scan)
     if file_path:
         message["file_path"] = file_path
@@ -154,6 +158,7 @@ async def enqueue_workflow_execution(
     api_key_id: str | None = None,
     file_path: str | None = None,
     dispatch_metadata: dict[str, Any] | None = None,
+    trusted_app_context: bool = False,
     *,
     lineage: RunLineage | None,
 ) -> str:
@@ -190,6 +195,7 @@ async def enqueue_workflow_execution(
         sync=sync,
         file_path=file_path,
         dispatch_metadata=dispatch_metadata,
+        trusted_app_context=trusted_app_context,
         lineage=lineage.bound(execution_id) if lineage else None,
         **_context_fields(context),
     )

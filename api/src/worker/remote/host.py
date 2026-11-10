@@ -109,6 +109,7 @@ class Bridge:
         )
         self.baseline_bytes = self.current
         self.hostname = hello["hostname"]
+        self.execution_lane = hello.get("execution_lane", "normal")
         self.handlers = hello.get("handlers", LEGACY_EXECUTION_HANDLERS)
         self.sample_at = time.monotonic()
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
@@ -523,11 +524,13 @@ class ApiExecutor(PoolWorker):
             pod_uid="remote-controlled",
             on_ready=ready,
             handlers=bridge.handlers,
+            execution_lane=bridge.execution_lane,
         )
         self.incarnation_id = incarnation_id
         self.bridge = bridge
         self._reconcile_lock = asyncio.Lock()
         self._reconciled_generation = 0
+        self._admission_prepared = False
 
     async def _initialize_runtime(self) -> bool:
         return await report_worker_handlers(
@@ -604,15 +607,16 @@ class ApiExecutor(PoolWorker):
         return await claim_platform_job(backend="local", fits_bytes=fits_bytes,
                                         memory_sample=self.bridge.memory())
 
-    async def _start_service_claim_loop(self) -> None:
+    async def _prepare_admission(self) -> None:
         """Adopt physical routes after memory admission exists, before claims run."""
         assert self.admission is not None
         self.bridge.admission = self.admission
         snapshot = await self._reconcile_transport_inventory()
         assert snapshot is not None
-        await super()._start_service_claim_loop()
+        await super()._prepare_admission()
         await self._apply_reconciled_snapshot(snapshot)
         await self.bridge.reconciliation_complete()
+        self._admission_prepared = True
 
     async def reconcile_transport_inventory(self, *, expected_generation: int | None = None) -> None:
         """Reconcile a same-owner reconnect before its terminal replay runs."""
@@ -621,8 +625,8 @@ class ApiExecutor(PoolWorker):
             and self.bridge.lease.session_generation != expected_generation
         ):
             return
-        if self._service_claim_loop is None:
-            # Initial inventory is consumed by _start_service_claim_loop,
+        if not self._admission_prepared:
+            # Initial inventory is consumed by _prepare_admission,
             # after PoolWorker has constructed its admission gate.
             return
         snapshot = await self._reconcile_transport_inventory(expected_generation)
@@ -1000,6 +1004,8 @@ class RemoteControlHost:
                 raise AuthenticationError("expected signed hello")
             signed = SignedHello.from_dict(initial.get("hello", {}))
             hello = verify_hello(get_settings().secret_key, signed)
+            if hello.form == "external" and hello.execution_lane != "normal":
+                raise AuthenticationError("External capacity workers only support the Normal lane")
             sample = initial.get("sample")
             if not isinstance(sample, dict):
                 raise ProtocolError("hello sample is required")
@@ -1014,7 +1020,10 @@ class RemoteControlHost:
                 "requirements": initial.get("requirements", {}),
                 "hostname": hello.hostname,
                 "handlers": hello_execution_handlers(initial),
+                "execution_lane": hello.execution_lane,
             }
+            if hello.execution_lane == "fast_path" and ("workflow.execute", 2) not in bootstrap["handlers"]:
+                raise AuthenticationError("Fast Path workers must support workflow.execute version 2")
             credential_protocol = hello_credential_protocol(initial)
         except (AuthenticationError, ProtocolError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             await socket.close(code=1008)
@@ -1030,6 +1039,7 @@ class RemoteControlHost:
             admitted = await admit_worker(
                 hello.incarnation_id, job_uid=hello.job_uid, pod_uid=hello.pod_uid,
                 version=version if isinstance(version, str) else None,
+                execution_lane=hello.execution_lane,
             )
             if admitted is None:
                 async with get_liveness_db_context() as db:
@@ -1040,6 +1050,7 @@ class RemoteControlHost:
                             ExecutionWorker.state.in_(("ready", "draining")),
                             ExecutionWorker.kubernetes_job_uid == hello.job_uid,
                             ExecutionWorker.kubernetes_pod_uid == hello.pod_uid,
+                            ExecutionWorker.execution_lane == hello.execution_lane,
                         )
                     )
                 if bound_pod is None:
@@ -1069,20 +1080,23 @@ class RemoteControlHost:
                     raise AuthenticationError("launcher is not bound to the prepared capacity resource")
         else:
             async with get_liveness_db_context() as db:
-                existing_form = await db.scalar(
-                    select(ExecutionWorker.form).where(
+                existing_worker = (await db.execute(
+                    select(ExecutionWorker.form, ExecutionWorker.execution_lane).where(
                         ExecutionWorker.id == hello.incarnation_id,
                     )
-                )
-            if existing_form is not None and existing_form != "static":
+                )).one_or_none()
+            if existing_worker is not None and existing_worker.form != "static":
                 raise AuthenticationError("static launcher cannot claim a managed incarnation")
-            if existing_form is None:
+            if existing_worker is not None and existing_worker.execution_lane != hello.execution_lane:
+                raise AuthenticationError("static launcher execution lane changed")
+            if existing_worker is None:
                 version = initial.get("version")
                 await register_static_worker(
                     hostname=hello.hostname,
                     version=version if isinstance(version, str) else None,
                     incarnation_id=hello.incarnation_id,
                     supported_handlers=[handler for handler, _version in bootstrap["handlers"]],
+                    execution_lane=hello.execution_lane,
                 )
         acquiring_at = time.monotonic()
         lease = await acquire_remote_owner(
