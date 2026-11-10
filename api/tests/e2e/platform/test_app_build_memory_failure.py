@@ -6,7 +6,6 @@ Unit tests cover other entry points and memory signals without extra builds.
 """
 
 import io
-import json
 from uuid import uuid4
 import zipfile
 
@@ -14,6 +13,7 @@ import pytest
 
 from shared.app_build_errors import app_build_memory_message
 from tests.e2e.conftest import poll_until
+from tests.e2e.platform.thin_live_helpers import app_build_package_files
 
 
 @pytest.mark.e2e
@@ -34,10 +34,8 @@ def test_app_build_oom_reaches_job_error_and_notification(e2e_client, platform_a
     request.addfinalizer(cleanup)
     source = io.BytesIO()
     with zipfile.ZipFile(source, "w") as archive:
-        archive.writestr("package.json", json.dumps({
-            "name": "build-memory-failure", "private": True,
-            "devDependencies": {"vite": "^6.2.2"},
-        }))
+        for name, content in app_build_package_files().items():
+            archive.writestr(name, content)
         archive.writestr("index.html", '<div id="root"></div>')
         archive.writestr(
             "vite.config.js",
@@ -60,7 +58,7 @@ def test_app_build_oom_reaches_job_error_and_notification(e2e_client, platform_a
     job = poll_until(terminal_job, max_wait=120, interval=0.1)
     assert job is not None
     assert job["status"] == "failed", job
-    assert job["error"]["code"] == "memory_pressure"
+    assert job["error"]["code"] == "memory_pressure", job
     assert job["error"]["message"] == app_build_memory_message()
     assert job["notification_id"] is not None
 
