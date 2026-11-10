@@ -53,8 +53,9 @@ def changes(monkeypatch):  # type: ignore[no-untyped-def]
     return recorded
 
 
-async def test_newer_changes_are_applied_in_order_and_the_generation_advances(changes) -> None:  # type: ignore[no-untyped-def]
-    worker = PoolWorker()
+@pytest.mark.parametrize("lane", ["normal", "fast_path"])
+async def test_newer_changes_are_applied_in_order_and_the_generation_advances(changes, lane) -> None:  # type: ignore[no-untyped-def]
+    worker = PoolWorker(execution_lane=lane)
     worker.package_generation = 3
     consumer = _Consumer()
     worker._package_consumer = consumer  # type: ignore[assignment]

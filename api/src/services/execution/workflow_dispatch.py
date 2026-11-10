@@ -26,6 +26,7 @@ from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
 from src.services.durable_impersonation import pending_durable_impersonation
 from src.services.memory_requests import workflow_request_bytes
+from shared.execution_lanes import resolve_admitted_execution_lane
 from src.services.work_dispatch import WAKE_WORKFLOW, hand_off, stage_dispatch, take_dispatch_payload
 
 logger = logging.getLogger(__name__)
@@ -33,6 +34,7 @@ logger = logging.getLogger(__name__)
 FAMILY = WAKE_WORKFLOW
 HANDLER = "workflow.execute"
 HANDLER_VERSION = 1
+FAST_PATH_HANDLER_VERSION = 2
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,7 @@ def _organization_id(org_id: str | None) -> UUID | None:
 
 async def _row_identity(
     db: AsyncSession, pending: PendingExecution
-) -> tuple[str, UUID | None, int]:
+) -> tuple[str, UUID | None, int, str]:
     """Display name, owning organization and memory request for the PENDING row.
 
     Mirrors the worker: an org-scoped workflow's runs belong to the
@@ -58,10 +60,10 @@ async def _row_identity(
     """
     caller_org = _organization_id(pending["org_id"])
     if pending["script_name"]:
-        return pending["script_name"], caller_org, workflow_request_bytes(None)
+        return pending["script_name"], caller_org, workflow_request_bytes(None), "auto"
     workflow_id = pending["workflow_id"]
     if workflow_id is None:
-        return "workflow", caller_org, workflow_request_bytes(None)
+        return "workflow", caller_org, workflow_request_bytes(None), "auto"
     row = (
         await db.execute(
             select(
@@ -69,16 +71,18 @@ async def _row_identity(
                 Workflow.organization_id,
                 Workflow.learned_memory_bytes,
                 Workflow.memory_request_mib,
+                Workflow.execution_lane,
             ).where(Workflow.id == UUID(workflow_id))
         )
     ).one_or_none()
     if row is None:
         # The worker records the failure when it claims the run.
-        return workflow_id, caller_org, workflow_request_bytes(None)
+        return workflow_id, caller_org, workflow_request_bytes(None), "auto"
     return (
         row.name,
         row.organization_id or caller_org,
         workflow_request_bytes(row.learned_memory_bytes, row.memory_request_mib),
+        row.execution_lane,
     )
 
 
@@ -112,8 +116,15 @@ async def stage_workflow_run(
     execution_id = UUID(pending["execution_id"])
     if record_exists:
         memory_request_bytes = await _request_for(db, pending)
+        execution_lane = await db.scalar(
+            select(Execution.execution_lane).where(Execution.id == execution_id)
+        ) or "normal"
     else:
-        workflow_name, organization_id, memory_request_bytes = await _row_identity(db, pending)
+        workflow_name, organization_id, memory_request_bytes, workflow_lane = await _row_identity(db, pending)
+        execution_lane = await resolve_admitted_execution_lane(
+            db, workflow_lane,
+            trusted_app_context=bool(message.get("trusted_app_context")),
+        )
         db.add(
             Execution(
                 id=execution_id,
@@ -128,6 +139,7 @@ async def stage_workflow_run(
                 api_key_id=UUID(pending["api_key_id"]) if pending["api_key_id"] else None,
                 execution_context={"is_platform_admin": pending["is_platform_admin"]},
                 execution_origin=provenance.origin,
+                execution_lane=execution_lane,
                 agent_id=provenance.agent_id,
                 **lineage_columns(pending.get("lineage")),
                 **pending_durable_impersonation(
@@ -140,10 +152,13 @@ async def stage_workflow_run(
         family=FAMILY,
         subject_id=execution_id,
         handler=HANDLER,
-        handler_version=HANDLER_VERSION,
+        handler_version=(
+            FAST_PATH_HANDLER_VERSION if execution_lane == "fast_path" else HANDLER_VERSION
+        ),
         message=message,
         payload=dict(pending),
         memory_request_bytes=memory_request_bytes,
+        execution_lane=execution_lane,
     )
     return AcceptedRun(
         dispatch_id=dispatch.id,
@@ -211,15 +226,23 @@ async def release_workflow_run(
                 ExecutionWorkerClaim.subject_id == execution_id,
             )
         )
+        execution_lane = await db.scalar(
+            select(Execution.execution_lane).where(Execution.id == execution_id)
+        ) or "normal"
         stage_dispatch(
             db,
             family=FAMILY,
             subject_id=execution_id,
             handler=HANDLER,
-            handler_version=HANDLER_VERSION,
+            handler_version=(
+                FAST_PATH_HANDLER_VERSION
+                if execution_lane == "fast_path"
+                else HANDLER_VERSION
+            ),
             message=message,
             payload=payload,
             memory_request_bytes=memory_request_bytes,
+            execution_lane=execution_lane,
             queued_at=queued_at,
         )
         await db.commit()

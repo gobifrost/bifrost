@@ -36,7 +36,7 @@ from types import SimpleNamespace
 from typing import TYPE_CHECKING, Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared import access_checks
@@ -72,6 +72,7 @@ class ResolvedSdkWorkflow:
     app_embed: Any | None
     lookup_org_id: UUID | None
     execution_org_id: UUID | None
+    trusted_app_context: bool
 
 
 def is_uuid_workflow_ref(identifier: str) -> bool:
@@ -107,6 +108,7 @@ async def insert_scheduled_execution(
     run_as: dict[str, Any] | None,
     execution_origin: str,
     agent_id: UUID | None,
+    trusted_app_context: bool = False,
 ) -> UUID:
     """Insert a SCHEDULED execution row.
 
@@ -117,8 +119,19 @@ async def insert_scheduled_execution(
     """
     from src.models.enums import ExecutionStatus
     from src.models.orm.executions import Execution
+    from src.models.orm.workflows import Workflow
+    from shared.execution_lanes import FastPathUnavailable, resolve_admitted_execution_lane
 
     exec_id = uuid4()
+    workflow_lane = await db.scalar(
+        select(Workflow.execution_lane).where(Workflow.id == workflow_id)
+    ) or "auto"
+    try:
+        execution_lane = await resolve_admitted_execution_lane(
+            db, workflow_lane, trusted_app_context=trusted_app_context,
+        )
+    except FastPathUnavailable as exc:
+        raise SdkWorkflowExecutionError(400, str(exc)) from None
     execution_context: dict[str, Any] = {"is_platform_admin": is_platform_admin}
     if run_as is not None:
         execution_context["run_as"] = run_as
@@ -138,6 +151,7 @@ async def insert_scheduled_execution(
             execution_context=execution_context,
             execution_origin=execution_origin,
             agent_id=agent_id,
+            execution_lane=execution_lane,
             **lineage_columns(lineage.bound(exec_id) if lineage else None),
             **current_durable_impersonation().columns(),
         )
@@ -397,11 +411,37 @@ async def resolve_sdk_workflow_for_execution(
         except PermissionDenied as exc:
             raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
 
+    trusted_app_context = app_embed is not None
+    if not trusted_app_context and context_app_id is not None:
+        # A request header identifies browser context, not priority authority.
+        # Resolve the App through the caller-scoped repository after the
+        # workflow permission gate, and keep it in the selected organization.
+        # This prevents a forged or merely visible cross-org app header from
+        # promoting an otherwise ordinary UUID/global workflow execution.
+        try:
+            app_context_id = UUID(context_app_id)
+        except ValueError:
+            app_context_id = None
+        if app_context_id is not None:
+            from src.repositories.applications import ApplicationRepository
+
+            assert caller is not None
+            app_context = await ApplicationRepository(
+                session,
+                lookup_org_id,
+                caller=caller,
+            ).get(id=app_context_id)
+            trusted_app_context = bool(
+                app_context is not None
+                and app_context.organization_id in (None, lookup_org_id)
+            )
+
     return ResolvedSdkWorkflow(
         workflow=workflow,
         app_embed=app_embed,
         lookup_org_id=lookup_org_id,
         execution_org_id=execution_org_id,
+        trusted_app_context=trusted_app_context,
     )
 
 
@@ -451,6 +491,7 @@ async def execute_sdk_workflow(
     app_embed = resolved.app_embed
     lookup_org_id = resolved.lookup_org_id
     execution_org_id = resolved.execution_org_id
+    trusted_app_context = resolved.trusted_app_context
 
     from shared.execution_provenance import ExecutionProvenance
     from src.services.authorization.runtime import load_execution_provenance
@@ -548,6 +589,7 @@ async def execute_sdk_workflow(
             run_as=scheduled_run_as,
             execution_origin=provenance.origin,
             agent_id=provenance.agent_id,
+            trusted_app_context=trusted_app_context,
         )
         return WorkflowExecutionResponse(
             execution_id=str(exec_id),
@@ -678,6 +720,7 @@ async def execute_sdk_workflow(
                 transient=request.transient,
                 sync=True,
                 dispatch_metadata=dispatch_metadata,
+                trusted_app_context=trusted_app_context,
                 lineage=lineage,
             )
             from src.models import WorkflowExecutionResponse
@@ -707,6 +750,7 @@ async def execute_sdk_workflow(
                 transient=request.transient,
                 sync=request.sync or False,
                 dispatch_metadata=dispatch_metadata,
+                trusted_app_context=trusted_app_context,
                 lineage=lineage,
             )
         else:

@@ -134,6 +134,7 @@ def build_worker_job_manifest(
     *,
     memory_limit_bytes: int,
     sized: bool,
+    execution_lane: str = "normal",
 ) -> dict[str, Any]:
     """Render the suspended Job for one reusable worker.
 
@@ -209,6 +210,7 @@ def build_worker_job_manifest(
                                 },
                                 {"name": "BIFROST_DATABASE_POOL_SIZE", "value": "1"},
                                 {"name": "BIFROST_DATABASE_MAX_OVERFLOW", "value": "2"},
+                                {"name": "BIFROST_POOL_WORKER_EXECUTION_LANE", "value": execution_lane},
                                 {"name": "PIP_NO_CACHE_DIR", "value": "1"},
                                 {"name": "HOME", "value": "/home/bifrost"},
                                 {

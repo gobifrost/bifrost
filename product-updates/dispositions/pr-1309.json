@@ -1,0 +1,14 @@
+{
+  "key": "pr:1309",
+  "classification": "highlight",
+  "entry_ids": [
+    "3156e6e2-15e9-5422-ad2d-ac4dd4039d99"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1309",
+      "Maintainer approved the proposed entry prose on 2026-11-10 and requested the screenshot, settings link and documentation link. General Writing and Humanizer copy review; controls and direct settings route verified in production-browser acceptance."
+    ]
+  }
+}

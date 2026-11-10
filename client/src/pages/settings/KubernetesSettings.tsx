@@ -29,6 +29,7 @@ import {
 
 type ScalingField =
 	| "warm_workers"
+	| "reserved_fast_path_workers"
 	| "max_workers"
 	| "worker_memory_mib"
 	| "largest_worker_mib"
@@ -38,12 +39,17 @@ const SCALING_FIELDS: { name: ScalingField; label: string; help: string }[] = [
 	{
 		name: "warm_workers",
 		label: "Warm Workers",
-		help: "Workers kept running while there is no work, so new runs start right away.",
+		help: "Normal workers kept running while there is no work, so new runs avoid worker startup delay.",
+	},
+	{
+		name: "reserved_fast_path_workers",
+		label: "Reserved Fast Path Workers",
+		help: "Workers kept running exclusively for Fast Path workflows. They count toward Max Workers and remain idle when there is no Fast Path work. Set to 0 to disable the reservation.",
 	},
 	{
 		name: "max_workers",
 		label: "Max Workers",
-		help: "The most workers that run at once.",
+		help: "The most managed workers that run at once, including the Fast Path reservation. Leave room for Normal work.",
 	},
 	{
 		name: "worker_memory_mib",
@@ -70,6 +76,7 @@ type DraftField = ScalingField | "max_isolated_pods";
 function scalingDraft(policy: KubernetesPolicyValues): ScalingDraft {
 	return {
 		warm_workers: String(policy.warm_workers),
+		reserved_fast_path_workers: String(policy.reserved_fast_path_workers),
 		max_workers: String(policy.max_workers),
 		worker_memory_mib: String(policy.worker_memory_mib),
 		largest_worker_mib: String(policy.largest_worker_mib),
@@ -486,6 +493,21 @@ export function KubernetesSettings() {
 		}
 	};
 
+	const toggleAppPriority = async (enabled: boolean) => {
+		if (busy) return;
+		const result = await savePolicy(
+			"app-priority",
+			{ auto_priority_app_workflows: enabled },
+			[],
+			enabled
+				? "Automatic App calls will use Fast Path workers"
+				: "Automatic App calls will use Normal workers",
+		);
+		if (result instanceof KubernetesRequestError) {
+			toast.error(result.message);
+		}
+	};
+
 	const saveJobType = async (
 		job: KubernetesExecutionJobType,
 		update: { enabled: boolean; maxConcurrency?: number | null },
@@ -546,8 +568,8 @@ export function KubernetesSettings() {
 					Scaling & Isolation
 				</h2>
 				<p className="mt-1 text-sm text-muted-foreground">
-					How Bifrost scales workers and runs jobs. Changes
-					apply without a restart.
+					How Bifrost scales workers and runs jobs. Changes apply
+					without a restart.
 				</p>
 			</div>
 
@@ -557,6 +579,17 @@ export function KubernetesSettings() {
 
 			{settings && (
 				<UnreadVariablesNotice variables={settings.unread_variables} />
+			)}
+
+			{settings && settings.policy.reserved_fast_path_workers > 0 && (
+				<p role="status" className="text-sm text-muted-foreground">
+					Fast Path: {settings.fast_path_ready_workers} of{" "}
+					{settings.policy.reserved_fast_path_workers} reserved
+					workers ready at last refresh.
+					{settings.fast_path_ready_workers <
+						settings.policy.reserved_fast_path_workers &&
+						" Reserved capacity is not fully available yet."}
+				</p>
 			)}
 
 			<Card>
@@ -610,6 +643,23 @@ export function KubernetesSettings() {
 									/>
 								))}
 							</div>
+							<SettingsToggleRow
+								id="k8s-app-priority"
+								label="Prioritize App Workflows"
+								description="Use Fast Path for authorized App calls when the workflow priority is Automatic. Set long imports to Normal in workflow settings. Reserved Fast Path capacity must be configured first."
+								checked={
+									settings.policy.auto_priority_app_workflows
+								}
+								disabled={busy}
+								busy={
+									saving === "app-priority"
+										? "saving"
+										: undefined
+								}
+								onChange={(value) =>
+									void toggleAppPriority(value)
+								}
+							/>
 							<div className="flex flex-col gap-3 border-t pt-5 sm:flex-row sm:items-center sm:justify-end">
 								{scalingError && (
 									<p
@@ -643,15 +693,21 @@ export function KubernetesSettings() {
 						<CardTitle>Isolated Jobs</CardTitle>
 					</div>
 					<CardDescription>
-						Run build jobs in their own Kubernetes pod. Without isolation, they
-						run on workers, and the pool scales up to make room.
+						Run build jobs in their own Kubernetes pod. Without
+						isolation, they run on workers, and the pool scales up
+						to make room.
 					</CardDescription>
 				</CardHeader>
 				{settings && (
 					<CardContent className="space-y-6">
 						{!kubernetesAvailable && (
-							<p role="status" className="text-sm text-muted-foreground">
-								Kubernetes isolation is unavailable in this deployment. Worker scaling and job concurrency remain configurable.
+							<p
+								role="status"
+								className="text-sm text-muted-foreground"
+							>
+								Kubernetes isolation is unavailable in this
+								deployment. Worker scaling and job concurrency
+								remain configurable.
 							</p>
 						)}
 						<div className="space-y-2">
@@ -696,7 +752,11 @@ export function KubernetesSettings() {
 									type="button"
 									variant="outline"
 									className="min-h-11"
-									disabled={busy || !kubernetesAvailable || !podsDirty}
+									disabled={
+										busy ||
+										!kubernetesAvailable ||
+										!podsDirty
+									}
 									onClick={() => void saveMaxPods()}
 								>
 									{saving === "max_isolated_pods" && (

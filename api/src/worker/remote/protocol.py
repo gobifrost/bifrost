@@ -44,6 +44,10 @@ CREDENTIAL_PROTOCOL = 2
 LEGACY_EXECUTION_HANDLERS = (("workflow.execute", 1), ("agent.run", 1))
 EXECUTION_HANDLERS = (
     *LEGACY_EXECUTION_HANDLERS,
+    # Version 2 is lane-aware. Fast Path dispatches use it so an executor
+    # running a pre-lane build (which only advertises version 1) can never
+    # claim reserved work during a rolling upgrade.
+    ("workflow.execute", 2),
     ("agent.summarize", 1),
     ("agent.summarize_backfill", 1),
 )
@@ -78,7 +82,11 @@ def hello_execution_handlers(frame: Mapping[str, Any]) -> tuple[tuple[str, int],
         raise ProtocolError("invalid summary claim protocol")
     return tuple(
         pair for pair in EXECUTION_HANDLERS if pair in pairs
-        and (pair in LEGACY_EXECUTION_HANDLERS or summary_protocol == SUMMARY_CLAIM_PROTOCOL)
+        and (
+            pair in LEGACY_EXECUTION_HANDLERS
+            or pair == ("workflow.execute", 2)
+            or summary_protocol == SUMMARY_CLAIM_PROTOCOL
+        )
     )
 
 
@@ -115,6 +123,7 @@ class Hello:
     nonce: str
     hello_sequence: int
     resource_uid: str | None = field(default=None, kw_only=True)
+    execution_lane: str = field(default="normal", kw_only=True)
 
     def __post_init__(self) -> None:
         if not self.hostname or self.form not in {"job", "static", "external"}:
@@ -132,6 +141,8 @@ class Hello:
             raise ProtocolError("hello nonce must be 24-256 characters")
         if self.hello_sequence < 1:
             raise ProtocolError("hello sequence must be positive")
+        if self.execution_lane not in {"normal", "fast_path"}:
+            raise ProtocolError("hello execution lane is invalid")
 
     def canonical_bytes(self) -> bytes:
         fields = {
@@ -145,6 +156,10 @@ class Hello:
             "hostname": self.hostname,
             "hello_sequence": self.hello_sequence,
         }
+        # Existing Normal launchers signed this exact shape. Fast Path is the
+        # opt-in capability, so only it extends the signed identity.
+        if self.execution_lane != "normal":
+            fields["execution_lane"] = self.execution_lane
         if self.form == "external":
             fields["resource_uid"] = self.resource_uid
         return json.dumps(
@@ -172,6 +187,7 @@ class SignedHello(Hello):
                 nonce=str(value["nonce"]),
                 hello_sequence=int(value["hello_sequence"]),
                 resource_uid=str(value["resource_uid"]) if value.get("resource_uid") is not None else None,
+                execution_lane=str(value.get("execution_lane", "normal")),
                 proof=str(value["proof"]),
             )
         except (KeyError, TypeError, ValueError) as exc:
@@ -353,6 +369,7 @@ def verify_hello(
         nonce=hello.nonce,
         hello_sequence=hello.hello_sequence,
         resource_uid=hello.resource_uid,
+        execution_lane=hello.execution_lane,
     )
     expected = sign_hello(secret, unsigned).proof
     if not hmac.compare_digest(hello.proof, expected):

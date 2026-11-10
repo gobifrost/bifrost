@@ -20,6 +20,7 @@ from src.services.openapi_endpoints import (
     get_endpoint_enabled_workflows,
     refresh_workflow_endpoint,
     register_workflow_endpoint,
+    register_workflow_endpoints,
     remove_workflow_endpoint,
     TYPE_TO_OPENAPI,
 )
@@ -332,6 +333,32 @@ class TestTypeMapping:
 
 class TestOpenAPIResponseCache:
     """Tests for the encoded OpenAPI response cache."""
+
+    @pytest.mark.asyncio
+    async def test_startup_builds_schema_after_registering_workflows(self):
+        app = FastAPI()
+        generator = MagicMock(wraps=app.openapi)
+        app.openapi = generator
+        workflow = SimpleNamespace(
+            name="startup_workflow",
+            description="Startup workflow",
+            endpoint_enabled=True,
+            allowed_methods=["GET"],
+            parameters_schema=[],
+            type="workflow",
+        )
+        with patch(
+            "src.services.openapi_endpoints.get_endpoint_enabled_workflows",
+            new=AsyncMock(return_value=[workflow]),
+        ):
+            assert await register_workflow_endpoints(app, AsyncMock()) == 1
+
+        generator.assert_called_once_with()
+        assert app.openapi_schema is None
+        response = TestClient(app).get("/openapi.json")
+        assert response.status_code == 200
+        assert "/api/endpoints/startup_workflow" in response.json()["paths"]
+        generator.assert_called_once_with()
 
     def test_http_response_matches_fresh_openapi_dict(self):
         app = FastAPI(title="Cached schema")

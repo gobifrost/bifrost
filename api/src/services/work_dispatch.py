@@ -87,6 +87,7 @@ def stage_dispatch(
     message: dict[str, Any],
     payload: dict[str, Any],
     memory_request_bytes: int,
+    execution_lane: str = "normal",
     queued_at: datetime | None = None,
 ) -> WorkDispatch:
     """Add a dispatch to the caller's transaction; hand off after commit.
@@ -112,6 +113,7 @@ def stage_dispatch(
         },
         payload=payload,
         memory_request_bytes=memory_request_bytes,
+        execution_lane=execution_lane,
     )
     if queued_at is not None:
         dispatch.created_at = queued_at
@@ -299,7 +301,9 @@ async def _settle_pool_dispatch(
     return None
 
 
-async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") -> int | None:
+async def largest_budget(
+    db: AsyncSession, handler: str = "workflow.execute", execution_lane: str = "normal"
+) -> int | None:
     """The most memory any executor can hand to one piece of work: the
     largest budget of an executor live now or within ``RECENTLY_LIVE`` (one
     restarting or rolling over counts), or what the worker controller can
@@ -319,6 +323,7 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
     live = await db.scalar(
         select(func.max(ExecutionWorker.memory_budget_bytes)).where(
             ExecutionWorker.supported_handlers.contains([handler]),
+            ExecutionWorker.execution_lane == execution_lane,
             (
                 ExecutionWorker.state.in_(("ready", "draining"))
                 | (ExecutionWorker.ended_at >= func.now() - RECENTLY_LIVE)
@@ -326,7 +331,10 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
         )
     )
     launchable = None
-    if handler in REMOTE_WORKER_HANDLER_NAMES:
+    # Managed controller capacity is elastic only for Normal. Fast Path is a
+    # fixed reservation; it must be proved by a matching worker, never by a
+    # Normal worker's launchable budget.
+    if handler in REMOTE_WORKER_HANDLER_NAMES and execution_lane == "normal":
         async with get_redis() as redis:
             launchable, generation = await redis.mget([LAUNCHABLE_KEY, LAUNCHABLE_GENERATION_KEY])
         if launchable == "":
@@ -358,22 +366,24 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
         from src.services.worker_pool.claims import SUPPORTED_HANDLERS
 
         budgets = {
-            handler: await largest_budget(db, handler)
+            (handler, lane): await largest_budget(db, handler, lane)
             for handler, _version in SUPPORTED_HANDLERS
+            for lane in ("normal", "fast_path")
         }
         due = WorkDispatch.created_at <= now - POOL_RECHECK_AFTER
-        for handler, largest in budgets.items():
+        for (handler, lane), largest in budgets.items():
             if largest is not None:
                 due = due | (
                     WorkDispatch.assigned_worker_id.is_(None)
                     & (WorkDispatch.handler == handler)
+                    & (WorkDispatch.execution_lane == lane)
                     & (WorkDispatch.memory_request_bytes > largest)
                 )
         candidates = (
             await db.execute(
                 select(
                     WorkDispatch.id, WorkDispatch.family,
-                    WorkDispatch.subject_id, WorkDispatch.handler,
+                    WorkDispatch.subject_id, WorkDispatch.handler, WorkDispatch.execution_lane,
                 )
                 .where(due)
                 .order_by(WorkDispatch.created_at.asc())
@@ -381,8 +391,10 @@ async def reconcile_work_dispatches(*, limit: int = RECONCILE_BATCH) -> None:
             )
         ).all()
     families = _families()
-    for dispatch_id, family_name, subject_id, handler in candidates:
-        await _reconcile_one(families, dispatch_id, family_name, subject_id, budgets.get(handler))
+    for dispatch_id, family_name, subject_id, handler, lane in candidates:
+        await _reconcile_one(
+            families, dispatch_id, family_name, subject_id, budgets.get((handler, lane))
+        )
 
 
 __all__ = [

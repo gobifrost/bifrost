@@ -21,7 +21,7 @@ from typing import Any, Protocol
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import select, text
+from sqlalchemy import exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.jobs.platform.catalog import (
@@ -39,6 +39,7 @@ from src.models.contracts.kubernetes import (
     KubernetesStatus,
 )
 from src.models.orm.config import SystemConfig
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services.deployment_environment import (
     KUBERNETES_POLICY_VARIABLES,
     set_variables,
@@ -83,6 +84,8 @@ class KubernetesPolicy:
     idle_seconds: int = 300
     isolated_jobs_enabled: bool = False
     max_isolated_pods: int = 2
+    reserved_fast_path_workers: int = 0
+    auto_priority_app_workflows: bool = False
     enabled_job_types: frozenset[str] = DEFAULT_REMOTE_JOB_TYPES
     max_concurrency: Mapping[str, int] = field(default_factory=dict)
 
@@ -115,7 +118,7 @@ def _policy_from(payload: Mapping[str, Any]) -> KubernetesPolicy:
     values: dict[str, Any] = {}
     for name in POLICY_FIELDS:
         value = payload.get(name)
-        if name == "isolated_jobs_enabled":
+        if name in ("isolated_jobs_enabled", "auto_priority_app_workflows"):
             if isinstance(value, bool):
                 values[name] = value
         elif _is_int(value):
@@ -142,6 +145,12 @@ def _validate_consistent(policy: KubernetesPolicy) -> None:
             raise ValueError(f"{name} must be between {low} and {high}")
     if policy.warm_workers > policy.max_workers:
         raise ValueError("Warm workers must not exceed max workers")
+    if policy.warm_workers + policy.reserved_fast_path_workers > policy.max_workers:
+        raise ValueError(
+            "Warm workers plus reserved Fast Path workers must not exceed max workers"
+        )
+    if policy.reserved_fast_path_workers >= policy.max_workers:
+        raise ValueError("Reserved Fast Path workers must leave capacity for Normal work")
     if policy.worker_memory_mib > policy.largest_worker_mib:
         raise ValueError("Worker memory must not exceed the largest worker")
 
@@ -171,7 +180,7 @@ async def _stored_config(db: AsyncSession) -> SystemConfig | None:
             SystemConfig.category == KUBERNETES_CONFIG_CATEGORY,
             SystemConfig.key == KUBERNETES_CONFIG_KEY,
             SystemConfig.organization_id.is_(None),
-        )
+        ).execution_options(populate_existing=True)
     )
     return result.scalars().first()
 
@@ -186,6 +195,15 @@ async def load_kubernetes_policy(db: AsyncSession) -> KubernetesPolicy:
     return _policy_from(await _stored_payload(db))
 
 
+async def lock_kubernetes_policy(db: AsyncSession, *, shared: bool = False) -> None:
+    """Serialize settings edits with admission to an exclusively reserved lane."""
+    function = "pg_advisory_xact_lock_shared" if shared else "pg_advisory_xact_lock"
+    await db.execute(
+        text(f"SELECT {function}(hashtext(:key))"),
+        {"key": f"{KUBERNETES_CONFIG_CATEGORY}/{KUBERNETES_CONFIG_KEY}"},
+    )
+
+
 async def _merge(
     db: AsyncSession,
     mutate: Callable[[dict[str, Any]], bool],
@@ -198,10 +216,7 @@ async def _merge(
     anything; nothing is written when it did not. The lock is held until the
     caller's transaction ends.
     """
-    await db.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:key))"),
-        {"key": f"{KUBERNETES_CONFIG_CATEGORY}/{KUBERNETES_CONFIG_KEY}"},
-    )
+    await lock_kubernetes_policy(db)
     config = await _stored_config(db)
     payload = dict(config.value_json or {}) if config is not None else {}
     if not mutate(payload):
@@ -236,7 +251,7 @@ def _edit(payload: dict[str, Any], name: str, value: Any) -> None:
 def _parse_imported(name: str, raw: str) -> Any:
     """The setting's value for a deployment variable, or None when invalid."""
     value = raw.strip()
-    if name == "isolated_jobs_enabled":
+    if name in ("isolated_jobs_enabled", "auto_priority_app_workflows"):
         return {"kubernetes": True, "local": False}.get(value.lower())
     if name == "enabled_job_types":
         listed = {part.strip() for part in value.split(",") if part.strip()}
@@ -436,6 +451,27 @@ class KubernetesExecutionService:
                     "Cannot verify capacity provider limits; worker settings were not saved"
                 ) from exc
 
+        await lock_kubernetes_policy(self.session)
+        current = await load_kubernetes_policy(self.session)
+        requested_reserved = changes.get("reserved_fast_path_workers", current.reserved_fast_path_workers)
+        if current.reserved_fast_path_workers and requested_reserved == 0:
+            from shared.execution_lanes import has_static_fast_path_capacity
+            from src.models.enums import ExecutionStatus
+            from src.models.orm.executions import Execution
+
+            if not await has_static_fast_path_capacity(self.session):
+                # One statement sees one snapshot while the promoter moves
+                # SCHEDULED -> dispatch atomically; separate reads could miss both.
+                waiting = await self.session.scalar(select(
+                    exists().where(WorkDispatch.execution_lane == "fast_path")
+                    | exists().where(
+                        Execution.execution_lane == "fast_path",
+                        Execution.status == ExecutionStatus.SCHEDULED,
+                    )
+                ))
+                if waiting:
+                    raise ValueError("Dedicated Fast Path capacity is still needed by queued or scheduled runs")
+
         def mutate(payload: dict[str, Any]) -> bool:
             for name, value in changes.items():
                 _edit(payload, name, value)
@@ -491,7 +527,16 @@ class KubernetesExecutionService:
                 key=lambda definition: definition.job_type,
             )
         ]
+        from src.models.orm.execution_workers import ExecutionWorker
+
+        ready_fast = await self.session.scalar(select(func.count()).select_from(ExecutionWorker).where(
+            ExecutionWorker.form == "job",
+            ExecutionWorker.execution_lane == "fast_path",
+            ExecutionWorker.state == "ready",
+            ExecutionWorker.memory_budget_bytes > 0,
+        ))
         return KubernetesExecutionSettings(
+            fast_path_ready_workers=ready_fast or 0,
             policy=KubernetesPolicyValues(
                 **{name: getattr(policy, name) for name in POLICY_FIELDS}
             ),

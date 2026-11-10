@@ -26,10 +26,11 @@ def percentile(values: list[float], fraction: float) -> float:
 
 def _distribution(values: list[float]) -> dict[str, float]:
     if not values:
-        return {"p50": 0.0, "p95": 0.0, "max": 0.0}
+        return {"p50": 0.0, "p95": 0.0, "p99": 0.0, "max": 0.0}
     return {
         "p50": round(percentile(values, 0.50), 1),
         "p95": round(percentile(values, 0.95), 1),
+        "p99": round(percentile(values, 0.99), 1),
         "max": round(max(values), 1),
     }
 

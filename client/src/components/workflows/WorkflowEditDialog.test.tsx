@@ -77,6 +77,7 @@ function makeWorkflow(overrides: Partial<Workflow> = {}): Workflow {
 		tags: [],
 		parameters: [],
 		execution_mode: "sync",
+		execution_lane: "auto",
 		timeout_seconds: 1800,
 		retry_policy: null,
 		endpoint_enabled: false,
@@ -120,6 +121,55 @@ afterEach(() => {
 });
 
 describe("WorkflowEditDialog", () => {
+	it("lets long App workflows explicitly use Normal priority", async () => {
+		const { user } = renderWithProviders(
+			<WorkflowEditDialog
+				workflow={makeWorkflow()}
+				open
+				initialTab="execution"
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(
+			screen.getByRole("combobox", { name: "Priority" }),
+		).toHaveTextContent("Automatic");
+		await user.click(screen.getByRole("combobox", { name: "Priority" }));
+		await user.click(
+			screen.getByRole("option", { name: "Normal" }),
+		);
+		await user.click(screen.getByRole("button", { name: "Save Changes" }));
+		await waitFor(() =>
+			expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1),
+		);
+		expect(mockUpdateWorkflow.mock.calls[0][1]).toMatchObject({
+			execution_lane: "normal",
+		});
+	});
+
+	it("loads and saves an explicitly reserved Fast Path workflow", async () => {
+		const { user } = renderWithProviders(
+			<WorkflowEditDialog
+				workflow={makeWorkflow({ execution_lane: "fast_path" })}
+				open
+				initialTab="execution"
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(
+			screen.getByRole("combobox", { name: "Priority" }),
+		).toHaveTextContent("Fast Path");
+		expect(
+			screen.getByText(/Fast Path uses reserved workers/),
+		).toBeVisible();
+		await user.click(screen.getByRole("button", { name: "Save Changes" }));
+		await waitFor(() =>
+			expect(mockUpdateWorkflow).toHaveBeenCalledTimes(1),
+		);
+		expect(mockUpdateWorkflow.mock.calls[0][1]).toMatchObject({
+			execution_lane: "fast_path",
+		});
+	});
+
 	it("submits an edited workflow tool name separately from the function name", async () => {
 		const onOpenChange = vi.fn();
 		const { user } = renderWithProviders(
