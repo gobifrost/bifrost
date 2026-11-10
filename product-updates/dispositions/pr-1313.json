@@ -1,0 +1,13 @@
+{
+  "key": "pr:1313",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal provider-agnostic Hyperdrive PostgreSQL boundary docs and validation helper; no user-visible behavior, capability, or customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1313",
+      "Contributor disposition for internal architecture boundary; no runtime behavior change."
+    ]
+  }
+}
