@@ -706,6 +706,20 @@ async def test_expire_leases_fails_and_reschedules(db_session):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["stop", "disable"])
+async def test_observed_state_honors_intent_before_attempt_is_flagged(db_session, control):
+    definition, _ = await _ensure(db_session)
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
+    assert attempt.stop_requested_at is None
+    if control == "stop":
+        definition.desired_state = "stopped"
+    else:
+        definition.enabled = False
+
+    assert service_lifecycle.describe_observed_state(definition, attempt) == "stopping"
+
+
+@pytest.mark.asyncio
 async def test_observed_state_mapping(db_session):
     """Desired + definition + live attempt derive the UI state."""
     definition, _ = await _ensure(db_session)
