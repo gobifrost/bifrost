@@ -137,7 +137,6 @@ async def test_execute_async_delegates_once_to_shared_execution_core(monkeypatch
         calls.append((_eid, _ctx))
         return {"status": "Success", "result": {}, "metrics": {}}
 
-    monkeypatch.setattr(sw, "_get_pss_bytes", lambda: 0)
     import src.services.execution.worker as worker_mod
     monkeypatch.setattr(worker_mod, "run_execution", _fake_run)
 

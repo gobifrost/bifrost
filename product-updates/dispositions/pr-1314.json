@@ -1,0 +1,18 @@
+{
+  "key": "pr:1314",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Jack explicitly requested no Product Update for this scoped repair batch.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1314",
+      "https://github.com/gobifrost/bifrost/issues/1196",
+      "Native Jack instruction: No product update. PR-only wording approved in strong native request async:call_ccd38f5b30b14d5da5451618fc2637e6, resolved 2026-11-10T17:26:46.890Z. Implementation and protected delivery retain the separately verified narrowed-batch grant."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1314"
+  }
+}

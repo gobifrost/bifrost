@@ -499,7 +499,10 @@ class AIModelService:
             endpoint=endpoint,
             openai_transport=openai_transport,
             provider_connection_id=connection.id,
-            anthropic_prompt_cache_supported=connection.anthropic_prompt_cache_supported,
+            model_profile_id=profile.id,
+            model_profile_updated_at=profile.updated_at,
+            provider_connection_updated_at=connection.updated_at,
+            anthropic_prompt_cache_supported=profile.anthropic_prompt_cache_supported,
             default_max_tokens=profile.default_max_tokens,
             catalog_provider_id=connection.catalog_provider_id,
             reasoning_effort=profile.reasoning_effort,
@@ -712,7 +715,7 @@ class AIModelService:
             await self.session.execute(
                 update(AIModelProfile)
                 .where(AIModelProfile.connection_id == connection.id)
-                .values(openai_transport=None, wire_api=None)
+                .values(openai_transport=None, wire_api=None, anthropic_prompt_cache_supported=None)
             )
         connection.updated_at = datetime.now(timezone.utc)
         await self.session.flush()
@@ -876,6 +879,7 @@ class AIModelService:
             profile.connection_id = connection_id
             profile.openai_transport = None
             profile.wire_api = None
+            profile.anthropic_prompt_cache_supported = None
         if model is not None:
             trimmed_model = model.strip()
             if not trimmed_model:
@@ -883,6 +887,7 @@ class AIModelService:
             profile.model = trimmed_model
             profile.openai_transport = None
             profile.wire_api = None
+            profile.anthropic_prompt_cache_supported = None
         if reasoning_effort_provided:
             profile.reasoning_effort = reasoning_effort
         if connection_id is not None or model is not None or reasoning_effort_provided:

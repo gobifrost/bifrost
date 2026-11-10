@@ -31404,6 +31404,11 @@ export interface components {
              */
             group: string;
             /**
+             * Bucket Start
+             * @description Exact UTC bucket start
+             */
+            bucket_start?: string | null;
+            /**
              * Worker Id
              * @description Container/pool identifier
              */

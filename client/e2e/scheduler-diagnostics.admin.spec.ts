@@ -7,6 +7,25 @@ test.describe("Scheduler diagnostics (platform admin)", () => {
 			page.getByRole("heading", { name: "Diagnostics" }),
 		).toBeVisible();
 
+		await expect(
+			page.getByText("Total Memory Usage", { exact: true }),
+		).toBeVisible();
+		const memoryResponse = page.waitForResponse(
+			(response) =>
+				response
+					.url()
+					.includes("/api/platform/workers/metrics?range=7d") &&
+				response.status() === 200,
+		);
+		await page.getByRole("button", { name: "7d", exact: true }).click();
+		const memory = await (await memoryResponse).json();
+		for (const point of memory.points) {
+			expect(Number.isFinite(Date.parse(point.bucket_start))).toBe(true);
+		}
+		await expect(
+			page.getByRole("button", { name: "7d", exact: true }),
+		).toHaveAttribute("aria-pressed", "true");
+
 		await page.getByRole("tab", { name: "Scheduler" }).click();
 		const diagnostics = page.getByTestId("scheduler-diagnostics");
 		await expect(diagnostics).toBeVisible({ timeout: 15_000 });

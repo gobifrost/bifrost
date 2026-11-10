@@ -4,7 +4,6 @@ import {
 	format,
 	isAfter,
 	isBefore,
-	isSameDay,
 	setHours,
 	setMinutes,
 	setSeconds,
@@ -117,25 +116,7 @@ export function DateTimePicker({
 		const day = value ?? roundUpToNextFiveMinutes(new Date());
 		const composed = composeDateTime(day, { hours, minutes });
 
-		// Clamp against minDate / maxDate when the selected day equals the
-		// boundary day: the caller asked that time selection be clamped in
-		// that case so e.g. min=today 3pm rejects a 2pm entry on today.
-		let clamped = composed;
-		if (
-			minDate &&
-			isSameDay(composed, minDate) &&
-			isBefore(composed, minDate)
-		) {
-			clamped = new Date(minDate);
-		}
-		if (
-			maxDate &&
-			isSameDay(composed, maxDate) &&
-			isAfter(composed, maxDate)
-		) {
-			clamped = new Date(maxDate);
-		}
-		onChange(clamped);
+		onChange(clamp(composed, minDate, maxDate));
 	};
 
 	// react-day-picker `disabled` matcher: block days outside the range.

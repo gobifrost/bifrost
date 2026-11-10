@@ -9,7 +9,7 @@ TemplateProcess via os.fork) use to run an execution:
   the resulting filesystem.
 - _execute_sync() / _execute_async(): run a single execution using context
   assembled by the parent consumer and delivered over a private pipe.
-- _get_process_rss() / _get_pss_bytes() / _capture_resource_metrics():
+- _get_process_rss() / _capture_resource_metrics():
   per-process memory/resource reporting used by the pool for recycling
   bloated children.
 
@@ -25,6 +25,8 @@ import asyncio
 import logging
 import os
 import resource
+import re
+import shlex
 import subprocess
 import sys
 from datetime import datetime, timezone
@@ -33,6 +35,24 @@ from typing import Any
 from src.services.execution.requirements_setup_result import FailedPackage, RequirementsInstallResult
 
 logger = logging.getLogger(__name__)
+
+
+_REQUIREMENT_SOURCE = re.compile(r"^(?:(--editable|--requirement)(?:=|\s+)|(-[er])\s*)(.+)$")
+
+
+def _requirement_source(line: str) -> tuple[str, str] | None:
+    match = _REQUIREMENT_SOURCE.match(line)
+    if match is None:
+        return None
+    return match[1] or match[2], match[3]
+
+
+def _requirement_install_args(line: str) -> list[str]:
+    source = _requirement_source(line)
+    if source is None:
+        return [line]
+    flag, target = source
+    return [flag, *shlex.split(target)]
 
 
 def _parse_requirement_lines(content: str) -> list[str]:
@@ -44,10 +64,8 @@ def _parse_requirement_lines(content: str) -> list[str]:
 def _parse_requirements(content: str) -> tuple[list[str], list[str]]:
     """Split requirements file content into package specs and pip option tokens.
 
-    Lines starting with ``-`` (e.g. ``-i``, ``--index-url``,
-    ``--extra-index-url``, ``-r other.txt``) are pip options, not packages.
-    Their whitespace-split tokens are collected so the per-package fallback can
-    reapply the same index/source configuration to each individual install.
+    Editable and nested requirement directives are install targets. Other
+    leading-dash lines remain global pip options, reapplied to each fallback.
     Comment and blank lines are ignored.
     """
     packages: list[str] = []
@@ -56,10 +74,12 @@ def _parse_requirements(content: str) -> tuple[list[str], list[str]]:
         line = raw.strip()
         if not line or line.startswith("#"):
             continue
-        if line.startswith("-"):
-            options.extend(line.split())
-            continue
-        packages.append(line)
+        if _requirement_source(line) is not None:
+            packages.append(line)
+        elif line.startswith("-"):
+            options.extend(shlex.split(line))
+        else:
+            packages.append(line)
     return packages, options
 
 
@@ -104,7 +124,11 @@ def install_requirements() -> RequirementsInstallResult:
         logger.info("[pool] No requirements.txt found")
         return result
 
-    packages, options = _parse_requirements(content)
+    try:
+        packages, options = _parse_requirements(content)
+    except ValueError as exc:
+        result.failed.append(FailedPackage(package="requirements.txt", error=str(exc)))
+        return result
     result.attempted = list(packages)
     if not packages:
         return result
@@ -138,11 +162,19 @@ def install_requirements() -> RequirementsInstallResult:
             except OSError as e:
                 logger.debug(f"[pool] could not remove temp requirements file {temp_path}: {e}")
 
+    # Hashes implicitly enable require-hashes across the entire file. Nested
+    # files can also set global hash/index/constraint policy. A separate
+    # per-target invocation must not bypass that policy for its sibling targets.
+    if re.search(r"(?:^|\s)--hash(?:=|\s)", content) or any((_requirement_source(pkg) or ("", ""))[0] in ("-r", "--requirement") for pkg in packages):
+        error = "Batch failed; cannot split requirements without losing shared pip policy"
+        result.failed.extend(FailedPackage(package=pkg, error=error) for pkg in packages)
+        return result
+
     # Fallback: install each requirement on its own so one bad package only
     # fails itself.
     for pkg in packages:
         try:
-            single = _pip_install([*options, pkg])
+            single = _pip_install([*options, *_requirement_install_args(pkg)])
             if single.returncode == 0:
                 result.installed.append(pkg)
             else:
@@ -217,11 +249,6 @@ async def _execute_async(
     """
     start_time = datetime.now(timezone.utc)
 
-    # Baseline PSS is captured before execution so both success and engine
-    # failure paths can report the memory growth attributable to this
-    # execution. Failed executions are often the highest-memory samples, so
-    # they must not go unrecorded.
-    baseline_pss = _get_pss_bytes()
     # The fork reset this process's peak RSS to its RSS at the fork, so peak
     # minus this reading is the most memory the run itself added.
     start_rss = _get_process_rss()
@@ -243,11 +270,6 @@ async def _execute_async(
         # Capture resource metrics (use worker's metrics if available, else local)
         metrics = result.get("metrics") or _capture_resource_metrics()
 
-        # Overwrite peak_memory_bytes with PSS delta — the memory uniquely
-        # attributable to this execution, excluding shared parent pages.
-        end_pss = _get_pss_bytes()
-        if baseline_pss > 0 and end_pss > 0:
-            metrics["peak_memory_bytes"] = max(0, end_pss - baseline_pss)
         metrics["peak_memory_growth_bytes"] = _peak_memory_growth(start_rss)
 
         envelope: dict[str, Any] = {
@@ -284,30 +306,8 @@ async def _execute_async(
             "error_type": type(e).__name__,
             "duration_ms": duration_ms,
             "worker_id": worker_id,
-            # A failure snapshot, not a peak: PSS growth from before the
-            # execution started to the failure point. Absent (None) values
-            # mean "unknown", never zero usage.
-            "metrics": _capture_failure_metrics(baseline_pss, start_rss),
+            "metrics": _capture_failure_metrics(start_rss),
         }
-
-
-def _get_pss_bytes() -> int:
-    """Get current PSS (Proportional Set Size) in bytes.
-
-    PSS divides shared pages proportionally among all processes sharing them
-    and counts private pages fully — giving the true unique memory footprint.
-    Reads from /proc/self/smaps_rollup on Linux/Docker.
-    Falls back to 0 if unavailable.
-    """
-    try:
-        with open("/proc/self/smaps_rollup") as f:
-            for line in f:
-                if line.startswith("Pss:"):
-                    return int(line.split()[1]) * 1024  # kB to bytes
-    except (OSError, ValueError) as e:
-        # /proc not available (macOS) or unexpected line format — caller treats 0 as unknown
-        logger.debug(f"could not read smaps_rollup PSS: {e}")
-    return 0
 
 
 def _get_process_rss() -> int:
@@ -335,31 +335,11 @@ def _peak_memory_growth(start_rss: int) -> int | None:
     return max(0, peak_rss - start_rss)
 
 
-def _capture_failure_metrics(baseline_pss: int, start_rss: int) -> dict[str, Any]:
-    """Capture a best-effort resource snapshot for a failed execution.
-
-    Returns PSS growth since ``baseline_pss`` when both readings are
-    available, plus cumulative CPU time. Uses ``None`` (not ``0``) for
-    unknown memory so downstream aggregation can distinguish "no sample"
-    from "no usage".
-    """
-    usage = resource.getrusage(resource.RUSAGE_SELF)
-    end_pss = _get_pss_bytes()
-    if baseline_pss > 0 and end_pss > 0:
-        peak_memory_bytes: int | None = max(0, end_pss - baseline_pss)
-    else:
-        peak_memory_bytes = None
-    peak_process_rss_bytes = (
-        usage.ru_maxrss if sys.platform == 'darwin' else usage.ru_maxrss * 1024
-    )
-    return {
-        "peak_memory_bytes": peak_memory_bytes,
-        "peak_process_rss_bytes": peak_process_rss_bytes,
-        "peak_memory_growth_bytes": _peak_memory_growth(start_rss),
-        "cpu_user_seconds": round(usage.ru_utime, 4),
-        "cpu_system_seconds": round(usage.ru_stime, 4),
-        "cpu_total_seconds": round(usage.ru_utime + usage.ru_stime, 4),
-    }
+def _capture_failure_metrics(start_rss: int) -> dict[str, Any]:
+    """Preserve process peak and separately measured execution growth on failure."""
+    metrics = _capture_resource_metrics()
+    metrics["peak_memory_growth_bytes"] = _peak_memory_growth(start_rss)
+    return metrics
 
 
 def _capture_resource_metrics() -> dict[str, Any]:

@@ -21,35 +21,37 @@ from src.models.enums import ExecutionStatus
 from src.services.execution.simple_worker import _capture_failure_metrics
 
 
-def test_capture_failure_metrics_reports_pss_growth(
-    monkeypatch: pytest.MonkeyPatch,
+@pytest.mark.parametrize("start_rss,expected_growth", [(121 * 1024, 200 * 1024), (0, None)])
+def test_capture_failure_metrics_preserves_peak_separately_from_growth(
+    monkeypatch: pytest.MonkeyPatch, start_rss: int, expected_growth: int | None,
 ) -> None:
-    monkeypatch.setattr(
-        "src.services.execution.simple_worker._get_pss_bytes", lambda: 200 * 1024
-    )
+    monkeypatch.setattr("src.services.execution.simple_worker.sys.platform", "linux")
     monkeypatch.setattr(
         "src.services.execution.simple_worker.resource.getrusage",
         lambda _: SimpleNamespace(ru_maxrss=321, ru_utime=1.0, ru_stime=0.5),
     )
-    metrics = _capture_failure_metrics(100 * 1024, 121 * 1024)
-
-    assert metrics["peak_memory_bytes"] == 100 * 1024
+    metrics = _capture_failure_metrics(start_rss)
+    assert metrics["peak_memory_bytes"] == 321 * 1024
     assert metrics["peak_process_rss_bytes"] == 321 * 1024
-    # Peak RSS since the fork minus RSS at its start: what the run added.
-    assert metrics["peak_memory_growth_bytes"] == 200 * 1024
-    assert metrics["cpu_total_seconds"] >= 0.0
+    assert metrics["peak_memory_growth_bytes"] == expected_growth
+    assert metrics["cpu_total_seconds"] == 1.5
 
 
-def test_capture_failure_metrics_uses_none_for_unknown_memory(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setattr(
-        "src.services.execution.simple_worker._get_pss_bytes", lambda: 0
-    )
-    metrics = _capture_failure_metrics(100 * 1024, 0)
-
-    assert metrics["peak_memory_bytes"] is None
-    assert metrics["peak_memory_growth_bytes"] is None
+@pytest.mark.asyncio
+async def test_success_metrics_preserve_peak_after_transient_allocation(monkeypatch):
+    from src.services.execution import simple_worker as worker
+    monkeypatch.setattr(worker, "_get_process_rss", lambda: 100 * 1024)
+    monkeypatch.setattr(worker.sys, "platform", "linux")
+    monkeypatch.setattr(worker.resource, "getrusage", lambda _: SimpleNamespace(
+        ru_maxrss=500, ru_utime=1.0, ru_stime=0.5,
+    ))
+    monkeypatch.setattr("src.services.execution.worker.run_execution", AsyncMock(
+        return_value={"status": "Success"},
+    ))
+    result = await worker._execute_async("test", "worker", {})
+    assert result["metrics"]["peak_memory_bytes"] == 500 * 1024
+    assert result["metrics"]["peak_process_rss_bytes"] == 500 * 1024
+    assert result["metrics"]["peak_memory_growth_bytes"] == 400 * 1024
 
 
 def test_parse_org_uuid_accepts_bare_and_prefixed_forms() -> None:

@@ -508,3 +508,34 @@ class TestStuckHistoryEndpoint:
 
         assert test_workflow is not None
         assert test_workflow.stuck_count == 3
+
+
+@pytest.mark.e2e
+async def test_memory_metrics_preserve_exact_buckets_and_unknown_samples(
+    db_session: AsyncSession, e2e_client, platform_admin,
+):
+    from src.models.orm.worker_metric import WorkerMetric
+
+    worker_id = f"bucket-test-{uuid4().hex}"
+    now = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    # Same displayed day, different half-hour buckets; one contains mixed
+    # known/unknown readings and must not average the unknown sentinel as bytes.
+    start = now - timedelta(days=1)
+    db_session.add_all([
+        WorkerMetric(worker_id=worker_id, timestamp=start + timedelta(minutes=minute),
+                     memory_current=memory, memory_max=4096,
+                     fork_count=0, busy_count=0, idle_count=0)
+        for minute, memory in [(0, 100), (30, 200), (31, -1)]
+    ])
+    await db_session.commit()
+    try:
+        response = e2e_client.get("/api/platform/workers/metrics", params={"range": "7d"}, headers=platform_admin.headers)
+        assert response.status_code == 200, response.text
+        points = [p for p in response.json()["points"] if p["worker_id"] == worker_id]
+        assert len(points) == 2
+        assert points[0]["group"] == points[1]["group"]
+        assert points[0]["bucket_start"] != points[1]["bucket_start"]
+        assert [p["memory_current"] for p in points] == [100, -1]
+    finally:
+        await db_session.execute(delete(WorkerMetric).where(WorkerMetric.worker_id == worker_id))
+        await db_session.commit()

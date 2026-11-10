@@ -26,6 +26,52 @@ logger = logging.getLogger(__name__)
 _MIN_SECRET_LENGTH = 4
 
 
+def _public_snapshot(value: Any, secrets: tuple[str, ...], active: set[int]) -> Any:
+    """Copy JSON-shaped diagnostics, scrubbing registered secrets and cycles.
+
+    This SDK module must also work without server imports. Secret-wrapper
+    strings expose get_secret_value; their JSON buffer must never pass through.
+    """
+    def scrub(text: str) -> str:
+        for secret in secrets:
+            text = text.replace(secret, "[REDACTED]")
+        return text
+
+    if isinstance(value, str):
+        if callable(getattr(value, "get_secret_value", None)):
+            return "[REDACTED]"
+        return scrub(value)
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, (dict, list, tuple, set)):
+        identity = id(value)
+        if identity in active:
+            return "[Circular Reference]"
+        active.add(identity)
+        try:
+            if not isinstance(value, dict):
+                return [_public_snapshot(item, secrets, active) for item in value]
+            copied: dict[Any, Any] = {}
+            occupied = set(value)
+            for key, item in value.items():
+                safe_key = _public_snapshot(key, secrets, active)
+                if not isinstance(safe_key, (str, int, float, bool, type(None))):
+                    safe_key = scrub(str(key))
+                if safe_key != key:
+                    # Redacted keys cannot overwrite an ordinary key or each other.
+                    index = 1
+                    safe_key = f"[REDACTED_KEY_{index}]"
+                    while safe_key in occupied or safe_key in copied:
+                        index += 1
+                        safe_key = f"[REDACTED_KEY_{index}]"
+                copied[safe_key] = _public_snapshot(item, secrets, active)
+            return copied
+        finally:
+            active.remove(identity)
+    # Match the persistence serializer's default=str behavior, then scrub it.
+    return scrub(str(value))
+
+
 @dataclass
 class Organization:
     """Organization entity."""
@@ -225,8 +271,8 @@ class ExecutionContext:
         return self.name
 
     def to_public_dict(self) -> dict[str, Any]:
-        """Serialize all non-private fields for persistence/API responses."""
-        return {
+        """Copy non-private fields for persistence, redacting registered secrets."""
+        return _public_snapshot({
             "user_id": self.user_id,
             "email": self.email,
             "name": self.name,
@@ -260,7 +306,7 @@ class ExecutionContext:
                 "time_saved": self.roi.time_saved,
                 "value": self.roi.value,
             },
-        }
+        }, tuple(sorted(self._collect_secret_values(), key=len, reverse=True)), set())
 
     # ==================== STATE TRACKING ====================
 

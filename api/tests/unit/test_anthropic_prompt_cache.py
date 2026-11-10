@@ -27,7 +27,7 @@ def _config(provider: str, endpoint: str | None = None) -> LLMConfig:
 
 def test_anthropic_agent_settings_enable_prompt_cache():
     settings = agent_model_settings(_config("anthropic"), max_tokens=1000, session_id="s")
-    assert settings["anthropic_cache"] is True
+    assert dict(settings)["anthropic_cache"] is True
     assert settings["anthropic_cache_instructions"] is True
     assert settings["anthropic_cache_tool_definitions"] is True
 
@@ -64,7 +64,8 @@ def test_anthropic_messages_through_openrouter_keeps_cache_settings():
 
 
 @pytest.mark.asyncio
-async def test_native_anthropic_model_uses_adaptive_request_path():
+@pytest.mark.parametrize("stream", [False, True])
+async def test_native_anthropic_model_uses_adaptive_request_path(stream):
     calls = []
 
     async def fake_create(
@@ -84,7 +85,7 @@ async def test_native_anthropic_model_uses_adaptive_request_path():
         model = create_agent_model(config)
         result = await model._messages_create(
             [],
-            False,
+            stream,
             anthropic_prompt_cache_settings(),
             ModelRequestParameters(),
         )
@@ -147,7 +148,7 @@ async def test_unknown_endpoint_falls_back_once_and_remembers_unsupported():
     assert send.await_args_list[0].args[0]["anthropic_cache"] is True
     assert not set(anthropic_prompt_cache_settings()) & send.await_args_list[1].args[0].keys()
     assert config.anthropic_prompt_cache_supported is False
-    persist.assert_awaited_once_with(connection_id, False)
+    persist.assert_awaited_once_with(config, False)
 
 
 @pytest.mark.asyncio
@@ -171,7 +172,7 @@ async def test_unknown_endpoint_success_remembers_supported():
 
     assert result == "ok"
     assert config.anthropic_prompt_cache_supported is True
-    persist.assert_awaited_once_with(connection_id, True)
+    persist.assert_awaited_once_with(config, True)
 
 
 @pytest.mark.asyncio
@@ -197,3 +198,51 @@ async def test_generic_validation_error_is_not_retried_or_persisted():
     assert raised.value is error
     assert send.await_count == 1
     persist.assert_not_awaited()
+
+
+async def test_failed_uncached_retry_does_not_poison_configured_model():
+    config = _config("anthropic")
+    send = AsyncMock(side_effect=[ModelHTTPError(400, "m", {"error": {"message": "cache_control unsupported"}}), RuntimeError("transport failed")])
+    with patch("src.services.anthropic_prompt_cache.persist_prompt_cache_support", new=AsyncMock()) as persist:
+        with pytest.raises(RuntimeError, match="transport failed"):
+            await request_with_prompt_cache_fallback(send, anthropic_prompt_cache_settings(), config)
+    assert config.anthropic_prompt_cache_supported is None
+    persist.assert_not_awaited()
+
+
+async def test_model_override_ignores_learned_state_without_mutating_its_profile():
+    config = _config("anthropic")
+    config.model_profile_id = uuid4()
+    config.anthropic_prompt_cache_supported = False
+    calls = []
+
+    async def send(self, messages, stream, settings, params):
+        calls.append(settings)
+        return "ok"
+
+    with patch.object(AnthropicModel, "_messages_create", send), patch(
+        "src.services.anthropic_prompt_cache.persist_prompt_cache_support", new=AsyncMock()
+    ) as persist:
+        model = create_agent_model(config, model="other-model")
+        settings = PydanticAIClient(config)._model_settings(10, "other-model")
+        assert dict(settings)["anthropic_cache"] is True
+        assert await model._messages_create([], False, {}, ModelRequestParameters()) == "ok"
+    assert calls[0]["anthropic_cache"] is True
+    assert config.anthropic_prompt_cache_supported is False
+    # A standalone override has no stored profile; persistence exits without a write.
+    assert persist.await_args.args[0].model_profile_id is None
+
+
+def test_user_echoed_cache_words_are_not_a_structured_cache_rejection():
+    error = ModelHTTPError(400, "m", {"request": {"cache_control": "unsupported"}, "error": {"message": "invalid model"}})
+    assert not is_prompt_cache_rejection(error)
+
+
+@pytest.mark.parametrize("body", [
+    {"error": "cache_control is not supported"},
+    {"detail": "cache_control: extra fields not permitted"},
+    {"error": {"param": "messages.0.cache_control", "message": "Extra inputs are not permitted"}},
+    {"detail": [{"loc": ["body", "cache_control"], "msg": "extra fields not permitted"}]},
+])
+def test_structured_cache_field_location_is_recognized(body):
+    assert is_prompt_cache_rejection(ModelHTTPError(422, "m", body))

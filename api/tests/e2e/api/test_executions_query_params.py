@@ -214,3 +214,29 @@ async def test_executions_rejects_invalid_filter_values(
     )
 
     assert response.status_code == 422, response.text
+
+
+@pytest.mark.parametrize("offset", ["+05:30", "-04:00"])
+async def test_history_filters_use_utc_and_include_unstarted_rows(
+    e2e_client, platform_admin, seeded_execution_history, db_session, offset,
+):
+    rows = seeded_execution_history["rows"]
+    # A cancelled scheduled run never started and must use its scheduled instant.
+    row = rows[1]
+    row.status = ExecutionStatus.CANCELLED
+    row.scheduled_at = row.started_at
+    row.started_at = None
+    await db_session.commit()
+    zone = timezone(timedelta(hours=5, minutes=30)) if offset == "+05:30" else timezone(timedelta(hours=-4))
+    instant = seeded_execution_history["base"] + timedelta(minutes=1)
+    response = e2e_client.get(
+        "/api/executions",
+        params={
+            "workflow_id": str(seeded_execution_history["workflow_id"]),
+            "start_date": instant.astimezone(zone).isoformat(),
+            "end_date": instant.astimezone(zone).isoformat(),
+        },
+        headers=platform_admin.headers,
+    )
+    assert response.status_code == 200, response.text
+    assert [item["execution_id"] for item in response.json()["executions"]] == [str(row.id)]

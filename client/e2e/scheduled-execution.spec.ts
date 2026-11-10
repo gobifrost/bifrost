@@ -223,8 +223,12 @@ test.describe("Scheduled executions", () => {
 		// Enable deferred execution using the shared scheduling control.
 		await page.getByLabel("Schedule for later").check();
 
-		// Click the "In 15 min" quick-pick button.
-		await page.getByRole("button", { name: "In 15 min" }).click();
+		await page.getByRole("button", { name: "Tomorrow 9 AM" }).click();
+		await page
+			.getByRole("button", { name: "Pick date and time", exact: true })
+			.click();
+		await page.getByLabel("Time", { exact: true }).fill("09:15");
+		await page.keyboard.press("Escape");
 
 		// Submit the scheduled action using its specific label.
 		await page

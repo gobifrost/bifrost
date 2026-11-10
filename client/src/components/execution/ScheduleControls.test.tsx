@@ -186,7 +186,9 @@ describe("ScheduleControls — validation", () => {
 	});
 
 	it("does not show the past hint for a future scheduled_at", () => {
-		const future = new Date(FIXED_NOW.getTime() + 60 * 60_000).toISOString();
+		const future = new Date(
+			FIXED_NOW.getTime() + 60 * 60_000,
+		).toISOString();
 		renderWithProviders(
 			<ScheduleControls
 				value={{ scheduled_at: future }}
@@ -230,3 +232,16 @@ describe("ScheduleControls — disabled", () => {
 		).toBeDisabled();
 	});
 });
+
+it.each(["not-a-date", "2026-02-30T12:00:00Z"])(
+	"ignores invalid saved schedule %s",
+	(scheduled_at) => {
+		renderWithProviders(
+			<ScheduleControls value={{ scheduled_at }} onChange={() => {}} />,
+		);
+		expect(
+			screen.getByRole("button", { name: /pick date and time/i }),
+		).toHaveTextContent("Pick a date and time");
+		expect(screen.queryByText(/past/i)).not.toBeInTheDocument();
+	},
+);

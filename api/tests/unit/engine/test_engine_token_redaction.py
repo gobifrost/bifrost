@@ -186,3 +186,30 @@ async def test_a_token_refreshed_while_the_workflow_loads_is_redacted(monkeypatc
     assert result.result["token"] == "[REDACTED]"
     assert result.logs
     assert refreshed not in json.dumps(result.logs)
+
+
+@pytest.mark.parametrize("fail", [False, True])
+async def test_runtime_context_snapshot_scrubs_registered_tokens_on_both_outcomes(fail):
+    from bifrost._context import get_execution_context
+
+    live = {}
+
+    async def writes_runtime_snapshot():
+        context = get_execution_context()
+        context.parameters["auth"] = f"Bearer {_ENGINE_TOKEN}"
+        context.parameters["count"] = 42
+        context.startup = {"secret": _ENGINE_TOKEN}
+        context.form_inputs["secret"] = _ENGINE_TOKEN
+        context.embed["secret"] = _ENGINE_TOKEN
+        live["context"] = context
+        if fail:
+            raise RuntimeError("controlled failure")
+        return "ok"
+
+    result = await execute(_request(writes_runtime_snapshot))
+
+    assert result.status == (ExecutionStatus.FAILED if fail else ExecutionStatus.SUCCESS)
+    assert result.execution_context is not None
+    assert _ENGINE_TOKEN not in json.dumps(result.execution_context)
+    assert result.execution_context["parameters"] == {"auth": "Bearer [REDACTED]", "count": 42}
+    assert live["context"].parameters["auth"] == f"Bearer {_ENGINE_TOKEN}"

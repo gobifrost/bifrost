@@ -96,6 +96,49 @@ class TestToPublicDict:
         assert result["startup"] is None
 
 
+    @pytest.mark.parametrize("field", ["parameters", "startup", "form_inputs", "embed"])
+    def test_public_snapshot_scrubs_secrets_without_mutating_live_values(self, field):
+        import json
+        from src.core.secret_string import SecretString
+
+        ctx = ExecutionContext(
+            user_id="u-1", email="a@b.com", name="A", scope="GLOBAL",
+            organization=None, is_platform_admin=False, is_function_key=False,
+            execution_id="e-1",
+        )
+        secret = "registered-runtime-token"
+        ctx._register_dynamic_secret(secret)
+        shared = {"auth": f"Bearer {secret}", "count": 42, "wrapped": SecretString("tiny")}
+        runtime = {"first": shared, "alias": shared, secret: "secret key", "[REDACTED_KEY_1]": "ordinary"}
+        runtime["cycle"] = runtime
+        setattr(ctx, field, runtime)
+
+        snapshot = ctx.to_public_dict()[field]
+
+        assert snapshot["first"] == {"auth": "Bearer [REDACTED]", "count": 42, "wrapped": "[REDACTED]"}
+        assert snapshot["alias"] == snapshot["first"]
+        assert snapshot["cycle"] == "[Circular Reference]"
+        assert snapshot["[REDACTED_KEY_1]"] == "ordinary"
+        assert snapshot["[REDACTED_KEY_2]"] == "secret key"
+        assert secret not in json.dumps(snapshot)
+        assert "tiny" not in json.dumps(snapshot)
+        snapshot["first"]["count"] = 0
+        assert shared["count"] == 42
+        assert shared["auth"] == f"Bearer {secret}"
+        assert runtime["cycle"] is runtime
+
+    def test_snapshot_copies_containers_even_without_registered_secrets(self):
+        ctx = ExecutionContext(
+            user_id="u-1", email="a@b.com", name="A", scope="GLOBAL",
+            organization=None, is_platform_admin=False, is_function_key=False,
+            execution_id="e-1", parameters={"values": [{"name": "visible"}], "tuple": (1, 2)},
+        )
+        snapshot = ctx.to_public_dict()
+        snapshot["parameters"]["values"][0]["name"] = "changed"
+        assert ctx.parameters["values"][0]["name"] == "visible"
+        assert snapshot["parameters"]["tuple"] == [1, 2]
+
+
 class TestNoConfigField:
     """Regression guard: ExecutionContext must not carry eager config state.
 
