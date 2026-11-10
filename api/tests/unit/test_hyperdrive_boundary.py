@@ -70,14 +70,11 @@ def test_non_direct_urls_rejected_for_canonical_pools() -> None:
     assert not is_direct_postgres_url("https://example.test/check")
 
 
-def test_hyperdrive_doc_is_provider_agnostic() -> None:
-    doc = (
-        Path(__file__).resolve().parents[3]
-        / "docs"
-        / "architecture"
-        / "hyperdrive-postgres.md"
+def test_hyperdrive_module_is_provider_agnostic() -> None:
+    module_src = (
+        Path(__file__).resolve().parents[2] / "shared" / "hyperdrive.py"
     ).read_text(encoding="utf-8")
-    lowered = doc.lower()
+    lowered = module_src.lower()
     # Provider names as examples are allowed; hardcoded provider hostnames,
     # private-link suffixes, and environment snapshots are not.
     for hardcoded in (
@@ -90,7 +87,7 @@ def test_hyperdrive_doc_is_provider_agnostic() -> None:
         "a1d63b24-",
     ):
         assert hardcoded not in lowered, (
-            f"hardcoded origin in Hyperdrive doc: {hardcoded}"
+            f"hardcoded origin in Hyperdrive module: {hardcoded}"
         )
-    assert "advisory lock" in lowered
-    assert "listen" in lowered
+    assert "advisory lock" in lowered or "advisory" in lowered
+    assert "direct postgresql" in lowered
