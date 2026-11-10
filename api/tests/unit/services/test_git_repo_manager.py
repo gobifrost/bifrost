@@ -10,6 +10,27 @@ from src.services.git_repo_manager import GitRepoManager, WorkspaceStorageChange
 from src.config import Settings
 
 
+def test_repository_content_cannot_impersonate_git_metadata(tmp_path):
+    """Content restored beside .git must not redirect native index commits."""
+    from git import Repo
+
+    initialized = Repo.init(tmp_path, initial_branch="main")
+    for name in ("objects", "refs", "hooks"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "README").write_text("ordinary tracked content")
+    (tmp_path / "HEAD").write_text("ref: refs/heads/main\n")
+
+    restored = Repo(tmp_path)
+    assert Path(restored.git_dir) == tmp_path / ".git"
+    restored.index.add(["HEAD", "objects/README", "refs/README", "hooks/README"])
+    from git import Actor
+
+    actor = Actor("Test", "test@example.com")
+    commit = restored.index.commit("Preserve repository content", author=actor, committer=actor)
+    assert initialized.head.commit.hexsha == commit.hexsha
+    assert (commit.tree / "hooks" / "README").data_stream.read() == b"ordinary tracked content"
+
+
 @pytest.mark.parametrize("configured", [None, "/tmp/bifrost/solution-repo-fixtures/git-checkouts/worker"])
 def test_fresh_executor_import_uses_configured_checkout_parent(monkeypatch, configured):
     import subprocess

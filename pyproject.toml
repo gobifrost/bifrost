@@ -49,7 +49,7 @@ dependencies = [
     # =========================================================================
     "pyjwt[crypto]",  # JWT tokens
     "pwdlib[bcrypt]",  # Modern password hashing
-    "cryptography>=47.0.0",  # Encryption utilities
+    "cryptography>=50.0.2",  # Encryption utilities
     "pyotp",  # TOTP/HOTP for MFA
     "webauthn>=2.7.1",  # WebAuthn/Passkeys support
     "authlib>=1.9.5",  # OIDC relying party: JWKS + id_token claim validation
@@ -100,7 +100,7 @@ dependencies = [
     # Git Integration
     # =========================================================================
     "PyGithub",
-    "GitPython>=3.1.47",  # Closes 5 CVEs incl. CVSS 9.8 RCE
+    "GitPython>=3.1.62",  # Patched repository metadata discovery
 
     # =========================================================================
     # Background Jobs
