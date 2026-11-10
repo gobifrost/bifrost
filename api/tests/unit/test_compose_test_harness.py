@@ -293,6 +293,33 @@ def test_state_reset_recreates_application_containers_and_removes_anonymous_volu
     assert 'start \\\n        api worker scheduler' not in reset_state
 
 
+def test_azurite_is_opt_in_and_azure_settings_reach_the_selected_test_lane():
+    """The default S3 stack must not launch an unused Azure emulator."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    azurite = compose["services"]["azurite"]
+    assert azurite["profiles"] == ["azure"]
+    assert "azurite" not in compose["services"]["test-runner"]["depends_on"]
+
+    for service_name in ("api", "worker", "scheduler", "test-runner"):
+        environment = compose["services"][service_name]["environment"]
+        assert environment["BIFROST_OBJECT_STORAGE_PROVIDER"] == (
+            "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}"
+        )
+        for variable in (
+            "ACCOUNT_URL", "CONTAINER", "ACCOUNT_NAME", "AUTH", "ACCOUNT_KEY",
+            "MANAGED_IDENTITY_CLIENT_ID",
+        ):
+            key = f"BIFROST_AZURE_BLOB_{variable}"
+            assert environment[key] is None
+
+    script = _find_repo_file("test.sh").read_text()
+    startup = script.split('echo "Building template database..."', 1)[1].split(
+        'echo "Starting API + Worker + Scheduler..."', 1
+    )[0]
+    assert 'BIFROST_TEST_AZURITE:-0' in startup
+    assert '--profile azure up -d azurite' in startup
+
+
 def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
     """Every platform-job executor uses the shared local TLS/Git fixture.
 
@@ -436,3 +463,36 @@ def test_production_client_assets_are_world_readable():
     dockerfile = _find_repo_file("client/Dockerfile").read_text()
     assert "find dist -type d -exec chmod 755 {} +" in dockerfile
     assert "find dist -type f -exec chmod 644 {} +" in dockerfile
+
+
+def test_github_app_fixture_transport_reaches_isolated_job_runners():
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    mount = "./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro"
+    for service in ("worker", "scheduler"):
+        assert mount in compose["services"][service]["volumes"]
+    assert mount not in compose["services"]["api"]["volumes"]
+
+
+def test_github_app_transport_does_not_preload_workflow_templates_or_health_probes():
+    source = _find_repo_file("api/scripts/test_github_app_sitecustomize.py").read_text()
+    import ast
+    module = ast.parse(source)
+    assert [type(node).__name__ for node in module.body] == ["Expr", "Import", "If"]
+    gate = module.body[2]
+    assert ast.unparse(gate.test) == "'src.jobs.platform.runner' in sys.orig_argv"
+
+
+def test_github_app_transport_defers_provider_imports_until_runner_startup():
+    import subprocess
+    import sys
+    script = _find_repo_file("api/scripts/test_github_app_sitecustomize.py")
+    code = """
+import runpy
+import sys
+sys.orig_argv.append("src.jobs.platform.runner")
+runpy.run_path(sys.argv[1])
+assert "shared.github_git_app" not in sys.modules
+from shared import github_git_app
+assert github_git_app.http_client.__name__ == "fixture_client"
+"""
+    subprocess.run([sys.executable, "-c", code, str(script)], check=True, capture_output=True, text=True)

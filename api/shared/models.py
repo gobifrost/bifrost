@@ -17,6 +17,8 @@ SEMVER_PATTERN = (
 
 
 class GitAppManifestRequest(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    organization_id: UUID | None = None
     owner: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*$")
     owner_type: Literal["organization", "user"] = "organization"
     name: str = Field(min_length=1, max_length=100)
@@ -25,6 +27,8 @@ class GitAppManifestRequest(BaseModel):
 
 
 class GitAppExistingRequest(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    organization_id: UUID | None = None
     app_id: int = Field(gt=0)
     client_id: str = Field(min_length=1, max_length=100)
     private_key: SecretStr
@@ -61,6 +65,9 @@ class GitAppRepository(BaseModel):
 
 
 class GitAppSetupResponse(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    source_organization_id: UUID | None = None
+    source_id: UUID | None = None
     setup_id: UUID
     stage: Literal["registration", "registration_needs_review", "authorization", "installation", "repository", "ready", "connected"]
     expires_at: datetime
@@ -77,6 +84,24 @@ class GitAppManifestResponse(GitAppSetupResponse):
 
 class GitAppAuthorizeResponse(BaseModel):
     authorization_url: str
+
+
+class GitAppReuseRequest(BaseModel):
+    source_id: UUID | None = None
+    organization_id: UUID | None = None
+
+
+class SolutionGitSource(BaseModel):
+    id: UUID
+    app_name: str
+    installation_id: int
+    organization_id: UUID | None
+    enabled: bool
+    repositories: list[GitAppRepository]
+
+
+class SolutionGitSources(BaseModel):
+    sources: list[SolutionGitSource]
 
 
 class AppConnectionDetails(BaseModel):

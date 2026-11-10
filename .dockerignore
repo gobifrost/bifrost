@@ -60,7 +60,7 @@ api/workspace/
 api/tmp/
 
 # Node modules (if any)
-node_modules/
+**/node_modules/
 
 # Browser credentials and generated results never belong in API build contexts.
 client/e2e/.auth/

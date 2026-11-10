@@ -1,0 +1,18 @@
+{
+  "key": "pr:1308",
+  "classification": "highlight",
+  "entry_ids": [
+    "5fc1ad99-8e17-47d0-a12c-0e8044aab59b"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1308"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1308",
+      "Maintainer-authorized private review covered App credential encryption, callback actor/scope binding, read-only repository-limited installation tokens, exact organization isolation, source generation fencing, export scrubbing, additive migration and shared install/update jobs. Integrated current main and repaired Python 3.15 fixture startup; focused live-job tests, API/client quality checks and hosted CI/CodeQL passed on 4772f9ef99b5f39170ce2543d6a0b3a1502a2bee. Jack authorized protected merge and then approved the exact existing entry prose and setup prompt with 'Then do it' in this contribution's native private thread on November 10, 2026. MTG-Thomas contributor credit is retained."
+    ]
+  }
+}

@@ -221,6 +221,16 @@ class ServiceClaimLoop:
                 continue
 
             definition = await db.get(ServiceDefinition, owned.service_id)
+            # A claim can commit after a control request found no live attempt
+            # but before it flushed stopped/disabled intent. Reconcile under
+            # the heartbeat's attempt lock without reversing the lock order.
+            if (
+                definition is not None
+                and (definition.desired_state != "running" or not definition.enabled)
+                and attempt.stop_requested_at is None
+            ):
+                attempt.stop_requested_at = lifecycle._now()
+                await db.flush()
             if await self._enforce_startup_grace(
                 db, owned, attempt, definition, stops
             ):
@@ -245,7 +255,7 @@ class ServiceClaimLoop:
 
         from src.services import service_lifecycle as lifecycle
 
-        if attempt.state != "starting" or definition is None:
+        if attempt.state != "starting" or definition is None or attempt.stop_requested_at is not None:
             return False
         started_at = attempt.started_at
         if started_at is None:
@@ -311,10 +321,9 @@ class ServiceClaimLoop:
     async def _mirror_stop(
         self, db, owned: OwnedAttempt, attempt, stops: list[str]
     ) -> None:
-        """Mirror durable stop_requested to the child exactly once."""
+        """Stage durable stop delivery; child termination confirms dispatch."""
         if attempt.stop_requested_at is None or owned.stop_mirrored:
             return
-        owned.stop_mirrored = True
         try:
             from src.core.cache import get_redis
 
@@ -526,6 +535,11 @@ class ServiceClaimLoop:
         for attempt_id in dict.fromkeys(attempt_ids):
             try:
                 await self.pool.stop_service_child(attempt_id)
+                # Cancellation or a failed signal must leave the dispatch
+                # eligible for the next beat. The callback may remove ownership.
+                owned = self._owned.get(attempt_id)
+                if owned is not None:
+                    owned.stop_mirrored = True
             except Exception as e:
                 # The durable stop state and lease expiry own recovery; this
                 # signal only prompts the local child to exit promptly.
@@ -809,15 +823,18 @@ class ServiceClaimLoop:
         committed = False
         try:
             async with get_db_context() as db:
-                from src.models.orm.services import ServiceAttempt
+                from src.models.orm.services import ServiceDefinition
 
-                attempt = await db.get(ServiceAttempt, attempt_uuid)
-                if attempt is None:
-                    return
-                reason, exit_reason, error = self._completion_for(
-                    envelope, attempt
-                )
                 try:
+                    # Classify only after fencing/locking: an overlapping
+                    # control request may have committed stopped intent.
+                    attempt = await lifecycle._locked_live_attempt(
+                        db, attempt_uuid, lease_token, lifecycle._now()
+                    )
+                    definition = await db.get(ServiceDefinition, attempt.service_id)
+                    reason, exit_reason, error = self._completion_for(
+                        envelope, attempt, definition
+                    )
                     await lifecycle.complete_attempt(
                         db,
                         attempt_id=attempt_uuid,
@@ -901,7 +918,7 @@ class ServiceClaimLoop:
                 self.wake.set()
 
     @staticmethod
-    def _completion_for(envelope: dict, attempt) -> tuple[str, str | None, str | None]:
+    def _completion_for(envelope: dict, attempt, definition) -> tuple[str, str | None, str | None]:
         """Map a child outcome envelope to a complete_attempt decision."""
         if envelope.get("recycled"):
             return (
@@ -909,7 +926,10 @@ class ServiceClaimLoop:
                 envelope.get("recycle_reason") or "recycled",
                 None,
             )
-        if attempt.stop_requested_at is not None:
+        if attempt.stop_requested_at is not None or (
+            definition is not None
+            and (definition.desired_state != "running" or not definition.enabled)
+        ):
             return (
                 "requested",
                 envelope.get("exit_reason") or "stop_requested",

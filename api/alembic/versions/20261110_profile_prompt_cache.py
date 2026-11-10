@@ -4,7 +4,7 @@ from alembic import op
 import sqlalchemy as sa
 
 revision = "20261110_profile_prompt_cache"
-down_revision = "20261109_merge_calibration"
+down_revision = "20261109_solution_git_source"
 branch_labels = None
 depends_on = None
 

@@ -171,7 +171,7 @@ async def warm_requirements_cache() -> bool:
     settings = get_settings()
     # Optional unconfigured startup remains unchanged. Configured namespaces
     # must not hide permission or IO failures.
-    if not settings.s3_bucket:
+    if not settings.storage_bucket:
         return False
     try:
         content_bytes = await RepoStorage().read("requirements.txt")

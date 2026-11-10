@@ -12,7 +12,7 @@ from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
 )
 
 pytestmark = pytest.mark.e2e
-PRIOR = "20261109_merge_calibration"
+PRIOR = "20261109_solution_git_source"
 REVISION = "20261110_profile_prompt_cache"
 
 

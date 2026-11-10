@@ -18,6 +18,44 @@ from tests.helpers.polling import poll_until
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
+async def test_direct_module_source_excludes_metadata_on_cold_and_warm_cache(
+    e2e_client, platform_admin,
+):
+    """Real storage/cache reads preserve Python source and deny Git metadata."""
+    from src.core.module_cache import invalidate_module, set_module
+    from src.services.repo_storage import RepoStorage
+
+    prefix = f"module_guard_{uuid4().hex}"
+    sources = {
+        f"{prefix}/helper.py": "VALUE = 42",
+        f"{prefix}/.git/config": "private metadata",
+        f"{prefix}/.git/hooks/helper.py": "private hook source",
+    }
+    storage = RepoStorage()
+    try:
+        for path, content in sources.items():
+            await storage.write(path, content.encode())
+        for warm in (False, True):
+            for path, content in sources.items():
+                if warm:
+                    await set_module(path, content, "module-guard-test")
+                response = e2e_client.get(
+                    f"/api/sdk/modules/{path}", headers=platform_admin.headers,
+                )
+                if "/.git/" in path:
+                    assert response.status_code == 400
+                    assert content not in response.text
+                else:
+                    assert response.status_code == 200
+                    assert response.json()["content"] == content
+    finally:
+        for path in sources:
+            await invalidate_module(path)
+            await storage.delete(path)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
 async def test_resolver_invalidation_with_large_unrelated_keyspace():
     """Nested source updates invalidate all scopes without a Redis walk."""
     from src.core.module_cache import (

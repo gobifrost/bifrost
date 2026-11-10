@@ -267,8 +267,11 @@
 | POST | `/api/github/app/manifest` |
 | POST | `/api/github/app/manifest/complete` |
 | POST | `/api/github/app/repositories` |
+| POST | `/api/github/app/reuse` |
 | POST | `/api/github/app/select` |
 | GET | `/api/github/app/setup` |
+| GET | `/api/github/app/solution-sources` |
+| DELETE | `/api/github/app/solution-sources/{source_id}` |
 | GET | `/api/github/branches` |
 | POST | `/api/github/changes` |
 | POST | `/api/github/commit` |
@@ -558,6 +561,7 @@
 | GET | `/api/solutions/export-jobs/{job_id}` |
 | GET | `/api/solutions/export-jobs/{job_id}/download` |
 | POST | `/api/solutions/export-jobs/{job_id}/download-link` |
+| GET | `/api/solutions/git-sources` |
 | POST | `/api/solutions/import-workspace` |
 | POST | `/api/solutions/import-workspace/preview` |
 | POST | `/api/solutions/import-workspace/preview-repo` |
