@@ -19,6 +19,20 @@ def test_decrypt_with_key_roundtrips():
     assert plaintext == "my-api-key-123"
 
 
+def test_decrypts_ciphertext_created_with_cryptography_47():
+    """Upgrading the crypto dependency must preserve existing stored secrets.
+
+    Generated with cryptography 47.0.0 and the existing Bifrost HKDF/Fernet
+    format, using only the public synthetic key below.
+    """
+    ciphertext = (
+        "Z0FBQUFBQnE4eTczbHFLTFN0VnN5VlMzWENXenZsTG93SDZYb3lKVXc5SUk4YkVT"
+        "NGF6S0JFTjhNakJZZUlTY3ZBdHJYSkRnam1ZbG5kVndBbF84Y3RvMXh5NnFkakZSbzB3"
+        "eFI0QVBoUF9EaGNvaHFmSDU4TzA9"
+    )
+    assert decrypt_with_key(ciphertext, "public-compatibility-test-key") == "stored-before-upgrade"
+
+
 def test_decrypt_with_key_wrong_key_fails():
     """Decrypting with wrong key raises an error."""
     encrypted = encrypt_secret("my-api-key-123")

@@ -94,6 +94,7 @@ def test_full_suite_gates_exact_merge_candidate_before_dev_image() -> None:
 
     assert set(jobs["test-e2e-gate"]["needs"]) == {
         "test-e2e",
+        "test-azure-object-storage",
         "test-client-unit",
         "test-client-smoke",
         "windows-credentials",
@@ -193,6 +194,49 @@ def test_ci_jobs_use_command_owned_stacks() -> None:
             "BIFROST_TEST_USE_CLEAN_BOOT" not in step.get("env", {})
             for step in job["steps"]
         )
+
+
+def test_azure_object_storage_lane_exercises_only_the_provider_neutral_contract() -> None:
+    """Azure coverage is an exact-candidate gate, not a second full E2E suite."""
+    jobs = _load_workflow(CI_WORKFLOW)["jobs"]
+    azure = jobs["test-azure-object-storage"]
+
+    condition = _normalized(azure["if"])
+    assert "github.event_name == 'merge_group'" in condition
+    assert "github.event_name == 'workflow_dispatch'" in condition
+    assert "startsWith(github.ref, 'refs/tags/v')" in condition
+    assert "pull_request" not in condition
+    assert azure["name"] == "Azure Object Storage E2E"
+
+    build = next(
+        step for step in azure["steps"]
+        if step.get("name") == "Build API dev image (cached)"
+    )
+    assert build["with"]["file"] == "./api/Dockerfile.dev"
+    assert build["with"]["tags"] == "bifrost-test-api-dev:latest"
+
+    run = next(
+        step for step in azure["steps"]
+        if step.get("name") == "Run Azure object-storage contract"
+    )
+    assert run["env"] == {
+        "BIFROST_SKIP_BUILD": "1",
+        "BIFROST_TEST_OBJECT_STORAGE_PROVIDER": "azure_blob",
+        "BIFROST_TEST_AZURITE": "1",
+        "BIFROST_TEST_AZURE_BLOB_RESET": "1",
+        "BIFROST_AZURE_BLOB_ACCOUNT_URL": "http://azurite:10000/bifrostcontract",
+        "BIFROST_AZURE_BLOB_ACCOUNT_NAME": "bifrostcontract",
+        "BIFROST_AZURE_BLOB_CONTAINER": "bifrost-test",
+        "BIFROST_AZURE_BLOB_AUTH": "account_key",
+        "BIFROST_AZURE_BLOB_ACCOUNT_KEY": "MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=",
+    }
+    assert "./test.sh tests/e2e/platform/test_object_storage.py -v --durations=0" in run["run"]
+    assert "./test.sh e2e" not in run["run"]
+
+    gate = jobs["test-e2e-gate"]
+    assert "test-azure-object-storage" in gate["needs"]
+    gate_source = "\n".join(step.get("run", "") for step in gate["steps"])
+    assert "needs.test-azure-object-storage.result" in gate_source
 
 
 def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild() -> None:

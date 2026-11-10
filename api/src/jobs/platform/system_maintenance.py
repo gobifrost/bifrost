@@ -188,7 +188,8 @@ WEBHOOK_RENEWAL_DEFINITION = define_platform_job(
 )
 
 SOLUTION_UPDATE_CHECK_DEFINITION = define_platform_job(
-    "solution.update_check", EmptyMaintenancePayload, run_solution_update_check
+    "solution.update_check", EmptyMaintenancePayload, run_solution_update_check,
+    historical_payload_models={1: EmptyMaintenancePayload},
 )
 
 FILE_INDEX_RECONCILIATION_DEFINITION = define_platform_job(

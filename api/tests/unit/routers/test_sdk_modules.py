@@ -161,6 +161,48 @@ async def test_router_maps_typed_scope_failure_to_403():
 # --- Shared service: scope rules ---
 
 
+@pytest.mark.parametrize("path", [
+    ".git/config", "settings.yaml", ".git/hooks/helper.py",
+    "modules/.git/helper.py", "modules\\helper.py", "C:/helper.py",
+    "modules//helper.py", "modules/./helper.py",
+    f"_solutions/{SOLUTION_A}/.git/config",
+])
+async def test_direct_module_source_rejects_non_source_before_lookup(path):
+    from shared.sdk_modules import fetch_module_source
+
+    with patch(f"{SERVICE}.get_module", new_callable=AsyncMock, return_value={"content": "private metadata"}) as lookup:
+        with pytest.raises(ModuleSourceError) as exc:
+            await fetch_module_source(path)
+    assert exc.value.status_code == 400
+    lookup.assert_not_awaited()
+
+
+@pytest.mark.parametrize("path", [
+    "modules/helper.py", "modules/pkg/__init__.py", "env/helper.py",
+    "modules/literal%20name.py", f"_solutions/{SOLUTION_A}/modules/helper.py",
+])
+async def test_direct_module_source_preserves_supported_python_paths(path):
+    from shared.sdk_modules import fetch_module_source
+
+    module = {"content": "VALUE = 1", "path": path, "hash": "digest"}
+    with patch(f"{SERVICE}.get_module", new_callable=AsyncMock, return_value=module) as lookup:
+        result = await fetch_module_source(path)
+    assert result == module
+    lookup.assert_awaited_once_with(path)
+
+
+async def test_workflow_module_route_rejects_git_metadata_without_repo_permission():
+    from src.routers.sdk_modules import fetch_module
+
+    workflow_id = uuid4()
+    db = _ScopeDb(SimpleNamespace(id=workflow_id, solution_id=None), None)
+    with patch(f"{SERVICE}.get_module", new_callable=AsyncMock, return_value={"content": "private metadata"}) as lookup:
+        with pytest.raises(HTTPException) as exc:
+            await fetch_module(".git/config", _runtime_user(workflow_id=workflow_id, full=False), db)
+    assert exc.value.status_code == 400
+    lookup.assert_not_awaited()
+
+
 def test_system_module_path_cannot_cross_signed_solution_scope():
     from shared.sdk_modules import validate_engine_storage_path
 

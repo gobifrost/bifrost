@@ -550,6 +550,55 @@ jobs:
           bifrost_test_project="$(compute_project_name .)"
           tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
 
+  # Azure is covered separately through its native Azurite adapter. This is a
+  # focused provider-neutral storage contract, not a second full E2E suite.
+  test-azure-object-storage:
+    if: >-
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    name: Azure Object Storage E2E
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Use the same cached development image as the regular backend lanes.
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Run Azure object-storage contract
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_OBJECT_STORAGE_PROVIDER: azure_blob
+          BIFROST_TEST_AZURITE: "1"
+          BIFROST_TEST_AZURE_BLOB_RESET: "1"
+          BIFROST_AZURE_BLOB_ACCOUNT_URL: http://azurite:10000/bifrostcontract
+          BIFROST_AZURE_BLOB_ACCOUNT_NAME: bifrostcontract
+          BIFROST_AZURE_BLOB_CONTAINER: bifrost-test
+          BIFROST_AZURE_BLOB_AUTH: account_key
+          BIFROST_AZURE_BLOB_ACCOUNT_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+        run: |
+          chmod +x test.sh
+          ./test.sh tests/e2e/platform/test_object_storage.py -v --durations=0
+
+      - name: Show API errors after Azure object-storage failure
+        if: failure()
+        run: |
+          source scripts/lib/test_helpers.sh
+          bifrost_test_project="$(compute_project_name .)"
+          tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
+
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
   # Fails if any backend E2E shard, the client unit suite, or the critical
   # browser smoke failed/cancelled. The component/browser jobs have their own
@@ -565,7 +614,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [test-e2e, test-client-unit, test-client-smoke, windows-credentials, build-dev-api-candidate, build-dev-client-candidate]
+    needs: [test-e2e, test-azure-object-storage, test-client-unit, test-client-smoke, windows-credentials, build-dev-api-candidate, build-dev-client-candidate]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
@@ -586,12 +635,14 @@ jobs:
           fi
 
           if [ "${{ needs.test-e2e.result }}" != "success" ] || \
+             [ "${{ needs.test-azure-object-storage.result }}" != "success" ] || \
              [ "${{ needs.test-client-unit.result }}" != "success" ] || \
              [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
              { [ "${{ github.event_name }}" = "merge_group" ] && \
                { [ "${{ needs.build-dev-api-candidate.result }}" != "success" ] || \
                  [ "${{ needs.build-dev-client-candidate.result }}" != "success" ]; }; }; then
             echo "E2E matrix result: ${{ needs.test-e2e.result }}"
+            echo "Azure object storage result: ${{ needs.test-azure-object-storage.result }}"
             echo "Client unit result: ${{ needs.test-client-unit.result }}"
             echo "Critical browser smoke result: ${{ needs.test-client-smoke.result }}"
             echo "API candidate result: ${{ needs.build-dev-api-candidate.result }}"

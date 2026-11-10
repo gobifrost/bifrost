@@ -30,6 +30,15 @@ name: bifrost
 #   - Production can use AWS S3, Azure Blob, or any S3-compatible storage
 #   - Workers download workspace from S3 before execution (enables horizontal scaling)
 
+x-object-storage-environment: &object-storage-environment
+  BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_OBJECT_STORAGE_PROVIDER:-s3}
+  BIFROST_AZURE_BLOB_ACCOUNT_URL:
+  BIFROST_AZURE_BLOB_CONTAINER:
+  BIFROST_AZURE_BLOB_AUTH: ${BIFROST_AZURE_BLOB_AUTH:-managed_identity}
+  BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+  BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+  BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+
 services:
   # PostgreSQL Database (with pgvector extension for semantic search)
   postgres:
@@ -88,6 +97,7 @@ services:
     image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     container_name: bifrost-init
     environment:
+      <<: *object-storage-environment
       # Core (required by Settings during migrations)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}
@@ -143,6 +153,7 @@ services:
     #   dockerfile: api/Dockerfile
     image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     environment:
+      <<: *object-storage-environment
       # Core
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       BIFROST_DEBUG: ${BIFROST_DEBUG:-false}
@@ -230,6 +241,7 @@ services:
     #   dockerfile: api/Dockerfile
     image: ghcr.io/gobifrost/bifrost-api:${BIFROST_VERSION:-latest}
     environment:
+      <<: *object-storage-environment
       # Core (must match API)
       BIFROST_ENVIRONMENT: ${BIFROST_ENVIRONMENT:-production}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:?BIFROST_SECRET_KEY is required (32+ chars)}

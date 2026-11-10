@@ -424,7 +424,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Existing CLI requests and MIN_CLI_VERSION remain compatible.
     # Workflow admission priority is an optional update field. Existing CLIs
     # omit it and retain automatic/legacy-normal scheduling.
-    "66b0cbcf6d8083951ca13bbc98def8fe0fcee302d8c53d27b73f17d9583b924e"
+    # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
+    # Preserve both merged surfaces; existing CLI minimum stays unchanged.
+    "21f8231a0d26807af43ee403cc13ffbcd1c1a4b60e2aee085f9dec7155d67ea7"
 )
 
 

@@ -9,7 +9,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Literal
 
-from pydantic import AliasChoices, Field, SecretStr, computed_field
+from pydantic import AliasChoices, Field, SecretStr, computed_field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,6 +27,7 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=False,
         extra="ignore",
+        hide_input_in_errors=True,
     )
 
     worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
@@ -310,6 +311,63 @@ class Settings(BaseSettings):
     # ==========================================================================
     # S3 Storage (for horizontal scaling)
     # ==========================================================================
+    object_storage_provider: Literal["s3", "azure_blob"] = Field(
+        default="s3",
+        description="Object storage provider. S3 is the default; azure_blob selects the opt-in native Azure Blob backend",
+    )
+    azure_blob_account_url: str | None = Field(
+        default=None,
+        description="Azure Blob account endpoint (existing account; Bifrost provisions nothing)",
+    )
+    azure_blob_account_name: str | None = Field(
+        default=None,
+        description="Azure Blob account name (optional for standard Azure hostnames; required for custom hostnames and emulators)",
+    )
+    azure_blob_container: str | None = Field(
+        default=None,
+        description="Azure Blob container name (existing container; selected provider namespace)",
+    )
+    azure_blob_auth: Literal["account_key", "managed_identity"] = Field(
+        default="managed_identity",
+        description="Azure Blob credential mode: explicit account key or managed identity (no developer credential discovery)",
+    )
+    azure_blob_account_key: SecretStr | None = Field(default=None, repr=False, exclude=True)
+    azure_blob_managed_identity_client_id: str | None = Field(
+        default=None,
+        description="Optional user-assigned managed identity client ID",
+    )
+
+    @field_validator("azure_blob_account_url")
+    @classmethod
+    def validate_blob_url(cls, value: str | None) -> str | None:
+        from urllib.parse import urlparse
+
+        if value is None:
+            return value
+        parsed = urlparse(value)
+        local = parsed.hostname in {"localhost", "127.0.0.1", "::1", "azurite"}
+        if not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+            raise ValueError("Blob account URL must be an account endpoint without credentials, query or fragment")
+        if parsed.scheme != "https" and not (parsed.scheme == "http" and local):
+            raise ValueError("Blob account URL requires HTTPS except for local Azurite")
+        return value
+
+    @property
+    def azure_blob_configured(self) -> bool:
+        if not self.azure_blob_account_url or not self.azure_blob_container:
+            return False
+        if self.azure_blob_auth == "account_key":
+            return bool(self.azure_blob_account_key and self.azure_blob_account_key.get_secret_value())
+        return self.azure_blob_account_key is None
+
+    @property
+    def storage_bucket(self) -> str | None:
+        return self.azure_blob_container if self.object_storage_provider == "azure_blob" else self.s3_bucket
+
+    @property
+    def storage_configured(self) -> bool:
+        return self.azure_blob_configured if self.object_storage_provider == "azure_blob" else self.s3_configured
+
     s3_multipart_copy_mode: Literal["server", "stream"] = Field(
         default="server",
         description="Large-copy strategy: server-side part copy, or conditional ranged reads and uploads for providers without conditional UploadPartCopy"

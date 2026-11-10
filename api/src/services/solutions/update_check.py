@@ -7,6 +7,9 @@ needs no release ceremony (authors just bump ``version:``)."""
 from __future__ import annotations
 
 from pathlib import Path
+from uuid import UUID
+
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from packaging.version import InvalidVersion, Version
 
@@ -32,7 +35,8 @@ def compute_update_available(*, installed: str | None, remote: str | None) -> st
 
 
 async def fetch_remote_version(
-    *, repo_url: str, repo_subpath: str | None, ref: str | None
+    *, repo_url: str, repo_subpath: str | None, ref: str | None,
+    db: AsyncSession | None = None, git_source_id: UUID | None = None, organization_id: UUID | None = None,
 ) -> str | None:
     """Shallow-clone ``repo_url`` at ``ref`` and read the descriptor ``version:``
     at ``repo_subpath``. Returns None if the repo/descriptor can't be read (the
@@ -41,15 +45,13 @@ async def fetch_remote_version(
     import tempfile
 
     from bifrost.solution_descriptor import is_solution_workspace, load_descriptor
-    from src.services.solutions.git_sync import (
-        clone_repo_to_dir,
-        resolve_repo_subpath,
-    )
+    from src.services.solutions.git_sync import resolve_repo_subpath
+    from shared.solution_git_sources import clone_solution_repository
 
     with tempfile.TemporaryDirectory(prefix="bifrost-update-check-") as tmp:
         work = Path(tmp)
         try:
-            await clone_repo_to_dir(repo_url, work, ref=ref)
+            await clone_solution_repository(db, git_source_id, organization_id, repo_url, work, ref)
             root = resolve_repo_subpath(work, repo_subpath)
         except Exception:  # noqa: BLE001 - any clone/subpath failure => no signal; the sweep skips this install rather than aborting
             return None

@@ -1,0 +1,21 @@
+{
+  "key": "pr:1307",
+  "classification": "highlight",
+  "entry_ids": [
+    "f6c52c7d-f3dd-4d34-9381-d9188b0faa49"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1307"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1307",
+      "Jack approved the existing Product Updates title/body and protected merge queue on 2026-11-10 in the private PR task; contributor credit and reviewed setup prompt retained.",
+      "Maintainer source review traced credential selection, environment scrubbing, signed requests, conditional writes/copies, synchronous reads and Git mirrors. Host-identity exposure is a shared S3/Azure deployment boundary, not a workflow isolation guarantee; limitations remain documented.",
+      "Runtime candidate 6e6fa5fc3 passed 141 focused unit tests, 13 S3 and 13 Azurite storage contracts, API lint/type checks and hosted PR checks. Real Azure on Python 3.15.2 passed 18 account-key contracts and 10 managed-identity/RBAC/SAS/native-copy/recovery probes, including a 300 MiB copy; all temporary resource groups were deleted and verified absent. Browser CORS and AKS federated identity were not qualified. This follow-up changes review metadata only.",
+      "Original contribution by Thomas Bray (MTG-Thomas), adapted from MTG-Thomas/bifrost-upstream at 162d3f477 under AGPL-3.0. Original contribution commits and entry credit are retained."
+    ]
+  }
+}

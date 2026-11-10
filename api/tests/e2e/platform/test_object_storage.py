@@ -10,6 +10,25 @@ from src.core.storage import object_store
 from src.core.storage.contracts import ContentProperties, StorageError, WriteOptions
 
 
+async def _native_seed(settings, key, body, *, content_type=None, metadata=None):
+    """Seed through the native wire on S3, through the contract on Azure Blob."""
+    if settings.object_storage_provider == "azure_blob":
+        async with object_store(settings) as store:
+            result = await store.write(key, body, options=WriteOptions(
+                properties=ContentProperties(content_type=content_type),
+                metadata=metadata or {},
+            ))
+            return {"ETag": store.serialize_version(result.version)}
+    async with S3Transport(
+        endpoint_url=settings.s3_endpoint_url, access_key_id=settings.s3_access_key,
+        secret_access_key=settings.s3_secret_key, region=settings.s3_region,
+    ) as native:
+        return await native.put_object(
+            Bucket=settings.s3_bucket, Key=key, Body=body,
+            ContentType=content_type or "application/octet-stream", Metadata=metadata or {},
+        )
+
+
 @pytest.mark.e2e
 async def test_signed_request_headers_are_in_the_served_api_schema():
     """Keep client generation bound to the running API's signed-request DTOs."""
@@ -29,28 +48,26 @@ async def test_signed_request_headers_are_in_the_served_api_schema():
 async def test_configured_store_reads_metadata_and_refuses_stale_versions():
     settings = get_settings()
     key = f"tests/object-storage/{uuid4().hex}/source.bin"
-    async with S3Transport(
-        endpoint_url=settings.s3_endpoint_url, access_key_id=settings.s3_access_key,
-        secret_access_key=settings.s3_secret_key, region=settings.s3_region,
-    ) as native:
+    seed = await _native_seed(
+        settings, key, b"first content",
+        content_type="application/octet-stream", metadata={"fixture": "neutral"},
+    )
+    async with object_store(settings) as store:
         try:
-            await native.put_object(
-                Bucket=settings.s3_bucket, Key=key, Body=b"first content",
-                ContentType="application/octet-stream", Metadata={"fixture": "neutral"},
-            )
-            async with object_store(settings) as store:
-                await store.probe()
-                info = await store.stat(key)
-                async with store.open_read(key, expected_version=info.version) as read:
-                    assert read.info.metadata == {"fixture": "neutral"}
-                    assert await read.body.read() == b"first content"
-                await native.put_object(Bucket=settings.s3_bucket, Key=key, Body=b"newer content")
-                with pytest.raises(StorageError) as caught:
-                    async with store.open_read(key, expected_version=info.version):
-                        pytest.fail("Stale reads must refuse before exposing a body")
-                assert caught.value.kind == "precondition_failed"
+            await store.probe()
+            info = await store.stat(key)
+            assert info.metadata == {"fixture": "neutral"}
+            assert info.version == store.restore_version(seed["ETag"])
+            async with store.open_read(key, expected_version=info.version) as read:
+                assert read.info.metadata == {"fixture": "neutral"}
+                assert await read.body.read() == b"first content"
+            await store.write(key, b"newer content")
+            with pytest.raises(StorageError) as caught:
+                async with store.open_read(key, expected_version=info.version):
+                    pytest.fail("Stale reads must refuse before exposing a body")
+            assert caught.value.kind == "precondition_failed"
         finally:
-            await native.delete_object(Bucket=settings.s3_bucket, Key=key)
+            await store.delete(key)
 
 
 @pytest.mark.e2e
@@ -265,10 +282,8 @@ async def test_git_pointer_reads_legacy_wire_witness_and_refuses_stale_update():
     original = {"checkpoint": str(uuid4()), "baseline": "a" * 64, "fingerprint": "b" * 64, "version": 1}
     async with object_store(settings) as store:
         try:
-            # A pre-refactor writer publishes native S3 bytes and a raw quoted witness.
-            async with S3Transport(endpoint_url=settings.s3_endpoint_url, access_key_id=settings.s3_access_key,
-                                   secret_access_key=settings.s3_secret_key, region=settings.s3_region) as native:
-                legacy = await native.put_object(Bucket=settings.s3_bucket, Key=STATE_KEY, Body=json.dumps(original).encode())
+            # A pre-refactor writer publishes native bytes and a quoted witness.
+            legacy = await _native_seed(settings, STATE_KEY, json.dumps(original).encode())
             state, witness = await GitWorkspaceState(SimpleNamespace(_settings=settings)).read()
             assert state.checkpoint == original["checkpoint"] and witness == legacy["ETag"]
             assert witness.startswith('"') and witness.endswith('"')
