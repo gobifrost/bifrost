@@ -1,0 +1,13 @@
+{
+  "key": "pr:1315",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Activate the existing approved Fast Path announcement using verified landed-source metadata; no separate customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1309",
+      "https://github.com/gobifrost/bifrost/pull/1315"
+    ]
+  }
+}
