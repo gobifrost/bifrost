@@ -48,7 +48,7 @@ async def owner(async_session_factory, monkeypatch):
     worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(id=worker_id, form="static", state="ready",
-                                    resource_class="standard", slots=1,
+                                    resource_class="standard",
                                     supported_handlers=["workflow.execute"]))
         await session.commit()
 
@@ -74,7 +74,7 @@ async def test_distinct_live_remote_owner_cannot_adopt_another_launchers_route(o
     other_worker = uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(id=other_worker, form="static", state="ready",
-                                   resource_class="standard", slots=1,
+                                   resource_class="standard",
                                    supported_handlers=["workflow.execute"]))
         await session.commit()
     journal = AttemptJournal()

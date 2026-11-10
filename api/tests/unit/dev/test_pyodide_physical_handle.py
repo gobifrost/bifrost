@@ -135,7 +135,7 @@ async def test_opaque_reconnect_keeps_original_expired_timing_and_canonical_clai
     monkeypatch.setattr('src.core.database.get_db_context', context)
     worker, run = uuid4(), uuid4()
     async with async_session_factory() as session:
-        session.add(ExecutionWorker(id=worker, form='static', state='ready', resource_class='standard', slots=0))
+        session.add(ExecutionWorker(id=worker, form='static', state='ready', resource_class='standard'))
         session.add(Execution(id=run, workflow_name='opaque', executed_by_name='test', status=ExecutionStatus.RUNNING))
         await session.flush()
         session.add(ExecutionWorkerClaim(worker_id=worker, family='workflow_execution', subject_id=run))
