@@ -17,6 +17,7 @@ def _summary_row() -> SimpleNamespace:
         executed_by_name="Test User",
         executed_by_user=None,
         status="Success",
+        execution_lane="normal",
         result_type="json",
         error_message=None,
         duration_ms=118,

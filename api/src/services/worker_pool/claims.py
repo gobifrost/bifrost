@@ -27,8 +27,9 @@ HEAD_OF_LINE_WAIT = timedelta(seconds=30)
 # (handler, version) stays for a compatible worker.
 SUPPORTED_HANDLERS = EXECUTION_HANDLERS
 REMOTE_WORKER_HANDLERS = EXECUTION_HANDLERS
+# Capacity stores names once; claim eligibility still uses every negotiated version.
 REMOTE_WORKER_HANDLER_NAMES: tuple[str, ...] = tuple(
-    handler for handler, _version in REMOTE_WORKER_HANDLERS
+    dict.fromkeys(handler for handler, _version in REMOTE_WORKER_HANDLERS)
 )
 
 
@@ -135,11 +136,9 @@ async def register_static_worker(
         state="starting",
         resource_class="standard",
         hostname=hostname,
-        supported_handlers=(
-            supported_handlers
-            if supported_handlers is not None
-            else [handler for handler, _version in SUPPORTED_HANDLERS]
-        ),
+        supported_handlers=list(dict.fromkeys(
+            supported_handlers if supported_handlers is not None else REMOTE_WORKER_HANDLER_NAMES
+        )),
         version=version,
         execution_lane=execution_lane,
         heartbeat_at=func.now(),
@@ -182,7 +181,7 @@ async def report_worker_handlers(incarnation_id: UUID, handlers: list[str]) -> b
                 ExecutionWorker.id == incarnation_id,
                 ExecutionWorker.state.in_(("starting", "ready", "draining")),
             )
-            .values(supported_handlers=handlers)
+            .values(supported_handlers=list(dict.fromkeys(handlers)))
             .returning(ExecutionWorker.id)
         ) is not None
 

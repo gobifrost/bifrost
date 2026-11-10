@@ -22,6 +22,7 @@ def _mock_workflow(name="test_wf", org_id=None):
     wf.access_level = "role_based"
     wf.endpoint_enabled = False
     wf.timeout_seconds = 1800
+    wf.execution_lane = "auto"
     wf.public_endpoint = False
     wf.category = "General"
     wf.description = None

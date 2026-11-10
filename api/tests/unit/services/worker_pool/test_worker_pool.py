@@ -2895,3 +2895,14 @@ async def test_settings_count_only_ready_managed_fast_path_workers(db) -> None:
         await session.commit()
         settings = await KubernetesExecutionService(session).describe({})
         assert settings.fast_path_ready_workers == 1
+
+
+async def test_worker_registration_stores_handler_names_once_across_versions(db) -> None:
+    worker_id = await claims.register_static_worker(hostname="versioned-handlers")
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.supported_handlers.count("workflow.execute") == 1
+    await claims.report_worker_handlers(worker_id, ["workflow.execute", "workflow.execute", "agent.run"])
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.supported_handlers == ["workflow.execute", "agent.run"]

@@ -37,6 +37,7 @@ async def test_run_workflow_reuses_validated_timeout_for_sync_wait() -> None:
         sync=True,
         timeout_seconds=123,
         dispatch_metadata=None,
+        trusted_app_context=False,
         lineage=None,
     )
 
