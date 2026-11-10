@@ -1,0 +1,19 @@
+{
+  "key": "pr:1316",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Deleting workflow source now requires workflow deactivation and index cleanup to succeed.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1316",
+      "https://github.com/gobifrost/bifrost/issues/1195",
+      "Native Jack response Approve This Wording to the exact PR title/body and release sentence displayed in this conversation on November 10, 2026. Fix and protected merge were separately authorized for the deletion portion only."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1316"
+  }
+}
