@@ -1,6 +1,7 @@
 """Physical executor incarnations and their canonical claims."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, text
@@ -89,6 +90,10 @@ class ExecutionWorker(Base):
     # Memory this executor may hand to work, and how much its held work
     # requested (src.services.memory_requests). None until it reports.
     memory_budget_bytes: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
+    # Intended runtime identity plus its immutable startup measurement. This
+    # survives retirement so an idle worker can hand capacity to a larger one.
+    memory_calibration: Mapped[dict[str, Any] | None] = mapped_column(JSONB, nullable=True)
+
     memory_reserved_bytes: Mapped[int] = mapped_column(
         BigInteger, nullable=False, default=0, server_default=text("0")
     )
@@ -115,6 +120,11 @@ class ExecutionWorker(Base):
 
     __table_args__ = (
         Index("ix_execution_workers_state", "state"),
+        Index(
+            "ix_execution_workers_calibration", "form",
+            text("(memory_calibration['environment'])"), "memory_limit_bytes", text("created_at DESC"),
+            postgresql_where=text("memory_calibration IS NOT NULL"),
+        ),
         Index(
             "ix_execution_workers_external_cleanup", "capacity_scope",
             postgresql_where=text(

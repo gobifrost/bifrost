@@ -1,0 +1,13 @@
+{
+  "key": "pr:1298",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Browser-test container dependency maintenance; no customer-facing behavior or upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1298",
+      "https://github.com/gobifrost/bifrost/blob/5b86df77ff309af4c25809600b2711157a3f8c17/docs/product-updates-authoring.md"
+    ]
+  }
+}

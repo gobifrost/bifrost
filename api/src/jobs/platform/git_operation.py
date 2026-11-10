@@ -17,6 +17,7 @@ from src.jobs.platform.base import (
 )
 from src.models.contracts.github import WorkspaceSyncPlan
 from src.services.github_config import get_github_config, save_github_config
+from shared.github_git_app import activate, credential_provider, pending_config
 from src.services.github_sync import (
     GitConnectDecisionError,
     GitConnectPreviewError,
@@ -137,7 +138,18 @@ async def run_git_operation(
     organization_id = context.organization_id
     async with get_db_context() as db:
         config = await get_github_config(db, organization_id)
-        if config is None or not config.token:
+        setup_id = payload.options.get("request", {}).get("app_setup_id") if payload.operation == "connect" else None
+        if setup_id:
+            # Browser setup must be live when accepted; an admitted durable job
+            # may refresh its credentials throughout the normal job lifetime.
+            config = await pending_config(db, UUID(setup_id), context.requested_by_user_id, organization_id, executing=True)
+        elif config and config.auth_kind == "app" and "connection_generation" not in payload.options:
+            raise PlatformJobFailure("github_connection_changed", "Requeue this Git operation after the App migration.")
+        elif config and "connection_generation" in payload.options and (
+            config.generation != payload.options["connection_generation"] or config.repo_url != payload.options.get("connection_repository")
+        ):
+            raise PlatformJobFailure("github_connection_changed", "GitHub connection changed after this operation was queued.")
+        if config is None or not config.has_credentials:
             raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
         if payload.operation == "connect":
             try:
@@ -149,7 +161,11 @@ async def run_git_operation(
                 )
             except (KeyError, TypeError, GitConnectPreviewError) as exc:
                 raise PlatformJobFailure("git_connect_preview_invalid", str(exc)) from exc
-            if config.repo_url:
+            if preview.app_setup_id != (UUID(setup_id) if setup_id else None):
+                raise PlatformJobFailure("git_connect_preview_invalid", "GitHub credentials do not match this connection preview.")
+            if setup_id and config.repo_url != preview.repository_url:
+                raise PlatformJobFailure("git_connect_preview_invalid", "The verified repository changed after preview.")
+            if config.repo_url and not setup_id:
                 raise PlatformJobFailure(
                     "github_already_configured",
                     "GitHub is already connected; disconnect it before first-connect reconciliation.",
@@ -167,6 +183,8 @@ async def run_git_operation(
             branch=service_branch,
             settings=get_settings(),
             token=config.token,
+            token_provider=credential_provider(db, config),
+            app_auth=config.auth_kind == "app",
         )
         try:
             result = redact_token(
@@ -183,14 +201,16 @@ async def run_git_operation(
         if payload.operation == "connect" and (
             result.get("success") or result.get("requires_action")
         ):
-            await save_github_config(
-                db=db,
-                org_id=organization_id,
-                token=config.token,
-                repo_url=preview.repository_url,
-                branch=preview.branch,
-                updated_by=context.requested_by_email,
-            )
+            if setup_id:
+                await activate(db, config, preview.branch, context.requested_by_email)
+            else:
+                if config.token is None:
+                    raise PlatformJobFailure("github_not_configured", "GitHub PAT credentials are missing.")
+                await save_github_config(
+                    db=db, org_id=organization_id, token=config.token,
+                    repo_url=preview.repository_url, branch=preview.branch,
+                    updated_by=context.requested_by_email,
+                )
 
     if result.get("requires_action"):
         raise PlatformJobRequiresAction("Delete confirmation required", result)
@@ -211,7 +231,7 @@ async def run_git_operation(
 
 GIT_OPERATION_DEFINITION = define_platform_job(
     "workspace.git", GitOperationPayload, run_git_operation,
-    # v2 fences old executors that retain Git state only on their local disk.
-    # v1 has the identical wire schema; queued jobs use the new durable handler.
-    historical_payload_models={1: GitOperationPayload},
+    # v3 fences executors that could ignore App setup and reuse a saved PAT.
+    # Old queued jobs retain their exact schema and are checked before effects.
+    historical_payload_models={1: GitOperationPayload, 2: GitOperationPayload},
 )

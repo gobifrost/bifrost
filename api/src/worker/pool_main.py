@@ -416,6 +416,9 @@ class PoolWorker:
         # service claims: what remains is what work may use. API-resident
         # agents receive the API host's shared gate at construction time.
         self.budget = self._measure_budget()
+        from src.services.worker_pool.calibration import record_memory_calibration
+
+        await record_memory_calibration(self.incarnation_id, self.budget, self.package_generation)
         if self.admission is None:
             if self._workflow_consumer is None:
                 self.admission = Admission(

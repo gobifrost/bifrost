@@ -453,3 +453,22 @@ def test_image_signing_requires_a_valid_signature_from_this_workflow(
             "--certificate-oidc-issuer", "https://token.actions.githubusercontent.com", image,
         ])
     assert calls == expected
+
+
+def test_dependency_lock_regeneration_uses_production_python_image():
+    """Resolve native dependencies with the same interpreter shipped to customers."""
+    dockerfile = (REPO_ROOT / "api" / "Dockerfile").read_text()
+    production_image = next(
+        line.split()[1] for line in dockerfile.splitlines()
+        if line.startswith("FROM python:")
+    )
+    workflow = _load_workflow(
+        REPO_ROOT / ".github" / "workflows" / "dependabot-lockfile-regen.yml"
+    )
+    scripts = [
+        step.get("run", "")
+        for job in workflow["jobs"].values()
+        for step in job.get("steps", [])
+    ]
+    regenerate = next(script for script in scripts if "pip-compile --generate-hashes" in script)
+    assert f"{production_image} sh -c" in regenerate

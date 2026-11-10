@@ -14,7 +14,7 @@ from src.services.worker_pool import controller
 from tests.unit.services.worker_pool.test_worker_capacity_domains import _executor
 from tests.unit.services.worker_pool.test_worker_pool import (
     GIB, MIB, POLICY, SETTINGS, SPEC, FakeCluster,
-    _clean as _clean, db as db_fixture,
+    _admit, _clean as _clean, db as db_fixture,
 )
 
 db = db_fixture
@@ -102,7 +102,10 @@ async def test_type_override_adds_parallel_capacity(db, jobs):
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)
     policy = replace(POLICY, max_concurrency={"application.deploy": 2})
 
-    assert len(await pool.launch_for_demand(policy)) == 2
+    [bootstrap_id] = await pool.launch_for_demand(policy)
+    await pool.reconcile_worker(bootstrap_id, policy)
+    await _admit(db.sessions, bootstrap_id)
+    assert len(await pool.launch_for_demand(policy)) == 1
 
 
 async def test_busy_resource_blocks_other_job_types_and_backends(db, jobs):

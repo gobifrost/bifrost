@@ -306,11 +306,14 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
     launch. Only executors supporting this handler count. A physical worker
     launch adds capacity for every advertised remote handler, including live
     and backfill summaries. None while no compatible executor has reported (an outage is
-    not too-large work).
+    not too-large work). A managed controller awaiting a verified largest size
+    likewise cannot establish a definitive maximum, even if static workers
+    have reported smaller budgets.
     """
     from src.core.cache.redis_client import get_redis
     from src.models.orm.execution_workers import ExecutionWorker
-    from src.services.memory_requests import LAUNCHABLE_KEY
+    from src.services.memory_requests import LAUNCHABLE_GENERATION_KEY, LAUNCHABLE_KEY
+    from src.models.orm.package_changes import PackageChange
     from src.services.worker_pool.claims import REMOTE_WORKER_HANDLER_NAMES
 
     live = await db.scalar(
@@ -325,7 +328,20 @@ async def largest_budget(db: AsyncSession, handler: str = "workflow.execute") ->
     launchable = None
     if handler in REMOTE_WORKER_HANDLER_NAMES:
         async with get_redis() as redis:
-            launchable = await redis.get(LAUNCHABLE_KEY)
+            launchable, generation = await redis.mget([LAUNCHABLE_KEY, LAUNCHABLE_GENERATION_KEY])
+        if launchable == "":
+            # A static executor's smaller budget cannot prove managed work
+            # impossible while the largest managed size is still unmeasured.
+            return None
+        if launchable is not None:
+            epoch, separator, reported = (generation or "").partition(":")
+            if not separator or not epoch.isdecimal() or reported != launchable:
+                return None
+            current_generation = int(await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0)
+            if int(epoch) != current_generation:
+                # A package commit can precede the next controller pass. Its
+                # old cached capacity cannot settle work in the new runtime.
+                return None
     sizes = [size for size in (live, int(launchable) if launchable else None) if size is not None]
     return max(sizes) if sizes else None
 

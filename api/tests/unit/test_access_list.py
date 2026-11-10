@@ -2114,6 +2114,8 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
+    "shared.github_git_app._user_token": (1, "cutover"),  # Encrypted GitHub setup credential.
+    "shared.github_git_app.GitAppCredentials.get_token": (2, "cutover"),  # Installation credential and cooldown.
     "shared.role_cache.get_user_roles": (1, "cutover"),
     "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),

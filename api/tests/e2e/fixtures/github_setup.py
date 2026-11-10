@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+import pytest_asyncio
 
 logger = logging.getLogger(__name__)
 
@@ -211,6 +212,45 @@ async def _publish_workspace_manifest() -> None:
             await storage.write(path, content)
     finally:
         await close_db()
+
+
+@pytest_asyncio.fixture
+async def isolated_git_workspace(tmp_path):
+    """Own published Git history, durable checkpoints and both executor caches."""
+    from src.config import get_settings
+    from src.core.storage import object_pages, object_store
+    from src.services.git_repo_manager import WORKSPACE_CHECKPOINT_PREFIX
+    from src.services.repo_storage import RepoStorage
+    from tests.git_workspace_isolation import isolated_git_workspaces
+
+    storage = RepoStorage()
+    original_files = {path: await storage.read(path) for path in await storage.list("")}
+    checkouts = [Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts") / name
+                 for name in ("worker", "scheduler")]
+    async with object_store(get_settings()) as store:
+        checkpoints = {}
+        async for page in object_pages(store, f"{WORKSPACE_CHECKPOINT_PREFIX}/"):
+            for item in page.objects:
+                async with store.open_read(item.key) as read:
+                    checkpoints[item.key] = await read.body.read()
+        with isolated_git_workspaces(checkouts, tmp_path / "git-checkouts"):
+            try:
+                for path in await storage.list(".git/"):
+                    await storage.delete(path)
+                await store.delete_many(list(checkpoints))
+                # Earlier API fixtures may commit entities without preserving
+                # their manifest. First-connect must review the current DB.
+                await _publish_workspace_manifest()
+                yield
+            finally:
+                for path in await storage.list(""):
+                    await storage.delete(path)
+                for path, content in original_files.items():
+                    await storage.write(path, content)
+                async for page in object_pages(store, f"{WORKSPACE_CHECKPOINT_PREFIX}/"):
+                    await store.delete_many([item.key for item in page.objects])
+                for key, content in checkpoints.items():
+                    await store.write(key, content)
 
 
 def _wait_for_platform_job(
