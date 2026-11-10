@@ -293,6 +293,33 @@ def test_state_reset_recreates_application_containers_and_removes_anonymous_volu
     assert 'start \\\n        api worker scheduler' not in reset_state
 
 
+def test_azurite_is_opt_in_and_azure_settings_reach_the_selected_test_lane():
+    """The default S3 stack must not launch an unused Azure emulator."""
+    compose = yaml.safe_load(_COMPOSE.read_text())
+    azurite = compose["services"]["azurite"]
+    assert azurite["profiles"] == ["azure"]
+    assert "azurite" not in compose["services"]["test-runner"]["depends_on"]
+
+    for service_name in ("api", "worker", "scheduler", "test-runner"):
+        environment = compose["services"][service_name]["environment"]
+        assert environment["BIFROST_OBJECT_STORAGE_PROVIDER"] == (
+            "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}"
+        )
+        for variable in (
+            "ACCOUNT_URL", "CONTAINER", "ACCOUNT_NAME", "AUTH", "ACCOUNT_KEY",
+            "MANAGED_IDENTITY_CLIENT_ID",
+        ):
+            key = f"BIFROST_AZURE_BLOB_{variable}"
+            assert environment[key] is None
+
+    script = _find_repo_file("test.sh").read_text()
+    startup = script.split('echo "Building template database..."', 1)[1].split(
+        'echo "Starting API + Worker + Scheduler..."', 1
+    )[0]
+    assert 'BIFROST_TEST_AZURITE:-0' in startup
+    assert '--profile azure up -d azurite' in startup
+
+
 def test_canonical_scheduler_fixture_serves_thin_provider_jobs():
     """Every platform-job executor uses the shared local TLS/Git fixture.
 

@@ -126,6 +126,8 @@ dependencies = [
     # Object Storage (S3-compatible)
     # =========================================================================
     "awscrt==0.38.1",  # Official SigV4 signer/checksums for the narrow HTTPX S3 transport
+    "azure-storage-blob>=12.27,<13",  # Opt-in native Azure Blob transport
+    "azure-identity>=1.25,<2",  # Explicit managed identity (no developer credential fallback)
 
     # =========================================================================
     # LLM Providers (AI Agent System)
