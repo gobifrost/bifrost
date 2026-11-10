@@ -18,6 +18,7 @@ class PercentileTest(unittest.TestCase):
         values = [float(v) for v in range(1, 21)]
         self.assertEqual(stats.percentile(values, 0.50), 10.0)
         self.assertEqual(stats.percentile(values, 0.95), 19.0)
+        self.assertEqual(stats.percentile(values, 0.99), 20.0)
         self.assertEqual(stats.percentile([5.0], 0.95), 5.0)
 
 
@@ -28,6 +29,7 @@ class TimingsTest(unittest.TestCase):
         ])
         self.assertEqual(result["succeeded"], 1)
         self.assertEqual(result["queue_ms"]["p50"], 500.0)
+        self.assertEqual(result["queue_ms"]["p99"], 500.0)
         self.assertEqual(result["run_ms"]["p50"], 1500.0)
         self.assertEqual(result["e2e_ms"]["p50"], 2000.0)
 

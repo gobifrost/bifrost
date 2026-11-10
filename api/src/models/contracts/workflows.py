@@ -98,6 +98,9 @@ class WorkflowMetadata(BaseModel):
 
     # Execution configuration
     execution_mode: Literal["sync", "async"] = Field(default="sync", description="Execution mode")
+    execution_lane: Literal["auto", "normal", "fast_path"] = Field(
+        default="auto", description="Admission priority: automatic, normal, or Fast Path"
+    )
     timeout_seconds: int = Field(default=1800, ge=0, le=86400, description="Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).")
     memory_request_mib: int | None = Field(default=None, description="Declared memory a run of this workflow requests from an executor; when unset, the learned value is used")
     learned_memory_bytes: int | None = Field(default=None, description="Peak memory its recent runs added (learned per code version); None before a measured run")
@@ -363,6 +366,9 @@ class WorkflowUpdateRequest(BaseModel):
     execution_mode: Literal["sync", "async"] | None = Field(
         default=None,
         description="Execution mode: 'sync' for immediate response, 'async' for background execution"
+    )
+    execution_lane: Literal["auto", "normal", "fast_path"] | None = Field(
+        default=None, description="Admission priority: automatic, normal, or Fast Path"
     )
 
     # Economics - value metrics for reporting

@@ -305,6 +305,7 @@ class WorkerCapacityController(ABC):
                     )
                     .where(
                         WorkDispatch.assigned_worker_id.is_(None),
+                        WorkDispatch.execution_lane == "normal",
                         # Every advertised execution handler, including live
                         # and backfill summaries, gains physical capacity.
                         WorkDispatch.handler.in_(REMOTE_WORKER_HANDLER_NAMES),
@@ -368,7 +369,10 @@ class WorkerCapacityController(ABC):
             covered: set[UUID] = set()
             for worker in workers:
                 # Only physical workers contribute launcher capacity.
-                if "workflow.execute" not in worker.supported_handlers:
+                if (
+                    "workflow.execute" not in worker.supported_handlers
+                    or worker.execution_lane != "normal"
+                ):
                     continue
                 handlers = frozenset(worker.supported_handlers)
                 if worker.state == "draining" or worker.memory_pressured:
@@ -425,6 +429,7 @@ class WorkerCapacityController(ABC):
                 1
                 for worker in workers
                 if worker.form in MANAGED_WORKER_FORMS
+                and worker.execution_lane == "normal"
                 and worker.resource_class == "standard"
                 and worker.state != "draining"
                 and not self.live.outdated(worker)
@@ -432,6 +437,24 @@ class WorkerCapacityController(ABC):
             )
             warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
             room = max(0, policy.max_workers - jobs)
+            # Fast Path capacity is a fixed exclusive reservation, not an
+            # elastic overflow lane. It intentionally ignores background
+            # demand and therefore cannot be borrowed by it.
+            fast_path_undrained = sum(
+                1
+                for worker in workers
+                if worker.form in MANAGED_WORKER_FORMS
+                and worker.execution_lane == "fast_path"
+                and worker.resource_class == "standard"
+                and worker.state != "draining"
+                and not self.live.outdated(worker)
+                and not self._lifetime_handoff_imminent(worker, now)
+            )
+            fast_path_warm = max(0, policy.reserved_fast_path_workers - fast_path_undrained)
+            # Keep the reservation's slots out of the Normal planner. Without
+            # this, a Normal burst arriving in the same pass could consume the
+            # final slots before the Fast Path floor is reserved.
+            normal_room = max(0, room - fast_path_warm)
             # First initialization is singular; it may be sized by the hint,
             # but an uncertain prediction can never veto that initial attempt.
             if not measurements and any(
@@ -468,6 +491,38 @@ class WorkerCapacityController(ABC):
             )
             if sizing.standard_limit_bytes in blocked_limits:
                 warm = 0
+            if room == 0 and fast_path_warm:
+                # A Settings transition can reserve slots that were already
+                # occupied by Normal workers. Drain only idle Normal workers
+                # above the new Normal cap; active work is never preempted and
+                # Fast Path capacity reports degraded until a slot is freed.
+                normal_cap = policy.max_workers - policy.reserved_fast_path_workers
+                normal_live = [
+                    worker for worker in workers
+                    if worker.form in MANAGED_WORKER_FORMS
+                    and worker.execution_lane == "normal"
+                    and worker.state != "draining"
+                ]
+                excess = max(0, len(normal_live) - normal_cap)
+                if excess:
+                    owned = set((await db.scalars(select(ExecutionWorker.id).where(
+                        self._managed_scope(), ExecutionWorker.state == "ready"
+                    ))).all())
+                    candidates = [
+                        worker for worker in normal_live
+                        if worker.id in owned and worker.state == "ready"
+                        # Draining is non-preemptive: current work keeps
+                        # running, but this excess Normal worker cannot claim
+                        # another dispatch while the reservation converges.
+                        and not worker.reserved_for_dispatch_id
+                    ]
+                    for worker in candidates[:excess]:
+                        await db.execute(update(ExecutionWorker).where(
+                            ExecutionWorker.id == worker.id, ExecutionWorker.state == "ready",
+                            ExecutionWorker.reserved_for_dispatch_id.is_(None),
+                        ).values(state="draining", end_reason="fast_path_reservation"))
+                    await db.commit()
+                    return []
             if room == 0 and (plan.sized or plan.standard):
                 # An idle undersized worker may yield the warm minimum, but it
                 # still occupies its slot until the canonical owner retires it.
@@ -494,7 +549,7 @@ class WorkerCapacityController(ABC):
                 return []
             launched: list[UUID] = []
             for _dispatch_id, request in plan.sized:
-                if len(launched) >= room:
+                if len(launched) >= normal_room:
                     break
                 limit = sizing.pod_limit_bytes(request) or sizing.largest_limit_bytes
                 if limit in probing_limits:
@@ -515,6 +570,17 @@ class WorkerCapacityController(ABC):
             if sizing.standard_limit_bytes not in known_limits:
                 standard_launches = min(1, standard_launches)
             for _ in range(standard_launches):
+                if len(launched) >= normal_room:
+                    break
+                launched.append(
+                    self._reserve(
+                        db,
+                        resource_class="standard",
+                        memory_limit_bytes=sizing.standard_limit_bytes,
+                        environment=environment,
+                    )
+                )
+            for _ in range(fast_path_warm):
                 if len(launched) >= room:
                     break
                 launched.append(
@@ -523,6 +589,7 @@ class WorkerCapacityController(ABC):
                         resource_class="standard",
                         memory_limit_bytes=sizing.standard_limit_bytes,
                         environment=environment,
+                        execution_lane="fast_path",
                     )
                 )
             await db.commit()
@@ -571,23 +638,36 @@ class WorkerCapacityController(ABC):
             ]
             if not outdated:
                 return []
-            current_ready = sum(
-                1
-                for worker in ready
-                if worker.resource_class == "standard"
-                and worker.memory_budget_bytes is not None
-                and not self.live.outdated(worker)
-            )
-            outdated_standard = [
-                worker for worker in outdated if worker.resource_class == "standard"
-            ]
-            if policy.warm_workers == 0:
-                drainable = outdated
-            elif current_ready >= policy.warm_workers:
-                drainable = outdated
-            else:
+            lane_floor = {
+                "normal": policy.warm_workers,
+                "fast_path": policy.reserved_fast_path_workers,
+            }
+            # Rotation must not borrow a current Normal worker to replace an
+            # old Fast Path worker (or the reverse): each lane keeps its own
+            # ready floor during a rolling replacement.
+            current_ready = {
+                lane: sum(
+                    1
+                    for worker in ready
+                    if worker.execution_lane == lane
+                    and worker.resource_class == "standard"
+                    and worker.memory_budget_bytes is not None
+                    and not self.live.outdated(worker)
+                )
+                for lane in lane_floor
+            }
+            drainable: list[ExecutionWorker] = []
+            for lane, floor in lane_floor.items():
+                lane_outdated = [worker for worker in outdated if worker.execution_lane == lane]
+                if floor == 0 or current_ready[lane] >= floor:
+                    drainable.extend(lane_outdated)
+                    continue
+                # At the hard total cap, one outdated standard worker above
+                # this lane's own floor can make room for its replacement.
+                # Do not use another lane's ready count for that decision.
                 current_starting = any(
-                    worker.resource_class == "standard"
+                    worker.execution_lane == lane
+                    and worker.resource_class == "standard"
                     and worker.state in ("reserved", "starting")
                     and not self.live.outdated(worker)
                     for worker in jobs
@@ -595,15 +675,17 @@ class WorkerCapacityController(ABC):
                 ready_standard = sum(
                     1
                     for worker in ready
-                    if worker.resource_class == "standard"
+                    if worker.execution_lane == lane
+                    and worker.resource_class == "standard"
                     and worker.memory_budget_bytes is not None
                 )
-                ready_excess = max(0, ready_standard - policy.warm_workers)
-                drainable = (
-                    outdated_standard[:ready_excess]
-                    if len(jobs) >= policy.max_workers and not current_starting
-                    else []
-                )
+                excess = max(0, ready_standard - floor)
+                if len(jobs) >= policy.max_workers and not current_starting:
+                    drainable.extend(
+                        worker
+                        for worker in lane_outdated[:excess]
+                        if worker.resource_class == "standard"
+                    )
             if not drainable:
                 return []
             drained = list(
@@ -638,6 +720,7 @@ class WorkerCapacityController(ABC):
         resource_class: str,
         memory_limit_bytes: int,
         environment: dict[str, Any],
+        execution_lane: str = "normal",
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -651,6 +734,7 @@ class WorkerCapacityController(ABC):
                 memory_limit_bytes=memory_limit_bytes,
                 memory_calibration={"environment": environment},
                 supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
+                execution_lane=execution_lane,
                 **self._binding_fields(worker_id),
             )
         )
@@ -718,6 +802,7 @@ class WorkerPoolController(WorkerCapacityController):
                                 worker, policy.worker_memory_mib * 2**20
                             ),
                             sized=worker.resource_class == "sized",
+                            execution_lane=worker.execution_lane,
                         )
                     )
                     # Whoever creates the Job launches it, whichever replica

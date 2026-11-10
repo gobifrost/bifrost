@@ -165,3 +165,28 @@ Do these in order; do not skip measurement.
 | Job identity settings | `api/src/config.py` (Kubernetes Job identity section) |
 | Opt-in overlay / local harness | `deploy/kubernetes/builds/`, `k8s/local/build-jobs.yaml` |
 | Operator manual | `docs/runbooks/kubernetes-build-jobs.md` |
+## Reserved Fast Path
+
+The durable dispatcher has two exclusive execution lanes: `normal` and
+`fast_path`. A workflow stores an `execution_lane` policy (`auto`, `normal`,
+or `fast_path`); the server resolves `auto` during accepted execution and
+persists the resulting lane on both the Execution and its WorkDispatch. A
+retry, scheduled promotion, handback, recovery, or later Settings edit never
+reclassifies accepted work.
+
+`reserved_fast_path_workers` keeps that many managed standard workers in the
+Fast Path lane. They count inside `max_workers`, while `warm_workers` remains
+the Normal floor, so Settings requires their sum not exceed Max workers.
+Normal workflows, agents, summaries, services, and local
+PlatformJobs cannot claim a Fast Path worker. Runtime package updates continue
+on both lanes. Fast Path work cannot borrow a
+Normal worker. This establishes queue isolation, not a CPU, API, database, or
+network latency guarantee; Kubernetes requests and limits still determine
+actual scheduling contention.
+
+Static workers use `BIFROST_POOL_WORKER_EXECUTION_LANE=normal|fast_path`
+(default `normal`). External capacity remains Normal-only unless its provider
+gains an explicit lane-capability contract. Automatic App promotion is off by
+default and accepts only a server-verified app context after normal workflow
+authorization; a browser-provided `app_id` is not an entitlement. Inline
+code, agents, summaries, services, and local PlatformJobs are Normal.

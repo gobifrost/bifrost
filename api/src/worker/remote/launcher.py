@@ -300,6 +300,7 @@ class Launcher:
             issued_at=int(time.time()),
             nonce=new_nonce(),
             hello_sequence=self._hello_sequence,
+            execution_lane=os.environ.get("BIFROST_POOL_WORKER_EXECUTION_LANE", "normal"),
         )
         await self.socket.send(json.dumps({
             "event": "hello",

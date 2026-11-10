@@ -1103,6 +1103,9 @@ async def update_workflow(
                 )
             workflow.execution_mode = request.execution_mode
 
+        if "execution_lane" in request.model_fields_set:
+            workflow.execution_lane = request.execution_lane or "auto"
+
         # Update time_saved if provided
         if request.time_saved is not None:
             if request.time_saved < 0:

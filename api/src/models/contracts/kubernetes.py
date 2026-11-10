@@ -13,6 +13,7 @@ POLICY_BOUNDS: dict[str, tuple[int, int]] = {
     "largest_worker_mib": (256, 1_048_576),
     "idle_seconds": (1, 86_400),
     "max_isolated_pods": (1, 100),
+    "reserved_fast_path_workers": (0, 99),
 }
 
 
@@ -46,6 +47,8 @@ class KubernetesPolicyValues(BaseModel):
     idle_seconds: int
     isolated_jobs_enabled: bool
     max_isolated_pods: int
+    reserved_fast_path_workers: int
+    auto_priority_app_workflows: bool
 
 
 class KubernetesPolicyProvenance(BaseModel):
@@ -59,6 +62,7 @@ class KubernetesExecutionSettings(BaseModel):
     """Everything Settings -> Kubernetes shows."""
 
     policy: KubernetesPolicyValues
+    fast_path_ready_workers: int = Field(default=0, ge=0, description="Ready managed workers dedicated to Fast Path at the time of this snapshot")
     # Field name -> the variable it was imported from, until an admin edits it.
     imported_from_env: dict[str, KubernetesPolicyProvenance]
     job_types: list[KubernetesExecutionJobType]
@@ -106,3 +110,9 @@ class KubernetesPolicyUpdate(BaseModel):
         ge=POLICY_BOUNDS["max_isolated_pods"][0],
         le=POLICY_BOUNDS["max_isolated_pods"][1],
     )
+    reserved_fast_path_workers: int | None = Field(
+        default=None,
+        ge=POLICY_BOUNDS["reserved_fast_path_workers"][0],
+        le=POLICY_BOUNDS["reserved_fast_path_workers"][1],
+    )
+    auto_priority_app_workflows: bool | None = None

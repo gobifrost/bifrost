@@ -121,6 +121,7 @@ class PoolWorker:
         handlers: tuple[tuple[str, int], ...] = SUPPORTED_HANDLERS,
         admission: Admission | None = None,
         hosts_remote_work: bool = True,
+        execution_lane: str | None = None,
     ) -> None:
         """A job worker passes its incarnation and UIDs; a static one, none.
 
@@ -128,6 +129,11 @@ class PoolWorker:
         readiness signal).
         """
         self.settings = get_settings()
+        self.execution_lane = execution_lane or os.environ.get(
+            "BIFROST_POOL_WORKER_EXECUTION_LANE", "normal"
+        )
+        if self.execution_lane not in ("normal", "fast_path"):
+            raise ValueError("BIFROST_POOL_WORKER_EXECUTION_LANE must be normal or fast_path")
         self.static = incarnation_id is None
         self.incarnation_id: UUID = incarnation_id or UUID(int=0)
         self.job_uid = job_uid
@@ -264,12 +270,13 @@ class PoolWorker:
                 hostname=socket.gethostname(),
                 version=get_version(),
                 supported_handlers=[handler for handler, _version in self._handlers],
+                execution_lane=self.execution_lane,
             )
         else:
             assert self.job_uid is not None and self.pod_uid is not None
             if await admit_worker(
                 self.incarnation_id, job_uid=self.job_uid, pod_uid=self.pod_uid,
-                version=get_version(),
+                version=get_version(), execution_lane=self.execution_lane,
             ) is None:
                 logger.error(
                     "Pool worker was not admitted (not this Job's first pod)",
@@ -351,19 +358,20 @@ class PoolWorker:
             asyncio.create_task(
                 replica_heartbeat_loop(
                     replica_id=str(self.incarnation_id),
-                    runs_platform_jobs=self.hosts_remote_work,
+                    runs_platform_jobs=(
+                        self.hosts_remote_work and self.execution_lane == "normal"
+                    ),
                     stop_event=self._platform_stop,
                 ),
                 name="pool-diagnostics-heartbeat",
             ),
         ]
         if self.hosts_remote_work:
-            background.extend(
-                [
-                    asyncio.create_task(self._package_loop(), name="pool-packages"),
-                    asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"),
-                ]
-            )
+            # Runtime package generations apply to every executor. They are
+            # maintenance of its workflow environment, not borrowed work.
+            background.append(asyncio.create_task(self._package_loop(), name="pool-packages"))
+            if self.execution_lane == "normal":
+                background.append(asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"))
             background.extend(await self._start_background_control())
         if self._on_ready is not None:
             self._on_ready()
@@ -442,7 +450,7 @@ class PoolWorker:
             pool.memory_kill_growth_bytes = max(
                 0, self.budget.budget_bytes - WORKFLOW_REQUEST_MARGIN_BYTES
             )
-            await self._start_service_claim_loop()
+            await self._prepare_admission()
         logger.info(
             "Pool worker ready",
             extra={
@@ -785,6 +793,11 @@ class PoolWorker:
             except Exception:
                 logger.exception("Pool worker heartbeat failed")
             await asyncio.sleep(HEARTBEAT_SECONDS)
+
+    async def _prepare_admission(self) -> None:
+        """Prepare shared admission, then start lane-eligible consumers."""
+        if self.execution_lane == "normal":
+            await self._start_service_claim_loop()
 
     async def _start_service_claim_loop(self) -> None:
         """Supervise services in this executor's pool (separate service slots)."""

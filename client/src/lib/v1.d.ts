@@ -18889,6 +18889,12 @@ export interface components {
             /** Executed By Email */
             executed_by_email?: string | null;
             status: components["schemas"]["ExecutionStatus"];
+            /**
+             * Execution Lane
+             * @default normal
+             * @enum {string}
+             */
+            execution_lane: "normal" | "fast_path";
             /** Result Type */
             result_type?: string | null;
             /** Error Message */
@@ -22373,6 +22379,12 @@ export interface components {
          */
         KubernetesExecutionSettings: {
             policy: components["schemas"]["KubernetesPolicyValues"];
+            /**
+             * Fast Path Ready Workers
+             * @description Ready managed workers dedicated to Fast Path at the time of this snapshot
+             * @default 0
+             */
+            fast_path_ready_workers: number;
             /** Imported From Env */
             imported_from_env: {
                 [key: string]: components["schemas"]["KubernetesPolicyProvenance"];
@@ -22429,6 +22441,10 @@ export interface components {
             isolated_jobs_enabled?: boolean | null;
             /** Max Isolated Pods */
             max_isolated_pods?: number | null;
+            /** Reserved Fast Path Workers */
+            reserved_fast_path_workers?: number | null;
+            /** Auto Priority App Workflows */
+            auto_priority_app_workflows?: boolean | null;
         };
         /**
          * KubernetesPolicyValues
@@ -22449,6 +22465,10 @@ export interface components {
             isolated_jobs_enabled: boolean;
             /** Max Isolated Pods */
             max_isolated_pods: number;
+            /** Reserved Fast Path Workers */
+            reserved_fast_path_workers: number;
+            /** Auto Priority App Workflows */
+            auto_priority_app_workflows: boolean;
         };
         /**
          * KubernetesStatus
@@ -31663,6 +31683,12 @@ export interface components {
             /** Executed By Email */
             executed_by_email?: string | null;
             status: components["schemas"]["ExecutionStatus"];
+            /**
+             * Execution Lane
+             * @default normal
+             * @enum {string}
+             */
+            execution_lane: "normal" | "fast_path";
             /** Result Type */
             result_type?: string | null;
             /** Error Message */
@@ -32082,6 +32108,13 @@ export interface components {
              * @enum {string}
              */
             execution_mode: "sync" | "async";
+            /**
+             * Execution Lane
+             * @description Admission priority: automatic, normal, or Fast Path
+             * @default auto
+             * @enum {string}
+             */
+            execution_lane: "auto" | "normal" | "fast_path";
             /**
              * Timeout Seconds
              * @description Max execution time in seconds. 0 = no timeout. Default 1800 (30 min), max 86400 (24h).
@@ -32506,6 +32539,11 @@ export interface components {
              * @description Execution mode: 'sync' for immediate response, 'async' for background execution
              */
             execution_mode?: ("sync" | "async") | null;
+            /**
+             * Execution Lane
+             * @description Admission priority: automatic, normal, or Fast Path
+             */
+            execution_lane?: ("auto" | "normal" | "fast_path") | null;
             /**
              * Time Saved
              * @description Minutes saved per execution (for ROI reporting)

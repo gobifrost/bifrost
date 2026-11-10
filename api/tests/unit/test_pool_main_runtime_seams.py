@@ -7,13 +7,16 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
+import pytest
+
 from src.services import work_dispatch
 from src.services.memory_requests import MIB, MemoryBudget
 from src.worker import pool_main
 from src.worker.pool_main import PoolWorker
 
 
-async def test_an_api_hosted_worker_owns_its_runtime_and_consumers(monkeypatch) -> None:  # type: ignore[no-untyped-def]
+@pytest.mark.parametrize("lane", ["normal", "fast_path"])
+async def test_an_api_hosted_worker_owns_its_runtime_and_consumers(monkeypatch, lane) -> None:  # type: ignore[no-untyped-def]
     """The API host reuses its database and supplies its canonical pool."""
 
     calls: list[str] = []
@@ -75,7 +78,7 @@ async def test_an_api_hosted_worker_owns_its_runtime_and_consumers(monkeypatch) 
     monkeypatch.setattr(pool_main, "replica_heartbeat_loop", AsyncMock())
     close_db = AsyncMock()
     monkeypatch.setattr(pool_main, "close_db", close_db)
-    worker = ApiHostedWorker()
+    worker = ApiHostedWorker(execution_lane=lane)
     for loop in (
         "_heartbeat_loop",
         "_wake_listener",
@@ -90,13 +93,11 @@ async def test_an_api_hosted_worker_owns_its_runtime_and_consumers(monkeypatch) 
     assert await worker.run() == 0
 
     assert calls == [
-        "initialize",
-        "workflow consumer",
-        "package consumer",
-        "measure",
-        "control",
-        "close",
+        "initialize", "workflow consumer", "package consumer", "measure",
+        "control", "close",
     ]
+    assert workflow_pool.memory_kill_growth_bytes == 2 * 1024 * MIB - pool_main.WORKFLOW_REQUEST_MARGIN_BYTES
+    assert worker._start_service_claim_loop.await_count == (1 if lane == "normal" else 0)
     assert worker.admission is not None
     assert worker.admission._under_pressure() is False
     assert calls[-1] == "pressure"
