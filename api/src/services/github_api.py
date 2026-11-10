@@ -12,6 +12,7 @@ import base64
 import logging
 import re
 from dataclasses import dataclass
+from collections.abc import Awaitable, Callable
 from urllib.parse import quote
 
 import httpx
@@ -20,6 +21,10 @@ from pydantic import BaseModel, ConfigDict, Field
 from src.core.log_safety import log_safe
 
 logger = logging.getLogger(__name__)
+
+
+def http_client(timeout: float) -> httpx.AsyncClient:
+    return httpx.AsyncClient(timeout=timeout)
 
 
 # =============================================================================
@@ -379,7 +384,7 @@ class GitHubAPIClient:
     API_VERSION = "2022-11-28"
     DEFAULT_TIMEOUT = 30.0
 
-    def __init__(self, token: str, timeout: float | None = None):
+    def __init__(self, token: str | None = None, timeout: float | None = None, *, token_provider: Callable[[], Awaitable[str]] | None = None, installation_auth: bool = False):
         """
         Initialize GitHub API client.
 
@@ -388,6 +393,8 @@ class GitHubAPIClient:
             timeout: Request timeout in seconds (default: 30)
         """
         self.token = token
+        self.token_provider = token_provider
+        self.installation_auth = installation_auth
         self.timeout = timeout or self.DEFAULT_TIMEOUT
         self._headers = {
             "Authorization": f"Bearer {token}",
@@ -419,13 +426,16 @@ class GitHubAPIClient:
             GitHubAuthError: When authentication fails
         """
         url = f"{self.BASE_URL}{endpoint}"
+        headers = self._headers.copy()
+        if self.token_provider:
+            headers["Authorization"] = f"Bearer {await self.token_provider()}"
 
-        async with httpx.AsyncClient(timeout=self.timeout) as client:
+        async with http_client(self.timeout) as client:
             try:
                 response = await client.request(
                     method=method,
                     url=url,
-                    headers=self._headers,
+                    headers=headers,
                     json=json_data,
                 )
 
@@ -886,8 +896,11 @@ class GitHubAPIClient:
         per_page = 100  # GitHub max
 
         while len(repos) < max_repos:
-            endpoint = f"/user/repos?per_page={per_page}&page={page}&sort=updated"
+            endpoint = (f"/installation/repositories?per_page={per_page}&page={page}" if self.installation_auth
+                        else f"/user/repos?per_page={per_page}&page={page}&sort=updated")
             data = await self._request("GET", endpoint)
+            if self.installation_auth:
+                data = data["repositories"]
 
             if not data:
                 break

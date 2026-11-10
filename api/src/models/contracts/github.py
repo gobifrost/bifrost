@@ -63,6 +63,7 @@ class GitConnectPreviewRequest(BaseModel):
 
     repository_url: str = Field(..., min_length=1)
     branch: str = Field(default="main", min_length=1)
+    app_setup_id: UUID | None = None
 
 
 class GitConnectPreview(BaseModel):
@@ -82,6 +83,7 @@ class GitConnectRequest(BaseModel):
     strategy: Literal["publish_local", "start_from_remote", "reconcile"]
     decisions: dict[str, Literal["local", "remote"]] = Field(default_factory=dict)
     confirm_destructive: bool = False
+    app_setup_id: UUID | None = None
 
     @model_validator(mode="after")
     def _destructive_confirmation_is_strategy_scoped(self) -> "GitConnectRequest":
@@ -97,6 +99,8 @@ class GitHubConfigResponse(BaseModel):
     repo_url: str | None = Field(default=None, description="Configured repository URL")
     branch: str | None = Field(default=None, description="Configured branch")
     backup_path: str | None = Field(default=None, description="Path to backup directory if workspace was backed up")
+    auth_kind: Literal["pat", "app"] | None = None
+    app_name: str | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

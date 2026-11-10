@@ -25,7 +25,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 179,
         "manifest": 16,
         "mcp": 100,
-        "rest": 710,  # Includes global/org base-role-default read and update routes.
+        "rest": 719,  # Includes nine platform GitHub App setup routes.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

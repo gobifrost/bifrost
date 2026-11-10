@@ -45,6 +45,7 @@ JOB_LIMIT_STEP_BYTES = 256 * MIB
 DANGEROUS_MEMORY_RATIO = 0.95
 # Where the worker controller publishes the largest budget it can launch.
 LAUNCHABLE_KEY = "bifrost:worker-pool:largest-launchable-bytes"
+LAUNCHABLE_GENERATION_KEY = "bifrost:worker-pool:largest-launchable-generation"
 
 
 def workflow_request_sql(workflow):  # type: ignore[no-untyped-def]
@@ -171,6 +172,7 @@ __all__ = [
     "AGENT_RUN_REQUEST_BYTES",
     "JOB_BASELINE_ESTIMATE_BYTES",
     "LAUNCHABLE_KEY",
+    "LAUNCHABLE_GENERATION_KEY",
     "job_budget_bytes",
     "sized_job_limit_bytes",
     "DEFAULT_WORKFLOW_REQUEST_BYTES",
