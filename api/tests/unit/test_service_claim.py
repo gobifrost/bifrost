@@ -508,9 +508,9 @@ async def test_interrupted_stop_dispatch_is_retried(db_session, redis_holder, ca
     await service_lifecycle.stop_service(db_session, definition)
     await db_session.commit()
 
+    redis = redis_holder["redis"]
+    setex = redis.setex
     if cancel_at == "redis":
-        redis = redis_holder["redis"]
-        setex = redis.setex
         redis.setex = AsyncMock(side_effect=asyncio.CancelledError())
     else:
         pool.stop_service_child.side_effect = [asyncio.CancelledError(), True]
