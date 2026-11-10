@@ -14,6 +14,7 @@
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { authFetch } from "@/lib/api-client";
+import type { components } from "@/lib/v1";
 
 // =============================================================================
 // Manual Type Definitions (until types are generated)
@@ -256,20 +257,8 @@ export function useRecycleAllProcesses() {
 // Worker Metrics (Time-Series for Diagnostics Chart)
 // =============================================================================
 
-export interface WorkerMetricPoint {
-    group: string;
-    worker_id: string;
-    memory_current: number;
-    memory_max: number;
-    fork_count: number;
-    busy_count: number;
-    idle_count: number;
-}
-
-export interface WorkerMetricsResponse {
-    range: string;
-    points: WorkerMetricPoint[];
-}
+export type WorkerMetricPoint = components["schemas"]["WorkerMetricPoint"];
+export type WorkerMetricsResponse = components["schemas"]["WorkerMetricsResponse"];
 
 export function useWorkerMetrics(range: string = "1h") {
     return useQuery<WorkerMetricsResponse>({

@@ -7,6 +7,9 @@ import logging
 import subprocess
 import sys
 
+from packaging.requirements import InvalidRequirement, Requirement
+from packaging.utils import canonicalize_name
+
 from shared.subprocess_env import package_tool_env
 from src.services.execution.requirements_setup_result import RequirementsInstallResult
 
@@ -30,7 +33,7 @@ def _get_installed_packages() -> list[dict[str, str]]:
 
 
 def _requirement_name(line: str) -> str:
-    return line.split("==")[0].split(">=")[0].split("<=")[0].split("~=")[0].strip().lower()
+    return canonicalize_name(Requirement(line).name)
 
 
 def _update_requirements_status(result: RequirementsInstallResult) -> None:
@@ -43,10 +46,22 @@ def _update_requirements_status(result: RequirementsInstallResult) -> None:
         result.requirements_installed = 0
         return
 
-    required = {_requirement_name(line) for line in _parse_requirement_lines(content)}
+    try:
+        lines = _parse_requirement_lines(content)
+    except ValueError:
+        result.requirements_total = result.requirements_installed = 0
+        return  # install_requirements already reports the malformed options.
+    required: set[str] = set()
+    for line in lines:
+        try:
+            required.add(_requirement_name(line))
+        except InvalidRequirement:
+            # Source directives/URLs are successful install targets, not a
+            # distribution identity we can compare with pip list.
+            continue
     result.requirements_total = len(required)
 
-    installed = {p["name"].lower() for p in _get_installed_packages()}
+    installed = {canonicalize_name(p["name"]) for p in _get_installed_packages()}
     result.requirements_installed = len(required & installed)
 
     missing = required - installed

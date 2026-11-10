@@ -7,6 +7,7 @@ cut over separately.
 """
 
 import json
+from dataclasses import replace
 from typing import Any, cast
 import logging
 from collections.abc import AsyncGenerator
@@ -98,9 +99,9 @@ class PydanticAIClient(BaseLLMClient):
         )
         return models
 
-    def _candidate_settings(self, max_tokens: int | None) -> list[ModelSettings | None]:
+    def _candidate_settings(self, max_tokens: int | None, model: str | None = None) -> list[ModelSettings | None]:
         """Build per-candidate settings aligned with ``_candidate_models``."""
-        settings: list[ModelSettings | None] = [self._model_settings(max_tokens)]
+        settings: list[ModelSettings | None] = [self._model_settings(max_tokens, model)]
         settings.extend(
             self._settings_for_config(fallback, None)
             for fallback in self.fallback_configs
@@ -113,7 +114,7 @@ class PydanticAIClient(BaseLLMClient):
         if len(models) == 1:
             return models[0]
         return FailoverModel(
-            models, candidate_settings=self._candidate_settings(max_tokens)
+            models, candidate_settings=self._candidate_settings(max_tokens, resolved_model)
         )
 
     async def complete(
@@ -138,7 +139,7 @@ class PydanticAIClient(BaseLLMClient):
             async with model_request_stream(
                 self._chain_or_single(resolved_model, max_tokens),
                 self.convert_messages(messages),
-                model_settings=self._model_settings(max_tokens),
+                model_settings=self._model_settings(max_tokens, resolved_model),
                 model_request_parameters=self._request_parameters(
                     tools, require_tool_call=require_tool_call
                 ),
@@ -166,7 +167,7 @@ class PydanticAIClient(BaseLLMClient):
                 async with model_request_stream(
                     self._chain_or_single(resolved_model, max_tokens),
                     self.convert_messages(messages),
-                    model_settings=self._model_settings(max_tokens),
+                    model_settings=self._model_settings(max_tokens, resolved_model),
                     model_request_parameters=self._request_parameters(tools),
                 ) as stream:
                     async for event in stream:
@@ -201,8 +202,11 @@ class PydanticAIClient(BaseLLMClient):
             logger.error("Pydantic AI streaming error: %s", exc)
             yield LLMStreamChunk(type="error", error=str(exc))
 
-    def _model_settings(self, max_tokens: int | None) -> ModelSettings:
-        return self._settings_for_config(self.config, max_tokens)
+    def _model_settings(self, max_tokens: int | None, model: str | None = None) -> ModelSettings:
+        config = self.config
+        if model is not None and model != config.model:
+            config = replace(config, anthropic_prompt_cache_supported=None)
+        return self._settings_for_config(config, max_tokens)
 
     def _settings_for_config(
         self, config: LLMConfig, max_tokens: int | None

@@ -152,3 +152,34 @@ describe("DateTimePicker", () => {
 		).toBe(true);
 	});
 });
+
+it.each(["minimum", "maximum"])(
+	"clamps time edits across the %s boundary day",
+	async (boundary) => {
+		const user = userEvent.setup();
+		const onChange = vi.fn();
+		const limit = new Date(2026, 3, 15, 12, 0);
+		const value = new Date(
+			2026,
+			3,
+			boundary === "minimum" ? 14 : 16,
+			10,
+			0,
+		);
+		render(
+			<DateTimePicker
+				value={value}
+				onChange={onChange}
+				minDate={boundary === "minimum" ? limit : undefined}
+				maxDate={boundary === "maximum" ? limit : undefined}
+			/>,
+		);
+		await user.click(
+			screen.getByRole("button", { name: /pick date and time/i }),
+		);
+		fireEvent.change(await screen.findByLabelText(/^time$/i), {
+			target: { value: "09:15" },
+		});
+		expect(onChange).toHaveBeenCalledWith(limit);
+	},
+);

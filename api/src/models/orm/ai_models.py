@@ -74,6 +74,7 @@ class AIModelProfile(Base):
         nullable=False,
     )
     model: Mapped[str] = mapped_column(String(200), nullable=False)
+    anthropic_prompt_cache_supported: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
     openai_transport: Mapped[str | None] = mapped_column(String(32), nullable=True)
     wire_api: Mapped[str | None] = mapped_column(String(32), nullable=True)
     default_max_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)

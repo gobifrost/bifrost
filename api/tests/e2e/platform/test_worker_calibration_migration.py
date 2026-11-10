@@ -24,7 +24,7 @@ async def test_both_upgrade_paths_converge(prior):
 
         async def verify(connection):
             assert (await connection.execute(sa.text("SELECT version_num FROM alembic_version"))).scalars().all() == [
-                "20261109_merge_calibration",
+                "20261110_profile_prompt_cache",
             ]
             columns = (await connection.execute(sa.text(
                 "SELECT table_name,column_name FROM information_schema.columns "

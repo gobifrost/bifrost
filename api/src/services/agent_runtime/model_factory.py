@@ -210,6 +210,10 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
     """
 
     model_name = model or config.model
+    model_override = model_name != config.model
+    if model_override:
+        # One request cannot inherit or change another model's learned state.
+        config = replace(config, anthropic_prompt_cache_supported=None, model_profile_id=None)
 
     if config.provider == "openai":
         if is_openrouter_endpoint(config.endpoint):
@@ -325,7 +329,10 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
         from anthropic import AsyncAnthropic
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
-        from src.services.anthropic_prompt_cache import request_with_prompt_cache_fallback
+        from src.services.anthropic_prompt_cache import (
+            ANTHROPIC_CACHE_SETTING_KEYS,
+            request_with_prompt_cache_fallback,
+        )
 
         class BifrostAnthropicModel(AnthropicModel):
             async def _messages_create(
@@ -341,9 +348,10 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
                         model_request_parameters,
                     )
 
-                return await request_with_prompt_cache_fallback(
-                    send, dict(model_settings), config
-                )
+                settings = dict(model_settings)
+                if model_override and not (ANTHROPIC_CACHE_SETTING_KEYS & settings.keys()):
+                    settings.update(anthropic_prompt_cache_settings())
+                return await request_with_prompt_cache_fallback(send, settings, config)
 
         client = AsyncAnthropic(
             api_key=config.api_key,

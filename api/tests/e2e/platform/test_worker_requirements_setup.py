@@ -18,7 +18,8 @@ from src.services.repo_storage import RepoStorage
 
 
 @pytest.mark.e2e
-async def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, monkeypatch):
+@pytest.mark.parametrize("nested", [False, True])
+async def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_path, monkeypatch, nested):
     package = f"bifrost_setup_probe_{uuid4().hex}"
     distribution = package.replace("_", "-")
     requirement = f"{distribution}==0.0.1"
@@ -33,6 +34,11 @@ async def test_requirements_helper_installs_package_visible_to_fresh_python(tmp_
         for name, content in files.items():
             archive.writestr(name, content)
         archive.writestr(f"{metadata}/RECORD", "".join(f"{name},,\n" for name in files))
+
+    if nested:
+        nested_file = tmp_path / "nested-requirements.txt"
+        nested_file.write_text(requirement + "\n")
+        requirement = f"--requirement={nested_file}"
 
     # Logical DB 15 keeps this fixture out of the running worker's requirements.
     url = urlsplit(get_settings().redis_url)
@@ -82,8 +88,8 @@ print(json.dumps({
 
         assert result.ok
         assert result.installed == [requirement]
-        assert result.requirements_total == 1
-        assert result.requirements_installed == 1
+        assert result.requirements_total == (0 if nested else 1)
+        assert result.requirements_installed == (0 if nested else 1)
         probe = subprocess.run(
             [sys.executable, "-c", f"import {package}; print({package}.VALUE)"],
             env=os.environ.copy(), capture_output=True, text=True, timeout=20, check=True,

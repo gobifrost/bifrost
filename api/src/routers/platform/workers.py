@@ -16,7 +16,7 @@ from datetime import datetime, timedelta, timezone
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
-from sqlalchemy import desc, func, select
+from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.auth import CurrentActiveUser
@@ -157,7 +157,10 @@ async def get_worker_metrics(
         select(
             bucket_ts,
             WorkerMetric.worker_id,
-            func.avg(WorkerMetric.memory_current).label("avg_memory_current"),
+            case(
+                (func.min(WorkerMetric.memory_current) < 0, -1),
+                else_=func.avg(WorkerMetric.memory_current),
+            ).label("avg_memory_current"),
             func.max(WorkerMetric.memory_max).label("memory_max"),
             func.round(func.avg(WorkerMetric.fork_count)).label("avg_fork_count"),
             func.round(func.avg(WorkerMetric.busy_count)).label("avg_busy_count"),
@@ -173,6 +176,7 @@ async def get_worker_metrics(
     points = [
         WorkerMetricPoint(
             group=row.bucket_ts.strftime(group_fmt),
+            bucket_start=row.bucket_ts,
             worker_id=row.worker_id,
             memory_current=int(row.avg_memory_current),
             memory_max=int(row.memory_max) if row.memory_max is not None else -1,

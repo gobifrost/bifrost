@@ -45,7 +45,7 @@ type LivePool = PoolSummary | PoolDetail;
 
 interface ChartDataPoint {
 	group: string;
-	total: number;
+	total: number | null;
 }
 
 function formatBytes(bytes: number): string {
@@ -73,112 +73,129 @@ export function MemoryChart({ livePoints, livePools }: MemoryChartProps) {
 	const { data, isLoading, isError, isFetching, refetch } =
 		useWorkerMetrics(range);
 
-	const { chartData, workerIds, totalCurrent, totalMax, hasUnlimitedWorker } =
-		useMemo(() => {
-			const allPoints = [...(data?.points ?? []), ...(livePoints ?? [])];
-			const hasLivePools = !!livePools && livePools.length > 0;
-			if (allPoints.length === 0 && !hasLivePools) {
-				return {
-					chartData: [],
-					workerIds: [],
-					totalCurrent: 0,
-					totalMax: 0,
-					hasUnlimitedWorker: false,
-				};
-			}
+	const {
+		chartData,
+		workerIds,
+		totalCurrent,
+		totalMax,
+		hasUnlimitedWorker,
+		hasUnknownMemory,
+	} = useMemo(() => {
+		const allPoints = [...(data?.points ?? []), ...(livePoints ?? [])];
+		const hasLivePools = !!livePools && livePools.length > 0;
+		if (allPoints.length === 0 && !hasLivePools) {
+			return {
+				chartData: [],
+				workerIds: [],
+				totalCurrent: 0,
+				totalMax: 0,
+				hasUnlimitedWorker: false,
+				hasUnknownMemory: false,
+			};
+		}
 
-			// Sum memory across workers within each group bucket
-			const totalsByGroup = new Map<string, number>();
-			const groupOrder: string[] = [];
-			for (const point of allPoints) {
-				if (!totalsByGroup.has(point.group)) {
-					groupOrder.push(point.group);
-				}
-				totalsByGroup.set(
-					point.group,
-					(totalsByGroup.get(point.group) ?? 0) +
-						Math.max(0, point.memory_current),
-				);
+		// Labels repeat across days. Group by the exact instant when supplied.
+		const buckets = new Map<
+			string,
+			{ group: string; workers: Map<string, number> }
+		>();
+		for (const point of allPoints) {
+			const key = point.bucket_start ?? point.group;
+			let bucket = buckets.get(key);
+			if (!bucket) {
+				bucket = { group: point.group, workers: new Map() };
+				buckets.set(key, bucket);
 			}
+			bucket.workers.set(point.worker_id, point.memory_current);
+		}
+		const result: ChartDataPoint[] = [...buckets.values()].map((bucket) => {
+			const samples = [...bucket.workers.values()];
+			return {
+				group: bucket.group,
+				total: samples.some((sample) => sample < 0)
+					? null
+					: samples.reduce((sum, sample) => sum + sample, 0),
+			};
+		});
 
-			const result: ChartDataPoint[] = groupOrder.map((g) => ({
-				group: g,
-				total: totalsByGroup.get(g)!,
-			}));
-
-			// Compute current totals from latest data points (server returns in order)
-			const latestByWorker = new Map<string, WorkerMetricPoint>();
-			for (const point of allPoints) {
-				latestByWorker.set(point.worker_id, point);
+		// Compute current totals from latest data points (server returns in order)
+		const latestByWorker = new Map<string, WorkerMetricPoint>();
+		for (const point of allPoints) {
+			latestByWorker.set(point.worker_id, point);
+		}
+		let current = 0;
+		let max = 0;
+		let unlimited = false;
+		let unknown = false;
+		for (const point of latestByWorker.values()) {
+			if (point.memory_current < 0) unknown = true;
+			else current += point.memory_current;
+			if (point.memory_max > 0) {
+				max += point.memory_max;
+			} else {
+				unlimited = true;
 			}
-			let current = 0;
-			let max = 0;
-			let unlimited = false;
-			for (const point of latestByWorker.values()) {
-				current += Math.max(0, point.memory_current);
-				if (point.memory_max > 0) {
-					max += point.memory_max;
+		}
+
+		// If we have live pool data from the WebSocket, prefer it for the
+		// header totals — the metrics endpoint only refreshes every 60s, so
+		// its denominator goes stale as containers come and go.
+		let headerWorkerIds: string[] = [
+			...new Set(allPoints.map((p) => p.worker_id)),
+		];
+		if (hasLivePools) {
+			let liveCurrent = 0;
+			let liveMax = 0;
+			let liveUnlimited = false;
+			let liveUnknown = false;
+			const liveIds: string[] = [];
+			for (const pool of livePools!) {
+				liveIds.push(pool.worker_id);
+				const memCurrent =
+					"memory_current_bytes" in pool &&
+					pool.memory_current_bytes != null
+						? pool.memory_current_bytes
+						: -1;
+				const memMax =
+					"memory_max_bytes" in pool && pool.memory_max_bytes != null
+						? pool.memory_max_bytes
+						: 0;
+				if (memCurrent < 0) liveUnknown = true;
+				else liveCurrent += memCurrent;
+				if (memMax > 0) {
+					liveMax += memMax;
 				} else {
-					unlimited = true;
-				}
-			}
-
-			// If we have live pool data from the WebSocket, prefer it for the
-			// header totals — the metrics endpoint only refreshes every 60s, so
-			// its denominator goes stale as containers come and go.
-			let headerWorkerIds: string[] = [
-				...new Set(allPoints.map((p) => p.worker_id)),
-			];
-			if (hasLivePools) {
-				let liveCurrent = 0;
-				let liveMax = 0;
-				let liveUnlimited = false;
-				const liveIds: string[] = [];
-				for (const pool of livePools!) {
-					liveIds.push(pool.worker_id);
-					const memCurrent =
-						"memory_current_bytes" in pool &&
-						pool.memory_current_bytes != null
-							? pool.memory_current_bytes
-							: 0;
-					const memMax =
-						"memory_max_bytes" in pool &&
-						pool.memory_max_bytes != null
-							? pool.memory_max_bytes
-							: 0;
-					liveCurrent += Math.max(0, memCurrent);
-					if (memMax > 0) {
-						liveMax += memMax;
-					} else {
-						// Only treat as unlimited if we know there are processes
-						// running — an empty pool with memMax=0 just means we
-						// haven't seen a heartbeat yet.
-						if (
-							"processes" in pool &&
-							Array.isArray(pool.processes) &&
-							(pool.processes as ProcessInfo[]).length > 0
-						) {
-							liveUnlimited = true;
-						}
+					// Only treat as unlimited if we know there are processes
+					// running — an empty pool with memMax=0 just means we
+					// haven't seen a heartbeat yet.
+					if (
+						"processes" in pool &&
+						Array.isArray(pool.processes) &&
+						(pool.processes as ProcessInfo[]).length > 0
+					) {
+						liveUnlimited = true;
 					}
 				}
-				current = liveCurrent;
-				max = liveMax;
-				unlimited = liveUnlimited;
-				headerWorkerIds = liveIds.sort();
 			}
+			current = liveCurrent;
+			max = liveMax;
+			unlimited = liveUnlimited;
+			unknown = liveUnknown;
+			headerWorkerIds = liveIds.sort();
+		}
 
-			return {
-				chartData: result,
-				workerIds: headerWorkerIds,
-				totalCurrent: current,
-				totalMax: max,
-				hasUnlimitedWorker: unlimited,
-			};
-		}, [data, livePoints, livePools]);
+		return {
+			chartData: result,
+			workerIds: headerWorkerIds,
+			totalCurrent: current,
+			totalMax: max,
+			hasUnlimitedWorker: unlimited,
+			hasUnknownMemory: unknown,
+		};
+	}, [data, livePoints, livePools]);
 
 	const hasData = chartData.length > 0 || workerIds.length > 0;
-	const showLimit = totalMax > 0 && !hasUnlimitedWorker;
+	const showLimit = totalMax > 0 && !hasUnlimitedWorker && !hasUnknownMemory;
 	const thresholdBytes = totalMax * 0.85;
 	const utilizationPct = showLimit
 		? ((totalCurrent / totalMax) * 100).toFixed(0)
@@ -231,6 +248,11 @@ export function MemoryChart({ livePoints, livePools }: MemoryChartProps) {
 									{isError
 										? "Memory history unavailable"
 										: "No metrics data yet"}
+								</span>
+							) : hasUnknownMemory ? (
+								<span className="text-sm text-muted-foreground">
+									Memory usage is unavailable for one or more
+									containers.
 								</span>
 							) : showLimit ? (
 								<>
