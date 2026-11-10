@@ -6229,7 +6229,7 @@ class TestSyncPublicationOrdering:
             monkeypatch.setattr(
                 sync_service,
                 "_do_push",
-                lambda *_args: PushResult(success=False, error="remote unavailable"),
+                AsyncMock(return_value=PushResult(success=False, error="remote unavailable")),
             )
             failed = await sync_service.apply_desktop_sync(
                 work_dir, repo, plan, confirm_deletes=True,
@@ -6320,7 +6320,7 @@ class TestSyncPublicationOrdering:
             monkeypatch.setattr(
                 sync_service,
                 "_do_push",
-                lambda *_args: PushResult(success=False, error="remote unavailable"),
+                AsyncMock(return_value=PushResult(success=False, error="remote unavailable")),
             )
             failed = await sync_service.apply_desktop_sync(
                 work_dir, repo, plan, confirm_deletes=True,
@@ -6356,7 +6356,7 @@ class TestSyncPublicationOrdering:
         monkeypatch.setattr(
             sync_service,
             "_do_push",
-            lambda *_args: PushResult(success=False, error="remote unavailable"),
+            AsyncMock(return_value=PushResult(success=False, error="remote unavailable")),
         )
         failed = await sync_service.desktop_sync(confirm_deletes=True)
 

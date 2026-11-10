@@ -137,7 +137,7 @@ jobs:
       # Install runtime deps from the hash-pinned lock file (Scorecard
       # Pinned-Dependencies); pyright is installed from its own hash-pinned
       # lock because --require-hashes forbids unpinned packages and pyright
-      # targets a different Python minor (3.12 here vs 3.14 in production)
+      # targets a different Python minor (3.12 here vs 3.15 in production)
       # so it can't share requirements.lock.
       #
       # We deliberately do NOT `pip install --upgrade pip` — actions/setup-python

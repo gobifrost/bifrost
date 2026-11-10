@@ -117,7 +117,7 @@ def test_authorization_callback_is_single_use_and_repository_binding_is_verified
 
 
 @pytest.mark.asyncio
-async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration, empty_app_remote):
+async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration, empty_app_remote, isolated_git_workspace):
     import asyncio
     from src.core.cache.redis_client import get_shared_redis
     from tests.e2e.platform.thin_live_helpers import wait_for_job

@@ -305,3 +305,59 @@ approved merging. The canonical disposition and Product Update now record
 approved review status, including the entry prose and agent prompt. Thomas
 Bray's original commits, verified source attribution and contributor credit
 are preserved. Live GitHub registration/install qualification remains separate.
+
+### Merge-Queue Test Repair (2026-11-09)
+
+Merge-group run `42676239910` failed five cases in backend shard 1 while
+783 passed. The failures received the following test-harness repairs:
+
+- Three publication-retry tests still returned synchronous `PushResult`
+  values from `_do_push` mocks after credential refresh made that method
+  asynchronous. Their mocks now use `AsyncMock`, retaining the failure and
+  retry assertions.
+- The real App connection case assumed an empty database. Running it after
+  the preceding shard files reproduced a missing-manifest refusal to delete
+  two existing workspace entities. Its fixture now publishes the manifest
+  corresponding to the current database; the production deletion guard stays
+  unchanged.
+- The thin worker Git case inherited workspace history and asserted the old
+  job payload version. It now owns its Git history and expects version 3.
+  The original queue fetch returned a checkout-path error; the ordered local
+  reproduction instead reached fetch and exposed the inherited history as
+  one unexpected remote commit. The exact original path-error mechanism was
+  not reproduced. Both worker cases now explicitly isolate published Git
+  history, durable checkpoints, executor checkout directories and receipts,
+  restoring previous source and Git artifacts after completion.
+
+The 21-case focused run passed without failures or skips:
+
+```bash
+./test.sh tests/e2e/api/test_github_git_app.py \
+  tests/e2e/platform/test_git_sync_local.py::TestSyncPublicationOrdering \
+  tests/e2e/platform/test_thin_platform_jobs_build.py::test_thin_worker_executes_git_platform_jobs \
+  -q --durations=0
+```
+
+The existing App connection job took 9.33 seconds, and the existing four-job
+thin worker case took 19.70 seconds. Fixture setup took less than one second
+for each. No jobs, retries, skips or longer deadlines were added.
+
+The ordered validation then ran all 31 original shard files through the App
+endpoint tests, the complete `test_git_sync_local.py`, and the thin worker Git
+case in one stack. It passed 339 cases with no failures; eight pre-existing
+external-GitHub cases skipped because `-o env=GITHUB_TEST_PAT=` deliberately
+matched credential-free CI. This verifies the App manifest baseline after the
+earlier API tests and the worker's independent history after local Git tests.
+
+An additional 16 cases passed without skips, including the storage-pointer
+contract and all three thin-worker happy paths in their original file order:
+
+```bash
+./test.sh tests/e2e/platform/test_object_storage.py \
+  tests/e2e/platform/test_thin_platform_jobs_build.py -q --durations=0
+```
+
+These are focused reproductions, not a repeat of the full backend or browser
+suites. The merge queue must validate the complete synthetic merge candidate.
+`./test.sh quality api` also passed: Pyright reported zero errors and warnings,
+and Ruff passed.

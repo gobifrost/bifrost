@@ -1,0 +1,17 @@
+{
+  "key": "pr:1296",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Worker memory-pressure checks now include previously omitted kernel and socket memory while continuing to exclude inactive file cache.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1296",
+      "https://github.com/gobifrost/bifrost/issues/1196",
+      "https://github.com/Midtown-Technology-Group/bifrost/pull/1342",
+      "Jack approved this exact wording and protected merge for candidate eb21ff1474fe4629360c3ae0ab14fc72d9ff4fa8 in native request async:call_8e95688dc44e43daa0bf3ea851f5f33d, resolved 2026-11-09T13:37:56.510Z.",
+      "Focused accounting/current-consumer tests and the complete local pre-publication gate passed. This is a shared accounting correction; configured thresholds and host-memory policy are preserved. Existing pressure recovery may act earlier on the corrected sample. Source contribution: MTG-Thomas at 87d54b5e284afd7ce1a75219643c8a549498ef23."
+    ]
+  }
+}

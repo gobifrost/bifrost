@@ -80,7 +80,7 @@ class PoolSummary(BaseModel):
     memory_current_bytes: int | None = Field(
         default=None,
         description="Working-set memory of the worker container in bytes "
-        "(cgroup anon + active_file, matches kubelet/kubectl top)"
+        "(cgroup memory.current - inactive_file, matches kubelet/kubectl top)"
     )
     memory_max_bytes: int | None = Field(
         default=None,
@@ -205,7 +205,7 @@ class WorkerMetricPoint(BaseModel):
     worker_id: str = Field(..., description="Container/pool identifier")
     memory_current: int = Field(
         ...,
-        description="Working-set memory in bytes (cgroup anon + active_file)",
+        description="Working-set memory in bytes (cgroup memory.current - inactive_file)",
     )
     memory_max: int = Field(..., description="cgroup memory.max in bytes")
     fork_count: int = Field(default=0)

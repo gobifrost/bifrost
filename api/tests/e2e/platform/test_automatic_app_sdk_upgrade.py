@@ -8,8 +8,6 @@ that builds, activates, and preserves its recovery artifacts.
 
 from __future__ import annotations
 
-import json
-import subprocess
 import tempfile
 import zipfile
 from datetime import datetime, timezone
@@ -23,13 +21,12 @@ from shared.application_sdk_upgrades import (
     automatic_upgrade_eligible,
     enqueue_automatic_app_sdk_upgrades,
 )
-from shared.subprocess_env import package_tool_env
 from src.models.orm.applications import Application
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.application_sdk_status import current_sdk_metadata
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
 from src.services.solutions.app_build import SolutionAppBuilder
-from tests.e2e.platform.thin_live_helpers import wait_for_job
+from tests.e2e.platform.thin_live_helpers import app_build_package_files, wait_for_job
 
 pytestmark = pytest.mark.e2e
 
@@ -38,39 +35,8 @@ _SETTINGS_PATH = "/api/maintenance/app-sdk-upgrades/settings"
 
 def _automatic_upgrade_source() -> dict[str, bytes]:
     """Retain the developer's lockfile; the platform injects its SDK at build time."""
-    package = {
-        "name": "automatic-sdk-upgrade-live",
-        "private": True,
-        "dependencies": {
-            "lucide-react": "^1.61.0",
-            "react": "18.3.1",
-            "react-dom": "18.3.1",
-        },
-        "devDependencies": {"vite": "6.2.2"},
-    }
-    with tempfile.TemporaryDirectory(prefix="bifrost-auto-sdk-lock-") as tmp:
-        workdir = Path(tmp)
-        (workdir / "package.json").write_text(json.dumps(package))
-        subprocess.run(
-            [
-                "npm",
-                "install",
-                "--package-lock-only",
-                "--ignore-scripts",
-                "--no-audit",
-                "--no-fund",
-            ],
-            cwd=workdir,
-            check=True,
-            capture_output=True,
-            timeout=120,
-            env=package_tool_env(),
-        )
-        lockfile = (workdir / "package-lock.json").read_bytes()
-
     return {
-        "package.json": json.dumps(package).encode(),
-        "package-lock.json": lockfile,
+        **app_build_package_files(),
         "index.html": (
             b"<!doctype html><html><body><div id='root'></div>"
             b"<script type='module' src='/src/main.ts'></script></body></html>"
