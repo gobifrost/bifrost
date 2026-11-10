@@ -22,10 +22,10 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     # MCP thin-wrapper rewrite and tool-name migration, closing that parity
     # domain by domain.
     assert inventory["counts"] == {
-        "cli": 179,
+        "cli": 180,  # Includes solution git sources.
         "manifest": 16,
         "mcp": 100,
-        "rest": 719,  # Includes nine platform GitHub App setup routes.
+        "rest": 723,  # Includes App setup and four Solution-source routes.
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

@@ -262,7 +262,7 @@ def test_ref_without_repo_fails(tmp_path) -> None:
         catch_exceptions=False,
     )
     assert result.exit_code != 0
-    assert "--ref and --path require --repo" in result.output
+    assert "--ref, --path and --git-source-id require --repo" in result.output
 
 
 def test_repo_preview_posts_coordinates_and_prints_source() -> None:

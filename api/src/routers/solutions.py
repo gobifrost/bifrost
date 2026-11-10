@@ -38,11 +38,13 @@ from bifrost.solution_jobs import (
 )
 from shared.app_build_errors import AppBuildMemoryError
 from shared.logo_processing import is_logo_thumbnail_version
+from shared.solution_git_sources import clone_solution_repository, list_sources, resolve_credentials
 from src.core.auth import Context, CurrentActiveUser
 from src.core.principal import UserPrincipal
 from shared.models import (
     SolutionDevContextRequest, SolutionDevContextResponse,
     SolutionAppBuildLookup, SolutionAppBuildMatches,
+    SolutionGitSources,
 )
 from src.models.contracts.applications import (
     ApplicationSdkUpdateSkipped,
@@ -490,7 +492,6 @@ async def preview_workspace_import_repo(
 
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
-        clone_repo_to_dir,
         resolve_repo_subpath,
     )
 
@@ -498,7 +499,9 @@ async def preview_workspace_import_repo(
     try:
         checkout = tmp / "checkout"
         try:
-            await clone_repo_to_dir(body.repo_url, checkout, ref=body.git_ref)
+            await clone_solution_repository(ctx.db, body.git_source_id, scope_org_id, body.repo_url, checkout, body.git_ref)
+        except HTTPException:
+            raise
         except Exception as exc:
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -868,6 +871,14 @@ async def _solution_sdk_statuses_for_rows(
         )[0]
         for row in rows
     }
+
+
+@router.get("/git-sources", response_model=SolutionGitSources)
+async def available_git_sources(ctx: Context, user: CurrentActiveUser, organization_id: str | None = None) -> SolutionGitSources:
+    caller = await load_caller(ctx.db, user)
+    scope = original_organization(caller) if organization_id is None else await _resolve_workspace_scope_org(ctx.db, organization_id)
+    await authorize_scope(ctx.db, user, scope, "solutions.readwrite")
+    return SolutionGitSources(sources=await list_sources(ctx.db, scope))
 
 
 @router.get("", response_model=SolutionsList, summary="List Solution installs (admin only)", **operation_route("solutions.list"))
@@ -2067,6 +2078,17 @@ async def update_solution(
     if not fields:
         return SolutionDTO.model_validate(sol)  # nothing to do
 
+    source_id = fields.get("git_source_id", sol.git_source_id)
+    source_scope = fields.get("organization_id", sol.organization_id)
+    source_url = fields.get("git_repo_url", sol.git_repo_url)
+    if source_id is not None and (
+        {"git_source_id", "git_repo_url", "organization_id"}.intersection(fields)
+        or fields.get("git_connected") is True
+    ):
+        if not source_url:
+            raise HTTPException(422, "Select a repository for the Solution GitHub source.")
+        await resolve_credentials(ctx.db, source_id, source_scope, source_url)
+
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
@@ -2131,6 +2153,7 @@ async def update_solution(
                     )
                 await _validate_solution_git_connection_source(
                     sol,
+                    db=ctx.db, source_id=source_id, organization_id=source_scope,
                     repo_url=repo_url.strip(),
                     repo_subpath=fields["repo_subpath"],
                     git_ref=git_ref,
@@ -2163,6 +2186,9 @@ async def update_solution(
 async def _validate_solution_git_connection_source(
     solution: SolutionORM,
     *,
+    db: AsyncSession,
+    source_id: UUID | None,
+    organization_id: UUID | None,
     repo_url: str,
     repo_subpath: str | None,
     git_ref: str | None,
@@ -2170,7 +2196,6 @@ async def _validate_solution_git_connection_source(
     """Clone and verify the Git source before making an install managed by it."""
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
-        clone_repo_to_dir,
         resolve_repo_subpath,
     )
     from src.services.solutions.zip_install import _parse_workspace
@@ -2178,7 +2203,9 @@ async def _validate_solution_git_connection_source(
     with tempfile.TemporaryDirectory(prefix="bifrost-solution-git-connect-") as tmp:
         checkout = Path(tmp)
         try:
-            await clone_repo_to_dir(repo_url, checkout, ref=git_ref)
+            await clone_solution_repository(db, source_id, organization_id, repo_url, checkout, git_ref)
+        except HTTPException:
+            raise
         except Exception as exc:  # noqa: BLE001 - GitPython has varied errors
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
@@ -3218,7 +3245,6 @@ async def install_preview_repo(
 
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
-        clone_repo_to_dir,
         resolve_repo_subpath,
     )
     from src.services.solutions.zip_install import _parse_workspace
@@ -3226,7 +3252,9 @@ async def install_preview_repo(
     with tempfile.TemporaryDirectory(prefix="bifrost-repo-preview-") as tmp:
         work = Path(tmp)
         try:
-            await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
+            await clone_solution_repository(ctx.db, body.git_source_id, org_id, body.repo_url, work, body.git_ref)
+        except HTTPException:
+            raise
         except Exception as exc:  # GitPython GitCommandError etc.
             raise HTTPException(
                 status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -3284,7 +3312,6 @@ async def install_from_repo(
 
     from src.services.solutions.git_sync import (
         NotASolutionWorkspace,
-        clone_repo_to_dir,
         resolve_repo_subpath,
     )
     from src.services.solutions.zip_install import _parse_workspace, find_install
@@ -3294,7 +3321,9 @@ async def install_from_repo(
     try:
         work = Path(tmp)
         try:
-            await clone_repo_to_dir(body.repo_url, work, ref=body.git_ref)
+            await clone_solution_repository(ctx.db, body.git_source_id, org_id, body.repo_url, work, body.git_ref)
+        except HTTPException:
+            raise
         except Exception as exc:
             # GitPython raises various exc subtypes (GitCommandError,
             # InvalidGitRepositoryError, ...) — catch-all intentional for a
@@ -3341,6 +3370,7 @@ async def install_from_repo(
             organization_id=org_id,
             git_connected=True,
             git_repo_url=body.repo_url,
+            git_source_id=body.git_source_id,
             repo_subpath=body.repo_subpath,
             git_ref=body.git_ref,
         )

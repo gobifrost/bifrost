@@ -1,6 +1,8 @@
 import { getErrorMessage } from "@/lib/api-error";
 import { GitHubTokenField } from "./GitHubTokenField";
+import type { GitAppSetup } from "@/services/githubGitApp";
 import { GitHubAppSetup } from "./GitHubAppSetup";
+import { SolutionGitSources } from "./SolutionGitSources";
 import { GitHubResourceSelect } from "./GitHubResourceSelect";
 import { GitHubCreateRepositoryDialog } from "./GitHubCreateRepositoryDialog";
 import { GitHubDisconnectDialog } from "./GitHubDisconnectDialog";
@@ -57,6 +59,17 @@ export function GitHub() {
 	const [confirmDestructive, setConfirmDestructive] = useState(false);
 	const [connectionJobId, setConnectionJobId] = useState<string | null>(null);
 	const [appSetupId, setAppSetupId] = useState<string | null>(null);
+	const [appPurpose, setAppPurpose] = useState<"workspace" | "solution">(
+		"workspace",
+	);
+	const [resumedAppSetup, setResumedAppSetup] = useState<GitAppSetup>();
+	function resumeAppSetup(
+		purpose: "workspace" | "solution",
+		setup: GitAppSetup,
+	) {
+		setResumedAppSetup(setup);
+		setAppPurpose(purpose);
+	}
 
 	// Form state
 	const [token, setToken] = useState("");
@@ -438,7 +451,31 @@ export function GitHub() {
 	return (
 		<div className="space-y-6">
 			{readError}
-			<Card>
+			<div className="flex gap-2" aria-label="GitHub Connection Purpose">
+				<Button
+					variant={appPurpose === "workspace" ? "default" : "outline"}
+					onClick={() => setAppPurpose("workspace")}
+				>
+					Workspace Sync
+				</Button>
+				<Button
+					variant={appPurpose === "solution" ? "default" : "outline"}
+					onClick={() => setAppPurpose("solution")}
+				>
+					Solution Repositories
+				</Button>
+			</div>
+			{appPurpose === "solution" && (
+				<SolutionGitSources
+					onPurposeDetected={resumeAppSetup}
+					callbackSetup={
+						resumedAppSetup?.purpose === "solution"
+							? resumedAppSetup
+							: undefined
+					}
+				/>
+			)}
+			<Card className={appPurpose === "solution" ? "hidden" : undefined}>
 				<CardHeader>
 					<div className="flex items-center gap-2">
 						<Github className="h-5 w-5" />
@@ -456,33 +493,44 @@ export function GitHub() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6">
-					<GitHubAppSetup
-						connectedWithApp={
-							config?.auth_kind === "app" && !!config.configured
-						}
-						onMigrated={() => {
-							setAppSetupId(null);
-							void refetchConfig();
-						}}
-						onReady={(setupId, repository) => {
-							setAppSetupId(setupId);
-							setRepositories([
-								{
-									name: repository.full_name.split("/")[1],
-									full_name: repository.full_name,
-									description: null,
-									url: `https://github.com/${repository.full_name}`,
-									private: repository.private,
-								},
-							]);
-							setTokenValid(true);
-							void handleRepoSelection(
-								repository.full_name,
-								repository.default_branch,
-								setupId,
-							);
-						}}
-					/>
+					{appPurpose === "workspace" && (
+						<GitHubAppSetup
+							onPurposeDetected={resumeAppSetup}
+							initialSetup={
+								resumedAppSetup?.purpose === "workspace"
+									? resumedAppSetup
+									: undefined
+							}
+							connectedWithApp={
+								config?.auth_kind === "app" &&
+								!!config.configured
+							}
+							onMigrated={() => {
+								setAppSetupId(null);
+								void refetchConfig();
+							}}
+							onReady={(setupId, repository) => {
+								setAppSetupId(setupId);
+								setRepositories([
+									{
+										name: repository.full_name.split(
+											"/",
+										)[1],
+										full_name: repository.full_name,
+										description: null,
+										url: `https://github.com/${repository.full_name}`,
+										private: repository.private,
+									},
+								]);
+								setTokenValid(true);
+								void handleRepoSelection(
+									repository.full_name,
+									repository.default_branch,
+									setupId,
+								);
+							}}
+						/>
+					)}
 					{/* Current Status */}
 					{config?.configured ? (
 						<GitHubConnectionSummary

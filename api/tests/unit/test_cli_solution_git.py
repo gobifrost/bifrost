@@ -86,6 +86,7 @@ def test_solution_git_connect_patches_one_writer_fields(monkeypatch) -> None:
     assert calls[-1] == (
         "patch", f"/api/solutions/{SOLUTION_ID}", {
             "git_connected": True,
+            "git_source_id": None,
             "git_repo_url": "https://example.test/repo.git",
             "repo_subpath": None,
             "git_ref": "main",
@@ -105,3 +106,27 @@ def test_pull_manifests_is_canonical_name_with_compatibility_alias() -> None:
     result = CliRunner().invoke(solution_group, ["--help"])
     assert "pull-manifests" in result.output
     assert "pull" in result.output
+
+
+def test_private_install_sends_only_source_identity_and_explicit_global_scope(monkeypatch):
+    calls = []
+    result = _invoke(monkeypatch, ["install-repo", "https://github.com/acme/private", "--git-source-id", "source", "--global"], calls)
+    assert result.exit_code == 0, result.output
+    assert calls[0][2]["git_source_id"] == "source"
+    assert calls[0][2]["organization_id"] is None
+
+
+def test_private_reconnect_binds_the_selected_source(monkeypatch):
+    calls = []
+    result = _invoke(monkeypatch, ["git", "connect", "support", "https://github.com/acme/private", "--git-source-id", "source"], calls)
+    assert result.exit_code == 0, result.output
+    assert calls[-1][2]["git_source_id"] == "source"
+
+
+def test_private_sources_listing_keeps_global_explicit(monkeypatch):
+    client = mock.AsyncMock()
+    client.get.return_value = _Response({"sources": []})
+    monkeypatch.setattr("bifrost.client.BifrostClient.get_instance", lambda **_: client)
+    result = CliRunner().invoke(solution_group, ["git", "sources", "--global"])
+    assert result.exit_code == 0, result.output
+    client.get.assert_awaited_once_with("/api/solutions/git-sources", params={"organization_id": ""})

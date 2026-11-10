@@ -2619,6 +2619,8 @@ export function SolutionDetail() {
 		queryFn: () =>
 			previewSolutionFromRepo({
 				repo_url: sol!.git_repo_url!,
+				git_source_id: sol!.git_source_id ?? null,
+				organization_id: sol!.organization_id,
 				...(sol!.repo_subpath
 					? { repo_subpath: sol!.repo_subpath }
 					: {}),

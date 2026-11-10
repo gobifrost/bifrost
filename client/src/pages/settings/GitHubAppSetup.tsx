@@ -34,10 +34,23 @@ export function GitHubAppSetup({
 	onReady,
 	onMigrated,
 	connectedWithApp,
+	purpose = "workspace",
+	sourceOrganizationId = null,
+	initialSetup,
+	onPurposeDetected,
+	onSourceScopeDetected,
 }: {
 	onReady: (setupId: string, repository: GitAppRepository) => void;
 	onMigrated: () => void;
 	connectedWithApp: boolean;
+	purpose?: "workspace" | "solution";
+	sourceOrganizationId?: string | null;
+	initialSetup?: GitAppSetup | null;
+	onPurposeDetected?: (
+		purpose: "workspace" | "solution",
+		setup: GitAppSetup,
+	) => void;
+	onSourceScopeDetected?: (organizationId: string | null) => void;
 }) {
 	const initialized = useRef(false);
 	const [setup, setSetup] = useState<GitAppSetup | null>(null);
@@ -47,7 +60,9 @@ export function GitHubAppSetup({
 	const [ownerType, setOwnerType] = useState<"organization" | "user">(
 		"organization",
 	);
-	const [name, setName] = useState("Bifrost Git Sync");
+	const [name, setName] = useState(
+		purpose === "solution" ? "Bifrost Solutions" : "Bifrost Git Sync",
+	);
 	const [isPublic, setPublic] = useState(false);
 	const [workflows, setWorkflows] = useState(false);
 	const [manual, setManual] = useState(false);
@@ -79,12 +94,22 @@ export function GitHubAppSetup({
 		if (!connectedWithApp) initialized.current = true;
 		void perform(async () => {
 			const callback = takeGitAppCallback();
-			if (connectedWithApp) return;
+			if (connectedWithApp && !callback) return;
 			const current = callback
 				? await completeGitAppCallback(callback)
-				: await getGitAppSetup();
+				: initialSetup !== undefined
+					? initialSetup
+					: await getGitAppSetup(purpose);
+			if (current && (current.purpose ?? "workspace") !== purpose) {
+				onPurposeDetected?.(current.purpose ?? "workspace", current);
+				return;
+			}
+			if (current?.purpose === "solution")
+				onSourceScopeDetected?.(current.source_organization_id ?? null);
 			setSetup(current);
 		});
+		// This component owns one setup attempt; parent keys start another.
+		// eslint-disable-next-line react-hooks/exhaustive-deps
 	}, [connectedWithApp]);
 
 	if (connectedWithApp)
@@ -100,10 +125,15 @@ export function GitHubAppSetup({
 			className="space-y-4 rounded-md border p-4"
 		>
 			<div>
-				<h3 className="font-medium">Connect With a GitHub App</h3>
+				<h3 className="font-medium">
+					{purpose === "solution"
+						? "Authorize Solution Repositories"
+						: "Connect With a GitHub App"}
+				</h3>
 				<p className="text-sm text-muted-foreground">
-					Create an App owned by your account or organization. Git
-					sync uses temporary repository credentials.
+					{purpose === "solution"
+						? "Authorize selected repositories for Solution installs and updates. Fetches use temporary read-only credentials."
+						: "Create an App owned by your account or organization. Git sync uses temporary repository credentials."}
 				</p>
 			</div>
 			{error && (
@@ -209,6 +239,13 @@ export function GitHubAppSetup({
 												client_id: clientId,
 												private_key: privateKey,
 												client_secret: clientSecret,
+												purpose,
+												...(purpose === "solution"
+													? {
+															organization_id:
+																sourceOrganizationId,
+														}
+													: {}),
 											});
 										setPrivateKey("");
 										setClientSecret("");
@@ -283,25 +320,27 @@ export function GitHubAppSetup({
 										connecting.
 									</p>
 								)}
-								<div className="flex items-center gap-2">
-									<Checkbox
-										id="git-app-workflows"
-										checked={workflows}
-										onCheckedChange={(value) =>
-											setWorkflows(value === true)
-										}
-									/>
-									<Label htmlFor="git-app-workflows">
-										Allow Updating GitHub Actions Workflow
-										Files
-									</Label>
-								</div>
+								{purpose === "workspace" && (
+									<div className="flex items-center gap-2">
+										<Checkbox
+											id="git-app-workflows"
+											checked={workflows}
+											onCheckedChange={(value) =>
+												setWorkflows(value === true)
+											}
+										/>
+										<Label htmlFor="git-app-workflows">
+											Allow Updating GitHub Actions
+											Workflow Files
+										</Label>
+									</div>
+								)}
 								<p className="text-sm text-muted-foreground">
 									GitHub will ask you to approve Contents
-									read/write
-									{workflows
-										? " and Workflows write"
-										: ""}{" "}
+									{purpose === "solution"
+										? " read"
+										: " read/write"}
+									{workflows ? " and Workflows write" : ""}{" "}
 									access.
 								</p>
 								<Button
@@ -317,6 +356,13 @@ export function GitHubAppSetup({
 													name,
 													public: isPublic,
 													workflows,
+													purpose,
+													...(purpose === "solution"
+														? {
+																organization_id:
+																	sourceOrganizationId,
+															}
+														: {}),
 												}),
 											);
 										})

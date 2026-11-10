@@ -59,6 +59,27 @@ def key_pair():
     return key, pem
 
 
+@pytest.mark.asyncio
+async def test_readonly_tokens_are_coalesced_and_separate_from_workspace_writes(monkeypatch, key_pair):
+    redis = Redis()
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=redis))
+    async def mint(*args, data):
+        return {"token": data["permissions"]["contents"], "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()}
+    provider = AsyncMock(side_effect=mint)
+    monkeypatch.setattr(app, "_request", provider)
+    config = GitHubConfig("https://github.com/owner/repo", None, "main", "connected", auth_kind="app", generation="generation",
+                         app={"id": 42, "private_key": key_pair[1], "installation_id": 7, "repository_id": 91, "workflows": True})
+    reader = app.GitAppCredentials(None, config, contents="read")
+    writer = app.GitAppCredentials(None, config)
+    monkeypatch.setattr(reader, "_current", AsyncMock())
+    monkeypatch.setattr(writer, "_current", AsyncMock())
+    assert await asyncio.gather(*(reader.get_token() for _ in range(8))) == ["read"] * 8
+    assert await writer.get_token() == "write"
+    assert provider.await_count == 2
+    assert provider.await_args_list[0].kwargs["data"] == {"repository_ids": [91], "permissions": {"contents": "read"}}
+    assert provider.await_args_list[1].kwargs["data"]["permissions"] == {"contents": "write", "workflows": "write"}
+
+
 def test_app_jwt_is_short_lived_rsa_and_has_app_identity(key_pair):
     key, pem = key_pair
     token = app.app_jwt({"id": 42, "private_key": pem})
@@ -279,6 +300,52 @@ def pending_setup(key_pair):
         "installation_id": 7, "workflows": False,
         "repository": {"id": 91, "full_name": "owner/repo", "default_branch": "main"},
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("purpose", ["workspace", "solution"])
+async def test_repository_selection_respects_workspace_and_solution_boundaries(monkeypatch, pending_setup, purpose):
+    setup_id, payload = pending_setup
+    payload.update(purpose=purpose, stage="repository", expires_at=(datetime.now(timezone.utc) + timedelta(minutes=5)).isoformat())
+    payload["repositories"] = [payload.pop("repository")]
+    monkeypatch.setattr(app, "setup_repositories", AsyncMock())
+    monkeypatch.setattr(app, "_row", AsyncMock(return_value=(SimpleNamespace(), payload)))
+    current = GitHubConfig("https://github.com/owner/connected", "personal", "main", "connected", generation="changed")
+    workspace = AsyncMock(return_value=current)
+    monkeypatch.setattr(app, "get_github_config", workspace)
+    save = AsyncMock()
+    monkeypatch.setattr(app, "_save", save)
+    monkeypatch.setattr(app, "get_shared_redis", AsyncMock(return_value=Redis()))
+    provider = AsyncMock(return_value={"token": "installation-secret", "expires_at": (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()})
+    monkeypatch.setattr(app, "_request", provider)
+
+    if purpose == "workspace":
+        with pytest.raises(HTTPException) as error:
+            await app.selected_config(None, setup_id, 7, 91, "actor", None)
+        assert error.value.status_code == 409
+        assert payload["stage"] == "repository"
+        save.assert_not_awaited()
+        provider.assert_not_awaited()
+    else:
+        config = await app.selected_config(None, setup_id, 7, 91, "actor", None)
+        assert config.repo_url == "https://github.com/owner/repo"
+        assert payload["stage"] == "ready"
+        workspace.assert_not_awaited()
+        assert provider.await_args.kwargs["data"] == {"repository_ids": [91], "permissions": {"contents": "read"}}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("executing", [False, True])
+async def test_solution_setup_cannot_be_used_for_workspace_connection(monkeypatch, pending_setup, executing):
+    setup_id, payload = pending_setup
+    payload["purpose"] = "solution"
+    monkeypatch.setattr(app, "_row", AsyncMock(return_value=(SimpleNamespace(), payload)))
+    provider = AsyncMock()
+    monkeypatch.setattr(app.GitAppCredentials, "get_token", provider)
+    with pytest.raises(HTTPException) as error:
+        await app.pending_config(None, setup_id, "actor", None, executing=executing)
+    assert error.value.status_code == 409
+    provider.assert_not_awaited()
 
 
 @pytest.mark.asyncio

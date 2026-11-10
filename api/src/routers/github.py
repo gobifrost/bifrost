@@ -11,10 +11,12 @@ from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, Response, status
 from shared import github_git_app
+from shared.solution_git_sources import authorize_source_scope, query_scope
 from shared.models import (
     GitAppAuthorizeResponse, GitAppCallbackRequest, GitAppExistingRequest, GitAppInstallationRequest,
     GitAppManifestRequest, GitAppManifestResponse, GitAppRepositoryRequest,
     GitAppSetupRequest, GitAppSetupResponse,
+    GitAppReuseRequest, SolutionGitSources,
 )
 
 from src.core.auth import Context, CurrentActiveUser
@@ -96,19 +98,25 @@ def _github_client(db, config):
 
 
 @router.get("/app/setup", response_model=GitAppSetupResponse | None)
-async def get_app_setup(user: CurrentActiveUser, ctx: Context, db: DbSession):
-    return await github_git_app.latest_setup(db, str(user.user_id), ctx.org_id)
+async def get_app_setup(user: CurrentActiveUser, ctx: Context, db: DbSession, purpose: Literal["workspace", "solution"] = "workspace"):
+    return await github_git_app.latest_setup(db, str(user.user_id), ctx.org_id, purpose)
 
 
 @router.post("/app/manifest", response_model=GitAppManifestResponse)
 async def start_app_manifest(body: GitAppManifestRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    if body.purpose == "solution":
+        target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+        await authorize_source_scope(db, user, target_scope)
     return await github_git_app.start_manifest(db, body, str(user.user_id), ctx.org_id)
 
 
 @router.post("/app/existing", response_model=GitAppSetupResponse)
 async def configure_existing_app(body: GitAppExistingRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+    if body.purpose == "solution":
+        await authorize_source_scope(db, user, target_scope)
     return await github_git_app.existing_app(db, {"id": body.app_id, "client_id": body.client_id,
-        "private_key": body.private_key.get_secret_value(), "client_secret": body.client_secret.get_secret_value()}, str(user.user_id), ctx.org_id)
+        "private_key": body.private_key.get_secret_value(), "client_secret": body.client_secret.get_secret_value()}, str(user.user_id), ctx.org_id, body.purpose, source_scope=target_scope)
 
 
 @router.post("/app/manifest/complete", response_model=GitAppSetupResponse)
@@ -138,7 +146,34 @@ async def app_repositories(body: GitAppInstallationRequest, user: CurrentActiveU
 
 @router.post("/app/select", response_model=GitAppSetupResponse)
 async def select_app_repository(body: GitAppRepositoryRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    _, setup = await github_git_app._row(db, body.setup_id, str(user.user_id), ctx.org_id)
+    if setup.get("purpose") == "solution":
+        await authorize_source_scope(db, user, uuid.UUID(setup["source_scope"]) if setup.get("source_scope") else None)
     return await github_git_app.select_repository(db, body.setup_id, body.installation_id, body.repository_id, str(user.user_id), ctx.org_id, user.email)
+
+
+@router.post("/app/reuse", response_model=GitAppSetupResponse)
+async def reuse_solution_app(body: GitAppReuseRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    from shared.solution_git_sources import reuse_app
+    target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+    await authorize_source_scope(db, user, target_scope)
+    return await reuse_app(db, body.source_id, str(user.user_id), ctx.org_id, target_scope)
+
+
+@router.get("/app/solution-sources", response_model=SolutionGitSources)
+async def get_solution_sources(user: CurrentActiveUser, ctx: Context, db: DbSession, organization_id: str | None = None):
+    from shared.solution_git_sources import list_sources
+    scope = query_scope(organization_id, ctx.org_id)
+    await authorize_source_scope(db, user, scope)
+    return SolutionGitSources(sources=await list_sources(db, scope))
+
+
+@router.delete("/app/solution-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_solution_source(source_id: uuid.UUID, user: CurrentActiveUser, ctx: Context, db: DbSession, organization_id: str | None = None):
+    from shared.solution_git_sources import disable_source
+    scope = query_scope(organization_id, ctx.org_id)
+    await authorize_source_scope(db, user, scope)
+    await disable_source(db, source_id, scope, user.email)
 
 
 # =============================================================================

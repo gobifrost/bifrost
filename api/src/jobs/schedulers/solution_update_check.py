@@ -41,7 +41,8 @@ async def check_solution_updates() -> dict[str, Any]:
             checked += 1
             try:
                 remote = await fetch_remote_version(
-                    repo_url=s.git_repo_url, repo_subpath=s.repo_subpath, ref=s.git_ref
+                    repo_url=s.git_repo_url, repo_subpath=s.repo_subpath, ref=s.git_ref,
+                    db=db, git_source_id=s.git_source_id, organization_id=s.organization_id,
                 )
                 available = compute_update_available(installed=s.version, remote=remote)
                 previous = s.update_available_version

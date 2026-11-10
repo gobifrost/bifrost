@@ -3,22 +3,29 @@ import type { components } from "@/lib/v1";
 
 export type GitAppSetup = components["schemas"]["GitAppSetupResponse"];
 export type GitAppRepository = components["schemas"]["GitAppRepository"];
+export type SolutionGitSource = components["schemas"]["SolutionGitSource"];
+type SourceList = components["schemas"]["SolutionGitSources"];
 type ManifestRequest = components["schemas"]["GitAppManifestRequest"];
 type ManifestResponse = components["schemas"]["GitAppManifestResponse"];
 type ExistingRequest = components["schemas"]["GitAppExistingRequest"];
 type AuthorizeResponse = components["schemas"]["GitAppAuthorizeResponse"];
 
-async function request<T>(path: string, body?: unknown): Promise<T> {
+async function request<T>(
+	path: string,
+	body?: unknown,
+	method = "POST",
+): Promise<T> {
 	const response = await authFetch(
 		path,
 		body === undefined
 			? undefined
 			: {
-					method: "POST",
+					method,
 					headers: { "Content-Type": "application/json" },
 					body: JSON.stringify(body),
 				},
 	);
+	if (response.status === 204) return undefined as T;
 	const data = await response.json();
 	if (!response.ok)
 		throw new Error(
@@ -29,8 +36,38 @@ async function request<T>(path: string, body?: unknown): Promise<T> {
 	return data as T;
 }
 
-export const getGitAppSetup = () =>
-	request<GitAppSetup | null>("/api/github/app/setup");
+export const getGitAppSetup = (
+	purpose: "workspace" | "solution" = "workspace",
+) =>
+	request<GitAppSetup | null>(
+		"/api/github/app/setup" +
+			(purpose === "solution" ? "?purpose=solution" : ""),
+	);
+export const listSolutionGitSources = (organizationId: string | null) =>
+	request<SourceList>(
+		"/api/github/app/solution-sources?organization_id=" +
+			encodeURIComponent(organizationId ?? "GLOBAL"),
+	);
+export const disconnectSolutionGitSource = (
+	sourceId: string,
+	organizationId: string | null,
+) =>
+	request<void>(
+		"/api/github/app/solution-sources/" +
+			encodeURIComponent(sourceId) +
+			"?organization_id=" +
+			encodeURIComponent(organizationId ?? "GLOBAL"),
+		{},
+		"DELETE",
+	);
+export const reuseSolutionGitApp = (
+	organizationId: string | null,
+	sourceId?: string,
+) =>
+	request<GitAppSetup>("/api/github/app/reuse", {
+		organization_id: organizationId,
+		source_id: sourceId ?? null,
+	});
 export const createGitApp = (body: ManifestRequest) =>
 	request<ManifestResponse>("/api/github/app/manifest", body);
 export const configureExistingGitApp = (body: ExistingRequest) =>

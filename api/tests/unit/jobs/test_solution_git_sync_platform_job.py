@@ -24,6 +24,8 @@ def test_solution_git_sync_definition_has_durable_per_install_policy() -> None:
 
     assert SOLUTION_GIT_SYNC_DEFINITION.job_type == "solution.git_sync"
     assert SOLUTION_GIT_SYNC_DEFINITION.payload_model is SolutionGitSyncPayload
+    assert SOLUTION_GIT_SYNC_DEFINITION.payload_version == 2
+    assert SOLUTION_GIT_SYNC_DEFINITION.payload_model_for_version(1) is SolutionGitSyncPayload
     assert policy.timeout_seconds == 60 * 60
     assert policy.max_attempts == 2
     assert policy.retry_on_runner_loss is True

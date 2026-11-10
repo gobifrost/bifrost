@@ -422,7 +422,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Default-base-role commands and optional explicit identity base roles are additive.
     # Additive GitHub App setup models and optional Git connection fields.
     # Existing CLI requests and MIN_CLI_VERSION remain compatible.
-    "0a90f9b35bbd636e314f050df8c78db8fb5a1d55b85d1accc1e85547a2481daa"
+    # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
+    # Existing clients retain public-repository behavior; minimum CLI stays unchanged.
+    "f684e38384b7b3ad0052908a64c43bcd364667cb26d2985a30d34dbfd7fdcc24"
 )
 
 
