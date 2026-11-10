@@ -137,7 +137,7 @@ jobs:
       # Install runtime deps from the hash-pinned lock file (Scorecard
       # Pinned-Dependencies); pyright is installed from its own hash-pinned
       # lock because --require-hashes forbids unpinned packages and pyright
-      # targets a different Python minor (3.12 here vs 3.14 in production)
+      # targets a different Python minor (3.12 here vs 3.15 in production)
       # so it can't share requirements.lock.
       #
       # We deliberately do NOT `pip install --upgrade pip` — actions/setup-python
@@ -248,7 +248,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -317,7 +317,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -550,6 +550,55 @@ jobs:
           bifrost_test_project="$(compute_project_name .)"
           tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
 
+  # Azure is covered separately through its native Azurite adapter. This is a
+  # focused provider-neutral storage contract, not a second full E2E suite.
+  test-azure-object-storage:
+    if: >-
+      github.event_name == 'merge_group' ||
+      github.event_name == 'workflow_dispatch' ||
+      startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    name: Azure Object Storage E2E
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      # Use the same cached development image as the regular backend lanes.
+      - name: Build API dev image (cached)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ./api/Dockerfile.dev
+          load: true
+          tags: bifrost-test-api-dev:latest
+          cache-from: type=gha,scope=test-api-dev
+          cache-to: type=gha,scope=test-api-dev,mode=max
+
+      - name: Run Azure object-storage contract
+        env:
+          BIFROST_SKIP_BUILD: "1"
+          BIFROST_TEST_OBJECT_STORAGE_PROVIDER: azure_blob
+          BIFROST_TEST_AZURITE: "1"
+          BIFROST_TEST_AZURE_BLOB_RESET: "1"
+          BIFROST_AZURE_BLOB_ACCOUNT_URL: http://azurite:10000/bifrostcontract
+          BIFROST_AZURE_BLOB_ACCOUNT_NAME: bifrostcontract
+          BIFROST_AZURE_BLOB_CONTAINER: bifrost-test
+          BIFROST_AZURE_BLOB_AUTH: account_key
+          BIFROST_AZURE_BLOB_ACCOUNT_KEY: MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+        run: |
+          chmod +x test.sh
+          ./test.sh tests/e2e/platform/test_object_storage.py -v --durations=0
+
+      - name: Show API errors after Azure object-storage failure
+        if: failure()
+        run: |
+          source scripts/lib/test_helpers.sh
+          bifrost_test_project="$(compute_project_name .)"
+          tail -n 300 "/tmp/bifrost-$bifrost_test_project/api.log"
+
   # Aggregate gate — required check named "E2E Tests" (matches ruleset 15329014).
   # Fails if any backend E2E shard, the client unit suite, or the critical
   # browser smoke failed/cancelled. The component/browser jobs have their own
@@ -565,7 +614,7 @@ jobs:
         github.event_name == 'workflow_dispatch' ||
         startsWith(github.ref, 'refs/tags/v')
       )
-    needs: [test-e2e, test-client-unit, test-client-smoke, windows-credentials, build-dev-api-candidate, build-dev-client-candidate]
+    needs: [test-e2e, test-azure-object-storage, test-client-unit, test-client-smoke, windows-credentials, build-dev-api-candidate, build-dev-client-candidate]
     runs-on: ubuntu-latest
     name: E2E Tests
     steps:
@@ -586,12 +635,14 @@ jobs:
           fi
 
           if [ "${{ needs.test-e2e.result }}" != "success" ] || \
+             [ "${{ needs.test-azure-object-storage.result }}" != "success" ] || \
              [ "${{ needs.test-client-unit.result }}" != "success" ] || \
              [ "${{ needs.test-client-smoke.result }}" != "success" ] || \
              { [ "${{ github.event_name }}" = "merge_group" ] && \
                { [ "${{ needs.build-dev-api-candidate.result }}" != "success" ] || \
                  [ "${{ needs.build-dev-client-candidate.result }}" != "success" ]; }; }; then
             echo "E2E matrix result: ${{ needs.test-e2e.result }}"
+            echo "Azure object storage result: ${{ needs.test-azure-object-storage.result }}"
             echo "Client unit result: ${{ needs.test-client-unit.result }}"
             echo "Critical browser smoke result: ${{ needs.test-client-smoke.result }}"
             echo "API candidate result: ${{ needs.build-dev-api-candidate.result }}"
@@ -680,7 +731,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -806,7 +857,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -892,7 +943,7 @@ jobs:
         uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -1003,7 +1054,7 @@ jobs:
           echo "tarball=${TARBALL}" >> "$GITHUB_OUTPUT"
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
         with:
           cosign-release: v2.4.1
 
@@ -1033,7 +1084,7 @@ jobs:
           subject-path: ${{ steps.source_tarball.outputs.tarball }}
 
       - name: Create release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3.0.4
         with:
           tag_name: ${{ steps.get_version.outputs.version }}
           name: Release ${{ steps.get_version.outputs.version }}

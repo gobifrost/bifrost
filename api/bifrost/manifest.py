@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Literal
 from uuid import UUID
 
@@ -1541,6 +1541,21 @@ class Manifest(BaseModel):
 # =============================================================================
 
 
+def _confined_manifest_path(bifrost_dir: Path, filename: str | None = None) -> Path:
+    """Return a manifest path only when symlinks keep it in its workspace."""
+    workspace_root = bifrost_dir.parent.resolve()
+    candidate = bifrost_dir if filename is None else bifrost_dir / filename
+    try:
+        candidate.resolve(strict=False).relative_to(workspace_root)
+        if candidate.exists() or candidate.is_symlink():
+            resolved = candidate.resolve(strict=True)
+            resolved.relative_to(workspace_root)
+            return resolved
+    except (OSError, RuntimeError, ValueError) as exc:
+        raise ValueError("Manifest files must resolve inside the workspace") from exc
+    return candidate
+
+
 def parse_manifest(yaml_str: str) -> Manifest:
     """Parse a YAML string into a Manifest object."""
     if not yaml_str or not yaml_str.strip():
@@ -1646,21 +1661,22 @@ def parse_manifest_dir(files: dict[str, str]) -> Manifest:
 
 def write_manifest_to_dir(manifest: Manifest, bifrost_dir: Path) -> None:
     """Write split manifest files to a directory. Removes legacy metadata.yaml."""
-    bifrost_dir.mkdir(parents=True, exist_ok=True)
+    manifest_dir = _confined_manifest_path(bifrost_dir)
+    manifest_dir.mkdir(parents=True, exist_ok=True)
 
     files = serialize_manifest_dir(manifest)
     for filename, content in files.items():
-        (bifrost_dir / filename).write_text(content)
+        _confined_manifest_path(manifest_dir, filename).write_text(content)
 
     # Remove split files that are now empty (entity type was cleared)
     for filename in MANIFEST_FILES.values():
         if filename not in files:
-            path = bifrost_dir / filename
+            path = _confined_manifest_path(manifest_dir, filename)
             if path.exists():
                 path.unlink()
 
     # Clean up legacy single-file manifest
-    legacy = bifrost_dir / MANIFEST_LEGACY_FILE
+    legacy = _confined_manifest_path(manifest_dir, MANIFEST_LEGACY_FILE)
     if legacy.exists():
         legacy.unlink()
 
@@ -1672,13 +1688,14 @@ def read_manifest_from_dir(bifrost_dir: Path) -> Manifest:
     Otherwise fall back to legacy metadata.yaml.
     Empty/missing directory returns empty Manifest.
     """
-    if not bifrost_dir.exists():
+    manifest_dir = _confined_manifest_path(bifrost_dir)
+    if not manifest_dir.exists():
         return Manifest()
 
     # Check for split files
     split_files: dict[str, str] = {}
     for filename in MANIFEST_FILES.values():
-        path = bifrost_dir / filename
+        path = _confined_manifest_path(manifest_dir, filename)
         if path.exists():
             split_files[filename] = path.read_text()
 
@@ -1686,7 +1703,7 @@ def read_manifest_from_dir(bifrost_dir: Path) -> Manifest:
         return parse_manifest_dir(split_files)
 
     # Fall back to legacy single file
-    legacy = bifrost_dir / MANIFEST_LEGACY_FILE
+    legacy = _confined_manifest_path(manifest_dir, MANIFEST_LEGACY_FILE)
     if legacy.exists():
         return parse_manifest(legacy.read_text())
 
@@ -1696,6 +1713,42 @@ def read_manifest_from_dir(bifrost_dir: Path) -> Manifest:
 # =============================================================================
 # Validation
 # =============================================================================
+
+
+def validate_manifest_paths(manifest: Manifest) -> list[str]:
+    """Return errors for entity paths that cannot name workspace content.
+
+    Manifests use portable, POSIX-relative path spellings.  Keep this separate
+    from Pydantic parsing so older manifests retain their model shape while all
+    import consumers can reject unsafe declarations before filesystem access.
+    """
+    errors: list[str] = []
+
+    def validate(kind: str, label: str, path: str | None) -> None:
+        if path is None:
+            return
+        invalid = (
+            not path
+            or "\0" in path
+            or "\\" in path
+            or Path(path).is_absolute()
+            or bool(PureWindowsPath(path).drive)
+        )
+        raw_parts = path.split("/")
+        if invalid or any(part in {".", "..", ".git", ".bifrost"} for part in raw_parts):
+            errors.append(
+                f"{kind} '{label}' has an unsafe workspace path: {path!r}"
+            )
+
+    for workflow in manifest.workflows.values():
+        validate("Workflow", workflow.name or workflow.id, workflow.path)
+    for form in manifest.forms.values():
+        validate("Form", form.name or form.id, form.path)
+    for agent in manifest.agents.values():
+        validate("Agent", agent.name or agent.id, agent.path)
+    for app in manifest.apps.values():
+        validate("App", app.name or app.id, app.path)
+    return errors
 
 
 def validate_manifest(manifest: Manifest) -> list[str]:
@@ -1714,6 +1767,7 @@ def validate_manifest(manifest: Manifest) -> list[str]:
     Returns a list of human-readable error strings. Empty list = valid.
     """
     errors: list[str] = []
+    errors.extend(validate_manifest_paths(manifest))
 
     org_ids = {org.id for org in manifest.organizations}
     role_ids = {role.id for role in manifest.roles}
@@ -1886,6 +1940,10 @@ def get_all_paths(manifest: Manifest) -> set[str]:
     Form/agent ``path`` is deprecated and may be ``None`` once the manifest is
     regenerated under the inline-content layout — those entries are skipped.
     """
+    path_errors = validate_manifest_paths(manifest)
+    if path_errors:
+        raise ValueError("; ".join(path_errors))
+
     paths: set[str] = set()
     for wf in manifest.workflows.values():
         paths.add(wf.path)

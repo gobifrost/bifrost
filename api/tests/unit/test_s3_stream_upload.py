@@ -7,24 +7,28 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.services.file_storage.s3_client import S3StorageClient
+from src.services.file_storage.object_storage import FileObjectStorage
+from src.core.storage.s3 import S3ObjectStore
+from src.core.storage import s3_transfers
+from src.core.storage.contracts import StorageError
 
 
 def storage_with_response(response, monkeypatch):
     client = SimpleNamespace(
         create_multipart_upload=AsyncMock(return_value=response),
         upload_part=AsyncMock(return_value={"ETag": "part-etag"}),
-        complete_multipart_upload=AsyncMock(),
+        complete_multipart_upload=AsyncMock(return_value={"ETag": '"committed"'}),
         abort_multipart_upload=AsyncMock(),
         put_object=AsyncMock(),
     )
-    storage = S3StorageClient(SimpleNamespace(s3_bucket="test-bucket"))
+    storage = FileObjectStorage(SimpleNamespace(s3_bucket="test-bucket"))
 
     @asynccontextmanager
-    async def get_client():
-        yield client
+    async def get_store():
+        yield S3ObjectStore("test-bucket", client)
 
-    monkeypatch.setattr(storage, "get_client", get_client)
+    monkeypatch.setattr(storage, "get_store", get_store)
+    monkeypatch.setattr(s3_transfers, "STREAM_PART_SIZE", 4)
     return storage, client
 
 
@@ -35,8 +39,9 @@ async def chunks():
 @pytest.mark.parametrize("response", [{}, {"UploadId": None}, {"UploadId": ""}, {"UploadId": 5}])
 async def test_missing_upload_id_is_rejected_before_uploading_parts(monkeypatch, response):
     storage, client = storage_with_response(response, monkeypatch)
-    with pytest.raises(ValueError, match="upload ID"):
-        await storage.put_object_from_chunks("backup.zip", chunks(), part_size=4)
+    with pytest.raises(StorageError) as caught:
+        await storage.put_object_from_chunks("backup.zip", chunks())
+    assert caught.value.provider_code == "MissingMultipartIdentity"
     client.upload_part.assert_not_awaited()
     client.complete_multipart_upload.assert_not_awaited()
     client.put_object.assert_not_awaited()
@@ -44,7 +49,7 @@ async def test_missing_upload_id_is_rejected_before_uploading_parts(monkeypatch,
 
 async def test_valid_multipart_upload_preserves_bytes_and_digest(monkeypatch):
     storage, client = storage_with_response({"UploadId": "upload-1"}, monkeypatch)
-    digest, size = await storage.put_object_from_chunks("backup.zip", chunks(), part_size=4)
+    digest, size = await storage.put_object_from_chunks("backup.zip", chunks())
     assert (digest, size) == (hashlib.sha256(b"abcdefghij").hexdigest(), 10)
     uploaded_parts = client.upload_part.await_args_list
     assert [call.kwargs["Body"] for call in uploaded_parts] == [b"abcd", b"efgh", b"ij"]

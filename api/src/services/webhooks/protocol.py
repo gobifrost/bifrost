@@ -150,6 +150,9 @@ class Deliver:
     event_id: UUID | None = None
     """Persisted event ID, populated by the event processor after ingestion."""
 
+    delivery_id: str | None = None
+    """Provider delivery ID, accepted after body authentication; source-scoped."""
+
 
 @dataclass
 class Rejected:

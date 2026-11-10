@@ -75,6 +75,10 @@ import {
 	AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { OrganizationSelect } from "@/components/forms/OrganizationSelect";
+import {
+	SolutionGitSourcePicker,
+	PrivateSolutionRepositoryFields,
+} from "./SolutionGitSourcePicker";
 import { useGitHubConfig, useCreateGitHubRepository } from "@/hooks/useGitHub";
 import {
 	installSolution,
@@ -89,7 +93,11 @@ import {
 	type SolutionUpgradeDiff,
 } from "@/services/solutions";
 import { WorkspaceImportBody } from "./WorkspaceImportBody";
-import { ConfigValueFields, asConfigSchemas, nonBlankConfigValues } from "./SolutionConfigFields";
+import {
+	ConfigValueFields,
+	asConfigSchemas,
+	nonBlankConfigValues,
+} from "./SolutionConfigFields";
 import type { components } from "@/lib/v1";
 
 /** Pre-filled From-repository fields (e.g. from a `?repo=` deep link). */
@@ -582,6 +590,41 @@ function GitRepoSection({
 	);
 }
 
+function SolutionGitSection(
+	props: Parameters<typeof GitRepoSection>[0] & {
+		organizationId: string | null;
+		sourceId: string | null;
+		onSourceIdChange: (id: string | null) => void;
+	},
+) {
+	return (
+		<div className="space-y-3">
+			<SolutionGitSourcePicker
+				organizationId={props.organizationId}
+				sourceId={props.sourceId}
+				repoUrl={props.repoUrl}
+				onChange={(sourceId, url, branch) => {
+					props.onSourceIdChange(sourceId);
+					if (url !== undefined) props.onRepoUrlChange(url);
+					if (branch !== undefined) props.onRefChange(branch);
+				}}
+			/>
+			{props.sourceId !== null ? (
+				<PrivateSolutionRepositoryFields
+					repoUrl={props.repoUrl}
+					subpath={props.subpath}
+					gitRef={props.gitRef}
+					onSubpathChange={props.onSubpathChange}
+					onRefChange={props.onRefChange}
+					onDisconnect={props.onDisconnect}
+				/>
+			) : (
+				<GitRepoSection {...props} />
+			)}
+		</div>
+	);
+}
+
 /**
  * A manual install becomes Git-managed only after its proposed source has been
  * read and shown to the operator. The server validates the same source again
@@ -617,8 +660,9 @@ function GitConnectionConfirmDialog({
 				<AlertDialogHeader>
 					<AlertDialogTitle>Connect Git?</AlertDialogTitle>
 					<AlertDialogDescription>
-						Git becomes this Solution&apos;s only writer. Future updates pull
-						and replace its installed content from this repository.
+						Git becomes this Solution&apos;s only writer. Future
+						updates pull and replace its installed content from this
+						repository.
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				<div
@@ -638,9 +682,12 @@ function GitConnectionConfirmDialog({
 						</p>
 					) : previewError ? (
 						<div className="space-y-3">
-							<p role="alert" className="text-sm text-destructive">
-								Couldn&apos;t preview this repository. Review it before
-								connecting Git.
+							<p
+								role="alert"
+								className="text-sm text-destructive"
+							>
+								Couldn&apos;t preview this repository. Review it
+								before connecting Git.
 							</p>
 							<Button
 								type="button"
@@ -657,7 +704,8 @@ function GitConnectionConfirmDialog({
 							{preview?.slug
 								? `“${preview.slug}”`
 								: "no Solution slug"}
-							, not “{solutionSlug}”. It can&apos;t manage this install.
+							, not “{solutionSlug}”. It can&apos;t manage this
+							install.
 						</p>
 					) : (
 						<div className="space-y-3">
@@ -666,14 +714,19 @@ function GitConnectionConfirmDialog({
 								<span className="font-semibold">
 									{preview.name ?? solutionSlug}
 								</span>
-								{preview.version ? ` · v${preview.version}` : ""}.
+								{preview.version
+									? ` · v${preview.version}`
+									: ""}
+								.
 							</p>
 							<UpgradeDiffView diff={preview.diff ?? {}} />
 						</div>
 					)}
 				</div>
 				<AlertDialogFooter>
-					<AlertDialogCancel disabled={pending}>Cancel</AlertDialogCancel>
+					<AlertDialogCancel disabled={pending}>
+						Cancel
+					</AlertDialogCancel>
 					<Button
 						type="button"
 						disabled={
@@ -749,7 +802,9 @@ function CreateDispatch({
 		intent === "reactivate"
 			? "zip"
 			: (mode.source ?? (mode.repo ? "repo" : mode.file ? "zip" : null));
-	const [destination, setDestination] = useState<InstallDestination | null>(initialDestination);
+	const [destination, setDestination] = useState<InstallDestination | null>(
+		initialDestination,
+	);
 	const [source, setSource] = useState<InstallSource | null>(initialSource);
 	// Pickers stay compact; WorkspaceImportBody widens the dialog for upload
 	// fields and the review table.
@@ -766,7 +821,11 @@ function CreateDispatch({
 				intent={intent}
 				destination={destination}
 				onPick={setSource}
-				onBack={fixedDestination === null ? () => setDestination(null) : null}
+				onBack={
+					fixedDestination === null
+						? () => setDestination(null)
+						: null
+				}
 			/>
 		);
 	}
@@ -785,6 +844,8 @@ function CreateDispatch({
 		return (
 			<RepoBody
 				initialRepo={mode.repo ?? null}
+				initialOrgId={mode.organizationId}
+				lockOrganization={lockOrganization}
 				intent={intent}
 				onClose={onClose}
 				onSaved={onSaved}
@@ -822,14 +883,16 @@ function DestinationPicker({
 			destination: "workspace",
 			icon: GitCompareArrows,
 			title: "Import into workspace",
-			description: "Bring definitions and source into your chosen workspace scope with uncommitted Git changes.",
+			description:
+				"Bring definitions and source into your chosen workspace scope with uncommitted Git changes.",
 			testid: "destination-workspace",
 		},
 		{
 			destination: "solution",
 			icon: AppWindow,
 			title: "Import as a Solution",
-			description: "Create or update an isolated, lifecycle-managed Solution installation.",
+			description:
+				"Create or update an isolated, lifecycle-managed Solution installation.",
 			testid: "destination-solution",
 		},
 	];
@@ -847,9 +910,18 @@ function DestinationPicker({
 					Choose where this package should go.
 				</DialogDescription>
 			</DialogHeader>
-			<div className="grid grid-cols-2 gap-3" data-testid="destination-picker">
+			<div
+				className="grid grid-cols-2 gap-3"
+				data-testid="destination-picker"
+			>
 				{options.map(
-					({ destination, icon: Icon, title, description, testid }) => (
+					({
+						destination,
+						icon: Icon,
+						title,
+						description,
+						testid,
+					}) => (
 						<button
 							key={destination}
 							type="button"
@@ -951,7 +1023,10 @@ function SourcePicker({
 			</div>
 			{onBack && (
 				<div className="pt-3">
-					<Button type="button" variant="ghost" onClick={onBack}><ArrowLeft className="mr-1 size-4" />Back</Button>
+					<Button type="button" variant="ghost" onClick={onBack}>
+						<ArrowLeft className="mr-1 size-4" />
+						Back
+					</Button>
 				</div>
 			)}
 		</>
@@ -1069,9 +1144,14 @@ function PreviewConfirmation({
 						</div>
 					) : (
 						<ConfigValueFields
-							configs={declaredConfigs.map((cfg) => ({ ...cfg, required: false }))}
+							configs={declaredConfigs.map((cfg) => ({
+								...cfg,
+								required: false,
+							}))}
 							values={configValues ?? {}}
-							onChange={(key, value) => onConfigChange?.(key, value)}
+							onChange={(key, value) =>
+								onConfigChange?.(key, value)
+							}
 						/>
 					)}
 				</div>
@@ -1115,6 +1195,7 @@ function CreateBody({
 	// re-runs the install with replaceSecrets=true.
 	const [collisionKeys, setCollisionKeys] = useState<string[] | null>(null);
 	const [gitRepoUrl, setGitRepoUrl] = useState("");
+	const [gitSourceId, setGitSourceId] = useState<string | null>(null);
 	const [gitSubpath, setGitSubpath] = useState("");
 	const [gitRef, setGitRef] = useState("");
 	const [dragging, setDragging] = useState(false);
@@ -1199,6 +1280,7 @@ function CreateBody({
 				try {
 					result = await updateSolution(created.id, {
 						git_repo_url: url,
+						git_source_id: gitSourceId,
 						git_connected: true,
 						repo_subpath: gitSubpath.trim() || null,
 						git_ref: gitRef.trim() || null,
@@ -1427,7 +1509,10 @@ function CreateBody({
 						/>
 
 						{!isUpgrade && (
-							<GitRepoSection
+							<SolutionGitSection
+								organizationId={orgId}
+								sourceId={gitSourceId}
+								onSourceIdChange={setGitSourceId}
 								slug={preview.slug ?? null}
 								connected={gitRepoUrl.trim() !== ""}
 								repoUrl={gitRepoUrl}
@@ -1437,6 +1522,7 @@ function CreateBody({
 								onSubpathChange={setGitSubpath}
 								onRefChange={setGitRef}
 								onDisconnect={() => {
+									setGitSourceId(null);
 									setGitRepoUrl("");
 									setGitSubpath("");
 									setGitRef("");
@@ -1575,11 +1661,15 @@ function CreateBody({
  */
 function RepoBody({
 	initialRepo,
+	initialOrgId,
+	lockOrganization,
 	intent,
 	onClose,
 	onSaved,
 }: {
 	initialRepo: RepoPrefill | null;
+	initialOrgId: string | null | undefined;
+	lockOrganization: boolean;
 	intent: CreateSolutionIntent;
 	onClose: () => void;
 	onSaved: (solution: Solution) => void;
@@ -1588,6 +1678,8 @@ function RepoBody({
 	const queryClient = useQueryClient();
 
 	const [repoUrl, setRepoUrl] = useState(initialRepo?.url ?? "");
+	const [orgId, setOrgId] = useState<string | null | undefined>(initialOrgId);
+	const [gitSourceId, setGitSourceId] = useState<string | null>(null);
 	const [subpath, setSubpath] = useState(initialRepo?.subpath ?? "");
 	const [gitRef, setGitRef] = useState(initialRepo?.ref ?? "");
 	const [preview, setPreview] = useState<SolutionInstallPreview | null>(null);
@@ -1603,7 +1695,11 @@ function RepoBody({
 	}
 
 	function buildBody(): SolutionRepoPreviewRequest {
-		const body: SolutionRepoPreviewRequest = { repo_url: repoUrl.trim() };
+		const body: SolutionRepoPreviewRequest = {
+			repo_url: repoUrl.trim(),
+			...(orgId !== undefined ? { organization_id: orgId } : {}),
+		};
+		if (gitSourceId !== null) body.git_source_id = gitSourceId;
 		const sub = subpath.trim();
 		const ref = gitRef.trim();
 		if (sub) body.repo_subpath = sub;
@@ -1671,6 +1767,33 @@ function RepoBody({
 			</DialogHeader>
 
 			<div className="space-y-5">
+				{!lockOrganization && (
+					<OrganizationSelect
+						aria-label="Install Organization"
+						placeholder="Your Organization"
+						value={orgId}
+						disabled={previewMutation.isPending}
+						onChange={(value) => {
+							setOrgId(value ?? null);
+							clearPreview();
+						}}
+						showGlobal
+					/>
+				)}
+				<SolutionGitSourcePicker
+					organizationId={orgId}
+					sourceId={gitSourceId}
+					repoUrl={repoUrl}
+					onChange={(id, url, branch) => {
+						setGitSourceId(id);
+						if (url !== undefined) setRepoUrl(url);
+						if (branch !== undefined) setGitRef(branch);
+						clearPreview();
+					}}
+					disabled={
+						previewMutation.isPending || installMutation.isPending
+					}
+				/>
 				<div className="space-y-3">
 					<div className="space-y-1.5">
 						<Label htmlFor="repo-url">
@@ -1682,6 +1805,7 @@ function RepoBody({
 						<Input
 							disabled={previewMutation.isPending}
 							id="repo-url"
+							readOnly={gitSourceId !== null}
 							data-testid="repo-url"
 							value={repoUrl}
 							placeholder="https://github.com/org/repo"
@@ -1804,6 +1928,9 @@ function EditBody({
 		solution.allow_inbound_access ?? true,
 	);
 	const [gitRepoUrl, setGitRepoUrl] = useState(solution.git_repo_url ?? "");
+	const [gitSourceId, setGitSourceId] = useState<string | null>(
+		solution.git_source_id ?? null,
+	);
 	const [gitSubpath, setGitSubpath] = useState(solution.repo_subpath ?? "");
 	const [gitRef, setGitRef] = useState(solution.git_ref ?? "");
 	// Explicit connection intent. Seeded from the install's current state; the
@@ -1851,12 +1978,15 @@ function EditBody({
 			// disconnect otherwise. A disconnected install clears its repo coords.
 			const { nextConnected, nextUrl, nextSubpath, nextRef } =
 				gitConnectionDraft();
-			const enablingGitConnection = nextConnected && !solution.git_connected;
+			const enablingGitConnection =
+				nextConnected && !solution.git_connected;
 
 			if (nextConnected !== solution.git_connected)
 				update.git_connected = nextConnected;
 			if (nextUrl !== (solution.git_repo_url ?? null))
 				update.git_repo_url = nextUrl;
+			if (gitSourceId !== (solution.git_source_id ?? null))
+				update.git_source_id = gitSourceId;
 			if (
 				enablingGitConnection ||
 				nextSubpath !== (solution.repo_subpath ?? null)
@@ -1881,6 +2011,8 @@ function EditBody({
 		queryKey: [
 			"solution-git-connect-preview",
 			solution.id,
+			gitSourceId,
+			orgId,
 			gitRepoUrl,
 			gitSubpath,
 			gitRef,
@@ -1892,7 +2024,8 @@ function EditBody({
 				repo_url: nextUrl ?? "",
 				repo_subpath: nextSubpath,
 				git_ref: nextRef,
-				organization_id: solution.organization_id ?? null,
+				organization_id: orgId,
+				git_source_id: gitSourceId,
 			});
 		},
 	});
@@ -2005,7 +2138,10 @@ function EditBody({
 								/>
 							</div>
 
-							<GitRepoSection
+							<SolutionGitSection
+								organizationId={orgId}
+								sourceId={gitSourceId}
+								onSourceIdChange={setGitSourceId}
 								slug={solution.slug}
 								connected={
 									connected && gitRepoUrl.trim() !== ""
@@ -2021,6 +2157,7 @@ function EditBody({
 								onSubpathChange={setGitSubpath}
 								onRefChange={setGitRef}
 								onDisconnect={() => {
+									setGitSourceId(null);
 									setConnected(false);
 									setGitRepoUrl("");
 									setGitSubpath("");

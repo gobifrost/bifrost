@@ -347,8 +347,8 @@ class Event(Base):
     # Source metadata
     source_ip: Mapped[str | None] = mapped_column(String(45), default=None)  # IPv6 max
 
-    # Unique identity of one scheduled occurrence (source + UTC time). Lets
-    # overlapping trigger leaders fire each occurrence at most once.
+    # Namespaced identity of a scheduled occurrence or an opted-in webhook
+    # delivery. Uniqueness lasts for this event's retention lifetime.
     occurrence_key: Mapped[str | None] = mapped_column(String(255), default=None)
 
     # Processing status

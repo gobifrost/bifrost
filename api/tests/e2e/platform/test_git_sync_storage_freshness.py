@@ -133,7 +133,11 @@ async def test_discard_restores_the_search_index_with_storage(
 
     service = GitHubSyncService(db=db_session, repo_url=f"file://{bare_repo}", branch="main")
     index = FileIndexService(db_session, storage)
+    literal_path = "notes/selected[1].txt"
+    sibling_path = "notes/selected1.txt"
     await index.write(EDITED, b"committed version\n")
+    await index.write(literal_path, b"literal baseline\n")
+    await index.write(sibling_path, b"sibling baseline\n")
     await db_session.commit()  # platform writes commit with their request
     assert (await service.desktop_fetch()).success
     assert (await service.desktop_commit("baseline")).success
@@ -144,16 +148,26 @@ async def test_discard_restores_the_search_index_with_storage(
 
     await index.write(EDITED, b"edited in the platform\n")
     await index.write(CREATED, b"untracked scratch\n")
+    await index.write(literal_path, b"literal edit\n")
+    await index.write(sibling_path, b"keep this sibling edit\n")
     await db_session.commit()
     assert (await service.desktop_fetch()).success
-    discard = await service.desktop_discard([EDITED, CREATED])
+    discard = await service.desktop_discard([EDITED, CREATED, literal_path])
     assert discard.success, discard.error
 
     assert await storage.read(EDITED) == b"committed version\n"
+    assert await storage.read(literal_path) == b"literal baseline\n"
+    assert await storage.read(sibling_path) == b"keep this sibling edit\n"
     indexed = dict((await db_session.execute(
-        select(FileIndex.path, FileIndex.content).where(FileIndex.path.in_([EDITED, CREATED]))
+        select(FileIndex.path, FileIndex.content).where(
+            FileIndex.path.in_([EDITED, CREATED, literal_path, sibling_path])
+        )
     )).tuples().all())
-    assert indexed == {EDITED: "committed version\n"}
+    assert indexed == {
+        EDITED: "committed version\n",
+        literal_path: "literal baseline\n",
+        sibling_path: "keep this sibling edit\n",
+    }
 
 
 def _legacy_workspace(path: Path) -> Path:

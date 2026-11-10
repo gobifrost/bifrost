@@ -143,3 +143,8 @@ def test_api_shutdown_budget_preserves_the_executor_drain_window() -> None:
     compose_api = _compose_service("docker-compose.yml", "api")
     assert "--timeout-graceful-shutdown 300" in compose_api["command"]
     assert compose_api["stop_grace_period"] == "310s"
+
+
+def test_compose_worker_shutdown_budget_preserves_the_launcher_drain_window() -> None:
+    worker = _compose_service("docker-compose.yml", "worker")
+    assert worker["stop_grace_period"] == "310s"

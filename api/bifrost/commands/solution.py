@@ -369,17 +369,22 @@ async def _resolve_solution_git_ref(client: BifrostClient, solution_ref: str) ->
 @click.argument("repository_url")
 @click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
 @click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to install.")
-def install_repo_cmd(repository_url: str, repo_subpath: str | None, git_ref: str) -> None:
+@click.option("--git-source-id", default=None, help="Authorized Solution GitHub App source UUID.")
+@org_option
+def install_repo_cmd(repository_url: str, repo_subpath: str | None, git_ref: str, git_source_id: str | None, org: str | None, is_global: bool) -> None:
     """Install from Git; local ``solution deploy`` is refused afterwards."""
 
     async def _run() -> int:
         client = BifrostClient.get_instance(require_auth=True)
+        target = await resolve_org_target(org, is_global, RefResolver(client))
         response = await client.post(
             "/api/solutions/install/from-repo",
             json={
                 "repo_url": repository_url,
                 "repo_subpath": repo_subpath,
                 "git_ref": git_ref,
+                **({"git_source_id": git_source_id} if git_source_id is not None else {}),
+                **({"organization_id": target.organization_id} if target.is_set else {}),
             },
         )
         if response.status_code != 202:
@@ -402,13 +407,28 @@ def solution_git_group() -> None:
     pass
 
 
+@solution_git_group.command(name="sources", help="List authorized private repository source IDs in a scope.")
+@org_option
+def solution_git_sources_cmd(org: str | None, is_global: bool) -> None:
+    async def _run() -> None:
+        client = BifrostClient.get_instance(require_auth=True)
+        target = await resolve_org_target(org, is_global, RefResolver(client))
+        params = {"organization_id": target.organization_id or ""} if target.is_set else {}
+        response = await client.get("/api/solutions/git-sources", params=params)
+        if response.status_code != 200:
+            raise click.ClickException(f"Could not list Solution Git sources ({response.status_code}): {response.text[:200]}")
+        output_result(response.json())
+    asyncio.run(_run())
+
+
 @solution_git_group.command(name="connect")
 @click.argument("solution_ref")
 @click.argument("repository_url")
 @click.option("--subpath", "repo_subpath", default=None, help="Solution workspace path inside the repository.")
 @click.option("--ref", "git_ref", default="main", show_default=True, help="Git ref to update from.")
+@click.option("--git-source-id", default=None, help="Authorized Solution GitHub App source UUID. Omit for a public repository.")
 def solution_git_connect_cmd(
-    solution_ref: str, repository_url: str, repo_subpath: str | None, git_ref: str
+    solution_ref: str, repository_url: str, repo_subpath: str | None, git_ref: str, git_source_id: str | None
 ) -> None:
     """Connect an existing install; repository updates become its sole writer."""
 
@@ -419,6 +439,7 @@ def solution_git_connect_cmd(
             f"/api/solutions/{solution['id']}",
             json={
                 "git_connected": True,
+                "git_source_id": git_source_id,
                 "git_repo_url": repository_url,
                 "repo_subpath": repo_subpath,
                 "git_ref": git_ref,
@@ -3985,19 +4006,21 @@ def _print_workspace_import_preview(preview: dict[str, Any]) -> None:
 @click.option("--decisions", type=click.Path(exists=True, dir_okay=False, path_type=pathlib.Path))
 @click.option("--preview", "preview_only", is_flag=True, help="Print the staged collision preview without queuing an import.")
 @click.option("--json", "json_output", is_flag=True, help="Emit raw preview and terminal job JSON.")
+@click.option("--git-source-id", default=None, help="Authorized Solution GitHub App source UUID; requires --repo.")
 def import_workspace_cmd(
     archive: pathlib.Path | None, repo_url: str | None, git_ref: str | None,
     repo_subpath: str | None, org_ref: str | None, is_global: bool,
     keep_all: bool, replace_all: bool,
     decisions: pathlib.Path | None, preview_only: bool, json_output: bool,
+    git_source_id: str | None,
 ) -> None:
     """Preview, explicitly decide conflicts, and queue a workspace import."""
     if archive is not None and repo_url is not None:
         raise click.UsageError("ARCHIVE and --repo are mutually exclusive.")
     if archive is None and repo_url is None:
         raise click.UsageError("Provide ARCHIVE or --repo.")
-    if repo_url is None and (git_ref is not None or repo_subpath is not None):
-        raise click.UsageError("--ref and --path require --repo.")
+    if repo_url is None and (git_ref is not None or repo_subpath is not None or git_source_id is not None):
+        raise click.UsageError("--ref, --path and --git-source-id require --repo.")
     async def _run() -> dict[str, Any]:
         from bifrost.org_target import resolve_org_target
 
@@ -4014,6 +4037,7 @@ def import_workspace_cmd(
                 "/api/solutions/import-workspace/preview-repo",
                 json={
                     "repo_url": repo_url,
+                    **({"git_source_id": git_source_id} if git_source_id is not None else {}),
                     "git_ref": git_ref,
                     "repo_subpath": repo_subpath,
                     "organization_id": organization_id,

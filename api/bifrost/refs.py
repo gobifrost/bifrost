@@ -32,8 +32,14 @@ list so the CLI can tell the user to pass the UUID directly. There is no
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal
+from urllib.parse import quote
 from uuid import UUID
+
+
+_APP_SLUG_RE = re.compile(r"^[a-z][a-z0-9-]*$")
+_MAX_APP_SLUG_LENGTH = 255
 
 RefKind = Literal[
     "org",
@@ -182,19 +188,33 @@ async def _resolve_agent(client: Any, value: str) -> tuple[str, list[dict[str, A
 
 
 async def _resolve_app(client: Any, value: str) -> tuple[str, list[dict[str, Any]]]:
-    # Try slug first — apps expose ``GET /api/applications/{slug}`` directly.
-    slug_response = await client.get(f"/api/applications/{value}")
-    if slug_response.status_code == 200:
-        app = slug_response.json()
-        return str(app["id"]), [
-            _candidate(
-                app.get("name", value),
-                str(app["id"]),
-                _as_opt_str(app.get("organization_id")),
-            )
-        ]
-    if slug_response.status_code not in (403, 404):
-        slug_response.raise_for_status()
+    # Only canonical slugs can use the direct endpoint. Names may contain path
+    # syntax or Unicode, and must stay an exact list lookup under the caller's
+    # ordinary application-list authorization.
+    if len(value) <= _MAX_APP_SLUG_LENGTH and _APP_SLUG_RE.fullmatch(value):
+        slug_response = await client.get(
+            f"/api/applications/{quote(value, safe='')}"
+        )
+        if slug_response.status_code == 200:
+            app = slug_response.json()
+            app_id = app.get("id") if isinstance(app, dict) else None
+            if (
+                not isinstance(app, dict)
+                or app.get("slug") != value
+                or not _is_uuid(str(app_id))
+            ):
+                raise RefResolutionError(
+                    f"Invalid application response for slug {value!r}"
+                )
+            return str(app_id), [
+                _candidate(
+                    app.get("name", value),
+                    str(app_id),
+                    _as_opt_str(app.get("organization_id")),
+                )
+            ]
+        if slug_response.status_code not in (403, 404):
+            slug_response.raise_for_status()
 
     # Fall through to name match across accessible scopes.
     data = await _get_json(client, "/api/applications")

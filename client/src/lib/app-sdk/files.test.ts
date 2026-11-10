@@ -289,6 +289,7 @@ describe("files web SDK", () => {
 			.mockResolvedValueOnce(
 				okJson({
 					url: "https://s3/upload",
+					headers: { "x-ms-blob-type": "BlockBlob", "content-type": "application/pdf" },
 					path: "_repo/report.pdf",
 					expires_in: 600,
 				}),
@@ -305,6 +306,10 @@ describe("files web SDK", () => {
 		expect(fetchMock.mock.calls[0][0]).toBe("/api/files/signed-url");
 		expect(fetchMock.mock.calls[1][0]).toBe("https://s3/upload");
 		expect(fetchMock.mock.calls[1][1].method).toBe("PUT");
+		const headers = new Headers(fetchMock.mock.calls[1][1].headers);
+		expect(headers.get("x-ms-blob-type")).toBe("BlockBlob");
+		expect(headers.get("content-type")).toBe("application/pdf");
+		expect(headers.has("Authorization")).toBe(false);
 		expect(await (fetchMock.mock.calls[1][1].body as Blob).text()).toBe(
 			"pdf",
 		);
@@ -326,6 +331,7 @@ describe("files web SDK", () => {
 			.mockResolvedValueOnce(
 				okJson({
 					url: "https://s3/download",
+					headers: { "x-required-download": "fixture" },
 					path: "_repo/a.txt",
 					expires_in: 600,
 				}),
@@ -338,6 +344,7 @@ describe("files web SDK", () => {
 		expect(await result.text()).toBe("hello");
 		expect(fetchMock.mock.calls[1][0]).toBe("https://s3/download");
 		expect(fetchMock.mock.calls[1][1].method).toBe("GET");
+		expect(new Headers(fetchMock.mock.calls[1][1].headers).get("x-required-download")).toBe("fixture");
 	});
 
 	it("maps 403, 404, and policy validation errors to distinct classes", async () => {

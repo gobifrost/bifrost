@@ -49,6 +49,7 @@ export interface SignedUrlOptions {
 }
 
 export interface SignedUrlResult {
+	headers?: Record<string, string>;
 	url: string;
 	path: string;
 	expiresIn: number;
@@ -212,12 +213,14 @@ function normalizeListResponse(response: {
 }
 
 function normalizeSignedUrl(response: {
+	headers?: Record<string, string>;
 	url: string;
 	path: string;
 	expires_in: number;
 }): SignedUrlResult {
 	return {
 		url: response.url,
+		headers: response.headers ?? {},
 		path: response.path,
 		expiresIn: response.expires_in,
 	};
@@ -342,6 +345,7 @@ export const files = {
 	): Promise<SignedUrlResult> {
 		const response = await http<{
 			url: string;
+			headers?: Record<string, string>;
 			path: string;
 			expires_in: number;
 		}>(withSolution("/api/files/signed-url", options.solution), {
@@ -364,6 +368,7 @@ export const files = {
 				resolved_path?: string | null;
 				method: SignedUrlMethod;
 				url?: string | null;
+				headers?: Record<string, string>;
 				expires_in: number;
 				error?: string | null;
 				status_code: number;
@@ -385,6 +390,7 @@ export const files = {
 			}
 			return {
 				url: item.url,
+				headers: item.headers ?? {},
 				path: item.resolved_path ?? item.path,
 				expiresIn: item.expires_in,
 			};
@@ -407,9 +413,11 @@ export const files = {
 			contentType,
 		});
 		const body = await toUploadBlob(content, contentType);
+		const headers = new Headers(signed.headers);
+		if (!headers.has("Content-Type")) headers.set("Content-Type", contentType);
 		const response = await fetch(signed.url, {
 			method: "PUT",
-			headers: { "content-type": contentType },
+			headers,
 			body,
 		});
 		if (!response.ok) {
@@ -441,7 +449,7 @@ export const files = {
 			...options,
 			method: "GET",
 		});
-		const response = await fetch(signed.url, { method: "GET" });
+		const response = await fetch(signed.url, { method: "GET", headers: signed.headers });
 		if (!response.ok) {
 			throw new Error(
 				`files.download: ${response.status} ${await errorText(response)}`,

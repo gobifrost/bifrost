@@ -6,6 +6,7 @@ Tests the GitHubSyncService data models and exceptions.
 
 from contextlib import asynccontextmanager
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import pytest
 from git import Repo
@@ -127,6 +128,47 @@ async def test_desktop_status_surfaces_invalid_repository(tmp_path: Path) -> Non
 
     with pytest.raises(GitStatusError, match="status failed"):
         await _status_service(tmp_path).desktop_status()
+
+
+@pytest.mark.asyncio
+async def test_desktop_diff_reads_only_from_the_workspace(tmp_path: Path) -> None:
+    repo = Repo.init(tmp_path)
+    inside = tmp_path / "inside.txt"
+    outside = tmp_path.parent / "diff-outside-sentinel.txt"
+    inside.write_text("inside\n")
+    outside.write_text("outside\n")
+    service = _status_service(tmp_path)
+    service._open_or_init = AsyncMock(return_value=repo)
+
+    inside_result = await service.desktop_diff("inside.txt")
+    outside_result = await service.desktop_diff("../diff-outside-sentinel.txt")
+
+    assert inside_result.working_content == "inside\n"
+    assert outside_result.working_content is None
+    assert outside.read_text() == "outside\n"
+
+
+@pytest.mark.asyncio
+async def test_desktop_discard_does_not_delete_outside_workspace(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.core import module_cache
+
+    repo = Repo.init(tmp_path)
+    outside = tmp_path.parent / "discard-outside-sentinel.txt"
+    outside.write_text("outside\n")
+    service = _status_service(tmp_path)
+    service._open_or_init = AsyncMock(return_value=repo)
+    service.repo_manager.ensure_storage_unchanged = AsyncMock()
+    service.repo_manager.sync_up = AsyncMock()
+    service._update_file_index = AsyncMock()
+    service.db = AsyncMock()
+    monkeypatch.setattr(module_cache, "refresh_modules_from_directory", AsyncMock())
+
+    result = await service.desktop_discard(["../discard-outside-sentinel.txt"])
+
+    assert result.success is False
+    assert outside.read_text() == "outside\n"
 
 
 def _git_state(repo: Repo) -> tuple[bytes, bytes, bytes, tuple[tuple[str, bytes], ...]]:
@@ -750,7 +792,8 @@ class TestMemoryUsageDuringFileScan:
 PAT = "ghp_unitTestSecretToken0123456789"
 
 
-def test_clone_failure_error_does_not_contain_the_token(
+@pytest.mark.asyncio
+async def test_clone_failure_error_does_not_contain_the_token(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """GitPython errors quote the command line, which carries the clone URL."""
@@ -769,12 +812,13 @@ def test_clone_failure_error_does_not_contain_the_token(
     )
 
     with pytest.raises(SyncError) as error:
-        service._clone_or_init(tmp_path)
+        await service._clone_or_init(tmp_path)
 
     assert PAT not in str(error.value)
 
 
-def test_opening_a_repo_rewrites_a_tokenized_remote(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_opening_a_repo_rewrites_a_tokenized_remote(tmp_path: Path) -> None:
     """Instances that stored the token in .git/config heal on the next open."""
     from src.services.github_sync import GitHubSyncService
 
@@ -786,13 +830,14 @@ def test_opening_a_repo_rewrites_a_tokenized_remote(tmp_path: Path) -> None:
         token=PAT,
     )
 
-    repo = service._open_or_init(tmp_path)
+    repo = await service._open_or_init(tmp_path)
 
     assert repo.remotes.origin.url == "https://github.com/owner/repo.git"
     assert PAT not in (tmp_path / ".git" / "config").read_text()
 
 
-def test_git_commands_authenticate_through_their_environment(tmp_path: Path) -> None:
+@pytest.mark.asyncio
+async def test_git_commands_authenticate_through_their_environment(tmp_path: Path) -> None:
     """The token reaches git per command, scoped to github.com, never on disk."""
     import base64
 
@@ -805,12 +850,29 @@ def test_git_commands_authenticate_through_their_environment(tmp_path: Path) -> 
         token=PAT,
     )
 
-    repo = service._open_or_init(tmp_path)
+    repo = await service._open_or_init(tmp_path)
 
     header = repo.git.config("--get", "http.https://github.com/.extraheader")
     basic = base64.b64encode(f"x-access-token:{PAT}".encode()).decode()
     assert header == f"Authorization: Basic {basic}"
     assert PAT not in (tmp_path / ".git" / "config").read_text()
+
+
+@pytest.mark.asyncio
+async def test_git_auth_never_calls_a_personal_credential_helper(tmp_path: Path) -> None:
+    from git import GitCommandError
+    from src.services.github_sync import GitHubSyncService
+    repo = Repo.init(str(tmp_path))
+    marker = tmp_path / "personal-helper-called"
+    with repo.config_writer() as writer:
+        writer.set_value("credential", "helper", f"!touch '{marker}'")
+    service = GitHubSyncService(None, "https://github.com/owner/repo.git", token="installation-token")
+    repo = await service._open_or_init(tmp_path)
+    request = tmp_path / "credential-request"
+    request.write_text("protocol=https\nhost=github.com\n\n")
+    with request.open("rb") as stream, pytest.raises(GitCommandError):
+        repo.git.credential("fill", istream=stream)
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio
@@ -840,7 +902,7 @@ async def test_discard_refreshes_executable_source_before_search_index(tmp_path,
 
     service.repo_manager.ensure_storage_unchanged = AsyncMock()
     service.repo_manager.sync_up = sync_up
-    service._open_or_init = lambda work_dir: repo
+    service._open_or_init = AsyncMock(return_value=repo)
     service._update_file_index = index
     service.db = AsyncMock()
     monkeypatch.setattr(module_cache, "refresh_modules_from_directory", refresh)

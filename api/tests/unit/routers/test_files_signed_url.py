@@ -8,6 +8,7 @@ path resolution, S3 method dispatch, error mapping, and batch behavior.
 Path resolution itself is delegated to `shared.file_paths.resolve_s3_key`.
 """
 
+from src.core.storage.contracts import SignedRequest
 from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID
 
@@ -76,11 +77,11 @@ def _allow_policy(monkeypatch):
 @pytest.fixture
 def _presign(monkeypatch):
     mock_fss = MagicMock()
-    mock_fss.generate_presigned_upload_url = AsyncMock(
-        return_value="https://s3/url"
+    mock_fss.generate_signed_upload_request = AsyncMock(
+        return_value=SignedRequest("PUT", "https://s3/url", {"x-ms-blob-type": "BlockBlob"}, 600)
     )
-    mock_fss.generate_presigned_download_url = AsyncMock(
-        return_value="https://s3/url"
+    mock_fss.generate_signed_download_request = AsyncMock(
+        return_value=SignedRequest("PUT", "https://s3/url", {"x-ms-blob-type": "BlockBlob"}, 600)
     )
     monkeypatch.setattr(
         "src.services.file_storage.FileStorageService", lambda db: mock_fss
@@ -237,8 +238,9 @@ class TestPresignedUrlGeneration:
         req = SignedUrlRequest(path="file.pdf", method="PUT", content_type="application/pdf", scope=str(ORG_A))
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/url"
+        assert result.headers == {"x-ms-blob-type": "BlockBlob"}
         assert result.expires_in == 600
-        _presign.generate_presigned_upload_url.assert_awaited_once_with(
+        _presign.generate_signed_upload_request.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
             content_type="application/pdf",
             expires_in=600,
@@ -256,8 +258,9 @@ class TestPresignedUrlGeneration:
         )
         result = await get_signed_url(req, _ctx(), MagicMock(), AsyncMock())
         assert result.url == "https://s3/url"
+        assert result.headers == {"x-ms-blob-type": "BlockBlob"}
         assert result.expires_in == 604800
-        _presign.generate_presigned_download_url.assert_awaited_once_with(
+        _presign.generate_signed_download_request.assert_awaited_once_with(
             path=f"uploads/{ORG_A}/file.pdf",
             expires_in=604800,
         )

@@ -1,0 +1,28 @@
+{
+  "key": "pr:1262",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal object-storage adapter and consumer refactor with compatibility coverage; S3 remains the shipped backend and requires no installation change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1262",
+      "Contributor editorial disposition under Thomas Bray's scoped landing instruction; this is not maintainer approval or a waiver of required code/security review.",
+      "The S3-only review tip passed 738 focused backend tests, API quality and a stricter storage type diagnostic; generated client types matched the served API, client typing/lint and 19 tests passed, and the production browser file-access journey passed.",
+      "No customer-facing backend selection, deployment, storage cutover or required upgrade action is introduced. Sensitive move, Git concurrency, source-import and signed-request paths remain subject to manual maintainer review.",
+      "Maintainer-directed review and repair authorized by Jack on 2026-11-08 in the private PR task. Reviewed omit: shared S3 adapter/consumer maintenance, without Azure activation, deployment change or required customer action.",
+      "Verified contributor: Thomas Bray (MTG-Thomas), source MTG-Thomas/bifrost-upstream, target gobifrost/bifrost main. Original contribution commits and author credit are retained.",
+      "Manual review traced managed-file authorization and recovery, opaque persisted Git/move versions, conditional writes, source-import routing, signed-request headers and error classification. Repaired the missed workflow-conversion error consumer; no permission boundary is widened. Azure identity, provider cutover and PR #1245 remain separate scope.",
+      "No security disclosure, CVE or changed authorization boundary was identified. The sensitive storage paths received manual review; this refactor does not add Azure identity or provider activation.",
+      "Maintainer repair on current main 54fbca9d8: 525 focused backend unit/live-service tests passed with zero failures/errors/skips, including the missing-source continuation regression, file moves, Git witnesses/checkpoints, source isolation, signed access, DTO/CLI compatibility and the existing conversion worker journey. Full API Pyright/Ruff passed. Owned Docker resources were removed after verification. Full backend/browser suites remain protected merge-queue gates; real R2/browser CORS and physical transfers above 5 GiB are not certified.",
+      "Client verification on the repaired branch: all 19 focused form-upload/App SDK file tests passed; TypeScript and ESLint passed. ESLint retained its existing no-console warning in unchanged client/e2e/support/seed-review-pack.ts (zero errors). Normalized merge-group Product Updates eligibility passed with the reviewed omit disposition. No full local client or browser suite was run.",
+      "Queue-admission blocker disposition: GitHub rejected enqueue because CodeQL threads 4495279831 and 4495279856 were unresolved. Replaced the two unreachable try/except/else test failure sentinels with pytest.raises, retaining exception-identity and body-close assertions. All 29 affected object-store and multipart tests passed with zero failures/errors/skips via the resource-gated test runner; no production code, retries, timeouts or permissions changed. The threads can be resolved against this concrete repair without posting new review prose.",
+      "Follow-up CodeQL annotations 2015, 2016 and 2002 identified the same static-model limitation after the pytest.raises rewrite: assertions after a directly raised exception were considered unreachable. Replaced that pattern with explicit exception capture and post-catch identity assertions, preserving detection of swallowed/reclassified exceptions and response-body cleanup. Rebuilt local Python CodeQL database and ran CI security-and-quality suite with changed-line enforcement: zero findings, no query exclusions or suppressions added.",
+      "Explicit-capture follow-up verification: all 29 affected object-store/multipart tests passed, zero failures/errors/skips; JUnit independently parsed. The resource-gated command ran the rebuilt local CodeQL suite first, then the focused Docker tests, and the test command removed its owned stack and image. Production source and prior 525-test/19-client-test verification remain unchanged by this test-only follow-up.",
+      "Merge-group CI 42529752474 durable failure disposition: E2E shard 1 job 128881117251 had one failure and 902 passes. test_worker_requirements_setup attempted to preserve an absent requirements.txt but still caught native S3NoSuchKey after RepoStorage migrated to StorageError. This was a missed test-fixture error-contract migration, before the helper itself ran. Updated only that fixture to treat neutral not_found as absence and re-raise other storage failures, retaining state restoration, offline wheel installation, fresh-interpreter import and parent-memory assertions. Resource-gated focused verification passed 33 tests, zero failures/errors/skips, including the real requirements-install helper and requirements-cache/sync-reader contracts. No added job, retry, timeout, skip, suppression or production fallback. Other queue shards, browser smoke, full units, lint/types and Product Updates passed; the next protected queue run must still validate the repaired candidate."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}

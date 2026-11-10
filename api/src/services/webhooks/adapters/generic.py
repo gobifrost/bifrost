@@ -5,6 +5,7 @@ Provides a simple webhook endpoint that accepts any POST request.
 Optionally validates HMAC signatures if a secret is configured.
 """
 
+import re
 from typing import Any
 
 from src.services.webhooks.protocol import (
@@ -93,6 +94,14 @@ class GenericWebhookAdapter(WebhookAdapter):
                     "text": "Top-level JSON field in the request body containing the event type. Takes precedence over the header if both are set. Example: Stripe uses 'type' (e.g. 'invoice.paid').",
                 },
             },
+            "delivery_id_header": {
+                "type": "string",
+                "title": "Delivery ID Header",
+                "maxLength": 128,
+                "description": "Optional provider delivery ID header. Requires a signing secret. "
+                "Repeated IDs reuse the retained event; a changed body or event type is rejected. "
+                "Deleting event history ends deduplication for those IDs.",
+            },
         },
     }
 
@@ -163,6 +172,19 @@ class GenericWebhookAdapter(WebhookAdapter):
                     status_code=401,
                 )
 
+        delivery_id = None
+        delivery_header = config.get("delivery_id_header")
+        if delivery_header is not None and delivery_header != "":
+            if not secret:
+                return Rejected("Delivery identity requires a signing secret", 503)
+            if not isinstance(delivery_header, str) or not re.fullmatch(
+                r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", delivery_header
+            ):
+                return Rejected("Delivery ID header is not configured correctly", 503)
+            delivery_id = request.headers.get(delivery_header.lower(), "")
+            if not isinstance(delivery_id, str) or not re.fullmatch(r"[!-~]{1,128}", delivery_id):
+                return Rejected("Missing or invalid delivery identity", 400)
+
         # Parse payload
         payload = request.json_body
         if payload is None:
@@ -190,4 +212,5 @@ class GenericWebhookAdapter(WebhookAdapter):
             data=payload,
             event_type=event_type,
             raw_headers=request.headers,
+            delivery_id=delivery_id,
         )

@@ -50,7 +50,9 @@ config = context.config
 
 # Setup logging from alembic.ini
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # Rehearsals also run migrations in-process; keep existing application
+    # loggers enabled when Alembic configures its own output.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Target metadata for autogenerate
 target_metadata = Base.metadata

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 import uuid
-from contextlib import asynccontextmanager
 from urllib.parse import quote
 from uuid import UUID
 
@@ -26,7 +25,7 @@ from src.services.file_storage.move import (
     MoveTarget,
     source_marker,
 )
-from src.services.file_storage.s3_client import S3StorageClient
+from src.services.file_storage.object_storage import FileObjectStorage
 from tests.e2e.conftest import execute_workflow_sync, write_and_register
 from tests.e2e.file_policy_helpers import grant_file_policy
 
@@ -205,13 +204,13 @@ async def test_retry_adopts_an_interrupted_move(
         _write(e2e_client, admin, sid, destination, "someone else")
         landed_at = "campus-b/r (1).pdf"
     row = await _row(db_session, sid, "campus-a/r.pdf")
-    storage = S3StorageClient(get_settings())
+    storage = FileObjectStorage(get_settings())
     source_key = resolve_s3_key(LOCATION, sid, "campus-a/r.pdf")
     head = await storage.head_object(source_key)
     # Simulate a run that copied and deleted the source, then died before commit.
     await storage.copy_object(
         source_key, resolve_s3_key(LOCATION, sid, landed_at), source=head,
-        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: head.etag},
+        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: storage.serialize_version(head.version)},
     )
     await storage.delete_object_strict(source_key)
 
@@ -237,13 +236,13 @@ async def test_recovering_a_renamed_copy_needs_the_retrying_users_write(
     _write(e2e_client, admin, sid, "recover/in/report.pdf", "mine")
     _write(e2e_client, admin, sid, "recover/report.pdf", "occupant")
     row = await _row(db_session, sid, "recover/in/report.pdf")
-    storage = S3StorageClient(get_settings())
+    storage = FileObjectStorage(get_settings())
     source_key = resolve_s3_key(LOCATION, sid, "recover/in/report.pdf")
     head = await storage.head_object(source_key)
     candidate_key = resolve_s3_key(LOCATION, sid, "recover/report (1).pdf")
     await storage.copy_object(
         source_key, candidate_key, source=head,
-        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: head.etag},
+        metadata={MARK_SOURCE: source_marker(source_key), MARK_ROW: str(row.id), MARK_ETAG: storage.serialize_version(head.version)},
     )
     if source_deleted:
         await storage.delete_object_strict(source_key)
@@ -257,35 +256,11 @@ async def test_recovering_a_renamed_copy_needs_the_retrying_users_write(
     assert await storage.head_object(candidate_key) is not None
     assert (await storage.head_object(source_key) is None) == source_deleted
 
-def _record_s3_calls(storage: S3StorageClient) -> list[str]:
-    """Record the name of every S3 client method ``storage`` calls from now on."""
-    issued: list[str] = []
-    open_client = storage.get_client
-
-    class Recorder:
-        def __init__(self, client) -> None:
-            self._client = client
-
-        def __getattr__(self, name: str):
-            attribute = getattr(self._client, name)
-            if callable(attribute):
-                issued.append(name)
-            return attribute
-
-    @asynccontextmanager
-    async def recording_client():
-        async with open_client() as client:
-            yield Recorder(client)
-
-    storage.get_client = recording_client  # type: ignore[method-assign]
-    return issued
-
-
-async def test_multipart_copy_against_object_storage(
+async def test_large_copy_against_object_storage(
     platform_admin, solution, async_session_factory
 ) -> None:
     sid = solution["id"]
-    storage = S3StorageClient(get_settings())
+    storage = FileObjectStorage(get_settings())
     source = "campus-a/Floor Plan – Rev 2 (final).bin"
     payload = bytes((i * 31) % 256 for i in range(11 * 1024 * 1024))
 
@@ -301,28 +276,18 @@ async def test_multipart_copy_against_object_storage(
         ),
         authorize_rename=_no_rename_expected,
         open_session=async_session_factory,
-        multipart_threshold=6 * 1024 * 1024,
-        part_size=5 * 1024 * 1024,
+        locked_copy_limit=6 * 1024 * 1024,
     )
 
     source_head = await storage.head_object(resolve_s3_key(LOCATION, sid, source))
-    issued = _record_s3_calls(storage)
 
     outcome = await mover.move(MoveRequest(source, "campus-b/Floor Plan – Rev 2 (final).bin"), "error")
 
     assert outcome.status_code == 200, outcome
-    # The multipart branch ran (11 MiB in 5 MiB parts), not a single CopyObject.
-    assert "copy_object" not in issued
-    assert issued.count("create_multipart_upload") == 1
-    assert issued.count("upload_part_copy") == 3
-    assert issued.count("complete_multipart_upload") == 1
     destination_key = resolve_s3_key(LOCATION, sid, "campus-b/Floor Plan – Rev 2 (final).bin")
     landed = await storage.head_object(destination_key)
-    # SeaweedFS gives a multipart object an "<md5>-<parts>" ETag. The source's
-    # own chunked upload is multipart too ("-2" in 8 MiB parts), so only "-3"
-    # proves the copy was assembled from this move's three part copies.
-    assert source_head.etag.endswith('-2"'), source_head.etag
-    assert landed.etag.endswith('-3"'), landed.etag
+    assert landed.size == len(payload)
+    assert landed.metadata[MARK_ETAG] == storage.serialize_version(source_head.version)
     moved = await storage.read_uploaded_file(destination_key)
     assert moved == payload
     assert await storage.head_object(resolve_s3_key(LOCATION, sid, source)) is None

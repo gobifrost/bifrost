@@ -100,11 +100,8 @@ async def test_redeploy_preserves_build_and_preflight_verifies_all_artifacts(
         assert row.active_deployment_id == pointer
         assert (row.deployed_at, row.sdk_built_at, row.sdk_fingerprint) == stamp
         assert row.name == "Updated Metadata"
-        async with builder._client() as client:
-            await client.delete_object(
-                Bucket=builder._bucket,
-                Key=builder._dist_key(app_id, "logo.bin", deployment_id=pointer),
-            )
+        async with builder._get_store() as store:
+            await store.delete(builder._dist_key(app_id, "logo.bin", deployment_id=pointer))
         response = e2e_client.post(path, json=request, headers=platform_admin.headers)
         assert response.status_code == 200, response.text
         assert response.json() == {"matches": {}}

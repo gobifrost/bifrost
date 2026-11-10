@@ -218,7 +218,6 @@ async def test_stale_remote_owner_cannot_complete_a_live_service_attempt(db_sess
             form="static",
             state="ready",
             resource_class="standard",
-            slots=0,
             supported_handlers=["workflow.execute"],
             remote_owner_id=current_owner,
             remote_launcher_id=launcher,
@@ -704,6 +703,20 @@ async def test_expire_leases_fails_and_reschedules(db_session):
 
 
 # --- Observed state ---
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("control", ["stop", "disable"])
+async def test_observed_state_honors_intent_before_attempt_is_flagged(db_session, control):
+    definition, _ = await _ensure(db_session)
+    attempt = await service_lifecycle.claim_eligible_service(db_session, fits_bytes=AMPLE, worker_id="w1")
+    assert attempt.stop_requested_at is None
+    if control == "stop":
+        definition.desired_state = "stopped"
+    else:
+        definition.enabled = False
+
+    assert service_lifecycle.describe_observed_state(definition, attempt) == "stopping"
 
 
 @pytest.mark.asyncio

@@ -15,6 +15,18 @@
 # Usage: see ./test.sh --help
 
 services:
+  # The Azure emulator is only started by the focused Azure storage lane.
+  azurite:
+    image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
+    command: [azurite-blob, --blobHost, 0.0.0.0, --location, /data, --skipApiVersionCheck, --silent]
+    environment:
+      # Public local fixture account; has no Azure authority.
+      AZURITE_ACCOUNTS: bifrostcontract:MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
+    tmpfs:
+      - /data
+    profiles:
+      - azure
+
   # PostgreSQL Database (Test) - with pgvector extension
   # Uses tmpfs so data is NOT persisted between test runs - fresh database each time
   postgres:
@@ -131,11 +143,18 @@ services:
       # access tokens valid for the longest supported local/CI run.
       BIFROST_ACCESS_TOKEN_EXPIRE_MINUTES: "120"
       # S3-compatible object storage
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
       # Enable registration for E2E tests
       BIFROST_ALLOW_REGISTRATION: "true"
       EMBEDDING_ALLOWED_HOSTS: scheduler-fixtures
@@ -154,6 +173,7 @@ services:
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro
       - test-mounts:/mounts  # File storage for uploads, branding, etc.
+      - ./api/scripts/test_github_app_api.py:/app/git_app_fixture_api.py:ro
       # Share ONLY the fixture subdir the test-runner stages file:// git repos
       # in, so install/preview-repo can clone them server-side. Do NOT bind the
       # whole LOG_DIR over the api's /tmp/bifrost: the api runs as root and its
@@ -186,7 +206,8 @@ services:
       start_period: 180s
     # Entrypoint handles permissions; run as root so it can fix volume ownership
     user: root
-    command: ["uvicorn", "src.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    # The wrapper supplies only the synthetic App provider; PAT transport stays real.
+    command: ["uvicorn", "git_app_fixture_api:app", "--host", "0.0.0.0", "--port", "8000"]
 
   # Background Worker (Test) - Only started for E2E tests
   # Note: Discovery service has been removed - workflow/form extraction
@@ -209,11 +230,18 @@ services:
       BIFROST_SERVICE_CLAIM_INTERVAL_SECONDS: "1"
       BIFROST_SERVICE_HEARTBEAT_INTERVAL_SECONDS: "2"
       # S3-compatible object storage
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
       # Executors run Git sync platform jobs too.
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
       GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
@@ -241,6 +269,7 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
+      - ./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.worker.health", "--ready"]
       interval: 10s
@@ -283,11 +312,18 @@ services:
       BIFROST_SECRET_KEY: test-secret-key-for-e2e-testing-must-be-32-chars
       BIFROST_ENVIRONMENT: testing
       # S3-compatible object storage
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
       # GitHub E2E test configuration
       GITHUB_TEST_PAT: ${GITHUB_TEST_PAT:-}
       GITHUB_TEST_REPO: ${GITHUB_TEST_REPO:-jackmusick/e2e-test-workspace}
@@ -315,6 +351,7 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}/solution-repo-fixtures:/tmp/bifrost/solution-repo-fixtures
       - thin-provider-tls:/fixture-tls:ro
       - ./api/scripts/thin_fixture.gitconfig:/fixture-gitconfig:ro
+      - ./api/scripts/test_github_app_sitecustomize.py:/app/sitecustomize.py:ro
     healthcheck:
       test: ["CMD", "python", "-m", "src.scheduler.health", "--ready"]
       interval: 10s
@@ -376,11 +413,22 @@ services:
       BIFROST_ENVIRONMENT: testing
       BIFROST_ALLOW_REGISTRATION: "true"
       # S3-compatible object storage
+      BIFROST_OBJECT_STORAGE_PROVIDER: ${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}
       BIFROST_S3_BUCKET: bifrost-test
       BIFROST_S3_ENDPOINT_URL: http://seaweedfs:8333
       BIFROST_S3_ACCESS_KEY: bifrost
       BIFROST_S3_SECRET_KEY: bifrost_test_key
       BIFROST_S3_REGION: us-east-1
+      BIFROST_AZURE_BLOB_ACCOUNT_URL:
+      BIFROST_AZURE_BLOB_CONTAINER:
+      BIFROST_AZURE_BLOB_ACCOUNT_NAME:
+      BIFROST_AZURE_BLOB_AUTH:
+      BIFROST_AZURE_BLOB_ACCOUNT_KEY:
+      BIFROST_AZURE_BLOB_MANAGED_IDENTITY_CLIENT_ID:
+      # Explicit-selection Azure qualification only. Unset host variables stay
+      # unset; no cloud endpoint or identity is supplied by the normal suite.
+      BIFROST_AZURE_QUALIFICATION_ACCOUNT_URL:
+      BIFROST_AZURE_QUALIFICATION_CONTAINER:
       # For E2E tests, point to the API container
       TEST_API_URL: http://api:8000
       PYTHONPATH: /app

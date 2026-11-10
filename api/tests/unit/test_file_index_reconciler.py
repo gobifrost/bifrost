@@ -11,12 +11,12 @@ from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.models.orm.solutions import Solution
 from src.services.file_index_reconciler import reconcile_file_index
 from src.services.file_index_service import FileIndexService
-from src.services.repo_storage import RepoStorage, S3FileMetadata
+from src.services.repo_storage import RepoStorage, SourceFileMetadata
 from src.services.solutions.storage import SolutionStorage
 
 
-def _meta(body: bytes) -> S3FileMetadata:
-    return S3FileMetadata(etag="e", last_modified=datetime.now(timezone.utc), size=len(body))
+def _meta(body: bytes) -> SourceFileMetadata:
+    return SourceFileMetadata(version="e", last_modified=datetime.now(timezone.utc), size=len(body))
 
 
 class FakeRepo(RepoStorage):
@@ -24,7 +24,7 @@ class FakeRepo(RepoStorage):
         super().__init__()
         self.objects = dict(objects or {})
 
-    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
+    async def list_with_metadata(self, prefix: str = "") -> dict[str, SourceFileMetadata]:
         return {p: _meta(b) for p, b in self.objects.items() if p.startswith(prefix)}
 
     async def read(self, path: str) -> bytes:
@@ -43,7 +43,7 @@ class FakeSolutionStorage(SolutionStorage):
         super().__init__(uuid4())
         self.objects = dict(objects or {})
 
-    async def list_with_metadata(self, prefix: str = "") -> dict[str, S3FileMetadata]:
+    async def list_with_metadata(self, prefix: str = "") -> dict[str, SourceFileMetadata]:
         return {p: _meta(b) for p, b in self.objects.items() if p.startswith(prefix)}
 
     async def read(self, path: str) -> bytes:

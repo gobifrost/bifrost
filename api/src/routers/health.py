@@ -18,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
 from src.core.database import get_db, get_session_factory
-from src.core.s3_transport import S3Transport
+from src.core.storage import object_store, storage_configured, storage_identity
+from src.core.storage.contracts import ObjectStore
 from shared.version import get_version
 
 router = APIRouter(prefix="/health", tags=["health"])
@@ -65,22 +66,16 @@ class RedisHealthConnection:
             self.url = None
 
 
-class S3HealthClient:
+class StorageHealthClient:
     def __init__(self) -> None:
-        self.client: Any | None = None
-        self.context: Any | None = None
+        self.client: ObjectStore | None = None
+        self.context: ObjectStore | None = None
         self.key: Hashable | None = None
         self.lock = asyncio.Lock()
 
     @staticmethod
     def _key(settings: Settings) -> Hashable:
-        return (
-            settings.s3_endpoint_url,
-            settings.s3_bucket,
-            settings.s3_access_key,
-            settings.s3_secret_key,
-            settings.s3_region,
-        )
+        return storage_identity(settings)
 
     async def close(self) -> None:
         context = self.context
@@ -90,7 +85,7 @@ class S3HealthClient:
         if context is not None:
             await context.__aexit__(None, None, None)
 
-    async def get(self, settings: Settings) -> Any:
+    async def get(self, settings: Settings) -> ObjectStore:
         key = self._key(settings)
         client = self.client
         if client is not None and self.key == key:
@@ -102,25 +97,20 @@ class S3HealthClient:
                 return client
 
             await self.close()
-            context = S3Transport(
-                endpoint_url=settings.s3_endpoint_url,
-                access_key_id=settings.s3_access_key,
-                secret_access_key=settings.s3_secret_key,
-                region=settings.s3_region,
-            )
+            context = object_store(settings)
             client = await context.__aenter__()
             self.client = client
             self.context = context
             self.key = key
             return client
 
-    async def discard(self, client: Any) -> None:
+    async def discard(self, client: ObjectStore) -> None:
         if self.client is client:
             await self.close()
 
 
 _redis_health_connection = RedisHealthConnection()
-_s3_health_client = S3HealthClient()
+_storage_health_client = StorageHealthClient()
 
 # Readiness checks the database, Redis and S3 after the process starts, until
 # they pass once, then reports that startup result without contacting them.
@@ -208,20 +198,20 @@ async def check_redis(settings: Settings) -> tuple[str, ComponentStatus]:
 
 async def close_health_check_clients() -> None:
     await _redis_health_connection.close()
-    await _s3_health_client.close()
+    await _storage_health_client.close()
 
 
 async def check_s3(settings: Settings) -> tuple[str, ComponentStatus]:
-    if not settings.s3_configured:
-        await _s3_health_client.close()
+    if not storage_configured(settings):
+        await _storage_health_client.close()
         return "s3", _component("not_configured", "s3")
 
     async def head_bucket() -> None:
-        client = await _s3_health_client.get(settings)
+        client = await _storage_health_client.get(settings)
         try:
-            await cast(Awaitable[object], client.head_bucket(Bucket=settings.s3_bucket))
+            await client.probe()
         except Exception:
-            await _s3_health_client.discard(client)
+            await _storage_health_client.discard(client)
             raise
 
     return await _checked_component("s3", "s3", head_bucket())

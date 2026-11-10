@@ -10,7 +10,8 @@ from uuid import uuid4
 
 import pytest
 
-from src.core.s3_transport import S3NoSuchKey
+from contextlib import asynccontextmanager
+from src.core.storage.contracts import ContentProperties, ObjectInfo, ObjectVersion, StorageError, WriteResult
 from src.services.git_repo_manager import GitRepoManager
 from src.services.git_workspace_state import (
     GitWorkspaceState, GitWorkspaceStateError, WorkspaceState, tree_fingerprint,
@@ -29,26 +30,34 @@ class PointerStore:
     async def __aexit__(self, *_):
         return False
 
-    async def get_object(self, **_):
+    def serialize_version(self, version):
+        return f'"{version}"'
+
+    def restore_version(self, value):
+        return ObjectVersion(value[1:-1])
+
+    @asynccontextmanager
+    async def open_read(self, key):
         if self.raw is None:
-            raise S3NoSuchKey("NoSuchKey", 404)
+            raise StorageError("not_found", provider_code="fixture")
         raw = self.raw
+        async def chunks(chunk_size):
+            for offset in range(0, len(raw), chunk_size):
+                yield raw[offset:offset + chunk_size]
+        yield SimpleNamespace(info=ObjectInfo(key, len(raw), self.restore_version(self.etag), None,
+                                             ContentProperties(), {}, self.etag),
+                              body=SimpleNamespace(iter_chunks=chunks))
 
-        async def chunks():
-            yield raw
-
-        return {"ETag": self.etag, "Body": SimpleNamespace(iter_chunks=chunks, close=AsyncMock())}
-
-    async def put_object(self, *, Body, **conditions):
+    async def write(self, key, content, *, options):
         if self.fail == "reject":
             raise RuntimeError("conditional write rejected")
-        assert conditions.get("IfMatch") == self.etag
-        if self.etag is None:
-            assert conditions["IfNoneMatch"] == "*"
-        self.raw, self.etag = Body, str(uuid4())
+        expected = self.serialize_version(options.expected_version) if options.expected_version is not None else None
+        if (self.etag is not None and expected != self.etag) or (self.etag is None and not options.create_only):
+            raise StorageError("precondition_failed", provider_code="fixture", status_code=412)
+        self.raw, self.etag = content, '"' + str(uuid4()) + '"'
         if self.fail == "accepted":
             raise RuntimeError("response lost after acceptance")
-        return {"ETag": self.etag}
+        return WriteResult(self.restore_version(self.etag))
 
 
 @pytest.fixture
@@ -56,7 +65,7 @@ def handoff(tmp_path, monkeypatch):
     snapshots = tmp_path / "snapshots"
     snapshots.mkdir()
     pointer = PointerStore()
-    monkeypatch.setattr(GitWorkspaceState, "_client", Mock(return_value=pointer))
+    monkeypatch.setattr(GitWorkspaceState, "_get_store", Mock(return_value=pointer))
 
     async def create(root):
         key = str(uuid4())
@@ -72,6 +81,7 @@ def handoff(tmp_path, monkeypatch):
 
     manager = SimpleNamespace(
         _settings=SimpleNamespace(s3_bucket="fixture"),
+        _mirror=SimpleNamespace(follows_symlinks=True),
         checkpoint_workspace=AsyncMock(side_effect=create),
         restore_workspace_checkpoint=AsyncMock(side_effect=restore),
         delete_workspace_checkpoint=AsyncMock(side_effect=delete),
@@ -280,3 +290,33 @@ def test_invalid_state_is_refused(field, value):
     data[field] = value
     with pytest.raises(GitWorkspaceStateError):
         WorkspaceState.parse(json.dumps(data).encode())
+
+
+async def test_existing_quoted_receipt_does_not_rehydrate_over_unpublished_edits(handoff):
+    state, root, _, pointer = handoff
+    await state.persist(root, None, None)
+    pointer.etag = '"legacy-opaque-v1"'
+    current, witness = await state.read()
+    assert witness == '"legacy-opaque-v1"'
+    state.record(root, '"legacy-opaque-v1"', await state.fingerprint(root))
+    state.manager.restore_workspace_checkpoint.reset_mock()
+    (root / "file.txt").write_text("unpublished local edits")
+    await state.restore(root, current, witness)
+    assert (root / "file.txt").read_text() == "unpublished local edits"
+    assert state._receipt(root)["etag"] == '"legacy-opaque-v1"'
+    state.manager.restore_workspace_checkpoint.assert_not_awaited()
+
+
+async def test_quoted_stale_pointer_cannot_replace_concurrent_state_or_delete_checkpoint(handoff):
+    state, root, _, pointer = handoff
+    await state.persist(root, None, None)
+    previous, stale = await state.read()
+    assert stale.startswith('"') and stale.endswith('"')
+    pointer.etag = '"concurrent-writer"'
+    saved = pointer.raw
+    (root / "file.txt").write_text("stale writer changes")
+    with pytest.raises(StorageError) as caught:
+        await state.persist(root, previous, stale)
+    assert caught.value.status_code == 412
+    assert pointer.raw == saved and pointer.etag == '"concurrent-writer"'
+    state.manager.delete_workspace_checkpoint.assert_not_awaited()

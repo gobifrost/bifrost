@@ -2,6 +2,7 @@
 
 import json
 from datetime import datetime
+from pathlib import Path
 
 from tests.e2e.conftest import poll_until
 
@@ -28,3 +29,13 @@ def wait_for_job(client, headers, job_id, expected_type, max_wait=120):
         "memory_peak_bytes": job["memory_peak_bytes"],
     }, sort_keys=True))
     return job
+
+
+def app_build_package_files() -> dict[str, bytes]:
+    """Use a frozen build graph so native packages cannot race npm publication.
+
+    Refresh the fixture's lockfile deliberately with the API Node/npm toolchain.
+    Both the successful SDK build and allocator-failure journey use this graph.
+    """
+    fixture = Path(__file__).resolve().parents[2] / "fixtures" / "app_build"
+    return {name: (fixture / name).read_bytes() for name in ("package.json", "package-lock.json")}

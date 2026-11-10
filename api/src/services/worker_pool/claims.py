@@ -53,7 +53,7 @@ def _now() -> datetime:
 
 async def admit_worker(
     incarnation_id: UUID, *, job_uid: str, pod_uid: str, version: str | None
-) -> int | None:
+) -> UUID | None:
     """Bind this pod to its incarnation once; None if it was refused.
 
     Only the first pod of the UID-bound Job can admit: a second start of the
@@ -81,13 +81,13 @@ async def admit_worker(
                 heartbeat_at=func.now(),
                 last_claim_at=now,
             )
-            .returning(ExecutionWorker.slots)
+            .returning(ExecutionWorker.id)
         )
 
 
 async def admit_external_worker(
     incarnation_id: UUID, *, resource_uid: str, launcher_id: UUID, version: str | None, hostname: str,
-) -> int | None:
+) -> UUID | None:
     """Bind the first physical process to a prepared external incarnation."""
     async with get_db_context() as db:
         if not await fence_remote_owner(db, for_update=True):
@@ -107,7 +107,7 @@ async def admit_external_worker(
                 state="ready", remote_launcher_id=launcher_id, version=version, hostname=hostname,
                 ready_at=_now(), heartbeat_at=func.now(), last_claim_at=_now(),
             )
-            .returning(ExecutionWorker.slots)
+            .returning(ExecutionWorker.id)
         )
 
 
@@ -131,7 +131,6 @@ async def register_static_worker(
         form="static",
         state="starting",
         resource_class="standard",
-        slots=0,
         hostname=hostname,
         supported_handlers=(
             supported_handlers

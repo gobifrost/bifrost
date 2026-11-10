@@ -1,78 +1,88 @@
-"""
-Unit tests for memory_monitor module.
-"""
+"""Shared cgroup accounting and its current admission consumers."""
 
-from unittest.mock import patch, mock_open
+from pathlib import Path
+from unittest.mock import mock_open, patch
 
+import pytest
+
+from src.services.execution import memory_monitor
 from src.services.execution.memory_monitor import (
     effective_memory_sample,
     get_cgroup_memory,
     memory_pressure_ratio,
 )
+from src.services.memory_requests import measure_budget, under_pressure
 
 
-class TestGetCgroupMemory:
-    """Tests for cgroup v2 memory reading (working-set semantics)."""
-
-    # Realistic memory.stat excerpt — order intentionally interleaved.
-    STAT_DATA = (
-        "anon 400000000\n"
-        "file 500000000\n"
-        "kernel_stack 1048576\n"
-        "active_anon 0\n"
-        "inactive_anon 400000000\n"
-        "active_file 100000000\n"
-        "inactive_file 400000000\n"
+@pytest.fixture
+def cgroup(tmp_path, monkeypatch):
+    """Read actual counter files without depending on the test container's cgroup."""
+    monkeypatch.setattr(memory_monitor, "Path", lambda path: tmp_path / Path(path).name)
+    (tmp_path / "memory.current").write_text("950000000\n")
+    (tmp_path / "memory.stat").write_text(
+        "anon 400000000\nfile 500000000\nkernel 50000000\n"
+        "active_file 100000000\ninactive_file 400000000\n"
     )
+    (tmp_path / "memory.max").write_text("1000000000\n")
+    return tmp_path
 
-    def test_returns_anon_plus_active_file_as_working_set(self):
-        """Should sum anon + active_file (kubelet working-set), excluding inactive_file."""
-        with patch("builtins.open", side_effect=[
-            mock_open(read_data=self.STAT_DATA)(),
-            mock_open(read_data="1073741824\n")(),   # memory.max = 1GB
-        ]):
-            with patch("pathlib.Path.exists", return_value=True):
-                current, limit = get_cgroup_memory()
-                # 400MB anon + 100MB active_file = 500MB working set,
-                # NOT 900MB (which would include the 400MB inactive_file cache).
-                assert current == 500_000_000
-                assert limit == 1073741824
 
-    def test_returns_negative_when_cgroup_files_missing(self):
-        """Should return (-1, -1) when cgroup files don't exist."""
-        with patch("pathlib.Path.exists", return_value=False):
-            current, limit = get_cgroup_memory()
-            assert current == -1
-            assert limit == -1
+def test_working_set_retains_charges_beyond_anon_and_active_file(cgroup):
+    # 950 MB total - 400 MB inactive cache = 550 MB, not the old 500 MB.
+    assert get_cgroup_memory() == (550_000_000, 1_000_000_000)
 
-    def test_returns_current_with_negative_limit_when_memory_max_is_max(self):
-        """Should return (working_set, -1) when memory.max is 'max' (no limit set)."""
-        with patch("builtins.open", side_effect=[
-            mock_open(read_data=self.STAT_DATA)(),
-            mock_open(read_data="max\n")(),
-        ]):
-            with patch("pathlib.Path.exists", return_value=True):
-                current, limit = get_cgroup_memory()
-                assert current == 500_000_000
-                assert limit == -1
 
-    def test_handles_read_error_gracefully(self):
-        """Should return (-1, -1) on read failure."""
-        with patch("pathlib.Path.exists", return_value=True):
-            with patch("builtins.open", side_effect=OSError("Permission denied")):
-                current, limit = get_cgroup_memory()
-                assert current == -1
-                assert limit == -1
+@pytest.mark.parametrize("missing", ["memory.current", "memory.stat"])
+def test_missing_counter_preserves_unknown_sample(cgroup, missing):
+    (cgroup / missing).unlink()
+    assert get_cgroup_memory() == (-1, -1)
 
-    def test_returns_negative_when_stat_missing_required_keys(self):
-        """Should return (-1, -1) when memory.stat lacks anon or active_file."""
-        # Only `anon`, no `active_file` — pre-v2-style stat or oddball runtime.
-        bad_stat = "anon 400000000\nfile 500000000\n"
-        with patch("builtins.open", mock_open(read_data=bad_stat)):
-            with patch("pathlib.Path.exists", return_value=True):
-                current, limit = get_cgroup_memory()
-                assert current == -1
-                assert limit == -1
+
+@pytest.mark.parametrize("counter,value", [
+    ("memory.current", "invalid"),
+    ("memory.current", "-1"),
+    ("memory.stat", "inactive_file invalid"),
+    ("memory.stat", "inactive_file -1"),
+    ("memory.stat", "anon 100"),
+])
+def test_invalid_counter_preserves_unknown_sample(cgroup, counter, value):
+    (cgroup / counter).write_text(value)
+    assert get_cgroup_memory() == (-1, -1)
+
+
+def test_read_error_preserves_unknown_sample(cgroup):
+    with patch("builtins.open", side_effect=OSError("Permission denied")):
+        assert get_cgroup_memory() == (-1, -1)
+
+
+@pytest.mark.parametrize("limit", ["max", "invalid", None])
+def test_unknown_or_unbounded_limit_preserves_working_set(cgroup, limit):
+    if limit is None:
+        (cgroup / "memory.max").unlink()
+    else:
+        (cgroup / "memory.max").write_text(limit)
+    assert get_cgroup_memory() == (550_000_000, -1)
+
+
+def test_independently_sampled_counters_cannot_report_negative_usage(cgroup):
+    (cgroup / "memory.current").write_text("100")
+    (cgroup / "memory.stat").write_text("inactive_file 200")
+    assert get_cgroup_memory() == (0, 1_000_000_000)
+
+
+def test_charged_memory_reaches_existing_pressure_and_budget_consumers(cgroup):
+    (cgroup / "memory.current").write_text("900000000")
+    (cgroup / "memory.stat").write_text(
+        "anon 700000000\nactive_file 100000000\ninactive_file 20000000\n"
+    )
+    # The old 800 MB sample missed the configured 850 MB pressure threshold.
+    assert effective_memory_sample() == (880_000_000, 1_000_000_000)
+    assert memory_pressure_ratio() == .88
+    assert under_pressure(.85)
+    assert not under_pressure(.90), "the caller's configured threshold still applies"
+    budget = measure_budget(.85)
+    assert budget.baseline_bytes == 880_000_000
+    assert budget.budget_bytes == 0
 
 
 def test_effective_sample_uses_host_limit_for_an_unbounded_cgroup(monkeypatch):

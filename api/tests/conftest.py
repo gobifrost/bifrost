@@ -184,7 +184,7 @@ async def isolate_global_redis_client() -> AsyncGenerator[None, None]:
 
 
 @pytest_asyncio.fixture(autouse=True)
-async def isolate_s3(request) -> AsyncGenerator[None, None]:
+async def isolate_object_storage(request) -> AsyncGenerator[None, None]:
     """Wipe .bifrost/ from S3 before every async test that touches the repo.
 
     Prevents stale manifest files written by one test (via manifest/import's
@@ -199,9 +199,10 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
     try:
         from src.config import get_settings
         from src.services.repo_storage import RepoStorage
+        from src.core.storage import storage_configured
 
         settings = get_settings()
-        if not settings.s3_configured:
+        if not storage_configured(settings):
             yield
             return
 
@@ -210,7 +211,7 @@ async def isolate_s3(request) -> AsyncGenerator[None, None]:
         for path in paths:
             await repo.delete(path)
     except Exception as e:
-        raise RuntimeError("Configured S3 test isolation failed") from e
+        raise RuntimeError("Configured object storage test isolation failed") from e
 
     yield
 

@@ -259,7 +259,7 @@ def _returned_class(func: object) -> type | None:
     """Blind spot B5: the in-scope class a function returns: its return
     annotation or, unannotated, the class of a ``return Cls(...)``."""
     try:
-        tree = _parse_source(inspect.getsource(func))
+        tree = _parse_source(_function_source(func))
     except (OSError, TypeError):
         return None
     local_imports = _local_imports(tree)
@@ -359,6 +359,15 @@ def _call_targets(func: object, tree: ast.AST) -> list[object]:
 
 
 @functools.cache
+def _function_source(func: object) -> str:
+    # A candidate's loaded function source is immutable during a test run. Cache
+    # only source text, not call targets: each traversal still resolves current
+    # globals/imports. Repeated inspect.getsource otherwise re-stats bind-mounted
+    # Windows files for every route that reaches the same authorization helper.
+    return inspect.getsource(func)
+
+
+@functools.cache
 def _parse_source(source: str) -> ast.Module:
     """Parse a function's source. ``dedent`` cannot strip a method whose
     multi-line string runs left of its body, so that one is parsed inside a
@@ -396,7 +405,7 @@ def _reachable_functions(
     if getattr(func, "__name__", "") in _NOISE_FUNC_NAMES:
         return []
     try:
-        source = inspect.getsource(func)
+        source = _function_source(func)
     except (OSError, TypeError):
         return []
     found: list[tuple[object, str]] = [(func, source)]
@@ -551,7 +560,7 @@ def _flag_parameter_branches(tree: ast.AST) -> list[tuple[ast.AST, str]]:
 
 def _has_source(func: object) -> bool:
     try:
-        inspect.getsource(func)
+        _function_source(func)
     except (OSError, TypeError):
         return False
     return True
@@ -1707,7 +1716,7 @@ class TestEvaluatorEnforcement:
                 isinstance(node, ast.Call)
                 and _terminal_name(node.func) == "_note_enforced_decision"
                 and [_terminal_name(arg) for arg in node.args] == ["caller", "entry", "target"]
-                for node in ast.walk(_parse_source(inspect.getsource(func)))
+                for node in ast.walk(_parse_source(_function_source(func)))
             )
 
         assert records_decision(enforce.require_operation)
@@ -2114,6 +2123,8 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
     "shared.form_runtime.load_startup_result": (1, "cutover"),
     "shared.form_runtime.validate_embed_upload_references": (1, "cutover"),
+    "shared.github_git_app._user_token": (1, "cutover"),  # Encrypted GitHub setup credential.
+    "shared.github_git_app.GitAppCredentials.get_token": (2, "cutover"),  # Installation credential and cooldown.
     "shared.role_cache.get_user_roles": (1, "cutover"),
     "shared.sdk_agent_runs.get_sdk_agent_run": (1, "cutover"),
     "src.core.embed_middleware.embed_session_owns_execution": (1, "cutover"),
@@ -2360,7 +2371,7 @@ class TestEveryElevatedCheckHasAScope:
             if func is None or not inspect.isfunction(func):
                 problems.append(f"{qualname}: no such function")
                 continue
-            deciding = _plumbing_disqualifiers(_parse_source(inspect.getsource(func)))
+            deciding = _plumbing_disqualifiers(_parse_source(_function_source(func)))
             if deciding:
                 problems.append(f"{qualname}: decides on {sorted(deciding)}")
         assert not problems, "_ELEVATED_PLUMBING entries that are stale or decide something:\n" + "\n".join(
@@ -2426,7 +2437,7 @@ class TestEveryPowerIsNoted:
                 isinstance(node, ast.Call)
                 and _terminal_name(node.func) == "_note_enforced_decision"
                 and [_terminal_name(arg) for arg in node.args] == ["caller", "entry", "target"]
-                for node in ast.walk(_parse_source(inspect.getsource(func)))
+                for node in ast.walk(_parse_source(_function_source(func)))
             )
 
         assert records_decision(enforce.require_named_permission)
@@ -3132,3 +3143,19 @@ def test_allowlist_has_no_unused_entries() -> None:
     }
     unused = set(_REVIEWED_WRITE_ALLOWLIST) - actual
     assert not unused, f"allow-list entries with no matching access-list route: {unused}"
+
+
+def test_source_cache_preserves_distinct_functions_without_repeated_filesystem_reads(monkeypatch):
+    def first():
+        return "first"
+    def second():
+        return "second"
+    original = inspect.getsource
+    calls = []
+    def source(func):
+        calls.append(func)
+        return original(func)
+    monkeypatch.setattr(inspect, "getsource", source)
+    assert _function_source(first) == _function_source(first)
+    assert _function_source(first) != _function_source(second)
+    assert calls == [first, second]

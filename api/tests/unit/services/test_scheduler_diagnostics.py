@@ -7,7 +7,7 @@ from typing import AsyncGenerator
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.platform_jobs import PlatformJob
@@ -41,6 +41,27 @@ def diagnostics_context(
 
     monkeypatch.setattr(diagnostics, "get_db_context", context)
     monkeypatch.setattr(diagnostics, "get_cgroup_memory", lambda: (600, 1000))
+
+
+@pytest.mark.asyncio
+async def test_heartbeat_role_changes_remain_visible_to_older_readers(
+    db_session: AsyncSession,
+    diagnostics_context: None,
+) -> None:
+    replica_id = f"role-change-{uuid4().hex}"
+    started_at = datetime.now(timezone.utc)
+    for runs_jobs in (False, True, False):
+        await diagnostics.heartbeat_scheduler_replica(
+            replica_id=replica_id,
+            hostname="role-change",
+            pid=42,
+            runs_platform_jobs=runs_jobs,
+            started_at=started_at,
+        )
+        row = (await db_session.execute(text(
+            "SELECT runs_platform_jobs, job_slots FROM scheduler_replicas WHERE id = :id"
+        ), {"id": replica_id})).one()
+        assert row == (runs_jobs, int(runs_jobs))
 
 
 @pytest.mark.asyncio
@@ -83,7 +104,7 @@ async def test_records_replica_schedule_run_and_curated_logs(
     assert replica is not None
     assert replica.memory_current_bytes == 600
     assert replica.memory_limit_bytes == 1000
-    assert replica.job_slots == 1
+    assert replica.runs_platform_jobs is True
 
     state = await db_session.get(SchedulerTaskState, task_id)
     assert state is not None
@@ -187,7 +208,7 @@ async def test_scheduler_snapshot_drops_expired_replicas(
                 id=stale_id,
                 hostname="scheduler-stale",
                 pid=41,
-                job_slots=1,
+                runs_platform_jobs=True,
                 started_at=now - timedelta(minutes=2),
                 last_heartbeat_at=now - timedelta(minutes=1),
             ),
@@ -195,7 +216,7 @@ async def test_scheduler_snapshot_drops_expired_replicas(
                 id=expired_id,
                 hostname="scheduler-expired",
                 pid=42,
-                job_slots=1,
+                runs_platform_jobs=True,
                 started_at=now - timedelta(minutes=10),
                 last_heartbeat_at=now - timedelta(minutes=6),
             ),

@@ -793,3 +793,13 @@ async def test_blocking_resolution_runs_through_to_thread(
 
     assert source.files["src/main.tsx"] == b"export {}"
     assert calls
+
+@pytest.mark.parametrize("error,expected", [
+    ("not_found", True), ("namespace_not_found", False), ("permission_denied", False), ("unavailable", False),
+])
+def test_retained_source_absence_uses_neutral_category(error, expected):
+    from src.core.storage.contracts import StorageError
+    from src.services.application_source_resolver import _is_missing_object_error
+
+    assert _is_missing_object_error(StorageError(error, provider_code="fixture")) is expected
+    assert not _is_missing_object_error(RuntimeError("NoSuchKey in an unrelated error message"))

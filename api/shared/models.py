@@ -5,7 +5,7 @@ from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
-from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AwareDatetime, BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 SEMVER_PATTERN = (
@@ -14,6 +14,94 @@ SEMVER_PATTERN = (
     r"(?:\.(?:(?:0|[1-9]\d*)|(?:\d*[A-Za-z-][0-9A-Za-z-]*)))*)?"
     r"(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$"
 )
+
+
+class GitAppManifestRequest(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    organization_id: UUID | None = None
+    owner: str = Field(min_length=1, max_length=39, pattern=r"^[A-Za-z0-9][A-Za-z0-9-]*$")
+    owner_type: Literal["organization", "user"] = "organization"
+    name: str = Field(min_length=1, max_length=100)
+    public: bool = False
+    workflows: bool = False
+
+
+class GitAppExistingRequest(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    organization_id: UUID | None = None
+    app_id: int = Field(gt=0)
+    client_id: str = Field(min_length=1, max_length=100)
+    private_key: SecretStr
+    client_secret: SecretStr
+
+
+class GitAppSetupRequest(BaseModel):
+    setup_id: UUID
+
+
+class GitAppCallbackRequest(BaseModel):
+    code: str = Field(min_length=1, max_length=1024, repr=False)
+    state: str = Field(min_length=1, max_length=4096, repr=False)
+
+
+class GitAppInstallationRequest(GitAppSetupRequest):
+    installation_id: int = Field(gt=0)
+
+
+class GitAppRepositoryRequest(GitAppInstallationRequest):
+    repository_id: int = Field(gt=0)
+
+
+class GitAppInstallation(BaseModel):
+    id: int
+    account: str
+
+
+class GitAppRepository(BaseModel):
+    id: int
+    full_name: str
+    private: bool
+    default_branch: str
+
+
+class GitAppSetupResponse(BaseModel):
+    purpose: Literal["workspace", "solution"] = "workspace"
+    source_organization_id: UUID | None = None
+    source_id: UUID | None = None
+    setup_id: UUID
+    stage: Literal["registration", "registration_needs_review", "authorization", "installation", "repository", "ready", "connected"]
+    expires_at: datetime
+    app_name: str | None = None
+    install_url: str | None = None
+    installations: list[GitAppInstallation]
+    repositories: list[GitAppRepository]
+
+
+class GitAppManifestResponse(GitAppSetupResponse):
+    registration_url: str
+    manifest: dict[str, Any]
+
+
+class GitAppAuthorizeResponse(BaseModel):
+    authorization_url: str
+
+
+class GitAppReuseRequest(BaseModel):
+    source_id: UUID | None = None
+    organization_id: UUID | None = None
+
+
+class SolutionGitSource(BaseModel):
+    id: UUID
+    app_name: str
+    installation_id: int
+    organization_id: UUID | None
+    enabled: bool
+    repositories: list[GitAppRepository]
+
+
+class SolutionGitSources(BaseModel):
+    sources: list[SolutionGitSource]
 
 
 class AppConnectionDetails(BaseModel):

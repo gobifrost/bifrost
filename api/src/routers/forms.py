@@ -2202,9 +2202,10 @@ async def generate_upload_url(
     # `files.read(blob_uri, location="uploads")` without prefix-stripping.
     storage = FileStorageService(db)
     try:
-        upload_url = await storage.generate_presigned_upload_url(
+        signed_upload = await storage.generate_signed_upload_request(
             path=s3_key,
             content_type=request.content_type,
+            content_length=request.file_size,
             expires_in=600,  # 10 minutes
         )
     except Exception as e:
@@ -2228,7 +2229,8 @@ async def generate_upload_url(
         )
 
     return FileUploadResponse(
-        upload_url=upload_url,
+        upload_url=signed_upload.url,
+        headers=dict(signed_upload.headers),
         blob_uri=relative_path,
         expires_at=expires_at,
         file_metadata=UploadedFileMetadata(

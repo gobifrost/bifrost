@@ -1,7 +1,9 @@
-from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
+import hashlib
+
+from src.core.storage.contracts import ContentProperties, ObjectInfo, ObjectPage, ObjectSummary, ObjectVersion, PageCursor, StorageError, StreamWriteResult
 from uuid import uuid4
 
 import pytest
@@ -12,12 +14,6 @@ class MemoryBody:
         self._data = data
         self._offset = 0
 
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_args):
-        return None
-
     async def read(self, size: int = -1) -> bytes:
         if size < 0:
             size = len(self._data) - self._offset
@@ -26,88 +22,65 @@ class MemoryBody:
         return chunk
 
 
-class MemoryS3:
-    exceptions = SimpleNamespace(NoSuchKey=KeyError)
-
+class MemoryStore:
     def __init__(self):
         self.objects: dict[str, bytes] = {}
         self.deleted: list[str] = []
         self.page_size: int | None = None
         self.seen_tokens: list[str | None] = []
 
-    async def put_object(self, *, Bucket, Key, Body, ContentType=None):
-        self.objects[Key] = Body
+    async def __aenter__(self):
+        return self
 
-    async def get_object(self, *, Bucket, Key):
-        if Key not in self.objects:
-            raise KeyError(Key)
-        return {"Body": MemoryBody(self.objects[Key])}
+    async def __aexit__(self, *_args):
+        return None
 
-    async def head_object(self, *, Bucket, Key):
-        if Key not in self.objects:
-            raise KeyError(Key)
-        return {"ContentLength": len(self.objects[Key])}
+    async def write_stream(self, key, chunks, *, options):
+        assert options.properties.content_type == "application/zip"
+        data = b"".join([chunk async for chunk in chunks])
+        self.objects[key] = data
+        return StreamWriteResult(ObjectVersion("fixture"), len(data), hashlib.sha256(data).hexdigest())
 
-    async def delete_object(self, *, Bucket, Key):
-        self.deleted.append(Key)
-        self.objects.pop(Key, None)
+    async def stat(self, key):
+        if key not in self.objects:
+            raise StorageError("not_found", provider_code="fixture")
+        return ObjectInfo(key, len(self.objects[key]), ObjectVersion("fixture"), None, ContentProperties(), {}, None)
 
-    async def list_objects_v2(self, **kwargs):
-        prefix = kwargs["Prefix"]
-        token = kwargs.get("ContinuationToken")
-        self.seen_tokens.append(token)
+    @asynccontextmanager
+    async def open_read(self, key):
+        info = await self.stat(key)
+        data = self.objects[key]
+        class Body(MemoryBody):
+            async def iter_chunks(self, chunk_size):
+                for offset in range(0, len(data), chunk_size):
+                    yield data[offset:offset + chunk_size]
+        yield SimpleNamespace(info=info, body=Body(data))
+
+    async def delete(self, key):
+        self.deleted.append(key)
+        self.objects.pop(key, None)
+
+    async def delete_many(self, keys):
+        for key in keys:
+            await self.delete(key)
+
+    async def list_page(self, prefix, *, cursor=None, **_kwargs):
+        self.seen_tokens.append(cursor)
         keys = sorted(key for key in self.objects if key.startswith(prefix))
-        offset = int(token) if token else 0
-        if self.page_size is None:
-            page = keys[offset:]
-            next_offset = len(keys)
-        else:
-            page = keys[offset : offset + self.page_size]
-            next_offset = offset + self.page_size
-        truncated = next_offset < len(keys)
-        response = {
-            "Contents": [{"Key": key} for key in page],
-            "IsTruncated": truncated,
-        }
-        if truncated:
-            response["NextContinuationToken"] = str(next_offset)
-        return response
+        offset = int(cursor) if cursor else 0
+        size = self.page_size or len(keys)
+        page = keys[offset:offset + size]
+        following = offset + size
+        return ObjectPage(tuple(ObjectSummary(key, len(self.objects[key]), ObjectVersion("fixture"), None)
+                                for key in page), (), PageCursor(str(following)) if following < len(keys) else None)
 
 
 @pytest.fixture
 def source_storage(monkeypatch: pytest.MonkeyPatch):
     from src.services import application_source_artifact
 
-    memory = MemoryS3()
-
-    class StorageClient:
-        def __init__(self, _settings):
-            pass
-
-        @asynccontextmanager
-        async def get_client(self):
-            yield memory
-
-        async def put_object_from_chunks(
-            self,
-            path: str,
-            chunks: AsyncIterator[bytes],
-            *,
-            content_type: str | None = None,
-            part_size: int = 8 * 1024 * 1024,
-        ) -> tuple[str, int]:
-            data = b""
-            async for chunk in chunks:
-                data += chunk
-            memory.objects[path] = data
-            return ("hash", len(data))
-
-        async def iter_object_chunks(self, path: str, *, chunk_size: int):
-            data = memory.objects[path]
-            for offset in range(0, len(data), chunk_size):
-                yield data[offset : offset + chunk_size]
-
-    monkeypatch.setattr(application_source_artifact, "S3StorageClient", StorageClient)
+    memory = MemoryStore()
+    monkeypatch.setattr(application_source_artifact, "object_store", lambda settings: memory)
     return application_source_artifact.ApplicationSourceArtifactStorage(), memory
 
 
@@ -125,7 +98,7 @@ async def test_source_artifact_writes_reads_and_deletes_exact_deployment_key(
 
     key = f"_application_artifacts/{app_id}/deployments/{deployment_id}/source.zip"
     assert memory.objects == {key: b"zip-bytes"}
-    assert digest == "hash"
+    assert digest == hashlib.sha256(b"zip-bytes").hexdigest()
     assert size == len(b"zip-bytes")
 
     copied = tmp_path / "copied.zip"

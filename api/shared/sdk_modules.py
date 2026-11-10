@@ -29,6 +29,7 @@ import asyncio
 import logging
 import re
 from dataclasses import dataclass
+from pathlib import PureWindowsPath
 from uuid import UUID
 from weakref import WeakValueDictionary
 
@@ -280,6 +281,16 @@ async def fetch_module_source(
     as the module cache would.
     """
     validate_module_path(path)
+    # The module API grants execution source access, not general repository
+    # reads. Enforce this before either the warm cache or S3 fallback.
+    if (
+        not path.endswith(".py")
+        or "\\" in path
+        or "\x00" in path
+        or PureWindowsPath(path).drive
+        or any(part in {"", ".", ".git"} for part in path.split("/"))
+    ):
+        raise ModuleSourceError(400, "Invalid Python module source path")
     if scope is not None:
         validate_engine_storage_path(path, scope)
 

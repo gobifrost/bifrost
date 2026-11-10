@@ -11,6 +11,7 @@ from src.services.repo_sync_writer import RepoSyncWriter
 def mock_settings():
     settings = MagicMock()
     settings.s3_configured = True
+    settings.storage_configured = True
     settings.s3_bucket = "test-bucket"
     settings.s3_endpoint_url = "http://seaweedfs:8333"
     settings.s3_access_key = "test"
@@ -110,6 +111,7 @@ class TestRegenerateManifest:
     @pytest.mark.asyncio
     async def test_skips_when_s3_not_configured(self, writer, mock_settings):
         mock_settings.s3_configured = False
+        mock_settings.storage_configured = False
 
         await writer.regenerate_manifest()
 

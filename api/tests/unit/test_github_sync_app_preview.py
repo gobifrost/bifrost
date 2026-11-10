@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from bifrost.manifest import Manifest, ManifestApp
 
 from src.models.contracts.github import PushResult, WorkspaceSyncPlan
 from src.services.app_resource_limits import AppSourceCompilationError, AppSourceLimitError
@@ -17,11 +19,11 @@ def _service() -> GitHubSyncService:
     return service
 
 
-def _manifest() -> SimpleNamespace:
-    return SimpleNamespace(
+def _manifest() -> Manifest:
+    return Manifest(
         apps={
-            "first": SimpleNamespace(id="app-1", path="apps/first"),
-            "second": SimpleNamespace(id="app-2", path="apps/second"),
+            "first": ManifestApp(id="app-1", path="apps/first"),
+            "second": ManifestApp(id="app-2", path="apps/second"),
         }
     )
 
@@ -57,7 +59,7 @@ async def test_authored_preview_error_makes_final_publication_nonretryable(tmp_p
         sync_up=AsyncMock(),
         delete_workspace_checkpoint=AsyncMock(),
     )
-    service._do_push = Mock(return_value=PushResult(success=True, commit_sha="abc", pushed_commits=1))
+    service._do_push = AsyncMock(return_value=PushResult(success=True, commit_sha="abc", pushed_commits=1))
     service._sync_app_previews = AsyncMock(
         side_effect=AppSourceCompilationError("Unexpected token in pages/index.tsx")
     )

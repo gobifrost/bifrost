@@ -267,6 +267,8 @@ class TestAuditArchiver:
         assert [c.object_key for c in await _catalog(db_session, old_rows)] == [kept.key]
         with pytest.raises(FileNotFoundError):
             await store.get(old.key)
+        with pytest.raises(FileNotFoundError):
+            _ = [chunk async for chunk in store.iter_chunks(old.key)]
         await _assert_stored(store, kept)
 
     async def test_stale_lease_cannot_expire(self, db_session, store, old_rows, lease):

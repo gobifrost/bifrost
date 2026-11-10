@@ -336,7 +336,7 @@ async def test_thin_worker_executes_solution_artifact_jobs(
 
 
 async def test_thin_worker_executes_git_platform_jobs(
-    e2e_client, platform_admin, async_session_factory, request, org1
+    e2e_client, platform_admin, async_session_factory, request, org1, isolated_git_workspace
 ) -> None:
     """Four jobs prove Solution sync, fetch, commit and workspace publication.
 
@@ -410,7 +410,7 @@ async def test_thin_worker_executes_git_platform_jobs(
             "workspace.git",
         )
         assert workspace_fetch["result"]["success"] is True
-        assert workspace_fetch["payload_version"] == 2
+        assert workspace_fetch["payload_version"] == 3
         assert workspace_fetch["result"]["remote_branch_exists"] is True
         assert workspace_fetch["result"]["commits_behind"] == 0
 
@@ -423,7 +423,7 @@ async def test_thin_worker_executes_git_platform_jobs(
             e2e_client, headers, commit_response.json()["job_id"], "workspace.git"
         )
         assert committed["result"]["success"] is True
-        assert committed["payload_version"] == 2
+        assert committed["payload_version"] == 3
         assert committed["result"]["files_committed"] > 0
         sync_response = e2e_client.post("/api/github/sync", headers=headers)
         assert sync_response.status_code == 202, sync_response.text
@@ -431,7 +431,7 @@ async def test_thin_worker_executes_git_platform_jobs(
             e2e_client, headers, sync_response.json()["job_id"], "workspace.git"
         )
         assert published["result"]["success"] is True
-        assert published["payload_version"] == 2
+        assert published["payload_version"] == 3
         assert published["result"]["push_success"] is True
         bare = workspace_root / "workspace.git"
         remote_head = subprocess.run(

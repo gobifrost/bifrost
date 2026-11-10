@@ -200,6 +200,48 @@ async def test_plan_import_rejects_decorator_settings_before_database_operations
         await ManifestResolver(db_session).plan_import(manifest, work_dir=tmp_path)
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("kind", "relative_path", "content"),
+    [
+        ("form", "forms/legacy.form.yaml", b"name: outside form\n"),
+        ("agent", "agents/legacy.agent.yaml", b"name: outside agent\n"),
+    ],
+)
+async def test_legacy_companion_read_refuses_symlink_outside_worktree(
+    tmp_path, kind, relative_path, content
+) -> None:
+    """Deprecated form/agent companions must not bypass manifest path validation."""
+    from uuid import uuid4
+
+    from bifrost.definition_validation import DefinitionValidationError
+    from bifrost.manifest import ManifestAgent, ManifestForm
+    from src.services.manifest_import import (
+        _read_confined_worktree_bytes,
+        _resolve_agent_content,
+        _resolve_form_content,
+    )
+
+    outside = tmp_path.parent / f"outside-{uuid4()}.yaml"
+    outside.write_bytes(content)
+    link = tmp_path / relative_path
+    link.parent.mkdir(parents=True)
+    link.symlink_to(outside)
+
+    async def read_legacy(path: str) -> bytes | None:
+        return _read_confined_worktree_bytes(tmp_path, path)
+
+    entry = (
+        ManifestForm(id=str(uuid4()), path=relative_path)
+        if kind == "form"
+        else ManifestAgent(id=str(uuid4()), path=relative_path)
+    )
+    resolve = _resolve_form_content if kind == "form" else _resolve_agent_content
+
+    with pytest.raises(DefinitionValidationError, match="resolve inside"):
+        await resolve(entry, read_legacy)
+
+
 class TestWorkflowRunIdentity:
     """A workflow the manifest moves away from the identity it runs as is refused by name and place."""
 

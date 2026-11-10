@@ -223,7 +223,7 @@ def _clear_s3_bifrost_sync() -> None:
         from src.services.repo_storage import RepoStorage
 
         settings = get_settings()
-        if not settings.s3_configured:
+        if not settings.storage_configured:
             return
         repo = RepoStorage(settings)
         paths = await repo.list(".bifrost/")

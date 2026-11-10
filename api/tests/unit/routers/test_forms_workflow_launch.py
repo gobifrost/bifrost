@@ -1,5 +1,6 @@
 """Authorization boundaries for form-triggered workflow launches."""
 
+from src.core.storage.contracts import SignedRequest
 from types import SimpleNamespace
 from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
@@ -145,7 +146,7 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
     from shared import file_paths
 
     storage = SimpleNamespace(
-        generate_presigned_upload_url=AsyncMock(return_value="https://uploads.example/file")
+        generate_signed_upload_request=AsyncMock(return_value=SignedRequest("PUT", "https://uploads.example/file", {"x-ms-blob-type": "BlockBlob"}, 600))
     )
     monkeypatch.setattr(file_storage, "FileStorageService", MagicMock(return_value=storage))
     captured: dict[str, str] = {}
@@ -171,6 +172,7 @@ async def test_upload_uses_the_selected_execution_organization(monkeypatch):
     launch.assert_awaited_once_with(
         db, ctx, form, requested_organization_id=selected_org
     )
+    assert storage.generate_signed_upload_request.await_args.kwargs["content_length"] == 12
     assert captured["location"] == "uploads"
     assert captured["scope"] == str(selected_org)
 

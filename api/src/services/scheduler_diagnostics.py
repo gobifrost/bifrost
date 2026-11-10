@@ -38,7 +38,7 @@ async def heartbeat_scheduler_replica(
         "id": replica_id,
         "hostname": hostname,
         "pid": pid,
-        "job_slots": 1 if runs_platform_jobs else 0,
+        "runs_platform_jobs": runs_platform_jobs,
         "started_at": started_at,
         "last_heartbeat_at": heartbeat_at,
         "memory_current_bytes": current if current >= 0 else None,

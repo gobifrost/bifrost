@@ -14,6 +14,7 @@ Key principles:
 import base64
 import hashlib
 import logging
+import os
 import shutil
 import subprocess
 import tempfile
@@ -21,7 +22,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
 from git import Repo as GitRepo
@@ -43,7 +44,6 @@ from src.models.contracts.github import (
 from src.services.git_repo_manager import (
     GitRepoManager,
     hash_file,
-    iter_tree_metadata,
     merge_in_progress,
 )
 from src.services.github_sync_entity_metadata import extract_entity_metadata
@@ -70,6 +70,7 @@ from bifrost.manifest import (
     Manifest,
     get_all_entity_ids,
     read_manifest_from_dir,
+    validate_manifest_paths,
 )
 from src.services.manifest_import import (
     ManifestResolver,
@@ -148,6 +149,7 @@ class _GitConnectPreviewRecord(BaseModel):
     remote_fingerprint: str
     remote_head_sha: str | None
     items: list[GitConnectItem]
+    app_setup_id: UUID | None = None
 
 
 class ReimportResult(BaseModel):
@@ -185,9 +187,12 @@ def _git_auth_env(token: str | None) -> dict[str, str]:
         return {}
     credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return {
-        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
         "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": "",
+        "GIT_ASKPASS": "/bin/false",
         "GIT_TERMINAL_PROMPT": "0",
     }
 
@@ -215,9 +220,142 @@ def _has_workspace_files(root: Path) -> bool:
     for entry in root.iterdir():
         if entry.name in (".git", ".bifrost"):
             continue
-        if entry.is_file() or any(path.is_file() for path in entry.rglob("*")):
+        resolved_entry = _confined_workspace_entry(root, entry.name)
+        if resolved_entry is not None and resolved_entry.is_file():
             return True
+        for path in entry.rglob("*"):
+            relative = path.relative_to(root).as_posix()
+            resolved = _confined_workspace_entry(root, relative)
+            if resolved is not None and resolved.is_file():
+                return True
     return False
+
+
+def _has_stored_manifest(root: Path) -> bool:
+    """Whether checkout storage contains an authored split or legacy manifest."""
+    from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE
+
+    return any(
+        (entry := _confined_workspace_entry(root, f".bifrost/{filename}")) is not None
+        and entry.is_file()
+        for filename in (*MANIFEST_FILES.values(), MANIFEST_LEGACY_FILE)
+    )
+
+
+def _validate_manifest_paths_or_raise(manifest: Manifest) -> None:
+    """Reject unsafe declared entity paths before workspace filesystem access."""
+    errors = validate_manifest_paths(manifest)
+    if errors:
+        raise DefinitionValidationError([
+            DefinitionIssue(
+                path=".bifrost/",
+                location=(),
+                code="unsafe_manifest_path",
+                message=error,
+            )
+            for error in errors
+        ])
+
+
+def _workspace_path_candidate(root: Path, raw_path: str) -> Path:
+    """Return a safe workspace path without normalizing its Git spelling.
+
+    Desktop Git operations retain ``raw_path`` for Git, while filesystem work
+    uses this candidate so unlinking a safe symlink removes the link itself.
+    """
+    if not raw_path or "\0" in raw_path:
+        raise SyncError("Workspace path must name a file inside the workspace")
+
+    raw = Path(raw_path)
+    if ".git" in raw.parts:
+        raise SyncError("Workspace path may not access Git metadata")
+
+    candidate = root / raw
+    try:
+        resolved_root = root.resolve(strict=False)
+        resolved_candidate = candidate.resolve(strict=False)
+        relative = resolved_candidate.relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SyncError("Workspace path must resolve inside the workspace") from error
+
+    if relative == Path("."):
+        raise SyncError("Workspace path must not target the workspace root")
+    if ".git" in relative.parts:
+        raise SyncError("Workspace path may not access Git metadata")
+    return candidate
+
+
+def _assert_safe_git_symlink_target(root: Path, relative_path: str, target: str) -> None:
+    """Reject a Git symlink blob that checkout would make escape ``root``."""
+    if "\0" in target:
+        raise SyncError("Git symlink target is invalid")
+    link_path = root / relative_path
+    target_path = Path(target)
+    candidate = target_path if target_path.is_absolute() else link_path.parent / target_path
+    try:
+        resolved_root = root.resolve(strict=False)
+        relative = candidate.resolve(strict=False).relative_to(resolved_root)
+    except (OSError, RuntimeError, ValueError) as error:
+        raise SyncError("Git symlink target must resolve inside the workspace") from error
+    if relative == Path(".") or ".git" in relative.parts:
+        raise SyncError("Git symlink target may not access Git metadata")
+
+
+def _git_symlink_entries(output: str, *, stage: int | None = None) -> list[tuple[str, str]]:
+    """Extract symlink blob object IDs from NUL-delimited Git tree records."""
+    entries: list[tuple[str, str]] = []
+    for record in output.split("\0"):
+        if not record:
+            continue
+        metadata, path = record.split("\t", 1)
+        fields = metadata.split()
+        if stage is None:
+            mode, _kind, object_id = fields
+        else:
+            mode, object_id, entry_stage = fields
+            if int(entry_stage) != stage:
+                continue
+        if mode == "120000":
+            entries.append((path, object_id))
+    return entries
+
+
+def _preflight_git_symlinks(
+    root: Path,
+    repo: GitRepo,
+    entries: Iterable[tuple[str, str]],
+) -> None:
+    """Validate selected symlink blobs before checkout can materialize them."""
+    for relative_path, object_id in entries:
+        target = os.fsdecode(
+            repo.odb.stream(bytes.fromhex(object_id)).read()
+        )
+        _assert_safe_git_symlink_target(root, relative_path, target)
+
+
+def _preflight_head_checkout_symlinks(root: Path, repo: GitRepo, paths: Iterable[str]) -> None:
+    """Check every HEAD symlink selected by a discard checkout pathspec."""
+    if not repo.head.is_valid():
+        return
+    with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+        for path in paths:
+            output = repo.git.ls_tree("-r", "-z", "HEAD", "--", path)
+            _preflight_git_symlinks(root, repo, _git_symlink_entries(output))
+
+
+def _preflight_conflict_checkout_symlinks(
+    root: Path,
+    repo: GitRepo,
+    resolutions: Mapping[str, str],
+) -> None:
+    """Check ours/theirs conflict blobs before resolution checkout materializes them."""
+    with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+        for path, resolution in resolutions.items():
+            stage = {"ours": 2, "theirs": 3}.get(resolution)
+            if stage is None:
+                continue
+            output = repo.git.ls_files("-u", "-z", "--", path)
+            _preflight_git_symlinks(root, repo, _git_symlink_entries(output, stage=stage))
 
 
 def _workspace_fingerprint(root: Path) -> str:
@@ -354,12 +492,18 @@ class GitHubSyncService:
         branch: str = "main",
         settings: Settings | None = None,
         token: str | None = None,
+        token_provider=None,
+        app_setup_id: UUID | None = None,
+        app_auth: bool = False,
     ):
         self.db = db
         # A credential-free URL: it is written into .git/config. The token
         # reaches git only through _git_env.
         self.repo_url = repo_url
         self._git_env = _git_auth_env(token)
+        self._token_provider = token_provider
+        self._app_setup_id = app_setup_id
+        self._app_auth = app_auth
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
@@ -368,9 +512,26 @@ class GitHubSyncService:
     def _connect_preview_key(token: str) -> str:
         return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
 
-    def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+    async def _refresh_git_auth(self, repo: GitRepo | None = None) -> None:
+        if self._token_provider:
+            self._git_env = _git_auth_env(await self._token_provider())
+        if repo is not None:
+            repo.git.update_environment(**self._git_env)
+
+    def _raise_app_access_error(self, error: Exception) -> None:
+        message = str(getattr(error, "stderr", error)).lower()
+        if self._app_auth and (
+            ("repository" in message and "not found" in message)
+            or "authentication failed" in message
+            or "could not read username" in message
+            or ("permission" in message and "denied" in message)
+        ):
+            raise SyncError("GitHub App repository access was denied. Check the installation and repository permissions.") from error
+
+    async def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
         """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
         try:
+            await self._refresh_git_auth()
             repo = GitRepo.clone_from(
                 repository_url, str(destination), branch=branch, env=self._git_env,
             )
@@ -386,6 +547,7 @@ class GitHubSyncService:
                 if destination.exists():
                     shutil.rmtree(destination)
                 try:
+                    await self._refresh_git_auth()
                     fallback = GitRepo.clone_from(
                         repository_url, str(destination), env=self._git_env,
                     )
@@ -442,7 +604,7 @@ class GitHubSyncService:
             local = _connect_tree_hashes(work_dir)
             with tempfile.TemporaryDirectory(prefix="bifrost-connect-preview-") as raw_remote:
                 remote_root = Path(raw_remote) / "remote"
-                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, branch)
+                remote_repo = await self._clone_connect_remote(remote_root, self.repo_url, branch)
                 remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
                 remote_head_sha = (
                     remote_repo.head.commit.hexsha
@@ -463,6 +625,7 @@ class GitHubSyncService:
             remote_fingerprint=_connect_tree_fingerprint(remote),
             remote_head_sha=remote_head_sha,
             items=items,
+            app_setup_id=self._app_setup_id,
         )
         from src.core.cache.redis_client import get_shared_redis
 
@@ -553,7 +716,7 @@ class GitHubSyncService:
                 raise GitConnectPreviewStale("workspace changed after the connection preview")
             with tempfile.TemporaryDirectory(prefix="bifrost-connect-apply-") as raw_remote:
                 remote_root = Path(raw_remote) / "remote"
-                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, record.branch)
+                remote_repo = await self._clone_connect_remote(remote_root, self.repo_url, record.branch)
                 remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
                 remote_head_sha = (
                     remote_repo.head.commit.hexsha
@@ -643,7 +806,7 @@ class GitHubSyncService:
         """
         async with self.repo_manager.checkout_readonly() as work_dir:
             if not (work_dir / ".git").exists():
-                self._clone_or_init(work_dir)
+                await self._clone_or_init(work_dir)
             return await self._run_preflight(work_dir)
 
     # -----------------------------------------------------------------
@@ -655,14 +818,16 @@ class GitHubSyncService:
     # Accept work_dir/repo so callers can share a single checkout.
     # -----------------------------------------------------------------
 
-    def _do_fetch(self, work_dir: Path, repo: GitRepo) -> "FetchResult":
+    async def _do_fetch(self, work_dir: Path, repo: GitRepo) -> "FetchResult":
         """Core fetch logic. Fetches remote and computes ahead/behind."""
         from src.models.contracts.github import FetchResult
 
         remote_exists = True
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e).lower()
             if "not found" in err_str or "empty" in err_str or "couldn't find remote ref" in err_str:
                 remote_exists = False
@@ -884,8 +1049,10 @@ class GitHubSyncService:
         await _progress("Fetching remote...")
         remote_exists = True
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e).lower()
             if "not found" in err_str or "empty" in err_str or "couldn't find remote ref" in err_str:
                 remote_exists = False
@@ -925,7 +1092,7 @@ class GitHubSyncService:
             commit_sha=commit_sha,
         )
 
-    def _do_push(self, work_dir: Path, repo: GitRepo) -> "PushResult":
+    async def _do_push(self, work_dir: Path, repo: GitRepo) -> "PushResult":
         """Core push logic. Pushes local commits to remote."""
         from src.models.contracts.github import PushResult
 
@@ -935,15 +1102,18 @@ class GitHubSyncService:
         # Count ahead before push
         ahead = 0
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
             ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
-        except Exception:
+        except Exception as e:
+            self._raise_app_access_error(e)
             ahead = int(repo.git.rev_list("--count", "HEAD"))
 
         if ahead == 0:
             return PushResult(success=True, pushed_commits=0)
 
         # Push
+        await self._refresh_git_auth(repo)
         push_infos = repo.remotes.origin.push(refspec=f"HEAD:{self.branch}")
 
         from git.remote import PushInfo
@@ -996,12 +1166,12 @@ class GitHubSyncService:
                 "A": "create",
                 "D": "delete",
             }.get(status[0], "update")
-            source = work_dir / path
+            source = _confined_workspace_entry(work_dir, path)
             changes.append(
                 WorkspaceFileChange(
                     path=path,
                     action=action,
-                    sha256=None if action == "delete" or not source.is_file() else hash_file(source)[1],
+                    sha256=None if action == "delete" or source is None or not source.is_file() else hash_file(source)[1],
                 )
             )
         return changes
@@ -1021,11 +1191,11 @@ class GitHubSyncService:
         try:
             await _progress("Syncing from storage...")
             async with self.repo_manager.checkout(reset_local_state=True) as work_dir:
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 await _progress("Generating manifest...")
                 await self._regenerate_manifest_to_dir(self.db, work_dir)
                 await _progress("Fetching remote...")
-                return self._do_fetch(work_dir, repo)
+                return await self._do_fetch(work_dir, repo)
         except Exception as e:
             logger.error(f"Fetch failed: {e}", exc_info=True)
             return FetchResult(success=False, error=str(e))
@@ -1048,10 +1218,11 @@ class GitHubSyncService:
     @staticmethod
     async def _regenerate_manifest_to_dir(db, work_dir) -> None:
         """Generate manifest from DB and write split files to work_dir/.bifrost/."""
-        from bifrost.manifest import serialize_manifest_dir, MANIFEST_FILES
+        from bifrost.manifest import MANIFEST_FILES, serialize_manifest_dir
         from src.services.manifest_generator import generate_manifest
 
         manifest = await generate_manifest(db)
+        _validate_manifest_paths_or_raise(manifest)
 
         # Filter out entities whose files don't exist in work_dir.
         # The DB may contain entities from other workspaces or deleted files;
@@ -1060,11 +1231,11 @@ class GitHubSyncService:
         # required companion file, so they are NOT filtered by file existence.
         manifest.workflows = {
             k: v for k, v in manifest.workflows.items()
-            if (work_dir / v.path).exists()
+            if (entry := _confined_workspace_entry(work_dir, v.path)) is not None and entry.is_file()
         }
         manifest.apps = {
             k: v for k, v in manifest.apps.items()
-            if (work_dir / v.path).is_dir()
+            if (entry := _confined_workspace_entry(work_dir, v.path)) is not None and entry.is_dir()
         }
 
         # Filter configs to only include those whose integration_id is present
@@ -1077,17 +1248,21 @@ class GitHubSyncService:
         }
 
         files = serialize_manifest_dir(manifest)
-
-        bifrost_dir = work_dir / ".bifrost"
+        bifrost_dir = _confined_workspace_entry(work_dir, ".bifrost")
+        if bifrost_dir is None:
+            bifrost_dir = work_dir / ".bifrost"
         bifrost_dir.mkdir(parents=True, exist_ok=True)
 
         for filename, content in files.items():
-            (bifrost_dir / filename).write_text(content)
+            path = _confined_workspace_entry(work_dir, f".bifrost/{filename}")
+            (path or bifrost_dir / filename).write_text(content)
 
-        # Remove files for now-empty entity types
+        # Remove files for now-empty entity types.
         for filename in MANIFEST_FILES.values():
-            path = bifrost_dir / filename
-            if filename not in files and path.exists():
+            if filename in files:
+                continue
+            path = _confined_workspace_entry(work_dir, f".bifrost/{filename}")
+            if path is not None and path.exists():
                 path.unlink()
 
         remove_legacy_entity_files(work_dir)
@@ -1106,9 +1281,8 @@ class GitHubSyncService:
         count = 0
 
         for py_path in paths:
-            full_path = work_dir / py_path
-            if full_path.exists():
-                content = full_path.read_bytes()
+            content = _read_confined_workspace_bytes(work_dir, py_path)
+            if content is not None:
                 await indexer.index_python_file(py_path, content)
                 count += 1
 
@@ -1126,7 +1300,7 @@ class GitHubSyncService:
         try:
             async with self.repo_manager.workspace() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
         except Exception as e:
             logger.error(f"Commit failed: {e}", exc_info=True)
@@ -1260,7 +1434,7 @@ class GitHubSyncService:
 
         if progress_fn:
             await progress_fn("Pushing to remote...")
-        push_result = self._do_push(work_dir, repo)
+        push_result = await self._do_push(work_dir, repo)
         if not push_result.success:
             logger.warning(
                 "Workspace publication failed after import; retaining local dirty state for retry: %s",
@@ -1363,7 +1537,7 @@ class GitHubSyncService:
                     await self.repo_manager.restore_workspace_checkpoint(
                         retry_plan.checkpoint_id, work_dir
                     )
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 plan = retry_plan or await self.prepare_desktop_sync(
                     work_dir, repo, progress_fn=_progress,
                 )
@@ -1390,7 +1564,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
 
                 merge_head = work_dir / ".git" / "MERGE_HEAD"
                 if not merge_head.exists():
@@ -1413,7 +1587,16 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
-                repo = self._open_or_init(work_dir)
+                # Validate the whole batch before opening or changing the repository.
+                for path in resolutions:
+                    _workspace_path_candidate(work_dir, path)
+                if (work_dir / ".git").exists():
+                    _preflight_conflict_checkout_symlinks(
+                        work_dir,
+                        GitRepo(str(work_dir)),
+                        resolutions,
+                    )
+                repo = await self._open_or_init(work_dir)
 
                 # Check for merge state or unmerged entries (stash pop conflicts)
                 merge_head = work_dir / ".git" / "MERGE_HEAD"
@@ -1426,17 +1609,20 @@ class GitHubSyncService:
                 # Apply resolutions
                 for cpath, resolution in resolutions.items():
                     try:
-                        if resolution == "ours":
-                            repo.git.checkout("--ours", cpath)
-                        elif resolution == "theirs":
-                            repo.git.checkout("--theirs", cpath)
-                        repo.git.add(cpath)
+                        with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                            if resolution == "ours":
+                                repo.git.checkout("--ours", "--", cpath)
+                            elif resolution == "theirs":
+                                repo.git.checkout("--theirs", "--", cpath)
+                            repo.git.add("--", cpath)
                     except Exception:
                         # DU/UD conflict — one side deleted, checkout fails
                         try:
-                            repo.git.rm(cpath)
+                            with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                repo.git.rm("--", cpath)
                         except Exception:
-                            repo.git.add(cpath)
+                            with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                repo.git.add("--", cpath)
 
                 # Complete the operation (merge commit is local)
                 if is_merge:
@@ -1472,7 +1658,8 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace(readonly=True) as work_dir:
-                repo = self._open_or_init(work_dir)
+                working_path = _workspace_path_candidate(work_dir, path)
+                repo = await self._open_or_init(work_dir)
 
                 # Get HEAD content
                 head_content = None
@@ -1484,7 +1671,6 @@ class GitHubSyncService:
 
                 # Get working tree content
                 working_content = None
-                working_path = work_dir / path
                 if working_path.exists():
                     working_content = working_path.read_text(errors="replace")
 
@@ -1503,8 +1689,17 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
+                for path in paths:
+                    _workspace_path_candidate(work_dir, path)
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
-                repo = self._open_or_init(work_dir)
+                file_paths = [_workspace_path_candidate(work_dir, path) for path in paths]
+                if (work_dir / ".git").exists():
+                    _preflight_head_checkout_symlinks(
+                        work_dir,
+                        GitRepo(str(work_dir)),
+                        paths,
+                    )
+                repo = await self._open_or_init(work_dir)
                 if merge_in_progress(work_dir, repo):
                     # Syncing up would publish the conflict markers to storage.
                     return DiscardResult(
@@ -1516,13 +1711,13 @@ class GitHubSyncService:
                     )
                 discarded = []
 
-                for path in paths:
-                    file_path = work_dir / path
+                for path, file_path in zip(paths, file_paths, strict=True):
                     try:
                         if repo.head.is_valid():
                             try:
                                 # File exists in HEAD — restore it
-                                repo.git.checkout("HEAD", "--", path)
+                                with repo.git.custom_environment(GIT_LITERAL_PATHSPECS="1"):
+                                    repo.git.checkout("HEAD", "--", path)
                                 discarded.append(path)
                                 continue
                             except Exception as e:
@@ -1553,7 +1748,7 @@ class GitHubSyncService:
     # Helpers for desktop-style operations
     # -----------------------------------------------------------------
 
-    def _open_or_init(self, work_dir: Path) -> GitRepo:
+    async def _open_or_init(self, work_dir: Path) -> GitRepo:
         """Open existing .git/ or clone fresh. Ensure remote URL and user identity are set."""
         if (work_dir / ".git").exists():
             repo = GitRepo(str(work_dir))
@@ -1564,7 +1759,7 @@ class GitHubSyncService:
             else:
                 repo.create_remote("origin", self.repo_url)
         else:
-            repo = self._clone_or_init(work_dir)
+            repo = await self._clone_or_init(work_dir)
         repo.git.update_environment(**self._git_env)
 
         # Ensure git user identity is configured (needed for merge/commit)
@@ -1619,6 +1814,7 @@ class GitHubSyncService:
 
         bifrost_dir = work_dir / ".bifrost"
         manifest = read_manifest_from_dir(bifrost_dir)
+        _validate_manifest_paths_or_raise(manifest)
         _validate_workspace_python_decorators(work_dir)
 
         has_entities = (
@@ -1672,10 +1868,12 @@ class GitHubSyncService:
         from src.models.orm.workflows import Workflow as WfORM
         from src.services.file_storage.indexers.workflow import WorkflowIndexer
 
-        wf_paths = {
-            mwf.path for mwf in manifest.workflows.values()
-            if (work_dir / mwf.path).exists() and mwf.id in changed_ids
+        workflow_sources = {
+            mwf.path: _read_confined_workspace_bytes(work_dir, mwf.path)
+            for mwf in manifest.workflows.values()
+            if mwf.id in changed_ids
         }
+        wf_paths = {path for path, source in workflow_sources.items() if source is not None}
         if wf_paths:
             # _repo/-scoped (solution_id IS NULL): the workspace indexer manages
             # _repo/ workflows only, and a solution-managed workflow sharing a path
@@ -1697,15 +1895,13 @@ class GitHubSyncService:
         for _wf_name, mwf in manifest.workflows.items():
             if mwf.id not in changed_ids:
                 continue
-            wf_path = work_dir / mwf.path
-            if wf_path.exists():
-                content = wf_path.read_bytes()
+            content = workflow_sources.get(mwf.path)
+            if content is not None:
                 await workflow_indexer.index_python_file(mwf.path, content)
 
         # Index forms from manifest
         async def _read_work_dir(path: str) -> bytes | None:
-            p = work_dir / path
-            return p.read_bytes() if p.exists() else None
+            return _read_confined_workspace_bytes(work_dir, path)
 
         await self._resolver._index_forms_from_manifest(manifest, _read_work_dir, changed_ids)
 
@@ -1728,6 +1924,7 @@ class GitHubSyncService:
 
         bifrost_dir = work_dir / ".bifrost"
         manifest = read_manifest_from_dir(bifrost_dir)
+        _validate_manifest_paths_or_raise(manifest)
 
         if not manifest.apps:
             return
@@ -1782,10 +1979,17 @@ class GitHubSyncService:
         async with self.repo_manager.checkout(isolated=True) as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
 
-            # Regenerate manifest from current DB state
-            await self._regenerate_manifest_to_dir(self.db, work_dir)
+            # An authored manifest is source data.  Regenerate only for legacy
+            # workspaces that have source files but no manifest at all.
+            if not _has_stored_manifest(work_dir):
+                await self._regenerate_manifest_to_dir(self.db, work_dir)
+            else:
+                _validate_manifest_paths_or_raise(
+                    read_manifest_from_dir(work_dir / ".bifrost")
+                )
 
-            # The regenerated manifest drops entities whose files are missing.
+            # The authored (or legacy-generated) manifest identifies missing
+            # source without applying deletions during reimport.
             pending_deletes = [
                 change
                 for change in await self._resolver._resolve_deletions(
@@ -1824,7 +2028,7 @@ class GitHubSyncService:
     # Internal: git operations
     # -----------------------------------------------------------------
 
-    def _clone_or_init(self, target: Path) -> GitRepo:
+    async def _clone_or_init(self, target: Path) -> GitRepo:
         """Clone from repo_url, or init if repo is empty.
 
         Handles the case where target already has files (e.g. entity files
@@ -1838,6 +2042,7 @@ class GitHubSyncService:
             # Clone into a temp dir first (git clone requires clean dir)
             clone_dir = Path(tempfile.mkdtemp(prefix="bifrost-clone-"))
             try:
+                await self._refresh_git_auth()
                 GitRepo.clone_from(
                     self.repo_url,
                     str(clone_dir),
@@ -1863,6 +2068,7 @@ class GitHubSyncService:
             finally:
                 shutil.rmtree(clone_dir, ignore_errors=True)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e)
             # Empty repo or branch doesn't exist yet
             if "not found" in err_str.lower() or "empty" in err_str.lower() or "could not find remote branch" in err_str.lower():
@@ -1887,7 +2093,16 @@ class GitHubSyncService:
         )
 
         index = FileIndexService(self.db)
-        files = iter_tree_metadata(work_dir)
+        files: list[tuple[str, int, str]] = []
+        for candidate in work_dir.rglob("*"):
+            rel_path = candidate.relative_to(work_dir).as_posix()
+            if ".git" in candidate.relative_to(work_dir).parts:
+                continue
+            resolved = _confined_workspace_entry(work_dir, rel_path)
+            if resolved is None or not resolved.is_file():
+                continue
+            size, sha256 = hash_file(resolved)
+            files.append((rel_path, size, sha256))
         repo_paths: set[str] = set()
 
         # Prefetch all existing (path, content_hash) in one query
@@ -1913,19 +2128,21 @@ class GitHubSyncService:
             pending_bytes = 0
 
         for entry in files:
-            rel_path = entry.path
+            rel_path, entry_size, entry_sha256 = entry
             if not is_tracked_path(rel_path):
                 continue
             repo_paths.add(rel_path)
-            if existing_hashes.get(rel_path) == entry.sha256:
+            if existing_hashes.get(rel_path) == entry_sha256:
                 continue
             # Oversized files get a path-only row without loading them.
-            content = (
-                indexable_text((work_dir / rel_path).read_bytes())
-                if entry.size <= MAX_INDEXABLE_TEXT_BYTES
-                else None
-            )
-            row_bytes = entry.size if content is not None else 0
+            if entry_size <= MAX_INDEXABLE_TEXT_BYTES:
+                source = _read_confined_workspace_bytes(work_dir, rel_path)
+                if source is None:
+                    continue
+                content = indexable_text(source)
+            else:
+                content = None
+            row_bytes = entry_size if content is not None else 0
             if pending_upserts and (
                 len(pending_upserts) >= FILE_INDEX_UPSERT_MAX_ROWS
                 or pending_bytes + row_bytes > FILE_INDEX_UPSERT_MAX_BYTES
@@ -1934,7 +2151,7 @@ class GitHubSyncService:
             pending_upserts.append({
                 "path": rel_path,
                 "content": content,
-                "content_hash": entry.sha256,
+                "content_hash": entry_sha256,
             })
             pending_bytes += row_bytes
             if (
@@ -1962,21 +2179,32 @@ class GitHubSyncService:
         # 1. Check manifest validity
         bifrost_dir = repo_dir / ".bifrost"
         manifest: Manifest | None = None
+        path_errors: list[str] = []
         if bifrost_dir.exists():
             try:
                 manifest = read_manifest_from_dir(bifrost_dir)
+                path_errors = validate_manifest_paths(manifest)
+                for error in path_errors:
+                    issues.append(PreflightIssue(
+                        path=".bifrost/",
+                        message=error,
+                        severity="error",
+                        category="manifest",
+                        fix_hint="Use a relative POSIX workspace path outside .git and .bifrost.",
+                    ))
                 # Verify all paths exist
                 from bifrost.manifest import get_all_paths
-                for path in get_all_paths(manifest):
-                    if not (repo_dir / path).exists():
-                        issues.append(PreflightIssue(
-                            path=".bifrost/",
-                            message=f"Manifest references missing file: {path}",
-                            severity="error",
-                            category="manifest",
-                            fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
-                            auto_fixable=True,
-                        ))
+                if not path_errors:
+                    for path in get_all_paths(manifest):
+                        if _confined_workspace_entry(repo_dir, path) is None:
+                            issues.append(PreflightIssue(
+                                path=".bifrost/",
+                                message=f"Manifest references missing file: {path}",
+                                severity="error",
+                                category="manifest",
+                                fix_hint="This file was deleted but the entity is still registered. Use 'Clean up & Retry' to remove orphaned references.",
+                                auto_fixable=True,
+                            ))
             except DefinitionValidationError as error:
                 for issue in error.issues:
                     field = ".".join(map(str, issue.location))
@@ -2053,11 +2281,11 @@ class GitHubSyncService:
             """
             if mform.workflow_id is not None or mform.launch_workflow_id is not None:
                 return mform.workflow_id, mform.launch_workflow_id
-            if mform.path:
-                form_path = repo_dir / mform.path
-                if form_path.exists():
+            if mform.path and not path_errors:
+                content = _read_confined_workspace_bytes(repo_dir, mform.path)
+                if content is not None:
                     try:
-                        data = yaml.safe_load(form_path.read_text()) or {}
+                        data = yaml.safe_load(content.decode("utf-8")) or {}
                         return (
                             data.get("workflow_id") or data.get("workflow"),
                             data.get("launch_workflow_id") or data.get("launch_workflow"),
@@ -2109,6 +2337,8 @@ class GitHubSyncService:
             from bifrost.manifest import validate_manifest
             ref_errors = validate_manifest(manifest)
             for err in ref_errors:
+                if err in path_errors:
+                    continue
                 issues.append(PreflightIssue(
                     path=".bifrost/",
                     message=err,
@@ -2155,8 +2385,8 @@ class GitHubSyncService:
         return PreflightResult(valid=not has_errors, issues=issues)
 
 
-def _candidate_python_source(work_dir: Path, path: str) -> str | None:
-    """Read a candidate Python source only when it stays inside its tree."""
+def _confined_workspace_entry(work_dir: Path, path: str) -> Path | None:
+    """Resolve a workspace file only when it remains inside its tree."""
     candidate = work_dir / path
     try:
         root = work_dir.resolve()
@@ -2171,9 +2401,25 @@ def _candidate_python_source(work_dir: Path, path: str) -> str | None:
                 path=path,
                 location=(),
                 code="unsafe_source_path",
-                message="Python source must resolve inside the workspace candidate.",
+                message="Workspace source must resolve inside the workspace candidate.",
             )
         ]) from exc
+    return resolved
+
+
+def _read_confined_workspace_bytes(work_dir: Path, path: str) -> bytes | None:
+    """Read a workspace file only after its resolved target stays in-tree."""
+    resolved = _confined_workspace_entry(work_dir, path)
+    if resolved is None or not resolved.is_file():
+        return None
+    return resolved.read_bytes()
+
+
+def _candidate_python_source(work_dir: Path, path: str) -> str | None:
+    """Read a candidate Python source only when it stays inside its tree."""
+    resolved = _confined_workspace_entry(work_dir, path)
+    if resolved is None:
+        return None
     if not resolved.is_file():
         return None
     try:

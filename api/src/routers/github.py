@@ -10,6 +10,14 @@ import uuid
 from typing import Literal
 
 from fastapi import APIRouter, Depends, Request, HTTPException, Query, Response, status
+from shared import github_git_app
+from shared.solution_git_sources import authorize_source_scope, query_scope
+from shared.models import (
+    GitAppAuthorizeResponse, GitAppCallbackRequest, GitAppExistingRequest, GitAppInstallationRequest,
+    GitAppManifestRequest, GitAppManifestResponse, GitAppRepositoryRequest,
+    GitAppSetupRequest, GitAppSetupResponse,
+    GitAppReuseRequest, SolutionGitSources,
+)
 
 from src.core.auth import Context, CurrentActiveUser
 from src.services.authorization.enforce import authorize_operation
@@ -81,6 +89,93 @@ async def _authorize_global_route(
 router = APIRouter(prefix="/api/github", tags=["GitHub"], dependencies=[Depends(_authorize_global_route)])
 
 
+def _credential_provider(db, config):
+    return github_git_app.credential_provider(db, config)
+
+
+def _github_client(db, config):
+    return GitHubAPIClient(config.token, token_provider=_credential_provider(db, config), installation_auth=config.auth_kind == "app")
+
+
+@router.get("/app/setup", response_model=GitAppSetupResponse | None)
+async def get_app_setup(user: CurrentActiveUser, ctx: Context, db: DbSession, purpose: Literal["workspace", "solution"] = "workspace"):
+    return await github_git_app.latest_setup(db, str(user.user_id), ctx.org_id, purpose)
+
+
+@router.post("/app/manifest", response_model=GitAppManifestResponse)
+async def start_app_manifest(body: GitAppManifestRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    if body.purpose == "solution":
+        target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+        await authorize_source_scope(db, user, target_scope)
+    return await github_git_app.start_manifest(db, body, str(user.user_id), ctx.org_id)
+
+
+@router.post("/app/existing", response_model=GitAppSetupResponse)
+async def configure_existing_app(body: GitAppExistingRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+    if body.purpose == "solution":
+        await authorize_source_scope(db, user, target_scope)
+    return await github_git_app.existing_app(db, {"id": body.app_id, "client_id": body.client_id,
+        "private_key": body.private_key.get_secret_value(), "client_secret": body.client_secret.get_secret_value()}, str(user.user_id), ctx.org_id, body.purpose, source_scope=target_scope)
+
+
+@router.post("/app/manifest/complete", response_model=GitAppSetupResponse)
+async def finish_app_manifest(body: GitAppCallbackRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    return await github_git_app.complete_manifest(db, body.code, body.state, str(user.user_id), ctx.org_id)
+
+
+@router.post("/app/authorize", response_model=GitAppAuthorizeResponse)
+async def authorize_app(body: GitAppSetupRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    return GitAppAuthorizeResponse(authorization_url=await github_git_app.authorize_setup(db, body.setup_id, str(user.user_id), ctx.org_id))
+
+
+@router.post("/app/authorize/complete", response_model=GitAppSetupResponse)
+async def finish_app_authorization(body: GitAppCallbackRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    return await github_git_app.complete_authorization(db, body.code, body.state, str(user.user_id), ctx.org_id)
+
+
+@router.post("/app/installations", response_model=GitAppSetupResponse)
+async def refresh_app_installations(body: GitAppSetupRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    return await github_git_app.refresh_installations(db, body.setup_id, str(user.user_id), ctx.org_id)
+
+
+@router.post("/app/repositories", response_model=GitAppSetupResponse)
+async def app_repositories(body: GitAppInstallationRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    return await github_git_app.setup_repositories(db, body.setup_id, body.installation_id, str(user.user_id), ctx.org_id)
+
+
+@router.post("/app/select", response_model=GitAppSetupResponse)
+async def select_app_repository(body: GitAppRepositoryRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    _, setup = await github_git_app._row(db, body.setup_id, str(user.user_id), ctx.org_id)
+    if setup.get("purpose") == "solution":
+        await authorize_source_scope(db, user, uuid.UUID(setup["source_scope"]) if setup.get("source_scope") else None)
+    return await github_git_app.select_repository(db, body.setup_id, body.installation_id, body.repository_id, str(user.user_id), ctx.org_id, user.email)
+
+
+@router.post("/app/reuse", response_model=GitAppSetupResponse)
+async def reuse_solution_app(body: GitAppReuseRequest, user: CurrentActiveUser, ctx: Context, db: DbSession):
+    from shared.solution_git_sources import reuse_app
+    target_scope = body.organization_id if "organization_id" in body.model_fields_set else ctx.org_id
+    await authorize_source_scope(db, user, target_scope)
+    return await reuse_app(db, body.source_id, str(user.user_id), ctx.org_id, target_scope)
+
+
+@router.get("/app/solution-sources", response_model=SolutionGitSources)
+async def get_solution_sources(user: CurrentActiveUser, ctx: Context, db: DbSession, organization_id: str | None = None):
+    from shared.solution_git_sources import list_sources
+    scope = query_scope(organization_id, ctx.org_id)
+    await authorize_source_scope(db, user, scope)
+    return SolutionGitSources(sources=await list_sources(db, scope))
+
+
+@router.delete("/app/solution-sources/{source_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def disconnect_solution_source(source_id: uuid.UUID, user: CurrentActiveUser, ctx: Context, db: DbSession, organization_id: str | None = None):
+    from shared.solution_git_sources import disable_source
+    scope = query_scope(organization_id, ctx.org_id)
+    await authorize_source_scope(db, user, scope)
+    await disable_source(db, source_id, scope, user.email)
+
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -126,6 +221,9 @@ async def _enqueue_git_operation(
     ensure_notification: bool = False,
 ) -> PlatformJobAccepted:
     """Enqueue one Git operation through the shared durable job transport."""
+    config = await get_github_config(db, organization_id)
+    options = {**(options or {}), "connection_generation": config.generation if config else None,
+               "connection_repository": config.repo_url if config else None}
     job, reused = await enqueue_platform_job(
         db,
         GIT_OPERATION_DEFINITION,
@@ -192,7 +290,9 @@ async def get_config_endpoint(
 
         return GitHubConfigResponse(
             configured=bool(config.repo_url),
-            token_saved=bool(config.token),
+            token_saved=config.has_credentials,
+            auth_kind=config.auth_kind,
+            app_name=config.app.get("name"),
             repo_url=config.repo_url,
             branch=config.branch,
             backup_path=None,
@@ -226,7 +326,7 @@ async def get_github_status(
     try:
         config = await get_github_config(db, ctx.org_id)
 
-        if not config or not config.token:
+        if not config or not config.has_credentials:
             # Not configured
             return GitRefreshStatusResponse(
                 success=True,
@@ -407,13 +507,13 @@ async def list_github_repos(
     try:
         config = await get_github_config(db, ctx.org_id)
 
-        if not config or not config.token:
+        if not config or not config.has_credentials:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="GitHub token not found. Please validate your token first.",
             )
 
-        client = GitHubAPIClient(config.token)
+        client = _github_client(db, config)
         repo_list = await client.list_repositories()
 
         repositories = [
@@ -456,6 +556,7 @@ async def list_github_branches(
     user: CurrentActiveUser,
     db: DbSession,
     repo: str = Query(..., description="Repository full name (owner/repo)"),
+    app_setup_id: uuid.UUID | None = None,
 ) -> GitHubBranchesResponse:
     """List branches in a repository using saved token."""
     try:
@@ -465,15 +566,16 @@ async def list_github_branches(
                 detail="Repository name required",
             )
 
-        config = await get_github_config(db, ctx.org_id)
+        config = (await github_git_app.pending_config(db, app_setup_id, str(user.user_id), ctx.org_id)
+                  if app_setup_id else await get_github_config(db, ctx.org_id))
 
-        if not config or not config.token:
+        if not config or not config.has_credentials:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="GitHub token not found. Please validate your token first.",
             )
 
-        client = GitHubAPIClient(config.token)
+        client = _github_client(db, config)
         branch_list = await client.list_branches(repo)
 
         branches = [
@@ -519,13 +621,16 @@ async def create_github_repository(
     try:
         config = await get_github_config(db, ctx.org_id)
 
-        if not config or not config.token:
+        if config and config.auth_kind == "app":
+            raise HTTPException(400, "Create the repository in GitHub, then grant the App access to it.")
+
+        if not config or not config.has_credentials:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="GitHub token not found. Please validate your token first.",
             )
 
-        client = GitHubAPIClient(config.token)
+        client = _github_client(db, config)
         result = await client.create_repository(
             name=request.name,
             description=request.description,
@@ -604,7 +709,7 @@ async def get_commits(
     try:
         config = await get_github_config(db, ctx.org_id)
 
-        if not config or not config.token:
+        if not config or not config.has_credentials:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="GitHub token not found. Please validate your token first.",
@@ -617,7 +722,7 @@ async def get_commits(
             )
 
         repo = _extract_repo_from_url(config.repo_url)
-        client = GitHubAPIClient(config.token)
+        client = _github_client(db, config)
 
         # Calculate pagination - GitHub uses page-based, we expose offset-based
         page = (offset // limit) + 1 if limit > 0 else 1
@@ -683,23 +788,29 @@ async def preview_git_connect(
     db: DbSession,
 ) -> GitConnectPreview:
     """Compare the detached workspace with a remote branch without changing either."""
-    config = await get_github_config(db, ctx.org_id)
-    if config is None or not config.token:
+    config = (await github_git_app.pending_config(db, body.app_setup_id, str(user.user_id), ctx.org_id)
+              if body.app_setup_id else await get_github_config(db, ctx.org_id))
+    if config is None or not config.has_credentials:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="GitHub token not found. Please validate your token first.",
         )
-    if config.repo_url:
+    if config.repo_url and not body.app_setup_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="GitHub is already connected; disconnect it before connecting another repository.",
         )
     repository_url = _normalize_connect_repository_url(body.repository_url)
+    if body.app_setup_id and config.repo_url != repository_url:
+        raise HTTPException(403, "Select the verified App repository before connecting.")
     service = GitHubSyncService(
         db,
         repo_url=_github_remote_url(config, repository_url),
         branch=body.branch,
         token=config.token,
+        token_provider=_credential_provider(db, config),
+        app_setup_id=body.app_setup_id,
+        app_auth=config.auth_kind == "app",
     )
     try:
         return await service.preview_connect(
@@ -729,13 +840,14 @@ async def enqueue_git_connect(
     db: DbSession,
 ) -> PlatformJobAccepted:
     """Validate a requester-bound preview, then run it through ``workspace.git``."""
-    config = await get_github_config(db, ctx.org_id)
-    if config is None or not config.token:
+    config = (await github_git_app.pending_config(db, body.app_setup_id, str(user.user_id), ctx.org_id)
+              if body.app_setup_id else await get_github_config(db, ctx.org_id))
+    if config is None or not config.has_credentials:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="GitHub token not found. Please validate your token first.",
         )
-    if config.repo_url:
+    if config.repo_url and not body.app_setup_id:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="GitHub is already connected; disconnect it before connecting another repository.",
@@ -746,6 +858,8 @@ async def enqueue_git_connect(
             requested_by_user_id=str(user.user_id),
             organization_id=str(ctx.org_id) if ctx.org_id else None,
         )
+        if preview.app_setup_id != body.app_setup_id:
+            raise GitConnectPreviewError("GitHub App setup does not match this preview")
         resolve_connect_items(
             preview.items, strategy=body.strategy, decisions=body.decisions
         )
@@ -786,7 +900,7 @@ async def git_fetch(
 ) -> PlatformJobAccepted:
     """Queue a git fetch operation."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -813,7 +927,7 @@ async def git_commit(
 ) -> PlatformJobAccepted:
     """Queue a git commit."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -841,7 +955,7 @@ async def git_sync(
 ) -> PlatformJobAccepted:
     """Queue a sync (pull + push + entity import)."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     job_id = request.job_id if request and request.job_id else uuid.uuid4()
@@ -903,7 +1017,7 @@ async def git_abort_merge(
 ) -> PlatformJobAccepted:
     """Queue a merge abort."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -930,7 +1044,7 @@ async def git_changes(
 ) -> PlatformJobAccepted:
     """Queue a working tree status check."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -957,7 +1071,7 @@ async def git_resolve(
 ) -> PlatformJobAccepted:
     """Queue conflict resolution."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -985,7 +1099,7 @@ async def git_diff(
 ) -> PlatformJobAccepted:
     """Queue a file diff."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(
@@ -1013,7 +1127,7 @@ async def git_discard(
 ) -> PlatformJobAccepted:
     """Queue a discard operation."""
     config = await get_github_config(db, ctx.org_id)
-    if not config or not config.token or not config.repo_url:
+    if not config or not config.has_credentials or not config.repo_url:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub not configured")
 
     return await _enqueue_git_operation(

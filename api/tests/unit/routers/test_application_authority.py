@@ -9,7 +9,10 @@ import pytest
 
 from src.core.principal import UserPrincipal
 from src.repositories.applications import ApplicationRepository
-from src.routers.applications import get_application_by_id_or_404
+from src.routers.applications import (
+    _can_view_application_repo_path,
+    get_application_by_id_or_404,
+)
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
 from src.services.authorization.enforce import Caller, allows_permission
 
@@ -72,6 +75,75 @@ async def test_app_repository_uses_original_reach_not_principal_admin_claim() ->
 
     assert await repo._can_access_entity(allowed)
     assert not await repo._can_access_entity(blocked)
+
+
+def test_application_repo_path_visibility_uses_actual_target_permissions() -> None:
+    home = uuid4()
+    org_app = SimpleNamespace(organization_id=home)
+    global_app = SimpleNamespace(organization_id=None)
+
+    basic_reader = _caller(home=home, permissions={"apps.readbasic"})
+    inspector = _caller(home=home, permissions={"apps.read"})
+    editor = _caller(home=home, permissions={"apps.readwrite"})
+    global_inspector = _caller(
+        home=home,
+        grants=(
+            RoleGrant(
+                uuid4(),
+                frozenset({"apps.read"}),
+                (Boundary(BoundaryKind.PLATFORM),),
+            ),
+        ),
+    )
+
+    assert not _can_view_application_repo_path(basic_reader, org_app)
+    assert not _can_view_application_repo_path(basic_reader, global_app)
+    assert _can_view_application_repo_path(inspector, org_app)
+    assert not _can_view_application_repo_path(inspector, global_app)
+    assert _can_view_application_repo_path(editor, org_app)
+    assert _can_view_application_repo_path(global_inspector, global_app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("permissions", "expected_repo_path"),
+    [
+        ({"apps.readbasic"}, None),
+        ({"apps.read"}, "apps/private"),
+        ({"apps.readwrite"}, "apps/private"),
+    ],
+)
+async def test_export_application_redacts_repo_path_without_inspection_permission(
+    permissions, expected_repo_path
+) -> None:
+    from src.routers import applications
+
+    home = uuid4()
+    app = SimpleNamespace(id=uuid4(), organization_id=home)
+    caller = _caller(home=home, permissions=permissions)
+    exported = {"id": app.id, "repo_path": "apps/private"}
+    repo = SimpleNamespace(export_application=AsyncMock(return_value=exported))
+    public = object()
+    ctx = SimpleNamespace(db=object(), user=caller.principal)
+
+    with (
+        patch.object(applications, "load_caller", new=AsyncMock(return_value=caller)),
+        patch.object(
+            applications, "_application_repository", new=AsyncMock(return_value=repo)
+        ),
+        patch.object(
+            applications,
+            "get_application_by_id_or_404",
+            new=AsyncMock(return_value=app),
+        ),
+        patch.object(
+            applications.ApplicationPublic, "model_validate", return_value=public
+        ) as validate,
+    ):
+        result = await applications.export_application(app.id, ctx, caller.principal, None)
+
+    assert result is public
+    assert validate.call_args.args[0]["repo_path"] == expected_repo_path
 
 
 @pytest.mark.asyncio

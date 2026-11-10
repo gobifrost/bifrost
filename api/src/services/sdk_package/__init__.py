@@ -22,14 +22,14 @@ import os
 import subprocess
 import tarfile
 import tempfile
-from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
 from shared.models import HostedAppSdkDescriptor
 from shared.version import get_version
 from src.config import Settings, get_settings
-from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.core.storage import object_store, optional_read
+from src.core.storage.contracts import ContentProperties, ObjectStore, StorageConfigurationError, WriteOptions
 
 _HERE = Path(__file__).resolve().parent
 _SDK_SRC = _HERE / "sdk_src"
@@ -320,17 +320,9 @@ class HostedSdkArtifactStorage:
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket = self._settings.s3_bucket or ""
 
-    @asynccontextmanager
-    async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
-            yield client
+    def _get_store(self) -> ObjectStore:
+        return object_store(self._settings)
 
     @staticmethod
     def _key(fingerprint: str) -> str:
@@ -338,24 +330,22 @@ class HostedSdkArtifactStorage:
 
     async def publish(self, artifact: HostedSdkArtifact) -> None:
         """Write the exact immutable bytes before any replica advertises them."""
-        if not self._bucket:
-            raise RuntimeError("Hosted App SDK requires configured shared object storage")
-        async with self._get_client() as client:
-            await client.put_object(
-                Bucket=self._bucket,
-                Key=self._key(artifact.fingerprint),
-                Body=artifact.content,
-                ContentType="application/javascript; charset=utf-8",
-            )
+        try:
+            store = self._get_store()
+        except StorageConfigurationError as error:
+            raise RuntimeError("Hosted App SDK requires configured shared object storage") from error
+        async with store:
+            await store.write(self._key(artifact.fingerprint), artifact.content, options=WriteOptions(
+                properties=ContentProperties(content_type="application/javascript; charset=utf-8"),
+            ))
 
     async def read(self, fingerprint: str) -> bytes:
         """Return only bytes whose content hash exactly matches the requested key."""
-        try:
-            async with self._get_client() as client:
-                response = await client.get_object(Bucket=self._bucket, Key=self._key(fingerprint))
-                content = await response["Body"].read()
-        except S3NoSuchKey as exc:
-            raise FileNotFoundError(f"Hosted App SDK artifact not found: {fingerprint}") from exc
+        async with self._get_store() as store:
+            async with optional_read(store, self._key(fingerprint)) as read:
+                if read is None:
+                    raise FileNotFoundError(f"Hosted App SDK artifact not found: {fingerprint}")
+                content = await read.body.read()
         if hashlib.sha256(content).hexdigest() != fingerprint:
             raise ValueError("Hosted App SDK artifact integrity check failed")
         return content

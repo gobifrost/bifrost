@@ -159,7 +159,7 @@ async def test_external_admission_binds_only_the_first_process(db, capacity):
         ) is None
     assert await claims.admit_external_worker(
         worker_id, resource_uid=uid, launcher_id=launcher_id, version="test-worker", hostname="physical-worker",
-    ) == 0
+    ) == worker_id
     assert await claims.admit_external_worker(
         worker_id, resource_uid=uid, launcher_id=uuid4(), version="test-worker", hostname="replacement",
     ) is None
@@ -306,7 +306,7 @@ async def test_lost_provider_resource_fences_its_running_work_before_cleanup(db,
 async def test_managed_provider_forms_share_the_worker_ceiling(db, capacity):
     async with db.context() as session:
         session.add_all([
-            ExecutionWorker(form=form, state="draining", slots=0, memory_limit_bytes=2 * GIB)
+            ExecutionWorker(form=form, state="draining", memory_limit_bytes=2 * GIB)
             for form in ("job", "external")
         ])
     await _accept_pool_run()
@@ -316,13 +316,13 @@ async def test_managed_provider_forms_share_the_worker_ceiling(db, capacity):
 async def test_external_workers_preserve_the_shared_warm_minimum(db, capacity):
     await _store_policy(db.sessions, replace(capacity.policy, warm_workers=1))
     async with db.context() as session:
-        first = ExecutionWorker(form="external", state="ready", slots=0)
+        first = ExecutionWorker(form="external", state="ready")
         session.add(first)
         await session.flush()
         first_id = first.id
     assert not await claims.begin_idle_drain(first_id)
     async with db.context() as session:
-        session.add(ExecutionWorker(form="external", state="ready", slots=0))
+        session.add(ExecutionWorker(form="external", state="ready"))
     assert await claims.begin_idle_drain(first_id)
 
 
@@ -432,3 +432,39 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.state == "lost"
         assert worker.capacity_resource_deleted_at is not None
+
+
+async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db, capacity):
+    from src.services import work_dispatch
+    from tests.unit.services.worker_pool.test_worker_pool import MIB, _claim, _report_budget, _set_request
+
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"memory_limit_bytes": GIB})
+    capacity.pool.profile = capacity.provider.profile
+    policy = replace(capacity.policy, worker_memory_mib=1024, largest_worker_mib=1024)
+    await _store_policy(db.sessions, policy)
+    run_id = await _accept_pool_run()
+    await _set_request(db.sessions, run_id, 128 * MIB)
+    other = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
+    results = await asyncio.gather(
+        capacity.pool.launch_for_demand(policy), other.launch_for_demand(policy),
+    )
+    assert sorted(len(ids) for ids in results) == [0, 1]
+    worker_id = next(ids[0] for ids in results if ids)
+    await capacity.pool.reconcile_worker(worker_id, policy)
+    assert len(capacity.provider.starts) == 1
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.memory_limit_bytes == GIB
+        assert worker.reserved_for_dispatch_id is None
+        assert await work_dispatch.largest_budget(session) is None
+    assert await _claim(worker_id) is None
+    uid = capacity.provider.resources[str(worker_id)]["resource_uid"]
+    assert await claims.admit_external_worker(
+        worker_id, resource_uid=uid, launcher_id=uuid4(),
+        version=capacity.provider.profile.worker_version, hostname="cold-provider-worker",
+    ) is not None
+    await _report_budget(worker_id, 512 * MIB)
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        assert await work_dispatch.largest_budget(session) == 512 * MIB
+    assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None

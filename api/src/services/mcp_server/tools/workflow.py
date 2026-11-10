@@ -157,14 +157,19 @@ async def bifrost_workflow_register(
     organization_id: str | None = None,
     access_level: str | None = None,
     role_ids: list[str] | None = None,
+    is_global: bool = False,
 ) -> ToolResult:
     """Register a decorated Python function as a workflow — thin wrapper over
-    ``POST /api/workflows/register`` (platform admin only).
+    ``POST /api/workflows/register`` under the caller's workflow permissions.
 
     Takes a file path and function name; the REST endpoint validates the
     function has a ``@workflow``/``@tool``/``@data_provider``/``@service``
     decorator and registers it. ``organization_id`` accepts a UUID or org
-    name (omit for global scope). ``role_ids`` accept UUIDs or role names.
+    name. Omit it to preserve an inactive workflow's organization; new
+    registrations default to the caller's runtime or home organization.
+    Set ``is_global=True`` to explicitly target global scope. A null
+    ``organization_id`` alone is treated as omission. ``role_ids`` accept
+    UUIDs or role names.
     """
     if not path:
         return error_result("path is required")
@@ -176,11 +181,13 @@ async def bifrost_workflow_register(
     body: dict[str, Any] = {"path": path, "function_name": function_name}
     try:
         async with rest_client(context) as http:
+            from bifrost.org_target import resolve_org_target
             from bifrost.refs import RefResolver
 
             resolver = RefResolver(http)
-            if organization_id:
-                body["organization_id"] = await resolver.resolve("org", organization_id)
+            target = await resolve_org_target(organization_id, is_global, resolver)
+            if target.is_set:
+                body["organization_id"] = target.organization_id
             if access_level is not None:
                 body["access_level"] = access_level
             if role_ids:
@@ -466,7 +473,7 @@ TOOLS = [
     ("bifrost_workflow_list", "List Workflows", "List workflows registered in Bifrost (platform admin only)."),
     ("bifrost_workflow_validate", "Validate Workflow", "Validate a workflow Python file for syntax and decorator issues."),
     ("bifrost_workflow_get", "Get Workflow", "Get detailed metadata for a specific workflow by ID, name, or path::func (platform admin only)."),
-    ("bifrost_workflow_register", "Register Workflow", "Register a decorated Python function as a workflow. Takes a file path, function name, and optional organization_id."),
+    ("bifrost_workflow_register", "Register Workflow", "Register a decorated Python function as a workflow. Omit organization_id to preserve an inactive workflow's organization; set is_global=true for an explicit global target."),
     ("bifrost_workflow_update", "Update Workflow", "Update an existing workflow by UUID or name (organization, access level, description, etc.)."),
     ("bifrost_workflow_delete", "Delete Workflow", "Delete a workflow; returns 409 with deactivation details if it has history."),
     ("bifrost_workflow_role_grant", "Grant Workflow Role", "Grant a role access to a workflow."),

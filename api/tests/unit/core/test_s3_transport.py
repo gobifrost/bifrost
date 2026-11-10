@@ -659,10 +659,10 @@ async def test_complete_multipart_upload_sends_destination_guard() -> None:
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen.append(request)
-        return httpx.Response(200, content=b"<CompleteMultipartUploadResult/>", request=request)
+        return httpx.Response(200, content=b'<CompleteMultipartUploadResult><ETag>"committed"</ETag></CompleteMultipartUploadResult>', request=request)
 
     client = transport_for(httpx.MockTransport(handler))
-    await client.complete_multipart_upload(
+    result = await client.complete_multipart_upload(
         Bucket="bucket",
         Key="destination",
         UploadId="upload",
@@ -671,6 +671,7 @@ async def test_complete_multipart_upload_sends_destination_guard() -> None:
     )
 
     assert seen[0].headers["if-none-match"] == "*"
+    assert result["ETag"] == '"committed"'
     await client.aclose()
 
 

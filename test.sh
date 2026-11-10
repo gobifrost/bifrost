@@ -125,6 +125,11 @@ require_stack_up() {
 }
 
 reset_state() {
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ] && \
+        [ "${BIFROST_TEST_AZURE_BLOB_RESET:-0}" != "1" ]; then
+        echo "ERROR: Blob tests clear the configured container. Select a disposable target and set BIFROST_TEST_AZURE_BLOB_RESET=1." >&2
+        return 1
+    fi
     echo "Resetting state..."
 
     # Reload scheduler-fixtures too: its source is bind-mounted but its simple
@@ -168,6 +173,12 @@ for checkout in Path("/tmp/bifrost/solution-repo-fixtures/git-checkouts").iterdi
     docker compose -f "$COMPOSE_FILE" exec -T redis redis-cli FLUSHDB > /dev/null
     docker compose -f "$COMPOSE_FILE" rm -sf seaweedfs > /dev/null
     docker compose -f "$COMPOSE_FILE" up -d seaweedfs > /dev/null
+
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ]; then
+        docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps \
+            -e BIFROST_TEST_AZURE_BLOB_RESET=1 \
+            test-runner python scripts/reset_test_blob_storage.py
+    fi
 
     clear_browser_auth_state
 
@@ -270,6 +281,37 @@ stack_up() {
 
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
+
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ] && \
+        [ "${BIFROST_TEST_AZURITE:-0}" = "1" ]; then
+        echo "Creating disposable Azurite container..."
+        docker compose -f "$COMPOSE_FILE" --profile azure up -d azurite
+        docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner python -c '
+import os, socket, time
+from azure.core.credentials import AzureNamedKeyCredential
+from azure.core.exceptions import ResourceExistsError
+from azure.storage.blob import BlobServiceClient
+from urllib.parse import urlsplit
+url = os.environ["BIFROST_AZURE_BLOB_ACCOUNT_URL"]
+host, port = urlsplit(url).hostname, urlsplit(url).port or 10000
+deadline = time.time() + 60
+while True:
+    try:
+        socket.create_connection((host, port), timeout=2).close()
+        break
+    except OSError:
+        if time.time() > deadline:
+            raise
+        time.sleep(1)
+account = os.environ.get("BIFROST_AZURE_BLOB_ACCOUNT_NAME") or host.split(".", 1)[0]
+client = BlobServiceClient(url, credential=AzureNamedKeyCredential(
+    account, os.environ["BIFROST_AZURE_BLOB_ACCOUNT_KEY"]))
+try:
+    client.create_container(os.environ["BIFROST_AZURE_BLOB_CONTAINER"])
+except ResourceExistsError:
+    pass
+'
+    fi
 
     echo "Starting API + Worker + Scheduler..."
     docker compose -f "$COMPOSE_FILE" --profile e2e up -d --no-build

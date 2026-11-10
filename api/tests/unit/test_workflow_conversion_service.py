@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 from uuid import UUID, uuid4
 from dataclasses import replace
 import hashlib
@@ -18,6 +18,7 @@ from shared.models import (
 from src.jobs.platform.base import PlatformJobFailure
 from src.models.contracts.workflow_permissions import WorkflowPermissionMode
 from src.core.principal import UserPrincipal
+from src.core.storage.contracts import StorageError
 from src.services.authorization.context import AuthorizationContext
 from src.services.authorization.enforce import Caller
 from shared import workflow_conversions as conversion
@@ -621,15 +622,63 @@ async def test_report_distinguishes_attempted_route_candidates_from_confirmed_ch
     assert report["observed_permissions"] == (["configs.read"] if confirmed else [])
 
 
-@pytest.mark.parametrize("code,status,missing", [
-    ("NoSuchKey", 404, True),
-    ("AccessDenied", 403, False),
-    ("InternalError", 500, False),
+@pytest.mark.parametrize("kind,missing", [
+    ("not_found", True),
+    ("namespace_not_found", False),
+    ("permission_denied", False),
+    ("unavailable", False),
+    ("backend_error", False),
 ])
-def test_storage_failure_classification_preserves_real_errors(code, status, missing):
-    from src.core.s3_transport import S3Error
+def test_storage_failure_classification_preserves_real_errors(kind, missing):
+    assert conversion._is_missing_source_error(StorageError(kind, provider_code="fixture")) is missing
 
-    assert conversion._is_missing_source_error(S3Error(code, status)) is missing
+
+async def test_analysis_records_missing_source_and_continues_to_the_next_workflow(monkeypatch):
+    missing, available = _workflow(), _workflow()
+    missing.created_at = available.created_at = datetime(2026, 10, 18, tzinfo=UTC)
+    batch = Mock()
+    batch.scalars.return_value = [missing.id, available.id]
+    empty = Mock()
+    empty.scalars.return_value = []
+    no_report = Mock()
+    no_report.scalar_one_or_none.return_value = None
+    db = SimpleNamespace(
+        execute=AsyncMock(side_effect=[batch, no_report, no_report, empty]),
+        get=AsyncMock(side_effect=[missing, available]),
+        add=Mock(), commit=AsyncMock(),
+    )
+
+    @asynccontextmanager
+    async def database():
+        yield db
+
+    monkeypatch.setattr(conversion, "get_db_context", database)
+    monkeypatch.setattr(conversion, "read_runtime_modules", AsyncMock())
+    monkeypatch.setattr(conversion, "_require_current_conversion_admin", AsyncMock())
+    monkeypatch.setattr(conversion, "_fenced_job", AsyncMock())
+    monkeypatch.setattr(conversion, "_source_for_workflow", AsyncMock(side_effect=[
+        StorageError("not_found", provider_code="NoSuchKey"), object(),
+    ]))
+    monkeypatch.setattr(conversion, "_blocked_report_for_source", AsyncMock(return_value={
+        "source_fingerprint": "a" * 64, "status": "blocked",
+    }))
+    monkeypatch.setattr(conversion, "_report_for_workflow", AsyncMock(return_value={
+        "source_fingerprint": "b" * 64, "status": "ready",
+    }))
+    context = SimpleNamespace(
+        job_id=uuid4(), checkpoint={"total": 2, "completed": 0},
+        save_checkpoint=AsyncMock(), report=AsyncMock(),
+    )
+    payload = SimpleNamespace(
+        workflow_ids=[missing.id, available.id], scope="all", platform_cutover=False,
+    )
+
+    result = await conversion.run_analysis(context, payload)
+
+    assert result["completed"] == 2
+    assert [(call.args[0].workflow_id, call.args[0].status) for call in db.add.call_args_list] == [
+        (missing.id, "blocked"), (available.id, "ready"),
+    ]
 
 
 def test_unknown_exception_named_like_a_missing_key_is_not_storage_evidence():

@@ -1,5 +1,8 @@
 import { getErrorMessage } from "@/lib/api-error";
 import { GitHubTokenField } from "./GitHubTokenField";
+import type { GitAppSetup } from "@/services/githubGitApp";
+import { GitHubAppSetup } from "./GitHubAppSetup";
+import { SolutionGitSources } from "./SolutionGitSources";
 import { GitHubResourceSelect } from "./GitHubResourceSelect";
 import { GitHubCreateRepositoryDialog } from "./GitHubCreateRepositoryDialog";
 import { GitHubDisconnectDialog } from "./GitHubDisconnectDialog";
@@ -55,6 +58,18 @@ export function GitHub() {
 	>({});
 	const [confirmDestructive, setConfirmDestructive] = useState(false);
 	const [connectionJobId, setConnectionJobId] = useState<string | null>(null);
+	const [appSetupId, setAppSetupId] = useState<string | null>(null);
+	const [appPurpose, setAppPurpose] = useState<"workspace" | "solution">(
+		"workspace",
+	);
+	const [resumedAppSetup, setResumedAppSetup] = useState<GitAppSetup>();
+	function resumeAppSetup(
+		purpose: "workspace" | "solution",
+		setup: GitAppSetup,
+	) {
+		setResumedAppSetup(setup);
+		setAppPurpose(purpose);
+	}
 
 	// Form state
 	const [token, setToken] = useState("");
@@ -191,6 +206,7 @@ export function GitHub() {
 	const handleRepoSelection = async (
 		repoFullName: string,
 		preferredBranch?: string,
+		setupId: string | null = appSetupId,
 	) => {
 		const request = ++branchRequest.current;
 		setBranchError(false);
@@ -204,7 +220,10 @@ export function GitHub() {
 
 		setLoadingBranches(true);
 		try {
-			const branchList = await listGitHubBranches(repoFullName);
+			const branchList = await listGitHubBranches(
+				repoFullName,
+				setupId ?? undefined,
+			);
 			if (request !== branchRequest.current) return;
 			setBranches(branchList);
 
@@ -274,7 +293,7 @@ export function GitHub() {
 	const handleConfigure = async () => {
 		if (saving || testingToken || loadingBranches || branchError) return;
 		// Token must be saved to configure
-		if (!config?.token_saved && !savedToken) {
+		if (!config?.token_saved && !savedToken && !appSetupId) {
 			toast.error("Please validate your token first");
 			return;
 		}
@@ -290,6 +309,7 @@ export function GitHub() {
 			const preview = await previewGitHubConnect({
 				repository_url: selectedRepo,
 				branch: selectedBranch,
+				...(appSetupId ? { app_setup_id: appSetupId } : {}),
 			});
 			setConnectionPreview(preview);
 			setConnectionStrategy("");
@@ -341,6 +361,7 @@ export function GitHub() {
 		try {
 			const operation = await enqueueGitHubConnect({
 				preview_token: connectionPreview.token,
+				...(appSetupId ? { app_setup_id: appSetupId } : {}),
 				strategy: connectionStrategy,
 				decisions:
 					connectionStrategy === "reconcile" ? conflictDecisions : {},
@@ -430,7 +451,31 @@ export function GitHub() {
 	return (
 		<div className="space-y-6">
 			{readError}
-			<Card>
+			<div className="flex gap-2" aria-label="GitHub Connection Purpose">
+				<Button
+					variant={appPurpose === "workspace" ? "default" : "outline"}
+					onClick={() => setAppPurpose("workspace")}
+				>
+					Workspace Sync
+				</Button>
+				<Button
+					variant={appPurpose === "solution" ? "default" : "outline"}
+					onClick={() => setAppPurpose("solution")}
+				>
+					Solution Repositories
+				</Button>
+			</div>
+			{appPurpose === "solution" && (
+				<SolutionGitSources
+					onPurposeDetected={resumeAppSetup}
+					callbackSetup={
+						resumedAppSetup?.purpose === "solution"
+							? resumedAppSetup
+							: undefined
+					}
+				/>
+			)}
+			<Card className={appPurpose === "solution" ? "hidden" : undefined}>
 				<CardHeader>
 					<div className="flex items-center gap-2">
 						<Github className="h-5 w-5" />
@@ -448,6 +493,44 @@ export function GitHub() {
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6">
+					{appPurpose === "workspace" && (
+						<GitHubAppSetup
+							onPurposeDetected={resumeAppSetup}
+							initialSetup={
+								resumedAppSetup?.purpose === "workspace"
+									? resumedAppSetup
+									: undefined
+							}
+							connectedWithApp={
+								config?.auth_kind === "app" &&
+								!!config.configured
+							}
+							onMigrated={() => {
+								setAppSetupId(null);
+								void refetchConfig();
+							}}
+							onReady={(setupId, repository) => {
+								setAppSetupId(setupId);
+								setRepositories([
+									{
+										name: repository.full_name.split(
+											"/",
+										)[1],
+										full_name: repository.full_name,
+										description: null,
+										url: `https://github.com/${repository.full_name}`,
+										private: repository.private,
+									},
+								]);
+								setTokenValid(true);
+								void handleRepoSelection(
+									repository.full_name,
+									repository.default_branch,
+									setupId,
+								);
+							}}
+						/>
+					)}
 					{/* Current Status */}
 					{config?.configured ? (
 						<GitHubConnectionSummary
@@ -461,22 +544,24 @@ export function GitHub() {
 						/>
 					) : (
 						<>
-							<GitHubTokenField
-								value={token}
-								saved={!!config?.token_saved}
-								valid={tokenValid}
-								error={tokenError}
-								pending={testingToken}
-								disabled={saving}
-								onChange={(value) => {
-									setToken(value);
-									setTokenValid(null);
-									setTokenError(null);
-								}}
-								onValidate={() => {
-									void handleTokenValidation();
-								}}
-							/>
+							{!appSetupId && (
+								<GitHubTokenField
+									value={token}
+									saved={!!config?.token_saved}
+									valid={tokenValid}
+									error={tokenError}
+									pending={testingToken}
+									disabled={saving}
+									onChange={(value) => {
+										setToken(value);
+										setTokenValid(null);
+										setTokenError(null);
+									}}
+									onValidate={() => {
+										void handleTokenValidation();
+									}}
+								/>
+							)}
 
 							{/* Repository Selection - always show if token is valid or saved */}
 							{(tokenValid || config?.token_saved) && (
@@ -485,19 +570,22 @@ export function GitHub() {
 										<Label htmlFor="repository">
 											Repository
 										</Label>
-										<Button
-											variant="ghost"
-											size="sm"
-											className="min-h-11"
-											disabled={saving}
-											onClick={() => {
-												createRepoMutation.reset();
-												setShowCreateRepo(true);
-											}}
-										>
-											<Plus className="h-4 w-4 mr-1" />
-											Create New
-										</Button>
+										{!appSetupId &&
+											config?.auth_kind !== "app" && (
+												<Button
+													variant="ghost"
+													size="sm"
+													className="min-h-11"
+													disabled={saving}
+													onClick={() => {
+														createRepoMutation.reset();
+														setShowCreateRepo(true);
+													}}
+												>
+													<Plus className="h-4 w-4 mr-1" />
+													Create New
+												</Button>
+											)}
 									</div>
 									<GitHubResourceSelect
 										id="repository"
@@ -881,9 +969,11 @@ export function GitHub() {
 										loadingBranches ||
 										branchError ||
 										!selectedRepo ||
-										(!config?.token_saved &&
+										(!appSetupId &&
+											!config?.token_saved &&
 											!token.trim()) ||
-										(!config?.token_saved &&
+										(!appSetupId &&
+											!config?.token_saved &&
 											tokenValid !== true)
 									}
 								>

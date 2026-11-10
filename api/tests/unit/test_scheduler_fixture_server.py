@@ -67,3 +67,18 @@ def test_chat_completion_stream_contract_is_openai_compatible_sse() -> None:
         "completion_tokens": 1,
         "total_tokens": 2,
     }
+
+
+def test_missing_usage_model_omits_usage_only_for_its_own_reply() -> None:
+    assert "usage" not in chat_completion_payload({"model": "fixture-missing-usage"})
+    assert chat_completion_payload({"model": "fixture-chat"})["usage"] == {
+        "prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2,
+    }
+
+
+def test_missing_usage_model_omits_usage_from_stream_chunks() -> None:
+    events = chat_completion_stream_events({"model": "fixture-missing-usage", "stream": True})
+    chunks = [event for event in events if isinstance(event, dict)]
+    assert chunks
+    assert all("usage" not in chunk for chunk in chunks)
+    assert all(ChatCompletionChunk.model_validate(chunk).usage is None for chunk in chunks)

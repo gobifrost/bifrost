@@ -16,6 +16,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
+from src.core.storage import storage_configured
 from src.services.file_index_service import FileIndexService
 from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE, serialize_manifest_dir
 from src.services.legacy_entity_files import (
@@ -40,14 +41,14 @@ class RepoSyncWriter:
         self._file_index = FileIndexService(db, RepoStorage())
 
     @property
-    def _s3_available(self) -> bool:
-        return self._settings.s3_configured
+    def _storage_available(self) -> bool:
+        return storage_configured(self._settings)
 
     async def delete_legacy_entity_file(
         self, entity_type: str, entity_id: UUID | str
     ) -> None:
         """Delete the retired companion file for one form or agent."""
-        if not self._s3_available:
+        if not self._storage_available:
             return
         directory = f"{entity_type}s"
         suffix = LEGACY_ENTITY_SUFFIXES.get(directory)
@@ -58,7 +59,7 @@ class RepoSyncWriter:
 
     async def regenerate_manifest(self) -> None:
         """Generate manifest from DB and write split files to _repo/.bifrost/."""
-        if not self._s3_available:
+        if not self._storage_available:
             return
         manifest = await generate_manifest(self.db)
         files = serialize_manifest_dir(manifest)

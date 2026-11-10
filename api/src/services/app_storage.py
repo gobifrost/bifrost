@@ -1,5 +1,5 @@
 """
-App Storage Service — S3 operations scoped to _apps/ prefix.
+App Storage Service — Object storage scoped to _apps/ prefix.
 
 Manages the app serving store:
   _apps/{app_id}/preview/   ← draft/editor files
@@ -9,8 +9,8 @@ Data flow:
 1. Git sync/import: copy from _repo/{app_path}/ to _apps/{app_id}/preview/
 2. Editor write: write to _apps/{app_id}/preview/
 3. Publish: copy preview → live
-4. Serve draft: read from preview (Redis cache → S3 fallback)
-5. Serve live: read from live (Redis cache → S3 fallback)
+4. Serve draft: read from preview (Redis cache → object storage fallback)
+5. Serve live: read from live (Redis cache → object storage fallback)
 """
 
 from __future__ import annotations
@@ -18,42 +18,33 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from contextlib import asynccontextmanager
 from collections.abc import Awaitable, Callable, Iterable
 from typing import Any, Literal
 
 from src.config import Settings, get_settings
 from src.core.log_safety import log_safe
-from src.core.s3_transport import S3NoSuchKey, S3Transport
+from src.core.storage import object_pages, object_store, optional_read
+from src.core.storage.contracts import ObjectStore
 
 logger = logging.getLogger(__name__)
 
 APPS_PREFIX = "_apps/"
 PUBLISH_COPY_CONCURRENCY = 16
-S3_DELETE_BATCH_SIZE = 1000
 
 AppMode = Literal["preview", "live"]
 
 
 class AppStorageService:
-    """S3 storage scoped to _apps/ prefix for app serving."""
+    """Object storage scoped to _apps/ prefix for app serving."""
 
     def __init__(self, settings: Settings | None = None):
         self._settings = settings or get_settings()
-        self._bucket: str = self._settings.s3_bucket or ""
 
-    @asynccontextmanager
-    async def _get_client(self):
-        async with S3Transport(
-            endpoint_url=self._settings.s3_endpoint_url,
-            access_key_id=self._settings.s3_access_key,
-            secret_access_key=self._settings.s3_secret_key,
-            region=self._settings.s3_region,
-        ) as client:
-            yield client
+    def _get_store(self) -> ObjectStore:
+        return object_store(self._settings)
 
     def _key(self, app_id: str, mode: AppMode, relative_path: str = "") -> str:
-        """Build S3 key: _apps/{app_id}/{mode}/{relative_path}"""
+        """Build object key: _apps/{app_id}/{mode}/{relative_path}"""
         base = f"{APPS_PREFIX}{app_id}/{mode}/"
         if relative_path:
             return f"{base}{relative_path.lstrip('/')}"
@@ -81,7 +72,7 @@ class AppStorageService:
         source_prefix = f"{REPO_PREFIX}{source_dir_in_repo.rstrip('/')}/"
         preview_prefix = self._key(app_id, "preview")
 
-        async with self._get_client() as client:
+        async with self._get_store() as client:
             source_entries = await self._list_keys_with_sizes(client, source_prefix)
             source_keys = list(source_entries)
             validate_app_source_metadata({
@@ -109,20 +100,13 @@ class AppStorageService:
                 dest_key = f"{preview_prefix}{rel_path}"
 
                 # Copy from source to preview
-                await client.copy_object(
-                    Bucket=self._bucket,
-                    CopySource={"Bucket": self._bucket, "Key": source_key},
-                    Key=dest_key,
-                )
+                await client.copy(await client.stat(source_key), dest_key)
                 synced += 1
 
             # Remove stale preview files
             stale = existing_relative - new_relative
             for rel_path in stale:
-                await client.delete_object(
-                    Bucket=self._bucket,
-                    Key=f"{preview_prefix}{rel_path}",
-                )
+                await client.delete(f"{preview_prefix}{rel_path}")
 
             if stale:
                 logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
@@ -161,7 +145,7 @@ class AppStorageService:
         source_prefix = f"{REPO_PREFIX}{source_dir_in_repo.rstrip('/')}/"
         preview_prefix = self._key(app_id, "preview")
 
-        async with self._get_client() as client:
+        async with self._get_store() as client:
             # List source metadata before any object body is read. This keeps a
             # Git preview from turning an arbitrary source prefix into an
             # unbounded API allocation.
@@ -188,8 +172,8 @@ class AppStorageService:
                 rel_path = source_key[len(source_prefix):]
                 if not rel_path:
                     continue
-                response = await client.get_object(Bucket=self._bucket, Key=source_key)
-                content = await response["Body"].read()
+                async with client.open_read(source_key) as read:
+                    content = await read.body.read()
                 validate_app_source_write(rel_path, content)
                 source_files.append((rel_path, content))
 
@@ -244,20 +228,13 @@ class AppStorageService:
                 else:
                     write_content = content
 
-                await client.put_object(
-                    Bucket=self._bucket,
-                    Key=dest_key,
-                    Body=write_content,
-                )
+                await client.write(dest_key, write_content)
                 synced += 1
 
             # Remove stale preview files
             stale = existing_relative - new_relative
             for rel_path in stale:
-                await client.delete_object(
-                    Bucket=self._bucket,
-                    Key=f"{preview_prefix}{rel_path}",
-                )
+                await client.delete(f"{preview_prefix}{rel_path}")
 
             if stale:
                 logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
@@ -279,22 +256,15 @@ class AppStorageService:
     ) -> None:
         """Write a single file to _apps/{app_id}/preview/ and bust render cache."""
         key = self._key(app_id, "preview", relative_path)
-        async with self._get_client() as client:
-            await client.put_object(
-                Bucket=self._bucket,
-                Key=key,
-                Body=content,
-            )
+        async with self._get_store() as client:
+            await client.write(key, content)
         await self.invalidate_render_cache(app_id)
 
     async def delete_preview_file(self, app_id: str, relative_path: str) -> None:
         """Delete a single file from _apps/{app_id}/preview/ and bust render cache."""
         key = self._key(app_id, "preview", relative_path)
-        async with self._get_client() as client:
-            try:
-                await client.delete_object(Bucket=self._bucket, Key=key)
-            except Exception:
-                pass  # Idempotent
+        async with self._get_store() as client:
+            await client.delete(key)
         await self.invalidate_render_cache(app_id)
 
     async def read_file(
@@ -306,12 +276,11 @@ class AppStorageService:
             FileNotFoundError: If the file does not exist.
         """
         key = self._key(app_id, mode, relative_path)
-        async with self._get_client() as client:
-            try:
-                response = await client.get_object(Bucket=self._bucket, Key=key)
-                return await response["Body"].read()
-            except S3NoSuchKey:
-                raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
+        async with self._get_store() as client:
+            async with optional_read(client, key) as read:
+                if read is None:
+                    raise FileNotFoundError(f"App file not found: {relative_path} (mode={mode})")
+                return await read.body.read()
 
     async def list_files(self, app_id: str, mode: AppMode) -> list[str]:
         """List relative file paths in _apps/{app_id}/{mode}/.
@@ -320,14 +289,14 @@ class AppStorageService:
             List of relative paths (e.g. ["pages/index.tsx", "components/Button.tsx"]).
         """
         prefix = self._key(app_id, mode)
-        async with self._get_client() as client:
+        async with self._get_store() as client:
             keys = await self._list_keys(client, prefix)
             return [k[len(prefix):] for k in keys if k[len(prefix):]]
 
     async def list_files_with_metadata(self, app_id: str, mode: AppMode) -> dict[str, int]:
         """List App files with byte sizes before a caller reads their bodies."""
         prefix = self._key(app_id, mode)
-        async with self._get_client() as client:
+        async with self._get_store() as client:
             entries = await self._list_keys_with_sizes(client, prefix)
         return {
             key[len(prefix):]: size
@@ -351,7 +320,7 @@ class AppStorageService:
         the preview prefix; copying all of them made publish time grow without
         bound and could promote stale artifacts. Bundle outputs are copied with
         bounded concurrency, then ``manifest.json`` is copied last as the live
-        pointer. Stale live and preview objects are removed in S3 batches.
+        pointer. Stale live and preview objects are removed in provider batches.
 
         Returns:
             Number of files published.
@@ -359,7 +328,7 @@ class AppStorageService:
         preview_prefix = self._key(app_id, "preview")
         live_prefix = self._key(app_id, "live")
 
-        async with self._get_client() as client:
+        async with self._get_store() as client:
             preview_keys = await self._list_keys(client, preview_prefix)
             preview_relative = {
                 key[len(preview_prefix):]
@@ -370,11 +339,9 @@ class AppStorageService:
                 logger.warning(f"No preview files to publish for app {log_safe(app_id)}")
                 return 0
 
-            manifest_response = await client.get_object(
-                Bucket=self._bucket,
-                Key=f"{preview_prefix}manifest.json",
-            )
-            manifest_bytes = await manifest_response["Body"].read()
+            async with client.open_read(f"{preview_prefix}manifest.json") as read:
+                manifest_bytes = await read.body.read()
+                manifest_info = read.info
             artifacts = self._bundle_artifacts(manifest_bytes)
             missing = artifacts - preview_relative
             if missing:
@@ -394,13 +361,8 @@ class AppStorageService:
 
             async def _copy_output(rel_path: str) -> None:
                 async with semaphore:
-                    await client.copy_object(
-                        Bucket=self._bucket,
-                        CopySource={
-                            "Bucket": self._bucket,
-                            "Key": f"{preview_prefix}{rel_path}",
-                        },
-                        Key=f"{live_prefix}{rel_path}",
+                    await client.copy(
+                        await client.stat(f"{preview_prefix}{rel_path}"), f"{live_prefix}{rel_path}",
                     )
 
             tasks = [
@@ -421,12 +383,7 @@ class AppStorageService:
 
             # The manifest is the live bundle pointer, so publish it only after
             # every referenced output is durable.
-            rel_path = "manifest.json"
-            await client.copy_object(
-                Bucket=self._bucket,
-                CopySource={"Bucket": self._bucket, "Key": f"{preview_prefix}{rel_path}"},
-                Key=f"{live_prefix}{rel_path}",
-            )
+            await client.copy(manifest_info, f"{live_prefix}manifest.json")
             completed += 1
             if progress_callback:
                 await progress_callback(completed, total)
@@ -490,20 +447,12 @@ class AppStorageService:
         artifacts.add("manifest.json")
         return artifacts
 
-    async def _delete_keys(self, client: Any, keys: Iterable[str]) -> None:
-        """Delete S3 objects in batches instead of one request per object."""
-        key_list = list(keys)
-        for start in range(0, len(key_list), S3_DELETE_BATCH_SIZE):
-            batch = key_list[start : start + S3_DELETE_BATCH_SIZE]
-            if not batch:
-                continue
-            await client.delete_objects(
-                Bucket=self._bucket,
-                Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
-            )
+    async def _delete_keys(self, client: ObjectStore, keys: Iterable[str]) -> None:
+        """Let the provider batch cleanup without exposing native request shapes."""
+        await client.delete_many(list(keys))
 
     # -----------------------------------------------------------------
-    # Render cache (Redis → S3 fallback)
+    # Render cache (Redis → object storage fallback)
     # -----------------------------------------------------------------
 
     @staticmethod
@@ -565,47 +514,12 @@ class AppStorageService:
     # Helpers
     # -----------------------------------------------------------------
 
-    async def _list_keys(self, client, prefix: str) -> list[str]:
-        """List all S3 keys under a prefix."""
-        keys: list[str] = []
-        continuation_token = None
+    async def _list_keys(self, client: ObjectStore, prefix: str) -> list[str]:
+        return list(await self._list_keys_with_sizes(client, prefix))
 
-        while True:
-            kwargs = {"Bucket": self._bucket, "Prefix": prefix}
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-
-            response = await client.list_objects_v2(**kwargs)
-            for obj in response.get("Contents", []):
-                key = obj["Key"]
-                # Skip directory markers
-                if not key.endswith("/"):
-                    keys.append(key)
-
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
-        return keys
-
-    async def _list_keys_with_sizes(self, client, prefix: str) -> dict[str, int]:
-        """List objects under a prefix with their S3-reported byte sizes."""
-        entries: dict[str, int] = {}
-        continuation_token = None
-
-        while True:
-            kwargs = {"Bucket": self._bucket, "Prefix": prefix}
-            if continuation_token:
-                kwargs["ContinuationToken"] = continuation_token
-
-            response = await client.list_objects_v2(**kwargs)
-            for obj in response.get("Contents", []):
-                key = obj["Key"]
-                if not key.endswith("/"):
-                    entries[key] = int(obj["Size"])
-
-            if not response.get("IsTruncated"):
-                break
-            continuation_token = response.get("NextContinuationToken")
-
-        return entries
+    async def _list_keys_with_sizes(self, client: ObjectStore, prefix: str) -> dict[str, int]:
+        return {
+            item.key: item.size
+            async for page in object_pages(client, prefix)
+            for item in page.objects if not item.key.endswith("/")
+        }

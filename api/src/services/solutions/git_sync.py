@@ -254,7 +254,8 @@ async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
         # write-lock's renewal watchdog (and everything else) keeps running during
         # a slow clone — otherwise a long clone would block the loop, starve the
         # watchdog, and let the lock TTL expire mid-deploy.
-        await clone_repo_to_dir(repo_url, work_dir, ref=solution.git_ref)
+        from shared.solution_git_sources import clone_solution_repository
+        await clone_solution_repository(db, solution.git_source_id, solution.organization_id, repo_url, work_dir, solution.git_ref)
         logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
         deploy_root = resolve_repo_subpath(work_dir, solution.repo_subpath)
         if not (deploy_root / _DESCRIPTOR_FILENAME).is_file():

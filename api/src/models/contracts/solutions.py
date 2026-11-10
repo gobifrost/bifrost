@@ -90,6 +90,7 @@ class SolutionUpdate(BaseModel):
     allow_inbound_access: bool | None = None
     git_connected: bool | None = None
     git_repo_url: str | None = None
+    git_source_id: UUID | None = None
     repo_subpath: str | None = None
     git_ref: str | None = None
 
@@ -217,6 +218,7 @@ class WorkspaceBundleRepoPreviewRequest(BaseModel):
     """
 
     repo_url: str = Field(min_length=1, max_length=2048)
+    git_source_id: UUID | None = None
     git_ref: str | None = Field(default=None, max_length=256)
     repo_subpath: str | None = Field(default=None, max_length=1024)
     # Target scope for scoped definitions (absent/null = global).
@@ -268,6 +270,7 @@ class Solution(BaseModel):
     allow_inbound_access: bool = True
     git_connected: bool = False
     git_repo_url: str | None = None
+    git_source_id: UUID | None = None
     # Subfolder within the connected repo holding this install's descriptor, and
     # the git ref (branch/tag) it tracks. Both None => repo root / default branch.
     repo_subpath: str | None = None
@@ -483,6 +486,7 @@ class SolutionRepoPreviewRequest(BaseModel):
     Parse-only — no DB write, no S3, no build."""
 
     repo_url: str = Field(min_length=1, max_length=1024)
+    git_source_id: UUID | None = None
     repo_subpath: str | None = None
     git_ref: str | None = None
     # Install kind for install-from-repo, per the unified --org standard:

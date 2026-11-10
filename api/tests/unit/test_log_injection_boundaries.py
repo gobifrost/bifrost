@@ -82,7 +82,7 @@ async def test_file_ops_sanitizes_deleted_path(monkeypatch, caplog):
     service = file_ops.FileOperationsService(
         db=AsyncMock(),
         settings=SimpleNamespace(s3_bucket="test"),
-        s3_client=MagicMock(),
+        object_storage=MagicMock(),
         diagnostics=MagicMock(),
         deactivation=MagicMock(),
         file_hash_fn=lambda content: "hash",

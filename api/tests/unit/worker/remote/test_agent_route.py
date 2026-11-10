@@ -362,7 +362,7 @@ async def _seeded_run(async_session_factory, *, status: str, claimed: bool = Tru
     worker_id, run_id = uuid4(), uuid4()
     async with async_session_factory() as session:
         session.add(ExecutionWorker(
-            id=worker_id, form="static", state="ready", resource_class="standard", slots=0,
+            id=worker_id, form="static", state="ready", resource_class="standard",
         ))
         session.add(AgentRun(id=run_id, trigger_type="sdk", status=status))
         await session.flush()

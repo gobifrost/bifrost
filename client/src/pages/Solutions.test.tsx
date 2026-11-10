@@ -64,7 +64,9 @@ const mockUpdateSolution = vi.fn();
 const mockPreviewSolutionFromRepo = vi.fn();
 const mockInstallSolutionFromRepo = vi.fn();
 const mockPreviewWorkspaceBundle = vi.fn();
+const mockGetSolutionGitSources = vi.fn();
 vi.mock("@/services/solutions", () => ({
+	getSolutionGitSources: (...a: unknown[]) => mockGetSolutionGitSources(...a),
 	listSolutions: (...a: unknown[]) => mockListSolutions(...a),
 	updateSelectedSolutionAppSdks: (...a: unknown[]) =>
 		mockUpdateSelectedSolutionAppSdks(...a),
@@ -116,6 +118,10 @@ function makeSolution(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
 	mockUseAuthorization.mockReturnValue({ authorization: undefined });
 	vi.clearAllMocks();
+	// Once-only outcomes belong to one scenario, including after an early failure.
+	mockPreviewInstall.mockReset();
+	mockInstallSolution.mockReset();
+	mockGetSolutionGitSources.mockReset().mockResolvedValue({ sources: [] });
 	mockListSolutions.mockResolvedValue({ solutions: [] });
 	mockUpdateSelectedSolutionAppSdks.mockResolvedValue({
 		accepted: [],
@@ -1088,6 +1094,7 @@ describe("Solutions — install flow (CreateEditSolution)", () => {
 			expect(mockUpdateSolution).toHaveBeenCalledWith("installed-1", {
 				git_repo_url: "https://github.com/acme/solution-new-sol-abc123",
 				git_connected: true,
+				git_source_id: null,
 				repo_subpath: null,
 				git_ref: null,
 			}),
@@ -1243,7 +1250,9 @@ describe("Solutions — upgrade flow", () => {
 		await within(dialog).findByText("Organization");
 
 		// Select an org — preview must re-run against it.
-		await user.click(within(dialog).getByRole("combobox"));
+		await user.click(
+			within(dialog).getByRole("combobox", { name: "Organization scope" }),
+		);
 		await user.click(
 			await screen.findByRole("option", { name: /Acme Corp/ }),
 		);
@@ -1298,7 +1307,9 @@ describe("Solutions — upgrade flow", () => {
 		const dialog = await uploadThroughDialog(user, file);
 		await within(dialog).findByText("Organization");
 
-		await user.click(within(dialog).getByRole("combobox"));
+		await user.click(
+			within(dialog).getByRole("combobox", { name: "Organization scope" }),
+		);
 		await user.click(
 			await screen.findByRole("option", { name: /Acme Corp/ }),
 		);

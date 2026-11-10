@@ -434,3 +434,38 @@ async def test_adopt_scans_numbered_copies_whatever_mode_the_retry_uses(store, s
 
     assert (outcome.status_code, outcome.error) == (500, "recovery_ambiguous")
     assert [r.id for r in await rows_at(solution_target, "a/r.pdf")] == [row_id]
+
+
+async def test_literal_pre_refactor_quoted_marker_resumes_without_recopy(store, solution_target):
+    from src.services.file_storage.move import source_marker
+
+    row = await seed_file(store, solution_target, "a/legacy.pdf")
+    source, destination = key_for(solution_target, "a/legacy.pdf"), key_for(solution_target, "b/legacy.pdf")
+    store.objects[source].etag = '"legacy-opaque-v1"'
+    legacy = {"bifrost-move-source": source_marker(source), "bifrost-move-row": str(row),
+              "bifrost-move-etag": '"legacy-opaque-v1"'}
+    store.put(destination, store.objects[source].data, legacy)
+    result = await FileMover(store, solution_target, authorize_rename=allow_rename).move(
+        MoveRequest("a/legacy.pdf", "b/legacy.pdf"), "error")
+    assert result.status_code == 200
+    assert source not in store.objects and store.objects[destination].metadata == legacy
+    assert not any(operation == "copy" for operation, _ in store.calls)
+    assert [item.id for item in await rows_at(solution_target, "b/legacy.pdf")] == [row]
+
+
+async def test_legacy_marker_does_not_resume_a_new_source_version_with_identical_bytes(store, solution_target):
+    from src.services.file_storage.move import source_marker
+
+    row = await seed_file(store, solution_target, "a/legacy.pdf")
+    source, destination = key_for(solution_target, "a/legacy.pdf"), key_for(solution_target, "b/legacy.pdf")
+    data = store.objects[source].data
+    legacy = {"bifrost-move-source": source_marker(source), "bifrost-move-row": str(row),
+              "bifrost-move-etag": '"legacy-opaque-v1"'}
+    store.put(destination, data, legacy)
+    store.objects[source].etag = '"concurrent-writer-v2"'
+    result = await FileMover(store, solution_target, authorize_rename=allow_rename).move(
+        MoveRequest("a/legacy.pdf", "b/legacy.pdf"), "error")
+    assert (result.status_code, result.error) == (409, "file_exists")
+    assert store.objects[source].data == data and store.objects[destination].metadata == legacy
+    assert not any(operation in {"copy", "delete"} for operation, _ in store.calls)
+    assert [item.id for item in await rows_at(solution_target, "a/legacy.pdf")] == [row]

@@ -134,6 +134,10 @@ class Solution(Base):
         Boolean, default=False, server_default=text("false")
     )
     git_repo_url: Mapped[str | None] = mapped_column(String(1024), nullable=True, default=None)
+    # Instance-local App authority; never serialized into portable definitions.
+    git_source_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("system_configs.id", ondelete="NO ACTION"), nullable=True, default=None,
+    )
 
     # Subfolder within the connected repo holding this solution's
     # bifrost.solution.yaml (omni-repo: one repo, a folder per solution).

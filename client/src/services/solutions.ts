@@ -3,6 +3,29 @@ import { getErrorMessage } from "@/lib/api-error";
 import type { components } from "@/lib/v1";
 
 export type Solution = components["schemas"]["Solution"];
+export type SolutionGitSourcesResponse =
+	components["schemas"]["SolutionGitSources"];
+
+export async function getSolutionGitSources(
+	organizationId: string | null | undefined,
+): Promise<SolutionGitSourcesResponse> {
+	const { data, error } = await apiClient.GET("/api/solutions/git-sources", {
+		params: {
+			query:
+				organizationId === undefined
+					? {}
+					: { organization_id: organizationId ?? "" },
+		},
+	});
+	if (error)
+		throw new Error(
+			getErrorMessage(
+				error,
+				"Failed to load Solution repository sources",
+			),
+		);
+	return data;
+}
 export type SolutionsList = components["schemas"]["SolutionsList"];
 export type SolutionEntities = components["schemas"]["SolutionEntities"];
 export type SolutionEntitySummary =
@@ -635,13 +658,19 @@ export async function previewWorkspaceBundle(
 	const body = new FormData();
 	body.append("file", file);
 	body.append("organization_id", params.organizationId ?? "");
-	const response = await authFetch("/api/solutions/import-workspace/preview", {
-		method: "POST",
-		body,
-	});
+	const response = await authFetch(
+		"/api/solutions/import-workspace/preview",
+		{
+			method: "POST",
+			body,
+		},
+	);
 	if (!response.ok) {
 		throw new Error(
-			await parseUploadError(response, "Failed to preview workspace import"),
+			await parseUploadError(
+				response,
+				"Failed to preview workspace import",
+			),
 		);
 	}
 	return response.json();
@@ -651,26 +680,41 @@ export async function previewWorkspaceBundle(
 export async function importWorkspaceBundle(
 	request: WorkspaceBundleImportRequest,
 ): Promise<PlatformJobAccepted> {
-	const { data, error } = await apiClient.POST("/api/solutions/import-workspace", {
-		body: request,
-	});
-	if (error) throw new Error(getErrorMessage(error, "Failed to start workspace import"));
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/import-workspace",
+		{
+			body: request,
+		},
+	);
+	if (error)
+		throw new Error(
+			getErrorMessage(error, "Failed to start workspace import"),
+		);
 	return data;
 }
 
 /** Stage and classify a repository snapshot for an explicit workspace import. */
 export async function previewWorkspaceBundleFromRepo(
-	coords: { repo_url: string; git_ref?: string | null; repo_subpath?: string | null; organization_id?: string | null },
+	coords: components["schemas"]["WorkspaceBundleRepoPreviewRequest"],
 ): Promise<WorkspaceBundlePreview> {
-	const { data, error } = await apiClient.POST("/api/solutions/import-workspace/preview-repo", {
-		body: {
-			repo_url: coords.repo_url,
-			git_ref: coords.git_ref ?? null,
-			repo_subpath: coords.repo_subpath ?? null,
-			organization_id: coords.organization_id ?? null,
+	const { data, error } = await apiClient.POST(
+		"/api/solutions/import-workspace/preview-repo",
+		{
+			body: {
+				repo_url: coords.repo_url,
+				...(coords.git_source_id !== undefined
+					? { git_source_id: coords.git_source_id }
+					: {}),
+				git_ref: coords.git_ref ?? null,
+				repo_subpath: coords.repo_subpath ?? null,
+				organization_id: coords.organization_id ?? null,
+			},
 		},
-	});
-	if (error) throw new Error(getErrorMessage(error, "Failed to preview workspace import"));
+	);
+	if (error)
+		throw new Error(
+			getErrorMessage(error, "Failed to preview workspace import"),
+		);
 	return data;
 }
 

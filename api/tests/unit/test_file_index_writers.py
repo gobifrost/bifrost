@@ -4,12 +4,14 @@ These run against the test stack's real PostgreSQL + object storage, so a
 writer that touches S3 without FileIndexService shows up as a stale row.
 """
 
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete, select
 
 from src.core.database import get_db_context
+from src.core.storage.contracts import StorageError
 from src.models.orm.file_index import FileIndex, SolutionFileIndex
 from src.models.orm.solutions import Solution
 from src.services.file_index_service import FileIndexService
@@ -44,6 +46,75 @@ async def test_create_folder_marker_is_indexed(db_session):
         select(FileIndex).where(FileIndex.path == f"{folder}/.gitkeep")
     )).scalar_one()
     assert (row.content, row.updated_by) == ("", "me")
+
+
+@pytest.mark.asyncio
+async def test_create_nested_folder_marker_is_indexed(db_session):
+    from src.services.file_storage import FileStorageService
+
+    folder = f"parent-{uuid4().hex[:8]}/child"
+    await FileStorageService(db_session).create_folder(folder, updated_by="me")
+    row = (await db_session.execute(
+        select(FileIndex).where(FileIndex.path == f"{folder}/.gitkeep")
+    )).scalar_one()
+    assert (row.content, row.updated_by) == ("", "me")
+
+
+@pytest.mark.asyncio
+async def test_create_existing_folder_keeps_existing_marker_metadata(db_session):
+    from src.services.file_storage import FileStorageService
+
+    folder = f"idempotent-{uuid4().hex[:8]}"
+    storage = FileStorageService(db_session)
+    await storage.create_folder(folder, updated_by="first")
+    await storage.create_folder(folder, updated_by="second")
+
+    row = (await db_session.execute(
+        select(FileIndex).where(FileIndex.path == f"{folder}/.gitkeep")
+    )).scalar_one()
+    assert row.updated_by == "first"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("folder_suffix", ["", "/child"])
+async def test_create_folder_rejects_indexed_file_target_or_ancestor(db_session, folder_suffix):
+    from src.services.file_storage import FileStorageService
+
+    ancestor = f"indexed-{uuid4().hex[:8]}"
+    db_session.add(FileIndex(path=ancestor, content="file", content_hash="hash"))
+    await db_session.flush()
+
+    with pytest.raises(ValueError, match=ancestor):
+        await FileStorageService(db_session).create_folder(f"{ancestor}{folder_suffix}")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("folder_suffix", ["", "/child"])
+async def test_create_folder_rejects_unindexed_storage_file_target_or_ancestor(db_session, folder_suffix):
+    from src.services.file_storage import FileStorageService
+    from src.services.repo_storage import RepoStorage
+
+    ancestor = f"storage-{uuid4().hex[:8]}"
+    repo = RepoStorage()
+    await repo.write(ancestor, b"file")
+    try:
+        with pytest.raises(ValueError, match=ancestor):
+            await FileStorageService(db_session).create_folder(f"{ancestor}{folder_suffix}")
+    finally:
+        await repo.delete(ancestor)
+
+
+@pytest.mark.asyncio
+async def test_create_folder_propagates_authoritative_storage_failure(db_session, monkeypatch):
+    from src.services.file_storage import FileStorageService
+    from src.services.file_storage import folder_ops
+
+    repo = AsyncMock()
+    repo.exists.side_effect = StorageError("unavailable", provider_code="fixture")
+    monkeypatch.setattr(folder_ops, "RepoStorage", lambda _settings: repo)
+
+    with pytest.raises(StorageError, match="unavailable"):
+        await FileStorageService(db_session).create_folder(f"failure-{uuid4().hex[:8]}")
 
 
 @pytest.mark.asyncio
@@ -162,3 +233,13 @@ async def test_saving_an_app_file_that_auto_migrate_rewrites_completes_and_index
 
     indexed = await _content(db_session, path)
     assert indexed is not None and 'import { Phone } from "lucide-react";' in indexed
+
+
+@pytest.mark.parametrize("path", ["../escape.txt", "/absolute.txt", "a/../escape.txt", "a\\b.txt", "folder/"])
+async def test_shared_file_writer_rejects_unsafe_targets_before_side_effects(path):
+    from src.services.file_storage.file_ops import FileOperationsService
+
+    # Validation must run before the service touches any of its dependencies.
+    service = FileOperationsService.__new__(FileOperationsService)
+    with pytest.raises(ValueError):
+        await service.write_file(path, b"blocked")
