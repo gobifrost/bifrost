@@ -1077,3 +1077,21 @@ async def test_mcp_file_read_and_write_reject_unsafe_targets_before_storage(plat
             assert is_error_result(await operation)
         read.assert_not_awaited()
         db.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_content_reports_required_retirement_failure(platform_admin_context):
+    from src.services.mcp_server.tools import code_editor
+
+    with (
+        patch.object(code_editor.RepoStorage, "exists", AsyncMock(return_value=True)),
+        patch.object(code_editor, "get_tool_db") as db,
+        patch.object(code_editor.FileStorageService, "delete_file", AsyncMock(
+            side_effect=RuntimeError("workflow retirement failed"),
+        )),
+    ):
+        db.return_value.__aenter__.return_value = AsyncMock()
+        result = await code_editor.delete_content(platform_admin_context, "workflow.py")
+
+    assert is_error_result(result)
+    assert "workflow retirement failed" in get_result_text(result)

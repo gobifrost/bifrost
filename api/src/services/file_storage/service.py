@@ -554,12 +554,17 @@ class FileStorageService:
         with deleted Python files. Form and agent records are managed via the
         manifest, not per-file YAML.
         """
-        # Clear diagnostic notifications
-        await self._diagnostics.clear_diagnostic_notification(path)
-
-        # Delete workflows/data_providers/tools when their source file goes away
+        # Retire executable authority before optional notification cleanup.
         if path.endswith(".py"):
             await self._workflow_indexer.delete_workflows_for_file(path)
+
+        try:
+            await self._diagnostics.clear_diagnostic_notification(path)
+        except Exception as exc:
+            logger.warning(
+                "Failed to clear diagnostic notification for deleted %s: %s",
+                log_safe(path), log_safe(exc),
+            )
 
     # ========================================================================
     # Deactivation Protection (delegate to DeactivationProtectionService)
