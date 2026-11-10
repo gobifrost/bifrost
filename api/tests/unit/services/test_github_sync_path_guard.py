@@ -3,7 +3,7 @@
 from contextlib import asynccontextmanager
 from io import BytesIO
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock
 
 import pytest
 from git import Repo
@@ -35,7 +35,7 @@ def workspace(tmp_path, monkeypatch):
         ensure_storage_unchanged=AsyncMock(),
         sync_up=AsyncMock(),
     )
-    service._open_or_init = Mock(return_value=repo)
+    service._open_or_init = AsyncMock(return_value=repo)
     service._update_file_index = AsyncMock()
     service.db = AsyncMock()
     monkeypatch.setattr("src.core.module_cache.refresh_modules_from_directory", AsyncMock())

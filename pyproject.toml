@@ -89,7 +89,7 @@ dependencies = [
     # =========================================================================
     # Code Transformation
     # =========================================================================
-    "libcst",  # Concrete Syntax Tree for Python - preserves formatting when modifying code
+    "libcst>=1.9.0",  # Concrete Syntax Tree for Python - preserves formatting when modifying code
 
     # =========================================================================
     # Templating

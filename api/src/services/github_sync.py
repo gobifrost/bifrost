@@ -22,7 +22,7 @@ from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import yaml
 from git import Repo as GitRepo
@@ -149,6 +149,7 @@ class _GitConnectPreviewRecord(BaseModel):
     remote_fingerprint: str
     remote_head_sha: str | None
     items: list[GitConnectItem]
+    app_setup_id: UUID | None = None
 
 
 class ReimportResult(BaseModel):
@@ -186,9 +187,12 @@ def _git_auth_env(token: str | None) -> dict[str, str]:
         return {}
     credentials = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     return {
-        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_COUNT": "2",
         "GIT_CONFIG_KEY_0": "http.https://github.com/.extraheader",
         "GIT_CONFIG_VALUE_0": f"Authorization: Basic {credentials}",
+        "GIT_CONFIG_KEY_1": "credential.helper",
+        "GIT_CONFIG_VALUE_1": "",
+        "GIT_ASKPASS": "/bin/false",
         "GIT_TERMINAL_PROMPT": "0",
     }
 
@@ -488,12 +492,18 @@ class GitHubSyncService:
         branch: str = "main",
         settings: Settings | None = None,
         token: str | None = None,
+        token_provider=None,
+        app_setup_id: UUID | None = None,
+        app_auth: bool = False,
     ):
         self.db = db
         # A credential-free URL: it is written into .git/config. The token
         # reaches git only through _git_env.
         self.repo_url = repo_url
         self._git_env = _git_auth_env(token)
+        self._token_provider = token_provider
+        self._app_setup_id = app_setup_id
+        self._app_auth = app_auth
         self.branch = branch
         self.repo_manager = GitRepoManager(settings or get_settings())
         self._resolver = ManifestResolver(db)
@@ -502,9 +512,26 @@ class GitHubSyncService:
     def _connect_preview_key(token: str) -> str:
         return f"{_GIT_CONNECT_PREVIEW_KEY_PREFIX}{token}"
 
-    def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
+    async def _refresh_git_auth(self, repo: GitRepo | None = None) -> None:
+        if self._token_provider:
+            self._git_env = _git_auth_env(await self._token_provider())
+        if repo is not None:
+            repo.git.update_environment(**self._git_env)
+
+    def _raise_app_access_error(self, error: Exception) -> None:
+        message = str(getattr(error, "stderr", error)).lower()
+        if self._app_auth and (
+            ("repository" in message and "not found" in message)
+            or "authentication failed" in message
+            or "could not read username" in message
+            or ("permission" in message and "denied" in message)
+        ):
+            raise SyncError("GitHub App repository access was denied. Check the installation and repository permissions.") from error
+
+    async def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
         """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
         try:
+            await self._refresh_git_auth()
             repo = GitRepo.clone_from(
                 repository_url, str(destination), branch=branch, env=self._git_env,
             )
@@ -520,6 +547,7 @@ class GitHubSyncService:
                 if destination.exists():
                     shutil.rmtree(destination)
                 try:
+                    await self._refresh_git_auth()
                     fallback = GitRepo.clone_from(
                         repository_url, str(destination), env=self._git_env,
                     )
@@ -576,7 +604,7 @@ class GitHubSyncService:
             local = _connect_tree_hashes(work_dir)
             with tempfile.TemporaryDirectory(prefix="bifrost-connect-preview-") as raw_remote:
                 remote_root = Path(raw_remote) / "remote"
-                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, branch)
+                remote_repo = await self._clone_connect_remote(remote_root, self.repo_url, branch)
                 remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
                 remote_head_sha = (
                     remote_repo.head.commit.hexsha
@@ -597,6 +625,7 @@ class GitHubSyncService:
             remote_fingerprint=_connect_tree_fingerprint(remote),
             remote_head_sha=remote_head_sha,
             items=items,
+            app_setup_id=self._app_setup_id,
         )
         from src.core.cache.redis_client import get_shared_redis
 
@@ -687,7 +716,7 @@ class GitHubSyncService:
                 raise GitConnectPreviewStale("workspace changed after the connection preview")
             with tempfile.TemporaryDirectory(prefix="bifrost-connect-apply-") as raw_remote:
                 remote_root = Path(raw_remote) / "remote"
-                remote_repo = self._clone_connect_remote(remote_root, self.repo_url, record.branch)
+                remote_repo = await self._clone_connect_remote(remote_root, self.repo_url, record.branch)
                 remote = {} if remote_repo is None else _connect_tree_hashes(remote_root)
                 remote_head_sha = (
                     remote_repo.head.commit.hexsha
@@ -777,7 +806,7 @@ class GitHubSyncService:
         """
         async with self.repo_manager.checkout_readonly() as work_dir:
             if not (work_dir / ".git").exists():
-                self._clone_or_init(work_dir)
+                await self._clone_or_init(work_dir)
             return await self._run_preflight(work_dir)
 
     # -----------------------------------------------------------------
@@ -789,14 +818,16 @@ class GitHubSyncService:
     # Accept work_dir/repo so callers can share a single checkout.
     # -----------------------------------------------------------------
 
-    def _do_fetch(self, work_dir: Path, repo: GitRepo) -> "FetchResult":
+    async def _do_fetch(self, work_dir: Path, repo: GitRepo) -> "FetchResult":
         """Core fetch logic. Fetches remote and computes ahead/behind."""
         from src.models.contracts.github import FetchResult
 
         remote_exists = True
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e).lower()
             if "not found" in err_str or "empty" in err_str or "couldn't find remote ref" in err_str:
                 remote_exists = False
@@ -1018,8 +1049,10 @@ class GitHubSyncService:
         await _progress("Fetching remote...")
         remote_exists = True
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e).lower()
             if "not found" in err_str or "empty" in err_str or "couldn't find remote ref" in err_str:
                 remote_exists = False
@@ -1059,7 +1092,7 @@ class GitHubSyncService:
             commit_sha=commit_sha,
         )
 
-    def _do_push(self, work_dir: Path, repo: GitRepo) -> "PushResult":
+    async def _do_push(self, work_dir: Path, repo: GitRepo) -> "PushResult":
         """Core push logic. Pushes local commits to remote."""
         from src.models.contracts.github import PushResult
 
@@ -1069,15 +1102,18 @@ class GitHubSyncService:
         # Count ahead before push
         ahead = 0
         try:
+            await self._refresh_git_auth(repo)
             repo.remotes.origin.fetch(self.branch)
             ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
-        except Exception:
+        except Exception as e:
+            self._raise_app_access_error(e)
             ahead = int(repo.git.rev_list("--count", "HEAD"))
 
         if ahead == 0:
             return PushResult(success=True, pushed_commits=0)
 
         # Push
+        await self._refresh_git_auth(repo)
         push_infos = repo.remotes.origin.push(refspec=f"HEAD:{self.branch}")
 
         from git.remote import PushInfo
@@ -1155,11 +1191,11 @@ class GitHubSyncService:
         try:
             await _progress("Syncing from storage...")
             async with self.repo_manager.checkout(reset_local_state=True) as work_dir:
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 await _progress("Generating manifest...")
                 await self._regenerate_manifest_to_dir(self.db, work_dir)
                 await _progress("Fetching remote...")
-                return self._do_fetch(work_dir, repo)
+                return await self._do_fetch(work_dir, repo)
         except Exception as e:
             logger.error(f"Fetch failed: {e}", exc_info=True)
             return FetchResult(success=False, error=str(e))
@@ -1264,7 +1300,7 @@ class GitHubSyncService:
         try:
             async with self.repo_manager.workspace() as work_dir:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
         except Exception as e:
             logger.error(f"Commit failed: {e}", exc_info=True)
@@ -1398,7 +1434,7 @@ class GitHubSyncService:
 
         if progress_fn:
             await progress_fn("Pushing to remote...")
-        push_result = self._do_push(work_dir, repo)
+        push_result = await self._do_push(work_dir, repo)
         if not push_result.success:
             logger.warning(
                 "Workspace publication failed after import; retaining local dirty state for retry: %s",
@@ -1501,7 +1537,7 @@ class GitHubSyncService:
                     await self.repo_manager.restore_workspace_checkpoint(
                         retry_plan.checkpoint_id, work_dir
                     )
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 plan = retry_plan or await self.prepare_desktop_sync(
                     work_dir, repo, progress_fn=_progress,
                 )
@@ -1528,7 +1564,7 @@ class GitHubSyncService:
 
         try:
             async with self.repo_manager.workspace() as work_dir:
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
 
                 merge_head = work_dir / ".git" / "MERGE_HEAD"
                 if not merge_head.exists():
@@ -1560,7 +1596,7 @@ class GitHubSyncService:
                         GitRepo(str(work_dir)),
                         resolutions,
                     )
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
 
                 # Check for merge state or unmerged entries (stash pop conflicts)
                 merge_head = work_dir / ".git" / "MERGE_HEAD"
@@ -1623,7 +1659,7 @@ class GitHubSyncService:
         try:
             async with self.repo_manager.workspace(readonly=True) as work_dir:
                 working_path = _workspace_path_candidate(work_dir, path)
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
 
                 # Get HEAD content
                 head_content = None
@@ -1663,7 +1699,7 @@ class GitHubSyncService:
                         GitRepo(str(work_dir)),
                         paths,
                     )
-                repo = self._open_or_init(work_dir)
+                repo = await self._open_or_init(work_dir)
                 if merge_in_progress(work_dir, repo):
                     # Syncing up would publish the conflict markers to storage.
                     return DiscardResult(
@@ -1712,7 +1748,7 @@ class GitHubSyncService:
     # Helpers for desktop-style operations
     # -----------------------------------------------------------------
 
-    def _open_or_init(self, work_dir: Path) -> GitRepo:
+    async def _open_or_init(self, work_dir: Path) -> GitRepo:
         """Open existing .git/ or clone fresh. Ensure remote URL and user identity are set."""
         if (work_dir / ".git").exists():
             repo = GitRepo(str(work_dir))
@@ -1723,7 +1759,7 @@ class GitHubSyncService:
             else:
                 repo.create_remote("origin", self.repo_url)
         else:
-            repo = self._clone_or_init(work_dir)
+            repo = await self._clone_or_init(work_dir)
         repo.git.update_environment(**self._git_env)
 
         # Ensure git user identity is configured (needed for merge/commit)
@@ -1992,7 +2028,7 @@ class GitHubSyncService:
     # Internal: git operations
     # -----------------------------------------------------------------
 
-    def _clone_or_init(self, target: Path) -> GitRepo:
+    async def _clone_or_init(self, target: Path) -> GitRepo:
         """Clone from repo_url, or init if repo is empty.
 
         Handles the case where target already has files (e.g. entity files
@@ -2006,6 +2042,7 @@ class GitHubSyncService:
             # Clone into a temp dir first (git clone requires clean dir)
             clone_dir = Path(tempfile.mkdtemp(prefix="bifrost-clone-"))
             try:
+                await self._refresh_git_auth()
                 GitRepo.clone_from(
                     self.repo_url,
                     str(clone_dir),
@@ -2031,6 +2068,7 @@ class GitHubSyncService:
             finally:
                 shutil.rmtree(clone_dir, ignore_errors=True)
         except Exception as e:
+            self._raise_app_access_error(e)
             err_str = str(e)
             # Empty repo or branch doesn't exist yet
             if "not found" in err_str.lower() or "empty" in err_str.lower() or "could not find remote branch" in err_str.lower():
