@@ -97,3 +97,22 @@ async def test_editor_delete_keeps_authorization_gate(monkeypatch):
 
     assert exc.value.status_code == 403
     storage_factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_editor_delete_does_not_commit_after_required_cleanup_failure(monkeypatch):
+    monkeypatch.setattr(files, "authorize_operation", AsyncMock())
+    repo = MagicMock()
+    repo.list = AsyncMock(return_value=[])
+    monkeypatch.setattr("src.services.repo_storage.RepoStorage", lambda: repo)
+    storage = MagicMock()
+    storage.delete_file = AsyncMock(side_effect=RuntimeError("retirement failed"))
+    monkeypatch.setattr("src.services.file_storage.FileStorageService", lambda _db: storage)
+    db = AsyncMock()
+
+    with pytest.raises(RuntimeError, match="retirement failed"):
+        await files.delete_file_editor(
+            MagicMock(), MagicMock(), path="workflow.py", db=db,
+        )
+
+    db.commit.assert_not_awaited()

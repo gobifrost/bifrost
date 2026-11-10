@@ -331,7 +331,10 @@ class FileOperationsService:
         """
         Delete a file from storage.
 
-        Pattern: S3 first (source of truth), then conditional side effects.
+        Source removal, cache invalidation and executable retirement must all
+        succeed. The caller commits database changes before reporting success;
+        a failure after source removal is a partial deletion, not a rollback of
+        object storage. Preview and activity cleanup remain best effort.
         """
         # === S3: Source of truth (must succeed) ===
         await self._delete_from_s3(path)
@@ -341,18 +344,17 @@ class FileOperationsService:
         # executable source, so let a cache failure reach the caller.
         await self._invalidate_module_cache_if_python(path)
 
-        # === Side effects (best-effort, independent) ===
-        for op in (
-            self._remove_from_search_index,
-            self._handle_app_file_cleanup,
-            self._remove_metadata,
-        ):
-            try:
-                await op(path)
-            except Exception as e:
-                logger.warning(
-                    f"Delete side effect failed for {log_safe(path)}: {log_safe(e)}"
-                )
+        # Retiring executable authority is required, not presentation cleanup.
+        # Do it before search maintenance so an index error cannot skip it.
+        await self._remove_metadata(path)
+        await self._remove_from_search_index(path)
+
+        try:
+            await self._handle_app_file_cleanup(path)
+        except Exception as e:
+            logger.warning(
+                f"Delete preview cleanup failed for {log_safe(path)}: {log_safe(e)}"
+            )
 
         # Broadcast file_delete event for watch mode sync
         try:
