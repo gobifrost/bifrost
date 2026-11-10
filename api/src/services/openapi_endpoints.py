@@ -290,6 +290,11 @@ async def register_workflow_endpoints(app: FastAPI, db: AsyncSession) -> int:
     # Install custom OpenAPI generator
     _install_custom_openapi(app)
 
+    # Schema generation is synchronous and expensive on the full API. Finish
+    # its first build before readiness, rather than blocking live requests
+    # (and the API's hosted workers) on the first /openapi.json request.
+    _get_openapi_response_body(app)
+
     logger.info(f"Registered {len(workflows)} workflow endpoints")
     return len(workflows)
 

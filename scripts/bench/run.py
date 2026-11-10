@@ -243,6 +243,63 @@ def run(profile_name: str, backend: str | None, out: Path | None) -> Path:
     return out
 
 
+def run_lanes(out: Path | None = None) -> Path:
+    """Use the existing isolated cluster and timestamp statistics for #1168."""
+    profile = json.loads((HERE / "profiles" / "smoke.json").read_text(encoding="utf-8"))
+    profile["worker_policy"].update({"warm_workers": 2, "max_workers": 2})
+    cluster = Cluster()
+    out = out or Path(f"/tmp/bifrost-bench-{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}-lanes")
+    out.mkdir(parents=True, exist_ok=True)
+    result = {
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "git_sha": _git_sha(), "image_id": _image_id(cluster.image),
+        "profile": profile, "variants": [],
+        "limits": "Local admission-reservation experiment with 20 short calls per phase. Bulk work simulates I/O and declares memory demand; this is not actual RAM/CPU pressure, tenant fairness, or a latency SLO.",
+    }
+
+    def save() -> None:
+        (out / "result.json").write_text(json.dumps(result, indent=2), encoding="utf-8")
+
+    save()
+    try:
+        cluster.apply_profile(profile)
+        apply_bench_resources(cluster)
+        for reserved, name in ((0, "Shared"), (1, "Reserved")):
+            print(f"{name}: two workers, {reserved} reserved for Fast Path ...", flush=True)
+            before, started = cluster.container_stats(), time.monotonic()
+            variant = cluster.exec_python("bench-driver", DRIVER, ["lane_mix", json.dumps({"reserved": reserved})], timeout_s=900)
+            elapsed = time.monotonic() - started
+            variant.update({
+                "name": name,
+                "elapsed_seconds": round(elapsed, 3),
+                "containers_before": before, "containers_after": cluster.container_stats(),
+                "timings": {kind: stats.timings(records) for kind, records in variant["raw"].items()},
+            })
+            result["variants"].append(variant)
+            save()
+    except BaseException as error:
+        result["error"] = str(error)
+        save()
+        raise
+
+    lines = [
+        "# Reserved Fast Path Admission Experiment", "",
+        f"Build: `{result['git_sha']}`; image: `{result['image_id']}`.", "",
+        result["limits"], "",
+        "Both variants use two managed workers with the same memory/CPU configuration. Worker startup is outside execution timestamps. The reserved variant dedicates one worker to each lane.", "",
+        "| Allocation | Workload | Runs / failures | Queue p50 / p95 / p99 / max (ms) | Completion p95 (ms) |", "| --- | --- | --- | --- | --- |",
+    ]
+    for variant in result["variants"]:
+        for workload, timing in variant["timings"].items():
+            wait = timing["queue_ms"]
+            values = " / ".join(str(wait[key]) for key in ("p50", "p95", "p99", "max"))
+            lines.append(f"| {variant['name']} | {workload} | {timing['runs']} / {timing['failed']} | {values} | {timing['e2e_ms']['p95']} |")
+    lines += ["", "Background max queue age is the largest recorded background queue wait above. Raw platform timestamps, worker admission envelopes, settings and resource snapshots are in result.json. This small burst does not estimate steady-state throughput or establish a production tail-latency promise."]
+    (out / "report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    print(f"Done: {out}/report.md", flush=True)
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -251,6 +308,8 @@ def main() -> None:
     run_parser.add_argument("--profile", default="baseline")
     run_parser.add_argument("--backend", choices=["fake", "deepseek", "none"], default="fake")
     run_parser.add_argument("--out", type=Path)
+    lane_parser = sub.add_parser("lanes", help="Compare shared and exclusive Fast Path capacity with two workers")
+    lane_parser.add_argument("--out", type=Path)
     sub.add_parser("down")
     args = parser.parse_args()
 
@@ -259,6 +318,8 @@ def main() -> None:
         apply_bench_resources(Cluster())
     elif args.command == "run":
         run(args.profile, None if args.backend == "none" else args.backend, args.out)
+    elif args.command == "lanes":
+        run_lanes(args.out)
     elif args.command == "down":
         cluster = Cluster()
         subprocess.run([str(KIND), "down"], check=True)

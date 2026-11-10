@@ -242,6 +242,7 @@ a restart:
 | Worker Memory (MiB) | `2048` | Memory limit of a standard worker Job |
 | Largest Worker (MiB) | `8192` | Largest worker Job sized for one large run |
 | Idle Time (Seconds) | `300` | How long a worker above the warm minimum waits for work |
+| Reserved Fast Path Workers | `0` | Exclusive Fast Path workers inside Max Workers; Normal warm capacity is preserved |
 
 An install upgraded from a release that set these as `BIFROST_POOL_*`
 variables imports them once on first start (the page shows where each value

@@ -9,6 +9,7 @@ worktree's Kind cluster running the production image. Design:
 ./test.sh bench run --profile smoke                  # quick end-to-end check (~10 min)
 ./test.sh bench run --profile baseline               # baseline, fake model (deterministic)
 ./test.sh bench run --profile baseline --backend deepseek   # real model; key from 1Password
+./test.sh bench lanes                                # equal-resource shared vs reserved lane comparison
 ./test.sh bench down                                 # delete the cluster and the image
 ```
 
@@ -33,6 +34,26 @@ Times come from the platform's own timestamps (`created_at`, `started_at`,
 comes from outside the processes: the API's `/proc/1/smaps` (classified by
 `smaps.py`) and the kubelet's per-container stats. No product code is needed,
 so any build can be measured.
+
+## Reserved Fast Path comparison
+
+`./test.sh bench lanes` reuses this worktree's isolated Kind stack and the
+existing driver/statistics. It compares two shared workers against one Normal
+plus one exclusive Fast Path worker, with equal worker size and total count.
+Each variant measures 20 short calls without background work and then 20 while
+four long I/O calls reserve almost a whole worker's memory admission budget.
+The driver waits for the expected workers and occupied Normal capacity before
+submitting the mixed burst. Fixtures and temporary policy changes are cleaned up.
+The reserved variant then fills Fast Path with a long run and measures short
+Fast Path calls alongside a new Normal call, exposing the limits of its own
+reserved capacity and checking that Normal work can still make progress.
+
+Results include raw execution timestamps, queue p50/p95/p99/max, completion
+timings, failures, worker budgets, settings and resource snapshots. Declared
+memory reservations create admission contention; the workload does not allocate
+that much RAM. This bounded experiment does not establish CPU-pressure behavior,
+steady-state throughput, tenant fairness or a production latency guarantee.
+Stop the owned cluster with `./test.sh bench down` when finished.
 
 ## Classes
 

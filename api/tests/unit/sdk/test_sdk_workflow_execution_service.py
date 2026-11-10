@@ -523,6 +523,34 @@ class TestExecuteAuthDecisions:
 
 @pytest.mark.asyncio
 class TestAppEmbedCapability:
+    async def test_human_app_context_must_be_visible_in_the_execution_scope_for_priority(self, db_session):
+        org = await _seed_org(db_session)
+        foreign_org = await _seed_org(db_session)
+        workflow = await _seed_workflow(
+            db_session, f"app-priority-{uuid4().hex[:8]}", org_id=org.id,
+            execution_lane="auto",
+        )
+        valid_app = await _seed_app(db_session, org_id=org.id)
+        global_app = await _seed_app(db_session)
+        forged_app = await _seed_app(db_session, org_id=foreign_org.id)
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            for app_id in (None, "not-a-uuid", str(forged_app.id), str(valid_app.id), str(global_app.id)):
+                await execute_sdk_workflow(
+                    db_session,
+                    _admin(org.id),
+                    _request(workflow_id=str(workflow.id), input_data={}),
+                    caller_org_id=org.id,
+                    context_app_id=app_id,
+                )
+        finally:
+            _stop_patches(patches)
+
+        assert [call.kwargs["trusted_app_context"] for call in mocks[0].await_args_list] == [
+            False, False, False, True, True,
+        ]
+
     async def test_bound_app_executes_an_authenticated_workflow_as_its_default_identity(
         self, db_session
     ):

@@ -39,6 +39,7 @@ def _orm(**overrides):
         access_level=None,
         parameters_schema=None,
         execution_mode=None,
+        execution_lane="auto",
         timeout_seconds=None,
         memory_request_mib=None,
         learned_memory_bytes=None,

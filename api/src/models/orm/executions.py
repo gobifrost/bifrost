@@ -42,6 +42,9 @@ class Execution(Base):
         ),
         default=ExecutionStatus.PENDING,
     )
+    execution_lane: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="normal", server_default=text("'normal'")
+    )
     parameters: Mapped[dict] = mapped_column(JSONB, default={})
     result: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     result_type: Mapped[str | None] = mapped_column(String(50), default=None)

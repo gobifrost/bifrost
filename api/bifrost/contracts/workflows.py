@@ -31,6 +31,7 @@ class WorkflowUpdateRequest(BaseModel):
     timeout_seconds: int | None = Field(default=None, ge=0, le=86400)
     memory_request_mib: int | None = Field(default=None, ge=1, le=262144)
     execution_mode: Literal["sync", "async"] | None = Field(default=None)
+    execution_lane: Literal["auto", "normal", "fast_path"] | None = Field(default=None)
     time_saved: int | None = Field(default=None, ge=0)
     value: float | None = Field(default=None, ge=0.0)
     tool_description: str | None = Field(default=None, max_length=1000)

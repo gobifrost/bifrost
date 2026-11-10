@@ -15,7 +15,8 @@ vi.mock("@/services/kubernetes", async (importOriginal) => ({
 	).KubernetesRequestError,
 	getKubernetesExecution: (...args: unknown[]) =>
 		mocks.getKubernetesExecution(...args),
-	getKubernetesStatus: (...args: unknown[]) => mocks.getKubernetesStatus(...args),
+	getKubernetesStatus: (...args: unknown[]) =>
+		mocks.getKubernetesStatus(...args),
 	updateKubernetesExecution: (...args: unknown[]) =>
 		mocks.updateKubernetesExecution(...args),
 	updateKubernetesPolicy: (...args: unknown[]) =>
@@ -31,6 +32,8 @@ import { KubernetesSettings } from "./KubernetesSettings";
 
 const policy = {
 	warm_workers: 1,
+	reserved_fast_path_workers: 0,
+	auto_priority_app_workflows: false,
 	max_workers: 6,
 	worker_memory_mib: 2048,
 	largest_worker_mib: 8192,
@@ -41,6 +44,7 @@ const policy = {
 
 const settings = {
 	policy,
+	fast_path_ready_workers: 0,
 	imported_from_env: {},
 	unread_variables: [],
 	job_types: [
@@ -75,7 +79,9 @@ describe("KubernetesSettings", () => {
 		mocks.getKubernetesStatus.mockResolvedValue({ configured: false });
 		render(<KubernetesSettings />);
 		expect(await screen.findByLabelText("Max Workers")).toBeEnabled();
-		expect(screen.getByText(/Kubernetes isolation is unavailable/)).toBeVisible();
+		expect(
+			screen.getByText(/Kubernetes isolation is unavailable/),
+		).toBeVisible();
 		expect(screen.getByLabelText("Isolate Build Jobs")).toBeDisabled();
 		expect(screen.getByLabelText("Max Isolated Pods")).toBeDisabled();
 		expect(screen.getByLabelText("App Deploys")).toBeDisabled();
@@ -89,6 +95,12 @@ describe("KubernetesSettings", () => {
 
 		expect(await screen.findByLabelText("Max Workers")).toHaveValue(6);
 		expect(screen.getByLabelText("Warm Workers")).toHaveValue(1);
+		expect(screen.getByLabelText("Reserved Fast Path Workers")).toHaveValue(
+			0,
+		);
+		expect(
+			screen.getByLabelText("Prioritize App Workflows"),
+		).not.toBeChecked();
 		expect(screen.getByLabelText("Worker Memory (MiB)")).toHaveValue(2048);
 		expect(screen.getByLabelText("Largest Worker (MiB)")).toHaveValue(8192);
 		expect(screen.getByLabelText("Idle Time (Seconds)")).toHaveValue(300);
@@ -119,6 +131,121 @@ describe("KubernetesSettings", () => {
 		expect(
 			screen.getByRole("button", { name: "Save Scaling" }),
 		).toBeDisabled();
+	});
+
+	it("reserves Fast Path capacity without overwriting Normal scaling", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockResolvedValue({
+			...settings,
+			policy: { ...policy, reserved_fast_path_workers: 2 },
+		});
+		render(<KubernetesSettings />);
+		const input = await screen.findByLabelText(
+			"Reserved Fast Path Workers",
+		);
+		await user.clear(input);
+		await user.type(input, "2");
+		await user.click(screen.getByRole("button", { name: "Save Scaling" }));
+		await waitFor(() =>
+			expect(mocks.updateKubernetesPolicy).toHaveBeenCalledWith({
+				reserved_fast_path_workers: 2,
+			}),
+		);
+		expect(screen.getByLabelText("Warm Workers")).toHaveValue(1);
+		expect(screen.getByLabelText("Max Workers")).toHaveValue(6);
+	});
+
+	it("shows a refused reservation inline and preserves the edit", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockRejectedValue(
+			new KubernetesRequestError(
+				"Leave capacity for Normal work.",
+				422,
+				"reserved_fast_path_workers",
+			),
+		);
+		render(<KubernetesSettings />);
+		const input = await screen.findByLabelText(
+			"Reserved Fast Path Workers",
+		);
+		await user.clear(input);
+		await user.type(input, "6");
+		await user.click(screen.getByRole("button", { name: "Save Scaling" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Leave capacity for Normal work.",
+		);
+		expect(input).toHaveValue(6);
+		expect(input).toHaveAttribute("aria-invalid", "true");
+	});
+
+	it("enables App priority only after the server accepts the change", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockResolvedValue({
+			...settings,
+			policy: { ...policy, auto_priority_app_workflows: true },
+		});
+		render(<KubernetesSettings />);
+		await user.click(
+			await screen.findByRole("switch", {
+				name: "Prioritize App Workflows",
+			}),
+		);
+		await waitFor(() =>
+			expect(mocks.updateKubernetesPolicy).toHaveBeenCalledWith({
+				auto_priority_app_workflows: true,
+			}),
+		);
+		expect(
+			screen.getByRole("switch", { name: "Prioritize App Workflows" }),
+		).toBeChecked();
+	});
+
+	it("preserves an unsaved reservation while App priority is saved", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockResolvedValue({
+			...settings,
+			policy: { ...policy, auto_priority_app_workflows: true },
+		});
+		render(<KubernetesSettings />);
+		const reservation = await screen.findByLabelText(
+			"Reserved Fast Path Workers",
+		);
+		await user.clear(reservation);
+		await user.type(reservation, "2");
+		await user.click(
+			screen.getByRole("switch", { name: "Prioritize App Workflows" }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("switch", {
+					name: "Prioritize App Workflows",
+				}),
+			).toBeChecked(),
+		);
+		expect(reservation).toHaveValue(2);
+		expect(
+			screen.getByRole("button", { name: "Save Scaling" }),
+		).toBeEnabled();
+	});
+
+	it("keeps App priority off when the reservation prerequisite is refused", async () => {
+		const user = userEvent.setup();
+		mocks.updateKubernetesPolicy.mockRejectedValue(
+			new KubernetesRequestError(
+				"Configure Fast Path capacity first.",
+				422,
+			),
+		);
+		render(<KubernetesSettings />);
+		const toggle = await screen.findByRole("switch", {
+			name: "Prioritize App Workflows",
+		});
+		await user.click(toggle);
+		await waitFor(() =>
+			expect(mocks.updateKubernetesPolicy).toHaveBeenCalledTimes(1),
+		);
+		await waitFor(() => expect(toggle).toBeEnabled());
+		expect(toggle).not.toBeChecked();
 	});
 
 	it("shows a refused change inline", async () => {
@@ -372,5 +499,17 @@ describe("KubernetesSettings", () => {
 				{ enabled: true, maxConcurrency: 2 },
 			),
 		);
+	});
+
+	it("shows when a saved Fast Path reservation is not ready", async () => {
+		mocks.getKubernetesExecution.mockResolvedValue({
+			...settings,
+			fast_path_ready_workers: 1,
+			policy: { ...policy, reserved_fast_path_workers: 2 },
+		});
+		render(<KubernetesSettings />);
+		expect(
+			await screen.findByText(/1 of 2 reserved workers ready/),
+		).toHaveTextContent("Reserved capacity is not fully available yet.");
 	});
 });

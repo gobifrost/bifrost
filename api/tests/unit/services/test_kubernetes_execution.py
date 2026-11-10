@@ -12,7 +12,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from pydantic import SecretStr
-from sqlalchemy import delete, text
+from sqlalchemy import delete, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from src.jobs.platform.application_deploy import (
@@ -29,6 +29,7 @@ from src.jobs.platform.solution_git_sync import (
     SolutionGitSyncPayload,
 )
 from src.models.orm.config import SystemConfig
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services import kubernetes_control
 from src.services import kubernetes_execution as kube
 from src.services import platform_jobs as service
@@ -303,6 +304,32 @@ async def test_a_consistent_change_of_both_fields_is_accepted(
         12,
         True,
     )
+
+
+async def test_last_reservation_cannot_be_removed_while_fast_path_work_waits(
+    db_session: AsyncSession,
+) -> None:
+    service = kube.KubernetesExecutionService(db_session)
+    await service.update_policy(
+        {"warm_workers": 1, "max_workers": 3, "reserved_fast_path_workers": 1},
+        updated_by="admin",
+    )
+    db_session.add(
+        WorkDispatch(
+            family="workflow_execution",
+            subject_id=uuid4(),
+            handler="workflow.execute",
+            handler_version=2,
+            message={},
+            payload={},
+            memory_request_bytes=1,
+            execution_lane="fast_path",
+        )
+    )
+    await db_session.flush()
+
+    with pytest.raises(ValueError, match="still needed"):
+        await service.update_policy({"reserved_fast_path_workers": 0}, updated_by="admin")
 
 
 def _memory_request(monkeypatch: pytest.MonkeyPatch, mib: int) -> None:
@@ -671,3 +698,39 @@ def test_all_build_class_policies_serialize_by_default() -> None:
     for definition in list_platform_job_definitions():
         if definition.policy.execution_class == "build":
             assert definition.policy.max_concurrency == 1, definition.job_type
+
+
+async def test_reducing_but_retaining_fast_capacity_does_not_strand_queued_work(db_session) -> None:
+    svc = kube.KubernetesExecutionService(db_session)
+    await svc.update_policy({"warm_workers": 1, "max_workers": 4, "reserved_fast_path_workers": 2}, updated_by="admin")
+    db_session.add(WorkDispatch(
+        family="workflow_execution", subject_id=uuid4(), handler="workflow.execute", handler_version=2,
+        message={}, payload={}, memory_request_bytes=1, execution_lane="fast_path",
+    ))
+    await db_session.flush()
+    await svc.update_policy({"reserved_fast_path_workers": 1}, updated_by="admin")
+    assert (await kube.load_kubernetes_policy(db_session)).reserved_fast_path_workers == 1
+
+
+async def test_locked_dispatch_cannot_be_skipped_when_removing_last_capacity(async_session_factory) -> None:
+    dispatch_id = uuid4()
+    async with async_session_factory() as setup:
+        await kube.KubernetesExecutionService(setup).update_policy(
+            {"reserved_fast_path_workers": 1}, updated_by="admin",
+        )
+        setup.add(WorkDispatch(
+            id=dispatch_id, family="workflow_execution", subject_id=uuid4(), handler="workflow.execute",
+            handler_version=2, message={}, payload={}, memory_request_bytes=1, execution_lane="fast_path",
+        ))
+        await setup.commit()
+    try:
+        async with async_session_factory() as claimant, async_session_factory() as editor:
+            await claimant.scalar(select(WorkDispatch).where(WorkDispatch.id == dispatch_id).with_for_update())
+            with pytest.raises(ValueError, match="still needed"):
+                await kube.KubernetesExecutionService(editor).update_policy(
+                    {"reserved_fast_path_workers": 0}, updated_by="admin",
+                )
+    finally:
+        async with async_session_factory() as cleanup:
+            await cleanup.execute(delete(WorkDispatch).where(WorkDispatch.id == dispatch_id))
+            await cleanup.commit()

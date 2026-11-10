@@ -366,6 +366,7 @@ class ExecutionReadAdapter:
             executed_by_name=execution.executed_by_name or str(execution.executed_by),
             executed_by_email=execution.executed_by_user.email if hasattr(execution, 'executed_by_user') and execution.executed_by_user else None,
             status=ExecutionStatus(execution.status),
+            execution_lane=execution.execution_lane or "normal",
             input_data=execution.parameters or {},
             result=execution.result,
             result_type=execution.result_type,

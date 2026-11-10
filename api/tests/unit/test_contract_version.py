@@ -422,9 +422,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Default-base-role commands and optional explicit identity base roles are additive.
     # Additive GitHub App setup models and optional Git connection fields.
     # Existing CLI requests and MIN_CLI_VERSION remain compatible.
+    # Workflow admission priority is an optional update field. Existing CLIs
+    # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
-    # Existing clients retain public-repository behavior; minimum CLI stays unchanged.
-    "f684e38384b7b3ad0052908a64c43bcd364667cb26d2985a30d34dbfd7fdcc24"
+    # Preserve both merged surfaces; existing CLI minimum stays unchanged.
+    "21f8231a0d26807af43ee403cc13ffbcd1c1a4b60e2aee085f9dec7155d67ea7"
 )
 
 

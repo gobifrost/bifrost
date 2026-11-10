@@ -354,6 +354,7 @@ async def run_workflow(
     transient: bool = False,
     sync: bool = False,
     dispatch_metadata: dict[str, Any] | None = None,
+    trusted_app_context: bool = False,
     *,
     lineage: RunLineage | None,
 ) -> WorkflowExecutionResponse:
@@ -425,6 +426,7 @@ async def run_workflow(
         sync=sync,
         timeout_seconds=timeout_seconds,
         dispatch_metadata=dispatch_metadata,
+        trusted_app_context=trusted_app_context,
         lineage=lineage,
     )
 
@@ -486,6 +488,7 @@ async def _enqueue_workflow_async(
     sync: bool = False,
     timeout_seconds: int | None = None,
     dispatch_metadata: dict[str, Any] | None = None,
+    trusted_app_context: bool = False,
     *,
     lineage: RunLineage | None,
 ) -> WorkflowExecutionResponse:
@@ -506,6 +509,7 @@ async def _enqueue_workflow_async(
         execution_id=context.execution_id,  # Pass through for log streaming
         sync=sync,
         dispatch_metadata=dispatch_metadata,
+        trusted_app_context=trusted_app_context,
         lineage=lineage,
     )
 

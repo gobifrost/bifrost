@@ -241,6 +241,19 @@ async def _set_request(sessions, execution_id: str, request: int, *, age: timede
         await session.commit()
 
 
+async def _set_run_lane(sessions, execution_id: str, execution_lane: str) -> None:  # type: ignore[no-untyped-def]
+    """Fixture an already accepted run with its durable lane and wire version."""
+    async with sessions() as session:
+        await session.execute(update(Execution).where(Execution.id == UUID(execution_id)).values(
+            execution_lane=execution_lane,
+        ))
+        await session.execute(update(WorkDispatch).where(WorkDispatch.subject_id == UUID(execution_id)).values(
+            execution_lane=execution_lane,
+            handler_version=2 if execution_lane == "fast_path" else 1,
+        ))
+        await session.commit()
+
+
 async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = False) -> str | None:
     from src.services.memory_requests import MemoryBudget
 
@@ -271,20 +284,21 @@ async def _report_budget(worker_id: UUID, budget: int, *, pressured: bool = Fals
     )
 
 
-async def _static_executor(hostname: str) -> UUID:
+async def _static_executor(hostname: str, *, execution_lane: str = "normal") -> UUID:
     """A static executor whose pool is up, with a measured 1 GiB budget."""
-    worker_id = await claims.register_static_worker(hostname=hostname)
+    worker_id = await claims.register_static_worker(hostname=hostname, execution_lane=execution_lane)
     assert await claims.mark_static_ready(worker_id, memory_budget_bytes=GIB)
     return worker_id
 
 
-async def _job_worker(sessions, *, state: str = "starting") -> ExecutionWorker:  # type: ignore[no-untyped-def]
+async def _job_worker(sessions, *, state: str = "starting", execution_lane: str = "normal") -> ExecutionWorker:  # type: ignore[no-untyped-def]
     worker_id = uuid4()
     async with sessions() as session:
         worker = ExecutionWorker(
             id=worker_id, form="job", state=state, resource_class="standard",
             kubernetes_namespace="test", kubernetes_job_name=f"bifrost-worker-{worker_id.hex[:24]}",
             kubernetes_job_uid="job-uid",
+            execution_lane=execution_lane,
         )
         session.add(worker)
         await session.commit()
@@ -333,10 +347,12 @@ async def test_an_admitted_worker_records_the_build_its_pod_reports(db) -> None:
         assert (await session.get(ExecutionWorker, worker.id)).version == "1.0.0-old"
 
 
-async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
-    first = await _job_worker(db.sessions, state="ready")
-    second = await _job_worker(db.sessions, state="ready")
+@pytest.mark.parametrize("execution_lane", ["normal", "fast_path"])
+async def test_a_ready_worker_claims_each_dispatch_once(db, execution_lane) -> None:
+    first = await _job_worker(db.sessions, state="ready", execution_lane=execution_lane)
+    second = await _job_worker(db.sessions, state="ready", execution_lane=execution_lane)
     execution_id = await _accept_pool_run()
+    await _set_run_lane(db.sessions, execution_id, execution_lane)
 
     claims_made = await asyncio.gather(_claim(first.id), _claim(second.id))
 
@@ -344,6 +360,39 @@ async def test_a_ready_worker_claims_each_dispatch_once(db) -> None:
     assert len(winners) == 1
     assert winners[0].message["execution_id"] == execution_id
     assert winners[0].handler == "workflow.execute"
+
+
+async def test_fast_path_dispatch_requires_lane_aware_fast_path_worker(db) -> None:
+    """The persisted lane and v2 handler fence both exclude normal workers."""
+    run_id = await _accept_pool_run()
+    async with db.sessions() as session:
+        await session.execute(
+            update(WorkDispatch)
+            .where(WorkDispatch.subject_id == UUID(run_id))
+            .values(execution_lane="fast_path", handler_version=2)
+        )
+        await session.execute(
+            update(Execution).where(Execution.id == UUID(run_id)).values(execution_lane="fast_path")
+        )
+        await session.commit()
+
+    normal = await claims.register_static_worker(
+        hostname="normal", supported_handlers=["workflow.execute"], execution_lane="normal"
+    )
+    fast = await claims.register_static_worker(
+        hostname="fast", supported_handlers=["workflow.execute"], execution_lane="fast_path"
+    )
+    assert await claims.mark_static_ready(normal, memory_budget_bytes=GIB)
+    assert await claims.mark_static_ready(fast, memory_budget_bytes=GIB)
+
+    assert await claims.claim_next(
+        normal, (("workflow.execute", 1),), fits_bytes=GIB, budget_bytes=GIB
+    ) is None
+    claimed = await claims.claim_next(
+        fast, (("workflow.execute", 2),), fits_bytes=GIB, budget_bytes=GIB
+    )
+    assert claimed is not None
+    assert claimed.subject_id == UUID(run_id)
 
 
 async def test_claim_reserves_memory_before_its_assignment_commits(db) -> None:
@@ -581,14 +630,16 @@ async def test_a_memory_pressured_executor_offers_no_capacity(db) -> None:
     assert len(cluster.created) == 1
 
 
-async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db) -> None:
+@pytest.mark.parametrize("execution_lane", ["normal", "fast_path"])
+async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db, execution_lane) -> None:
     """A run whose fork was refused after its claim goes back to PENDING with
     a fresh dispatch carrying the same request and its place in line, and
     without the first executor's claim record."""
     from src.models.orm.execution_workers import ExecutionWorkerClaim
 
-    first = await _static_executor("first")
+    first = await _static_executor("first", execution_lane=execution_lane)
     execution_id = await _accept_pool_run()
+    await _set_run_lane(db.sessions, execution_id, execution_lane)
     await _set_request(db.sessions, execution_id, 200 * MIB)
     claim = await _claim(first)
     assert claim is not None and claim.claimed is not None
@@ -604,12 +655,17 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
 
     async with db.sessions() as session:
         execution = await session.get(Execution, UUID(execution_id))
+        dispatch = await session.scalar(select(WorkDispatch).where(
+            WorkDispatch.subject_id == UUID(execution_id),
+        ))
         held = (
             await session.execute(
                 select(ExecutionWorkerClaim).where(ExecutionWorkerClaim.worker_id == first)
             )
         ).scalars().all()
     assert (execution.status, execution.started_at) == (ExecutionStatus.PENDING, None)
+    assert dispatch.execution_lane == execution_lane
+    assert dispatch.handler_version == (2 if execution_lane == "fast_path" else 1)
     assert held == []
     from src.services.execution.queue_tracker import get_queued_executions
 
@@ -621,7 +677,7 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     db.wake.assert_awaited_once_with(workflow_dispatch.FAMILY)
     db.queue_refresh.assert_called_once_with()
     db.live_updates.assert_awaited_once_with(UUID(execution_id), ExecutionStatus.PENDING.value)
-    second = await _static_executor("second")
+    second = await _static_executor("second", execution_lane=execution_lane)
     again = await _claim(second)
     assert again is not None and again.claimed is not None
     assert again.claimed["execution_id"] == execution_id
@@ -1113,8 +1169,20 @@ def test_worker_job_is_suspended_tokenless_and_has_no_deadline() -> None:
     assert "controller-uid" in env["BIFROST_KUBERNETES_JOB_UID"]["valueFrom"]["fieldRef"]["fieldPath"]
     # Warm workers and Idle time are read from Settings, not injected.
     assert {name for name in env if name.startswith("BIFROST_POOL_")} == {
+        "BIFROST_POOL_WORKER_EXECUTION_LANE",
         "BIFROST_POOL_MAX_LIFETIME_SECONDS"
     }
+    assert env["BIFROST_POOL_WORKER_EXECUTION_LANE"] == {
+        "name": "BIFROST_POOL_WORKER_EXECUTION_LANE", "value": "normal"
+    }
+
+    fast_env = {
+        item["name"]: item for item in build_worker_job_manifest(
+            uuid4(), SETTINGS, SPEC, memory_limit_bytes=3072 * MIB, sized=False,
+            execution_lane="fast_path",
+        )["spec"]["template"]["spec"]["containers"][0]["env"]
+    }
+    assert fast_env["BIFROST_POOL_WORKER_EXECUTION_LANE"]["value"] == "fast_path"
 
 
 async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
@@ -1134,6 +1202,26 @@ async def test_warm_minimum_is_kept_ready_until_settings_lower_it(db) -> None:
     # An admin lowers Warm workers: the running idle worker drains.
     await _store_policy(db.sessions, POLICY)
     assert await claims.begin_idle_drain(worker_id)
+
+
+async def test_fast_path_idle_drain_keeps_its_own_reserved_floor(db) -> None:
+    policy = replace(POLICY, warm_workers=0, reserved_fast_path_workers=1)
+    await _store_policy(db.sessions, policy)
+    worker = await _job_worker(db.sessions, state="starting")
+    async with db.sessions() as session:
+        await session.execute(
+            update(ExecutionWorker)
+            .where(ExecutionWorker.id == worker.id)
+            .values(execution_lane="fast_path")
+        )
+        await session.commit()
+    assert await claims.admit_worker(
+        worker.id, job_uid="job-uid", pod_uid="fast-pod", version=get_version(), execution_lane="fast_path"
+    )
+
+    assert not await claims.begin_idle_drain(worker.id)
+    await _store_policy(db.sessions, replace(policy, reserved_fast_path_workers=0))
+    assert await claims.begin_idle_drain(worker.id)
 
 
 async def test_a_max_workers_change_in_settings_applies_on_the_next_pass(db) -> None:
@@ -2742,3 +2830,79 @@ async def test_the_worker_controller_idles_when_its_pod_gives_no_job_identity(
 
     resolve.assert_awaited_once()
     client.close.assert_awaited_once()
+
+
+async def test_scheduled_fast_path_keeps_accepted_lane_after_workflow_edit(db, monkeypatch) -> None:
+    from shared.sdk_workflow_execution import insert_scheduled_execution
+    from src.jobs.schedulers import deferred_execution_promoter as promoter
+
+    monkeypatch.setattr(promoter, "get_db_context", db.context)
+    await _static_executor("reserved", execution_lane="fast_path")
+    workflow_id = uuid4()
+    async with db.sessions() as session:
+        session.add(Workflow(
+            id=workflow_id, name=f"lane-{workflow_id}", function_name="main",
+            path=f"workflows/lane-{workflow_id}.py", type="workflow", execution_lane="fast_path",
+        ))
+        await session.commit()
+        execution_id = await insert_scheduled_execution(
+            db=session, workflow_id=workflow_id, workflow_name="scheduled lane",
+            parameters={}, scheduled_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+            organization_id=None, executed_by=UUID("00000000-0000-0000-0000-000000000001"),
+            executed_by_name="Dev", form_id=None, api_key_id=None, is_platform_admin=True,
+            lineage=None, run_as=None, execution_origin="human", agent_id=None,
+        )
+        await session.execute(update(Workflow).where(Workflow.id == workflow_id).values(execution_lane="normal"))
+        await session.commit()
+    try:
+        assert await promoter.promote_due_executions() == 1
+        async with db.sessions() as session:
+            row = await session.get(Execution, execution_id)
+            dispatch = await session.scalar(select(WorkDispatch).where(WorkDispatch.subject_id == execution_id))
+            assert row.execution_lane == dispatch.execution_lane == "fast_path"
+            assert dispatch.handler_version == 2
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(WorkDispatch).where(WorkDispatch.subject_id == execution_id))
+            await session.execute(delete(Execution).where(Execution.id == execution_id))
+            await session.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            await session.commit()
+
+
+@pytest.mark.parametrize("execution_lane", ["normal", "fast_path"])
+async def test_cancelled_lane_run_is_not_restarted_by_claim(db, execution_lane) -> None:
+    worker = await _static_executor("cancellation", execution_lane=execution_lane)
+    execution_id = await _accept_pool_run()
+    await _set_run_lane(db.sessions, execution_id, execution_lane)
+    async with db.sessions() as session:
+        await session.execute(update(Execution).where(Execution.id == UUID(execution_id)).values(
+            status=ExecutionStatus.CANCELLED, completed_at=datetime.now(timezone.utc),
+        ))
+        await session.commit()
+    claimed = await _claim(worker)
+    assert claimed is None or claimed.claimed is None
+    async with db.sessions() as session:
+        assert (await session.get(Execution, UUID(execution_id))).status == ExecutionStatus.CANCELLED
+
+
+async def test_settings_count_only_ready_managed_fast_path_workers(db) -> None:
+    ready = await _job_worker(db.sessions, state="ready", execution_lane="fast_path")
+    await _job_worker(db.sessions, state="starting", execution_lane="fast_path")
+    await _job_worker(db.sessions, state="ready", execution_lane="normal")
+    await _static_executor("fixed-fast", execution_lane="fast_path")
+    async with db.sessions() as session:
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == ready.id).values(memory_budget_bytes=GIB))
+        await session.commit()
+        settings = await KubernetesExecutionService(session).describe({})
+        assert settings.fast_path_ready_workers == 1
+
+
+async def test_worker_registration_stores_handler_names_once_across_versions(db) -> None:
+    worker_id = await claims.register_static_worker(hostname="versioned-handlers")
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.supported_handlers.count("workflow.execute") == 1
+    await claims.report_worker_handlers(worker_id, ["workflow.execute", "workflow.execute", "agent.run"])
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.supported_handlers == ["workflow.execute", "agent.run"]

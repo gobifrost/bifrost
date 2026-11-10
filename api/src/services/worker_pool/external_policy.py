@@ -25,3 +25,8 @@ def validate_external_policy(
             "BIFROST_POOL_MAX_LIFETIME_SECONDS exceeds the capacity provider limit "
             f"({profile.max_lifetime_seconds}); update the deployment configuration"
         )
+    if policy.reserved_fast_path_workers:
+        raise ValueError(
+            "reserved_fast_path_workers requires managed Kubernetes or static Fast Path workers; "
+            "the external capacity provider does not advertise lane isolation"
+        )

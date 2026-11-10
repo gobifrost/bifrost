@@ -86,6 +86,9 @@ class Workflow(Base):
     public_endpoint: Mapped[bool] = mapped_column(Boolean, default=False)
     disable_global_key: Mapped[bool] = mapped_column(Boolean, default=False)
     execution_mode: Mapped[str] = mapped_column(String(20), default="sync")
+    execution_lane: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="auto", server_default="auto"
+    )
     timeout_seconds: Mapped[int] = mapped_column(Integer, default=1800)  # 30 min default
     # Decaying maximum of its runs' peak memory growth (memory_requests),
     # and the code version it was learned from.

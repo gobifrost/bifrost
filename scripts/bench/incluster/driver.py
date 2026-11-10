@@ -10,6 +10,8 @@ Modes:
   return the platform's own records (timestamps, status, error). Chat classes
   send messages the way the chat page does: ``chat-first`` opens a new chat,
   ``chat-followup`` times a second message in an existing one.
+- ``lane_mix``: compare short calls with long memory-admission reservations,
+  with shared workers or one exclusive Fast Path worker.
 """
 
 from __future__ import annotations
@@ -339,9 +341,172 @@ async def run_class(name: str, sequential: int, burst: int, timeout_s: int, burs
         await http.aclose()
 
 
+LANE_SOURCE = '''import asyncio
+from bifrost import workflow
+
+@workflow(name="bench_lane_short")
+async def bench_lane_short() -> dict:
+    return {"ok": True}
+
+@workflow(name="bench_lane_bulk")
+async def bench_lane_bulk(seconds: float = 8) -> dict:
+    await asyncio.sleep(seconds)
+    return {"waited_s": seconds}
+'''
+
+
+async def _lane_workers() -> list[dict]:
+    """Read worker admission envelopes from this isolated benchmark's DB."""
+    from sqlalchemy import select
+
+    from src.core.database import get_db_context
+    from src.models.orm.execution_workers import ExecutionWorker
+
+    async with get_db_context() as db:
+        rows = (await db.scalars(select(ExecutionWorker).where(
+            ExecutionWorker.form == "job",
+            ExecutionWorker.state.in_(("reserved", "starting", "ready", "draining")),
+        ))).all()
+        return [{
+            "id": str(row.id), "state": row.state, "lane": row.execution_lane,
+            "budget_bytes": row.memory_budget_bytes,
+        } for row in rows]
+
+
+async def _wait_lane_workers(reserved: int, timeout_s: int) -> list[dict]:
+    deadline = time.monotonic() + timeout_s
+    workers: list[dict] = []
+    while time.monotonic() < deadline:
+        workers = await _lane_workers()
+        ready = [worker for worker in workers if worker["state"] == "ready" and worker["budget_bytes"]]
+        if (len(workers) == len(ready) == 2
+                and sum(worker["lane"] == "fast_path" for worker in ready) == reserved):
+            return ready
+        await asyncio.sleep(POLL_INTERVAL_S)
+    raise RuntimeError(f"Two-worker lane allocation did not become ready: {workers}")
+
+
+async def lane_mix(reserved: int, samples: int = 20, bulk_runs: int = 4,
+                   bulk_seconds: int = 8, timeout_s: int = 300) -> dict:
+    """A bounded admission experiment, not a customer latency promise.
+
+    Bulk runs reserve almost a full worker budget while simulating external
+    I/O. They do not allocate that much resident memory. Both variants use
+    two workers of the same configured size; startup is outside the sample.
+    """
+    if reserved not in (0, 1) or not 1 <= samples <= 40 or bulk_runs < 2 or bulk_seconds < 1:
+        raise ValueError("Use 0/1 reserved workers, 1-40 short samples and at least two positive-duration bulk runs")
+    from src.core.database import close_db, init_db
+
+    await init_db()
+    http = await client()
+    policy = _check(await http.get("/api/admin/kubernetes/execution"), "read policy").json()["policy"]
+    policy_fields = ("reserved_fast_path_workers", "warm_workers", "max_workers", "auto_priority_app_workflows")
+    previous = {field: policy[field] for field in policy_fields}
+    ids: list[str] = []
+    workflow_ids: dict[str, str] = {}
+    try:
+        _check(await http.put("/api/admin/kubernetes/policy", json={
+            "reserved_fast_path_workers": reserved, "warm_workers": 2 - reserved,
+            "max_workers": 2, "auto_priority_app_workflows": False,
+        }), "set equal-resource lane policy")
+        workers = await _wait_lane_workers(reserved, timeout_s)
+        budget_mib = min(worker["budget_bytes"] for worker in workers) // (1024 * 1024)
+        # Less than a short run's 64 MiB request remains while bulk occupies
+        # a worker. Leave a small margin for reported budget fluctuations.
+        request_mib = budget_mib - 16
+        if request_mib < 64:
+            raise RuntimeError("Benchmark workers need at least an 80 MiB measured budget")
+        known = await _workflow_ids(http)
+        names = ["bench_lane_short", "bench_lane_bulk"]
+        if any(name in known for name in names):
+            raise RuntimeError("Lane benchmark fixtures already exist; use a clean benchmark environment")
+        await _write_and_register(http, "workflows/bench_lanes.py", LANE_SOURCE, names, known)
+        all_ids = await _workflow_ids(http)
+        workflow_ids = {name: all_ids[name] for name in names}
+        short_id, bulk_id = (workflow_ids[name] for name in names)
+        _check(await http.patch(f"/api/workflows/{short_id}", json={
+            "execution_lane": "fast_path" if reserved else "normal", "memory_request_mib": 64,
+        }), "classify short workflow")
+        _check(await http.patch(f"/api/workflows/{bulk_id}", json={
+            "execution_lane": "normal", "memory_request_mib": request_mib,
+        }), "classify bulk workflow")
+
+        async def submit(workflow_id: str, inputs: dict | None = None) -> str:
+            result = _check(await http.post("/api/workflows/execute", json={
+                "workflow_id": workflow_id, "input_data": inputs or {}, "sync": False,
+            }), "submit lane workload").json()["execution_id"]
+            ids.append(result)
+            return result
+
+        async def records(run_ids: list[str]) -> list[dict]:
+            result = await _wait_all(http, "/api/executions", {"limit": 100}, run_ids, timeout_s)
+            if any(row["status"] != "Success" for row in result):
+                raise RuntimeError(f"Lane workload failed: {result}")
+            return result
+
+        async def wait_running(run_ids: list[str], expected: int) -> None:
+            deadline = time.monotonic() + timeout_s
+            while time.monotonic() < deadline:
+                rows = _check(await http.get("/api/executions", params={"workflowId": bulk_id, "limit": 50}), "wait for bulk admission").json()
+                rows = rows if isinstance(rows, list) else rows.get("executions", rows.get("items", []))
+                selected = [row for row in rows if str(row.get("execution_id") or row.get("id")) in run_ids]
+                if sum(row.get("status") == "Running" for row in selected) >= expected:
+                    return
+                if any(row.get("status") in ("Failed", "Timeout", "Cancelled", "Success") for row in selected):
+                    raise RuntimeError(f"Bulk workload ended before saturation was observed: {selected}")
+                await asyncio.sleep(POLL_INTERVAL_S)
+            raise RuntimeError("Expected workers did not become occupied by the bulk workload")
+
+        baseline = await records(list(await asyncio.gather(*(submit(short_id) for _ in range(samples)))))
+        bulk = list(await asyncio.gather(*(submit(bulk_id, {"seconds": bulk_seconds}) for _ in range(bulk_runs))))
+        await wait_running(bulk, 2 - reserved)
+        mixed = await records(list(await asyncio.gather(*(submit(short_id) for _ in range(samples)))))
+        background = await records(bulk)
+        raw = {"no_background": baseline, "mixed_short": mixed, "background": background}
+        if reserved:
+            _check(await http.patch(f"/api/workflows/{bulk_id}", json={"execution_lane": "fast_path"}), "classify saturation run")
+            fast_bulk = [await submit(bulk_id, {"seconds": bulk_seconds})]
+            await wait_running(fast_bulk, 1)
+            # Classification changes affect only future runs. The accepted
+            # bulk run stays in Fast Path while a new Normal sentinel runs.
+            _check(await http.patch(f"/api/workflows/{bulk_id}", json={"execution_lane": "normal"}), "restore bulk classification")
+            fast_short = list(await asyncio.gather(*(submit(short_id) for _ in range(samples))))
+            normal = [await submit(bulk_id, {"seconds": 0})]
+            saturated_short, saturated_bulk, normal_records = await asyncio.gather(
+                records(fast_short), records(fast_bulk), records(normal),
+            )
+            raw.update({
+                "fast_saturated_short": saturated_short, "fast_saturated_bulk": saturated_bulk,
+                "normal_during_fast_saturation": normal_records,
+            })
+        return {
+            "reserved_fast_path_workers": reserved, "workers": workers,
+            "policy": {**policy, "max_workers": 2, "warm_workers": 2 - reserved,
+                       "reserved_fast_path_workers": reserved, "auto_priority_app_workflows": False},
+            "bulk_request_mib": request_mib, "bulk_seconds": bulk_seconds,
+            "admission_reservation_only": True,
+            "raw": raw,
+        }
+    finally:
+        # Cancel only this experiment's unfinished runs before removing fixtures
+        # or restoring a policy that may disable their reserved lane.
+        for run_id in ids:
+            response = await http.post(f"/api/executions/{run_id}/cancel")
+            if response.status_code not in (200, 400, 404):
+                _check(response, "cancel benchmark run")
+        for workflow_id in workflow_ids.values():
+            _check(await http.delete(f"/api/workflows/{workflow_id}"), "remove benchmark workflow")
+        if workflow_ids:
+            _check(await http.delete("/api/files/editor", params={"path": "workflows/bench_lanes.py"}), "remove benchmark source")
+        _check(await http.put("/api/admin/kubernetes/policy", json=previous), "restore worker policy")
+        await http.aclose()
+        await close_db()
+
+
 def main() -> None:
     mode, args = sys.argv[1], json.loads(sys.argv[2])
-    handler = {"setup": setup, "run_class": run_class}[mode]
+    handler = {"setup": setup, "run_class": run_class, "lane_mix": lane_mix}[mode]
     print(json.dumps(asyncio.run(handler(**args))))
 
 

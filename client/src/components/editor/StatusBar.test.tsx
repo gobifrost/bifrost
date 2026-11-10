@@ -44,6 +44,7 @@ describe("StatusBar metadata recovery", () => {
 					permission_mode: "full",
 					category: "General",
 					execution_mode: "sync",
+					execution_lane: "auto",
 					timeout_seconds: 1800,
 					endpoint_enabled: false,
 					disable_global_key: false,
