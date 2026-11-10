@@ -255,7 +255,18 @@ class AzureObjectStore:
 
         if settings.azure_blob_account_name:
             return settings.azure_blob_account_name
-        return urlparse(settings.azure_blob_account_url or "").hostname or ""
+        hostname = urlparse(settings.azure_blob_account_url or "").hostname or ""
+        for suffix in (
+            ".blob.core.windows.net", ".blob.core.usgovcloudapi.net",
+            ".blob.core.chinacloudapi.cn",
+        ):
+            if hostname.endswith(suffix):
+                account = hostname.removesuffix(suffix)
+                if account and "." not in account:
+                    return account
+        raise StorageConfigurationError(
+            "Azure Blob account name is required for custom endpoints and emulators"
+        )
 
     async def __aenter__(self) -> Self:
         if self._container is not None:

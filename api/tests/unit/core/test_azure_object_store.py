@@ -105,6 +105,24 @@ def test_provider_identity_covers_every_credential_bearing_field():
     assert isinstance(s3_base, tuple) and s3_base[0] == "s3"
 
 
+@pytest.mark.parametrize("suffix", [
+    "blob.core.windows.net", "blob.core.usgovcloudapi.net", "blob.core.chinacloudapi.cn",
+])
+def test_account_name_is_derived_from_standard_endpoint(suffix):
+    assert AzureObjectStore._account_name(settings(
+        azure_blob_account_url=f"https://example.{suffix}",
+    )) == "example"
+
+
+def test_custom_endpoint_requires_explicit_account_name():
+    config = settings(azure_blob_account_url="https://storage.example.com")
+    with pytest.raises(StorageConfigurationError, match="account name is required"):
+        AzureObjectStore._account_name(config)
+    assert AzureObjectStore._account_name(settings(
+        azure_blob_account_url="https://storage.example.com", azure_blob_account_name="example",
+    )) == "example"
+
+
 def test_managed_identity_never_accepts_an_explicit_key():
     assert not settings(azure_blob_auth="managed_identity").azure_blob_configured
     assert settings(

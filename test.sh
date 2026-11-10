@@ -282,9 +282,10 @@ stack_up() {
     echo "Building template database..."
     "$SCRIPT_DIR/scripts/stack_template_init.sh"
 
-    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ]; then
+    if [ "${BIFROST_TEST_OBJECT_STORAGE_PROVIDER:-s3}" = "azure_blob" ] && \
+        [ "${BIFROST_TEST_AZURITE:-0}" = "1" ]; then
         echo "Creating disposable Azurite container..."
-        docker compose -f "$COMPOSE_FILE" up -d azurite
+        docker compose -f "$COMPOSE_FILE" --profile azure up -d azurite
         docker compose -f "$COMPOSE_FILE" --profile test run --rm --no-deps test-runner python -c '
 import os, socket, time
 from azure.core.credentials import AzureNamedKeyCredential

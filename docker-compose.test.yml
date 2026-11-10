@@ -15,7 +15,7 @@
 # Usage: see ./test.sh --help
 
 services:
-  # Both storage contracts run against real local services in every test lane.
+  # The Azure emulator is only started by the focused Azure storage lane.
   azurite:
     image: mcr.microsoft.com/azure-storage/azurite:3.35.0@sha256:647c63a91102a9d8e8000aab803436e1fc85fbb285e7ce830a82ee5d6661cf37
     command: [azurite-blob, --blobHost, 0.0.0.0, --location, /data, --skipApiVersionCheck, --silent]
@@ -24,6 +24,8 @@ services:
       AZURITE_ACCOUNTS: bifrostcontract:MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA=
     tmpfs:
       - /data
+    profiles:
+      - azure
 
   # PostgreSQL Database (Test) - with pgvector extension
   # Uses tmpfs so data is NOT persisted between test runs - fresh database each time
@@ -498,8 +500,6 @@ services:
       - ${LOG_DIR:-/tmp/bifrost}:/tmp/bifrost
     working_dir: /app
     depends_on:
-      azurite:
-        condition: service_started
       pgbouncer:
         condition: service_healthy
       redis:

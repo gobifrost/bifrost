@@ -49,17 +49,27 @@ async def _copy_key(
         if error.kind != "not_found":
             return "failed", f"stat dest: {error.kind}/{error.provider_code}"
         current = None
-    if current is not None and (
+    matches = current is not None and (
         current.size == info.size
         and current.metadata == info.metadata
         and current.properties == info.properties
-    ):
+    )
+    if matches and not verify_digests:
         return "skipped", None
     try:
         async with source.open_read(key, expected_version=info.version) as read:
             data = await read.body.read()
     except StorageError as error:
         return "failed", f"read source: {error.kind}/{error.provider_code}"
+    if matches:
+        assert current is not None
+        try:
+            async with dest.open_read(key, expected_version=current.version) as read:
+                existing = await read.body.read()
+        except StorageError as error:
+            return "failed", f"verify existing: {error.kind}/{error.provider_code}"
+        if hashlib.sha256(existing).digest() == hashlib.sha256(data).digest():
+            return "skipped", None
     properties = info.properties
     expired = False
     if properties.http_expires is not None:
@@ -93,7 +103,7 @@ async def _copy_key(
         return "failed", "verify mismatch after write"
     if verify_digests:
         try:
-            async with dest.open_read(key) as read:
+            async with dest.open_read(key, expected_version=written.version) as read:
                 if hashlib.sha256(await read.body.read()).hexdigest() != hashlib.sha256(data).hexdigest():
                     return "failed", "digest mismatch after write"
         except StorageError as error:

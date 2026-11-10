@@ -3,13 +3,34 @@
 These files are deliberately outside default pytest discovery. They access
 real Azure and must use a disposable, explicitly authorized storage target with
 synthetic data. They do not provision resources or grant access. See
-[provider configuration and limits](../../docs/architecture/object-storage-providers.md).
+[provider configuration and limits](../../../docs/architecture/object-storage-providers.md).
 Record the exact approved account/container, source commit, ownership, cost and
 lifetime bounds before running; retain source-bound results and cleanup receipts.
 
 Keep evidence outside application fixture prefixes: the normal test harness
 resets application state. Never put credentials in bootstrap objects or point
 this lane at an existing deployment or customer storage.
+
+## Local emulator and CI
+
+The merge queue runs `tests/e2e/platform/test_object_storage.py` against
+Azurite in a parallel job; the full application suite runs once with S3.
+Azurite is not started for ordinary S3 tests. To run the focused lane locally:
+
+```bash
+BIFROST_TEST_OBJECT_STORAGE_PROVIDER=azure_blob \
+BIFROST_TEST_AZURITE=1 BIFROST_TEST_AZURE_BLOB_RESET=1 \
+BIFROST_AZURE_BLOB_ACCOUNT_URL=http://azurite:10000/bifrostcontract \
+BIFROST_AZURE_BLOB_ACCOUNT_NAME=bifrostcontract \
+BIFROST_AZURE_BLOB_CONTAINER=bifrost-test \
+BIFROST_AZURE_BLOB_AUTH=account_key \
+BIFROST_AZURE_BLOB_ACCOUNT_KEY=MDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA= \
+./test.sh tests/e2e/platform/test_object_storage.py -v --durations=0
+```
+
+This key belongs only to the public local emulator fixture. The test harness
+creates that disposable container. Leave `BIFROST_TEST_AZURITE` unset for real
+Azure: its account/container must already exist, and tests do not provision them.
 
 ## Dockerized contracts
 

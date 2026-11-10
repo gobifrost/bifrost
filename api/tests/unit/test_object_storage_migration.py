@@ -154,3 +154,35 @@ def test_migrate_requires_explicit_acknowledgment(monkeypatch, capsys):
     monkeypatch.delenv("BIFROST_MIGRATE_OBJECT_STORAGE_ACK", raising=False)
     assert migrate.main() == 2
     assert "ACK" in capsys.readouterr().err
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("destination_bytes,expected_writes", [(b"aaa", []), (b"zzz", ["a"])])
+async def test_digest_verified_resume_compares_existing_content(stores, destination_bytes, expected_writes):
+    source, dest = stores
+    content, _, properties = source.objects["a"]
+    dest.objects["a"] = (destination_bytes, '"dest-v1"', properties)
+    assert await migrate._copy_key(source, dest, "a", verify_digests=True) == (
+        ("skipped", None) if destination_bytes == content else ("copied", None)
+    )
+    assert dest.objects["a"][0] == content
+    assert dest.writes == expected_writes
+
+
+@pytest.mark.asyncio
+async def test_digest_verified_resume_refuses_a_changed_destination(stores):
+    source, dest = stores
+    _, _, properties = source.objects["a"]
+    dest.objects["a"] = (b"aaa", '"dest-v1"', properties)
+    original_stat = dest.stat
+
+    async def stat_then_change(key):
+        info = await original_stat(key)
+        dest.objects[key] = (b"zzz", '"dest-v2"', properties)
+        return info
+
+    dest.stat = stat_then_change
+    outcome, detail = await migrate._copy_key(source, dest, "a", verify_digests=True)
+    assert outcome == "failed"
+    assert detail is not None and "precondition_failed" in detail
+    assert dest.writes == []

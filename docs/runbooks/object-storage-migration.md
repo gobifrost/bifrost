@@ -30,7 +30,9 @@ metadata envelope and issues fresh concurrency versions.
    readback comparison on a small installation; the default check compares
    size, metadata and content properties for every key.
 6. The script skips keys that already match for a crash resume (pass
-   `--allow-nonempty-dest`). It reports keys whose HTTP Expires property
+   `--allow-nonempty-dest`). With `--verify-digests`, matching-size existing
+   objects are read and compared too; different bytes are copied again, and
+   concurrent destination changes fail verification. It reports keys whose HTTP Expires property
    was dropped — Azure has no native Expires — so retention can be
    re-applied at the destination. Any `FAILED` line aborts the cutover:
    fix the cause and resume; a zero exit with no failures is the only
