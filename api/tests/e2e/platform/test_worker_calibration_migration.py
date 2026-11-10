@@ -5,9 +5,10 @@ from uuid import uuid4
 
 import pytest
 import sqlalchemy as sa
+from alembic.script import ScriptDirectory
 
 from tests.e2e.platform.test_r2b_roles_migration_rehearsal import (
-    _create_database, _direct_database_url, _drop_database, _run_in_database, _upgrade,
+    _alembic_config, _create_database, _direct_database_url, _drop_database, _run_in_database, _upgrade,
 )
 
 pytestmark = pytest.mark.e2e
@@ -15,6 +16,8 @@ pytestmark = pytest.mark.e2e
 
 @pytest.mark.parametrize("prior", ["20261108_worker_calibration", "20261109_deprecate_slot_fields"])
 async def test_both_upgrade_paths_converge(prior):
+    expected_heads = ScriptDirectory.from_config(_alembic_config()).get_heads()
+    assert len(expected_heads) == 1, "Upgrade paths must converge to one current head"
     name = f"bifrost_r2b_rehearsal_{uuid4().hex[:12]}"
     url = _direct_database_url(name)
     await _create_database(name)
@@ -23,15 +26,15 @@ async def test_both_upgrade_paths_converge(prior):
         await asyncio.to_thread(_upgrade, url, "head")
 
         async def verify(connection):
-            assert (await connection.execute(sa.text("SELECT version_num FROM alembic_version"))).scalars().all() == [
-                "20261109_merge_calibration",
-            ]
+            assert (await connection.execute(sa.text("SELECT version_num FROM alembic_version"))).scalars().all() == expected_heads
             columns = (await connection.execute(sa.text(
                 "SELECT table_name,column_name FROM information_schema.columns "
-                "WHERE table_schema='public' AND column_name IN ('memory_calibration','runs_platform_jobs')"
+                "WHERE table_schema='public' AND column_name IN ('memory_calibration','runs_platform_jobs','execution_lane')"
             ))).all()
             assert set(columns) == {
                 ("execution_workers", "memory_calibration"), ("scheduler_replicas", "runs_platform_jobs"),
+                ("workflows", "execution_lane"), ("executions", "execution_lane"),
+                ("work_dispatches", "execution_lane"), ("execution_workers", "execution_lane"),
             }
             assert await connection.scalar(sa.text("SELECT to_regclass('ix_execution_workers_calibration')"))
 
