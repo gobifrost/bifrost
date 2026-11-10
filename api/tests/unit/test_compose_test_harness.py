@@ -453,3 +453,19 @@ def test_github_app_transport_does_not_preload_workflow_templates_or_health_prob
     assert [type(node).__name__ for node in module.body] == ["Expr", "Import", "If"]
     gate = module.body[2]
     assert ast.unparse(gate.test) == "'src.jobs.platform.runner' in sys.orig_argv"
+
+
+def test_github_app_transport_defers_provider_imports_until_runner_startup():
+    import subprocess
+    import sys
+    script = _find_repo_file("api/scripts/test_github_app_sitecustomize.py")
+    code = """
+import runpy
+import sys
+sys.orig_argv.append("src.jobs.platform.runner")
+runpy.run_path(sys.argv[1])
+assert "shared.github_git_app" not in sys.modules
+from shared import github_git_app
+assert github_git_app.http_client.__name__ == "fixture_client"
+"""
+    subprocess.run([sys.executable, "-c", code, str(script)], check=True, capture_output=True, text=True)

@@ -14705,17 +14705,17 @@ export interface components {
              * First Seen
              * @description Oldest entry's time (access-check aggregates only)
              */
-            first_seen?: string;
+            first_seen?: null | string;
             /**
              * Window Start
              * @description Inclusive UTC aggregate window start
              */
-            window_start?: string;
+            window_start?: null | string;
             /**
              * Window End
              * @description Exclusive UTC aggregate window end
              */
-            window_end?: string;
+            window_end?: null | string;
             /** @description Newest entry in the group */
             sample: components["schemas"]["AuditLogEntry"];
         };
