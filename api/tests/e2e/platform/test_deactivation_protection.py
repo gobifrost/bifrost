@@ -281,6 +281,16 @@ class TestDeactivationProtection:
         assert result.pending_deactivations is not None
         assert len(result.pending_deactivations) == 1
 
+        # A rejected save must not publish replacement code to either source
+        # storage or the executable cache, even if the caller commits metadata.
+        from src.core.module_cache import get_module
+        from src.services.repo_storage import RepoStorage
+
+        assert await RepoStorage().read(path) == initial_code.encode("utf-8")
+        cached = await get_module(path)
+        assert cached is not None
+        assert cached["content"] == initial_code
+
         pending = result.pending_deactivations[0]
         assert pending.id == str(workflow.id)
         # name in the DB is set to function_name on creation; decorator display name

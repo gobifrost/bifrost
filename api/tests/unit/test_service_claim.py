@@ -100,12 +100,13 @@ async def _cleanup_services(async_session_factory):
     _created_workflow_ids.clear()
     _created_org_ids.clear()
     yield
-    from sqlalchemy import delete as sa_delete
+    from sqlalchemy import delete as sa_delete, select
 
     from src.models.orm.services import ServiceAttempt, ServiceDefinition
     from src.models.orm.workflows import Workflow
     from src.models.orm.organizations import Organization
     from src.models.orm.users import User
+    from src.models.orm.file_index import FileIndex
 
     async with async_session_factory() as session:
         if _created_definition_ids:
@@ -120,6 +121,9 @@ async def _cleanup_services(async_session_factory):
                 )
             )
         if _created_workflow_ids:
+            await session.execute(sa_delete(FileIndex).where(FileIndex.path.in_(
+                select(Workflow.path).where(Workflow.id.in_(_created_workflow_ids))
+            )))
             await session.execute(
                 sa_delete(Workflow).where(
                     Workflow.id.in_(_created_workflow_ids)
@@ -168,7 +172,9 @@ async def _ensure_org(db_session):
 
 
 async def _ensure_service(db_session, org=None, **overrides):
+    import hashlib
     from src.models.orm.workflows import Workflow
+    from src.services.file_index_service import FileIndexService
 
     org = org or await _ensure_org(db_session)
     suffix = uuid4().hex[:8]
@@ -183,10 +189,14 @@ async def _ensure_service(db_session, org=None, **overrides):
     )
     db_session.add(wf)
     await db_session.flush()
+    source = f"from bifrost import service\n@service\nasync def {wf.function_name}(): pass\n".encode()
+    digest = hashlib.sha256(source).hexdigest()
+    await FileIndexService(db_session).index(wf.path, source, digest, "test")
     definition = await service_lifecycle.ensure_definition_for_workflow(
         db_session, wf, created_by="tester"
     )
     definition.restart_eligible_at = datetime.now(timezone.utc) + _ELIGIBLE_AHEAD
+    definition.current_revision = digest
     for key, value in overrides.items():
         setattr(definition, key, value)
     await db_session.flush()

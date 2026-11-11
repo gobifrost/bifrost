@@ -34,6 +34,18 @@ install_virtual_import_hook()
 logger = logging.getLogger(__name__)
 
 
+def _verify_entry_source(code: str, context_data: dict[str, Any]) -> str:
+    """Check the actual source bytes before the loader can execute Python."""
+    expected = context_data.get("content_hash")
+    path = context_data.get("file_path")
+    if not expected and not context_data.get("solution_id"):
+        raise RuntimeError(f"Workflow source digest is unavailable for '{path}'")
+    actual = hashlib.sha256(code.encode("utf-8")).hexdigest()
+    if expected and actual != expected:
+        raise RuntimeError(f"Workflow source changed before execution: '{path}'")
+    return actual
+
+
 def _set_process_engine_credentials(context_data: dict[str, Any]) -> bool:
     """Install the handed-down engine credentials for this one-shot process.
 
@@ -203,7 +215,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                     cached = get_module_sync(file_path)
                     if cached:
                         loaded_code = cached["content"]
-                        code_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
+                        code_hash = _verify_entry_source(loaded_code, context_data)
                         workflow_func, metadata, load_error = load_workflow_from_db(
                             code=loaded_code,
                             path=file_path,
@@ -227,19 +239,6 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                     f"function_name={function_name}, "
                     f"file_path={file_path}"
                 )
-
-            # Validate content hash if pinned at dispatch time
-            content_hash = context_data.get("content_hash")
-            if content_hash and loaded_code:
-                actual_hash = hashlib.sha256(
-                    loaded_code.encode("utf-8")
-                ).hexdigest()
-                if actual_hash != content_hash:
-                    logger.warning(
-                        f"Content hash mismatch for {file_path}: "
-                        f"expected={content_hash[:12]}... actual={actual_hash[:12]}... "
-                        f"Code may have changed between dispatch and execution."
-                    )
 
             if workflow_func is None:
                 metrics = _capture_metrics(start_rss, start_utime, start_stime)
@@ -453,6 +452,7 @@ async def run_service(
                 cached = get_module_sync(file_path)
                 if cached:
                     loaded_code = cached["content"]
+                    _verify_entry_source(loaded_code, context_data)
                     service_func, _, load_error = load_workflow_from_db(
                         code=loaded_code,
                         path=file_path,
@@ -470,17 +470,6 @@ async def run_service(
                 f"Missing required fields for service execution: "
                 f"function_name={function_name}, file_path={file_path}"
             )
-
-        content_hash = context_data.get("content_hash")
-        if content_hash and loaded_code:
-            actual_hash = hashlib.sha256(loaded_code.encode("utf-8")).hexdigest()
-            if actual_hash != content_hash:
-                logger.warning(
-                    "Content hash mismatch for %s: expected=%s... actual=%s...",
-                    file_path,
-                    content_hash[:12],
-                    actual_hash[:12],
-                )
 
         if service_func is None:
             return _service_result(

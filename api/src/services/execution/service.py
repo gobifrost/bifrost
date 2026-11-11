@@ -136,7 +136,8 @@ async def get_workflow_for_execution(
 
     Returns metadata only (path, function_name, timeout, etc.) — no code.
     Workers load code via the virtual import hook: Redis cache → S3 _repo/ fallback.
-    Content hash is pinned separately by the consumer for reproducibility.
+    The workspace source digest travels with this metadata so workers can
+    verify the entry source before executing any module-level Python.
 
     This is DB-only (no Redis caching) since metadata may be updated frequently
     and we want the latest version for each execution.
@@ -156,23 +157,30 @@ async def get_workflow_for_execution(
         - execution_mode: sync or async
         - organization_id: Org scope (or None for global)
         - solution_id: Solution install id if solution-managed (else None)
+        - content_hash: Workspace entry digest (None for Solution workflows)
         - type: Executable type (workflow, tool, or data_provider)
         - cache_ttl_seconds: Data provider cache TTL
 
     Raises:
         WorkflowNotFoundError: If workflow doesn't exist in database
+        WorkflowLoadError: If workspace source has no digest
     """
-    from sqlalchemy import select
+    from sqlalchemy import and_, select
     from src.core.database import get_session_factory
     from src.models import Workflow as WorkflowORM
+    from src.models.orm.file_index import FileIndex
 
     async def _fetch(session: AsyncSession) -> dict[str, Any]:
         from sqlalchemy import or_
         from src.models.orm.solutions import Solution as SolutionORM
 
         stmt = (
-            select(WorkflowORM, SolutionORM.allow_outbound_access)
+            select(WorkflowORM, SolutionORM.allow_outbound_access, FileIndex.content_hash)
             .outerjoin(SolutionORM, WorkflowORM.solution_id == SolutionORM.id)
+            .outerjoin(FileIndex, and_(
+                WorkflowORM.solution_id.is_(None),
+                FileIndex.path == WorkflowORM.path,
+            ))
             .where(
                 WorkflowORM.id == workflow_id,
                 WorkflowORM.is_active == True,  # noqa: E712
@@ -191,7 +199,11 @@ async def get_workflow_for_execution(
         if row is None:
             raise WorkflowNotFoundError(f"Workflow with ID '{workflow_id}' not found")
 
-        workflow_record, allow_outbound_access = row
+        workflow_record, allow_outbound_access, content_hash = row
+        if workflow_record.solution_id is None and not content_hash:
+            raise WorkflowLoadError(
+                f"Workflow source digest is unavailable for '{workflow_record.path}'"
+            )
         logger.debug(f"Loaded workflow for execution: {workflow_id} -> {workflow_record.name}")
 
         return {
@@ -204,6 +216,7 @@ async def get_workflow_for_execution(
             "execution_mode": workflow_record.execution_mode or "async",
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
             "solution_id": str(workflow_record.solution_id) if workflow_record.solution_id else None,
+            "content_hash": content_hash,
             # Wire key kept stable for in-flight workflow_data across deploys.
             "can_access_global_repo": bool(allow_outbound_access),
             "type": workflow_record.type or "workflow",

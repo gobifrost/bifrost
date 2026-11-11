@@ -826,6 +826,13 @@ class TestExecuteRunAs:
             root_execution_id=None,
         )
         workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        import hashlib
+        from src.services.file_index_service import FileIndexService
+
+        source = b"def run(): pass\n"
+        await FileIndexService(db_session).index(
+            workflow.path, source, hashlib.sha256(source).hexdigest(), "test",
+        )
         with (
             patch("src.services.execution.async_executor._accept", new=AsyncMock()) as accept,
             patch("src.core.pubsub.publish_execution_update", new=AsyncMock()),

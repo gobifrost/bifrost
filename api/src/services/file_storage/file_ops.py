@@ -202,21 +202,7 @@ class FileOperationsService:
 
             validate_app_source_write(path, content)
 
-        # Write ALL files to S3 under _repo/ prefix — this is the durable store.
-        # Platform entities also go to S3 so the Redis→S3 fallback works for workers.
-        s3_key = f"{REPO_PREFIX}{path}"
-        async with self._object_storage.get_store() as store:
-            await store.write(s3_key, content, options=WriteOptions(properties=ContentProperties(content_type=content_type)))
-
         content_str = cached_content_str or content.decode("utf-8", errors="replace")
-
-        # Update module cache in Redis for immediate availability in virtual imports.
-        # Both workflows and modules need caching — workers load code via Redis→S3.
-        if path.endswith(".py"):
-            await set_module(path, content_str, content_hash)
-
-        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
-        await self.db.flush()
 
         # Extract metadata for workflows/forms/agents
         # Pass cached AST and content_str to avoid re-parsing large Python files
@@ -250,6 +236,22 @@ class FileOperationsService:
                 pending_deactivations=pending_deactivations,
                 available_replacements=available_replacements,
             )
+
+        # Only publish after deactivation protection accepts the write. Object
+        # storage and Redis cannot roll back when a caller returns a conflict.
+        # Write ALL files to S3 under _repo/ prefix — this is the durable store.
+        # Platform entities also go to S3 so the Redis→S3 fallback works for workers.
+        s3_key = f"{REPO_PREFIX}{path}"
+        async with self._object_storage.get_store() as store:
+            await store.write(s3_key, content, options=WriteOptions(properties=ContentProperties(content_type=content_type)))
+
+        # Update module cache in Redis for immediate availability in virtual imports.
+        # Both workflows and modules need caching — workers load code via Redis→S3.
+        if path.endswith(".py"):
+            await set_module(path, content_str, content_hash)
+
+        await FileIndexService(self.db).index(path, content, content_hash, updated_by)
+        await self.db.flush()
 
         # Scan Python files for missing SDK references
         if path.endswith(".py"):
