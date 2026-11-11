@@ -1,0 +1,19 @@
+{
+  "key": "pr:1317",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Workflow source is checked before execution, and rejected edits no longer replace active code.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1317",
+      "https://github.com/gobifrost/bifrost/issues/1195",
+      "Native Jack response Approve This Wording to the exact source-verification PR title/body and release sentence displayed in this conversation on November 10, 2026. Protected merge is separately authorized for this bounded repair."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1317"
+  }
+}
