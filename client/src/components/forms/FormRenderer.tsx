@@ -210,6 +210,15 @@ function FormRendererInner({
 		[form.form_schema],
 	);
 
+	// Display blocks render content but are not values accepted by the form API.
+	const inputFields = useMemo(
+		() =>
+			fields.filter(
+				(field) => field.type !== "markdown" && field.type !== "html",
+			),
+		[fields],
+	);
+
 	// Single state object for all data provider state to batch updates
 	const [dataProviderState, setDataProviderState] = useState<{
 		options: Record<string, DataProviderOption[]>;
@@ -544,7 +553,7 @@ function FormRendererInner({
 	const buildSchema = useCallback(() => {
 		const schemaFields: Record<string, z.ZodTypeAny> = {};
 
-		fields.forEach((field: FormField) => {
+		inputFields.forEach((field: FormField) => {
 			let fieldSchema: z.ZodTypeAny;
 
 			switch (field.type) {
@@ -645,7 +654,7 @@ function FormRendererInner({
 		});
 
 		return z.object(schemaFields);
-	}, [fields, dataProviderState.successfullyLoaded]);
+	}, [inputFields, dataProviderState.successfullyLoaded]);
 
 	// Create a custom resolver that calls buildSchema() to get the latest schema
 	const customResolver = useCallback<Resolver<Record<string, unknown>>>(
@@ -666,7 +675,7 @@ function FormRendererInner({
 	} = useForm({
 		resolver: customResolver,
 		mode: "onChange", // Validate on change to keep isValid up-to-date
-		defaultValues: fields.reduce(
+		defaultValues: inputFields.reduce(
 			(acc: Record<string, unknown>, field: FormField) => {
 				if (field.type === "multi_select") {
 					// default_value is a comma-separated list of option values
