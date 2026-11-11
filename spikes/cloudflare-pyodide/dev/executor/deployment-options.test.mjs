@@ -5,7 +5,7 @@ const configured = {BIFROST_CF_ACCOUNT_ID: 'a'.repeat(32), BIFROST_CF_EXECUTOR_N
   BIFROST_CF_API_WORKER: 'test-api', BIFROST_CF_API_ORIGIN: 'https://api.example/'};
 test('existing isolated development defaults remain explicit and copied', () => {
   const first = deploymentOptions({});
-  assert.equal(first.executorName, 'bifrost-pyodide-spike-ddf316c1');
+  assert.equal(first.executorName, 'bifrost-pyodide-spike-06aeb2c8');
   first.executorName = 'mutated';
   assert.notEqual(deploymentOptions({}).executorName, first.executorName);
 });
