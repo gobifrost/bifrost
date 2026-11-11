@@ -7,6 +7,7 @@ import {verifyResolutionResponse} from '../../backend/resolution-response.mjs';
 import {fixtureRejection} from '../../backend/fixture-admission.mjs';
 import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
+import {readBudgetedJson} from './output-budget.mjs';
 
 export class DevApi extends WorkerEntrypoint {
   async fetch(request) {
@@ -61,10 +62,16 @@ export default {
       const response = await child.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
         method: 'POST', body: JSON.stringify(payload),
       }));
-      const output = await boundedJson(response);
+      const output = await readBudgetedJson(response);
       return Response.json({result: output.upstream_result, bootstrap: output.bootstrap, api_calls: calls,
         api_calls_scope: 'parent_module_preflight_only'});
     } catch (error) {
+      if (error?.name === 'ExecutorBodyTooLargeError') return Response.json({phase: 'output-budget',
+        error_type: 'ExecutorBodyTooLargeError',
+        error: 'Executor response exceeds retention budget; workflow effects may already exist',
+        provider_outcome: {kind: 'terminal_body_too_large', response_eof: true, engine_outcome_delivered: false,
+          response_bytes: error.observedBytes, retention_limit_bytes: error.limitBytes},
+        api_calls: calls}, {status: 502});
       // Exception strings can contain workflow data or credentials.
       return Response.json({phase: 'dynamic-runtime', error_type: error.name, api_calls: calls}, {status: 502});
     }

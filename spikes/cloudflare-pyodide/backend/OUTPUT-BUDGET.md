@@ -59,3 +59,11 @@ this does not establish parity with a newer upstream main.
 
 Admission remains disabled. Larger child responses, memory exhaustion, full
 native startup, deployed retention and abnormal cancellation remain open gates.
+
+## Dev executor path
+
+`dev/executor/output-budget.mjs` enforces the same 1 MiB retention budget on
+the Python-entry child envelope: oversized output is dropped and reported as
+`ExecutorBodyTooLargeError` with `terminal_body_too_large` /
+`engine_outcome_delivered: false`, never parsed as a workflow result.
+Covered by `dev/executor/output-budget.test.mjs` (`node --test`).
