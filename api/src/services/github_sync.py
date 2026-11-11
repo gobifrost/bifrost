@@ -683,9 +683,24 @@ class GitHubSyncService:
             writer.set_value("user", "name", "Bifrost")
             writer.set_value("user", "email", "bifrost@localhost")
 
+    @staticmethod
+    def _stage_workspace_tree(work_dir: Path, repo: GitRepo) -> None:
+        """Include canonical manifests even when ignored, without forcing other files."""
+        from bifrost.manifest import MANIFEST_FILES, MANIFEST_LEGACY_FILE
+
+        manifests = []
+        for filename in sorted({*MANIFEST_FILES.values(), MANIFEST_LEGACY_FILE}):
+            relative = f".bifrost/{filename}"
+            entry = _confined_workspace_entry(work_dir, relative)
+            if entry is not None and entry.is_file():
+                manifests.append(relative)
+        repo.git.add(A=True)
+        if manifests:
+            repo.git.add("--force", "--", *manifests)
+
     async def _commit_connect_tree(self, work_dir: Path, repo: GitRepo) -> None:
         """Commit reviewed files without regenerating a manifest from old DB state."""
-        repo.git.add(A=True)
+        self._stage_workspace_tree(work_dir, repo)
         if repo.head.is_valid() and not repo.index.diff("HEAD") and not repo.untracked_files:
             return
         preflight = await self._run_preflight(work_dir)
@@ -1004,7 +1019,7 @@ class GitHubSyncService:
 
         # Regenerate manifest from DB so the commit captures current platform state
         await self._regenerate_manifest_to_dir(self.db, work_dir)
-        repo.git.add(A=True)
+        self._stage_workspace_tree(work_dir, repo)
 
         # Check if there are changes to commit
         if repo.head.is_valid() and not repo.index.diff("HEAD") and not repo.untracked_files:

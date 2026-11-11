@@ -2,11 +2,10 @@
 
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-from pathlib import Path
 
 
 @pytest.mark.asyncio
-async def test_desktop_commit_regenerates_manifest_before_staging():
+async def test_desktop_commit_regenerates_manifest_before_staging(tmp_path):
     """desktop_commit() should regenerate manifest into working tree before git add."""
     from src.services.github_sync import GitHubSyncService
 
@@ -18,7 +17,7 @@ async def test_desktop_commit_regenerates_manifest_before_staging():
     service.db = mock_db
     service.branch = "main"
 
-    mock_work_dir = MagicMock(spec=Path)
+    mock_work_dir = tmp_path
     mock_repo = MagicMock()
     mock_repo.head.is_valid.return_value = True
     mock_repo.index.diff.return_value = [MagicMock()]  # Has changes

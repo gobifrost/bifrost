@@ -722,6 +722,9 @@ class TestPushToEmptyRepo:
         )
         await write_manifest_to_repo(db_session, sync_service._persistent_dir)
 
+        write_entity_to_repo(sync_service._persistent_dir, ".gitignore", ".bifrost/\n")
+        write_entity_to_repo(sync_service._persistent_dir, ".bifrost/private.txt", "must stay ignored")
+
         # Commit + push
         await sync_service.desktop_commit("initial commit")
         await sync_service.desktop_sync(confirm_deletes=True)
@@ -730,6 +733,7 @@ class TestPushToEmptyRepo:
         verify_path = tmp_path / "verify"
         Repo.clone_from(f"file://{bare_repo}", str(verify_path), branch="main")
 
+        assert not (verify_path / ".bifrost" / "private.txt").exists()
         manifest = read_manifest_from_dir(verify_path / ".bifrost")
 
         # Workflow should be in manifest
