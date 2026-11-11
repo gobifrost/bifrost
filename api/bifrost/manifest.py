@@ -301,6 +301,13 @@ class ManifestForm(EntityCodec, BaseModel):
         schema: dict | None = None
         if fields:
             schema = {"fields": [_form_field_to_schema_dict(f) for f in fields]}
+        layout = getattr(form, "layout", None)
+        if layout is not None:
+            from src.models.contracts.forms import FormLayout
+
+            layout = FormLayout.model_validate(layout).model_dump(mode="json")
+            schema = schema or {"fields": []}
+            schema["layout"] = layout
 
         confirmation_markdown = getattr(form, "confirmation_markdown", None)
         if not isinstance(confirmation_markdown, str):

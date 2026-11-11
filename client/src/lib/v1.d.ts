@@ -20142,6 +20142,52 @@ export interface components {
          */
         FormFieldType: "text" | "email" | "number" | "select" | "multi_select" | "checkbox" | "textarea" | "radio" | "date" | "datetime" | "markdown" | "html" | "file";
         /**
+         * FormLayout
+         * @description Optional presentation structure for a form's normalized field records.
+         */
+        FormLayout: {
+            /** Sections */
+            sections?: components["schemas"]["FormLayoutSection"][];
+        };
+        /**
+         * FormLayoutColumn
+         * @description One field placement in a responsive twelve-column form row.
+         */
+        FormLayoutColumn: {
+            /**
+             * Field
+             * @description Name of the form field in this column
+             */
+            field: string;
+            /**
+             * Width
+             * @description Desktop width in a twelve-column row; all columns stack on small screens
+             * @default 12
+             * @enum {integer}
+             */
+            width: 3 | 4 | 6 | 8 | 9 | 12;
+        };
+        /**
+         * FormLayoutRow
+         * @description A horizontal row of field columns within a form section.
+         */
+        FormLayoutRow: {
+            /** Columns */
+            columns?: components["schemas"]["FormLayoutColumn"][];
+        };
+        /**
+         * FormLayoutSection
+         * @description A named grouping of rows. Empty sections and rows are allowed while authoring.
+         */
+        FormLayoutSection: {
+            /** Title */
+            title?: string | null;
+            /** Description */
+            description?: string | null;
+            /** Rows */
+            rows?: components["schemas"]["FormLayoutRow"][];
+        };
+        /**
          * FormPublic
          * @description Form output for API responses.
          */
@@ -20391,6 +20437,7 @@ export interface components {
         FormRuntimeSchema: {
             /** Fields */
             fields: components["schemas"]["FormRuntimeField"][];
+            layout?: components["schemas"]["FormLayout"] | null;
         };
         /**
          * FormSchema
@@ -20402,6 +20449,8 @@ export interface components {
              * @description Max 50 fields per form
              */
             fields: components["schemas"]["FormField"][];
+            /** @description Optional sections, rows, and field column widths. Omit to use the legacy vertical layout. */
+            layout?: components["schemas"]["FormLayout"] | null;
         };
         /**
          * FormStartupResponse

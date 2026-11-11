@@ -131,10 +131,50 @@ class FormField(BaseModel):
         return self
 
 
+class FormLayoutColumn(BaseModel):
+    """One field placement in a responsive twelve-column form row."""
+
+    field: str = Field(..., min_length=1, description="Name of the form field in this column")
+    width: Literal[3, 4, 6, 8, 9, 12] = Field(
+        default=12,
+        description="Desktop width in a twelve-column row; all columns stack on small screens",
+    )
+
+
+class FormLayoutRow(BaseModel):
+    """A horizontal row of field columns within a form section."""
+
+    columns: list[FormLayoutColumn] = Field(default_factory=list, max_length=4)
+
+    @model_validator(mode="after")
+    def validate_width(self):
+        if sum(column.width for column in self.columns) > 12:
+            raise ValueError("Form layout row columns cannot exceed a total width of 12")
+        return self
+
+
+class FormLayoutSection(BaseModel):
+    """A named grouping of rows. Empty sections and rows are allowed while authoring."""
+
+    title: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=1_000)
+    rows: list[FormLayoutRow] = Field(default_factory=list, max_length=50)
+
+
+class FormLayout(BaseModel):
+    """Optional presentation structure for a form's normalized field records."""
+
+    sections: list[FormLayoutSection] = Field(default_factory=list, max_length=25)
+
+
 class FormSchema(BaseModel):
     """Form schema with field definitions"""
     fields: list[FormField] = Field(..., max_length=50,
                                     description="Max 50 fields per form")
+    layout: FormLayout | None = Field(
+        default=None,
+        description="Optional sections, rows, and field column widths. Omit to use the legacy vertical layout.",
+    )
 
     @field_validator('fields')
     @classmethod
@@ -158,6 +198,34 @@ class FormSchema(BaseModel):
                     f"Field '{field.name}' auto_fill references non-existent "
                     f"target field(s): {', '.join(sorted(invalid))}"
                 )
+        return self
+
+    @model_validator(mode="after")
+    def validate_layout_fields(self):
+        """A saved layout is a complete, ordered presentation of the form fields."""
+        if self.layout is None:
+            return self
+
+        field_names = {field.name for field in self.fields}
+        placed_fields = [
+            column.field
+            for section in self.layout.sections
+            for row in section.rows
+            for column in row.columns
+        ]
+        unknown_fields = set(placed_fields) - field_names
+        if unknown_fields:
+            raise ValueError(
+                "Form layout references non-existent field(s): "
+                + ", ".join(sorted(unknown_fields))
+            )
+        if len(placed_fields) != len(set(placed_fields)):
+            raise ValueError("Each form field may appear only once in the layout")
+        missing_fields = field_names - set(placed_fields)
+        if missing_fields:
+            raise ValueError(
+                "Form layout must place every field: " + ", ".join(sorted(missing_fields))
+            )
         return self
 
 
@@ -416,9 +484,6 @@ class FormPublic(BaseModel):
                 )
                 form_fields.append(form_field)
 
-            # Create FormSchema with FormField objects
-            form_schema = FormSchema(fields=form_fields)
-
             # Create a new dict with form_schema computed
             data_dict = {
                 "id": data.id,
@@ -436,7 +501,10 @@ class FormPublic(BaseModel):
                 "launch_workflow_id": data.launch_workflow_id,
                 "default_launch_params": data.default_launch_params,
                 "allowed_query_params": data.allowed_query_params,
-                "form_schema": form_schema,
+                "form_schema": FormSchema(
+                    fields=form_fields,
+                    layout=getattr(data, "layout", None),
+                ),
                 "access_level": data.access_level,
                 "organization_id": data.organization_id,
                 "is_active": data.is_active,
@@ -515,6 +583,7 @@ class FormRuntimeField(BaseModel):
 
 class FormRuntimeSchema(BaseModel):
     fields: list[FormRuntimeField]
+    layout: FormLayout | None = None
 
 
 class FormRuntimeDefinition(BaseModel):
@@ -566,7 +635,10 @@ class FormRuntimeDefinition(BaseModel):
             "id": data.id,
             "name": data.name,
             "description": data.description,
-            "form_schema": FormRuntimeSchema(fields=fields),
+            "form_schema": FormRuntimeSchema(
+                fields=fields,
+                layout=getattr(data, "layout", None),
+            ),
             "allowed_query_params": data.allowed_query_params,
             "has_startup": data.launch_workflow_id is not None,
             "is_active": data.is_active,

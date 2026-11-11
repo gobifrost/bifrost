@@ -36,6 +36,7 @@ import type {
 } from "@/lib/client-types";
 import { getEmbedTokenClaims } from "@/lib/auth-token";
 import { formRuntimeQueryParams } from "@/lib/form-embed-presentation";
+import { formLayoutWidthClass, normalizeFormLayout } from "./form-layout";
 
 type Form =
 	| components["schemas"]["FormPublic"]
@@ -205,6 +206,13 @@ function FormRendererInner({
 	// Get typed fields array - memoized to prevent unnecessary re-renders
 	const fields = useMemo(
 		() => (isFormSchema(form.form_schema) ? form.form_schema.fields : []),
+		[form.form_schema],
+	);
+	const layout = useMemo(
+		() =>
+			isFormSchema(form.form_schema)
+				? normalizeFormLayout(form.form_schema.layout)
+				: null,
 		[form.form_schema],
 	);
 
@@ -1705,52 +1713,178 @@ function FormRendererInner({
 									mode="popLayout"
 									initial={false}
 								>
-									{visibleFields.map((field: FormField) => (
-										<motion.div
-											key={field.name}
-											initial={
-												reduceMotion
-													? false
-													: {
+									{layout
+										? layout.sections.map(
+												(section, sectionIndex) => {
+													const sectionRows =
+														section.rows
+															.map(
+																(row, rowIndex) => ({
+																	rowIndex,
+																	columns:
+																		row.columns.flatMap(
+																			(
+																				column,
+																			) => {
+																				const field =
+																					visibleFields.find(
+																						(
+																							item,
+																						) =>
+																							item.name ===
+																							column.field,
+																					);
+																				return field
+																					? [
+																							{
+																								column,
+																								field,
+																							},
+																						]
+																					: [];
+																			},
+																		),
+																}),
+															)
+															.filter(
+																(row) =>
+																	row.columns
+																		.length >
+																	0,
+															);
+													if (
+														sectionRows.length === 0
+													)
+														return null;
+													return (
+														<section
+															key={sectionIndex}
+															className="space-y-4"
+														>
+															{(section.title ||
+																section.description) && (
+																<div className="min-w-0 space-y-1">
+																	<h2 className="break-words text-lg font-semibold">
+																		{
+																			section.title
+																		}
+																	</h2>
+																	{section.description && (
+																		<p className="break-words text-sm text-muted-foreground">
+																			{
+																				section.description
+																			}
+																		</p>
+																	)}
+																</div>
+															)}
+															{sectionRows.map(
+																({
+																	rowIndex,
+																	columns,
+																}) => (
+																	<div
+																		key={
+																			rowIndex
+																		}
+																		className="grid grid-cols-1 gap-4 md:grid-cols-12"
+																	>
+																		{columns.map(
+																			({
+																				column,
+																				field,
+																			}) => (
+																				<motion.div
+																					key={
+																						field.name
+																					}
+																					className={`${formLayoutWidthClass[column.width] ?? formLayoutWidthClass[12]} min-w-0`}
+																					initial={
+																						reduceMotion
+																							? false
+																							: {
+																									opacity: 0,
+																								}
+																					}
+																					animate={{
+																						opacity: 1,
+																					}}
+																					exit={{
+																						opacity: 0,
+																					}}
+																					transition={{
+																						duration:
+																							reduceMotion
+																								? 0
+																								: 0.12,
+																					}}
+																				>
+																					{renderField(
+																						field,
+																					)}
+																				</motion.div>
+																			),
+																		)}
+																	</div>
+																),
+															)}
+														</section>
+													);
+												},
+											)
+										: visibleFields.map(
+												(field: FormField) => (
+													<motion.div
+														key={field.name}
+														initial={
+															reduceMotion
+																? false
+																: {
+																		opacity: 0,
+																		height: 0,
+																		marginBottom: 0,
+																	}
+														}
+														animate={{
+															opacity: 1,
+															height: "auto",
+															marginBottom: 16,
+														}}
+														exit={{
 															opacity: 0,
 															height: 0,
 															marginBottom: 0,
-														}
-											}
-											animate={{
-												opacity: 1,
-												height: "auto",
-												marginBottom: 16,
-											}}
-											exit={{
-												opacity: 0,
-												height: 0,
-												marginBottom: 0,
-											}}
-											transition={{
-												opacity: {
-													duration: reduceMotion
-														? 0
-														: 0.12,
-												},
-												height: {
-													duration: reduceMotion
-														? 0
-														: 0.22,
-													ease: "easeInOut",
-												},
-												marginBottom: {
-													duration: reduceMotion
-														? 0
-														: 0.22,
-													ease: "easeInOut",
-												},
-											}}
-											style={{ overflow: "hidden" }}
-										>
-											{renderField(field)}
-										</motion.div>
-									))}
+														}}
+														transition={{
+															opacity: {
+																duration:
+																	reduceMotion
+																		? 0
+																		: 0.12,
+															},
+															height: {
+																duration:
+																	reduceMotion
+																		? 0
+																		: 0.22,
+																ease: "easeInOut",
+															},
+															marginBottom: {
+																duration:
+																	reduceMotion
+																		? 0
+																		: 0.22,
+																ease: "easeInOut",
+															},
+														}}
+														style={{
+															overflow: "hidden",
+														}}
+													>
+														{renderField(field)}
+													</motion.div>
+												),
+											)}
 								</AnimatePresence>
 							</fieldset>
 							<input

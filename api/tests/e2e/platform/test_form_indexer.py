@@ -89,6 +89,45 @@ form_schema:
         assert len(fields) == 1
         assert fields[0].name == "email"
 
+    async def test_index_form_persists_portable_layout(self, db_session: AsyncSession):
+        """The indexer validates and stores layout separately from field rows."""
+        form_yaml = """name: Layout Form
+form_schema:
+  fields:
+  - name: first_name
+    type: text
+    label: First name
+  - name: last_name
+    type: text
+    label: Last name
+  layout:
+    sections:
+    - title: Contact
+      rows:
+      - columns:
+        - field: first_name
+          width: 6
+        - field: last_name
+          width: 6
+"""
+        indexer = FormIndexer(db_session)
+        await indexer.index_form("forms/layout.form.yaml", form_yaml.encode())
+        await db_session.flush()
+
+        form = (await db_session.execute(
+            select(Form).where(Form.name == "Layout Form")
+        )).scalar_one()
+        assert form.layout == {
+            "sections": [{
+                "title": "Contact",
+                "description": None,
+                "rows": [{"columns": [
+                    {"field": "first_name", "width": 6},
+                    {"field": "last_name", "width": 6},
+                ]}],
+            }],
+        }
+
     async def test_invalid_schema_preserves_existing_form_and_fields(
         self, db_session: AsyncSession
     ):

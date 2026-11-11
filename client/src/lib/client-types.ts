@@ -105,6 +105,7 @@ export interface FormField {
  */
 export interface FormSchema {
 	fields: FormField[];
+	layout?: components["schemas"]["FormLayout"] | null;
 }
 
 export interface FormSubmission {

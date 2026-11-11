@@ -19,7 +19,9 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
+from pydantic import ValidationError
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -83,6 +85,19 @@ from shared.scope_resolver import UNSET, RequestedScope
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
+
+
+def _normalize_form_schema(form_schema: dict) -> dict:
+    """Validate an opaque schema payload before persisting its normalized form."""
+    from src.models import FormSchema
+
+    try:
+        return FormSchema.model_validate(form_schema).model_dump(mode="json")
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=jsonable_encoder(exc.errors()),
+        ) from exc
 
 
 async def _require_form_permission(
@@ -438,6 +453,7 @@ async def create_form(
     form_schema_data: dict = request.form_schema  # type: ignore[assignment]
     if hasattr(form_schema_data, 'model_dump'):
         form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
+    form_schema_data = _normalize_form_schema(form_schema_data)
 
     # Validate all references before creating the form
     await _validate_form_references(
@@ -477,6 +493,7 @@ async def create_form(
         launch_workflow_id=request.launch_workflow_id,
         default_launch_params=request.default_launch_params,
         allowed_query_params=request.allowed_query_params,
+        layout=form_schema_data.get("layout"),
         access_level=request.access_level,
         organization_id=target_org_id,
         is_active=True,
@@ -854,17 +871,18 @@ async def update_form(
     assert_not_solution_managed(form)
 
     # Validate references being updated
-    form_schema_for_validation = None
+    form_schema_data = None
     if request.form_schema is not None:
-        form_schema_for_validation = request.form_schema
-        if hasattr(form_schema_for_validation, 'model_dump'):
-            form_schema_for_validation = form_schema_for_validation.model_dump()
+        form_schema_data = request.form_schema
+        if hasattr(form_schema_data, 'model_dump'):
+            form_schema_data = form_schema_data.model_dump()
+        form_schema_data = _normalize_form_schema(form_schema_data)
 
     await _validate_form_references(
         db=db,
         workflow_id=request.workflow_id,
         launch_workflow_id=request.launch_workflow_id,
-        form_schema=form_schema_for_validation,
+        form_schema=form_schema_data,
     )
 
     if request.name is not None:
@@ -890,9 +908,9 @@ async def update_form(
         db.expire(form, ["fields"])
 
         # Convert new form_schema to FormField records
-        form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-        if hasattr(form_schema_data, 'model_dump'):
-            form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
+        assert form_schema_data is not None
+
+        form.layout = form_schema_data.get("layout")
 
         field_records = _form_schema_to_fields(form_schema_data, form_id)
         for field in field_records:

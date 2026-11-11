@@ -94,7 +94,12 @@ describe("FormPreview", () => {
 
 	it("renders a disabled checkbox with the label when type=checkbox", () => {
 		const fields: FormField[] = [
-			{ name: "agree", label: "I agree", type: "checkbox", required: false },
+			{
+				name: "agree",
+				label: "I agree",
+				type: "checkbox",
+				required: false,
+			},
 		];
 		renderWithProviders(
 			<FormPreview formName="F" formDescription="" fields={fields} />,
@@ -132,5 +137,44 @@ describe("FormPreview", () => {
 
 		const submit = screen.getByRole("button", { name: /submit/i });
 		expect(submit).toBeDisabled();
+	});
+
+	it("renders opted-in sections and desktop column widths", () => {
+		const fields: FormField[] = [
+			{ name: "first", label: "First", type: "text", required: false },
+			{ name: "last", label: "Last", type: "text", required: false },
+		];
+		renderWithProviders(
+			<FormPreview
+				formName="F"
+				formDescription=""
+				fields={fields}
+				layout={{
+					sections: [
+						{
+							title: "Your Details",
+							description: "Tell us who you are",
+							rows: [
+								{
+									columns: [
+										{ field: "first", width: 4 },
+										{ field: "last", width: 8 },
+									],
+								},
+							],
+						},
+					],
+				}}
+			/>,
+		);
+
+		expect(screen.getByText("Your Details")).toBeInTheDocument();
+		expect(screen.getByText("Tell us who you are")).toBeInTheDocument();
+		expect(screen.getByText("First").parentElement).toHaveClass(
+			"md:col-span-4",
+		);
+		expect(screen.getByText("Last").parentElement).toHaveClass(
+			"md:col-span-8",
+		);
 	});
 });

@@ -102,6 +102,57 @@ class TestFormSchema:
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("fields",) and e["type"] == "missing" for e in errors)
 
+    def test_layout_places_fields_in_sections_and_rows(self):
+        schema = FormSchema.model_validate({
+            "fields": [
+                {"name": "first_name", "label": "First name", "type": "text"},
+                {"name": "last_name", "label": "Last name", "type": "text"},
+                {"name": "notes", "label": "Notes", "type": "textarea"},
+            ],
+            "layout": {
+                "sections": [{
+                    "title": "Contact",
+                    "rows": [
+                        {"columns": [
+                            {"field": "first_name", "width": 6},
+                            {"field": "last_name", "width": 6},
+                        ]},
+                        {"columns": [{"field": "notes", "width": 12}]},
+                    ],
+                }],
+            },
+        })
+
+        assert schema.layout is not None
+        assert schema.layout.sections[0].rows[0].columns[0].width == 6
+
+    @pytest.mark.parametrize(
+        "layout, message",
+        [
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "missing", "width": 12}]}]}]},
+                "non-existent field",
+            ),
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "first", "width": 6}, {"field": "first", "width": 6}]}]}]},
+                "only once",
+            ),
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "first", "width": 12}, {"field": "second", "width": 12}]}]}]},
+                "cannot exceed",
+            ),
+        ],
+    )
+    def test_layout_rejects_invalid_placements(self, layout, message):
+        with pytest.raises(ValidationError, match=message):
+            FormSchema.model_validate({
+                "fields": [
+                    {"name": "first", "label": "First", "type": "text"},
+                    {"name": "second", "label": "Second", "type": "text"},
+                ],
+                "layout": layout,
+            })
+
 
 class TestFormField:
     """Test validation for FormField model"""
