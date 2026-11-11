@@ -9,9 +9,32 @@ import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
 import {readBudgetedJson} from './output-budget.mjs';
 import {capabilityRejection} from './capability-requirements.mjs';
+import {egressRejection, isUrlAllowed, VIRTUAL_TEST_HOST} from './egress-allowlist.mjs';
 
 export class DevApi extends WorkerEntrypoint {
   async fetch(request) {
+    const egress = this.ctx.props.egress;
+    // Egress gate BEFORE any network effect. Declared hosts plus the virtual
+    // test endpoint only. Anything else fails closed with zero api_calls and
+    // never echoes hostnames or secrets; only the shape class is named.
+    if (!isUrlAllowed(request.url, egress)) {
+      const bad = egressRejection(egress);
+      const reason = bad ? bad.reason : 'unlisted';
+      return Response.json({phase: 'egress-rejected', reason, api_calls: []}, {status: 422});
+    }
+    const hostname = new URL(request.url).hostname.toLowerCase();
+    if (hostname !== VIRTUAL_TEST_HOST) {
+      // Declared external host: direct HTTPS fetch, no DEV_API bridge.
+      // Never forward run credentials or qualification secrets outward.
+      const headers = new Headers(request.headers);
+      headers.delete('Host');
+      headers.delete('Authorization');
+      headers.delete('Cookie');
+      headers.delete('X-Dev-Auth');
+      headers.delete('X-Qualification-Auth');
+      headers.set('User-Agent', 'bifrost-pyodide-dev-executor/1.0');
+      return fetch(new Request(request.url, new Request(request, {headers, redirect: 'manual'})));
+    }
     let target;
     try { target = apiTarget(request.url, this.env.API_ORIGIN); }
     catch { return new Response('API capability denied', {status: 403}); }
@@ -48,12 +71,19 @@ export default {
     const capability = capabilityRejection(body.requirements, body.manifest);
     if (capability) return Response.json({phase: 'capability-rejected',
       missing_modules: capability.missing_modules, api_calls: []}, {status: 422});
+    // Egress gate BEFORE any loader, network, or SDK effect. Declaration
+    // rides the attempt. Absent egress keeps old behavior (test-api.invalid
+    // only). Invalid shape fails closed with zero api_calls and echoes only
+    // the shape class, never hostnames or secrets.
+    const egress = egressRejection(body.egress);
+    if (egress) return Response.json({phase: 'egress-rejected',
+      reason: egress.reason, api_calls: []}, {status: 422});
     let payload;
     try { payload = attemptPayload(body, env.API_ORIGIN); }
     catch { return new Response('Invalid dev public URL configuration', {status: 503}); }
     const calls = [];
     try {
-      const api = ctx.exports.DevApi({props: {manifest: body.manifest}});
+      const api = ctx.exports.DevApi({props: {manifest: body.manifest, egress: body.egress}});
       const preflight = await api.fetch(new Request('https://test-api.invalid/api/sdk/modules/' + body.context.file_path,
         {headers: {Authorization: 'Bearer ' + body.context.engine_token}}));
       const moduleStatus = preflight.status;
