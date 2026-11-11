@@ -10,6 +10,8 @@ from typing import Any
 
 from bifrost import api, organizations, roles, tables, users
 from modules.scim_sync import (
+    expand_grant,
+    mapped_role_names,
     normalize_user_event,
     registry_id,
     resolve_grants,
@@ -74,7 +76,14 @@ async def sync_one_user(
                     resolved = await _resolve_org(ref)
                     if resolved:
                         desired.add((role_id, resolved))
-    managed = {by_name[r] for r, _ in grants if r in by_name}
+    # "Managed" = every role this mapping can ever grant, not just the roles
+    # this user holds right now. Otherwise losing the last group leaves the
+    # old grant looking like a manual one and it is never revoked.
+    managed = {
+        by_name[role]
+        for role in mapped_role_names(group_mapping)
+        if role in by_name
+    }
 
     current = await _get_assignments(user_id)
     current_pairs = {

@@ -10,6 +10,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "modules"))
 from idp_client import translate_keycloak_user
 from scim_sync import (
     expand_grant,
+    mapped_role_names,
     normalize_user_event,
     registry_id,
     resolve_grants,
@@ -120,3 +121,11 @@ def test_resolve_grants_mixed():
         ("Support", None),
         ("Leads", ["A"]),
     ]
+
+
+def test_mapped_role_names_include_ungranted_roles():
+    # A role the mapping can grant stays managed even when the user's
+    # current groups no longer name it; that is what makes revocation work.
+    mapping = {"g1": "Support", "g2": {"role": "Leads", "orgs": ["A"]}}
+    assert mapped_role_names(mapping) == {"Support", "Leads"}
+    assert mapped_role_names({}) == set()

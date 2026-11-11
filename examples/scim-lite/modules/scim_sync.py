@@ -39,6 +39,15 @@ def resolve_grants(groups: list[str], mapping: dict) -> list[tuple[str, list[str
     return [expand_grant(mapping[g]) for g in groups if g in mapping]
 
 
+def mapped_role_names(mapping: dict) -> set[str]:
+    """Every role this mapping can ever grant: the SCIM-managed set.
+
+    Must not depend on the user's current groups, or removing the last
+    group would leave the old grant looking manual and never revoked.
+    """
+    return {expand_grant(value)[0] for value in mapping.values()}
+
+
 def normalize_user_event(payload: dict) -> dict:
     """Validate one IdP user payload into a stable shape.
 
