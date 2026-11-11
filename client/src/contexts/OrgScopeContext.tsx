@@ -8,6 +8,7 @@ import {
 	useRef,
 	ReactNode,
 } from "react";
+import { setPlatformFavicon } from "@/lib/useDocumentChrome";
 import { initializeBranding, applyBrandingTheme } from "@/lib/branding";
 import {
 	DEFAULT_TERMINOLOGY,
@@ -176,6 +177,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 
 				// Apply branding theme (colors to CSS) - no need to fetch again
 				applyBrandingTheme(branding);
+				setPlatformFavicon(sqUrl);
 
 				// Mark everything as loaded - UI can now render
 				setBrandingLoaded(true);
