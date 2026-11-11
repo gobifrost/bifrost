@@ -1,0 +1,34 @@
+# Bifrost execution-capacity provider on Cloudflare Containers. Fill in
+# name, scope, worker image digest, and API origin, then:
+#   npm ci && npm test && npx wrangler deploy
+#
+# The API remains canonical owner of demand, admission, claims, progress,
+# cancellation, and recovery (PostgreSQL). This worker only prepares, starts,
+# and deletes container incarnations by exact resource UID. It never receives
+# job payloads and never chooses which jobs execute.
+name = "bifrost-worker-capacity"
+main = "./capacity.mjs"
+compatibility_date = "2026-11-10"
+
+[[containers]]
+binding = "WORKER_CONTAINER"
+# Pinned by digest before any deployment. Never deploy `:latest` or a bare
+# tag: the API fences enrollment to the exact reported worker build version.
+image = "ghcr.io/CHANGEME/bifrost-worker-dev@sha256:CHANGEME"
+instances = 2
+
+[vars]
+# Opaque provider scope. Must equal BIFROST_WORKER_CAPACITY_TOKEN's scope on
+# the API side (`BIFROST_WORKER_CAPACITY_URL` points at this worker).
+SCOPE = "CHANGEME"
+# Must equal the embedded version of the pinned worker image; the API fences
+# any reservation whose build differs.
+WORKER_VERSION = "CHANGEME"
+MEMORY_LIMIT_BYTES = "2147483648"
+MAX_WORKERS = "4"
+MAX_LIFETIME_SECONDS = "21600"
+# Canonical API origin this capacity serves. HTTPS only, no path/query/fragment.
+API_ORIGIN = "https://api.example.invalid"
+
+[observability]
+enabled = true
