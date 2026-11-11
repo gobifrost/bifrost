@@ -39,6 +39,7 @@ import {
 	type IntegrationDetail,
 } from "@/services/integrations";
 import { useDataProviders } from "@/services/dataProviders";
+import { IntegrationSetupNotesContext } from "./IntegrationSetupNotes";
 
 interface CreateIntegrationDialogProps {
 	open: boolean;
@@ -297,6 +298,7 @@ function CreateIntegrationForm({
 				</DialogHeader>
 
 				<div className="min-h-0 flex-1 overflow-y-auto py-4">
+					<IntegrationSetupNotesContext notes={isEditing ? existingIntegration?.notes : null}>
 					<fieldset
 						disabled={isLoading}
 						className="min-w-0 space-y-4"
@@ -475,6 +477,7 @@ function CreateIntegrationForm({
 							onRemove={removeConfigField}
 						/>
 					</fieldset>
+					</IntegrationSetupNotesContext>
 				</div>
 				{saveError && (
 					<p
@@ -803,7 +806,7 @@ export function CreateIntegrationDialog({
 				if (!isSaving) onOpenChange(nextOpen);
 			}}
 		>
-			<DialogContent className="flex max-w-2xl max-h-[90dvh] flex-col overflow-hidden">
+			<DialogContent className={`flex max-h-[90dvh] flex-col overflow-hidden ${initialData?.notes ? "max-w-[1120px]" : "max-w-2xl"}`}>
 				{open && (
 					<CreateIntegrationDialogContent
 						key={dialogKey}

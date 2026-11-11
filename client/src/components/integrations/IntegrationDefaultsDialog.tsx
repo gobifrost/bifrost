@@ -13,6 +13,7 @@ import {
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { IntegrationSetupNotesContext } from "./IntegrationSetupNotes";
 
 type ConfigSchemaField = Pick<ConfigSchemaItem, "key" | "type" | "options" | "option_labels"> & Partial<Pick<ConfigSchemaItem, "required">>;
 
@@ -25,6 +26,7 @@ export interface IntegrationDefaultsDialogProps {
 	onSave: () => void;
 	isSaving: boolean;
 	error?: string | null;
+	notes?: string | null;
 }
 
 export function IntegrationDefaultsDialog({
@@ -36,6 +38,7 @@ export function IntegrationDefaultsDialog({
 	onSave,
 	isSaving,
 	error,
+	notes,
 }: IntegrationDefaultsDialogProps) {
 	return (
 		<Dialog
@@ -44,7 +47,7 @@ export function IntegrationDefaultsDialog({
 				if (!isSaving) onOpenChange(next);
 			}}
 		>
-			<DialogContent className="flex max-w-md max-h-[90dvh] flex-col overflow-hidden">
+			<DialogContent className={`flex max-h-[90dvh] flex-col overflow-hidden ${notes ? "max-w-[1120px]" : "max-w-md"}`}>
 				<form
 					onSubmit={(e) => {
 						e.preventDefault();
@@ -59,6 +62,7 @@ export function IntegrationDefaultsDialog({
 						</DialogDescription>
 					</DialogHeader>
 					<div className="min-h-0 flex-1 overflow-y-auto py-4">
+						<IntegrationSetupNotesContext notes={notes}>
 						<fieldset
 							disabled={isSaving}
 							className="min-w-0 space-y-4"
@@ -192,6 +196,7 @@ export function IntegrationDefaultsDialog({
 								</div>
 							))}
 						</fieldset>
+						</IntegrationSetupNotesContext>
 					</div>
 					{error && (
 						<p

@@ -11,6 +11,7 @@ import {
 import { Loader2 } from "lucide-react";
 import { ConfigFieldInput } from "./ConfigFieldInput";
 import type { ConfigSchemaItem } from "@/services/integrations";
+import { IntegrationSetupNotesContext } from "./IntegrationSetupNotes";
 
 interface OrgConfigDialogProps {
 	open: boolean;
@@ -21,6 +22,7 @@ interface OrgConfigDialogProps {
 	/** The org's current config overrides (only keys that have explicit overrides) */
 	currentConfig: Record<string, unknown>;
 	onSave: (config: Record<string, unknown>) => Promise<void>;
+	notes?: string | null;
 }
 
 function OrgConfigDialogContent({
@@ -29,6 +31,7 @@ function OrgConfigDialogContent({
 	currentConfig,
 	onSave,
 	onOpenChange,
+	notes,
 	isSaving,
 	setIsSaving,
 }: Omit<OrgConfigDialogProps, "open" | "orgId"> & {
@@ -130,6 +133,7 @@ function OrgConfigDialogContent({
 			</DialogHeader>
 
 			<div className="min-h-0 flex-1 overflow-y-auto py-4">
+				<IntegrationSetupNotesContext notes={notes}>
 				<fieldset disabled={isSaving} className="min-w-0 space-y-4">
 					{configSchema.length > 0 ? (
 						configSchema.map((field) => (
@@ -150,6 +154,7 @@ function OrgConfigDialogContent({
 						</p>
 					)}
 				</fieldset>
+				</IntegrationSetupNotesContext>
 			</div>
 			{saveError && (
 				<p
@@ -192,6 +197,7 @@ export function OrgConfigDialog({
 	configSchema,
 	currentConfig,
 	onSave,
+	notes,
 }: OrgConfigDialogProps) {
 	const [isSaving, setIsSaving] = useState(false);
 	return (
@@ -201,7 +207,7 @@ export function OrgConfigDialog({
 				if (!isSaving) onOpenChange(next);
 			}}
 		>
-			<DialogContent className="flex max-w-2xl max-h-[90dvh] flex-col overflow-hidden">
+			<DialogContent className={`flex max-h-[90dvh] flex-col overflow-hidden ${notes ? "max-w-[1120px]" : "max-w-2xl"}`}>
 				{/* Key resets form state when switching between orgs */}
 				<OrgConfigDialogContent
 					key={orgId}
@@ -212,6 +218,7 @@ export function OrgConfigDialog({
 					currentConfig={currentConfig}
 					onSave={onSave}
 					onOpenChange={onOpenChange}
+					notes={notes}
 				/>
 			</DialogContent>
 		</Dialog>

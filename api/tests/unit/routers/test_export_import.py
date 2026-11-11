@@ -230,6 +230,16 @@ class TestOrganizationNameBackwardsCompat:
         parsed = IntegrationExportFile.model_validate_json(old_json)
         assert parsed.items[0].mappings[0].organization_name is None
 
+    def test_older_integration_export_omits_notes_without_implying_a_clear(self):
+        old_json = json.dumps({
+            "bifrost_export_version": "1.0",
+            "entity_type": "integrations",
+            "item_count": 1,
+            "items": [{"name": "Test", "config_schema": [], "mappings": [], "default_config": {}}],
+        })
+        parsed = IntegrationExportFile.model_validate_json(old_json)
+        assert "notes" not in parsed.items[0].model_fields_set
+
 
 class TestOrganizationNameSerialization:
     """Verify organization_name appears in export JSON when set."""

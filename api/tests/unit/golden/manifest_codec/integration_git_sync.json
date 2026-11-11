@@ -25,6 +25,7 @@
     }
   ],
   "name": "rt-integration-golden",
+  "notes": null,
   "oauth_provider": {
     "authorization_url": "https://auth.example.com/authorize",
     "client_id": "test-client-id",

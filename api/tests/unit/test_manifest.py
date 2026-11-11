@@ -445,9 +445,11 @@ def test_manifest_reader_refuses_an_external_split_file_symlink(tmp_path):
         read_manifest_from_dir(manifest_dir)
 
 
-# =============================================================================
+# ======================================================================
+
 # Split manifest (per-entity-type files) tests
-# =============================================================================
+# ======================================================================
+
 
 
 class TestSerializeManifestDir:
@@ -649,9 +651,11 @@ workflows:
         assert len(manifest.workflows) == 0
 
 
-# =============================================================================
+# ======================================================================
+
 # New entity types: Integrations, Configs, Tables, Knowledge, Events
-# =============================================================================
+# ======================================================================
+
 
 
 @pytest.fixture
@@ -1910,9 +1914,11 @@ class TestManifestValidationAgents:
         assert len(workflow_errors) == 0, f"Agent subscription should not produce workflow errors: {workflow_errors}"
 
 
-# =============================================================================
+# ======================================================================
+
 # _diff_manifests and _collect_changed_ids tests
-# =============================================================================
+# ======================================================================
+
 
 
 class TestDiffManifests:
@@ -2106,9 +2112,11 @@ class TestCollectChangedIds:
         assert org_id in self._collect(incoming, current)
 
 
-# =============================================================================
+# ======================================================================
+
 # Inline form/agent content (Task 9: manifest carries content under UUID)
-# =============================================================================
+# ======================================================================
+
 
 
 class TestInlineFormContent:
@@ -2381,9 +2389,11 @@ class TestBackCompatSeparateFile:
         assert await _resolve_form_content(mform, read_fn) is None
 
 
-# ============================================================================
+# =====================================================================
+
 # External MCP client (server template + connection + tool catalog) tests
-# ============================================================================
+# =====================================================================
+
 
 
 @pytest.fixture
@@ -2735,9 +2745,11 @@ def test_manifest_workflow_requested_permissions_is_not_an_orm_column():
         assert "requested_permissions" not in wf.to_orm_values(dest).direct
 
 
-# =============================================================================
+# ======================================================================
+
 # ManifestPolicyRule tests (Task 10)
-# =============================================================================
+# ======================================================================
+
 
 
 class TestManifestPolicyRule:
@@ -2898,9 +2910,11 @@ class TestManifestPolicyRule:
         assert restored_ref.ref == "ops"
 
 
-# =============================================================================
+# ======================================================================
+
 # Task 22: ManifestSolutionFile + FilePolicy.solution_id round-trip tests
-# =============================================================================
+# ======================================================================
+
 
 
 class TestSolutionFilesManifestRoundTrip:
@@ -3217,3 +3231,25 @@ def test_integration_choice_labels_round_trip():
     restored = ManifestIntegrationConfigSchema.model_validate_json(manifest.model_dump_json())
     assert restored.options == ["eu"]
     assert restored.option_labels == {"eu": "Europe"}
+
+
+def test_integration_notes_round_trip_from_row_through_yaml_to_import_values():
+    from types import SimpleNamespace
+
+    from bifrost.manifest import Manifest, ManifestIntegration, parse_manifest, serialize_manifest
+    from bifrost.manifest_codec import Destination
+
+    notes = "## Setup\n\n1. Create an API key.\n\n[Runbook](https://example.com/runbook)\n"
+    row = SimpleNamespace(
+        id=uuid4(),
+        name="Service Desk",
+        description=None,
+        notes=notes,
+        entity_id=None,
+        entity_id_name=None,
+        default_entity_id=None,
+        list_entities_data_provider_id=None,
+    )
+    manifest = Manifest(integrations={str(row.id): ManifestIntegration.from_row(row)})
+    restored = parse_manifest(serialize_manifest(manifest)).integrations[str(row.id)]
+    assert restored.to_orm_values(Destination.GIT_SYNC).direct["notes"] == notes

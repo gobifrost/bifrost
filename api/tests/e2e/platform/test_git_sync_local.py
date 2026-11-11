@@ -2290,6 +2290,7 @@ class TestSplitManifestFormat:
         work_dir = Path(working_clone.working_dir)
         integ_id = str(uuid4())
         config_id = str(uuid4())
+        notes = "## Setup\n\n[Runbook](https://example.com/runbook)\n"
 
         bifrost_dir = work_dir / ".bifrost"
         bifrost_dir.mkdir(exist_ok=True)
@@ -2297,6 +2298,7 @@ class TestSplitManifestFormat:
             "integrations": {
                 "TestIntegConfigSchemaLink": {
                     "id": integ_id,
+                    "notes": notes,
                     "config_schema": [
                         {
                             "key": "EXAMPLE_TOKEN",
@@ -2359,6 +2361,7 @@ class TestSplitManifestFormat:
         assert commit_result.success is True
         exported = read_manifest_from_dir(sync_service._persistent_dir / ".bifrost")
         exported_integ = exported.integrations[integ_id]
+        assert exported_integ.notes == notes
         assert [cs.key for cs in exported_integ.config_schema] == ["EXAMPLE_TOKEN"]
         exported_cfg = exported.configs[config_id]
         assert exported_cfg.integration_id == integ_id
@@ -2391,6 +2394,9 @@ class TestSplitManifestFormat:
         roundtrip_cfg = await db_session.get(Config, UUIDType(config_id))
         assert roundtrip_cfg is not None
         assert roundtrip_cfg.config_schema_id == roundtrip_schema.id
+        roundtrip_integration = await db_session.get(Integration, UUIDType(integ_id))
+        assert roundtrip_integration is not None
+        assert roundtrip_integration.notes == notes
 
     async def test_pull_table_from_manifest(
         self,

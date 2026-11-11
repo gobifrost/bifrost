@@ -33,6 +33,7 @@ class Integration(Base):
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, default=None)
+    notes: Mapped[str | None] = mapped_column(Text, default=None)
     list_entities_data_provider_id: Mapped[UUID | None] = mapped_column(
         default=None, nullable=True
     )

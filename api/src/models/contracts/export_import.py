@@ -109,6 +109,7 @@ class OAuthProviderExportItem(BaseModel):
 class IntegrationExportItem(BaseModel):
     name: str
     description: str | None = None
+    notes: str | None = None
     entity_id: str | None = None
     entity_id_name: str | None = None
     default_entity_id: str | None = None

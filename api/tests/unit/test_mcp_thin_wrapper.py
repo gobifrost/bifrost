@@ -406,14 +406,15 @@ async def test_bifrost_integration_list_is_a_thin_rest_wrapper() -> None:
 
 
 @pytest.mark.asyncio
-async def test_create_integration_forwards_description() -> None:
-    """create_integration includes description in DTO assembly and REST payload."""
+async def test_create_integration_forwards_description_and_notes() -> None:
+    """create_integration includes editable text fields in the REST payload."""
     from src.services.mcp_server.tools.integrations import bifrost_integration_create as create_integration
 
     ctx = _make_mcp_context()
     assembled_body = {
         "name": "mcp-unit-integration",
         "description": "Shown on admin integration cards",
+        "notes": "## Setup\nUse the tenant identifier.",
     }
 
     with (
@@ -430,6 +431,7 @@ async def test_create_integration_forwards_description() -> None:
             ctx,
             name="mcp-unit-integration",
             description="Shown on admin integration cards",
+            notes="## Setup\nUse the tenant identifier.",
         )
 
     fields = assemble_mock.await_args.kwargs
@@ -437,12 +439,13 @@ async def test_create_integration_forwards_description() -> None:
     assert assemble_mock.await_args.args[1]["description"] == (
         "Shown on admin integration cards"
     )
+    assert assemble_mock.await_args.args[1]["notes"] == "## Setup\nUse the tenant identifier."
     assert call_rest_mock.await_args.kwargs["json_body"] == assembled_body
 
 
 @pytest.mark.asyncio
-async def test_update_integration_forwards_description_when_provided() -> None:
-    """update_integration forwards a provided description through the REST bridge."""
+async def test_update_integration_forwards_description_and_notes_when_provided() -> None:
+    """update_integration forwards editable text fields through the REST bridge."""
     from src.services.mcp_server.tools.integrations import bifrost_integration_update as update_integration
 
     class _RestClient:
@@ -454,7 +457,10 @@ async def test_update_integration_forwards_description_when_provided() -> None:
 
     ctx = _make_mcp_context()
     integration_id = "11111111-2222-3333-4444-555555555555"
-    assembled_body = {"description": "Updated card description"}
+    assembled_body = {
+        "description": "Updated card description",
+        "notes": "Updated setup instructions",
+    }
 
     with (
         patch(
@@ -474,11 +480,13 @@ async def test_update_integration_forwards_description_when_provided() -> None:
             ctx,
             integration_ref=integration_id,
             description="Updated card description",
+            notes="Updated setup instructions",
         )
 
     fields = assemble_mock.await_args.args[1]
     assert assemble_mock.await_args.kwargs["model_name"] == "IntegrationUpdate"
     assert fields["description"] == "Updated card description"
+    assert fields["notes"] == "Updated setup instructions"
     assert call_rest_mock.await_args.args[2] == f"/api/integrations/{integration_id}"
     assert call_rest_mock.await_args.kwargs["json_body"] == assembled_body
 

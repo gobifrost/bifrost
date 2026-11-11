@@ -20,6 +20,7 @@ import {
 	type OAuthProviderData,
 } from "@/components/oauth/OAuthProviderEditor";
 import type { components } from "@/lib/v1";
+import { IntegrationSetupNotesContext } from "@/components/integrations/IntegrationSetupNotes";
 
 type CreateOAuthConnectionRequest =
 	components["schemas"]["CreateOAuthConnectionRequest"];
@@ -32,6 +33,7 @@ interface CreateOAuthConnectionDialogProps {
 	onOpenChange: (open: boolean) => void;
 	integrationId: string;
 	editConnectionName?: string | undefined;
+	notes?: string | null;
 }
 
 const FORM_ID = "oauth-connection-form";
@@ -41,6 +43,7 @@ export function CreateOAuthConnectionDialog({
 	onOpenChange,
 	integrationId,
 	editConnectionName,
+	notes,
 }: CreateOAuthConnectionDialogProps) {
 	const isEditMode = !!editConnectionName;
 	const createMutation = useCreateOAuthConnection();
@@ -159,7 +162,7 @@ export function CreateOAuthConnectionDialog({
 			}}
 		>
 			<DialogContent
-				className="flex max-h-[calc(100dvh-1rem)] flex-col w-[min(56rem,calc(100vw-1rem))] max-w-none overflow-hidden rounded-[var(--bf-radius-surface)] p-0"
+				className={`flex max-h-[calc(100dvh-1rem)] flex-col ${notes ? "w-[min(70rem,calc(100vw-1rem))]" : "w-[min(56rem,calc(100vw-1rem))]"} max-w-none overflow-hidden rounded-[var(--bf-radius-surface)] p-0`}
 				showCloseButton={!isPending}
 				onEscapeKeyDown={(event) => {
 					if (isPending) event.preventDefault();
@@ -221,6 +224,7 @@ export function CreateOAuthConnectionDialog({
 						</div>
 					) : (
 						<div className="px-4 py-4 sm:px-6">
+							<IntegrationSetupNotesContext notes={notes}>
 							<OAuthProviderEditor
 								flowType="authorization_code"
 								initialValues={initialValues}
@@ -230,6 +234,7 @@ export function CreateOAuthConnectionDialog({
 								formId={FORM_ID}
 								disabled={isPending}
 							/>
+							</IntegrationSetupNotesContext>
 						</div>
 					)}
 				</div>
