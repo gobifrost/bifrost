@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from collections import Counter
+import hashlib
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -16,6 +17,7 @@ from src.models import WorkflowExecutionRequest, WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
 from src.models.orm.users import User
 from src.models.orm.workflows import Workflow
+from src.services.file_index_service import FileIndexService
 from tests.conftest import TEST_DATABASE_URL
 
 
@@ -42,6 +44,7 @@ async def test_execute_releases_main_pool_connection_before_dispatch(
     )
     sessions = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
     user_id, workflow_id = uuid4(), uuid4()
+    source_path = f"workflows/pool_retention_probe_{workflow_id.hex}.py"
     checked_out: Counter[str] = Counter()
 
     @event.listens_for(engine.sync_engine, "checkout")
@@ -112,12 +115,17 @@ async def test_execute_releases_main_pool_connection_before_dispatch(
                         id=workflow_id,
                         name="pool-retention-probe",
                         function_name="pool_retention_probe",
-                        path="workflows/pool_retention_probe.py",
+                        path=source_path,
                         type=execution_kind,
                         cache_ttl_seconds=300 if execution_kind == "data_provider" else 0,
                         is_active=True,
                         permission_mode="full",
                     )
+                )
+                source = b"def pool_retention_probe(): return {'ok': True}\n"
+                await FileIndexService(db).index(
+                    source_path, source, hashlib.sha256(source).hexdigest(),
+                    "pool-retention-probe",
                 )
             await db.commit()
 
@@ -146,6 +154,7 @@ async def test_execute_releases_main_pool_connection_before_dispatch(
         async with sessions() as cleanup:
             if execution_kind != "inline":
                 await cleanup.execute(text("DELETE FROM workflows WHERE id = :id"), {"id": workflow_id})
+                await cleanup.execute(text("DELETE FROM file_index WHERE path = :path"), {"path": source_path})
             await cleanup.execute(text("DELETE FROM users WHERE id = :id"), {"id": user_id})
             await cleanup.commit()
         await engine.dispose()
