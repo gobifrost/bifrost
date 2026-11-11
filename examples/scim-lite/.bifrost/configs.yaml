@@ -1,0 +1,9 @@
+configs:
+  SCIM_GROUP_ROLES:
+    id: 8b0bf903-6c7b-47a2-890b-b56811e2b4ac
+    key: SCIM_GROUP_ROLES
+    type: json
+    required: false
+    description: 'IdP group name to Bifrost role name mapping'
+    default: "{}"
+    position: 0

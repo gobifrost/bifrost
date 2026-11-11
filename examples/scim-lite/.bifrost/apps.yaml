@@ -1,0 +1,11 @@
+apps:
+  c2ab8e4d-b9aa-4fa5-a447-fb74e019c65f:
+    id: c2ab8e4d-b9aa-4fa5-a447-fb74e019c65f
+    slug: skim
+    name: Skim
+    description: SCIM onboarding — one screen per org (platform admin only)
+    path: apps/skim
+    app_model: standalone_v2
+    access_level: role_based
+    role_names:
+      - Platform Admin

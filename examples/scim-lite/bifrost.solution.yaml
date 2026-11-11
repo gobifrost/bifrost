@@ -1,0 +1,5 @@
+slug: scim-lite
+name: SCIM Lite
+version: 0.1.0
+allow_outbound_access: false
+allow_inbound_access: false

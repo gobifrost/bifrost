@@ -1,0 +1,31 @@
+workflows:
+  a65e9dab-3b36-4121-951d-c28ef7490e3e:
+    id: a65e9dab-3b36-4121-951d-c28ef7490e3e
+    name: scim_user_event
+    path: functions/scim.py
+    function_name: scim_user_event
+    description: Create/update/deactivate one user from the IdP webhook payload
+  c70f2c92-0062-4e7d-b639-a40fe79fc51f:
+    id: c70f2c92-0062-4e7d-b639-a40fe79fc51f
+    name: scim_pull
+    path: functions/scim_pull.py
+    function_name: scim_pull
+    description: Pull IdP users via the org mapping and reconcile each one
+  85df292e-d612-4266-b026-0338975f7e67:
+    id: 85df292e-d612-4266-b026-0338975f7e67
+    name: scim_onboarding_status
+    path: functions/scim_admin.py
+    function_name: scim_onboarding_status
+    description: Read one org's SCIM onboarding state
+    access_level: role_based
+    role_names:
+      - Platform Admin
+  22228f4c-fbde-4d3b-a140-9eac43827471:
+    id: 22228f4c-fbde-4d3b-a140-9eac43827471
+    name: scim_onboarding_save
+    path: functions/scim_admin.py
+    function_name: scim_onboarding_save
+    description: Validate and save one org's IdP mapping and group map
+    access_level: role_based
+    role_names:
+      - Platform Admin

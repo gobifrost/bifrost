@@ -1,0 +1,18 @@
+connections:
+  scim-idp:
+    integration_name: scim-idp
+    template:
+      config_schema:
+        - key: base_url
+          type: string
+          required: true
+        - key: dialect
+          type: string
+          required: false
+        - key: domain
+          type: string
+          required: false
+        - key: api_token
+          type: secret
+          required: false
+    position: 0

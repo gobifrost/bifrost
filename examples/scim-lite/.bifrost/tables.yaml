@@ -1,0 +1,25 @@
+tables:
+  bface29c-f41f-4ec3-a0e9-f5bf1b06b8d2:
+    id: bface29c-f41f-4ec3-a0e9-f5bf1b06b8d2
+    name: scim_identities
+    description: IdP external_id to Bifrost user mapping, keyed {org_id}:{external_id}
+    schema:
+      columns:
+        - name: org_id
+          type: text
+        - name: user_id
+          type: text
+        - name: email
+          type: text
+        - name: active
+          type: boolean
+  b30f67d4-3d58-420a-a89d-08880cbb6015:
+    id: b30f67d4-3d58-420a-a89d-08880cbb6015
+    name: scim_sync_state
+    description: Per-org pull-sync checkpoint cursor (row id pull-cursor:{org_id})
+    schema:
+      columns:
+        - name: org_id
+          type: text
+        - name: cursor
+          type: text
