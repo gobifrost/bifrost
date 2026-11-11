@@ -498,3 +498,51 @@ async def test_user_can_discover_and_submit_a_form_with_access_only_in_selected_
         await db.execute(delete(Role).where(Role.id.in_([role.id, base_role.id])))
         await db.execute(delete(Organization).where(Organization.id == selected_org.id))
         await db.commit()
+
+
+@pytest.mark.e2e
+@pytest.mark.parametrize("allowed", [False, True])
+async def test_startup_shared_workflow_obeys_solution_policy(
+    db_session, e2e_client, platform_admin, allowed,
+):
+    """Shared startup executes only when the installation explicitly allows it."""
+    from tests.e2e.conftest import write_and_register
+    from src.services.repo_storage import RepoStorage
+    from src.core.module_cache import invalidate_module
+
+    db = db_session
+    org = await _org(db)
+    sol = Solution(id=uuid4(), slug=f"startup-{uuid4().hex[:8]}", name="Startup",
+                   organization_id=org.id, allow_outbound_access=allowed)
+    db.add(sol)
+    await db.flush()
+    path = f"workflows/shared_startup_{uuid4().hex}.py"
+    registered = write_and_register(
+        e2e_client, platform_admin.headers, path,
+        "from bifrost import workflow\n@workflow\nasync def main(): return {'ready': True}\n",
+        "main", organization_id=None,
+    )
+    wf = await db.get(Workflow, UUID(registered["id"]))
+    form = Form(id=uuid4(), name="startup-policy", organization_id=org.id,
+                solution_id=sol.id, workflow_id=f"{path}::main",
+                launch_workflow_id=f"{path}::main", created_by="test")
+    db.add(form)
+    await db.commit()
+    try:
+        response = e2e_client.post(f"/api/forms/{form.id}/startup",
+                                   headers=platform_admin.headers, json={})
+        assert response.status_code == (200 if allowed else 404), response.text
+        if allowed:
+            assert response.json()["result"] == {"ready": True}
+    finally:
+        await db.execute(delete(Execution).where(Execution.organization_id == org.id))
+        await db.execute(delete(Form).where(Form.id == form.id))
+        await db.execute(delete(Workflow).where(Workflow.id == wf.id))
+        await db.execute(delete(Solution).where(Solution.id == sol.id))
+        await db.execute(delete(Organization).where(Organization.id == org.id))
+        await db.commit()
+        from src.models.orm.file_index import FileIndex
+        await db.execute(delete(FileIndex).where(FileIndex.path == path))
+        await db.commit()
+        await RepoStorage().delete(path)
+        await invalidate_module(path)
