@@ -1,0 +1,12 @@
+{
+  "key": "pr:1330",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Deployment recipe and docs for optional Cloudflare frontend hosting; no customer-facing product change.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1330"
+    ]
+  }
+}
