@@ -81,6 +81,8 @@ async def test_provider_subscription_starts_after_webhook_source_commit(monkeypa
         return SubscribeResult()
 
     adapter = SimpleNamespace(
+        name="test_provider",
+        config_schema={},
         requires_integration=None,
         subscribe=AsyncMock(side_effect=subscribe),
     )
@@ -116,6 +118,8 @@ async def test_provider_subscription_starts_after_webhook_source_commit(monkeypa
 async def test_failed_provider_subscription_removes_provisional_source(monkeypatch):
     db, added = _session_that_assigns_ids()
     adapter = SimpleNamespace(
+        name="test_provider",
+        config_schema={},
         requires_integration=None,
         subscribe=AsyncMock(side_effect=ValueError("provider rejected callback")),
     )
