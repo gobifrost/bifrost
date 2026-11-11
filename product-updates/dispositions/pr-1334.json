@@ -1,0 +1,14 @@
+{
+  "key": "pr:1334",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1334",
+      "https://github.com/gobifrost/bifrost/blob/main/docs/product-updates-authoring.md",
+      "Reference example only: adds examples/scim-lite plus the Skim admin app. It ships no platform behavior, changes no existing surface, and is not installed on any customer instance, so there is no customer-facing capability to announce."
+    ]
+  },
+  "reason": "Repository example fixture; omitted under the customer-facing selection policy because it adds no product capability and is not deployed by an upgrade."
+}
