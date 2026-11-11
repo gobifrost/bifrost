@@ -5,6 +5,7 @@ Provides a simple webhook endpoint that accepts any POST request.
 Optionally validates HMAC signatures if a secret is configured.
 """
 
+import hmac
 import re
 from typing import Any
 
@@ -43,13 +44,24 @@ class GenericWebhookAdapter(WebhookAdapter):
     config_schema = {
         "type": "object",
         "properties": {
+            "header_auth": {
+                "type": "boolean",
+                "title": "Header Token Authentication",
+                "description": "Verify a static header value instead of an HMAC signature. Enter the complete value as the webhook secret, including Bearer when required.",
+                "default": False,
+            },
+            "auth_header": {
+                "type": "string",
+                "title": "Authentication Header",
+                "description": "Header containing the token, such as X-Gitlab-Token or Authorization.",
+            },
             "secret": {
                 "type": "string",
                 "title": "Webhook Secret",
-                "description": "HMAC secret for signature verification (optional)",
+                "description": "HMAC signing secret, or complete header token when header authentication is enabled.",
                 "format": "password",
                 "x-help": {
-                    "text": "Shared secret used to verify webhook signatures via HMAC-SHA256. Bifrost accepts hex- or base64-encoded digests. Set the same secret in both Bifrost and the sending service.",
+                    "text": "For HMAC, enter the sender's signing secret. For header token authentication, enter the complete header value, including any Bearer prefix.",
                     "code": (
                         "# Python example: sign a webhook request\n"
                         "import hmac, hashlib\n"
@@ -105,6 +117,28 @@ class GenericWebhookAdapter(WebhookAdapter):
         },
     }
 
+    @staticmethod
+    def validate_config(config: dict[str, Any]) -> str | None:
+        """Validate header mode without inspecting or disclosing its secret."""
+        header_auth = config.get("header_auth", False)
+        if not isinstance(header_auth, bool):
+            return "Header authentication must be enabled or disabled"
+        if not header_auth:
+            return None
+        header = config.get("auth_header")
+        if not isinstance(header, str) or not re.fullmatch(
+            r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", header
+        ):
+            return "Enter a valid authentication header name"
+        if header.lower() == "x-forwarded-for":
+            return "Authentication header cannot be X-Forwarded-For because it supplies event metadata"
+        event_header = config.get("event_type_header")
+        if isinstance(event_header, str) and event_header.lower() == header.lower():
+            return "Authentication header cannot be used as the event type header"
+        if config.get("delivery_id_header"):
+            return "Delivery identity requires HMAC authentication"
+        return None
+
     async def subscribe(
         self,
         callback_url: str,
@@ -147,9 +181,32 @@ class GenericWebhookAdapter(WebhookAdapter):
 
         Validates signature if secret is configured, then delivers the payload.
         """
+        if self.validate_config(config):
+            return Rejected("Header authentication is not configured correctly", 503)
         secret = read_signing_secret(state)
 
-        if secret:
+        header_auth = config.get("header_auth", False)
+        if not isinstance(header_auth, bool):
+            return Rejected("Header authentication is not configured correctly", 503)
+        auth_header = config.get("auth_header", "")
+        if header_auth:
+            if not isinstance(auth_header, str) or not re.fullmatch(
+                r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", auth_header
+            ) or not secret:
+                return Rejected("Header authentication is not configured correctly", 503)
+            auth_header = auth_header.lower()
+            # A credential cannot simultaneously be metadata exposed to consumers.
+            if any(
+                isinstance(config.get(key), str) and config[key].lower() == auth_header
+                for key in ("event_type_header", "delivery_id_header")
+            ):
+                return Rejected("Authentication header cannot be used as event metadata", 503)
+            supplied = request.headers.get(auth_header)
+            if supplied is None or not hmac.compare_digest(
+                supplied.encode("utf-8"), secret.encode("utf-8")
+            ):
+                return Rejected("Invalid authentication token", 401)
+        elif secret:
             # Validate signature
             sig_header = config.get("signature_header", "x-signature-256").lower()
             sig_prefix = config.get("signature_prefix", "sha256=")
@@ -172,16 +229,22 @@ class GenericWebhookAdapter(WebhookAdapter):
                     status_code=401,
                 )
 
+        credential_headers = {"authorization", "cookie"}
+        if isinstance(auth_header, str) and auth_header:
+            credential_headers.add(auth_header.lower())
+        safe_headers = {key: value for key, value in request.headers.items()
+                        if key.lower() not in credential_headers}
+
         delivery_id = None
         delivery_header = config.get("delivery_id_header")
         if delivery_header is not None and delivery_header != "":
-            if not secret:
+            if not secret or header_auth:
                 return Rejected("Delivery identity requires a signing secret", 503)
             if not isinstance(delivery_header, str) or not re.fullmatch(
                 r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", delivery_header
             ):
                 return Rejected("Delivery ID header is not configured correctly", 503)
-            delivery_id = request.headers.get(delivery_header.lower(), "")
+            delivery_id = safe_headers.get(delivery_header.lower(), "")
             if not isinstance(delivery_id, str) or not re.fullmatch(r"[!-~]{1,128}", delivery_id):
                 return Rejected("Missing or invalid delivery identity", 400)
 
@@ -197,7 +260,7 @@ class GenericWebhookAdapter(WebhookAdapter):
         # From header
         type_header = config.get("event_type_header")
         if type_header:
-            event_type = request.headers.get(type_header.lower())
+            event_type = safe_headers.get(type_header.lower())
 
         # From payload field (overrides header)
         type_field = config.get("event_type_field")
@@ -211,6 +274,6 @@ class GenericWebhookAdapter(WebhookAdapter):
         return Deliver(
             data=payload,
             event_type=event_type,
-            raw_headers=request.headers,
+            raw_headers=safe_headers,
             delivery_id=delivery_id,
         )

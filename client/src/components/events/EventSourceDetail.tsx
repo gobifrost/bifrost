@@ -20,6 +20,8 @@ import {
 	Radio,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -147,6 +149,7 @@ export function EventSourceDetail({
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
 	const [resubscribeDialogOpen, setResubscribeDialogOpen] = useState(false);
 	const [rotateDialogOpen, setRotateDialogOpen] = useState(false);
+	const [headerToken, setHeaderToken] = useState("");
 	const [rotateError, setRotateError] = useState<string | null>(null);
 	const [revealedSecret, setRevealedSecret] = useState<string | null>(null);
 
@@ -166,6 +169,8 @@ export function EventSourceDetail({
 				orgTarget(source.organization_id),
 			)
 		: false;
+
+	const isHeaderAuth = source?.webhook?.config?.header_auth === true;
 
 	// Toggle active status
 	const handleToggleActive = async () => {
@@ -255,20 +260,27 @@ export function EventSourceDetail({
 		try {
 			const rotated = await rotateMutation.mutateAsync({
 				params: { path: { source_id: sourceId } },
-				body: {},
+				body: isHeaderAuth ? { secret: headerToken } : {},
 			});
 			// Keep the one-time secret only in this dialog, not the mutation cache.
 			rotateMutation.reset();
+			if (isHeaderAuth) {
+				setHeaderToken("");
+				setRotateDialogOpen(false);
+				toast.success("Authentication token updated");
+				return;
+			}
 			setRevealedSecret(rotated.raw_secret ?? null);
 		} catch (error) {
 			setRotateError(
-				getErrorMessage(error, "Failed to rotate the signing secret"),
+				getErrorMessage(error, "Failed to update the webhook secret"),
 			);
 		}
 	};
 
 	const closeRotateDialog = () => {
 		setRotateDialogOpen(false);
+		setHeaderToken("");
 		setRevealedSecret(null);
 		setRotateError(null);
 	};
@@ -773,16 +785,26 @@ export function EventSourceDetail({
 				<AlertDialogContent>
 					<AlertDialogHeader>
 						<AlertDialogTitle>
-							{revealedSecret
+							{isHeaderAuth
+								? "Set Authentication Token"
+								: revealedSecret
 								? "New signing secret"
 								: "Rotate signing secret?"}
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{revealedSecret
+							{isHeaderAuth
+								? "Enter the complete header value sent by your service, including Bearer if needed. The previous value stops working as soon as you save."
+								: revealedSecret
 								? "Set this secret in the sending service. Requests signed with the previous secret are now rejected."
 								: "Bifrost will generate a new signing secret and show it once. Requests signed with the current secret are rejected until you update the sending service."}
 						</AlertDialogDescription>
 					</AlertDialogHeader>
+					{isHeaderAuth && (
+						<div className="space-y-2">
+							<Label htmlFor="authentication-token">Expected Header Value</Label>
+							<Input id="authentication-token" type="password" autoComplete="new-password" value={headerToken} onChange={(event) => setHeaderToken(event.target.value)} />
+						</div>
+					)}
 					{revealedSecret && (
 						<HmacSecretReveal
 							value={revealedSecret}
@@ -812,11 +834,11 @@ export function EventSourceDetail({
 									event.preventDefault();
 									void handleRotateSecret();
 								}}
-								disabled={rotateMutation.isPending}
+								disabled={rotateMutation.isPending || (isHeaderAuth && !headerToken)}
 							>
 								{rotateMutation.isPending
 									? "Rotating…"
-									: "Rotate secret"}
+									: isHeaderAuth ? "Save Token" : "Rotate secret"}
 							</AlertDialogAction>
 						</AlertDialogFooter>
 					)}
