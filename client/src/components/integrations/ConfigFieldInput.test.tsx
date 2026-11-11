@@ -12,7 +12,9 @@ import { renderWithProviders, screen, fireEvent } from "@/test-utils";
 import { ConfigFieldInput } from "./ConfigFieldInput";
 import type { ConfigSchemaItem } from "@/services/integrations";
 
-function makeField(overrides: Partial<ConfigSchemaItem> = {}): ConfigSchemaItem {
+function makeField(
+	overrides: Partial<ConfigSchemaItem> = {},
+): ConfigSchemaItem {
 	return {
 		key: "example_key",
 		type: "string",
@@ -49,7 +51,9 @@ describe("ConfigFieldInput — string", () => {
 			/>,
 		);
 
-		fireEvent.change(screen.getByRole("textbox"), { target: { value: "" } });
+		fireEvent.change(screen.getByRole("textbox"), {
+			target: { value: "" },
+		});
 
 		expect(onChange).toHaveBeenLastCalledWith(undefined);
 	});
@@ -214,4 +218,21 @@ describe("ConfigFieldInput — reset affordance", () => {
 		await user.click(screen.getByRole("button", { name: /reset/i }));
 		expect(onReset).toHaveBeenCalledTimes(1);
 	});
+});
+
+it("uses static options for organization configuration and clears to inherited state", async () => {
+	const onChange = vi.fn();
+	const { user } = renderWithProviders(
+		<ConfigFieldInput
+			field={makeField({ options: ["us", "eu"] })}
+			value="us"
+			onChange={onChange}
+		/>,
+	);
+	await user.click(screen.getByRole("combobox"));
+	await user.click(screen.getByRole("option", { name: "eu" }));
+	expect(onChange).toHaveBeenLastCalledWith("eu");
+	await user.click(screen.getByRole("combobox"));
+	await user.click(screen.getByRole("option", { name: "us" }));
+	expect(onChange).toHaveBeenLastCalledWith(undefined);
 });

@@ -623,6 +623,7 @@ class ManifestIntegrationConfigSchema(EntityCodec, BaseModel):
     required: bool = Field(default=False, description="Whether this config must be set", **classify(FieldClass.CONTENT))
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
     options: list[str] | None = Field(default=None, description="Allowed values (for string type)", **classify(FieldClass.CONTENT))
+    option_labels: dict[str, str] | None = Field(default=None, description="Display labels keyed by stored option value", **classify(FieldClass.CONTENT))
     position: int = Field(default=0, description="Display order in UI", **classify(FieldClass.CONTENT))
 
     @classmethod
@@ -634,6 +635,7 @@ class ManifestIntegrationConfigSchema(EntityCodec, BaseModel):
             required=cs.required,
             description=cs.description,
             options=cs.options,
+            option_labels=cs.option_labels,
             position=cs.position,
         )
 

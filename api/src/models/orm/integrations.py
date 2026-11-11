@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
-from sqlalchemy.dialects.postgresql import ARRAY
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.models.orm.base import Base
@@ -108,6 +108,7 @@ class IntegrationConfigSchema(Base):
     required: Mapped[bool] = mapped_column(Boolean, default=False)
     description: Mapped[str | None] = mapped_column(String(500), default=None, nullable=True)
     options: Mapped[list[str] | None] = mapped_column(ARRAY(String), default=None, nullable=True)
+    option_labels: Mapped[dict[str, str] | None] = mapped_column(JSONB, default=None, nullable=True)
     position: Mapped[int] = mapped_column(default=0)  # For ordering
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")

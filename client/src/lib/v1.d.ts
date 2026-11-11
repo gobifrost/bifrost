@@ -16364,6 +16364,13 @@ export interface components {
              * @description List of valid string options for dropdown UI
              */
             options?: string[] | null;
+            /**
+             * Option Labels
+             * @description Display labels keyed by stored option value
+             */
+            option_labels?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * ConfigType

@@ -2134,7 +2134,7 @@ class TestSplitManifestFormat:
                     "entity_id": "tenant_id",
                     "entity_id_name": "Tenant",
                     "config_schema": [
-                        {"key": "api_url", "type": "string", "required": True, "position": 0},
+                        {"key": "api_url", "type": "string", "required": True, "position": 0, "options": ["eu"], "option_labels": {"eu": "Europe"}},
                         {"key": "api_key", "type": "secret", "required": True, "position": 1},
                     ],
                     "mappings": [],
@@ -2166,6 +2166,8 @@ class TestSplitManifestFormat:
         assert len(schemas) == 2
         assert schemas[0].key == "api_url"
         assert schemas[0].type == "string"
+        assert schemas[0].options == ["eu"]
+        assert schemas[0].option_labels == {"eu": "Europe"}
         assert schemas[1].key == "api_key"
         assert schemas[1].type == "secret"
 

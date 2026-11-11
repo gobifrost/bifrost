@@ -154,3 +154,15 @@ class TestIntegrationMappingUpdate:
         update = IntegrationMappingUpdate(entity_id="")
         assert update.entity_id == ""
 
+
+
+@pytest.mark.parametrize("options, labels", [(["eu", "eu"], {"eu": "Europe"}), ([""], {"": "Europe"}), (["eu"], {"us": "USA"}), (["eu"], {"eu": ""})])
+def test_choice_labels_reject_ambiguous_or_invalid_values(options, labels):
+    with pytest.raises(ValidationError):
+        ConfigSchemaItem(key="region", type="string", options=options, option_labels=labels)
+
+
+def test_choice_labels_preserve_scalar_values():
+    schema = ConfigSchemaItem(key="region", type="string", options=["eu"], option_labels={"eu": "Europe"})
+    assert schema.model_dump()["options"] == ["eu"]
+    assert schema.model_dump()["option_labels"] == {"eu": "Europe"}

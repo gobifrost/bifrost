@@ -79,6 +79,7 @@ class ConfigSchemaExportItem(BaseModel):
     required: bool = False
     description: str | None = None
     options: list[str] | None = None
+    option_labels: dict[str, str] | None = None
     position: int = 0
 
 

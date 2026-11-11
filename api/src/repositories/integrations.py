@@ -122,6 +122,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                     required=item.required,
                     description=item.description,
                     options=item.options,
+                    option_labels=item.option_labels,
                     position=idx,
                 )
                 integration.config_schema.append(schema_item)
@@ -257,6 +258,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                     existing.required = item_data.required
                     existing.description = item_data.description
                     existing.options = item_data.options
+                    existing.option_labels = item_data.option_labels
                     existing.position = idx
                 else:
                     # Add new
@@ -267,6 +269,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                         required=item_data.required,
                         description=item_data.description,
                         options=item_data.options,
+                        option_labels=item_data.option_labels,
                         position=idx,
                     )
                     integration.config_schema.append(new_item)

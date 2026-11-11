@@ -3,6 +3,7 @@
     {
       "description": "API key for auth",
       "key": "api_key",
+      "option_labels": null,
       "options": null,
       "position": 0,
       "required": true,
