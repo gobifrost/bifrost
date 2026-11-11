@@ -1,0 +1,14 @@
+{
+  "key": "pr:1332",
+  "classification": "highlight",
+  "entry_ids": [
+    "f8201123-b087-4ac5-9571-782794ccc3d2"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1332",
+      "Native Jack Approve This Wording response to strong Codex request call_34739302c1924a05a12b69731270d56a in the existing Issue #1325 owner on November 11, 2026. Exact PR and Product Update wording approved; protected merge separately authorized."
+    ]
+  }
+}
