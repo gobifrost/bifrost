@@ -247,6 +247,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                 async with httpx.AsyncClient(timeout=90, follow_redirects=False) as provider:
                     if dev_qualification:
                         payload = {'execution_id': str(execution.id), 'context': context, 'manifest': manifest,
+                                   'requirements': {'modules': sorted(manifest.keys())},
+                                   'egress': {'hosts': []},
                                    'api_url': 'https://attacker.invalid', 'public_url': 'https://attacker.invalid'}
                         # Explicitly reject canonical mode rather than pretending
                         # this physical-runtime fixture implements platform dispatch.
@@ -269,6 +271,8 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                     response = await provider.post(provider_url, headers=provider_headers,
                                                    json={"execution_id": str(execution.id), "context": context,
                                                          "manifest": manifest,
+                                                         "requirements": {"modules": sorted(manifest.keys())},
+                                                         "egress": {"hosts": []},
                                                          **({'api_url': 'https://attacker.invalid', 'public_url': 'https://attacker.invalid'}
                                                             if dev_qualification else {})})
                     evidence = response.json()
