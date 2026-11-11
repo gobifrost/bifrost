@@ -57,11 +57,11 @@ async def scim_onboarding_save(
     if domain is not None and (not isinstance(domain, str) or not domain):
         raise ValueError("domain must be a non-empty string or omitted")
     if not isinstance(group_roles, dict):
-        raise ValueError("group_roles must be an object")
+        raise TypeError("group_roles must be an object")
     for group, grant in group_roles.items():
         if not isinstance(group, str) or not group or len(group) > 100:
             raise ValueError(f"invalid group: {group!r}")
-        role, org_refs = expand_grant(grant)
+        _role, org_refs = expand_grant(grant)
         if org_refs is not None:
             resolved = await _resolve_orgs(org_refs)
             missing = [o for o in org_refs if o not in resolved]

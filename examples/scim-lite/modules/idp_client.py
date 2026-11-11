@@ -60,7 +60,7 @@ async def fetch_user_page(
         raise RuntimeError(f"IdP page fetch failed: {resp.status_code}")
     data = resp.json()
     if not isinstance(data, dict) or not isinstance(data.get("users"), list):
-        raise ValueError("IdP returned an unexpected page shape")
+        raise TypeError("IdP returned an unexpected page shape")
 
     users = data["users"]
     if dialect == "keycloak":

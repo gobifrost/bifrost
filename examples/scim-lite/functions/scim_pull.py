@@ -6,7 +6,7 @@ group mappings (org config cascade with global fallback), per-org failure
 containment: one org's bad page never stops the others.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from bifrost import config, integrations, tables, users, workflow
 from modules.idp_client import fetch_user_page
@@ -132,7 +132,7 @@ def _deadline_close() -> bool:
 
     return bool(
         context.workflow_deadline
-        and datetime.now(timezone.utc)
+        and datetime.now(UTC)
         > (context.workflow_deadline - timedelta(seconds=60))
     )
 

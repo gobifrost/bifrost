@@ -51,7 +51,7 @@ def test_normalize_scim_keys_and_deactivate():
 def test_rejects_bad_email_and_org_choice():
     with pytest.raises(ValueError):
         normalize_user_event({"external_id": "x", "email": "not-an-email"})
-    with pytest.raises(ValueError):
+    with pytest.raises(TypeError):
         normalize_user_event(
             {"external_id": "x", "email": "a@b.co", "active": "yes"}
         )

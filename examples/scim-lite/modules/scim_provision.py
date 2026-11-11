@@ -10,7 +10,6 @@ from typing import Any
 
 from bifrost import api, organizations, roles, tables, users
 from modules.scim_sync import (
-    expand_grant,
     mapped_role_names,
     normalize_user_event,
     registry_id,

@@ -55,7 +55,7 @@ def normalize_user_event(payload: dict) -> dict:
     name/displayName, active, groups. Raises ValueError on bad input.
     """
     if not isinstance(payload, dict):
-        raise ValueError("payload must be an object")
+        raise TypeError("payload must be an object")
     external_id = payload.get("external_id", payload.get("id"))
     email = payload.get("email", payload.get("userName"))
     name = payload.get("name", payload.get("displayName", ""))
@@ -69,7 +69,7 @@ def normalize_user_event(payload: dict) -> dict:
     if not isinstance(name, str) or len(name) > MAX_NAME_LEN:
         raise ValueError("name invalid")
     if not isinstance(active, bool):
-        raise ValueError("active must be boolean")
+        raise TypeError("active must be boolean")
     if not isinstance(groups, list) or len(groups) > MAX_GROUPS:
         raise ValueError("groups must be a list (max 50)")
     clean_groups: list[str] = []

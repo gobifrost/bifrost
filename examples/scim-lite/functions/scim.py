@@ -13,7 +13,7 @@ async def scim_user_event(org_id: str | None = None) -> dict:
     """
     body = context.event.data if context.event else {}
     if not isinstance(body, dict):
-        raise ValueError("webhook payload must be an object")
+        raise TypeError("webhook payload must be an object")
     resolved = org_id or (str(context.org_id) if context.org_id else None)
     if not resolved:
         raise ValueError("no org: bind org_id in the subscription input_mapping")
