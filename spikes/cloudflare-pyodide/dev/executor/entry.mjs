@@ -8,7 +8,7 @@ import {fixtureRejection} from '../../backend/fixture-admission.mjs';
 import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
 import {readBudgetedJson} from './output-budget.mjs';
-import {reconcileImports} from './import-audit.mjs';
+import {reconcileImports, deniedTerminal} from './import-audit.mjs';
 import {capabilityRejection} from './capability-requirements.mjs';
 import {egressRejection, isUrlAllowed, VIRTUAL_TEST_HOST} from './egress-allowlist.mjs';
 
@@ -101,9 +101,12 @@ export default {
         method: 'POST', body: JSON.stringify(payload),
       }));
       const output = await readBudgetedJson(response);
-      // Audit-only: reconcile observed workspace loads against the declaration.
-      // Never blocks here; the audit is reported for the caller to decide.
+      // Deny undeclared workspace imports: the run executed, so this maps the
+      // terminal post-hoc (effects may already exist) instead of banking Success.
+      // Clean runs keep the exact prior envelope shape.
       const audit = reconcileImports(body.requirements?.modules, output.bootstrap?.recorded_workspace_paths);
+      const denied = deniedTerminal(audit);
+      if (denied) return Response.json({...denied, api_calls: calls}, {status: 502});
       return Response.json({result: output.upstream_result, bootstrap: output.bootstrap,
         ...(audit ? {import_audit: audit} : {}), api_calls: calls,
         api_calls_scope: 'parent_module_preflight_only'});
