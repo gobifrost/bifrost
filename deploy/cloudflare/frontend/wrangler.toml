@@ -1,0 +1,20 @@
+# Bifrost frontend edge worker. Fill in name/routes and API_ORIGIN, then:
+#   npm ci && npm run build:client # (produces ./assets from the repo client/)
+#   npx wrangler deploy
+name = "bifrost-frontend"
+main = "./edge.mjs"
+compatibility_date = "2026-10-30"
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "./assets"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[vars]
+# Canonical API root. HTTPS only, no path/query/fragment. Never taken from requests.
+API_ORIGIN = "https://api.example.invalid"
+
+[observability]
+enabled = true

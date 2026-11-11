@@ -1,0 +1,8 @@
+{
+  "name": "bifrost-frontend-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test edge.test.mjs"
+  }
+}
