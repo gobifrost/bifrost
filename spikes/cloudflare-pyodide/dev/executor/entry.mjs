@@ -18,6 +18,10 @@ export class DevApi extends WorkerEntrypoint {
     // Let fetch derive Host from the fixed physical destination.
     headers.delete('Host');
     headers.set('User-Agent', 'bifrost-pyodide-dev-executor/1.0');
+    // The SDK-only origin bridge requires the run-scoped dev credential.
+    // Without it the gateway fails closed and module preflight cannot
+    // distinguish an invalid engine token from a denied bridge.
+    headers.set('X-Qualification-Auth', this.env.DEV_AUTH ?? '');
     const response = await this.env.DEV_API.fetch(new Request(target, new Request(request, {headers, redirect: 'manual'})));
     const path = new URL(request.url).pathname;
     if (path.startsWith('/api/sdk/modules/')) {
