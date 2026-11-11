@@ -8,6 +8,7 @@ import {fixtureRejection} from '../../backend/fixture-admission.mjs';
 import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
 import {readBudgetedJson} from './output-budget.mjs';
+import {capabilityRejection} from './capability-requirements.mjs';
 
 export class DevApi extends WorkerEntrypoint {
   async fetch(request) {
@@ -41,6 +42,12 @@ export default {
     const body = await boundedJson(request, 262144);
     const rejection = fixtureRejection(body, 0);
     if (rejection || body.fixture_mode !== undefined || body.mode !== undefined) return Response.json({error: 'Fixture not admitted', reason: rejection ?? 'unsupported_mode'}, {status: 422});
+    // Capability gate BEFORE any loader, network, or SDK effect. Manifest
+    // lookup only. Missing declarations fail closed with zero api_calls and
+    // never echo secrets or params; only the missing module names are named.
+    const capability = capabilityRejection(body.requirements, body.manifest);
+    if (capability) return Response.json({phase: 'capability-rejected',
+      missing_modules: capability.missing_modules, api_calls: []}, {status: 422});
     let payload;
     try { payload = attemptPayload(body, env.API_ORIGIN); }
     catch { return new Response('Invalid dev public URL configuration', {status: 503}); }
