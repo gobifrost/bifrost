@@ -91,6 +91,7 @@ export function DateTimePicker({
 }: DateTimePickerProps): React.JSX.Element {
 	const [open, setOpen] = React.useState(false);
 	const timeInputId = React.useId();
+	const valueDescriptionId = React.useId();
 
 	const label = ariaLabel ?? "Pick date and time";
 	const triggerText = value ? format(value, DISPLAY_FORMAT) : placeholder;
@@ -154,7 +155,9 @@ export function DateTimePicker({
 					id={id}
 					onBlur={onBlur}
 					aria-label={label}
-					aria-describedby={describedBy}
+					aria-describedby={[valueDescriptionId, describedBy]
+						.filter(Boolean)
+						.join(" ")}
 					aria-invalid={invalid}
 					className={cn(
 						"h-auto min-h-11 w-full min-w-0 max-w-[260px] justify-start whitespace-normal text-left font-normal",
@@ -163,7 +166,10 @@ export function DateTimePicker({
 					)}
 				>
 					<CalendarIcon className="mr-2 h-4 w-4" />
-					<span className="min-w-0 [overflow-wrap:anywhere]">
+					<span
+						id={valueDescriptionId}
+						className="min-w-0 [overflow-wrap:anywhere]"
+					>
 						{triggerText}
 					</span>
 				</Button>

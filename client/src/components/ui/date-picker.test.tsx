@@ -17,6 +17,7 @@ describe("DatePicker", () => {
 		render(<ControlledPicker />);
 		const trigger = screen.getByRole("button", { name: "Start Date" });
 		expect(trigger).toHaveTextContent("Nov 10, 2026");
+		expect(trigger).toHaveAccessibleDescription("Nov 10, 2026");
 		await user.click(trigger);
 		expect(screen.getByRole("grid")).toBeInTheDocument();
 		await user.click(

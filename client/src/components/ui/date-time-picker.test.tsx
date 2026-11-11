@@ -21,6 +21,7 @@ describe("DateTimePicker", () => {
 		});
 		expect(trigger.textContent).toMatch(/2026/);
 		expect(trigger.textContent).toMatch(/9:30\s*AM/i);
+		expect(trigger).toHaveAccessibleDescription("Apr 25, 2026 · 9:30 AM");
 	});
 
 	it("opens the popover with a calendar when the trigger is clicked", async () => {

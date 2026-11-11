@@ -332,11 +332,15 @@ describe("FormRenderer — field types", () => {
 				type: "date",
 				required: true,
 				default_value: "2026-11-10",
+				help_text: "Choose the employee start date.",
 			},
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 		const input = screen.getByLabelText(/start date/i);
 		expect(input).toHaveTextContent("Nov 10, 2026");
+		expect(input).toHaveAccessibleDescription(
+			"Nov 10, 2026 Choose the employee start date.",
+		);
 		await user.click(input);
 		await user.click(
 			await screen.findByRole("button", { name: /November 20.*2026/i }),

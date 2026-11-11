@@ -1,4 +1,4 @@
-import { useState, type ComponentProps } from "react";
+import { useState, useId, type ComponentProps } from "react";
 import { CalendarIcon } from "lucide-react";
 import { format, isValid, parseISO } from "date-fns";
 
@@ -30,6 +30,7 @@ export function DatePicker({
 	...props
 }: DatePickerProps) {
 	const [open, setOpen] = useState(false);
+	const valueDescriptionId = useId();
 	const parsed = value ? parseISO(value) : undefined;
 	const selected = parsed && isValid(parsed) ? parsed : undefined;
 
@@ -44,6 +45,12 @@ export function DatePicker({
 			<PopoverTrigger asChild>
 				<Button
 					{...props}
+					aria-describedby={[
+						valueDescriptionId,
+						props["aria-describedby"],
+					]
+						.filter(Boolean)
+						.join(" ")}
 					type="button"
 					variant="outline"
 					disabled={disabled}
@@ -54,7 +61,10 @@ export function DatePicker({
 					)}
 				>
 					<CalendarIcon className="mr-2 size-4 shrink-0" />
-					<span className="min-w-0 [overflow-wrap:anywhere]">
+					<span
+						id={valueDescriptionId}
+						className="min-w-0 [overflow-wrap:anywhere]"
+					>
 						{selected
 							? format(selected, "MMM d, yyyy")
 							: value || placeholder}
