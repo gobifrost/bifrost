@@ -55,11 +55,12 @@ beforeEach(() => {
 function renderForm(
 	schema: ConfigSchema,
 	config: Record<string, unknown> = {},
+	adapterName = "test-adapter",
 ) {
 	const onChange = vi.fn();
 	const utils = renderWithProviders(
 		<DynamicConfigForm
-			adapterName="test-adapter"
+			adapterName={adapterName}
 			organizationId="org-1"
 			configSchema={schema}
 			config={config}
@@ -472,4 +473,34 @@ describe("DynamicConfigForm — option context", () => {
 			expect(onChange).toHaveBeenLastCalledWith({ changes: ["created"] });
 		},
 	);
+});
+
+describe("Generic webhook authentication modes", () => {
+	const schema: ConfigSchema = {
+		type: "object",
+		properties: {
+			header_auth: { type: "boolean", title: "Header Token Authentication" },
+			auth_header: { type: "string", title: "Authentication Header" },
+			secret: { type: "string", title: "Webhook Secret", format: "password" },
+			signature_header: { type: "string", title: "Signature Header" },
+			signature_prefix: { type: "string", title: "Signature Prefix" },
+			delivery_id_header: { type: "string", title: "Delivery ID Header" },
+		},
+	};
+
+	it("shows the fields relevant to header authentication and drops HMAC delivery identity", async () => {
+		const { user, onChange } = renderForm(schema, { delivery_id_header: "X-Delivery" }, "generic");
+		expect(screen.getByLabelText("Signature Header")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Authentication Header")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("switch", { name: "Header Token Authentication" }));
+		expect(onChange).toHaveBeenLastCalledWith({ header_auth: true });
+	});
+
+	it("labels the write-only header value and hides HMAC controls", () => {
+		renderForm(schema, { header_auth: true }, "generic");
+		expect(screen.getByLabelText("Expected Header Value")).toHaveAttribute("type", "password");
+		expect(screen.getByLabelText("Authentication Header")).toBeInTheDocument();
+		expect(screen.queryByLabelText("Signature Header")).not.toBeInTheDocument();
+		expect(screen.queryByLabelText("Delivery ID Header")).not.toBeInTheDocument();
+	});
 });

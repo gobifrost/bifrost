@@ -225,6 +225,12 @@ def _split_webhook_secret(config: dict[str, Any], adapter: Any) -> tuple[dict[st
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=f"Adapter '{adapter.name}' does not verify a signing secret",
         )
+    if adapter.name == "generic":
+        from src.services.webhooks.adapters.generic import GenericWebhookAdapter
+
+        error = GenericWebhookAdapter.validate_config(remaining)
+        if error:
+            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=error)
     return remaining, sent, secret
 
 
@@ -952,7 +958,9 @@ async def create_source(
         },
     )
 
-    return await _build_event_source_secret_response(source, db, signing_secret)
+    show_secret = not (source.webhook_source and source.webhook_source.adapter_name == "generic"
+                       and (source.webhook_source.config or {}).get("header_auth", False) is not False)
+    return await _build_event_source_secret_response(source, db, signing_secret if show_secret else None)
 
 
 @router.get(
@@ -1265,6 +1273,12 @@ async def rotate_source_secret(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only webhook sources whose adapter verifies a signing secret can rotate it",
+        )
+
+    if ws.adapter_name == "generic" and (ws.config or {}).get("header_auth") is True:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Update the webhook secret in the source configuration for header authentication",
         )
 
     signing_secret = request.secret or generate_signing_secret()

@@ -1264,7 +1264,8 @@ class TestEventManifest:
         assert len(evt_rest.subscriptions) == len(evt_orig.subscriptions)
         assert evt_rest.subscriptions[0].workflow_id == evt_orig.subscriptions[0].workflow_id
 
-    def test_webhook_config_never_carries_the_signing_secret(self):
+    @pytest.mark.parametrize("public_config", [{"signature_header": "X-Sig"}, {"header_auth": True, "auth_header": "X-Token"}])
+    def test_webhook_config_never_carries_the_signing_secret(self, public_config):
         """A manifest written before the secret moved out of config still
         parses, and neither import nor export carries the secret."""
         from types import SimpleNamespace
@@ -1279,11 +1280,11 @@ class TestEventManifest:
                     "name": "Signed hook",
                     "source_type": "webhook",
                     "adapter_name": "generic",
-                    "webhook_config": {"secret": "LEGACY-PLAINTEXT", "signature_header": "X-Sig"},
+                    "webhook_config": {"secret": "LEGACY-PLAINTEXT", **public_config},
                 },
             },
         }))
-        assert legacy.events[es_id].webhook_config == {"signature_header": "X-Sig"}
+        assert legacy.events[es_id].webhook_config == public_config
         assert "LEGACY-PLAINTEXT" not in serialize_manifest(legacy)
 
         row = SimpleNamespace(
@@ -1292,11 +1293,11 @@ class TestEventManifest:
         )
         webhook = SimpleNamespace(
             adapter_name="generic", integration_id=None,
-            config={"secret": "ROW-PLAINTEXT", "signature_header": "X-Sig"},
+            config={"secret": "ROW-PLAINTEXT", **public_config},
             rate_limit_per_minute=60, rate_limit_window_seconds=60, rate_limit_enabled=True,
         )
         exported = ManifestEventSource.from_row(row, webhook=webhook)
-        assert exported.webhook_config == {"signature_header": "X-Sig"}
+        assert exported.webhook_config == public_config
 
     def test_event_split_file(self, full_manifest_data):
         """Events serialize to events.yaml in split format."""

@@ -445,7 +445,7 @@ export function EventSourceDetail({
 							onEdit={() => setEditDialogOpen(true)}
 							onDelete={() => setDeleteDialogOpen(true)}
 							onRotateSecret={
-								isGenericWebhook
+								isGenericWebhook && source.webhook?.config?.header_auth !== true
 									? () => setRotateDialogOpen(true)
 									: undefined
 							}
