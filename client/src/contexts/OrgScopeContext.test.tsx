@@ -131,3 +131,41 @@ it("uses the impersonated user's home organization without replacing the operato
 		operatorScope,
 	);
 });
+
+it("applies an existing saved square logo on initial branding load", async () => {
+	const link = document.createElement("link");
+	link.rel = "icon";
+	link.href = "/logo.svg";
+	document.head.appendChild(link);
+	// The provider preloads the saved image before applying branding.
+	vi.stubGlobal(
+		"Image",
+		class {
+			onload: (() => void) | null = null;
+			set src(_value: string) {
+				queueMicrotask(() => this.onload?.());
+			}
+		},
+	);
+	const fetch = vi.fn().mockResolvedValue(
+		new Response(
+			JSON.stringify({
+				square_logo_url: "/api/branding/logo/square",
+			}),
+		),
+	);
+	vi.stubGlobal("fetch", fetch);
+	try {
+		render(
+			<OrgScopeProvider>
+				<Shell />
+			</OrgScopeProvider>,
+		);
+		await screen.findByRole("textbox", { name: "Draft" });
+		expect(new URL(link.href).pathname).toBe("/api/branding/logo/square");
+		expect(fetch).toHaveBeenCalledTimes(1);
+		expect(fetch).toHaveBeenCalledWith("/api/branding");
+	} finally {
+		link.remove();
+	}
+});
