@@ -1,0 +1,14 @@
+{
+  "key": "pr:1327",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Product Updates deferred at the maintainer\u2019s request.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1327",
+      "https://github.com/gobifrost/bifrost/issues/1321",
+      "Native Jack response Yes\u2014PR Without Product Update to request call_db0255c200ba4be0b506ef6f5ef69b6d in the existing Issue #1321 owner approves the PR wording without its Product Updates paragraph and defers the release note. Protected merge separately requested."
+    ]
+  }
+}

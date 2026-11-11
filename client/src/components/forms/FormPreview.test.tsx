@@ -13,6 +13,47 @@ import { FormPreview } from "./FormPreview";
 import type { FormField } from "@/lib/client-types";
 
 describe("FormPreview", () => {
+	it("renders a disabled shared datetime control with the local default", () => {
+		renderWithProviders(
+			<FormPreview
+				formName="F"
+				formDescription=""
+				fields={[
+					{
+						name: "appointment",
+						label: "Appointment",
+						type: "datetime",
+						default_value: "2026-11-10T09:00",
+					},
+				]}
+			/>,
+		);
+		const control = screen.getByLabelText("Appointment");
+		expect(control).toHaveTextContent("Nov 10, 2026 · 9:00 AM");
+		expect(control).toBeDisabled();
+	});
+
+	it("renders a disabled date control with its default calendar date", () => {
+		renderWithProviders(
+			<FormPreview
+				formName="F"
+				formDescription=""
+				fields={[
+					{
+						name: "start_date",
+						label: "Start Date",
+						type: "date",
+						required: false,
+						default_value: "2026-11-10",
+					},
+				]}
+			/>,
+		);
+		const input = screen.getByLabelText("Start Date");
+		expect(input).toHaveTextContent("Nov 10, 2026");
+		expect(input).toBeDisabled();
+	});
+
 	it("renders the form title and description", () => {
 		renderWithProviders(
 			<FormPreview
@@ -94,7 +135,12 @@ describe("FormPreview", () => {
 
 	it("renders a disabled checkbox with the label when type=checkbox", () => {
 		const fields: FormField[] = [
-			{ name: "agree", label: "I agree", type: "checkbox", required: false },
+			{
+				name: "agree",
+				label: "I agree",
+				type: "checkbox",
+				required: false,
+			},
 		];
 		renderWithProviders(
 			<FormPreview formName="F" formDescription="" fields={fields} />,

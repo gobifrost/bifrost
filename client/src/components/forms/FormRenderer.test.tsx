@@ -324,6 +324,130 @@ describe("FormRenderer — conditional rendering", () => {
 });
 
 describe("FormRenderer — field types", () => {
+	it("renders a date control and submits the selected calendar date as a string", async () => {
+		const form = makeForm([
+			{
+				name: "start_date",
+				label: "Start Date",
+				type: "date",
+				required: true,
+				default_value: "2026-11-10",
+				help_text: "Choose the employee start date.",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		const input = screen.getByLabelText(/start date/i);
+		expect(input).toHaveTextContent("Nov 10, 2026");
+		expect(input).toHaveAccessibleDescription(
+			"Nov 10, 2026 Choose the employee start date.",
+		);
+		await user.click(input);
+		await user.click(
+			await screen.findByRole("button", { name: /November 20.*2026/i }),
+		);
+		const submit = screen.getByRole("button", { name: /submit/i });
+		await waitFor(() => expect(submit).toBeEnabled());
+		await user.click(submit);
+		await waitFor(() =>
+			expect(mockMutateAsync).toHaveBeenCalledWith(
+				expect.objectContaining({
+					body: expect.objectContaining({
+						form_data: { start_date: "2026-11-20" },
+					}),
+				}),
+			),
+		);
+	});
+
+	it("submits a shared datetime selection as a local datetime string", async () => {
+		const form = makeForm([
+			{
+				name: "appointment",
+				label: "Appointment",
+				type: "datetime",
+				required: true,
+				default_value: "2026-11-10T09:00",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		const control = screen.getByLabelText("Appointment");
+		expect(control).toHaveTextContent("Nov 10, 2026 · 9:00 AM");
+		await user.click(control);
+		await user.click(
+			screen.getByRole("button", { name: /November 20.*2026/i }),
+		);
+		fireEvent.change(screen.getByLabelText("Time"), {
+			target: { value: "14:30" },
+		});
+		await user.keyboard("{Escape}");
+		const submit = screen.getByRole("button", { name: /submit/i });
+		await waitFor(() => expect(submit).toBeEnabled());
+		await user.click(submit);
+		await waitFor(() =>
+			expect(mockMutateAsync).toHaveBeenCalledWith(
+				expect.objectContaining({
+					body: expect.objectContaining({
+						form_data: { appointment: "2026-11-20T14:30" },
+					}),
+				}),
+			),
+		);
+	});
+
+	it("validates a required datetime after clearing it", async () => {
+		const form = makeForm([
+			{
+				name: "appointment",
+				label: "Appointment",
+				type: "datetime",
+				required: true,
+				default_value: "2026-11-10T09:00",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		await user.click(screen.getByLabelText("Appointment"));
+		await user.click(
+			screen.getByRole("button", { name: "Clear Date & Time" }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByText("This field is required"),
+			).toBeInTheDocument(),
+		);
+		expect(screen.getByLabelText("Appointment")).toHaveAttribute(
+			"aria-invalid",
+			"true",
+		);
+		expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
+	});
+
+	it("validates a required date after clearing the shared picker", async () => {
+		const form = makeForm([
+			{
+				name: "start_date",
+				label: "Start Date",
+				type: "date",
+				required: true,
+				default_value: "2026-11-10",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		await user.click(screen.getByLabelText(/start date/i));
+		await user.click(
+			await screen.findByRole("button", { name: "Clear Date" }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByText("This field is required"),
+			).toBeInTheDocument(),
+		);
+		expect(screen.getByLabelText(/start date/i)).toHaveAttribute(
+			"aria-invalid",
+			"true",
+		);
+		expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
+	});
+
 	it("renders a markdown field's content", () => {
 		const form = makeForm([
 			{
