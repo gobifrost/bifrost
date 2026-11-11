@@ -22,7 +22,10 @@ row controls, and field move menus also work without dragging.
 
 The database migration adds a nullable JSONB `forms.layout` column. Existing
 forms need no backfill and retain their vertical layout when layout is omitted.
-Authors opt into the new editor per form. Apply the normal platform database
+Opening an existing form or saving its metadata does not initialize a layout.
+Authors opt into saved layout metadata by changing the form's structure in the
+canvas. Field settings and submitted parameter names remain independent of
+placement. Apply the normal platform database
 migration when upgrading; no workflow or integration configuration changes are
 required by this layout feature.
 

@@ -404,6 +404,11 @@ it("preserves loaded role assignments in an existing-form patch without additive
 			body: expect.objectContaining({
 				role_ids: ["existing-role"],
 				clear_roles: false,
+				form_schema: {
+					fields: [
+						{ name: "summary", label: "Summary", type: "text" },
+					],
+				},
 			}),
 		}),
 	);

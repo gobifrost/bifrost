@@ -86,6 +86,28 @@ beforeEach(() => {
 	dialogProps.mockClear();
 });
 describe("unified form builder", () => {
+	it("lets authors label sections and add descriptions without altering fields", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(<Harness onChange={changed} />);
+		await user.click(screen.getByRole("button", { name: "Section" }));
+		await user.clear(
+			screen.getByRole("textbox", { name: "Section 1 Title" }),
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: "Section 1 Title" }),
+			"Contact Details",
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: "Section 1 Description" }),
+			"How we can reach you.",
+		);
+		const state = changed.mock.lastCall![0] as FormCanvasState;
+		expect(state.layout!.sections[0]).toMatchObject({
+			title: "Contact Details",
+			description: "How we can reach you.",
+		});
+		expect(state.fields).toEqual([]);
+	});
 	it("keeps structural and field components in one palette beside one canvas", () => {
 		renderWithProviders(<Harness />);
 		expect(screen.getByText("Component Palette")).toBeInTheDocument();

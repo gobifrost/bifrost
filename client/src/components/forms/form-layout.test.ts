@@ -50,6 +50,7 @@ describe("form canvas state", () => {
 						createCanvasRow(),
 					],
 				},
+				{ title: "Another Section", rows: [createCanvasRow()] },
 			],
 		};
 		const moved = moveCanvasField(layout, "first", {
@@ -74,6 +75,17 @@ describe("form canvas state", () => {
 			{ field: "last", width: 4 },
 			{ field: "first", width: 8 },
 		]);
+		const acrossSections = moveCanvasField(layout, "first", {
+			section: 1,
+			row: 0,
+			column: 1,
+		});
+		expect(
+			acrossSections.sections[0]!.rows[0]!.columns[0]!.field,
+		).toBeNull();
+		expect(acrossSections.sections[1]!.rows[0]!.columns[1]!.field).toBe(
+			"first",
+		);
 	});
 	it("never discards occupied fields when reducing the number of columns", () => {
 		const row = {
