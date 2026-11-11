@@ -53,3 +53,14 @@ form_schema:
 
 The API validates layout references and widths. Empty rows and sections are
 allowed for authoring; a saved layout must still place every defined field.
+
+## Reordering Layouts
+
+Use a visible grip to drag sections, rows, or field columns. Drop indicators
+show the insertion edge. Rows can move between sections, including an empty
+section's **Drop Row Here** target; field columns can move between rows and
+sections through **Drop Field Here**. A move retains its configured width and
+is refused with an explanation if it would exceed twelve row columns or four
+fields. The section/row arrows and field left/right buttons remain available
+for keyboard use. These controls change presentation only; the Fields list
+continues to edit field definitions.

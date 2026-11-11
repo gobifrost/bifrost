@@ -3,6 +3,20 @@ import { renderWithProviders, screen } from "@/test-utils";
 import type { FormField } from "@/lib/client-types";
 import { FormLayoutEditor } from "./FormLayoutEditor";
 
+vi.mock("@atlaskit/pragmatic-drag-and-drop/element/adapter", () => ({
+	draggable: () => () => {},
+	dropTargetForElements: () => () => {},
+}));
+vi.mock("@atlaskit/pragmatic-drag-and-drop/combine", () => ({
+	combine:
+		(...cleanups: Array<() => void>) =>
+		() =>
+			cleanups.forEach((cleanup) => cleanup()),
+}));
+vi.mock("@atlaskit/pragmatic-drag-and-drop-auto-scroll/element", () => ({
+	autoScrollForElements: () => () => {},
+}));
+
 const fields: FormField[] = [
 	{ name: "first", label: "First", type: "text" },
 	{ name: "last", label: "Last", type: "text" },
@@ -60,5 +74,17 @@ describe("FormLayoutEditor", () => {
 			screen.getByRole("button", { name: "Move row 1 up" }),
 		).toBeDisabled();
 		expect(screen.getByLabelText("Add field to row 1")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Drag section 1" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Drag row 1 in section 1" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Drag field first" }),
+		).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", { name: "Move field first right" }),
+		).toBeDisabled();
 	});
 });

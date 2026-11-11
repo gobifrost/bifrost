@@ -27,6 +27,17 @@ export type FormLayout = Omit<GeneratedFormLayout, "sections"> & {
 	sections: FormLayoutSection[];
 };
 
+export type LayoutPosition = "before" | "after";
+
+export interface LayoutRowLocation {
+	section: number;
+	row: number;
+}
+
+export interface LayoutColumnLocation extends LayoutRowLocation {
+	field: string;
+}
+
 export const formLayoutWidthClass: Record<number, string> = {
 	3: "col-span-12 md:col-span-3",
 	4: "col-span-12 md:col-span-4",
@@ -115,4 +126,162 @@ export function synchronizeFormLayout(
 	}
 
 	return { ...layout, sections };
+}
+
+export function moveLayoutSection(
+	layout: FormLayout,
+	sourceIndex: number,
+	targetIndex: number,
+	position: LayoutPosition,
+): FormLayout {
+	if (sourceIndex === targetIndex) return layout;
+	const next = structuredClone(layout);
+	const [section] = next.sections.splice(sourceIndex, 1);
+	if (!section) return layout;
+	const adjustedTarget =
+		sourceIndex < targetIndex ? targetIndex - 1 : targetIndex;
+	next.sections.splice(
+		position === "after" ? adjustedTarget + 1 : adjustedTarget,
+		0,
+		section,
+	);
+	return next;
+}
+
+export function moveLayoutRow(
+	layout: FormLayout,
+	source: LayoutRowLocation,
+	target: LayoutRowLocation,
+	position: LayoutPosition,
+): FormLayout {
+	if (source.section === target.section && source.row === target.row)
+		return layout;
+	const next = structuredClone(layout);
+	const [row] =
+		next.sections[source.section]?.rows.splice(source.row, 1) ?? [];
+	if (!row) return layout;
+	const targetIndex =
+		source.section === target.section && source.row < target.row
+			? target.row - 1
+			: target.row;
+	const targetRows = next.sections[target.section]?.rows;
+	if (!targetRows || !targetRows[targetIndex]) return layout;
+	targetRows.splice(
+		position === "after" ? targetIndex + 1 : targetIndex,
+		0,
+		row,
+	);
+	return next;
+}
+
+export function appendLayoutRow(
+	layout: FormLayout,
+	source: LayoutRowLocation,
+	targetSection: number,
+): FormLayout | null {
+	if (source.section === targetSection) return layout;
+	const next = structuredClone(layout);
+	const [row] =
+		next.sections[source.section]?.rows.splice(source.row, 1) ?? [];
+	if (!row || !next.sections[targetSection]) return null;
+	next.sections[targetSection]!.rows.push(row);
+	return next;
+}
+
+export function moveLayoutColumn(
+	layout: FormLayout,
+	source: LayoutColumnLocation,
+	target: LayoutColumnLocation,
+	position: LayoutPosition,
+): { layout: FormLayout | null; error?: string } {
+	if (
+		source.section === target.section &&
+		source.row === target.row &&
+		source.field === target.field
+	) {
+		return { layout };
+	}
+	const sourceRow = layout.sections[source.section]?.rows[source.row];
+	const targetRow = layout.sections[target.section]?.rows[target.row];
+	const sourceColumn = sourceRow?.columns.find(
+		(column) => column.field === source.field,
+	);
+	if (!sourceRow || !targetRow || !sourceColumn) return { layout: null };
+	const sameRow = sourceRow === targetRow;
+	const targetWidth = targetRow.columns.reduce(
+		(sum, column) => sum + column.width,
+		0,
+	);
+	if (!sameRow && targetRow.columns.length >= 4) {
+		return {
+			layout: null,
+			error: "A row can contain at most four fields.",
+		};
+	}
+	if (
+		targetWidth - (sameRow ? sourceColumn.width : 0) + sourceColumn.width >
+		12
+	) {
+		return {
+			layout: null,
+			error: "That row does not have enough width for this field.",
+		};
+	}
+
+	const next = structuredClone(layout);
+	const nextSourceRow = next.sections[source.section]!.rows[source.row]!;
+	const sourceIndex = nextSourceRow.columns.findIndex(
+		(column) => column.field === source.field,
+	);
+	const [column] = nextSourceRow.columns.splice(sourceIndex, 1);
+	const nextTargetRow = next.sections[target.section]!.rows[target.row]!;
+	const targetIndex = nextTargetRow.columns.findIndex(
+		(candidate) => candidate.field === target.field,
+	);
+	if (!column || targetIndex < 0) return { layout: null };
+	nextTargetRow.columns.splice(
+		position === "after" ? targetIndex + 1 : targetIndex,
+		0,
+		column,
+	);
+	return { layout: next };
+}
+
+export function appendLayoutColumn(
+	layout: FormLayout,
+	source: LayoutColumnLocation,
+	target: LayoutRowLocation,
+): { layout: FormLayout | null; error?: string } {
+	const sourceRow = layout.sections[source.section]?.rows[source.row];
+	const targetRow = layout.sections[target.section]?.rows[target.row];
+	const sourceColumn = sourceRow?.columns.find(
+		(column) => column.field === source.field,
+	);
+	if (!sourceRow || !targetRow || !sourceColumn) return { layout: null };
+	if (sourceRow === targetRow) return { layout };
+	if (targetRow.columns.length >= 4) {
+		return {
+			layout: null,
+			error: "A row can contain at most four fields.",
+		};
+	}
+	if (
+		targetRow.columns.reduce((sum, column) => sum + column.width, 0) +
+			sourceColumn.width >
+		12
+	) {
+		return {
+			layout: null,
+			error: "That row does not have enough width for this field.",
+		};
+	}
+	const next = structuredClone(layout);
+	const nextSourceRow = next.sections[source.section]!.rows[source.row]!;
+	const sourceIndex = nextSourceRow.columns.findIndex(
+		(column) => column.field === source.field,
+	);
+	const [column] = nextSourceRow.columns.splice(sourceIndex, 1);
+	if (!column) return { layout: null };
+	next.sections[target.section]!.rows[target.row]!.columns.push(column);
+	return { layout: next };
 }
