@@ -1843,8 +1843,16 @@ async def execute_startup_workflow(
             detail="Form execution has no accepted identity",
         )
     _launch_repo = WorkflowRepository(db, org_id=launch_anchor_org_id, is_superuser=True)
+    from src.services.solution_scope import solution_allows_global
+
+    allow_shared_launch = (
+        form.solution_id is None
+        or await solution_allows_global(db, form.solution_id)
+    )
     _resolved_launch = await _launch_repo.resolve(
-        form.launch_workflow_id, solution_scope=form.solution_id
+        form.launch_workflow_id,
+        solution_scope=form.solution_id,
+        allow_shared_fallback=allow_shared_launch,
     )
     if _resolved_launch is None:
         raise HTTPException(

@@ -1,0 +1,19 @@
+{
+  "key": "pr:1319",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Workflow recovery verifies stored source, and form startup respects Solution access to shared workflows.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1319",
+      "https://github.com/gobifrost/bifrost/issues/1195",
+      "Native Jack Approve This Wording response to the exact recovery/startup PR title, body and release sentence in this owner conversation on November 10, 2026. Code repair and protected merge separately authorized."
+    ]
+  },
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1319"
+  }
+}
