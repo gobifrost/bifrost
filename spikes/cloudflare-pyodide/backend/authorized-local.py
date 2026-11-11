@@ -258,8 +258,10 @@ async def qualified(n: int = 7, forbidden_scope: str | None = None):
                         invalid = await provider.post(provider_url, headers=provider_headers,
                             json={**payload, 'context': {**context, 'engine_token': 'synthetic-invalid-runtime-token'}})
                         invalid_result = invalid.json()
-                        assert invalid.status_code == 502 and invalid_result['phase'] == 'module-preflight'
-                        assert invalid_result['module_status'] == 401
+                        assert invalid.status_code == 502 and invalid_result['phase'] == 'module-preflight', \
+                            f"Invalid-token leg: provider={invalid.status_code} body={invalid_result}"
+                        assert invalid_result['module_status'] == 401, \
+                            f"Invalid-token module status: {invalid_result!r}"
                         report['unsupported_canonical_mode_status'] = rejected.status_code
                         report['invalid_runtime_credential_module_status'] = invalid_result['module_status']
                         reserve_development_invocation(execution.id)
