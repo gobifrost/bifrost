@@ -17,8 +17,8 @@ if not re.fullmatch(r'cloud-private(?:-[a-z0-9-]{1,48})?', args.private_director
     raise RuntimeError('Owned private-directory name required')
 
 ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
-RUN = ROOT / 'run-06aeb2c87'
-CHECKOUT = ROOT / 'spike-06aeb2c87'
+RUN = ROOT / 'run-e39b83eae'
+CHECKOUT = ROOT / 'spike-e39b83eae'
 PRIVATE = RUN / args.private_directory
 if subprocess.check_output(['hostname'], text=True).strip() != 'bifrost-pyodide-test-01':
     raise RuntimeError('Assigned guest required')
@@ -50,6 +50,6 @@ logpath = RUN / f'cloud-qualification-{time.time_ns()}.private.log'
 with logpath.open('x') as log:
     result = subprocess.run(command, stdout=log, stderr=subprocess.STDOUT, timeout=200)
 print(json.dumps({'exit_code': result.returncode, 'guest': 'CT128', 'max_memory_mib': 768,
-                  'source': '06aeb2c8797c057a5255b4cfab32491754b4f9e4', 'fixture_overlay': 'authorized-local.py',
+                  'source': 'e39b83eaeea6efd0640133cac0ee0a6a4c93e4a1', 'fixture_overlay': 'authorized-local.py',
                   'log': str(logpath)}))
 raise SystemExit(result.returncode)

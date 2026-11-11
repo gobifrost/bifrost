@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {stageRuntimeLoader} from './stage-runtime-loader.mjs';
-const PIN='4cfd86edcdde611b93a067313c53d9ff93bb52b49f2a2fa33e167d7f115aaf4f';
+const PIN='5c80c979a1b3f0c8d6dfe137df0b38e2ea0654f975faaefd6b8011d59191f199';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
 export async function stageQualifiedRuntime(input,output) {
@@ -13,7 +13,7 @@ export async function stageQualifiedRuntime(input,output) {
   const text=bytes.toString('utf8');
   if(!text.startsWith('export default ')||!text.endsWith(';\n'))throw new Error('Qualified artifact format changed');
   const modules=JSON.parse(text.slice('export default '.length,-2));
-  if(Object.keys(modules).length!==466||hash(modules['src/services/execution/engine.py'].py)!=='443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2')
+  if(Object.keys(modules).length!==472||hash(modules['src/services/execution/engine.py'].py)!=='443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2')
     throw new Error('Qualified module/engine identity changed');
   // Existing output is never reused or overwritten, including partial attempts.
   await mkdir(output);
