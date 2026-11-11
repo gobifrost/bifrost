@@ -27,6 +27,12 @@ test("configures a write-only webhook header token", async ({ page, api }) => {
 		await page.getByRole("link", { name }).click();
 		await page.getByRole("button", { name: / actions$/ }).click();
 		await expect(page.getByRole("menuitem", { name: "Rotate signing secret" })).toHaveCount(0);
+        await page.getByRole("menuitem", { name: "Set Authentication Token" }).click();
+        const tokenDialog = page.getByRole("alertdialog", { name: "Set Authentication Token" });
+        await tokenDialog.getByLabel("Expected Header Value").fill("synthetic-replacement");
+        await tokenDialog.getByRole("button", { name: "Save Token" }).click();
+        await expect(tokenDialog).toBeHidden();
+        await page.getByRole("button", { name: / actions$/ }).click();
 		await page.getByRole("menuitem", { name: "Edit" }).click();
 		const edit = page.getByRole("dialog", { name: "Edit Event Source" });
 		await expect(edit.getByLabel("Authentication Header")).toHaveValue("X-Gitlab-Token");

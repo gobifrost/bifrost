@@ -30,7 +30,7 @@ export function EventSourceActions({
 					onClick={(event) => onRotateSecret(source, event)}
 				>
 					<KeyRound aria-hidden="true" className="size-4" />
-					Rotate signing secret
+					{source.webhook?.config?.header_auth === true ? "Set Authentication Token" : "Rotate signing secret"}
 				</DropdownMenuItem>
 			)}
 			<DropdownMenuItem

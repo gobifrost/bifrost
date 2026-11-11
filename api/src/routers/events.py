@@ -1275,10 +1275,11 @@ async def rotate_source_secret(
             detail="Only webhook sources whose adapter verifies a signing secret can rotate it",
         )
 
-    if ws.adapter_name == "generic" and (ws.config or {}).get("header_auth") is True:
+    header_auth = ws.adapter_name == "generic" and (ws.config or {}).get("header_auth") is True
+    if header_auth and not request.secret:
         raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Update the webhook secret in the source configuration for header authentication",
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide the complete expected header value to set the authentication token",
         )
 
     signing_secret = request.secret or generate_signing_secret()
@@ -1294,7 +1295,7 @@ async def rotate_source_secret(
         details={"name": source.name, "generated": request.secret is None},
     )
 
-    return await _build_event_source_secret_response(source, db, signing_secret)
+    return await _build_event_source_secret_response(source, db, None if header_auth else signing_secret)
 
 
 @router.delete(

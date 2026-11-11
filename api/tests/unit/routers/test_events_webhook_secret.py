@@ -163,6 +163,7 @@ async def test_header_secret_lifecycle_and_mode_transition(registry):
 @pytest.mark.parametrize("config", [
     {"header_auth": True},
     {"header_auth": True, "auth_header": "bad header"},
+    {"header_auth": True, "auth_header": "X-Forwarded-For"},
     {"header_auth": True, "auth_header": "X-Token", "event_type_header": "x-token"},
     {"header_auth": True, "auth_header": "X-Token", "delivery_id_header": "X-ID"},
 ])

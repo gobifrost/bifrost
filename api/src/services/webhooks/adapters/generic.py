@@ -130,6 +130,8 @@ class GenericWebhookAdapter(WebhookAdapter):
             r"[!#$%&'*+.^_`|~0-9A-Za-z-]{1,128}", header
         ):
             return "Enter a valid authentication header name"
+        if header.lower() == "x-forwarded-for":
+            return "Authentication header cannot be X-Forwarded-For because it supplies event metadata"
         event_header = config.get("event_type_header")
         if isinstance(event_header, str) and event_header.lower() == header.lower():
             return "Authentication header cannot be used as the event type header"
@@ -179,6 +181,8 @@ class GenericWebhookAdapter(WebhookAdapter):
 
         Validates signature if secret is configured, then delivers the payload.
         """
+        if self.validate_config(config):
+            return Rejected("Header authentication is not configured correctly", 503)
         secret = read_signing_secret(state)
 
         header_auth = config.get("header_auth", False)

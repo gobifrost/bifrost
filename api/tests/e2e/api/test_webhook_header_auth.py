@@ -56,7 +56,7 @@ async def test_header_token_ingress_and_delivery(e2e_client, platform_admin, db_
         assert metadata["headers"]["x-signature-256"] == "signature"
         assert not {"x-gitlab-token", "authorization", "cookie"} & metadata["headers"].keys()
         rotated = e2e_client.post(f"/api/events/sources/{source['id']}/rotate-secret", headers=platform_admin.headers, json={})
-        assert rotated.status_code == 400 and token not in rotated.text
+        assert rotated.status_code == 422 and token not in rotated.text
         replacement = "synthetic-replacement"
         config = {"header_auth": True, "auth_header": header}
         updated = e2e_client.patch(f"/api/events/sources/{source['id']}", headers=platform_admin.headers,
@@ -71,3 +71,44 @@ async def test_header_token_ingress_and_delivery(e2e_client, platform_admin, db_
     finally:
         e2e_client.delete(f"/api/events/sources/{source['id']}", headers=platform_admin.headers)
         e2e_client.delete("/api/files/editor", params={"path": path}, headers=platform_admin.headers)
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_solution_header_token_can_be_initialized_and_replaced(e2e_client, platform_admin, db_session):
+    # Event-only reconciliation: zero builds, installs, or worker jobs. Proves
+    # a fresh managed source can receive its instance-only credential via HTTP.
+    from sqlalchemy import delete
+    from src.models.orm.events import EventSource
+    from src.models.orm.solutions import Solution
+    from src.services.solutions.deploy import SolutionBundle, SolutionDeployer, solution_entity_id
+
+    solution = Solution(id=uuid.uuid4(), slug=f"header-custody-{uuid.uuid4().hex[:8]}", name="Header custody", organization_id=None)
+    db_session.add(solution)
+    await db_session.flush()
+    template_id = uuid.uuid4()
+    source_id = solution_entity_id(solution.id, template_id)
+    bundle = SolutionBundle(solution=solution, version="0.1.0", events=[{
+        "id": str(template_id), "name": "Managed header webhook", "source_type": "webhook",
+        "adapter_name": "generic", "webhook_config": {"header_auth": True, "auth_header": "X-Gitlab-Token"},
+        "is_active": True, "subscriptions": [],
+    }])
+    await SolutionDeployer(db_session).deploy(bundle, force=True)
+    await db_session.commit()
+    base = f"/api/events/sources/{source_id}"
+    hook = f"/api/hooks/{source_id}"
+    try:
+        assert e2e_client.post(hook, json={}, headers={"X-Gitlab-Token": "before"}).status_code == 503
+        locked = e2e_client.patch(base, headers=platform_admin.headers, json={"webhook": {"config": {"secret": "forbidden"}}})
+        assert locked.status_code == 409
+        for value in ("first-synthetic-token", "replacement-synthetic-token"):
+            changed = e2e_client.post(f"{base}/rotate-secret", headers=platform_admin.headers, json={"secret": value})
+            assert changed.status_code == 200, changed.text
+            assert value not in changed.text and changed.json()["webhook"]["secret_set"]
+            assert e2e_client.post(hook, json={}, headers={"X-Gitlab-Token": value}).status_code == 202
+        assert e2e_client.post(hook, json={}, headers={"X-Gitlab-Token": "first-synthetic-token"}).status_code == 401
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(EventSource).where(EventSource.id == source_id))
+        await db_session.execute(delete(Solution).where(Solution.id == solution.id))
+        await db_session.commit()
