@@ -11,16 +11,19 @@ from src.services.opencode_go import (
 
 
 def test_default_endpoint_is_the_go_gateway() -> None:
-    assert OPENCODE_GO_DEFAULT_ENDPOINT == "https://opencode.ai/zen/go/v1"
+    assert OPENCODE_GO_DEFAULT_ENDPOINT == "https://opencode.ai/inference/go/openai/v1"
 
 
 def test_is_opencode_go_endpoint_matches_only_go_gateway_paths() -> None:
     assert is_opencode_go_endpoint(OPENCODE_GO_DEFAULT_ENDPOINT)
-    assert is_opencode_go_endpoint("https://opencode.ai/zen/go/v1/")
-    assert is_opencode_go_endpoint("https://opencode.ai/zen/go")
+    assert is_opencode_go_endpoint("https://opencode.ai/inference/go/openai/v1/")
+    assert is_opencode_go_endpoint("https://opencode.ai/inference/go/anthropic/v1")
+    assert is_opencode_go_endpoint("https://opencode.ai/inference/go/google/v1beta")
+    # Stored connections from the previous /zen/go layout keep working.
+    assert is_opencode_go_endpoint("https://opencode.ai/zen/go/v1")
     assert not is_opencode_go_endpoint("https://opencode.ai/zen/v1")
     assert not is_opencode_go_endpoint("https://opencode.ai")
-    assert not is_opencode_go_endpoint("https://example.test/zen/go/v1")
+    assert not is_opencode_go_endpoint("https://example.test/inference/go/openai/v1")
     assert not is_opencode_go_endpoint(None)
 
 
@@ -46,13 +49,24 @@ def test_known_wire_api_returns_none_for_undocumented_models() -> None:
     assert opencode_go_known_wire_api("brand-new-model") is None
 
 
-def test_anthropic_endpoint_drops_the_v1_suffix_the_sdk_re_adds() -> None:
+def test_anthropic_endpoint_uses_the_messages_base() -> None:
     assert (
         opencode_go_anthropic_endpoint(OPENCODE_GO_DEFAULT_ENDPOINT)
-        == "https://opencode.ai/zen/go"
+        == "https://opencode.ai/inference/go/anthropic"
     )
     assert (
-        opencode_go_anthropic_endpoint("https://opencode.ai/zen/go/v1/")
+        opencode_go_anthropic_endpoint(
+            "https://opencode.ai/inference/go/openai/v1/"
+        )
+        == "https://opencode.ai/inference/go/anthropic"
+    )
+    assert (
+        opencode_go_anthropic_endpoint("https://opencode.ai/inference/go/anthropic/v1")
+        == "https://opencode.ai/inference/go/anthropic"
+    )
+    # Legacy layout: the Anthropic SDK re-adds /v1/messages.
+    assert (
+        opencode_go_anthropic_endpoint("https://opencode.ai/zen/go/v1")
         == "https://opencode.ai/zen/go"
     )
     assert (

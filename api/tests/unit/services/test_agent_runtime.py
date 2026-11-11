@@ -362,7 +362,7 @@ def test_openrouter_stream_class_uses_bifrost_usage_mapper() -> None:
     assert stream.provider_details["cost"] == Decimal("0.000106904")
 
 
-OPENCODE_GO_ENDPOINT = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_ENDPOINT = "https://opencode.ai/inference/go/openai/v1"
 
 
 def test_opencode_go_settings_carry_identity_headers() -> None:
@@ -382,6 +382,24 @@ def test_opencode_go_settings_carry_identity_headers() -> None:
     assert headers["x-opencode-session"] == "run-123"
     assert "openai_store" not in settings
     assert "extra_body" not in settings
+
+
+def test_opencode_go_headers_follow_the_linked_catalog_provider() -> None:
+    config = LLMConfig(
+        provider="openai",
+        model="glm-5.3",
+        api_key="test-key",
+        endpoint="https://gateway.internal.example/v1",
+        catalog_provider_id="opencode-go",
+    )
+
+    assert provider_name_for_config(config) == "opencode_go"
+    settings = agent_model_settings(config, max_tokens=None, session_id="run-42")
+    headers = cast(dict[str, str], settings["extra_headers"])
+
+    assert headers["x-opencode-session"] == "run-42"
+    assert headers["User-Agent"].startswith("Bifrost/")
+    assert "openai_store" not in settings
 
 
 def test_create_agent_model_uses_chat_completions_for_opencode_go() -> None:
@@ -426,7 +444,7 @@ def test_create_agent_model_uses_anthropic_messages_for_opencode_go_messages_mod
         provider="anthropic",
         model="qwen3.8-flash",
         api_key="test-key",
-        endpoint="https://opencode.ai/zen/go",
+        endpoint="https://opencode.ai/inference/go/anthropic",
     )
 
     model = create_agent_model(config)
@@ -464,7 +482,7 @@ async def test_opencode_go_messages_requests_target_the_messages_surface() -> No
         provider="anthropic",
         model="qwen3.8-flash",
         api_key="test-key",
-        endpoint="https://opencode.ai/zen/go",
+        endpoint="https://opencode.ai/inference/go/anthropic",
     )
     settings = agent_model_settings(config, max_tokens=64, session_id="conv-msg")
 
@@ -486,7 +504,7 @@ async def test_opencode_go_messages_requests_target_the_messages_surface() -> No
     assert response.text == "hi"
     assert len(seen_requests) == 1
     request = seen_requests[0]
-    assert request.url.path == "/zen/go/v1/messages"
+    assert request.url.path == "/inference/go/anthropic/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["x-opencode-session"] == "conv-msg"
     assert request.headers["User-Agent"].startswith("Bifrost/")
