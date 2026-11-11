@@ -6,6 +6,7 @@ import {
 	CardTitle,
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -24,6 +25,16 @@ export function FormPreview({
 }: FormPreviewProps) {
 	const renderField = (field: FormField) => {
 		switch (field.type) {
+			case "date":
+				return (
+					<DatePicker
+						id={`preview-${field.name}`}
+						value={(field.default_value as string) || ""}
+						onChange={() => {}}
+						placeholder={field.placeholder ?? undefined}
+						disabled
+					/>
+				);
 			case "textarea":
 				return (
 					<Textarea
@@ -80,9 +91,7 @@ export function FormPreview({
 								? "email"
 								: field.type === "number"
 									? "number"
-									: field.type === "date"
-										? "date"
-										: "text"
+									: "text"
 						}
 						placeholder={field.placeholder ?? undefined}
 						defaultValue={field.default_value as string}

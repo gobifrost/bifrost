@@ -16,6 +16,7 @@ import { FormConfirmation } from "@/components/forms/FormConfirmation";
 import { FormCaptcha } from "@/components/forms/FormCaptcha";
 import { JsxTemplateRenderer } from "@/components/ui/jsx-template-renderer";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -1026,6 +1027,50 @@ function FormRendererInner({
 		}
 
 		switch (field.type) {
+			case "date":
+				return (
+					<div className="space-y-2">
+						<Label htmlFor={field.name}>
+							{field.label}
+							{field.required && (
+								<span className="text-destructive ml-1">*</span>
+							)}
+						</Label>
+						<DatePicker
+							id={field.name}
+							value={(formValues[field.name] as string) || ""}
+							onChange={(value) =>
+								setValue(field.name, value, {
+									shouldValidate: true,
+									shouldDirty: true,
+								})
+							}
+							onBlur={handleFieldBlur}
+							placeholder={field.placeholder ?? undefined}
+							aria-invalid={!!error}
+							aria-describedby={
+								field.help_text || error
+									? `${field.name}-description`
+									: undefined
+							}
+						/>
+						{(field.help_text || error) && (
+							<div id={`${field.name}-description`}>
+								{field.help_text && (
+									<p className="text-sm text-muted-foreground">
+										{field.help_text}
+									</p>
+								)}
+								{error && (
+									<p className="text-sm text-destructive">
+										{error.message as string}
+									</p>
+								)}
+							</div>
+						)}
+					</div>
+				);
+
 			case "textarea":
 				return (
 					<div className="space-y-2">
@@ -1455,9 +1500,7 @@ function FormRendererInner({
 									? "email"
 									: field.type === "number"
 										? "number"
-										: field.type === "date"
-											? "date"
-											: "text"
+										: "text"
 							}
 							placeholder={field.placeholder ?? undefined}
 							{...register(field.name)}

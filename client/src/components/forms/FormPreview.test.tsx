@@ -30,8 +30,7 @@ describe("FormPreview", () => {
 			/>,
 		);
 		const input = screen.getByLabelText("Start Date");
-		expect(input).toHaveAttribute("type", "date");
-		expect(input).toHaveValue("2026-11-10");
+		expect(input).toHaveTextContent("Nov 10, 2026");
 		expect(input).toBeDisabled();
 	});
 

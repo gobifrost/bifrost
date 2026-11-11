@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/api-fixture";
 
-test("date fields use a native picker and submit a calendar date", async ({
+test("date fields use the shared calendar and submit a calendar date", async ({
 	page,
 	api,
 }) => {
@@ -52,15 +52,15 @@ test("date fields use a native picker and submit a calendar date", async ({
 		const previewDate = page
 			.getByRole("tabpanel", { name: "Preview" })
 			.getByLabel("Start Date");
-		await expect(previewDate).toHaveAttribute("type", "date");
-		await expect(previewDate).toHaveValue("2026-11-10");
+		await expect(previewDate).toHaveText("Nov 10, 2026");
 		await expect(previewDate).toBeDisabled();
 
 		await page.goto(`/execute/${formId}`);
 		const date = page.getByLabel("Start Date");
-		await expect(date).toHaveAttribute("type", "date");
-		await expect(date).toHaveValue("2026-11-10");
-		await date.fill("2026-11-20");
+		await expect(date).toHaveText("Nov 10, 2026");
+		await date.click();
+		await page.getByRole("button", { name: /November 20.*2026/i }).click();
+		await expect(date).toHaveText("Nov 20, 2026");
 		const submitted = page.waitForResponse(
 			(r) =>
 				r.url().includes(`/api/forms/${formId}/submissions`) &&
@@ -70,7 +70,9 @@ test("date fields use a native picker and submit a calendar date", async ({
 		const response = await submitted;
 		expect(response.ok(), await response.text()).toBe(true);
 		const submission = (await response.json()) as { execution_id: string };
-		const execution = await api.get(`/api/executions/${submission.execution_id}`);
+		const execution = await api.get(
+			`/api/executions/${submission.execution_id}`,
+		);
 		expect(execution.ok(), await execution.text()).toBe(true);
 		expect(await execution.json()).toMatchObject({
 			input_data: { start_date: "2026-11-20" },

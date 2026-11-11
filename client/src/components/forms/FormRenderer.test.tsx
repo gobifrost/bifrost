@@ -336,9 +336,11 @@ describe("FormRenderer — field types", () => {
 		]);
 		const { user } = renderWithProviders(<FormRenderer form={form} />);
 		const input = screen.getByLabelText(/start date/i);
-		expect(input).toHaveAttribute("type", "date");
-		expect(input).toHaveValue("2026-11-10");
-		fireEvent.change(input, { target: { value: "2026-11-20" } });
+		expect(input).toHaveTextContent("Nov 10, 2026");
+		await user.click(input);
+		await user.click(
+			await screen.findByRole("button", { name: /November 20.*2026/i }),
+		);
 		const submit = screen.getByRole("button", { name: /submit/i });
 		await waitFor(() => expect(submit).toBeEnabled());
 		await user.click(submit);
@@ -351,6 +353,33 @@ describe("FormRenderer — field types", () => {
 				}),
 			),
 		);
+	});
+
+	it("validates a required date after clearing the shared picker", async () => {
+		const form = makeForm([
+			{
+				name: "start_date",
+				label: "Start Date",
+				type: "date",
+				required: true,
+				default_value: "2026-11-10",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		await user.click(screen.getByLabelText(/start date/i));
+		await user.click(
+			await screen.findByRole("button", { name: "Clear Date" }),
+		);
+		await waitFor(() =>
+			expect(
+				screen.getByText("This field is required"),
+			).toBeInTheDocument(),
+		);
+		expect(screen.getByLabelText(/start date/i)).toHaveAttribute(
+			"aria-invalid",
+			"true",
+		);
+		expect(screen.getByRole("button", { name: /submit/i })).toBeDisabled();
 	});
 
 	it("renders a markdown field's content", () => {
