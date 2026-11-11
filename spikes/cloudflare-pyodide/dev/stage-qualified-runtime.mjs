@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {stageRuntimeLoader} from './stage-runtime-loader.mjs';
-const PIN='5c80c979a1b3f0c8d6dfe137df0b38e2ea0654f975faaefd6b8011d59191f199';
+const PIN='6ed190c6e86e471678ebc838da76f7cbff21f73d936e2b23d3f16aef8c2de1bc';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
 export async function stageQualifiedRuntime(input,output) {
