@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { DatePicker } from "@/components/ui/date-picker";
+import { DateTimeFieldInput } from "@/components/forms/DateTimeFieldInput";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -26,15 +27,20 @@ export function FormPreview({
 	const renderField = (field: FormField) => {
 		switch (field.type) {
 			case "date":
+			case "datetime": {
+				const DateControl =
+					field.type === "date" ? DatePicker : DateTimeFieldInput;
 				return (
-					<DatePicker
+					<DateControl
 						id={`preview-${field.name}`}
+						aria-label={field.label ?? field.name}
 						value={(field.default_value as string) || ""}
 						onChange={() => {}}
 						placeholder={field.placeholder ?? undefined}
 						disabled
 					/>
 				);
+			}
 			case "textarea":
 				return (
 					<Textarea

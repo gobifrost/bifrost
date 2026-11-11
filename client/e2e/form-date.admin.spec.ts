@@ -1,6 +1,6 @@
 import { test, expect } from "./fixtures/api-fixture";
 
-test("date fields use the shared calendar and submit a calendar date", async ({
+test("date and datetime fields use shared calendars and preserve their values", async ({
 	page,
 	api,
 }) => {
@@ -13,7 +13,7 @@ test("date fields use the shared calendar and submit a calendar date", async ({
 			data: {
 				path,
 				encoding: "utf-8",
-				content: `from bifrost import workflow\n\n@workflow(name="${name}")\nasync def ${name}(start_date: str):\n    return {"start_date": start_date}\n`,
+				content: `from bifrost import workflow\n\n@workflow(name="${name}")\nasync def ${name}(start_date: str, appointment: str):\n    return {"start_date": start_date, "appointment": appointment}\n`,
 			},
 		});
 		expect(write.ok(), await write.text()).toBe(true);
@@ -35,6 +35,13 @@ test("date fields use the shared calendar and submit a calendar date", async ({
 				form_schema: {
 					fields: [
 						{
+							name: "appointment",
+							label: "Appointment",
+							type: "datetime",
+							required: true,
+							default_value: "2026-11-10T09:00",
+						},
+						{
 							name: "start_date",
 							label: "Start Date",
 							type: "date",
@@ -54,6 +61,11 @@ test("date fields use the shared calendar and submit a calendar date", async ({
 			.getByLabel("Start Date");
 		await expect(previewDate).toHaveText("Nov 10, 2026");
 		await expect(previewDate).toBeDisabled();
+		const previewDatetime = page
+			.getByRole("tabpanel", { name: "Preview" })
+			.getByLabel("Appointment", { exact: true });
+		await expect(previewDatetime).toHaveText("Nov 10, 2026 · 9:00 AM");
+		await expect(previewDatetime).toBeDisabled();
 
 		await page.goto(`/execute/${formId}`);
 		const date = page.getByLabel("Start Date");
@@ -61,6 +73,17 @@ test("date fields use the shared calendar and submit a calendar date", async ({
 		await date.click();
 		await page.getByRole("button", { name: /November 20.*2026/i }).click();
 		await expect(date).toHaveText("Nov 20, 2026");
+		const appointment = page.getByLabel("Appointment", { exact: true });
+		await appointment.click();
+		const dateTimeDialog = page.getByRole("dialog").filter({
+			has: page.getByLabel("Time", { exact: true }),
+		});
+		await dateTimeDialog
+			.getByRole("button", { name: /November 20.*2026/i })
+			.click();
+		await dateTimeDialog.getByLabel("Time", { exact: true }).fill("14:30");
+		await page.keyboard.press("Escape");
+		await expect(appointment).toHaveText("Nov 20, 2026 · 2:30 PM");
 		const submitted = page.waitForResponse(
 			(r) =>
 				r.url().includes(`/api/forms/${formId}/submissions`) &&
@@ -75,7 +98,10 @@ test("date fields use the shared calendar and submit a calendar date", async ({
 		);
 		expect(execution.ok(), await execution.text()).toBe(true);
 		expect(await execution.json()).toMatchObject({
-			input_data: { start_date: "2026-11-20" },
+			input_data: {
+				start_date: "2026-11-20",
+				appointment: "2026-11-20T14:30",
+			},
 		});
 	} finally {
 		if (formId)

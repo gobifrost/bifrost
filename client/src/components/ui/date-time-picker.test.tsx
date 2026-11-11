@@ -29,6 +29,9 @@ describe("DateTimePicker", () => {
 		await user.click(
 			screen.getByRole("button", { name: /pick date and time/i }),
 		);
+		expect(
+			screen.queryByRole("button", { name: "Clear Date & Time" }),
+		).not.toBeInTheDocument();
 		// react-day-picker renders a grid role for the calendar
 		expect(await screen.findByRole("grid")).toBeInTheDocument();
 	});
