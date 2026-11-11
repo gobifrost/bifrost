@@ -1977,3 +1977,24 @@ class TestBatchMappingUpsert:
         assert response.status_code == 404, (
             f"Expected 404 for nonexistent integration, got {response.status_code}: {response.text}"
         )
+
+
+@pytest.mark.e2e
+def test_integration_choice_labels_persist_on_create_and_update(e2e_client, platform_admin):
+    name = f"Choice metadata {uuid4().hex}"
+    schema = {"key": "region", "type": "string", "options": ["eu"], "option_labels": {"eu": "Europe"}}
+    response = e2e_client.post("/api/integrations", headers=platform_admin.headers, json={"name": name, "config_schema": [schema]})
+    assert response.status_code == 201, response.text
+    integration_id = response.json()["id"]
+    try:
+        created = e2e_client.get(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert created.json()["config_schema"][0]["option_labels"] == {"eu": "Europe"}
+        schema["option_labels"] = {"eu": "European Union"}
+        updated = e2e_client.put(f"/api/integrations/{integration_id}", headers=platform_admin.headers, json={"config_schema": [schema]})
+        assert updated.status_code == 200, updated.text
+        read = e2e_client.get(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert read.json()["config_schema"][0]["options"] == ["eu"]
+        assert read.json()["config_schema"][0]["option_labels"] == {"eu": "European Union"}
+    finally:
+        deleted = e2e_client.delete(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert deleted.status_code in {200, 204}, deleted.text

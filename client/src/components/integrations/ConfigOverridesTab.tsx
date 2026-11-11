@@ -344,6 +344,18 @@ export function ConfigOverridesTab({
 								<OverrideValueEditor
 									name={row.configKey}
 									type={row.fieldType}
+									optionLabels={
+										configSchema.find(
+											(field) =>
+												field.key === row.configKey,
+										)?.option_labels
+									}
+									options={
+										configSchema.find(
+											(field) =>
+												field.key === row.configKey,
+										)?.options
+									}
 									value={editingCell.value}
 									pending={isSaving}
 									error={saveError}

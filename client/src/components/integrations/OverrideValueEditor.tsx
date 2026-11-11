@@ -1,3 +1,5 @@
+import type { ConfigSchemaItem } from "@/services/integrations";
+import { StaticConfigChoice } from "./StaticConfigChoice";
 import { useId, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +9,8 @@ import { Label } from "@/components/ui/label";
 export function OverrideValueEditor({
 	name,
 	type,
+	options,
+	optionLabels,
 	value,
 	pending,
 	error,
@@ -16,6 +20,8 @@ export function OverrideValueEditor({
 }: {
 	name: string;
 	type: string;
+	options?: string[] | null;
+	optionLabels?: ConfigSchemaItem["option_labels"];
 	value: unknown;
 	pending: boolean;
 	error: string | null;
@@ -77,7 +83,16 @@ export function OverrideValueEditor({
 				<Label htmlFor={id} className="[overflow-wrap:anywhere]">
 					Value for {name}
 				</Label>
-				{type === "bool" ? (
+				{type === "string" && options?.length ? (
+					<StaticConfigChoice
+						id={id}
+						options={options}
+						optionLabels={optionLabels}
+						disabled={pending}
+						value={value}
+						onChange={onChange}
+					/>
+				) : type === "bool" ? (
 					<select
 						id={id}
 						autoFocus

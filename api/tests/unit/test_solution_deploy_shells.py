@@ -34,7 +34,8 @@ class TestSolutionDeployShells:
                 "default_entity_id": "common",
                 "config_schema": [{
                     "key": "url", "type": "string", "required": True,
-                    "description": None, "options": None, "position": 0,
+                    "description": None, "options": ["eu", "us"],
+                    "option_labels": {"eu": "Europe", "us": "United States"}, "position": 0,
                 }],
                 "oauth": {
                     "provider_name": f"p-{name}", "display_name": "P",
@@ -45,7 +46,16 @@ class TestSolutionDeployShells:
                 },
             },
         }]
-        created = await SolutionDeployer(db)._upsert_integration_shells(decls)
+        from src.services.solutions.deploy import SolutionBundle
+        from src.services.solutions.export import build_workspace_zip
+        from src.services.solutions.zip_install import preview_zip
+
+        package = build_workspace_zip(SolutionBundle(
+            solution=Solution(slug="choice-template", name="Choice Template"),
+            connection_schemas=decls,
+        ))
+        restored = preview_zip(package)
+        created = await SolutionDeployer(db)._upsert_integration_shells(list(restored.connection_schemas))
         await db.flush()
         assert created == 1
 
@@ -62,6 +72,8 @@ class TestSolutionDeployShells:
         )).scalars().all()
         assert len(schema) == 1
         assert schema[0].key == "url" and schema[0].required is True
+        assert schema[0].options == ["eu", "us"]
+        assert schema[0].option_labels == {"eu": "Europe", "us": "United States"}
 
         provider = (await db.execute(
             select(OAuthProvider).where(OAuthProvider.integration_id == integ.id)

@@ -2197,6 +2197,7 @@ class ManifestResolver:
                 existing_cs.required = cs.required
                 existing_cs.description = cs.description
                 existing_cs.options = cs.options
+                existing_cs.option_labels = cs.option_labels
                 existing_cs.position = cs.position
             else:
                 cs_stmt = insert(IntegrationConfigSchema).values(
@@ -2206,6 +2207,7 @@ class ManifestResolver:
                     required=cs.required,
                     description=cs.description,
                     options=cs.options,
+                    option_labels=cs.option_labels,
                     position=cs.position,
                 )
                 await self.db.execute(cs_stmt)

@@ -1,3 +1,5 @@
+import type { ConfigSchemaItem } from "@/services/integrations";
+import { StaticConfigChoice } from "./StaticConfigChoice";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,11 +14,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-interface ConfigSchemaField {
-	key: string;
-	type: string;
-	required?: boolean;
-}
+type ConfigSchemaField = Pick<ConfigSchemaItem, "key" | "type" | "options" | "option_labels"> & Partial<Pick<ConfigSchemaItem, "required">>;
 
 export interface IntegrationDefaultsDialogProps {
 	open: boolean;
@@ -81,7 +79,22 @@ export function IntegrationDefaultsDialog({
 											({field.type})
 										</span>
 									</Label>
-									{field.type === "bool" ? (
+									{field.type === "string" &&
+									field.options?.length ? (
+										<StaticConfigChoice
+											id={`default-${field.key}`}
+											options={field.options}
+											optionLabels={field.option_labels}
+											disabled={isSaving}
+											value={formValues[field.key]}
+											onChange={(value) =>
+												onFormValuesChange({
+													...formValues,
+													[field.key]: value,
+												})
+											}
+										/>
+									) : field.type === "bool" ? (
 										<select
 											id={`default-${field.key}`}
 											value={String(
@@ -99,7 +112,9 @@ export function IntegrationDefaultsDialog({
 											}
 											className="flex min-h-11 w-full rounded-[var(--bf-radius-control)] border border-input bg-background px-3 text-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/25 disabled:opacity-50"
 										>
-											<option value="">— Not set —</option>
+											<option value="">
+												— Not set —
+											</option>
 											<option value="true">True</option>
 											<option value="false">False</option>
 										</select>

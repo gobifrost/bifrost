@@ -121,3 +121,15 @@ it("renders stored JSON as multiline text and preserves unfinished JSON edits", 
 		options: '{"enabled":',
 	});
 });
+
+it("offers packaged static choices when setting a default", async () => {
+	const { user, onFormValuesChange } = renderDialog({
+		configSchema: [
+			{ key: "region", type: "string", options: ["us", "eu"] },
+		],
+		formValues: { region: "us" },
+	});
+	await user.click(screen.getByRole("combobox", { name: /region/ }));
+	await user.click(screen.getByRole("option", { name: "eu" }));
+	expect(onFormValuesChange).toHaveBeenLastCalledWith({ region: "eu" });
+});

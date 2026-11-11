@@ -3206,3 +3206,14 @@ def test_manifest_workflow_git_sync_view_ignores_requested_permissions():
     )
     assert "requested_permissions" not in wf.view(Destination.GIT_SYNC)
     assert wf.view(Destination.INSTALL)["requested_permissions"] == {"mode": "full", "grants": []}
+
+
+def test_integration_choice_labels_round_trip():
+    from bifrost.manifest import ManifestIntegrationConfigSchema
+    from src.models.orm.integrations import IntegrationConfigSchema
+
+    row = IntegrationConfigSchema(key="region", type="string", options=["eu"], option_labels={"eu": "Europe"}, required=False, position=0)
+    manifest = ManifestIntegrationConfigSchema.from_row(row)
+    restored = ManifestIntegrationConfigSchema.model_validate_json(manifest.model_dump_json())
+    assert restored.options == ["eu"]
+    assert restored.option_labels == {"eu": "Europe"}

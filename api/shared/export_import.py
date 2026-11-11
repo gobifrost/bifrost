@@ -280,6 +280,7 @@ async def _build_integrations_export(
                 required=cs.required,
                 description=cs.description,
                 options=cs.options,
+                option_labels=cs.option_labels,
                 position=cs.position,
             )
             for cs in sorted(integ.config_schema, key=lambda x: x.position)
@@ -736,6 +737,7 @@ async def import_integrations(
                             required=cs_item.required,
                             description=cs_item.description,
                             options=cs_item.options,
+                            option_labels=cs_item.option_labels,
                             position=cs_item.position,
                         ))
 
@@ -889,6 +891,7 @@ async def _sync_config_schema(
             existing_cs.required = cs_item.required
             existing_cs.description = cs_item.description
             existing_cs.options = cs_item.options
+            existing_cs.option_labels = cs_item.option_labels
             existing_cs.position = cs_item.position
         else:
             db.add(IntegrationConfigSchema(
@@ -898,6 +901,7 @@ async def _sync_config_schema(
                 required=cs_item.required,
                 description=cs_item.description,
                 options=cs_item.options,
+                option_labels=cs_item.option_labels,
                 position=cs_item.position,
             ))
 
