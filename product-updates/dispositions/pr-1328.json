@@ -1,0 +1,18 @@
+{
+  "key": "pr:1328",
+  "classification": "highlight",
+  "entry_ids": [
+    "89a02a76-45a1-4149-b71f-d4737f629cf1"
+  ],
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1328"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1328",
+      "Native Jack approved this exact PR title/body and Product Update title/body in the existing Issue #1322 owner on November 11, 2026. Shipment separately authorized after the configuration screenshot was delivered."
+    ]
+  }
+}
