@@ -132,9 +132,9 @@ class FormField(BaseModel):
 
 
 class FormLayoutColumn(BaseModel):
-    """One field placement in a responsive twelve-column form row."""
+    """One responsive column. Empty columns are authoring slots, not field references."""
 
-    field: str = Field(..., min_length=1, description="Name of the form field in this column")
+    field: str | None = Field(default=None, min_length=1, description="Name of the form field in this column, or an empty authoring slot")
     width: Literal[3, 4, 6, 8, 9, 12] = Field(
         default=12,
         description="Desktop width in a twelve-column row; all columns stack on small screens",
@@ -212,6 +212,7 @@ class FormSchema(BaseModel):
             for section in self.layout.sections
             for row in section.rows
             for column in row.columns
+            if column.field is not None
         ]
         unknown_fields = set(placed_fields) - field_names
         if unknown_fields:
@@ -457,7 +458,7 @@ class FormPublic(BaseModel):
             return data  # Already a dict, use as-is
 
         # It's an ORM object
-        if hasattr(data, 'fields') and data.fields:
+        if hasattr(data, 'fields'):
             # Build FormField objects from ORM fields relationship
             # This ensures @field_serializer decorators are used during model_dump()
             form_fields = []

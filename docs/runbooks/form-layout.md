@@ -1,15 +1,22 @@
 # Form Layout
 
-Form authors can opt into sections, rows, and field columns using **Customize
-Layout** in the form builder. Sections have optional titles and descriptions.
-Each row uses a twelve-column grid; field widths are Quarter (3), Third (4),
-Half (6), Two Thirds (8), Three Quarters (9), or Full (12). Columns stack in
-their configured order on small screens.
+The form builder has one canvas beside the existing field palette. **Row** and
+**Section** are draggable palette components, alongside field types and workflow
+inputs. Drop a Row onto the canvas, select its column count or width ratio, then
+drag fields directly into its column slots. Dropping a field opens the existing
+field configuration dialog; saving places it in that slot, and cancelling leaves
+the slot empty. Existing fields can move between slots, rows, and sections.
 
-Field definitions remain in `form_schema.fields`. Layout only references their
-names; it does not change submitted values, workflow bindings, or access rules.
-Each field must appear exactly once, and a row's widths cannot exceed twelve.
-The editor keeps layout references synchronized when fields change.
+Rows offer one, two, three, or four equal columns, plus two-column width ratios.
+A preset cannot remove occupied columns. Each column can hold one field; empty
+slots are stored as `field: null` so the structure survives saving. Preview and
+respondent forms hide empty rows and sections, retain the widths of empty slots
+beside visible fields on desktop, and stack visible fields on small screens.
+
+Field definitions remain in `form_schema.fields`; placement references their
+names. Every real field must appear exactly once. Layout changes do not change
+submitted parameter names, workflow bindings, or access rules. The field dialog,
+row controls, and field move menus also work without dragging.
 
 ## Existing Installations
 
@@ -49,18 +56,15 @@ form_schema:
                 width: 6
               - field: email
                 width: 6
+          - columns:
+              - field: null
+                width: 6
+              - field: null
+                width: 6
 ```
+
+The second row remains available for editing after a save/reload, but is omitted
+from respondent forms until it contains a visible field.
 
 The API validates layout references and widths. Empty rows and sections are
 allowed for authoring; a saved layout must still place every defined field.
-
-## Reordering Layouts
-
-Use a visible grip to drag sections, rows, or field columns. Drop indicators
-show the insertion edge. Rows can move between sections, including an empty
-section's **Drop Row Here** target; field columns can move between rows and
-sections through **Drop Field Here**. A move retains its configured width and
-is refused with an explanation if it would exceed twelve row columns or four
-fields. The section/row arrows and field left/right buttons remain available
-for keyboard use. These controls change presentation only; the Fields list
-continues to edit field definitions.

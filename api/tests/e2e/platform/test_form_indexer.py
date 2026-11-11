@@ -106,9 +106,11 @@ form_schema:
       rows:
       - columns:
         - field: first_name
-          width: 6
+          width: 4
         - field: last_name
-          width: 6
+          width: 4
+        - field: null
+          width: 4
 """
         indexer = FormIndexer(db_session)
         await indexer.index_form("forms/layout.form.yaml", form_yaml.encode())
@@ -122,8 +124,9 @@ form_schema:
                 "title": "Contact",
                 "description": None,
                 "rows": [{"columns": [
-                    {"field": "first_name", "width": 6},
-                    {"field": "last_name", "width": 6},
+                    {"field": "first_name", "width": 4},
+                    {"field": "last_name", "width": 4},
+                    {"field": None, "width": 4},
                 ]}],
             }],
         }

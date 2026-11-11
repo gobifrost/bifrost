@@ -83,8 +83,9 @@ class TestFormCRUD:
                 "sections": [{
                     "title": "Contact details",
                     "rows": [{"columns": [
-                        {"field": "first_name", "width": 6},
-                        {"field": "last_name", "width": 6},
+                        {"field": "first_name", "width": 4},
+                        {"field": "last_name", "width": 4},
+                        {"field": None, "width": 4},
                     ]}],
                 }],
             },
@@ -112,6 +113,20 @@ class TestFormCRUD:
         )
         assert runtime.status_code == 200, runtime.text
         assert runtime.json()["form_schema"]["layout"] == normalized_schema["layout"]
+        empty_schema = {
+            "fields": [],
+            "layout": {"sections": [{"rows": [{"columns": [
+                {"field": None, "width": 6}, {"field": None, "width": 6},
+            ]}]}]},
+        }
+        empty = e2e_client.patch(
+            f"/api/forms/{form['id']}", headers=platform_admin.headers,
+            json={"form_schema": empty_schema},
+        )
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["form_schema"]["layout"] == FormSchema.model_validate(
+            empty_schema
+        ).model_dump(mode="json")["layout"]
         e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
 
     def test_create_form_rejects_invalid_layout_with_422(self, e2e_client, platform_admin):

@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import type { FormField } from "@/lib/client-types";
-import { formLayoutWidthClass, type FormLayout } from "./form-layout";
+import type { FormLayout } from "./form-layout";
+import { FormLayoutView } from "./FormLayoutView";
 
 interface FormPreviewProps {
 	formName: string;
@@ -93,14 +94,23 @@ export function FormPreview({
 		}
 	};
 
-	const fieldByName = new Map(fields.map((field) => [field.name, field]));
-	const renderedRows = layout?.sections.flatMap((section, sectionIndex) =>
-		section.rows.map((row, rowIndex) => ({
-			section,
-			sectionIndex,
-			row,
-			rowIndex,
-		})),
+	const renderPreviewField = (field: FormField) => (
+		<div className="space-y-2">
+			{field.type !== "checkbox" && (
+				<Label htmlFor={`preview-${field.name}`}>
+					{field.label}
+					{field.required && (
+						<span className="ml-1 text-destructive">*</span>
+					)}
+				</Label>
+			)}
+			{renderField(field)}
+			{field.help_text && (
+				<p className="text-sm text-muted-foreground">
+					{field.help_text}
+				</p>
+			)}
+		</div>
 	);
 
 	return (
@@ -115,104 +125,19 @@ export function FormPreview({
 				<CardContent>
 					{fields.length > 0 ? (
 						<div className="space-y-6">
-							{renderedRows
-								? layout?.sections.map(
-										(section, sectionIndex) => (
-											<section
-												key={sectionIndex}
-												className="space-y-4"
-											>
-												{(section.title ||
-													section.description) && (
-													<div className="min-w-0 space-y-1">
-														<h2 className="break-words font-semibold">
-															{section.title}
-														</h2>
-														{section.description && (
-															<p className="break-words text-sm text-muted-foreground">
-																{
-																	section.description
-																}
-															</p>
-														)}
-													</div>
-												)}
-												{section.rows.map(
-													(row, rowIndex) => (
-														<div
-															key={rowIndex}
-															className="grid grid-cols-1 gap-4 md:grid-cols-12"
-														>
-															{row.columns.map(
-																(column) => {
-																	const field =
-																		fieldByName.get(
-																			column.field,
-																		);
-																	return field ? (
-																		<div
-																			key={
-																				field.name
-																			}
-																			className={`min-w-0 space-y-2 ${formLayoutWidthClass[column.width] ?? formLayoutWidthClass[12]}`}
-																		>
-																			{field.type !==
-																				"checkbox" && (
-																				<Label
-																					htmlFor={`preview-${field.name}`}
-																				>
-																					{
-																						field.label
-																					}
-																					{field.required && (
-																						<span className="text-destructive ml-1">
-																							*
-																						</span>
-																					)}
-																				</Label>
-																			)}
-																			{renderField(
-																				field,
-																			)}
-																			{field.help_text && (
-																				<p className="text-sm text-muted-foreground">
-																					{
-																						field.help_text
-																					}
-																				</p>
-																			)}
-																		</div>
-																	) : null;
-																},
-															)}
-														</div>
-													),
-												)}
-											</section>
-										),
-									)
-								: fields.map((field, index) => (
-										<div key={index} className="space-y-2">
-											{field.type !== "checkbox" && (
-												<Label
-													htmlFor={`preview-${field.name}`}
-												>
-													{field.label}
-													{field.required && (
-														<span className="text-destructive ml-1">
-															*
-														</span>
-													)}
-												</Label>
-											)}
-											{renderField(field)}
-											{field.help_text && (
-												<p className="text-sm text-muted-foreground">
-													{field.help_text}
-												</p>
-											)}
-										</div>
-									))}
+							{layout ? (
+								<FormLayoutView
+									layout={layout}
+									fields={fields}
+									renderField={renderPreviewField}
+								/>
+							) : (
+								fields.map((field) => (
+									<div key={field.name}>
+										{renderPreviewField(field)}
+									</div>
+								))
+							)}
 							<div className="pt-4">
 								<Button disabled>Submit</Button>
 							</div>

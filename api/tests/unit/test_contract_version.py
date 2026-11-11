@@ -198,6 +198,8 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # description now documents that value. Existing CLI shapes and minimum version
 # are unchanged.
 # Additive agent package branding settings models; existing CLI shapes are unchanged.
+# Optional form layout and empty authoring slots are additive; --form-schema
+# remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -426,7 +428,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    "a532d26f028513d79ffa729cc28ab5b258f021c91a5c275de814e7a6299a838b"
+    "856e18a710cb8ad45288a66aeae9d4f4f5908f8fc016b4191e2ae23cdaee8073"
 )
 
 

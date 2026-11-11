@@ -29,11 +29,10 @@ import { FormLogoEditor } from "@/components/forms/FormLogoEditor";
 import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import type { FormInfoValues } from "@/components/forms/FormInfoDialog";
 import { FieldsPanelDnD } from "@/components/forms/FieldsPanelDnD";
-import { FormLayoutEditor } from "@/components/forms/FormLayoutEditor";
 import { FormPreview } from "@/components/forms/FormPreview";
 import {
 	normalizeFormLayout,
-	synchronizeFormLayout,
+	type FormCanvasState,
 	type FormLayout,
 } from "@/components/forms/form-layout";
 import { WorkflowParametersForm } from "@/components/workflows/WorkflowParametersForm";
@@ -106,12 +105,9 @@ export function FormBuilder() {
 	// Fields state for the drag-and-drop builder (separate from dialog metadata)
 	const [fields, setFields] = useState<FormField[]>([]);
 	const [layout, setLayout] = useState<FormLayout | null>();
-	const updateFields = (nextFields: FormField[]) => {
-		setLayout(
-			(current) =>
-				synchronizeFormLayout(current, fields, nextFields) ?? null,
-		);
-		setFields(nextFields);
+	const updateCanvas = (state: FormCanvasState) => {
+		setFields(state.fields);
+		setLayout(state.layout);
 	};
 
 	// UI state
@@ -720,17 +716,13 @@ export function FormBuilder() {
 					inert={!canManageForm || isSolutionManaged}
 					className="flex-1 lg:min-h-0 lg:overflow-auto data-[state=active]:block"
 				>
-					<div className="space-y-6 py-4">
+					<div className="h-full min-h-0 py-4">
 						<FieldsPanelDnD
 							fields={fields}
-							setFields={updateFields}
+							layout={layout}
+							onChange={updateCanvas}
 							linkedWorkflow={linkedWorkflow}
 							previewContext={previewContext}
-						/>
-						<FormLayoutEditor
-							fields={fields}
-							layout={layout}
-							onChange={setLayout}
 						/>
 					</div>
 				</TabsContent>

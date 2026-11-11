@@ -170,11 +170,11 @@ describe("FormPreview", () => {
 
 		expect(screen.getByText("Your Details")).toBeInTheDocument();
 		expect(screen.getByText("Tell us who you are")).toBeInTheDocument();
-		expect(screen.getByText("First").parentElement).toHaveClass(
-			"md:col-span-4",
-		);
-		expect(screen.getByText("Last").parentElement).toHaveClass(
-			"md:col-span-8",
-		);
+		expect(
+			screen.getByText("First").closest('[class~="md:col-span-4"]'),
+		).toHaveClass("md:col-span-4");
+		expect(
+			screen.getByText("Last").closest('[class~="md:col-span-8"]'),
+		).toHaveClass("md:col-span-8");
 	});
 });

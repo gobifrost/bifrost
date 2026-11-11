@@ -20151,14 +20151,14 @@ export interface components {
         };
         /**
          * FormLayoutColumn
-         * @description One field placement in a responsive twelve-column form row.
+         * @description One responsive column. Empty columns are authoring slots, not field references.
          */
         FormLayoutColumn: {
             /**
              * Field
-             * @description Name of the form field in this column
+             * @description Name of the form field in this column, or an empty authoring slot
              */
-            field: string;
+            field?: string | null;
             /**
              * Width
              * @description Desktop width in a twelve-column row; all columns stack on small screens

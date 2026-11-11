@@ -126,6 +126,20 @@ class TestFormSchema:
         assert schema.layout is not None
         assert schema.layout.sections[0].rows[0].columns[0].width == 6
 
+    def test_layout_preserves_empty_column_slots_and_still_requires_real_fields(self):
+        schema = FormSchema.model_validate({
+            "fields": [{"name": "first", "label": "First", "type": "text"}],
+            "layout": {"sections": [{"rows": [{"columns": [
+                {"field": None, "width": 6}, {"field": "first", "width": 6},
+            ]}]}]},
+        })
+        assert schema.layout.sections[0].rows[0].columns[0].field is None
+        with pytest.raises(ValidationError, match="must place every field"):
+            FormSchema.model_validate({
+                "fields": [{"name": "first", "label": "First", "type": "text"}],
+                "layout": {"sections": [{"rows": [{"columns": [{"field": None, "width": 12}]}]}]},
+            })
+
     @pytest.mark.parametrize(
         "layout, message",
         [

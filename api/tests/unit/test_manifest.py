@@ -2176,8 +2176,9 @@ class TestInlineFormContent:
                             "rows": [
                                 {
                                     "columns": [
-                                        {"field": "first_name", "width": 6},
-                                        {"field": "email", "width": 6},
+                                        {"field": "first_name", "width": 4},
+                                        {"field": "email", "width": 4},
+                                        {"field": None, "width": 4},
                                     ]
                                 }
                             ],

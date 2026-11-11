@@ -1,206 +1,138 @@
 import { describe, expect, it } from "vitest";
-import type { FormField } from "@/lib/client-types";
 import {
-	appendLayoutColumn,
-	appendLayoutRow,
 	createVerticalLayout,
-	moveLayoutColumn,
-	moveLayoutRow,
-	moveLayoutSection,
+	createCanvasRow,
+	placeCanvasField,
+	moveCanvasField,
+	resizeCanvasRow,
+	moveCanvasRow,
+	moveCanvasSection,
 	synchronizeFormLayout,
 } from "./form-layout";
-
-const fields: FormField[] = [
-	{ name: "first", label: "First", type: "text" },
-	{ name: "last", label: "Last", type: "text" },
+const fields = [
+	{ name: "first", label: "First", type: "text" as const },
+	{ name: "last", label: "Last", type: "text" as const },
 ];
-
-describe("form layout helpers", () => {
-	it("creates a vertical layout only when the designer opts in", () => {
-		expect(createVerticalLayout(fields)).toEqual({
-			sections: [
-				{
-					rows: [
-						{ columns: [{ field: "first", width: 12 }] },
-						{ columns: [{ field: "last", width: 12 }] },
-					],
-				},
-			],
-		});
-		expect(synchronizeFormLayout(null, fields, fields)).toBeNull();
-	});
-
-	it("keeps an opted-in layout complete across a rename followed by an addition", () => {
-		const layout = {
-			sections: [
-				{
-					rows: [
-						{
-							columns: [
-								{ field: "first", width: 6 as const },
-								{ field: "last", width: 6 as const },
-							],
-						},
-					],
-				},
-			],
-		};
-		const renamed = [{ ...fields[0]!, name: "given" }, fields[1]!];
-		const renamedLayout = synchronizeFormLayout(layout, fields, renamed);
-		expect(renamedLayout).toEqual({
-			sections: [
-				{
-					rows: [
-						{
-							columns: [
-								{ field: "given", width: 6 },
-								{ field: "last", width: 6 },
-							],
-						},
-					],
-				},
-			],
-		});
-
-		const next = [
-			...renamed,
-			{ name: "email", label: "Email", type: "email" as const },
-		];
-		expect(synchronizeFormLayout(renamedLayout, renamed, next)).toEqual({
-			sections: [
-				{
-					rows: [
-						{
-							columns: [
-								{ field: "given", width: 6 },
-								{ field: "last", width: 6 },
-							],
-						},
-						{ columns: [{ field: "email", width: 12 }] },
-					],
-				},
-			],
-		});
-	});
-
-	it("preserves existing placements when deleting the first field or reordering", () => {
-		const layout = {
-			sections: [
-				{
-					rows: [
-						{ columns: [{ field: "first", width: 3 as const }] },
-						{ columns: [{ field: "last", width: 9 as const }] },
-					],
-				},
-			],
-		};
-		expect(synchronizeFormLayout(layout, fields, [fields[1]!])).toEqual({
-			sections: [
-				{
-					rows: [
-						{ columns: [] },
-						{ columns: [{ field: "last", width: 9 }] },
-					],
-				},
-			],
-		});
+describe("form canvas state", () => {
+	it("derives vertical rows without persisting layout on a metadata-only save", () => {
 		expect(
-			synchronizeFormLayout(layout, fields, [fields[1]!, fields[0]!]),
-		).toEqual(layout);
-	});
-
-	it("moves sections and rows across sections without duplicating content", () => {
-		const layout = {
-			sections: [
-				{
-					title: "First",
-					rows: [
-						{ columns: [{ field: "first", width: 12 as const }] },
-					],
-				},
-				{
-					title: "Second",
-					rows: [
-						{ columns: [{ field: "last", width: 12 as const }] },
-					],
-				},
-			],
-		};
-		expect(
-			moveLayoutSection(layout, 1, 0, "before").sections.map(
-				(section) => section.title,
+			createVerticalLayout(fields).sections[0]!.rows.map(
+				(r) => r.columns[0]!.field,
 			),
-		).toEqual(["Second", "First"]);
-		expect(
-			moveLayoutRow(
-				layout,
-				{ section: 0, row: 0 },
-				{ section: 1, row: 0 },
-				"after",
-			).sections[1]!.rows.map((row) => row.columns[0]?.field),
-		).toEqual(["last", "first"]);
-		expect(
-			appendLayoutRow(layout, { section: 0, row: 0 }, 1)?.sections[1]!
-				.rows,
-		).toHaveLength(2);
+		).toEqual(["first", "last"]);
+		expect(synchronizeFormLayout(null, fields, fields)).toBeNull();
+		expect(createVerticalLayout([]).sections).toEqual([]);
 	});
-
-	it("preserves a field width and rejects overflowing layout drops", () => {
-		const layout = {
-			sections: [
-				{
-					rows: [
-						{
-							columns: [
-								{ field: "first", width: 6 as const },
-								{ field: "last", width: 6 as const },
-							],
-						},
-						{ columns: [] },
-					],
-				},
-			],
-		};
-		const moved = appendLayoutColumn(
-			layout,
-			{ section: 0, row: 0, field: "first" },
-			{ section: 0, row: 1 },
-		);
-		expect(moved.layout?.sections[0]!.rows[1]!.columns).toEqual([
+	it("places new fields directly into a row slot without appending duplicate placements", () => {
+		const layout = { sections: [{ rows: [createCanvasRow()] }] };
+		const next = placeCanvasField(layout, "first", {
+			section: 0,
+			row: 0,
+			column: 1,
+		});
+		expect(next.sections[0]!.rows[0]!.columns).toEqual([
+			{ field: null, width: 6 },
 			{ field: "first", width: 6 },
 		]);
-		const overflow = moveLayoutColumn(
+		expect(layout.sections[0]!.rows[0]!.columns[1]!.field).toBeNull();
+	});
+	it("keeps source slots and widths when moving or swapping existing fields", () => {
+		const layout = {
+			sections: [
+				{
+					rows: [
+						{
+							columns: [
+								{ field: "first", width: 4 as const },
+								{ field: "last", width: 8 as const },
+							],
+						},
+						createCanvasRow(),
+					],
+				},
+			],
+		};
+		const moved = moveCanvasField(layout, "first", {
+			section: 0,
+			row: 1,
+			column: 0,
+		});
+		expect(moved.sections[0]!.rows[0]!.columns[0]).toEqual({
+			field: null,
+			width: 4,
+		});
+		expect(moved.sections[0]!.rows[1]!.columns[0]).toEqual({
+			field: "first",
+			width: 6,
+		});
+		const swapped = moveCanvasField(layout, "first", {
+			section: 0,
+			row: 0,
+			column: 1,
+		});
+		expect(swapped.sections[0]!.rows[0]!.columns).toEqual([
+			{ field: "last", width: 4 },
+			{ field: "first", width: 8 },
+		]);
+	});
+	it("never discards occupied fields when reducing the number of columns", () => {
+		const row = {
+			columns: [
+				{ field: "first", width: 6 as const },
+				{ field: "last", width: 6 as const },
+			],
+		};
+		expect(resizeCanvasRow(row, "12")).toBeNull();
+		expect(
+			resizeCanvasRow(row, "4,4,4")?.columns.map((c) => c.field),
+		).toEqual(["first", "last", null]);
+	});
+	it("preserves empty slots through field renames and deletes", () => {
+		const layout = {
+			sections: [
+				{
+					rows: [
+						{
+							columns: [
+								{ field: "first", width: 6 as const },
+								{ field: null, width: 6 as const },
+							],
+						},
+					],
+				},
+			],
+		};
+		const renamed = synchronizeFormLayout(
 			layout,
-			{ section: 0, row: 0, field: "first" },
-			{ section: 0, row: 0, field: "last" },
-			"after",
+			[fields[0]!],
+			[{ ...fields[0]!, name: "renamed" }],
 		);
 		expect(
-			overflow.layout?.sections[0]!.rows[0]!.columns.map(
-				(column) => column.field,
-			),
-		).toEqual(["last", "first"]);
-		const blocked = appendLayoutColumn(
-			{
-				sections: [
-					{
-						rows: [
-							{
-								columns: [
-									{ field: "first", width: 6 as const },
-								],
-							},
-							{ columns: [{ field: "last", width: 9 as const }] },
-						],
-					},
-				],
-			},
-			{ section: 0, row: 0, field: "first" },
-			{ section: 0, row: 1 },
+			renamed?.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual(["renamed", null]);
+		expect(
+			synchronizeFormLayout(
+				layout,
+				[fields[0]!],
+				[],
+			)?.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual([null, null]);
+	});
+	it("moves rows into empty sections and reorders whole sections", () => {
+		const layout = {
+			sections: [
+				{ title: "First", rows: [createCanvasRow()] },
+				{ title: "Second", rows: [] },
+			],
+		};
+		const moved = moveCanvasRow(
+			layout,
+			{ section: 0, row: 0 },
+			{ section: 1, row: 0 },
 		);
-		expect(blocked).toEqual({
-			layout: null,
-			error: "That row does not have enough width for this field.",
-		});
+		expect(moved.sections.map((s) => s.rows.length)).toEqual([0, 1]);
+		expect(
+			moveCanvasSection(layout, 1, 0).sections.map((s) => s.title),
+		).toEqual(["Second", "First"]);
 	});
 });

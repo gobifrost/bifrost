@@ -698,8 +698,9 @@ async def seed_solution_form(db: AsyncSession, sol: Solution) -> tuple[str, str]
             "sections": [{
                 "title": "Details",
                 "rows": [{"columns": [
-                    {"field": "title", "width": 6},
-                    {"field": "lookup", "width": 6},
+                    {"field": "title", "width": 4},
+                    {"field": "lookup", "width": 4},
+                    {"field": None, "width": 4},
                 ]}],
             }],
         },
