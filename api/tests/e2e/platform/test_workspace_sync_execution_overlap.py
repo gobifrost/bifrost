@@ -82,10 +82,10 @@ def _execution(client, headers, execution_id: str, *, terminal: bool = True):
     return None
 
 
-async def test_sync_updates_queued_code_without_replacing_running_imports(
+async def test_sync_rejects_changed_queued_source_without_replacing_running_imports(
     e2e_client, platform_admin, async_session_factory, isolated_git_checkouts,
 ):
-    """A keeps loaded v1 code, lazily imports v2; queued B starts entirely on v2."""
+    """A keeps loaded v1 code and lazy v2 imports; queued B rejects changed entry source."""
     headers = platform_admin.headers
     suffix = uuid.uuid4().hex[:8]
     function = f"overlap_{suffix}"
@@ -264,12 +264,15 @@ async def test_sync_updates_queued_code_without_replacing_running_imports(
         for execution_id in executions:
             result = poll_until(lambda: _execution(e2e_client, headers, execution_id), max_wait=30)
             assert result is not None, f"execution {execution_id} did not finish"
-            assert result["status"] == "Success", result
-            results.append(result["result"])
-        assert results == [
-            {"entry": "v1", "eager": "v1", "lazy": "v2"},
-            {"entry": "v2", "eager": "v2", "lazy": "v2"},
-        ]
+            results.append(result)
+        assert results[0]["status"] == "Success", results[0]
+        assert results[0]["result"] == {"entry": "v1", "eager": "v1", "lazy": "v2"}
+        # B was authorized/prepared against v1 before Sync published v2. It
+        # must fail before loading a different entry rather than silently
+        # changing the code behind that queued request.
+        assert results[1]["status"] == "Failed", results[1]
+        assert "Workflow source changed before execution" in results[1]["error_message"]
+        assert results[1]["result"] is None
         print("WORKSPACE_SYNC_OVERLAP " + json.dumps({
             "commit": deployed_sha, "running": results[0], "queued": results[1],
         }, sort_keys=True))

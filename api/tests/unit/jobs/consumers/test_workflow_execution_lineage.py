@@ -65,6 +65,33 @@ async def _created_with(claimed: dict) -> dict:
 
 
 @pytest.mark.asyncio
+async def test_authorized_source_digest_reaches_the_worker():
+    workflow_id = "00000000-0000-0000-0000-000000000002"
+    digest = "a" * 64
+    metadata = {
+        "name": "pinned", "function_name": "run", "path": "workflows/pinned.py",
+        "type": "workflow", "cache_ttl_seconds": 0, "timeout_seconds": 300,
+        "time_saved": 0, "value": 0, "organization_id": None, "solution_id": None,
+        "content_hash": digest,
+    }
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()),
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+        patch("src.services.execution.queue_tracker.request_queue_position_refresh", new=Mock()),
+    ):
+        consumer = _consumer()
+        await consumer.process_message(
+            {"execution_id": EXECUTION_ID, "workflow_id": workflow_id,
+             "dispatch_metadata": metadata},
+            _claimed(workflow_id=workflow_id, script_name=None),
+        )  # type: ignore[arg-type]
+
+    consumer._pool.route_execution.assert_awaited_once()
+    assert consumer._pool.route_execution.await_args.kwargs["context"]["content_hash"] == digest
+
+
+@pytest.mark.asyncio
 async def test_row_gets_the_claimed_lineage() -> None:
     lineage = {
         "run_user_id": RUN_USER_ID,

@@ -371,43 +371,37 @@ class FileStorageService:
             Tuple of (final_content, content_modified, needs_indexing, conflicts, diagnostics,
                       pending_deactivations, available_replacements)
         """
-        try:
-            if path.endswith(".py"):
-                # For modules without decorators, skip indexing entirely
-                # The has_decorators flag is set by detect_python_entity_type_with_ast
-                # and indicates whether we need to process this file for workflows
-                if cached_ast is None and cached_content_str is not None:
-                    # No AST means no decorators were found - skip indexing
-                    # Still need to run deactivation check in case file previously had workflows
-                    if workflows_to_deactivate:
-                        await self._deactivation.deactivate_workflows_by_id(workflows_to_deactivate)
-                    if force_deactivation:
-                        await self._deactivation.deactivate_removed_workflows(path, set())
-                    else:
-                        pending, available = await self._deactivation.detect_pending_deactivations(
-                            path=path,
-                            new_function_names=set(),
-                            new_decorator_info={},
-                        )
-                        if pending:
-                            return content, False, False, None, [], pending, available
-                    logger.info(
-                        "Skipping indexing for module without decorators: "
-                        f"{log_safe(path)}"
+        if path.endswith(".py"):
+            # For modules without decorators, skip indexing entirely
+            # The has_decorators flag is set by detect_python_entity_type_with_ast
+            # and indicates whether we need to process this file for workflows
+            if cached_ast is None and cached_content_str is not None:
+                # No AST means no decorators were found - skip indexing
+                # Still need to run deactivation check in case file previously had workflows
+                if workflows_to_deactivate:
+                    await self._deactivation.deactivate_workflows_by_id(workflows_to_deactivate)
+                if force_deactivation:
+                    await self._deactivation.deactivate_removed_workflows(path, set())
+                else:
+                    pending, available = await self._deactivation.detect_pending_deactivations(
+                        path=path,
+                        new_function_names=set(),
+                        new_decorator_info={},
                     )
-                    return content, False, False, None, [], None, None
-
-                # Python files with decorators: do deactivation check then index
-                return await self._index_python_file_full(
-                    path, content, force_deactivation, replacements,
-                    cached_ast=cached_ast, cached_content_str=cached_content_str,
-                    workflows_to_deactivate=workflows_to_deactivate,
+                    if pending:
+                        return content, False, False, None, [], pending, available
+                logger.info(
+                    "Skipping indexing for module without decorators: "
+                    f"{log_safe(path)}"
                 )
-        except Exception as e:
-            logger.warning(
-                f"Failed to extract metadata from {log_safe(path)}: {log_safe(e)}"
-            )
+                return content, False, False, None, [], None, None
 
+            # Python files with decorators: do deactivation check then index
+            return await self._index_python_file_full(
+                path, content, force_deactivation, replacements,
+                cached_ast=cached_ast, cached_content_str=cached_content_str,
+                workflows_to_deactivate=workflows_to_deactivate,
+            )
         return content, False, False, None, [], None, None
 
     async def _index_python_file_full(

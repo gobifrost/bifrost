@@ -45,6 +45,20 @@ class TestReadFileModuleCacheGuard:
 
 class TestWriteFileDecoratorAcceptance:
     @pytest.mark.asyncio
+    async def test_metadata_validation_error_cannot_become_write_acceptance(self):
+        import ast
+        from src.services.file_storage.service import FileStorageService
+
+        service = FileStorageService.__new__(FileStorageService)
+        service._index_python_file_full = AsyncMock(
+            side_effect=RuntimeError("validation unavailable"),
+        )
+        with pytest.raises(RuntimeError, match="validation unavailable"):
+            await service._extract_metadata_full(
+                "workflows/current.py", b"VALUE = 2\n", cached_ast=ast.parse("VALUE = 2"),
+            )
+
+    @pytest.mark.asyncio
     async def test_python_cache_is_updated_before_search_index_failure(self):
         from src.services.file_storage.file_ops import FileOperationsService
 
@@ -57,6 +71,9 @@ class TestWriteFileDecoratorAcceptance:
         service._compute_hash = MagicMock(return_value="source-hash")
         service._guess_content_type = MagicMock(return_value="text/plain")
         service._find_app_by_path = AsyncMock(return_value=None)
+        service._extract_metadata = AsyncMock(
+            return_value=(b"VALUE = 2\n", False, False, None, [], None, None)
+        )
 
         with (
             patch("src.services.file_storage.file_ops.set_module", new_callable=AsyncMock) as cached,
@@ -68,6 +85,35 @@ class TestWriteFileDecoratorAcceptance:
 
         s3.write.assert_awaited_once()
         cached.assert_awaited_once_with("workflows/current.py", "VALUE = 2\n", "source-hash")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("validation_error", [False, True])
+    async def test_rejected_write_never_publishes_executable_source(self, validation_error):
+        from src.services.file_storage.file_ops import FileOperationsService
+
+        service = FileOperationsService.__new__(FileOperationsService)
+        service._compute_hash = MagicMock(return_value="hash")
+        service._guess_content_type = MagicMock(return_value="text/plain")
+        service._find_app_by_path = AsyncMock(return_value=None)
+        service._object_storage = MagicMock()
+        service.db = AsyncMock()
+        service._extract_metadata = AsyncMock(
+            return_value=(b"VALUE = 2\n", False, False, None, [], [MagicMock()], [])
+        )
+        if validation_error:
+            service._extract_metadata.side_effect = RuntimeError("validation unavailable")
+
+        with patch("src.services.file_storage.file_ops.set_module", AsyncMock()) as cache:
+            if validation_error:
+                with pytest.raises(RuntimeError, match="validation unavailable"):
+                    await service.write_file("workflows/current.py", b"VALUE = 2\n")
+            else:
+                result = await service.write_file("workflows/current.py", b"VALUE = 2\n")
+                assert result.pending_deactivations
+
+        service._object_storage.get_store.assert_not_called()
+        cache.assert_not_awaited()
+        service.db.flush.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_rejects_decorator_source_before_storage_or_metadata_side_effects(self):

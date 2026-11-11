@@ -891,6 +891,7 @@ class WorkflowExecutionConsumer:
                     workflow_name = workflow_data["name"]
                     workflow_function_name = workflow_data["function_name"]
                     file_path = workflow_data["path"]  # Used for __file__ injection and Redis/S3 loading
+                    content_hash = workflow_data.get("content_hash")
                     workflow_type = workflow_data["type"]
                     cache_ttl_seconds = workflow_data["cache_ttl_seconds"]
 

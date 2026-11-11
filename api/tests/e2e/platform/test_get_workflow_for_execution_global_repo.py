@@ -1,5 +1,6 @@
 """get_workflow_for_execution returns the install's global_repo_access as
 can_access_global_repo (one DB grab; the engine has no DB access)."""
+import hashlib
 from uuid import uuid4
 
 import pytest
@@ -8,6 +9,7 @@ from src.models.orm.organizations import Organization
 from src.models.orm.solutions import Solution
 from src.models.orm.workflows import Workflow
 from src.services.execution.service import get_workflow_for_execution
+from src.services.file_index_service import FileIndexService
 
 
 async def _org(db):
@@ -57,6 +59,10 @@ class TestGlobalRepoEnrichment:
         db.add(wf)
         await db.flush()
 
+        source = b"def main(): pass\n"
+        digest = hashlib.sha256(source).hexdigest()
+        await FileIndexService(db).index(wf.path, source, digest, "test")
         data = await get_workflow_for_execution(str(wf.id), db=db)
         assert data["solution_id"] is None
         assert data["can_access_global_repo"] is False
+        assert data["content_hash"] == digest
