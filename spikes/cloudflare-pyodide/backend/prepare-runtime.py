@@ -21,6 +21,7 @@ paths += [repo / "api" / (name + ".py") for name in (
     "src/services/execution/module_loader", "src/services/execution/type_inference",
     "src/services/execution/result_envelope",
     "src/core/module_cache_sync", "src/core/module_cache_contract",
+    "src/core/storage/contracts",
     "src/core/error_messages", "src/core/secret_string", "src/models/enums",
     "src/sdk/context", "src/sdk/errors", "src/sdk/error_handling", "src/sdk/decorators",
 )]
@@ -31,7 +32,7 @@ for source in paths:
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(source, target)
     manifest[relative.as_posix()] = hashlib.sha256(source.read_bytes()).hexdigest()
-for folder in ("src", "src/core", "src/sdk", "src/models", "src/services", "src/services/execution"):
+for folder in ("src", "src/core", "src/core/storage", "src/sdk", "src/models", "src/services", "src/services/execution"):
     (destination / folder / "__init__.py").write_text("# Runtime namespace; excludes server package initialization.\n")
 report = {"head": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True).strip(),
           "source_files": manifest,
