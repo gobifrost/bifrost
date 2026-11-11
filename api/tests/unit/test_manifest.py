@@ -445,11 +445,9 @@ def test_manifest_reader_refuses_an_external_split_file_symlink(tmp_path):
         read_manifest_from_dir(manifest_dir)
 
 
-# ======================================================================
-
+# =============================================================================
 # Split manifest (per-entity-type files) tests
-# ======================================================================
-
+# =============================================================================
 
 
 class TestSerializeManifestDir:
@@ -651,11 +649,9 @@ workflows:
         assert len(manifest.workflows) == 0
 
 
-# ======================================================================
-
+# =============================================================================
 # New entity types: Integrations, Configs, Tables, Knowledge, Events
-# ======================================================================
-
+# =============================================================================
 
 
 @pytest.fixture
@@ -1914,11 +1910,9 @@ class TestManifestValidationAgents:
         assert len(workflow_errors) == 0, f"Agent subscription should not produce workflow errors: {workflow_errors}"
 
 
-# ======================================================================
-
+# =============================================================================
 # _diff_manifests and _collect_changed_ids tests
-# ======================================================================
-
+# =============================================================================
 
 
 class TestDiffManifests:
@@ -2112,11 +2106,9 @@ class TestCollectChangedIds:
         assert org_id in self._collect(incoming, current)
 
 
-# ======================================================================
-
+# =============================================================================
 # Inline form/agent content (Task 9: manifest carries content under UUID)
-# ======================================================================
-
+# =============================================================================
 
 
 class TestInlineFormContent:
@@ -2389,11 +2381,9 @@ class TestBackCompatSeparateFile:
         assert await _resolve_form_content(mform, read_fn) is None
 
 
-# =====================================================================
-
+# ============================================================================
 # External MCP client (server template + connection + tool catalog) tests
-# =====================================================================
-
+# ============================================================================
 
 
 @pytest.fixture
@@ -2745,11 +2735,9 @@ def test_manifest_workflow_requested_permissions_is_not_an_orm_column():
         assert "requested_permissions" not in wf.to_orm_values(dest).direct
 
 
-# ======================================================================
-
+# =============================================================================
 # ManifestPolicyRule tests (Task 10)
-# ======================================================================
-
+# =============================================================================
 
 
 class TestManifestPolicyRule:
@@ -2910,11 +2898,9 @@ class TestManifestPolicyRule:
         assert restored_ref.ref == "ops"
 
 
-# ======================================================================
-
+# =============================================================================
 # Task 22: ManifestSolutionFile + FilePolicy.solution_id round-trip tests
-# ======================================================================
-
+# =============================================================================
 
 
 class TestSolutionFilesManifestRoundTrip:
