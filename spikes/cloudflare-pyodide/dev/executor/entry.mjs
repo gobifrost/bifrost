@@ -8,6 +8,7 @@ import {fixtureRejection} from '../../backend/fixture-admission.mjs';
 import {apiTarget, attemptPayload} from './policy.mjs';
 import {pythonEntry} from './python-entry.mjs';
 import {readBudgetedJson} from './output-budget.mjs';
+import {reconcileImports} from './import-audit.mjs';
 import {capabilityRejection} from './capability-requirements.mjs';
 import {egressRejection, isUrlAllowed, VIRTUAL_TEST_HOST} from './egress-allowlist.mjs';
 
@@ -100,7 +101,11 @@ export default {
         method: 'POST', body: JSON.stringify(payload),
       }));
       const output = await readBudgetedJson(response);
-      return Response.json({result: output.upstream_result, bootstrap: output.bootstrap, api_calls: calls,
+      // Audit-only: reconcile observed workspace loads against the declaration.
+      // Never blocks here; the audit is reported for the caller to decide.
+      const audit = reconcileImports(body.requirements?.modules, output.bootstrap?.recorded_workspace_paths);
+      return Response.json({result: output.upstream_result, bootstrap: output.bootstrap,
+        ...(audit ? {import_audit: audit} : {}), api_calls: calls,
         api_calls_scope: 'parent_module_preflight_only'});
     } catch (error) {
       if (error?.name === 'ExecutorBodyTooLargeError') return Response.json({phase: 'output-budget',

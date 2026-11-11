@@ -8,6 +8,29 @@ require_runtime()
 
 mark_execution_child = importlib.import_module("src.core.module_cache_sync").mark_execution_child
 
+# Audit-only workspace import recording for the declared-capability contract.
+# Appends the loader-relative path of every module actually executed through
+# the virtual loader. Never blocks, never alters loading; the isolate runs a
+# single attempt, so a module-level list is attempt-scoped by construction.
+recorded_workspace_paths: list[str] = []
+
+
+def _install_import_recorder() -> None:
+    from src.services.execution import virtual_import as _virtual_import
+
+    loader_cls = _virtual_import.VirtualModuleLoader
+    original_exec = loader_cls.exec_module
+
+    def recording_exec(self, module):
+        path = getattr(self, "storage_path", None) or self.path
+        recorded_workspace_paths.append(path)
+        return original_exec(self, module)
+
+    loader_cls.exec_module = recording_exec
+
+
+_install_import_recorder()
+
 # Must precede installation of the virtual import hook. This forbids all parent
 # Redis/S3 paths even during module initialization in an isolated runtime.
 mark_execution_child()

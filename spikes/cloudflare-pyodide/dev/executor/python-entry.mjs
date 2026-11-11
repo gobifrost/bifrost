@@ -2,7 +2,7 @@
 export const pythonEntry = `
 import json
 from workers import WorkerEntrypoint, Response
-from runtime_runner import run_authorized_attempt
+from runtime_runner import run_authorized_attempt, recorded_workspace_paths
 
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
@@ -13,6 +13,7 @@ class Default(WorkerEntrypoint):
         from runtime_guard import runtime_fingerprint
         diagnostic = {'execution_child': module_cache_sync._execution_child,
                       'engine_client_available': module_cache_sync._get_engine_client() is not None,
-                      'abi': runtime_fingerprint()}
+                      'abi': runtime_fingerprint(),
+                      'recorded_workspace_paths': sorted(set(recorded_workspace_paths))}
         return Response.json({'upstream_result': result, 'bootstrap': diagnostic})
 `;
