@@ -63,7 +63,7 @@ export function DatePicker({
 			</PopoverTrigger>
 			<PopoverContent
 				align="start"
-				className="w-auto max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) gap-0 overflow-y-auto p-0"
+				className="w-[min(20.5rem,calc(100vw-2rem))] sm:w-auto max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) gap-0 overflow-y-auto p-0"
 			>
 				<Calendar
 					mode="single"
