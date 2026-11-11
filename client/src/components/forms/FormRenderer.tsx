@@ -1455,7 +1455,9 @@ function FormRendererInner({
 									? "email"
 									: field.type === "number"
 										? "number"
-										: "text"
+										: field.type === "date"
+											? "date"
+											: "text"
 							}
 							placeholder={field.placeholder ?? undefined}
 							{...register(field.name)}

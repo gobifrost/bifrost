@@ -324,6 +324,35 @@ describe("FormRenderer — conditional rendering", () => {
 });
 
 describe("FormRenderer — field types", () => {
+	it("renders a date control and submits the selected calendar date as a string", async () => {
+		const form = makeForm([
+			{
+				name: "start_date",
+				label: "Start Date",
+				type: "date",
+				required: true,
+				default_value: "2026-11-10",
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		const input = screen.getByLabelText(/start date/i);
+		expect(input).toHaveAttribute("type", "date");
+		expect(input).toHaveValue("2026-11-10");
+		fireEvent.change(input, { target: { value: "2026-11-20" } });
+		const submit = screen.getByRole("button", { name: /submit/i });
+		await waitFor(() => expect(submit).toBeEnabled());
+		await user.click(submit);
+		await waitFor(() =>
+			expect(mockMutateAsync).toHaveBeenCalledWith(
+				expect.objectContaining({
+					body: expect.objectContaining({
+						form_data: { start_date: "2026-11-20" },
+					}),
+				}),
+			),
+		);
+	});
+
 	it("renders a markdown field's content", () => {
 		const form = makeForm([
 			{

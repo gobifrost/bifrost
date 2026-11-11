@@ -13,6 +13,28 @@ import { FormPreview } from "./FormPreview";
 import type { FormField } from "@/lib/client-types";
 
 describe("FormPreview", () => {
+	it("renders a disabled date control with its default calendar date", () => {
+		renderWithProviders(
+			<FormPreview
+				formName="F"
+				formDescription=""
+				fields={[
+					{
+						name: "start_date",
+						label: "Start Date",
+						type: "date",
+						required: false,
+						default_value: "2026-11-10",
+					},
+				]}
+			/>,
+		);
+		const input = screen.getByLabelText("Start Date");
+		expect(input).toHaveAttribute("type", "date");
+		expect(input).toHaveValue("2026-11-10");
+		expect(input).toBeDisabled();
+	});
+
 	it("renders the form title and description", () => {
 		renderWithProviders(
 			<FormPreview

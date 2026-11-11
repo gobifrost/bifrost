@@ -80,7 +80,9 @@ export function FormPreview({
 								? "email"
 								: field.type === "number"
 									? "number"
-									: "text"
+									: field.type === "date"
+										? "date"
+										: "text"
 						}
 						placeholder={field.placeholder ?? undefined}
 						defaultValue={field.default_value as string}
