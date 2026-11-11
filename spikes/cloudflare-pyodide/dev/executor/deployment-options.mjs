@@ -2,7 +2,7 @@
 const keys = ['BIFROST_CF_ACCOUNT_ID', 'BIFROST_CF_EXECUTOR_NAME', 'BIFROST_CF_API_WORKER', 'BIFROST_CF_API_ORIGIN'];
 const development = Object.freeze({
   accountId: 'b5fc61a1bec847ecc83b3b880b563aaf',
-  executorName: 'bifrost-pyodide-spike-ddf316c1',
+  executorName: 'bifrost-pyodide-spike-06aeb2c8',
   apiWorker: 'bifrost-pyodide-dev-ui-ddf316c1',
   apiOrigin: 'https://bifrost-pyodide-dev-ui-ddf316c1.midtown-technology-group.workers.dev',
 });

@@ -5,7 +5,7 @@ from pathlib import Path
 import subprocess
 import time
 
-ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1/dev-deploy-2037ac0')
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1/run-06aeb2c87')
 WORKLOADS = ('json_transform', 'http_orchestration', 'integration_read', 'table_update', 'multi_step')
 PRIVATE = 'cloud-private-benchmark-v1'
 

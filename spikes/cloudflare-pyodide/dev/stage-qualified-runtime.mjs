@@ -4,7 +4,7 @@ import {createHash} from 'node:crypto';
 import {resolve,sep} from 'node:path';
 import {fileURLToPath,pathToFileURL} from 'node:url';
 import {stageRuntimeLoader} from './stage-runtime-loader.mjs';
-const PIN='61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731';
+const PIN='4cfd86edcdde611b93a067313c53d9ff93bb52b49f2a2fa33e167d7f115aaf4f';
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 
 export async function stageQualifiedRuntime(input,output) {
@@ -13,7 +13,7 @@ export async function stageQualifiedRuntime(input,output) {
   const text=bytes.toString('utf8');
   if(!text.startsWith('export default ')||!text.endsWith(';\n'))throw new Error('Qualified artifact format changed');
   const modules=JSON.parse(text.slice('export default '.length,-2));
-  if(Object.keys(modules).length!==466||hash(modules['src/services/execution/engine.py'].py)!=='6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21')
+  if(Object.keys(modules).length!==466||hash(modules['src/services/execution/engine.py'].py)!=='443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2')
     throw new Error('Qualified module/engine identity changed');
   // Existing output is never reused or overwritten, including partial attempts.
   await mkdir(output);
@@ -21,8 +21,8 @@ export async function stageQualifiedRuntime(input,output) {
   await writeFile(new URL('generated-runtime.mjs',directory),bytes,{flag:'wx'});
   const loaderFiles=await stageRuntimeLoader(directory);
   const provenance={bundle_sha256:PIN,bundle_bytes:bytes.length,module_count:Object.keys(modules).length,
-    sdk_source:'139596497d57b219ddcc3616aa66ec58e1b3cf3c',engine_source:'f49d4ba99cebd24aa497f1244833b940e640885f',
-    closure_source:'785b560b9973020e1c13401383e1a73a87a54940',
+    sdk_source:'a4ba01ca43b25f082af304a9d6473268f393eb52',engine_source:'82c6559fe224a00325510c0a78281f3cc9835213',
+    closure_source:'06aeb2c8797c057a5255b4cfab32491754b4f9e4',
     loader_files_sha256:loaderFiles,artifact_bytes_preserved:true,
     scope:'Offline staging of locally qualified code; no new runtime or deployed qualification'};
   await writeFile(new URL('runtime-provenance.json',directory),JSON.stringify(provenance,null,2)+'\n',{flag:'wx'});

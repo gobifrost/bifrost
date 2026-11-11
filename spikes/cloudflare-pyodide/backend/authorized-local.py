@@ -85,12 +85,12 @@ async def main(*, dev_qualification=False, integration_probe=False, fresh_probe=
     if dev_qualification:
         from pathlib import Path
         profile = json.loads(Path('/qualification/private/profile.json').read_text())
-        if (profile.get('deployment') != 'pyodide-ddf316c1-dev-2037ac0'
+        if (profile.get('deployment') != 'pyodide-ddf316c1-dev-06aeb2c8'
             or os.environ.get('BIFROST_ENVIRONMENT') != 'development'
             or database.hostname != 'pgbouncer' or database.path != '/bifrost'
             or profile.get('expires_at_ms', 0) <= time.time() * 1000):
             raise RuntimeError('Owned isolated development qualification required')
-        provider_url = 'https://bifrost-pyodide-spike-ddf316c1.midtown-technology-group.workers.dev'
+        provider_url = 'https://bifrost-pyodide-spike-06aeb2c8.midtown-technology-group.workers.dev'
         provider_headers = {'X-Dev-Auth': profile['DEV_AUTH'], 'User-Agent': 'bifrost-pyodide-dev-qualification/1.0'}
     elif (os.environ.get("BIFROST_ENVIRONMENT") != "testing"
           or os.environ.get("TEST_API_URL") != "http://api:8000"

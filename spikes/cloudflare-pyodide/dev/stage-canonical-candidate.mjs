@@ -14,7 +14,7 @@ const files = ['probe-io.mjs',
 
 export async function stageCanonicalCandidate(input, output) {
   const bundle = await readFile(input);
-  if (hash(bundle) !== '61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731') {
+  if (hash(bundle) !== '4cfd86edcdde611b93a067313c53d9ff93bb52b49f2a2fa33e167d7f115aaf4f') {
     throw new Error('Exact qualified runtime required');
   }
   await mkdir(output);
