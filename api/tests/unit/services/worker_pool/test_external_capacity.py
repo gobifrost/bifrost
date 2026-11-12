@@ -512,3 +512,41 @@ async def test_starting_worker_explicit_stopped_fences_at_once(db, capacity):
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert (worker.state, worker.end_reason) == ("lost", "provider_resource_stopped")
+
+
+async def test_reconcile_state_records_ok_then_error(db, capacity):
+    from sqlalchemy import delete
+
+    from src.models.orm.config import SystemConfig
+
+    async with db.context() as session:
+        await session.execute(delete(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))
+        await session.commit()
+
+    await external_controller.record_external_reconcile_state(
+        ok=True, error=None, scope="test-provider",
+    )
+    async with db.context() as session:
+        rows = (await session.scalars(select(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))).all()
+        assert len(rows) == 1
+        assert rows[0].value_json["ok"] is True
+        assert rows[0].value_json["scope"] == "test-provider"
+        assert rows[0].value_json["finished_at"]
+
+    await external_controller.record_external_reconcile_state(
+        ok=False, error="Capacity provider is unreachable", scope="test-provider",
+    )
+    async with db.context() as session:
+        rows = (await session.scalars(select(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))).all()
+        assert len(rows) == 1, "one global row is updated, never duplicated"
+        assert rows[0].value_json["ok"] is False
+        assert rows[0].value_json["error"] == "Capacity provider is unreachable"

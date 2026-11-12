@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
+from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.principal import UserPrincipal
@@ -296,3 +297,74 @@ async def test_capacity_reports_misconfigured_endpoint(
     assert page.configured is True
     assert page.bounds is None
     assert page.error == "Capacity provider endpoint is invalid"
+
+
+async def test_capacity_reports_last_pass_and_recent_losses(
+    admin: UserPrincipal, uncommitted: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from datetime import datetime, timezone
+
+    from src.models.orm.config import SystemConfig
+    from src.models.orm.execution_workers import ExecutionWorker
+    from src.services.kubernetes_execution import KubernetesExecutionService
+
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        _capacity_profile(),
+    )
+    await KubernetesExecutionService(uncommitted).update_policy(
+        {"worker_memory_mib": 4096, "largest_worker_mib": 4096}, updated_by="test"
+    )
+    # Another test module may have committed this global row already; the
+    # endpoint reads whatever is current, so reset it deterministically.
+    await uncommitted.execute(
+        delete(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        )
+    )
+    uncommitted.add(SystemConfig(
+        category="worker_capacity",
+        key="external_reconcile_state",
+        value_json={
+            "finished_at": "2026-11-12T00:00:00+00:00",
+            "ok": False,
+            "error": "Capacity provider is unreachable",
+            "scope": "test-scope",
+        },
+    ))
+    uncommitted.add_all(
+        [
+            ExecutionWorker(
+                form="external", state="lost", capacity_scope="test-scope",
+                end_reason="provider_resource_stopped",
+                ended_at=datetime.now(timezone.utc),
+            ),
+            ExecutionWorker(
+                form="external", state="lost", capacity_scope="test-scope",
+                end_reason="provider_resource_stopped",
+                ended_at=datetime.now(timezone.utc),
+            ),
+            ExecutionWorker(
+                form="external", state="retired", capacity_scope="other-scope",
+                end_reason="idle",
+                ended_at=datetime.now(timezone.utc),
+            ),
+        ]
+    )
+    await uncommitted.flush()
+
+    page = await router.get_worker_capacity_status(
+        uncommitted, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.last_pass.ok is False
+    assert page.last_pass.error == "Capacity provider is unreachable"
+    assert page.last_pass.finished_at is not None
+    assert [
+        (item.reason, item.count) for item in page.recent_losses
+    ] == [("provider_resource_stopped", 2)]
