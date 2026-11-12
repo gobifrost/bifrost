@@ -1,0 +1,12 @@
+{
+  "key": "pr:1350",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal agent-runtime correctness fix: token budgets no longer fail runs when a provider rejects Responses-API token counting.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1350"
+    ]
+  }
+}

@@ -630,6 +630,111 @@ async def test_uncountable_provider_uses_local_estimate_for_preflight_guard() ->
     assert provider_model.provider_requests == 0
 
 
+def _responses_counting_model(status_code: int, message: str):
+    """Exercise SDK HTTP errors and Pydantic AI's real error mapping."""
+    import httpx2
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    paths: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/input_tokens"):
+            return httpx2.Response(
+                status_code,
+                json={"error": {"message": message, "type": "invalid_request_error"}},
+            )
+        assert request.url.path == "/v1/responses"
+        return httpx2.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "test-model",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_test",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [
+                            {"type": "output_text", "text": "done", "annotations": []}
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+            },
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://provider.invalid/v1",
+        http_client=http_client,
+        max_retries=0,
+    )
+    model = OpenAIResponsesModel(
+        "test-model", provider=OpenAIProvider(openai_client=client)
+    )
+    return model, http_client, paths
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 404, 405, 501])
+@pytest.mark.parametrize("budget_limit", [100, 10_000])
+async def test_rejected_server_side_counting_uses_local_budget(
+    status_code: int,
+    budget_limit: int,
+) -> None:
+    provider_model, http_client, paths = _responses_counting_model(
+        status_code, "This model is not supported by Responses API."
+    )
+    model = ObservedModel(provider_model, AsyncMock())
+    runtime = PydanticAgent(model)
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=budget_limit)
+
+    async with http_client:
+        if budget_limit == 100:
+            with pytest.raises(UsageLimitExceeded):
+                await runtime.run(
+                    "one more request",
+                    usage=RunUsage(input_tokens=95),
+                    usage_limits=budget.usage_limits(),
+                )
+            assert paths == ["/v1/responses/input_tokens"]
+        else:
+            result = await runtime.run(
+                "one more request", usage_limits=budget.usage_limits()
+            )
+            assert result.output == "done"
+            assert paths == ["/v1/responses/input_tokens", "/v1/responses"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 401, 429, 500])
+async def test_unrelated_provider_error_during_counting_still_raises(
+    status_code: int,
+) -> None:
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    provider_model, http_client, paths = _responses_counting_model(
+        status_code, "Provider fault"
+    )
+    runtime = PydanticAgent(ObservedModel(provider_model, AsyncMock()))
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=10_000)
+
+    async with http_client:
+        with pytest.raises(ModelHTTPError) as raised:
+            await runtime.run("one more request", usage_limits=budget.usage_limits())
+
+    assert raised.value.status_code == status_code
+    assert paths == ["/v1/responses/input_tokens"]
+
+
 def test_delegated_subtree_shares_parent_ledger_and_keeps_local_cap() -> None:
     parent = AgentRunBudget(max_requests=20, max_total_tokens=100_000)
 
