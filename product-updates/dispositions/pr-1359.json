@@ -1,0 +1,13 @@
+{
+  "key": "pr:1359",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Lint-severity change only; no customer-visible behavior.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1359",
+      "Pending maintainer review."
+    ]
+  }
+}
