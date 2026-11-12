@@ -138,9 +138,15 @@ def test_sdk_package_version_matches_tarball_package_json(monkeypatch):
         pkg_file = tar.extractfile("package/package.json")
         assert pkg_file is not None
         pkg = json.loads(pkg_file.read())
+        license_file = tar.extractfile("package/LICENSE")
+        assert license_file is not None
+        license_text = license_file.read()
 
     assert sdkpkg.sdk_package_version(version) == "1.2.0"
     assert pkg["version"] == sdkpkg.sdk_package_version(version)
+    assert pkg["license"] == "AGPL-3.0-only"
+    assert license_text == sdkpkg._license_bytes()
+    assert b"GNU AFFERO GENERAL PUBLIC LICENSE" in license_text
 
 
 @pytest.mark.e2e
@@ -160,6 +166,7 @@ def test_build_sdk_tarball_shape_and_exports():
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         names = tar.getnames()
         assert "package/package.json" in names
+        assert "package/LICENSE" in names
         assert "package/dist/index.mjs" in names
         assert "package/types/hosted-binding.d.ts" in names
 
@@ -169,6 +176,7 @@ def test_build_sdk_tarball_shape_and_exports():
         assert pkg["name"] == "bifrost"
         # git-describe "v1.2-3-gabc1234" has no patch component → coerced to 1.2.0.
         assert pkg["version"] == "1.2.0"
+        assert pkg["license"] == "AGPL-3.0-only"
         # No runtime deps — the binding shares the App's React singleton.
         assert "dependencies" not in pkg or not pkg["dependencies"]
         assert "react" in pkg["peerDependencies"]

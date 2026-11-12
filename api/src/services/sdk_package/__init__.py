@@ -195,6 +195,20 @@ def sdk_supported_binding_api_majors() -> frozenset[int]:
     return frozenset({_HOSTED_API_MAJOR})
 
 
+_LICENSE_CANDIDATES = (
+    Path("/app/LICENSE"),
+    _HERE.parents[3] / "LICENSE",
+)
+
+
+def _license_bytes() -> bytes:
+    """AGPL-3.0 text shipped as ``package/LICENSE`` (image, else repo root)."""
+    for candidate in _LICENSE_CANDIDATES:
+        if candidate.is_file():
+            return candidate.read_bytes()
+    raise RuntimeError("LICENSE not found for SDK tarball")
+
+
 @functools.lru_cache(maxsize=1)
 def sdk_automatic_hosted_migration_contracts() -> frozenset[int]:
     """Reviewed wire contracts whose bundles can migrate to the v1 binding."""
@@ -214,7 +228,8 @@ def sdk_automatic_hosted_migration_contracts() -> frozenset[int]:
 def build_sdk_tarball(version: str) -> bytes:
     """Produce an npm-installable ``bifrost`` package tarball (gzip), version
     stamped. Layout: ``package/package.json`` (name ``bifrost``, ESM ``module``
-    entry, React peer deps) + ``package/dist/index.mjs`` (the bundle)."""
+    entry, React peer deps, AGPL-3.0 licence) + ``package/LICENSE`` (verbatim
+    AGPL-3.0) + ``package/dist/index.mjs`` (the bundle)."""
     pkg_version = sdk_package_version(version)
     bundle = _built_bundle(version)
 
@@ -222,6 +237,7 @@ def build_sdk_tarball(version: str) -> bytes:
         "name": "bifrost",
         "version": pkg_version,
         "description": "Bifrost web SDK for standalone v2 apps.",
+        "license": "AGPL-3.0-only",
         "type": "module",
         "module": "dist/index.mjs",
         "main": "dist/index.mjs",
@@ -235,6 +251,8 @@ def build_sdk_tarball(version: str) -> bytes:
         },
     }
 
+    license_text = _license_bytes()
+
     with tempfile.TemporaryDirectory(prefix="bifrost-sdk-types-") as tmp:
         types_root = _build_types(Path(tmp))
         buffer = io.BytesIO()
@@ -246,6 +264,7 @@ def build_sdk_tarball(version: str) -> bytes:
 
             # npm expects everything under a top-level "package/" dir.
             _add("package/package.json", json.dumps(package_json, indent=2).encode())
+            _add("package/LICENSE", license_text)
             _add("package/dist/index.mjs", bundle)
             for declaration in types_root.rglob("*.d.ts"):
                 _add(

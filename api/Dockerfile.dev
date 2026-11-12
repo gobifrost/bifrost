@@ -147,6 +147,8 @@ RUN mkdir -p /app/artifacts/app-sdk \
 
 # Source is bind-mounted at runtime in development, but the downloadable CLI
 # is deliberately frozen at image-build time just as it is in production.
+# /app/LICENSE backs the SDK tarball's package/LICENSE (AGPL-3.0).
+COPY LICENSE /app/LICENSE
 COPY api/bifrost/ /tmp/cli-build/bifrost/
 COPY api/shared/cli_artifact.py /tmp/cli-build/shared/cli_artifact.py
 COPY api/scripts/build_cli_artifact.py /tmp/cli-build/build_cli_artifact.py

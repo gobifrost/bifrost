@@ -90,6 +90,7 @@ COPY api/alembic/ /app/alembic/
 COPY api/alembic.ini /app/
 COPY api/bifrost/ /app/bifrost/
 COPY api/bifrost.py /app/
+COPY LICENSE /app/LICENSE
 COPY api/scripts/ /app/scripts/
 COPY assets/ /app/assets/
 RUN chmod -R a+rX /app/assets
