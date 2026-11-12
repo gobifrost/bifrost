@@ -10,44 +10,39 @@ import {pythonEntry} from './python-entry.mjs';
 import {readBudgetedJson} from './output-budget.mjs';
 import {reconcileImports, deniedTerminal} from './import-audit.mjs';
 import {capabilityRejection} from './capability-requirements.mjs';
-import {egressRejection, isUrlAllowed, VIRTUAL_TEST_HOST} from './egress-allowlist.mjs';
+import {egressRejection, VIRTUAL_TEST_HOST} from './egress-allowlist.mjs';
+import {decideGatewayAction, sanitizedChildContext, injectionHeaders, externalHeaders,
+  DUMMY_CREDENTIAL} from './gateway-injection.mjs';
 
 export class DevApi extends WorkerEntrypoint {
   async fetch(request) {
     const egress = this.ctx.props.egress;
+    const runToken = this.ctx.props.runToken;
     // Egress gate BEFORE any network effect. Declared hosts plus the virtual
     // test endpoint only. Anything else fails closed with zero api_calls and
     // never echoes hostnames or secrets; only the shape class is named.
-    if (!isUrlAllowed(request.url, egress)) {
-      const bad = egressRejection(egress);
-      const reason = bad ? bad.reason : 'unlisted';
-      return Response.json({phase: 'egress-rejected', reason, api_calls: []}, {status: 422});
+    // Reuses egress-allowlist logic (test-api.invalid + declared hosts only).
+    const decision = decideGatewayAction(request.url, egress);
+    if (decision.action === 'reject') {
+      return Response.json({phase: 'egress-rejected', reason: decision.reason, api_calls: []}, {status: 422});
     }
     const hostname = new URL(request.url).hostname.toLowerCase();
-    if (hostname !== VIRTUAL_TEST_HOST) {
+    if (decision.action === 'forward-external' || hostname !== VIRTUAL_TEST_HOST) {
       // Declared external host: direct HTTPS fetch, no DEV_API bridge.
-      // Never forward run credentials or qualification secrets outward.
-      const headers = new Headers(request.headers);
-      headers.delete('Host');
-      headers.delete('Authorization');
-      headers.delete('Cookie');
-      headers.delete('X-Dev-Auth');
-      headers.delete('X-Qualification-Auth');
-      headers.set('User-Agent', 'bifrost-pyodide-dev-executor/1.0');
+      // Strip X-Dev-Auth/X-Qualification-Auth/Cookie always.
+      const headers = externalHeaders(request.headers);
       return fetch(new Request(request.url, new Request(request, {headers, redirect: 'manual'})));
+    }
+    // test-api.invalid: inject run-scoped auth held ONLY in parent env/props.
+    // Child env carries NO tokens (dummy tolerated because gateway injects real).
+    // Strip incoming auth/cookies/qualification headers; never trust child bearer.
+    if (typeof runToken !== 'string' || runToken.length < 10 || runToken === DUMMY_CREDENTIAL) {
+      return Response.json({phase: 'egress-rejected', reason: 'unlisted', api_calls: []}, {status: 422});
     }
     let target;
     try { target = apiTarget(request.url, this.env.API_ORIGIN); }
     catch { return new Response('API capability denied', {status: 403}); }
-    const headers = new Headers(request.headers);
-    // A service-binding request carries the virtual origin's Host header.
-    // Let fetch derive Host from the fixed physical destination.
-    headers.delete('Host');
-    headers.set('User-Agent', 'bifrost-pyodide-dev-executor/1.0');
-    // The SDK-only origin bridge requires the run-scoped dev credential.
-    // Without it the gateway fails closed and module preflight cannot
-    // distinguish an invalid engine token from a denied bridge.
-    headers.set('X-Qualification-Auth', this.env.DEV_AUTH ?? '');
+    const headers = injectionHeaders(request.headers, runToken, this.env.DEV_AUTH ?? '');
     const response = await this.env.DEV_API.fetch(new Request(target, new Request(request, {headers, redirect: 'manual'})));
     const path = new URL(request.url).pathname;
     if (path.startsWith('/api/sdk/modules/')) {
@@ -79,14 +74,26 @@ export default {
     const egress = egressRejection(body.egress);
     if (egress) return Response.json({phase: 'egress-rejected',
       reason: egress.reason, api_calls: []}, {status: 422});
+    // Gateway injection: run-scoped auth held ONLY in parent props.
+    // Child receives sanitized context with dummy (non-token-shaped) placeholder
+    // tolerated by the SDK because the gateway injects the real bearer.
+    // Tech debt: refresh via gateway not yet implemented; bounded runs stay
+    // within token lifetime so no refresh occurs.
+    const runToken = body.context?.engine_token;
+    if (typeof runToken !== 'string' || runToken.length < 10) {
+      return Response.json({phase: 'egress-rejected', reason: 'unlisted', api_calls: []}, {status: 422});
+    }
+    const childContext = sanitizedChildContext(body.context);
+    const childBody = {...body, context: childContext};
     let payload;
-    try { payload = attemptPayload(body, env.API_ORIGIN); }
+    try { payload = attemptPayload(childBody, env.API_ORIGIN); }
     catch { return new Response('Invalid dev public URL configuration', {status: 503}); }
     const calls = [];
     try {
-      const api = ctx.exports.DevApi({props: {manifest: body.manifest, egress: body.egress}});
+      const api = ctx.exports.DevApi({props: {manifest: body.manifest, egress: body.egress, runToken}});
+      // Preflight via gateway with dummy bearer; gateway injects real auth.
       const preflight = await api.fetch(new Request('https://test-api.invalid/api/sdk/modules/' + body.context.file_path,
-        {headers: {Authorization: 'Bearer ' + body.context.engine_token}}));
+        {headers: {Authorization: 'Bearer ' + DUMMY_CREDENTIAL}}));
       const moduleStatus = preflight.status;
       calls.push({path: '/api/sdk/modules/' + body.context.file_path, method: 'GET', status: moduleStatus});
       await preflight.body?.cancel();
