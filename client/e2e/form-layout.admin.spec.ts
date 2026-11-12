@@ -82,6 +82,9 @@ test("rows and palette fields share one canvas, persist and preview responsively
 				name: "Add Field",
 				exact: true,
 			});
+			await expect(
+				dialog.getByRole("combobox", { name: "Field Type" }),
+			).toHaveText(type === "Text Input" ? "Text" : "Email");
 			await dialog.getByLabel(/Field Name/).fill(name);
 			await dialog.getByLabel(/^Label/).fill(label);
 			await dialog
@@ -250,6 +253,12 @@ test("rows and palette fields share one canvas, persist and preview responsively
 		await page.getByRole("button", { name: "Save", exact: true }).click();
 		const saved = await save;
 		expect(saved.ok(), await saved.text()).toBe(true);
+		const payload = await saved.json();
+		expect(
+			payload.form_schema.fields.find(
+				(f: { name: string }) => f.name === "email",
+			).type,
+		).toBe("email");
 		await page.waitForURL("**/forms");
 		await page.goto(`/forms/${form.id}/edit`);
 		await expect(
