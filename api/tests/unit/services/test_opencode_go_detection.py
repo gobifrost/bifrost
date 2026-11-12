@@ -10,13 +10,15 @@ from openai import BadRequestError, NotFoundError, PermissionDeniedError, RateLi
 
 from src.services.opencode_go_detection import detect_opencode_go_wire_api
 
-ENDPOINT = "https://opencode.ai/zen/go/v1"
+ENDPOINT = "https://opencode.ai/inference/go/openai/v1"
 
 
 def _status_error(error_type, status: int, message: str):
     response = httpx.Response(
         status,
-        request=httpx.Request("POST", "https://opencode.ai/zen/go/v1/chat/completions"),
+        request=httpx.Request(
+            "POST", "https://opencode.ai/inference/go/openai/v1/chat/completions"
+        ),
     )
     return error_type(message, response=response, body={"message": message})
 

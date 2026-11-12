@@ -234,3 +234,28 @@ async def test_delete_adapter_delegates_and_maps_errors(monkeypatch) -> None:
             MagicMock(),
         )
     assert exc.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_refused_write_does_not_commit_metadata_or_publish(monkeypatch, mutation_context):
+    backend = MagicMock()
+    backend.write = AsyncMock(side_effect=FileServiceError(
+        409, {"reason": "workflows_would_deactivate"},
+    ))
+    ctx, db = mutation_context
+    metadata = AsyncMock()
+    publish = AsyncMock()
+    monkeypatch.setattr("src.services.file_backend.get_backend", lambda *_args: backend)
+    monkeypatch.setattr("shared.sdk_files.lock_file_mutation", AsyncMock())
+    monkeypatch.setattr("src.services.file_storage.FileStorageService.record_file_write_metadata", metadata)
+    monkeypatch.setattr("src.core.pubsub.publish_file_change", publish)
+
+    with pytest.raises(HTTPException) as caught:
+        await files.write_file(
+            files.FileWriteRequest(path="workflows/test.py", content="new"),
+            ctx, MagicMock(), db,
+        )
+    assert caught.value.status_code == 409
+    metadata.assert_not_awaited()
+    db.commit.assert_not_awaited()
+    publish.assert_not_awaited()

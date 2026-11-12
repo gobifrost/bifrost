@@ -1,0 +1,14 @@
+{
+  "key": "pr:1355",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine CLI and file-service correctness repair; no in-app announcement or customer upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1355",
+      "https://github.com/gobifrost/bifrost/issues/1348",
+      "Native owner instruction on 2026-11-12: Scope, fix and merge please as you see fit. Reviewed as a behavior-preserving refusal propagation fix; existing explicit deactivation remains required."
+    ]
+  }
+}
