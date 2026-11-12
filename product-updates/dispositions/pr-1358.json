@@ -1,0 +1,14 @@
+{
+  "key": "pr:1358",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Client visuals now follow the shared token system; status and kind colors adapt to light and dark automatically.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1358",
+      "Pending maintainer review of the lint governance setup and token migration."
+    ]
+  }
+}
