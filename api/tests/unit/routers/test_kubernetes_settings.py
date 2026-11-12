@@ -86,3 +86,213 @@ async def test_unavailable_provider_returns_503_without_committing(
 def test_out_of_range_values_fail_request_validation(values: dict[str, int]) -> None:
     with pytest.raises(ValidationError):
         KubernetesPolicyUpdate(**values)
+
+
+class _Secret:
+    def __init__(self, value: str) -> None:
+        self._value = value
+
+    def get_secret_value(self) -> str:
+        return self._value
+
+
+def _capacity_settings(**overrides: object) -> object:
+    from types import SimpleNamespace
+
+    base: dict[str, object] = {
+        "worker_capacity_url": None,
+        "worker_capacity_token": None,
+        "pool_max_lifetime_seconds": 21600,
+        "pool_worker_memory_request_mib": 512,
+    }
+    base.update(overrides)
+    return SimpleNamespace(**base)
+
+
+def _capacity_profile() -> object:
+    from shared.models import WorkerCapacityProfile
+
+    return WorkerCapacityProfile(
+        protocol_version=1,
+        scope="test-scope",
+        worker_version="test-worker",
+        memory_limit_bytes=4096 * 1024 * 1024,
+        max_workers=6,
+        max_lifetime_seconds=21600,
+    )
+
+
+class _FakeCapacityClient:
+    behaviour: object = None
+
+    def __init__(self, url: str, token: str, http: object = None) -> None:
+        self.url = url
+        self.token = token
+
+    async def profile(self) -> object:
+        behaviour = _FakeCapacityClient.behaviour
+        if isinstance(behaviour, Exception):
+            raise behaviour
+        return behaviour
+
+
+def _stub_capacity(
+    monkeypatch: pytest.MonkeyPatch, settings: object, behaviour: object
+) -> None:
+    import src.services.kubernetes_execution as service
+
+    monkeypatch.setattr("src.config.get_settings", lambda: settings)
+    _FakeCapacityClient.behaviour = behaviour
+    monkeypatch.setattr(service, "ExternalCapacityClient", _FakeCapacityClient)
+
+
+async def test_capacity_unconfigured_reports_no_provider(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def _fail(*args: object, **kwargs: object) -> object:
+        raise AssertionError("no provider call without configuration")
+
+    import src.services.kubernetes_execution as service
+
+    monkeypatch.setattr("src.config.get_settings", lambda: _capacity_settings())
+    monkeypatch.setattr(service, "ExternalCapacityClient", _fail)
+
+    page = await router.get_worker_capacity_status(
+        db_session, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.configured is False
+    assert page.endpoint is None
+    assert page.bounds is None
+    assert page.error is None
+    assert page.policy_mismatches == []
+    assert page.workers.ready == 0
+
+
+async def test_capacity_reports_bounds_and_worker_states_when_policy_fits(
+    admin: UserPrincipal, uncommitted: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.models.orm.execution_workers import ExecutionWorker
+    from src.services.kubernetes_execution import KubernetesExecutionService
+
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        _capacity_profile(),
+    )
+    await KubernetesExecutionService(uncommitted).update_policy(
+        {"worker_memory_mib": 4096, "largest_worker_mib": 4096}, updated_by="test"
+    )
+    uncommitted.add_all(
+        [
+            ExecutionWorker(form="external", state="ready", capacity_scope="test-scope"),
+            ExecutionWorker(form="external", state="starting", capacity_scope="test-scope"),
+            ExecutionWorker(form="external", state="ready", capacity_scope="other-scope"),
+            ExecutionWorker(form="job", state="ready", capacity_scope=None),
+        ]
+    )
+    await uncommitted.flush()
+
+    page = await router.get_worker_capacity_status(
+        uncommitted, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.configured is True
+    assert page.endpoint == "https://capacity.example.invalid"
+    assert page.error is None
+    assert page.policy_mismatches == []
+    assert page.bounds is not None
+    assert page.bounds.scope == "test-scope"
+    assert page.bounds.memory_limit_bytes == 4096 * 1024 * 1024
+    assert (page.workers.ready, page.workers.starting) == (1, 1)
+
+
+async def test_capacity_reports_policy_mismatch_without_saving(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        _capacity_profile(),
+    )
+
+    page = await router.get_worker_capacity_status(
+        db_session, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.configured is True
+    assert page.bounds is not None
+    assert page.error is None
+    assert len(page.policy_mismatches) == 1
+    assert "4096" in page.policy_mismatches[0]
+
+
+async def test_capacity_reports_provider_outage_without_raising(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import httpx
+
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        httpx.ConnectError("synthetic outage"),
+    )
+
+    page = await router.get_worker_capacity_status(
+        db_session, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.configured is True
+    assert page.bounds is None
+    assert page.error == "Capacity provider is unreachable"
+
+
+async def test_capacity_reports_invalid_provider_response(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from src.services.worker_pool.external_client import CapacityProtocolError
+
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        CapacityProtocolError("synthetic mismatch"),
+    )
+
+    page = await router.get_worker_capacity_status(
+        db_session, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.error == "Capacity provider response is invalid"
+
+
+async def test_capacity_reports_misconfigured_endpoint(
+    admin: UserPrincipal, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _stub_capacity(
+        monkeypatch,
+        _capacity_settings(
+            worker_capacity_url="https://capacity.example.invalid",
+            worker_capacity_token=_Secret("synthetic-token"),
+        ),
+        ValueError("synthetic misconfiguration"),
+    )
+
+    page = await router.get_worker_capacity_status(
+        db_session, admin,  # type: ignore[arg-type]
+    )
+
+    assert page.configured is True
+    assert page.bounds is None
+    assert page.error == "Capacity provider endpoint is invalid"

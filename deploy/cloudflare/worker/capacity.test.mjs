@@ -1,9 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createCapacityProvider } from "./capacity.mjs";
+import { WORKER_ENTRYPOINT, buildWorkerEnv, createCapacityProvider } from "./capacity.mjs";
 
 const TOKEN = "synthetic-capacity-token-" + "x".repeat(32);
 const SCOPE = "test-scope";
+const NETWORK = JSON.stringify([
+    { hostname: "db.internal", address: "127.0.0.2", port: 5432, url: "wss://gateway.example.invalid/network/db" },
+    { hostname: "cache.internal", address: "127.0.0.3", port: 6379, url: "wss://gateway.example.invalid/network/cache" },
+    { hostname: "s3.internal", address: "127.0.0.4", port: 8333, url: "wss://gateway.example.invalid/network/s3" },
+]);
 
 function setup(overrides = {}) {
     const launched = [];
@@ -18,6 +23,18 @@ function setup(overrides = {}) {
             maxLifetimeSeconds: 21600,
             image: "ghcr.io/example/bifrost-worker-dev@sha256:deadbeef",
             apiOrigin: "https://api.example.invalid",
+            secretKey: "s".repeat(48),
+            environment: "production",
+            databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+            databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+            redisUrl: "redis://cache.internal:6379/0",
+            s3EndpointUrl: "http://s3.internal:8333",
+            s3AccessKey: "synthetic-access",
+            s3SecretKey: "synthetic-secret",
+            s3Bucket: "bifrost-test",
+            s3Region: "us-east-1",
+            workerNetwork: NETWORK,
+            networkToken: "n".repeat(48),
             ...overrides,
         },
         store: new Map(),
@@ -148,12 +165,22 @@ test("start launches once with enrollment identity, then is idempotent", async (
     assert.equal(first.status, 200);
     assert.equal((await first.json()).state, "starting");
     assert.equal(launched.length, 1);
-    assert.deepEqual(launched[0].env, {
-        BIFROST_WORKER_FORM: "external",
-        BIFROST_WORKER_INCARNATION_ID: RESERVATION.worker_id,
-        BIFROST_WORKER_RESOURCE_UID: prepared.resource_uid,
-        BIFROST_API_URL: "https://api.example.invalid",
-    });
+    assert.equal(launched[0].name, `bifrost-${RESERVATION.worker_id}`);
+    assert.deepEqual(launched[0].entrypoint, WORKER_ENTRYPOINT);
+    const env = launched[0].env;
+    assert.equal(env.BIFROST_WORKER_FORM, "external");
+    assert.equal(env.BIFROST_WORKER_INCARNATION_ID, RESERVATION.worker_id);
+    assert.equal(env.BIFROST_WORKER_RESOURCE_UID, prepared.resource_uid);
+    assert.equal(env.BIFROST_API_URL, "https://api.example.invalid");
+    assert.equal(env.BIFROST_SECRET_KEY, "s".repeat(48));
+    assert.equal(env.BIFROST_POOL_WORKER_EXECUTION_LANE, "normal");
+    assert.equal(env.BIFROST_POOL_MAX_LIFETIME_SECONDS, "21600");
+    assert.equal(env.BIFROST_DATABASE_URL, "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost");
+    assert.equal(env.BIFROST_REDIS_URL, "redis://cache.internal:6379/0");
+    assert.equal(env.BIFROST_S3_BUCKET, "bifrost-test");
+    assert.equal(env.HOME, "/home/bifrost");
+    assert.deepEqual(JSON.parse(env.BIFROST_WORKER_NETWORK).map(({ hostname }) => hostname),
+        ["db.internal", "cache.internal", "s3.internal"]);
     const second = await provider.fetch(
         request(`/v1/workers/${RESERVATION.worker_id}/start`, "POST", TOKEN, {
             body: { resource_uid: prepared.resource_uid },
@@ -215,4 +242,117 @@ test("delete writes an idempotent tombstone and never restarts", async () => {
         request(`/v1/workers/${RESERVATION.worker_id}`, "PUT", TOKEN, { body: RESERVATION }),
     );
     assert.equal(reprepare.status, 409);
+});
+
+test("worker env carries the full Normal-workload contract", () => {
+    const env = buildWorkerEnv({
+        apiOrigin: "https://api.example.invalid",
+        secretKey: "s".repeat(48),
+        environment: "production",
+        databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+        databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+        redisUrl: "redis://cache.internal:6379/0",
+        s3EndpointUrl: "http://s3.internal:8333",
+        s3AccessKey: "access",
+        s3SecretKey: "secret",
+        s3Bucket: "bucket",
+        workerNetwork: NETWORK,
+        networkToken: "n".repeat(48),
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123");
+    assert.equal(env.BIFROST_WORKER_FORM, "external");
+    assert.equal(env.BIFROST_POOL_MAX_LIFETIME_SECONDS, "900");
+    assert.equal(env.BIFROST_DATABASE_POOL_SIZE, "1");
+    assert.equal(env.PIP_NO_CACHE_DIR, "1");
+    assert.ok(!("BIFROST_S3_REGION" in env));
+    assert.ok(!("BIFROST_WORKER_CONTROL_HEADERS" in env));
+});
+
+test("worker env rejects a control secret too short to verify hellos", () => {
+    assert.throws(() => buildWorkerEnv({
+        apiOrigin: "https://api.example.invalid",
+        secretKey: "short",
+        environment: "production",
+        databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+        databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+        redisUrl: "redis://cache.internal:6379/0",
+        s3EndpointUrl: "http://s3.internal:8333",
+        s3AccessKey: "access",
+        s3SecretKey: "secret",
+        s3Bucket: "bucket",
+        workerNetwork: NETWORK,
+        networkToken: "n".repeat(48),
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123"), /SECRET_KEY/);
+});
+
+test("worker env rejects dependency hostnames outside the private transport", () => {
+    const base = {
+        apiOrigin: "https://api.example.invalid",
+        secretKey: "s".repeat(48),
+        environment: "production",
+        databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+        redisUrl: "redis://cache.internal:6379/0",
+        s3EndpointUrl: "http://s3.internal:8333",
+        s3AccessKey: "access",
+        s3SecretKey: "secret",
+        s3Bucket: "bucket",
+        workerNetwork: NETWORK,
+        networkToken: "n".repeat(48),
+    };
+    assert.throws(() => buildWorkerEnv({
+        ...base, databaseUrl: "postgresql+asyncpg://worker:secret@unmapped.example:5432/bifrost",
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123"), /NETWORK target/);
+    assert.throws(() => buildWorkerEnv({
+        ...base,
+        databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+        workerNetwork: "not-json",
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123"), /JSON/);
+});
+
+test("worker env allows public HTTPS object storage without a tunnel target", () => {
+    const env = buildWorkerEnv({
+        apiOrigin: "https://api.example.invalid",
+        secretKey: "s".repeat(48),
+        environment: "production",
+        databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+        databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+        redisUrl: "redis://cache.internal:6379/0",
+        s3EndpointUrl: "https://s3.us-east-1.amazonaws.com",
+        s3AccessKey: "access",
+        s3SecretKey: "secret",
+        s3Bucket: "bucket",
+        s3Region: "us-east-1",
+        workerNetwork: NETWORK,
+        networkToken: "n".repeat(48),
+        controlHeaders: JSON.stringify({ "CF-Access-Client-Id": "id" }),
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123");
+    assert.equal(env.BIFROST_S3_ENDPOINT_URL, "https://s3.us-east-1.amazonaws.com");
+    assert.equal(env.BIFROST_S3_REGION, "us-east-1");
+    assert.equal(env.BIFROST_WORKER_CONTROL_HEADERS, JSON.stringify({ "CF-Access-Client-Id": "id" }));
+    assert.throws(() => buildWorkerEnv({
+        apiOrigin: "https://api.example.invalid",
+        secretKey: "s".repeat(48),
+        environment: "production",
+        databaseUrl: "postgresql+asyncpg://worker:secret@db.internal:5432/bifrost",
+        databaseUrlSync: "postgresql://worker:secret@db.internal:5432/bifrost",
+        redisUrl: "redis://cache.internal:6379/0",
+        s3EndpointUrl: "http://s3.us-east-1.amazonaws.com",
+        s3AccessKey: "access",
+        s3SecretKey: "secret",
+        s3Bucket: "bucket",
+        workerNetwork: NETWORK,
+        networkToken: "n".repeat(48),
+    }, { worker_id: RESERVATION.worker_id, max_lifetime_seconds: 900 }, "res-123"), /Private S3/);
+});
+
+test("start fails closed when the worker env is misconfigured", async () => {
+    const { provider, launched } = setup({ secretKey: "short" });
+    const prepared = await prepare(provider);
+    await assert.rejects(provider.fetch(
+        request(`/v1/workers/${RESERVATION.worker_id}/start`, "POST", TOKEN, {
+            body: { resource_uid: prepared.resource_uid },
+        }),
+    ), /SECRET_KEY/);
+    assert.equal(launched.length, 0);
+    const status = await provider.fetch(request(`/v1/workers/${RESERVATION.worker_id}`, "GET"));
+    assert.equal((await status.json()).state, "prepared");
 });

@@ -32,6 +32,33 @@ MAX_WORKERS = "4"
 MAX_LIFETIME_SECONDS = "21600"
 # Canonical API origin this capacity serves. HTTPS only, no path/query/fragment.
 API_ORIGIN = "https://api.example.invalid"
+# Runtime environment stamped into every container. Must be a valid API
+# environment: development, testing, or production.
+ENVIRONMENT = "production"
+# Control secret shared with the API (its BIFROST_SECRET_KEY). The API
+# verifies launcher hellos against its own key: a mismatch means no worker
+# ever enrolls. 32-512 printable ASCII; set via `wrangler secret put`.
+# WORKER_SECRET_KEY = (secret; never commit)
+# Private platform endpoints, reached through WORKER_NETWORK targets below.
+# Every hostname here (database, Redis, private S3) must be covered by a
+# target or the container fails closed at start instead of running degraded.
+DATABASE_URL = "postgresql+asyncpg://CHANGEME@db.internal:5432/bifrost"
+DATABASE_URL_SYNC = "postgresql://CHANGEME@db.internal:5432/bifrost"
+REDIS_URL = "redis://cache.internal:6379/0"
+S3_ENDPOINT_URL = "http://s3.internal:8333"
+S3_ACCESS_KEY = "CHANGEME"
+# S3_SECRET_KEY = (secret; never commit)
+S3_BUCKET = "bifrost"
+# S3_REGION = "us-east-1"  # optional; omit for private S3 without regions
+# Private TCP transport: JSON array of {hostname, address (127.x loopback),
+# port, url (wss://gateway/network/<id>)}. One entry per private hostname
+# above (database, Redis, private S3). No entry may carry credentials.
+WORKER_NETWORK = "CHANGEME"
+# Dedicated bearer for the network gateway (32-256 URL-safe characters).
+# WORKER_NETWORK_TOKEN = (secret; never commit)
+# Optional JSON object of edge-auth headers when the API origin sits behind
+# Cloudflare Access (e.g. {"CF-Access-Client-Id": "...", ...}).
+# WORKER_CONTROL_HEADERS = ""
 
 [observability]
 enabled = true

@@ -63,6 +63,163 @@ function resourceUidFor(workerId) {
     return `res-${workerId.toLowerCase()}`;
 }
 
+// Full container environment a Normal-lane worker needs. The launcher boots
+// both the workflow and agent templates plus requirements setup at startup:
+// without the database, Redis, and storage URLs (reached through the private
+// TCP transport below) the container exits before enrolling, and no work
+// family — workflows, agent runs, summaries, services, or platform jobs —
+// can run. Every dependency hostname must resolve inside the container, so
+// database/Redis hostnames must be covered by an explicit network target;
+// the S3 endpoint may instead be public HTTPS (direct egress, no tunnel).
+const WORKER_ENV_SCHEMES = {
+    BIFROST_DATABASE_URL: ["postgresql+asyncpg:"],
+    BIFROST_DATABASE_URL_SYNC: ["postgresql:", "postgresql+psycopg2:", "postgresql+psycopg:"],
+    BIFROST_REDIS_URL: ["redis:", "rediss:"],
+};
+const LOOPBACK_RE = /^(127\.\d{1,3}\.\d{1,3}\.\d{1,3})$/;
+
+function readNetworkTargets(raw) {
+    let entries = null;
+    try {
+        entries = JSON.parse(raw);
+    } catch {
+        throw new Error("WORKER_NETWORK must be JSON");
+    }
+    if (!Array.isArray(entries) || entries.length < 1 || entries.length > 16) {
+        throw new Error("WORKER_NETWORK must list 1-16 targets");
+    }
+    for (const entry of entries) {
+        if (!entry || typeof entry !== "object" ||
+            typeof entry.hostname !== "string" || entry.hostname.length > 253 ||
+            typeof entry.address !== "string" || !LOOPBACK_RE.test(entry.address) ||
+            !Number.isInteger(entry.port) || entry.port < 1 || entry.port > 65535 ||
+            typeof entry.url !== "string") {
+            throw new Error("Invalid WORKER_NETWORK target");
+        }
+        let url = null;
+        try {
+            url = new URL(entry.url);
+        } catch {
+            throw new Error("Invalid WORKER_NETWORK target");
+        }
+        if (url.protocol !== "wss:" || url.username || url.password || url.search || url.hash) {
+            throw new Error("WORKER_NETWORK target URLs must be credential-free wss://");
+        }
+    }
+    return entries;
+}
+
+function mappedTarget(targets, hostname, port) {
+    return targets.some((target) =>
+        target.hostname.toLowerCase() === hostname.toLowerCase() && target.port === port);
+}
+
+function mappedEndpoint(targets, name, value, schemes, defaultPort) {
+    let endpoint = null;
+    try {
+        endpoint = new URL(value);
+    } catch {
+        throw new Error(`${name} must be a valid URL`);
+    }
+    if (!schemes.includes(endpoint.protocol)) {
+        throw new Error(`${name} must use one of ${schemes.join(" ")}`);
+    }
+    const port = Number(endpoint.port || defaultPort);
+    if (!mappedTarget(targets, endpoint.hostname, port)) {
+        throw new Error(`${name} hostname must be covered by a WORKER_NETWORK target`);
+    }
+    return value;
+}
+
+export function buildWorkerEnv(settings, reservation, resourceUid) {
+    if (typeof settings.secretKey !== "string" || settings.secretKey.length < 32) {
+        throw new Error("WORKER_SECRET_KEY must match the API's control secret (32+ characters)");
+    }
+    const targets = readNetworkTargets(settings.workerNetwork);
+    if (typeof settings.networkToken !== "string" || !/^[A-Za-z0-9_-]{32,256}$/.test(settings.networkToken)) {
+        throw new Error("WORKER_NETWORK_TOKEN must be 32-256 URL-safe characters");
+    }
+    const env = {
+        BIFROST_WORKER_FORM: "external",
+        BIFROST_WORKER_INCARNATION_ID: reservation.worker_id,
+        BIFROST_WORKER_RESOURCE_UID: resourceUid,
+        BIFROST_API_URL: settings.apiOrigin,
+        BIFROST_SECRET_KEY: settings.secretKey,
+        BIFROST_ENVIRONMENT: settings.environment,
+        BIFROST_POOL_WORKER_EXECUTION_LANE: "normal",
+        BIFROST_POOL_MAX_LIFETIME_SECONDS: String(reservation.max_lifetime_seconds),
+        BIFROST_DATABASE_POOL_SIZE: "1",
+        BIFROST_DATABASE_MAX_OVERFLOW: "2",
+        HOME: "/home/bifrost",
+        PIP_NO_CACHE_DIR: "1",
+        BIFROST_WORKER_NETWORK_TOKEN: settings.networkToken,
+        BIFROST_WORKER_NETWORK: JSON.stringify(targets.map(({ hostname, address, port, url }) => ({
+            hostname, address, port, url,
+        }))),
+    };
+    for (const [name, schemes, defaultPort] of [
+        ["BIFROST_DATABASE_URL", WORKER_ENV_SCHEMES.BIFROST_DATABASE_URL, 5432],
+        ["BIFROST_DATABASE_URL_SYNC", WORKER_ENV_SCHEMES.BIFROST_DATABASE_URL_SYNC, 5432],
+        ["BIFROST_REDIS_URL", WORKER_ENV_SCHEMES.BIFROST_REDIS_URL, 6379],
+    ]) {
+        const key = name === "BIFROST_DATABASE_URL" ? "databaseUrl"
+            : name === "BIFROST_DATABASE_URL_SYNC" ? "databaseUrlSync" : "redisUrl";
+        if (typeof settings[key] !== "string" || !settings[key]) {
+            throw new Error(`Explicit ${key} is required for Normal workloads`);
+        }
+        env[name] = mappedEndpoint(targets, name, settings[key], schemes, defaultPort);
+    }
+    for (const [name, key] of [
+        ["BIFROST_S3_ENDPOINT_URL", "s3EndpointUrl"],
+        ["BIFROST_S3_ACCESS_KEY", "s3AccessKey"],
+        ["BIFROST_S3_SECRET_KEY", "s3SecretKey"],
+        ["BIFROST_S3_BUCKET", "s3Bucket"],
+    ]) {
+        if (typeof settings[key] !== "string" || !settings[key]) {
+            throw new Error(`Explicit ${key} is required for Normal workloads`);
+        }
+        env[name] = settings[key];
+    }
+    let s3 = null;
+    try {
+        s3 = new URL(settings.s3EndpointUrl);
+    } catch {
+        throw new Error("BIFROST_S3_ENDPOINT_URL must be a valid URL");
+    }
+    if (!["http:", "https:"].includes(s3.protocol)) {
+        throw new Error("BIFROST_S3_ENDPOINT_URL must be http(s)");
+    }
+    if (s3.protocol === "http:" && !mappedTarget(targets, s3.hostname, Number(s3.port || 80))) {
+        throw new Error("Private S3 endpoints must be covered by a WORKER_NETWORK target");
+    }
+    if (typeof settings.s3Region === "string" && settings.s3Region) {
+        env.BIFROST_S3_REGION = settings.s3Region;
+    }
+    if (settings.controlHeaders !== undefined) {
+        let headers = null;
+        try {
+            headers = JSON.parse(settings.controlHeaders);
+        } catch {
+            throw new Error("WORKER_CONTROL_HEADERS must be JSON");
+        }
+        if (!headers || typeof headers !== "object" || Array.isArray(headers) ||
+            Object.values(headers).some((value) => typeof value !== "string")) {
+            throw new Error("WORKER_CONTROL_HEADERS must be a JSON object of strings");
+        }
+        env.BIFROST_WORKER_CONTROL_HEADERS = JSON.stringify(headers);
+    }
+    return env;
+}
+
+// Containers must boot through the private-transport wrapper so the NSS
+// tunnel entries above resolve before the launcher starts; a bare
+// `python -m src.worker.main` entrypoint leaves every dependency hostname
+// unresolvable. Keep in sync with api/src/worker/network.py `--exec`.
+export const WORKER_ENTRYPOINT = [
+    "/usr/local/bin/python", "-m", "src.worker.network", "--exec",
+    "/entrypoint.sh", "python", "-m", "src.worker.main",
+];
+
 function toResource(record) {
     return {
         scope: record.scope,
@@ -178,12 +335,11 @@ export function createCapacityProvider({ settings, store, runtime }) {
                 await runtime.launchWorker({
                     name: `bifrost-${record.worker_id}`,
                     image: settings.image,
-                    env: {
-                        BIFROST_WORKER_FORM: "external",
-                        BIFROST_WORKER_INCARNATION_ID: record.worker_id,
-                        BIFROST_WORKER_RESOURCE_UID: record.resource_uid,
-                        BIFROST_API_URL: settings.apiOrigin,
-                    },
+                    entrypoint: WORKER_ENTRYPOINT,
+                    env: buildWorkerEnv(settings, {
+                        worker_id: record.worker_id,
+                        max_lifetime_seconds: record.max_lifetime_seconds,
+                    }, record.resource_uid),
                 });
                 record.state = "starting";
             }
@@ -235,6 +391,14 @@ function readSettings(env) {
         return value;
     };
     const apiOrigin = text("API_ORIGIN", /^https:\/\/[^/?#\s]+$/);
+    const optional = (name, pattern) => {
+        const value = env[name];
+        if (value === undefined || value === "") return undefined;
+        if (typeof value !== "string" || value.trim() !== value || !pattern.test(value)) {
+            throw new Error(`Explicit valid ${name} is required`);
+        }
+        return value;
+    };
     return {
         token: text("CAPACITY_TOKEN", /^[!-~]{32,512}$/),
         scope: text("SCOPE", /^[a-zA-Z0-9._:-]{1,128}$/),
@@ -244,6 +408,25 @@ function readSettings(env) {
         maxLifetimeSeconds: integer("MAX_LIFETIME_SECONDS", MIN_LIFETIME_SECONDS, MAX_LIFETIME_SECONDS),
         image: text("WORKER_IMAGE", /^\S+$/),
         apiOrigin,
+        // Normal-workload platform environment (explicit pass-through; the
+        // API never sends these — the operator pins them at deploy time).
+        // WORKER_SECRET_KEY must equal the API's BIFROST_SECRET_KEY or no
+        // launcher hello verifies and nothing enrolls.
+        secretKey: text("WORKER_SECRET_KEY", /^[!-~]{32,512}$/),
+        environment: text("ENVIRONMENT", /^(development|testing|production)$/),
+        databaseUrl: text("DATABASE_URL", /^\S+$/),
+        databaseUrlSync: text("DATABASE_URL_SYNC", /^\S+$/),
+        redisUrl: text("REDIS_URL", /^\S+$/),
+        s3EndpointUrl: text("S3_ENDPOINT_URL", /^\S+$/),
+        s3AccessKey: text("S3_ACCESS_KEY", /^\S+$/),
+        s3SecretKey: text("S3_SECRET_KEY", /^\S+$/),
+        s3Bucket: text("S3_BUCKET", /^\S+$/),
+        s3Region: optional("S3_REGION", /^\S+$/),
+        // JSON array of {hostname, address (127.x), port, url (wss://...)}.
+        workerNetwork: text("WORKER_NETWORK", /^\S[\s\S]*$/),
+        networkToken: text("WORKER_NETWORK_TOKEN", /^[A-Za-z0-9_-]{32,256}$/),
+        // Optional JSON object of edge-auth headers for an Access-fronted API.
+        controlHeaders: optional("WORKER_CONTROL_HEADERS", /^\S[\s\S]*$/),
     };
 }
 

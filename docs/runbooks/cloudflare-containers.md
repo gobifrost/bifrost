@@ -31,9 +31,13 @@ behind the API. The two tracks share nothing but the account.
 
 ```bash
 cd deploy/cloudflare/worker
-npm test  # protocol contract: node --test capacity.test.mjs
-# Pin SCOPE, WORKER_VERSION, WORKER_IMAGE (@sha256), API_ORIGIN in wrangler.toml
+npm test  # protocol contract + worker env: node --test capacity.test.mjs
+# Pin SCOPE, WORKER_VERSION, WORKER_IMAGE (@sha256), API_ORIGIN, ENVIRONMENT,
+# DATABASE_URL[_SYNC], REDIS_URL, S3_*, WORKER_NETWORK in wrangler.toml
 npx wrangler secret put CAPACITY_TOKEN
+npx wrangler secret put WORKER_SECRET_KEY  # == API's BIFROST_SECRET_KEY
+npx wrangler secret put S3_SECRET_KEY
+npx wrangler secret put WORKER_NETWORK_TOKEN
 npx wrangler deploy
 ```
 
@@ -48,9 +52,18 @@ Coordination; Hyperdrive Excluded").
 
 1. The API's canonical pool computes demand and reserves a worker UUID plus
    build version, then `PUT /v1/workers/{uuid}` (prepare, idempotent).
-2. The provider launches one container with `BIFROST_WORKER_FORM=external`,
-   `BIFROST_WORKER_INCARNATION_ID` (reserved UUID), and
-   `BIFROST_WORKER_RESOURCE_UID` (prepared UID), commits the UID, then
+2. The provider launches one container with the full Normal-workload
+   environment (`BIFROST_WORKER_FORM=external`,
+   `BIFROST_WORKER_INCARNATION_ID` (reserved UUID),
+   `BIFROST_WORKER_RESOURCE_UID` (prepared UID), the shared
+   `BIFROST_SECRET_KEY`, database/Redis/S3 URLs, and `BIFROST_WORKER_NETWORK`
+   tunnel entries — see `buildWorkerEnv` in
+   `deploy/cloudflare/worker/capacity.mjs`, which fails the start closed
+   when a dependency hostname is not covered by a network target),
+   booted through the private-transport wrapper entrypoint
+   (`python -m src.worker.network --exec ...`, never a bare
+   `python -m src.worker.main`, so tunnel hostnames resolve before the
+   launcher starts), commits the UID, then
    `POST /v1/workers/{uuid}/start`.
 3. The launcher enrolls over the signed control handshake. Admission requires
    a matching canonical `starting` reservation, the same resource UID, and
@@ -63,12 +76,13 @@ Coordination; Hyperdrive Excluded").
 
 Full protocol: `docs/architecture/external-worker-capacity.md`. Reference
 implementation: `deploy/cloudflare/worker/capacity.mjs` (pure protocol logic
-with injected container runtime; 10 contract tests).
+with injected container runtime; 15 contract tests covering prepare/start/
+delete fencing plus the Normal-workload container environment).
 
 ## Verify
 
 ```bash
-npm test  # idempotent prepare/start/delete, UID fencing, tombstones
+npm test  # idempotent prepare/start/delete, UID fencing, tombstones, worker env
 ```
 
 Live checklist (disposable dev Worker + dev API, bounded window, cleanup
@@ -83,6 +97,13 @@ verified before counting anything):
 
 ## Limits
 
+- **Normal lane only.** A fully-provisioned container runs every Normal-lane
+  workload a Kubernetes worker runs — workflows, agent runs, live and
+  backfill summaries, supervised services, and `local` platform jobs — with
+  demand, admission, claims, and rotation shared through the canonical pool.
+  Fast Path reservations and isolated (`kubernetes`-backend) builds are not
+  servable from external capacity by design; the policy validator rejects
+  them at save time instead of stalling at runtime.
 - **Canonical coordination stays on direct PostgreSQL.** Hyperdrive does not
   support advisory locks or `LISTEN`/`NOTIFY`, so it can never carry admission,
   fencing, or leases; never point canonical pools at it (see

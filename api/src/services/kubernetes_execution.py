@@ -24,6 +24,7 @@ import httpx
 from sqlalchemy import exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models import WorkerCapacityProfile
 from src.jobs.platform.catalog import (
     PlatformJobMetadata,
     get_platform_job_metadata,
@@ -32,11 +33,14 @@ from src.jobs.platform.catalog import (
 from src.jobs.platform.policy import PlatformJobPolicy
 from src.models.contracts.kubernetes import (
     POLICY_BOUNDS,
+    ExternalWorkerStateCounts,
     KubernetesExecutionJobType,
     KubernetesExecutionSettings,
     KubernetesPolicyProvenance,
     KubernetesPolicyValues,
     KubernetesStatus,
+    WorkerCapacityBounds,
+    WorkerCapacityStatus,
 )
 from src.models.orm.config import SystemConfig
 from src.models.orm.work_dispatches import WorkDispatch
@@ -553,6 +557,86 @@ class KubernetesExecutionService:
         from src.services.kubernetes_control import may_manage_jobs
 
         return KubernetesStatus(configured=await may_manage_jobs(get_settings()))
+
+    async def capacity_status(self) -> WorkerCapacityStatus:
+        """Live external-capacity card: provider bounds, policy fit, workers.
+
+        Read-only: it fetches the provider's current capabilities and counts
+        canonical external workers, but changes nothing. An unreachable or
+        nonconforming provider is reported in ``error``, never raised, so the
+        Settings page can show it next to the policy it would reject.
+        """
+        from src.config import get_settings
+        from src.models.orm.execution_workers import ExecutionWorker
+
+        settings = get_settings()
+        url = settings.worker_capacity_url
+        token = settings.worker_capacity_token
+        if not url or not token:
+            states = await self.session.execute(
+                select(ExecutionWorker.state, func.count())
+                .where(ExecutionWorker.form == "external")
+                .group_by(ExecutionWorker.state)
+            )
+            return WorkerCapacityStatus(
+                configured=False,
+                workers=ExternalWorkerStateCounts(
+                    **{state: count for state, count in states.all()
+                       if state in ExternalWorkerStateCounts.model_fields}
+                ),
+            )
+        fetched: WorkerCapacityProfile | None = None
+        error: str | None = None
+        try:
+            async with httpx.AsyncClient() as http:
+                client = ExternalCapacityClient(url, token.get_secret_value(), http=http)
+                fetched = await client.profile()
+        except CapacityProtocolError:
+            error = "Capacity provider response is invalid"
+        except ValueError:
+            error = "Capacity provider endpoint is invalid"
+        except httpx.HTTPError:
+            error = "Capacity provider is unreachable"
+        profile = fetched
+        clauses = [ExecutionWorker.form == "external"]
+        if profile is not None:
+            clauses.append(ExecutionWorker.capacity_scope == profile.scope)
+        states = await self.session.execute(
+            select(ExecutionWorker.state, func.count())
+            .where(*clauses)
+            .group_by(ExecutionWorker.state)
+        )
+        counts = ExternalWorkerStateCounts(
+            **{state: count for state, count in states.all()
+               if state in ExternalWorkerStateCounts.model_fields}
+        )
+        if profile is None:
+            return WorkerCapacityStatus(
+                configured=True, endpoint=url, workers=counts, error=error,
+            )
+        policy = await load_kubernetes_policy(self.session)
+        mismatches: list[str] = []
+        try:
+            validate_external_policy(
+                policy, profile,
+                max_lifetime_seconds=settings.pool_max_lifetime_seconds,
+            )
+        except ValueError as exc:
+            mismatches.append(str(exc))
+        return WorkerCapacityStatus(
+            configured=True,
+            endpoint=url,
+            bounds=WorkerCapacityBounds(
+                protocol_version=profile.protocol_version,
+                scope=profile.scope,
+                worker_version=profile.worker_version,
+                memory_limit_bytes=profile.memory_limit_bytes,
+                max_workers=profile.max_workers,
+                max_lifetime_seconds=profile.max_lifetime_seconds,
+            ),
+            policy_mismatches=mismatches,
+            workers=counts,
+        )
 
 
 async def decide_execution_backend(
