@@ -31,6 +31,7 @@ import {
 	useAuthorizeMapping,
 	useDisconnectMapping,
 	useRefreshMapping,
+	useUpdateIntegration,
 	planOrgConfigSave,
 	type IntegrationTestResponse,
 } from "@/services/integrations";
@@ -57,8 +58,13 @@ import {
 } from "@/components/integrations/IntegrationMappingsTab";
 import { IntegrationTestPanel } from "@/components/integrations/IntegrationTestPanel";
 import { IntegrationDefaultsDialog } from "@/components/integrations/IntegrationDefaultsDialog";
+import {
+	IntegrationSetupNotesContext,
+	IntegrationSetupNotesDialog,
+} from "@/components/integrations/IntegrationSetupNotes";
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
+import { exportEntities } from "@/services/exportImport";
 
 interface MappingFormData {
 	organization_id: string;
@@ -80,9 +86,13 @@ export function IntegrationDetail() {
 			"integrations.readwrite",
 			orgTarget(organizationId),
 		);
+	const canExport = authorization.canAt("integrations.read", GLOBAL_TARGET);
 
 	const [oauthConfigDialogOpen, setOAuthConfigDialogOpen] = useState(false);
 	const [editDialogOpen, setEditDialogOpen] = useState(false);
+	const [notesDialogOpen, setNotesDialogOpen] = useState(false);
+	const [showSetupNotes, setShowSetupNotes] = useState(true);
+	const [isExporting, setIsExporting] = useState(false);
 	const [configDialogOpen, setConfigDialogOpen] = useState(false);
 	const [defaultsDialogOpen, setDefaultsDialogOpen] = useState(false);
 	const [defaultsError, setDefaultsError] = useState<string | null>(null);
@@ -104,6 +114,7 @@ export function IntegrationDetail() {
 		useState<IntegrationTestResponse | null>(null);
 
 	const queryClient = useQueryClient();
+	const updateIntegrationMutation = useUpdateIntegration();
 
 	// Fetch integration details (includes mappings and OAuth config)
 	const {
@@ -780,6 +791,29 @@ export function IntegrationDetail() {
 		setTestDialogOpen(true);
 	};
 
+	const handleSaveNotes = async (notes: string | null) => {
+		if (!integrationId || !canManageDefinitions) return;
+		await updateIntegrationMutation.mutateAsync({
+			params: { path: { integration_id: integrationId } },
+			body: { notes },
+		});
+		setNotesDialogOpen(false);
+		toast.success("Setup instructions saved");
+	};
+
+	const handleExport = async () => {
+		if (!integrationId || !canExport || isExporting) return;
+		setIsExporting(true);
+		try {
+			await exportEntities("integrations", [integrationId]);
+			toast.success("Export downloaded");
+		} catch {
+			toast.error("Export failed");
+		} finally {
+			setIsExporting(false);
+		}
+	};
+
 	const isLoading = isLoadingIntegration || isLoadingOrgs;
 
 	if (isLoading) {
@@ -847,6 +881,11 @@ export function IntegrationDetail() {
 				onEdit={() => {
 					if (canManageDefinitions) setEditDialogOpen(true);
 				}}
+				onExport={() => void handleExport()}
+				canExport={canExport}
+				hasSetupNotes={Boolean(integration.notes)}
+				showSetupNotes={showSetupNotes}
+				onToggleSetupNotes={() => setShowSetupNotes((value) => !value)}
 				canTestConnection={
 					canTestAt(null) || testableOrganizations.length > 0
 				}
@@ -873,6 +912,11 @@ export function IntegrationDetail() {
 						}}
 					/>
 				)}
+				<IntegrationSetupNotesContext
+					notes={showSetupNotes ? integration.notes : null}
+					canEdit={canManageDefinitions && showSetupNotes}
+					onEdit={() => setNotesDialogOpen(true)}
+				>
 				{/* Config Defaults & OAuth Status */}
 				<IntegrationOverview
 					integration={integration}
@@ -1028,6 +1072,7 @@ export function IntegrationDetail() {
 						</Card>
 					</TabsContent>
 				</Tabs>
+				</IntegrationSetupNotesContext>
 			</PageScrollArea>
 
 			{/* OAuth Configuration Dialog (Create) */}
@@ -1036,6 +1081,7 @@ export function IntegrationDetail() {
 					open={oauthConfigDialogOpen}
 					onOpenChange={setOAuthConfigDialogOpen}
 					integrationId={integrationId}
+					notes={integration.notes}
 				/>
 			)}
 
@@ -1046,6 +1092,7 @@ export function IntegrationDetail() {
 					onOpenChange={setEditingOAuthConfig}
 					integrationId={integrationId}
 					editConnectionName={integrationId}
+					notes={integration.notes}
 				/>
 			)}
 
@@ -1056,6 +1103,16 @@ export function IntegrationDetail() {
 					onOpenChange={setEditDialogOpen}
 					editIntegrationId={integrationId}
 					initialData={integration}
+				/>
+			)}
+
+			{canManageDefinitions && (
+				<IntegrationSetupNotesDialog
+					open={notesDialogOpen}
+					onOpenChange={setNotesDialogOpen}
+					notes={integration.notes}
+					onSave={handleSaveNotes}
+					isSaving={updateIntegrationMutation.isPending}
 				/>
 			)}
 
@@ -1070,6 +1127,7 @@ export function IntegrationDetail() {
 						configSchema={integration?.config_schema || []}
 						currentConfig={selectedOrgForConfig.formData.config}
 						onSave={handleSaveOrgConfig}
+						notes={integration?.notes}
 					/>
 				)}
 
@@ -1084,6 +1142,7 @@ export function IntegrationDetail() {
 					onFormValuesChange={setDefaultsFormValues}
 					onSave={handleSaveDefaults}
 					isSaving={updateConfigMutation.isPending}
+					notes={integration?.notes}
 				/>
 			)}
 

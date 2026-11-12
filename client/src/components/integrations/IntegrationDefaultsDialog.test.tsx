@@ -95,6 +95,14 @@ it("keeps Not set distinct from false", () => {
 	});
 	expect(onFormValuesChange).toHaveBeenLastCalledWith({ enabled: "" });
 });
+
+it("does not submit defaults while setup instructions are collapsed", async () => {
+	const { user, onSave } = renderDialog({ notes: "## Prepare credentials" });
+	await user.click(screen.getByRole("button", { name: "Collapse setup instructions" }));
+	expect(onSave).not.toHaveBeenCalled();
+	await user.click(screen.getByRole("button", { name: "Expand setup instructions" }));
+	expect(onSave).not.toHaveBeenCalled();
+});
 it("preserves zero and invalid integer drafts until save validation", () => {
 	const { onFormValuesChange } = renderDialog({
 		configSchema: [{ key: "count", type: "int" }],

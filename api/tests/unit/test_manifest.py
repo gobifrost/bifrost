@@ -3217,3 +3217,25 @@ def test_integration_choice_labels_round_trip():
     restored = ManifestIntegrationConfigSchema.model_validate_json(manifest.model_dump_json())
     assert restored.options == ["eu"]
     assert restored.option_labels == {"eu": "Europe"}
+
+
+def test_integration_notes_round_trip_from_row_through_yaml_to_import_values():
+    from types import SimpleNamespace
+
+    from bifrost.manifest import Manifest, ManifestIntegration, parse_manifest, serialize_manifest
+    from bifrost.manifest_codec import Destination
+
+    notes = "## Setup\n\n1. Create an API key.\n\n[Runbook](https://example.com/runbook)\n"
+    row = SimpleNamespace(
+        id=uuid4(),
+        name="Service Desk",
+        description=None,
+        notes=notes,
+        entity_id=None,
+        entity_id_name=None,
+        default_entity_id=None,
+        list_entities_data_provider_id=None,
+    )
+    manifest = Manifest(integrations={str(row.id): ManifestIntegration.from_row(row)})
+    restored = parse_manifest(serialize_manifest(manifest)).integrations[str(row.id)]
+    assert restored.to_orm_values(Destination.GIT_SYNC).direct["notes"] == notes

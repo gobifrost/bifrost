@@ -95,6 +95,11 @@ class IntegrationCreate(BaseModel):
         max_length=2000,
         description="Optional integration description for admin UI cards",
     )
+    notes: str | None = Field(
+        default=None,
+        max_length=50000,
+        description="Optional Markdown setup notes for configuring this integration",
+    )
     config_schema: list[ConfigSchemaItem] | None = Field(
         default=None,
         description="Optional schema defining available configuration for this integration",
@@ -133,6 +138,11 @@ class IntegrationUpdate(BaseModel):
         default=None,
         max_length=2000,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=50000,
+        description="Optional Markdown setup notes; null explicitly clears saved notes",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,
@@ -306,6 +316,10 @@ class IntegrationResponse(BaseModel):
     description: str | None = Field(
         default=None,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Optional Markdown setup notes for configuring this integration",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,
@@ -484,6 +498,10 @@ class IntegrationDetailResponse(BaseModel):
     description: str | None = Field(
         default=None,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Optional Markdown setup notes for configuring this integration",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,

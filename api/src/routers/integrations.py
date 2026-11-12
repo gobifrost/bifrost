@@ -340,6 +340,7 @@ class IntegrationsRepository:
         integration = Integration(
             name=request.name,
             description=request.description,
+            notes=request.notes,
             entity_id=request.entity_id,
             entity_id_name=request.entity_id_name,
             default_entity_id=request.default_entity_id,
@@ -379,6 +380,8 @@ class IntegrationsRepository:
             integration.name = request.name
         if "description" in request.model_fields_set:
             integration.description = request.description
+        if "notes" in request.model_fields_set:
+            integration.notes = request.notes
         if request.list_entities_data_provider_id is not None:
             integration.list_entities_data_provider_id = (
                 request.list_entities_data_provider_id
@@ -998,6 +1001,7 @@ async def get_integration(
         id=integration.id,
         name=integration.name,
         description=integration.description,
+        notes=integration.notes,
         list_entities_data_provider_id=integration.list_entities_data_provider_id,
         config_schema=config_schema_items,
         config_defaults=config_defaults if config_defaults else None,

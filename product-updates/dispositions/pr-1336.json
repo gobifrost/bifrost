@@ -1,0 +1,14 @@
+{
+  "key": "pr:1336",
+  "classification": "highlight",
+  "entry_ids": [
+    "c39cd66e-5cd9-42b0-81f6-c8860e51e228"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1336",
+      "Native Jack message \u201cSend it.\u201d approves the exact PR and Product Update text presented in the existing Issue #1324 owner thread on November 11, 2026. Earlier \u201cLet\u2019s merge when ready\u201d authorizes protected merge."
+    ]
+  }
+}

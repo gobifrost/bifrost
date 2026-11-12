@@ -358,6 +358,7 @@ async def _build_integrations_export(
         items.append(IntegrationExportItem(
             name=integ.name,
             description=integ.description,
+            notes=integ.notes,
             entity_id=integ.entity_id,
             entity_id_name=integ.entity_id_name,
             default_entity_id=integ.default_entity_id,
@@ -693,6 +694,8 @@ async def import_integrations(
 
                     # Update basic fields
                     existing.description = item.description
+                    if "notes" in item.model_fields_set:
+                        existing.notes = item.notes
                     existing.entity_id = item.entity_id
                     existing.entity_id_name = item.entity_id_name
                     existing.default_entity_id = item.default_entity_id
@@ -714,6 +717,7 @@ async def import_integrations(
                     integ = Integration(
                         name=item.name,
                         description=item.description,
+                        notes=item.notes,
                         entity_id=item.entity_id,
                         entity_id_name=item.entity_id_name,
                         default_entity_id=item.default_entity_id,

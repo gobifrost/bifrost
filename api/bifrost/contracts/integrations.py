@@ -46,6 +46,7 @@ class IntegrationCreate(BaseModel):
 
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    notes: str | None = Field(default=None, max_length=50000)
     config_schema: list[ConfigSchemaItem] | None = Field(default=None)
     entity_id: str | None = Field(default=None, min_length=1, max_length=255)
     entity_id_name: str | None = Field(default=None, max_length=255)
@@ -57,6 +58,7 @@ class IntegrationUpdate(BaseModel):
 
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
+    notes: str | None = Field(default=None, max_length=50000)
     list_entities_data_provider_id: UUID | None = Field(default=None)
     config_schema: list[ConfigSchemaItem] | None = Field(default=None)
     entity_id: str | None = Field(default=None, min_length=1, max_length=255)
