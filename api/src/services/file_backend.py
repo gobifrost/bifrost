@@ -11,10 +11,12 @@ S3 key resolution is delegated to `shared.file_paths.resolve_s3_key`.
 import asyncio
 import os
 from abc import ABC, abstractmethod
+from dataclasses import asdict
 from pathlib import Path
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.file_access import FileServiceError
 from shared.file_paths import resolve_s3_key
 from src.core.paths import TEMP_PATH, UPLOADS_PATH
 from src.services.file_storage import FileStorageService
@@ -175,7 +177,20 @@ class S3Backend(FileBackend):
     async def write(self, path: str, content: bytes, location: Location, updated_by: str = "system", scope: str | None = None) -> None:
         """Write file to S3."""
         if location == "workspace":
-            await self.storage.write_file(path, content, updated_by)
+            result = await self.storage.write_file(path, content, updated_by)
+            if result.pending_deactivations:
+                names = ", ".join(item.name for item in result.pending_deactivations)
+                raise FileServiceError(409, {
+                    "reason": "workflows_would_deactivate",
+                    "path": path,
+                    "message": (
+                        f"File was not written: registered workflows would be deactivated: {names}. "
+                        "Restore the removed functions, explicitly deactivate the affected workflows, "
+                        "or resolve their replacements in the code editor before retrying."
+                    ),
+                    "pending_deactivations": [asdict(item) for item in result.pending_deactivations],
+                    "available_replacements": [asdict(item) for item in (result.available_replacements or [])],
+                })
             return
         s3_path = resolve_s3_key(location, scope, path)
         await self.storage.write_raw_to_s3(s3_path, content)

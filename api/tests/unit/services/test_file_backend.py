@@ -5,6 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from shared.file_access import FileServiceError
+from src.services.file_storage.models import PendingDeactivationInfo, WriteResult
 from src.services.file_backend import LocalBackend, S3Backend
 
 
@@ -32,13 +34,34 @@ class TestS3BackendPathHandling:
     async def test_write_passes_workspace_relative_path(self):
         """write() should pass workspace-relative path, not _repo/ prefixed."""
         backend = self._make_backend()
-        backend.storage.write_file = AsyncMock()
+        backend.storage.write_file = AsyncMock(return_value=WriteResult(None, b"content", False))
 
         await backend.write("workflows/test.py", b"content", "workspace", "user")
 
         backend.storage.write_file.assert_called_once_with(
             "workflows/test.py", b"content", "user"
         )
+
+    @pytest.mark.asyncio
+    async def test_write_reports_pending_workflow_deactivations(self):
+        backend = self._make_backend()
+        pending = PendingDeactivationInfo(
+            id="workflow-id", name="Removed Workflow", function_name="removed",
+            path="workflows/test.py", description=None, decorator_type="workflow",
+            has_executions=False, last_execution_at=None, endpoint_enabled=False,
+            affected_entities=[],
+        )
+        backend.storage.write_file = AsyncMock(return_value=WriteResult(
+            None, b"content", False, pending_deactivations=[pending],
+        ))
+        with pytest.raises(FileServiceError) as caught:
+            await backend.write("workflows/test.py", b"content", "workspace", "user")
+        assert caught.value.status_code == 409
+        detail = caught.value.detail
+        assert detail["reason"] == "workflows_would_deactivate"
+        assert detail["pending_deactivations"][0]["id"] == "workflow-id"
+        assert "Removed Workflow" in detail["message"]
+        assert "explicitly deactivate" in detail["message"]
 
     @pytest.mark.asyncio
     async def test_delete_passes_workspace_relative_path(self):
