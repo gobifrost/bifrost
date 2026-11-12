@@ -141,7 +141,7 @@ async def update_decorator_properties(
 
         # Check ETag for conflict detection
         if request.expected_etag:
-            current_etag = hashlib.md5(content).hexdigest()
+            current_etag = hashlib.sha256(content).hexdigest()
             if current_etag != request.expected_etag:
                 raise HTTPException(
                     status_code=status.HTTP_409_CONFLICT,
@@ -164,7 +164,7 @@ async def update_decorator_properties(
 
         if not result.modified:
             # No changes needed - return current ETag
-            current_etag = hashlib.md5(content).hexdigest()
+            current_etag = hashlib.sha256(content).hexdigest()
             return UpdatePropertiesResponse(
                 modified=False,
                 changes=result.changes,
@@ -179,7 +179,7 @@ async def update_decorator_properties(
             updated_by=user.email,
         )
 
-        new_etag = hashlib.md5(write_result.final_content).hexdigest()
+        new_etag = hashlib.sha256(write_result.final_content).hexdigest()
         logger.info(
             f"Updated decorator properties in {log_safe(request.path)} "
             f"for {log_safe(request.function_name)}: {result.changes}"
