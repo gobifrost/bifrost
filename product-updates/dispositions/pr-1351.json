@@ -1,0 +1,1 @@
+{"category":"hardening","classification":"other","entry_ids":[],"key":"pr:1351","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1351"],"status":"approved"},"summary":"Editor and file ETags now use SHA-256 instead of MD5 for change detection."}
