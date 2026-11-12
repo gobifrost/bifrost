@@ -10,6 +10,8 @@ export type KubernetesPolicyValues =
 	components["schemas"]["KubernetesPolicyValues"];
 export type KubernetesPolicyUpdate =
 	components["schemas"]["KubernetesPolicyUpdate"];
+export type WorkerCapacityStatus =
+	components["schemas"]["WorkerCapacityStatus"];
 
 /** A refused request; `field` names the setting a validation error is about. */
 export class KubernetesRequestError extends Error {
@@ -55,6 +57,11 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 export function getKubernetesStatus(): Promise<KubernetesStatus> {
 	return request("/api/admin/kubernetes/status");
+}
+
+/** Live external capacity bounds, policy fit, and worker states. */
+export function getWorkerCapacityStatus(): Promise<WorkerCapacityStatus> {
+	return request("/api/admin/kubernetes/capacity");
 }
 
 export function getKubernetesExecution(): Promise<KubernetesExecutionSettings> {

@@ -14,17 +14,20 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsToggleRow } from "@/components/shared/SettingsToggleRow";
 import { SettingsLoadError } from "@/components/shared/SettingsLoadError";
+import { WorkerCapacityCard } from "./WorkerCapacityCard";
 import { formatDateShort } from "@/lib/utils";
 import {
 	KubernetesRequestError,
 	getKubernetesStatus,
 	getKubernetesExecution,
+	getWorkerCapacityStatus,
 	updateKubernetesExecution,
 	updateKubernetesPolicy,
 	type KubernetesExecutionJobType,
 	type KubernetesExecutionSettings,
 	type KubernetesPolicyUpdate,
 	type KubernetesPolicyValues,
+	type WorkerCapacityStatus,
 } from "@/services/kubernetes";
 
 type ScalingField =
@@ -320,6 +323,11 @@ export function KubernetesSettings() {
 	>({});
 	const [scalingError, setScalingError] = useState<string | null>(null);
 	const [podsError, setPodsError] = useState<string | null>(null);
+	const [capacity, setCapacity] = useState<WorkerCapacityStatus | null>(
+		null,
+	);
+	const [capacityLoading, setCapacityLoading] = useState(true);
+	const [capacityFailed, setCapacityFailed] = useState(false);
 	// Fields the admin changed and has not saved. Every other draft follows
 	// the server, so a save never sends a value another admin replaced.
 	const [edited, setEdited] = useState<ReadonlySet<DraftField>>(
@@ -328,13 +336,20 @@ export function KubernetesSettings() {
 
 	useEffect(() => {
 		let active = true;
-		Promise.all([getKubernetesExecution(), getKubernetesStatus()])
-			.then(([loaded, status]) => {
+		Promise.all([
+			getKubernetesExecution(),
+			getKubernetesStatus(),
+			getWorkerCapacityStatus().catch(() => null),
+		])
+			.then(([loaded, status, capacityLoaded]) => {
 				if (!active) return;
 				setKubernetesAvailable(status.configured);
 				setSettings(loaded);
 				setDraft(scalingDraft(loaded.policy));
 				setPodsDraft(String(loaded.policy.max_isolated_pods));
+				setCapacity(capacityLoaded);
+				setCapacityFailed(capacityLoaded === null);
+				setCapacityLoading(false);
 			})
 			.catch(() => {
 				if (active) setLoadError(true);
@@ -343,6 +358,15 @@ export function KubernetesSettings() {
 			active = false;
 		};
 	}, [loadAttempt]);
+
+	const reloadCapacity = () => {
+		setCapacityLoading(true);
+		setCapacityFailed(false);
+		getWorkerCapacityStatus()
+			.then(setCapacity)
+			.catch(() => setCapacityFailed(true))
+			.finally(() => setCapacityLoading(false));
+	};
 
 	const loading = settings === null && !loadError;
 	const busy = loading || saving !== null || loadError;
@@ -423,6 +447,36 @@ export function KubernetesSettings() {
 			const value = parseWholeNumber(draft[name]);
 			if (value === null) errors[name] = "Enter a whole number.";
 			else changes[name] = value;
+		}
+		const bounds =
+			capacity?.configured && !capacity.error ? capacity.bounds : null;
+		if (bounds) {
+			const providerMib = bounds.memory_limit_bytes / (1024 * 1024);
+			if (
+				changes.worker_memory_mib !== undefined &&
+				changes.worker_memory_mib !== providerMib
+			) {
+				errors.worker_memory_mib = `Must be ${providerMib} MiB to match the provider.`;
+			}
+			if (
+				changes.largest_worker_mib !== undefined &&
+				changes.largest_worker_mib !== providerMib
+			) {
+				errors.largest_worker_mib = `Must be ${providerMib} MiB to match the provider.`;
+			}
+			if (
+				changes.max_workers !== undefined &&
+				changes.max_workers > bounds.max_workers
+			) {
+				errors.max_workers = `Must fit the provider's max of ${bounds.max_workers}.`;
+			}
+			if (
+				changes.reserved_fast_path_workers !== undefined &&
+				changes.reserved_fast_path_workers > 0
+			) {
+				errors.reserved_fast_path_workers =
+					"External capacity does not support Fast Path reservations.";
+			}
 		}
 		setScalingErrors(errors);
 		return Object.keys(errors).length > 0 ? null : changes;
@@ -592,6 +646,13 @@ export function KubernetesSettings() {
 				</p>
 			)}
 
+			<WorkerCapacityCard
+				capacity={capacity}
+				loading={capacityLoading}
+				loadFailed={capacityFailed}
+				onRetry={reloadCapacity}
+			/>
+
 			<Card>
 				<CardHeader>
 					<div className="flex items-center gap-2">
@@ -601,6 +662,18 @@ export function KubernetesSettings() {
 					<CardDescription>
 						Workers start as work arrives and stop when idle, within
 						these limits.
+						{capacity?.configured && capacity.bounds && (
+							<>
+								{" "}
+								External capacity is active: Worker Memory and
+								Largest Worker must both equal{" "}
+								{capacity.bounds.memory_limit_bytes /
+									(1024 * 1024)}{" "}
+								MiB, Max Workers must fit{" "}
+								{capacity.bounds.max_workers}, and Fast Path
+								reservations are unavailable.
+							</>
+						)}
 					</CardDescription>
 				</CardHeader>
 				<CardContent className="space-y-6">
