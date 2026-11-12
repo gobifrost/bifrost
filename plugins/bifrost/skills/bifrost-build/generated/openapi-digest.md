@@ -26,6 +26,7 @@
 | DELETE | `/api/admin/ai/profiles/{profile_id}` |
 | PATCH | `/api/admin/ai/profiles/{profile_id}` |
 | POST | `/api/admin/ai/profiles/{profile_id}/verify` |
+| GET | `/api/admin/kubernetes/capacity` |
 | GET | `/api/admin/kubernetes/execution` |
 | PUT | `/api/admin/kubernetes/execution` |
 | PUT | `/api/admin/kubernetes/policy` |
