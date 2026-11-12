@@ -415,6 +415,7 @@ def test_sdk_client_opencode_go_headers_follow_the_linked_catalog_provider() -> 
     )
 
     settings = client._model_settings(max_tokens=64)
+    assert "extra_headers" in settings
     headers = cast(dict[str, str], settings["extra_headers"])
 
     assert headers["x-opencode-session"] == "sdk-conversation"
