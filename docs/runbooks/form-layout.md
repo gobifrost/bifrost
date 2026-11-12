@@ -86,3 +86,11 @@ An entry without a section title or description is ungrouped form-level content.
 The `field` placement is a standalone field; `columns` denotes an explicit Row.
 No section or Row component is implied for a standalone field. Layout is still
 optional, so saving metadata on a fields-only form does not convert its schema.
+
+## CLI and MCP
+
+The CLI accepts the complete schema through `--form-schema` JSON. MCP form
+create/update tools accept `fields` plus an optional `layout` object using the
+same structure above. Updating layout requires the complete field list. Replacing
+fields without layout returns the form to a vertical layout; metadata-only
+updates leave the saved schema untouched.

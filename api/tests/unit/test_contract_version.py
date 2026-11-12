@@ -430,7 +430,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    "b12d28dd7e60b35fa243601a7bc12f12f91e63c2afb32bdda1d31888597481df"
+    "a9f0eff489bf67b1df1e78ed9ac1b33f82efdfaa792e6beee42c2bb6b8f2897a"
 )
 
 
