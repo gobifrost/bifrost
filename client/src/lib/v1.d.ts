@@ -31546,6 +31546,34 @@ export interface components {
             max_lifetime_seconds: number;
         };
         /**
+         * WorkerCapacityLastPass
+         * @description The last completed external reconcile pass known to this API.
+         */
+        WorkerCapacityLastPass: {
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Ok
+             * @default false
+             */
+            ok: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * WorkerCapacityRecentLoss
+         * @description Terminal external workers fenced recently, grouped by end reason.
+         */
+        WorkerCapacityRecentLoss: {
+            /** Reason */
+            reason: string;
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+        };
+        /**
          * WorkerCapacityStatus
          * @description Everything Settings needs for the external capacity card.
          */
@@ -31560,6 +31588,9 @@ export interface components {
             /** Policy Mismatches */
             policy_mismatches?: string[];
             workers?: components["schemas"]["ExternalWorkerStateCounts"];
+            last_pass?: components["schemas"]["WorkerCapacityLastPass"];
+            /** Recent Losses */
+            recent_losses?: components["schemas"]["WorkerCapacityRecentLoss"][];
         };
         /**
          * WorkerMetricPoint

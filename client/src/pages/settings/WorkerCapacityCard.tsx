@@ -21,6 +21,16 @@ function formatLifetime(seconds: number): string {
 	return `${seconds} seconds`;
 }
 
+function timeAgo(iso: string): string {
+	const seconds = Math.max(
+		0,
+		Math.floor((Date.now() - new Date(iso).getTime()) / 1000),
+	);
+	if (seconds < 60) return "just now";
+	if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+	return `${Math.floor(seconds / 3600)}h ago`;
+}
+
 function WorkerCounts({ workers }: { workers: WorkerCapacityStatus["workers"] }) {
 	const counts: {
 		ready?: number;
@@ -201,6 +211,33 @@ export function WorkerCapacityCard({
 				{!loading && !loadFailed && capacity?.configured && (
 					<WorkerCounts workers={capacity.workers} />
 				)}
+				{!loading &&
+					!loadFailed &&
+					capacity?.configured &&
+					capacity.last_pass?.finished_at && (
+						<p role="status" className="text-sm text-muted-foreground">
+							{capacity.last_pass.ok
+								? `Last reconcile ${timeAgo(capacity.last_pass.finished_at)} — healthy.`
+								: `Last reconcile failed ${timeAgo(capacity.last_pass.finished_at)}: ${capacity.last_pass.error ?? "unknown error"}`}
+						</p>
+					)}
+				{!loading &&
+					!loadFailed &&
+					capacity?.configured &&
+					(capacity.recent_losses ?? []).length > 0 && (
+						<div className="text-sm">
+							<p className="text-muted-foreground">
+								Recent fencing (last 24 hours):
+							</p>
+							<ul className="list-disc space-y-1 pl-5 tabular-nums">
+								{capacity.recent_losses?.map((loss) => (
+									<li key={loss.reason}>
+										{loss.reason} × {loss.count}
+									</li>
+								))}
+							</ul>
+						</div>
+					)}
 			</CardContent>
 		</Card>
 	);

@@ -34,6 +34,60 @@ from src.services.work_dispatch import (
 
 logger = logging.getLogger(__name__)
 
+RECONCILE_STATE_CATEGORY = "worker_capacity"
+RECONCILE_STATE_KEY = "external_reconcile_state"
+#: At most one status write per interval; errors always win over the throttle
+#: when the outcome changes, so a fresh failure is never hidden behind it.
+RECONCILE_STATE_MIN_INTERVAL_SECONDS = 30.0
+
+
+async def record_external_reconcile_state(
+    *, ok: bool, error: str | None, scope: str | None,
+) -> None:
+    """Persist the last external reconcile pass outcome for the status card.
+
+    A single global row: last-writer-wins across API replicas is fine for a
+    display signal. Failures must never break the loop that reports them.
+    """
+    from src.models.orm.config import SystemConfig
+
+    try:
+        async with get_db_context() as db:
+            row = await db.scalar(select(SystemConfig).where(
+                SystemConfig.category == RECONCILE_STATE_CATEGORY,
+                SystemConfig.key == RECONCILE_STATE_KEY,
+                SystemConfig.organization_id.is_(None),
+            ))
+            payload = {
+                "finished_at": _now().isoformat(),
+                "ok": ok,
+                "error": error,
+                "scope": scope,
+            }
+            if row is None:
+                db.add(SystemConfig(
+                    category=RECONCILE_STATE_CATEGORY,
+                    key=RECONCILE_STATE_KEY,
+                    value_json=payload,
+                    organization_id=None,
+                    created_by="external-worker-pool",
+                    updated_by="external-worker-pool",
+                ))
+            else:
+                row.value_json = payload
+                row.updated_by = "external-worker-pool"
+            await db.commit()
+    except Exception:
+        logger.exception("External reconcile state could not be recorded")
+
+
+def _reconcile_error_message(exc: BaseException) -> str:
+    if isinstance(exc, CapacityProtocolError):
+        return "Capacity provider response is invalid"
+    if isinstance(exc, httpx.HTTPError):
+        return "Capacity provider is unreachable"
+    return f"{type(exc).__name__}: {str(exc)[:200]}"
+
 
 class ExternalWorkerPoolController(WorkerCapacityController):
     def __init__(self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile) -> None:
@@ -210,6 +264,8 @@ async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Setting
             settings.worker_capacity_url, settings.worker_capacity_token.get_secret_value(), http=http,
         )
         controller: ExternalWorkerPoolController | None = None
+        last_reported: tuple[bool, str | None, str | None] | None = None
+        last_reported_at = 0.0
         wake = asyncio.Event()
         listener = asyncio.create_task(
             listen_for_pool_wake(
@@ -224,15 +280,28 @@ async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Setting
         try:
             while not stop_event.is_set():
                 started = time.monotonic()
+                outcome: tuple[bool, str | None, str | None] | None = None
                 try:
                     if controller is None:
                         controller = ExternalWorkerPoolController(client, settings, await client.profile())
                     if await controller.reachability.check():
                         await controller.reconcile()
+                        outcome = (True, None, controller.profile.scope)
                 except asyncio.CancelledError:
                     raise
-                except Exception:
+                except Exception as exc:
                     logger.exception("External worker capacity reconciliation failed")
+                    scope = controller.profile.scope if controller is not None else None
+                    outcome = (False, _reconcile_error_message(exc), scope)
+                if outcome is not None:
+                    now = time.monotonic()
+                    if (
+                        outcome != last_reported
+                        or now - last_reported_at >= RECONCILE_STATE_MIN_INTERVAL_SECONDS
+                    ):
+                        ok, error, scope = outcome
+                        await record_external_reconcile_state(ok=ok, error=error, scope=scope)
+                        last_reported, last_reported_at = outcome, now
                 await wait_for_next_pass(
                     stop_event, wake, since=started, spacing=RECONCILE_SECONDS, sweep=SWEEP_SECONDS,
                 )

@@ -45,6 +45,21 @@ class ExternalWorkerStateCounts(BaseModel):
     retired: int = 0
 
 
+class WorkerCapacityLastPass(BaseModel):
+    """The last completed external reconcile pass known to this API."""
+
+    finished_at: datetime | None = None
+    ok: bool = False
+    error: str | None = None
+
+
+class WorkerCapacityRecentLoss(BaseModel):
+    """Terminal external workers fenced recently, grouped by end reason."""
+
+    reason: str
+    count: int = 0
+
+
 class WorkerCapacityStatus(BaseModel):
     """Everything Settings needs for the external capacity card."""
 
@@ -54,6 +69,8 @@ class WorkerCapacityStatus(BaseModel):
     error: str | None = None
     policy_mismatches: list[str] = Field(default_factory=list)
     workers: ExternalWorkerStateCounts = Field(default_factory=ExternalWorkerStateCounts)
+    last_pass: WorkerCapacityLastPass = Field(default_factory=WorkerCapacityLastPass)
+    recent_losses: list[WorkerCapacityRecentLoss] = Field(default_factory=list)
 
 
 class KubernetesExecutionJobType(BaseModel):

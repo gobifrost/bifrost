@@ -113,4 +113,59 @@ describe("WorkerCapacityCard", () => {
 		await user.click(screen.getByRole("button", { name: "Retry" }));
 		expect(onRetry).toHaveBeenCalledTimes(1);
 	});
+
+	it("shows the last reconcile result and recent fencing", () => {
+		render(
+			<WorkerCapacityCard
+				capacity={{
+					...configured,
+					last_pass: {
+						finished_at: new Date(
+							Date.now() - 90 * 1000,
+						).toISOString(),
+						ok: false,
+						error: "Capacity provider is unreachable",
+					},
+					recent_losses: [
+						{ reason: "provider_resource_stopped", count: 3 },
+					],
+				}}
+				loading={false}
+				loadFailed={false}
+				onRetry={() => {}}
+			/>,
+		);
+		expect(
+			screen.getByText(
+				/Last reconcile failed 1m ago: Capacity provider is unreachable/,
+			),
+		).toBeVisible();
+		expect(
+			screen.getByText(/provider_resource_stopped.*× 3/),
+		).toBeVisible();
+	});
+
+	it("shows a healthy last reconcile", () => {
+		render(
+			<WorkerCapacityCard
+				capacity={{
+					...configured,
+					last_pass: {
+						finished_at: new Date(
+							Date.now() - 20 * 1000,
+						).toISOString(),
+						ok: true,
+						error: null,
+					},
+					recent_losses: [],
+				}}
+				loading={false}
+				loadFailed={false}
+				onRetry={() => {}}
+			/>,
+		);
+		expect(
+			screen.getByText(/Last reconcile just now.+healthy/),
+		).toBeVisible();
+	});
 });
