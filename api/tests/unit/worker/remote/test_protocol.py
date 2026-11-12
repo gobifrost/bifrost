@@ -223,3 +223,16 @@ def test_large_logical_message_round_trips_in_bounded_ordered_frames() -> None:
             "result": {"metadata": {"created_at": str(created_at)}},
         },
     )
+
+
+@pytest.mark.parametrize("padding", [0, MAX_FRAME_BYTES * 2])
+def test_mixed_keys_follow_json_contract_in_small_and_fragmented_results(padding: int) -> None:
+    payload = {"result": {"variables": {"ids": {None: 1, "abc": 2, 7: 3}},
+                          "output": {"ok": True}, "padding": "x" * padding}}
+    envelope = ControlEnvelope(session_generation=2, sequence=4, kind="event", payload=payload)
+    assembler = FragmentAssembler()
+    received = None
+    for frame in fragment(envelope):
+        received = assembler.feed(ControlEnvelope.from_json(frame.to_json()))
+    assert received is not None
+    assert received.payload == json.loads(json.dumps(payload))
