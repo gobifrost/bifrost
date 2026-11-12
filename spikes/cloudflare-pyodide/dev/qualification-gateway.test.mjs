@@ -10,6 +10,9 @@ test('SDK bridge rejects missing, expired and unrelated capabilities before netw
   assert.equal(allowedSdkPath('/api/sdk/modules/x.py'), true);
   assert.equal(allowedSdkPath('/api/tables/x'), true);
   assert.equal(allowedSdkPath('/api/sdk-other'), false);
+  assert.equal(allowedSdkPath('/api/agent-runs/enqueue'), true);
+  assert.equal(allowedSdkPath('/api/agent-runs/0192dead-beef'), true);
+  assert.equal(allowedSdkPath('/api/agent-runs-other'), false);
 });
 test('SDK bridge preserves run authorization and never follows an origin redirect', async () => {
   const previous = globalThis.fetch;

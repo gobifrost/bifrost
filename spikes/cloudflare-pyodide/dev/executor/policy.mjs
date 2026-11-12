@@ -2,7 +2,9 @@ export function apiTarget(url, origin) {
   const incoming = new URL(url);
   if (incoming.origin !== 'https://test-api.invalid' ||
       !(incoming.pathname.startsWith('/api/sdk/') || incoming.pathname === '/api/tables' ||
-        incoming.pathname.startsWith('/api/tables/') || incoming.pathname === '/auth/refresh')) {
+        incoming.pathname.startsWith('/api/tables/') || incoming.pathname === '/auth/refresh' ||
+        incoming.pathname === '/api/agent-runs/enqueue' ||
+        incoming.pathname.startsWith('/api/agent-runs/'))) {
     throw new TypeError('API capability denied');
   }
   const target = new URL(origin);

@@ -19,9 +19,15 @@ test('invalid trusted metadata is rejected before runtime construction', () => {
     assert.throws(() => attemptPayload({}, url), TypeError);
   }
 });
+test('agent run control plane rides the same authenticated bridge', () => {
+  assert.equal(apiTarget('https://test-api.invalid/api/agent-runs/enqueue', 'https://dev.invalid').href,
+    'https://dev.invalid/api/agent-runs/enqueue');
+  assert.equal(apiTarget('https://test-api.invalid/api/agent-runs/0192dead-beef', 'https://dev.invalid').href,
+    'https://dev.invalid/api/agent-runs/0192dead-beef');
+});
 test('external fetch, control endpoints and origin ambiguity are rejected before effects', () => {
   for (const url of ['https://other.invalid/api/sdk/config/get', 'https://test-api.invalid/auth/login',
-    'https://test-api.invalid/api/workflows', 'https://test-api.invalid/api/tables-admin']) {
+    'https://test-api.invalid/api/workflows', 'https://test-api.invalid/api/tables-admin', 'https://test-api.invalid/api/agent-runs-other']) {
     assert.throws(() => apiTarget(url, 'https://dev.invalid'));
   }
   for (const origin of ['http://dev.invalid', 'https://user:password@dev.invalid', 'https://dev.invalid/path', 'https://dev.invalid?x=1']) {

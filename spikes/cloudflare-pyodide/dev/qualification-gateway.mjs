@@ -1,7 +1,10 @@
 // Temporary SDK-only origin bridge. No business scheduling or public UI.
+// Agent run control plane (enqueue + run readback) rides the same authenticated
+// bridge; agent execution itself stays wherever the dispatcher places it.
 export function allowedSdkPath(path) {
   return path.startsWith('/api/sdk/') || path === '/api/tables' ||
-    path.startsWith('/api/tables/') || path === '/auth/refresh';
+    path.startsWith('/api/tables/') || path === '/auth/refresh' ||
+    path === '/api/agent-runs/enqueue' || path.startsWith('/api/agent-runs/');
 }
 export default {
   async fetch(request, env) {
