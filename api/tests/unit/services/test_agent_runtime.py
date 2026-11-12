@@ -402,6 +402,27 @@ def test_opencode_go_headers_follow_the_linked_catalog_provider() -> None:
     assert "openai_store" not in settings
 
 
+def test_sdk_client_opencode_go_headers_follow_the_linked_catalog_provider() -> None:
+    client = PydanticAIClient(
+        LLMConfig(
+            provider="openai",
+            model="glm-5.3",
+            api_key="test-key",
+            endpoint="https://gateway.internal.example/v1",
+            catalog_provider_id="opencode-go",
+        ),
+        session_id="sdk-conversation",
+    )
+
+    settings = client._model_settings(max_tokens=64)
+    headers = cast(dict[str, str], settings["extra_headers"])
+
+    assert headers["x-opencode-session"] == "sdk-conversation"
+    assert headers["User-Agent"].startswith("Bifrost/")
+    assert "openai_store" not in settings
+    assert client.provider_name == "opencode_go"
+
+
 def test_create_agent_model_uses_chat_completions_for_opencode_go() -> None:
     from pydantic_ai.models.openai import OpenAIChatModel
 
