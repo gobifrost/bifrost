@@ -26,6 +26,7 @@ export interface CanvasTarget {
 	section: number;
 	row: number;
 	column?: number;
+	standalone?: boolean;
 }
 export const formLayoutWidthClass: Record<number, string> = {
 	3: "col-span-12 md:col-span-3",
@@ -63,16 +64,24 @@ export function normalizeFormLayout(
 		})),
 	};
 }
+export function isNamedSection(section: FormLayoutSection): boolean {
+	return section.title != null || section.description != null;
+}
+export function rootCanvasTarget(layout: FormLayout): CanvasTarget {
+	const last = layout.sections.at(-1);
+	return last && !isNamedSection(last)
+		? { section: layout.sections.length - 1, row: last.rows.length }
+		: { section: layout.sections.length, row: 0 };
+}
+export function rowPlacements(
+	row: FormLayoutRow,
+): Array<{ field?: string | null }> {
+	return row.field ? [row] : row.columns;
+}
 export function createVerticalLayout(fields: FormField[]): FormLayout {
 	return {
 		sections: fields.length
-			? [
-					{
-						rows: fields.map((f) => ({
-							columns: [{ field: f.name, width: 12 }],
-						})),
-					},
-				]
+			? [{ rows: fields.map((f) => ({ field: f.name, columns: [] })) }]
 			: [],
 	};
 }
@@ -90,8 +99,7 @@ export function placeCanvasField(
 	const section = next.sections[target.section]!;
 	if (target.column !== undefined)
 		section.rows[target.row]!.columns[target.column]!.field = field;
-	else
-		section.rows.splice(target.row, 0, { columns: [{ field, width: 12 }] });
+	else section.rows.splice(target.row, 0, { field, columns: [] });
 	return next;
 }
 export function moveCanvasField(
@@ -100,25 +108,31 @@ export function moveCanvasField(
 	target: CanvasTarget,
 ): FormLayout {
 	const next = structuredClone(layout);
-	let source: FormLayoutColumn | undefined;
+	let source: { field?: string | null } | undefined;
 	for (const s of next.sections)
 		for (const r of s.rows)
-			for (const c of r.columns) if (c.field === field) source = c;
+			for (const c of rowPlacements(r)) if (c.field === field) source = c;
 	if (!source) return layout;
-	if (target.column !== undefined) {
-		const destination =
-			next.sections[target.section]!.rows[target.row]!.columns[
-				target.column
-			]!;
+	if (target.column !== undefined || target.standalone) {
+		const destination = target.standalone
+			? next.sections[target.section]!.rows[target.row]!
+			: next.sections[target.section]!.rows[target.row]!.columns[
+					target.column!
+				]!;
 		source.field = destination.field ?? null;
 		destination.field = field;
 	} else {
 		source.field = null;
 		if (!next.sections[target.section]) next.sections.push({ rows: [] });
 		next.sections[target.section]!.rows.splice(target.row, 0, {
-			columns: [{ field, width: 12 }],
+			field,
+			columns: [],
 		});
 	}
+	for (const section of next.sections)
+		section.rows = section.rows.filter(
+			(r) => r !== source || Boolean(r.field),
+		);
 	return next;
 }
 export function resizeCanvasRow(
@@ -145,6 +159,7 @@ export function moveCanvasRow(
 	const next = structuredClone(layout);
 	const [row] = next.sections[source.section]!.rows.splice(source.row, 1);
 	if (!row) return layout;
+	if (!next.sections[target.section]) next.sections.push({ rows: [] });
 	const index =
 		source.section === target.section && source.row < target.row
 			? target.row - 1
@@ -181,20 +196,29 @@ export function synchronizeFormLayout(
 			: new Map<string, string>();
 	const placed = new Set<string>();
 	const next = structuredClone(layout);
-	for (const section of next.sections)
+	for (const section of next.sections) {
+		section.rows = section.rows.filter(
+			(row) =>
+				!row.field || names.has(rename.get(row.field) ?? row.field),
+		);
 		for (const row of section.rows)
-			for (const column of row.columns) {
+			for (const column of rowPlacements(row)) {
 				if (!column.field) continue;
 				const name = rename.get(column.field) ?? column.field;
 				column.field =
 					names.has(name) && !placed.has(name) ? name : null;
 				if (column.field) placed.add(column.field);
 			}
-	if (!next.sections.length) next.sections.push({ rows: [] });
+	}
 	for (const field of fields)
-		if (!placed.has(field.name))
-			next.sections[0]!.rows.push({
-				columns: [{ field: field.name, width: 12 }],
+		if (!placed.has(field.name)) {
+			const target = rootCanvasTarget(next);
+			if (!next.sections[target.section])
+				next.sections.push({ rows: [] });
+			next.sections[target.section]!.rows.push({
+				field: field.name,
+				columns: [],
 			});
+		}
 	return next;
 }

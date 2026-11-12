@@ -107,10 +107,12 @@ form_schema:
       - columns:
         - field: first_name
           width: 4
-        - field: last_name
+        - field: null
           width: 4
         - field: null
           width: 4
+    - rows:
+      - field: last_name
 """
         indexer = FormIndexer(db_session)
         await indexer.index_form("forms/layout.form.yaml", form_yaml.encode())
@@ -123,12 +125,12 @@ form_schema:
             "sections": [{
                 "title": "Contact",
                 "description": None,
-                "rows": [{"columns": [
+                "rows": [{"field": None, "columns": [
                     {"field": "first_name", "width": 4},
-                    {"field": "last_name", "width": 4},
+                    {"field": None, "width": 4},
                     {"field": None, "width": 4},
                 ]}],
-            }],
+            }, {"title": None, "description": None, "rows": [{"field": "last_name", "columns": []}]}],
         }
 
     async def test_invalid_schema_preserves_existing_form_and_fields(

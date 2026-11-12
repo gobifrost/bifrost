@@ -7,6 +7,11 @@ drag fields directly into its column slots. Dropping a field opens the existing
 field configuration dialog; saving places it in that slot, and cancelling leaves
 the slot empty. Existing fields can move between slots, rows, and sections.
 
+The bottom canvas dropzone always adds at form level, outside named sections.
+A standalone field has no Row controls; only adding a Row creates a Row component.
+Inside an empty dropzone the editor highlights the destination; between items it
+shows an insertion line.
+
 Rows offer one, two, three, or four equal columns, plus two-column width ratios.
 A preset cannot remove occupied columns. Each column can hold one field; empty
 slots are stored as `field: null` so the structure survives saving. Preview and
@@ -49,6 +54,9 @@ form_schema:
     - name: email
       type: email
       label: Email
+    - name: notes
+      type: textarea
+      label: Notes
   layout:
     sections:
       - title: Contact Details
@@ -64,6 +72,8 @@ form_schema:
                 width: 6
               - field: null
                 width: 6
+      - rows:
+          - field: notes
 ```
 
 The second row remains available for editing after a save/reload, but is omitted
@@ -71,3 +81,8 @@ from respondent forms until it contains a visible field.
 
 The API validates layout references and widths. Empty rows and sections are
 allowed for authoring; a saved layout must still place every defined field.
+
+An entry without a section title or description is ungrouped form-level content.
+The `field` placement is a standalone field; `columns` denotes an explicit Row.
+No section or Row component is implied for a standalone field. Layout is still
+optional, so saving metadata on a fields-only form does not convert its schema.

@@ -699,10 +699,10 @@ async def seed_solution_form(db: AsyncSession, sol: Solution) -> tuple[str, str]
                 "title": "Details",
                 "rows": [{"columns": [
                     {"field": "title", "width": 4},
-                    {"field": "lookup", "width": 4},
+                    {"field": None, "width": 4},
                     {"field": None, "width": 4},
                 ]}],
-            }],
+            }, {"rows": [{"field": "lookup"}]}],
         },
         created_by="roundtrip@test.local",
     ))

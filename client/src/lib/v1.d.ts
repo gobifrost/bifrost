@@ -20172,6 +20172,11 @@ export interface components {
          * @description A horizontal row of field columns within a form section.
          */
         FormLayoutRow: {
+            /**
+             * Field
+             * @description Standalone field, without a Row component
+             */
+            field?: string | null;
             /** Columns */
             columns?: components["schemas"]["FormLayoutColumn"][];
         };

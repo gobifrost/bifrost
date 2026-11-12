@@ -144,10 +144,13 @@ class FormLayoutColumn(BaseModel):
 class FormLayoutRow(BaseModel):
     """A horizontal row of field columns within a form section."""
 
+    field: str | None = Field(default=None, min_length=1, description="Standalone field, without a Row component")
     columns: list[FormLayoutColumn] = Field(default_factory=list, max_length=4)
 
     @model_validator(mode="after")
     def validate_width(self):
+        if self.field is not None and self.columns:
+            raise ValueError("Standalone fields cannot also contain columns")
         if sum(column.width for column in self.columns) > 12:
             raise ValueError("Form layout row columns cannot exceed a total width of 12")
         return self
@@ -214,6 +217,7 @@ class FormSchema(BaseModel):
             for column in row.columns
             if column.field is not None
         ]
+        placed_fields += [row.field for section in self.layout.sections for row in section.rows if row.field is not None]
         unknown_fields = set(placed_fields) - field_names
         if unknown_fields:
             raise ValueError(

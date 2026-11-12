@@ -35,6 +35,7 @@ import { useWorkflowsMetadata } from "@/hooks/useWorkflows";
 import { FormCanvas, type CanvasSource } from "./FormCanvas";
 import {
 	createVerticalLayout,
+	rootCanvasTarget,
 	createCanvasRow,
 	placeCanvasField,
 	synchronizeFormLayout,
@@ -238,10 +239,7 @@ export function FieldsPanelDnD({
 					!fields.some((f) => f.name === p.name),
 			)
 		: [];
-	const rootTarget = (): CanvasTarget => {
-		const section = Math.max(0, canvas.sections.length - 1);
-		return { section, row: canvas.sections[section]?.rows.length ?? 0 };
-	};
+	const rootTarget = () => rootCanvasTarget(canvas);
 	const requestField = (source: CanvasSource, target: CanvasTarget) => {
 		setSelectedField(undefined);
 		setEditingName(undefined);
@@ -292,10 +290,10 @@ export function FieldsPanelDnD({
 				rows: [],
 			});
 		else {
-			if (!next.sections.length) next.sections.push({ rows: [] });
-			next.sections[next.sections.length - 1]!.rows.push(
-				createCanvasRow(),
-			);
+			const target = rootCanvasTarget(next);
+			if (!next.sections[target.section])
+				next.sections.push({ rows: [] });
+			next.sections[target.section]!.rows.push(createCanvasRow());
 		}
 		onChange({ fields, layout: next });
 	};

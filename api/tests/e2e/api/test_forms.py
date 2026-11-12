@@ -113,6 +113,12 @@ class TestFormCRUD:
         )
         assert runtime.status_code == 200, runtime.text
         assert runtime.json()["form_schema"]["layout"] == normalized_schema["layout"]
+        standalone_schema = {"fields": schema["fields"], "layout": {"sections": [schema["layout"]["sections"][0] | {"rows": [{"columns": [{"field": "first_name", "width": 12}]}]}, {"rows": [{"field": "last_name"}]}]}}
+        updated = e2e_client.patch(f"/api/forms/{form['id']}", headers=platform_admin.headers, json={"form_schema": standalone_schema})
+        assert updated.status_code == 200, updated.text
+        reloaded = e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=platform_admin.headers)
+        assert reloaded.json()["form_schema"]["layout"]["sections"][1]["rows"][0]["field"] == "last_name"
+        assert reloaded.json()["form_schema"]["layout"]["sections"][0]["rows"][0]["columns"][0]["field"] == "first_name"
         empty_schema = {
             "fields": [],
             "layout": {"sections": [{"rows": [{"columns": [

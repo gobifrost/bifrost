@@ -145,6 +145,21 @@ it("labels object types and shows only the innermost insertion line during a dra
 				},
 			} as never);
 	});
+	act(() => {
+		const data = configs[3]!.getData?.({
+			input: { clientX: 0, clientY: 0 },
+		} as never);
+		configs[3]!.onDrag?.({
+			self: { data },
+			source: { data: { type: "canvas-field" } },
+			location: { current: { dropTargets: [{ element: elements[3] }] } },
+		} as never);
+	});
+	expect(
+		screen.getByRole("status", {
+			name: "Drop at Column 2 of row 1 in section 1",
+		}),
+	).toHaveClass("border-2");
 	expect(screen.getAllByRole("status")).toHaveLength(1);
 	expect(
 		screen.getByRole("status", {

@@ -33,6 +33,9 @@ import {
 import type { FormField } from "@/lib/client-types";
 import {
 	createCanvasRow,
+	rootCanvasTarget,
+	isNamedSection,
+	rowPlacements,
 	formLayoutWidthClass,
 	moveCanvasField,
 	moveCanvasRow,
@@ -100,6 +103,12 @@ function Drop({
 	const grip = useRef<HTMLButtonElement>(null);
 	const [over, setOver] = useState<"before" | "after" | null>(null);
 	const [dropTop, setDropTop] = useState<number>();
+	const [dropZone, setDropZone] = useState<{
+		top: number;
+		left: number;
+		width: number;
+		height: number;
+	}>();
 	useEffect(() => {
 		const element = ref.current;
 		if (!element) return;
@@ -110,6 +119,7 @@ function Drop({
 		}: Parameters<
 			NonNullable<Parameters<typeof dropTargetForElements>[0]["onDrag"]>
 		>[0]) => {
+			setDropZone(self.data.dropZone as typeof dropZone);
 			setDropTop(
 				target.kind === "root"
 					? (
@@ -165,12 +175,35 @@ function Drop({
 									source.data.component === "section"
 								)
 							: true),
-				getData: ({ input }) => ({
-					after:
-						input.clientY >
-						element.getBoundingClientRect().top +
-							element.getBoundingClientRect().height / 2,
-				}),
+				getData: ({ input }) => {
+					const box = element.getBoundingClientRect();
+					const zone =
+						target.kind === "slot"
+							? element
+							: element.querySelector(
+									target.kind === "root"
+										? "[data-canvas-footer]"
+										: "[data-empty-section]",
+								);
+					const rect = zone?.getBoundingClientRect();
+					const inside =
+						rect &&
+						input.clientX >= rect.left &&
+						input.clientX <= rect.right &&
+						input.clientY >= rect.top &&
+						input.clientY <= rect.bottom;
+					return {
+						after: input.clientY > box.top + box.height / 2,
+						dropZone: inside
+							? {
+									top: rect.top - box.top,
+									left: rect.left - box.left,
+									width: rect.width,
+									height: rect.height,
+								}
+							: undefined,
+					};
+				},
 				onDragEnter: updateIndicator,
 				onDrag: updateIndicator,
 				onDragLeave: () => setOver(null),
@@ -195,11 +228,20 @@ function Drop({
 			{over && (
 				<div
 					role="status"
-					style={dropTop === undefined ? undefined : { top: dropTop }}
+					style={
+						dropZone ??
+						(dropTop === undefined ? undefined : { top: dropTop })
+					}
 					aria-label={`Drop at ${label}`}
-					className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-primary ${target.kind === "root" ? "" : target.kind === "slot" ? "top-1/2" : over === "before" ? "-top-2" : "-bottom-2"}`}
+					className={
+						dropZone
+							? "pointer-events-none absolute z-10 rounded-md border-2 border-primary bg-primary/10"
+							: `pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-primary ${target.kind === "root" ? "" : target.kind === "slot" ? "top-1/2" : over === "before" ? "-top-2" : "-bottom-2"}`
+					}
 				>
-					<span className="absolute -top-1 -left-1 size-2.5 rounded-full border-2 border-primary bg-background" />
+					{!dropZone && (
+						<span className="absolute -top-1 -left-1 size-2.5 rounded-full border-2 border-primary bg-background" />
+					)}
 				</div>
 			)}
 			{children(
@@ -447,21 +489,27 @@ export function FormCanvas({
 	const fieldMap = new Map(fields.map((f) => [f.name, f]));
 	const ordered = layout.sections.flatMap((s) =>
 		s.rows.flatMap((r) =>
-			r.columns.flatMap((c) => (c.field ? [c.field] : [])),
+			rowPlacements(r).flatMap((c) => (c.field ? [c.field] : [])),
 		),
 	);
 	const receive = (source: CanvasSource, target: Target) => {
 		const next = structuredClone(layout);
 		const insertion: CanvasTarget =
-			target.kind === "slot"
-				? target
-				: target.kind === "row"
-					? { ...target, row: target.row + (target.after ? 1 : 0) }
-					: {
-							section: target.section,
-							row:
-								next.sections[target.section]?.rows.length ?? 0,
-						};
+			target.kind === "root"
+				? rootCanvasTarget(layout)
+				: target.kind === "slot"
+					? target
+					: target.kind === "row"
+						? {
+								...target,
+								row: target.row + (target.after ? 1 : 0),
+							}
+						: {
+								section: target.section,
+								row:
+									next.sections[target.section]?.rows
+										.length ?? 0,
+							};
 		if (source.type === "canvas-section") {
 			onChange(
 				moveCanvasSection(
@@ -533,30 +581,61 @@ export function FormCanvas({
 				let row = 0;
 				row < layout.sections[section]!.rows.length;
 				row++
-			)
-				for (
-					let column = 0;
-					column <
-					layout.sections[section]!.rows[row]!.columns.length;
-					column++
-				)
-					if (
-						layout.sections[section]!.rows[row]!.columns[column]!
-							.field === other
-					) {
-						onChange(
-							moveCanvasField(layout, name, {
-								section,
-								row,
-								column,
-							}),
-						);
-						onAnnounce(
-							`${fieldMap.get(name)?.label} moved to position ${index + direction + 1} of ${ordered.length}.`,
-						);
-						return;
-					}
+			) {
+				const item = layout.sections[section]!.rows[row]!;
+				const column = rowPlacements(item).findIndex(
+					(c) => c.field === other,
+				);
+				if (column < 0) continue;
+				onChange(
+					moveCanvasField(layout, name, {
+						section,
+						row,
+						...(item.field ? { standalone: true } : { column }),
+					}),
+				);
+				onAnnounce(
+					`${fieldMap.get(name)?.label} moved to position ${index + direction + 1} of ${ordered.length}.`,
+				);
+				return;
+			}
 	};
+	const renderCard = (field: FormField) => (
+		<FieldCard
+			field={field}
+			onRestoreFocus={restoreFocus}
+			destinations={layout.sections.flatMap((s, section) =>
+				s.rows.flatMap((r, row) =>
+					r.columns.flatMap((c, column) =>
+						c.field === field.name
+							? []
+							: [
+									{
+										label: `${isNamedSection(s) ? s.title || "Section" : "Form"}, Row ${row + 1}, Column ${column + 1}`,
+										target: {
+											section,
+											row,
+											column,
+										},
+									},
+								],
+					),
+				),
+			)}
+			onPlace={(target) => {
+				onChange(moveCanvasField(layout, field.name, target));
+				onAnnounce(
+					`${field.label} moved to section ${target.section + 1}, row ${target.row + 1}, column ${target.column! + 1}.`,
+				);
+			}}
+
+			onEdit={() => onEdit(field)}
+			onDelete={() => onDelete(field)}
+			onMove={(d) => moveField(field.name, d)}
+			canUp={ordered.indexOf(field.name) > 0}
+			canDown={ordered.indexOf(field.name) < ordered.length - 1}
+		/>
+	);
 	const lastSection = Math.max(0, layout.sections.length - 1);
 	return (
 		<div ref={scrollRef}>
@@ -573,9 +652,7 @@ export function FormCanvas({
 				{() => (
 					<>
 						{layout.sections.map((section, si) => {
-							const named =
-								section.title !== undefined ||
-								section.description !== undefined;
+							const named = isNamedSection(section);
 							return (
 								<Drop
 									key={si}
@@ -670,7 +747,9 @@ export function FormCanvas({
 														aria-label={`Remove section ${si + 1}`}
 														disabled={section.rows.some(
 															(r) =>
-																r.columns.some(
+																rowPlacements(
+																	r,
+																).some(
 																	(c) =>
 																		c.field,
 																),
@@ -706,6 +785,29 @@ export function FormCanvas({
 												</div>
 											)}
 											{section.rows.map((row, ri) => {
+												if (row.field) {
+													const field = fieldMap.get(
+														row.field,
+													);
+													return field ? (
+														<Drop
+															key={ri}
+															label={`Field ${field.name}`}
+															target={{
+																kind: "row",
+																section: si,
+																row: ri,
+															}}
+															onDrop={receive}
+														>
+															{() =>
+																renderCard(
+																	field,
+																)
+															}
+														</Drop>
+													) : null;
+												}
 												const preset = row.columns
 														.map((c) => c.width)
 														.join(","),
@@ -934,91 +1036,9 @@ export function FormCanvas({
 																				>
 																					{() =>
 																						field ? (
-																							<FieldCard
-																								field={
-																									field
-																								}
-																								onRestoreFocus={
-																									restoreFocus
-																								}
-																								destinations={layout.sections.flatMap(
-																									(
-																										s,
-																										section,
-																									) =>
-																										s.rows.flatMap(
-																											(
-																												r,
-																												row,
-																											) =>
-																												r.columns.flatMap(
-																													(
-																														c,
-																														column,
-																													) =>
-																														c.field ===
-																														field.name
-																															? []
-																															: [
-																																	{
-																																		label: `Section ${section + 1}, Row ${row + 1}, Column ${column + 1}`,
-																																		target: {
-																																			section,
-																																			row,
-																																			column,
-																																		},
-																																	},
-																																],
-																												),
-																										),
-																								)}
-																								onPlace={(
-																									target,
-																								) => {
-																									onChange(
-																										moveCanvasField(
-																											layout,
-																											field.name,
-																											target,
-																										),
-																									);
-																									onAnnounce(
-																										`${field.label} moved to section ${target.section + 1}, row ${target.row + 1}, column ${target.column! + 1}.`,
-																									);
-																								}}
-
-																								onEdit={() =>
-																									onEdit(
-																										field,
-																									)
-																								}
-																								onDelete={() =>
-																									onDelete(
-																										field,
-																									)
-																								}
-																								onMove={(
-																									d,
-																								) =>
-																									moveField(
-																										field.name,
-																										d,
-																									)
-																								}
-																								canUp={
-																									ordered.indexOf(
-																										field.name,
-																									) >
-																									0
-																								}
-																								canDown={
-																									ordered.indexOf(
-																										field.name,
-																									) <
-																									ordered.length -
-																										1
-																								}
-																							/>
+																							renderCard(
+																								field,
+																							)
 																						) : (
 																							<button
 																								type="button"
@@ -1065,6 +1085,7 @@ export function FormCanvas({
 											{named && !section.rows.length && (
 												<button
 													type="button"
+													data-empty-section
 													className="w-full rounded border-2 border-dashed p-6 text-sm text-muted-foreground"
 													onClick={() =>
 														update((n) =>

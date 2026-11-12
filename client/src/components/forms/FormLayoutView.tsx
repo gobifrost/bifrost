@@ -16,10 +16,13 @@ export function FormLayoutView({
 	return (
 		<div className="space-y-6">
 			{layout.sections.map((section, si) => {
-				const rows = section.rows.filter((row) =>
-					row.columns.some(
-						(column) => column.field && visible.has(column.field),
-					),
+				const rows = section.rows.filter(
+					(row) =>
+						(row.field && visible.has(row.field)) ||
+						row.columns.some(
+							(column) =>
+								column.field && visible.has(column.field),
+						),
 				);
 				if (!rows.length) return null;
 				return (
@@ -38,29 +41,37 @@ export function FormLayoutView({
 								)}
 							</div>
 						)}
-						{rows.map((row, ri) => (
-							<div
-								key={ri}
-								className="grid grid-cols-12 items-start gap-4"
-							>
-								{row.columns.map((column, ci) => {
-									const field = column.field
-										? visible.get(column.field)
-										: undefined;
-									return (
-										<div
-											key={ci}
-											aria-hidden={
-												field ? undefined : true
-											}
-											className={`${field ? "min-w-0" : "hidden md:block"} ${formLayoutWidthClass[column.width]}`}
-										>
-											{field ? renderField(field) : null}
-										</div>
-									);
-								})}
-							</div>
-						))}
+						{rows.map((row, ri) =>
+							row.field ? (
+								<div key={ri}>
+									{renderField(visible.get(row.field)!)}
+								</div>
+							) : (
+								<div
+									key={ri}
+									className="grid grid-cols-12 items-start gap-4"
+								>
+									{row.columns.map((column, ci) => {
+										const field = column.field
+											? visible.get(column.field)
+											: undefined;
+										return (
+											<div
+												key={ci}
+												aria-hidden={
+													field ? undefined : true
+												}
+												className={`${field ? "min-w-0" : "hidden md:block"} ${formLayoutWidthClass[column.width]}`}
+											>
+												{field
+													? renderField(field)
+													: null}
+											</div>
+										);
+									})}
+								</div>
+							),
+						)}
 					</section>
 				);
 			})}

@@ -173,6 +173,75 @@ test("rows and palette fields share one canvas, persist and preview responsively
 		await expect(
 			page.getByRole("textbox", { name: "Section 1 Title", exact: true }),
 		).toHaveValue("Contact Details");
+		// A final named section must never capture drops onto the form footer.
+		const footer = page.getByText("Drop a Field, Row, or Section Here", {
+			exact: true,
+		});
+		await drag(
+			page,
+			page.getByRole("button", { name: "Section", exact: true }),
+			footer,
+		);
+		await page
+			.getByRole("textbox", { name: "Section 3 Title", exact: true })
+			.fill("Other Section");
+		await drag(
+			page,
+			page.getByRole("button", { name: "Row", exact: true }),
+			footer,
+		);
+		await expect(
+			page
+				.getByRole("region", { name: "Section 3", exact: true })
+				.getByRole("combobox"),
+		).toHaveCount(0);
+		await expect(
+			page.getByRole("combobox", {
+				name: "Columns for row 1 in section 4",
+			}),
+		).toBeVisible();
+		await drag(
+			page,
+			page.getByRole("button", { name: "Drag field email" }),
+			footer,
+		);
+		await expect(
+			page
+				.getByRole("region", { name: "Field email", exact: true })
+				.getByRole("combobox"),
+		).toHaveCount(0);
+		await expect(
+			page
+				.getByRole("region", { name: "Field email", exact: true })
+				.getByRole("button", { name: "Edit Email" }),
+		).toBeVisible();
+		await drag(
+			page,
+			page.getByRole("button", { name: "Drag field email" }),
+			page.getByRole("group", {
+				name: "Column 2 of row 1 in section 1",
+				exact: true,
+			}),
+		);
+		await drag(
+			page,
+			page.getByRole("button", { name: "Text Input", exact: true }),
+			footer,
+		);
+		const standaloneDialog = page.getByRole("dialog", {
+			name: "Add Field",
+			exact: true,
+		});
+		await standaloneDialog.getByLabel(/Field Name/).fill("notes");
+		await standaloneDialog.getByLabel(/^Label/).fill("Notes");
+		await standaloneDialog
+			.getByRole("button", { name: "Add Field", exact: true })
+			.click();
+		await expect(
+			page
+				.getByRole("region", { name: "Field notes", exact: true })
+				.getByRole("combobox"),
+		).toHaveCount(0);
 		const save = page.waitForResponse(
 			(r) =>
 				r.url().endsWith(`/api/forms/${form.id}`) &&
@@ -196,6 +265,14 @@ test("rows and palette fields share one canvas, persist and preview responsively
 				name: "Add field to column 1 of row 1 in section 2",
 			}),
 		).toBeVisible();
+		await expect(
+			page
+				.getByRole("region", { name: "Field notes", exact: true })
+				.getByRole("button", { name: "Edit Notes" }),
+		).toBeVisible();
+		await expect(
+			page.getByRole("textbox", { name: "Section 4 Title", exact: true }),
+		).toHaveCount(0);
 		await page.screenshot({
 			path: "playwright-results/form-unified-canvas.png",
 		});

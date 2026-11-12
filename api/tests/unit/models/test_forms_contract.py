@@ -126,6 +126,16 @@ class TestFormSchema:
         assert schema.layout is not None
         assert schema.layout.sections[0].rows[0].columns[0].width == 6
 
+    def test_layout_allows_standalone_fields_and_validates_their_references(self):
+        fields = [{"name": "first", "label": "First", "type": "text"}]
+        schema = FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "first"}]}]}})
+        assert schema.layout.sections[0].rows[0].field == "first"
+        assert schema.layout.sections[0].rows[0].columns == []
+        with pytest.raises(ValidationError, match="non-existent"):
+            FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "missing"}]}]}})
+        with pytest.raises(ValidationError, match="cannot also contain columns"):
+            FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "first", "columns": [{"field": "first", "width": 12}]}]}]}})
+
     def test_layout_preserves_empty_column_slots_and_still_requires_real_fields(self):
         schema = FormSchema.model_validate({
             "fields": [{"name": "first", "label": "First", "type": "text"}],

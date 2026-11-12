@@ -344,3 +344,23 @@ it("matches palette icon color to the Row badge in the canvas", async () => {
 		.filter((c) => /^(bg-|text-|dark:text-|border-sky)/.test(c)))
 		expect(badge.className).toContain(token);
 });
+
+it("keeps palette Row creation outside an existing section and shows legacy fields without wrappers", async () => {
+	const changed = vi.fn();
+	const { user } = renderWithProviders(
+		<Harness fields={[first]} onChange={changed} />,
+	);
+	expect(screen.queryByText("Row")).toBeInTheDocument(); // palette only
+	expect(
+		screen
+			.getByRole("region", { name: "Form Canvas" })
+			.querySelectorAll('[data-slot="badge"]'),
+	).toHaveLength(1);
+	await user.click(screen.getByRole("button", { name: "Section" }));
+	await user.click(screen.getByRole("button", { name: "Row" }));
+	const layout = (changed.mock.lastCall![0] as FormCanvasState).layout!;
+	expect(layout.sections[1]!.title).toBe("Section");
+	expect(layout.sections[1]!.rows).toEqual([]);
+	expect(layout.sections[2]!.rows).toHaveLength(1);
+	expect(layout.sections[2]!.title).toBeUndefined();
+});
