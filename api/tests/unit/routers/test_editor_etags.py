@@ -80,16 +80,25 @@ async def test_stale_or_pre_upgrade_validator_never_writes(editor, route, valida
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("modified", [False, True])
-async def test_decorator_accepts_editor_validator_and_returns_final_hash(editor, modified):
+async def test_decorator_accepts_editor_validator_and_returns_final_hash(editor, modified, monkeypatch):
     storage, ctx, user, db = editor
     read = await files.get_file_content_editor(ctx, user, "example.py", db)
     final = SOURCE.replace(b'"Original"', b'"Changed"') + b"# storage normalization\n"
+    # Parsing is covered by test_decorator_property_service; this route contract
+    # must not depend on the LibCST module identities that its fixtures replace.
+    service = SimpleNamespace(write_properties=MagicMock(return_value=SimpleNamespace(
+        modified=modified, new_content=SOURCE.replace(b'"Original"', b'"Changed"').decode(), changes=[],
+    )))
+    monkeypatch.setattr(decorator_properties, "DecoratorPropertyService", lambda: service)
     storage.write_file.return_value = SimpleNamespace(final_content=final)
     response = await decorator_properties.update_decorator_properties(
         ctx, user, UpdatePropertiesRequest(
             path="example.py", function_name="example",
             properties={"name": "Changed"} if modified else {}, expected_etag=read.etag,
         ), db,
+    )
+    service.write_properties.assert_called_once_with(
+        SOURCE.decode(), "example", {"name": "Changed"} if modified else {},
     )
     assert response.modified is modified
     assert response.new_etag == hashlib.sha256(final if modified else SOURCE).hexdigest()
