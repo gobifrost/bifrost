@@ -82,6 +82,28 @@ class UncountableGuardedModel(GuardedTestModel):
         raise NotImplementedError
 
 
+class ResponsesRejectedCountModel(GuardedTestModel):
+    """Represent a provider that rejects server-side counting on this transport."""
+
+    def __init__(self, *, status_code: int, message: str) -> None:
+        super().__init__(custom_output_text="must not be called")
+        self._status_code = status_code
+        self._message = message
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        import httpx2
+        from openai import APIStatusError
+
+        request = httpx2.Request("POST", "https://provider.invalid/v1/responses/input_tokens")
+        response = httpx2.Response(self._status_code, request=request)
+        raise APIStatusError(self._message, response=response, body=None)
+
+
 class MissingUsageTestModel(TestModel):
     """Represent an upstream route that omits usage in every transport."""
 
@@ -628,6 +650,56 @@ async def test_uncountable_provider_uses_local_estimate_for_preflight_guard() ->
         )
 
     assert provider_model.provider_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_rejected_server_side_counting_falls_back_to_local_estimate() -> None:
+    """A budget must not change which wire API serves the model.
+
+    Reproduces #1349: the provider rejects Responses-API input-token counting
+    for this model, and the run used to fail before any work. The pre-request
+    guard must fall back to the local estimate and keep enforcing the ceiling.
+    """
+
+    provider_model = ResponsesRejectedCountModel(
+        status_code=400,
+        message="This model is not supported by Responses API.",
+    )
+    model = ObservedModel(provider_model, MagicMock())
+    runtime = PydanticAgent(model)
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=100)
+    usage = RunUsage(input_tokens=95)
+
+    with pytest.raises(UsageLimitExceeded):
+        await runtime.run(
+            "one more request",
+            usage=usage,
+            usage_limits=budget.usage_limits(),
+        )
+
+    assert provider_model.provider_requests == 0
+
+
+@pytest.mark.asyncio
+async def test_unrelated_provider_error_during_counting_still_raises() -> None:
+    """Only the unsupported-transport rejection degrades; real faults surface."""
+
+    provider_model = ResponsesRejectedCountModel(
+        status_code=500,
+        message="Internal server error",
+    )
+    model = ObservedModel(provider_model, MagicMock())
+    runtime = PydanticAgent(model)
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=100)
+
+    with pytest.raises(Exception) as raised:
+        await runtime.run(
+            "one more request",
+            usage=RunUsage(),
+            usage_limits=budget.usage_limits(),
+        )
+
+    assert getattr(raised.value, "status_code", None) == 500
 
 
 def test_delegated_subtree_shares_parent_ledger_and_keeps_local_cap() -> None:
