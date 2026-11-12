@@ -782,12 +782,12 @@ async def test_unencodable_result_becomes_replayable_failure_and_next_result_com
                               payload={"id": "retire", "action": "retired", "payload": {}}).to_json()
     frames = iter([*acks, retired])
 
-    async def receive():
+    async def receive() -> str:
         frame = next(frames, None)
         if frame is not None:
             return frame
         # A real socket stays open while the scheduled retirement runs.
-        await asyncio.Event().wait()
+        return await asyncio.Future[str]()
 
     new_socket.recv.side_effect = receive
     await _receive_control_commands(launcher, new_socket, asyncio.Event())
