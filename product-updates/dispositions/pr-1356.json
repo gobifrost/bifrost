@@ -1,0 +1,13 @@
+{
+  "key": "pr:1356",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal remote-worker serialization and terminal-delivery repair; maintainer explicitly requested no product announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1356",
+      "Native #1345 owner instruction: Do not publish an invisible internal fix as a product update."
+    ]
+  }
+}
