@@ -13,6 +13,14 @@ async function drag(page: Page, source: Locator, target: Locator) {
 	await target.scrollIntoViewIfNeeded();
 	const b = (await target.boundingBox())!;
 	await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 12 });
+	await expect(page.getByRole("status", { name: /^Drop at / })).toHaveCount(
+		1,
+	);
+	if ((await source.getAttribute("aria-label"))?.startsWith("Drag row")) {
+		await page.screenshot({
+			path: "playwright-results/form-drop-insertion.png",
+		});
+	}
 	await page.mouse.up();
 }
 test("rows and palette fields share one canvas, persist and preview responsively @smoke", async ({

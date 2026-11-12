@@ -5,7 +5,7 @@ import {
 	GripVertical,
 	Pencil,
 	Trash2,
-	ArrowUpDown,
+	Columns3,
 	Plus,
 } from "lucide-react";
 import {
@@ -14,6 +14,11 @@ import {
 } from "@atlaskit/pragmatic-drag-and-drop/element/adapter";
 import { combine } from "@atlaskit/pragmatic-drag-and-drop/combine";
 import { autoScrollForElements } from "@atlaskit/pragmatic-drag-and-drop-auto-scroll/element";
+import { flushSync } from "react-dom";
+import { createRoot } from "react-dom/client";
+import { setCustomNativeDragPreview } from "@atlaskit/pragmatic-drag-and-drop/element/set-custom-native-drag-preview";
+import { pointerOutsideOfPreview } from "@atlaskit/pragmatic-drag-and-drop/element/pointer-outside-of-preview";
+import { ComponentTypeBadge, FORM_COMPONENT_TYPES } from "./ComponentTypeBadge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -37,6 +42,30 @@ import {
 	type CanvasTarget,
 	type FormLayout,
 } from "./form-layout";
+
+const typeLabel = (type: string) => FORM_COMPONENT_TYPES[type]!.label;
+const dragPreview =
+	(label: string) =>
+	(
+		event: Pick<
+			Parameters<typeof setCustomNativeDragPreview>[0],
+			"nativeSetDragImage"
+		>,
+	) => {
+		setCustomNativeDragPreview({
+			nativeSetDragImage: event.nativeSetDragImage,
+			getOffset: pointerOutsideOfPreview({ x: "16px", y: "8px" }),
+			render: ({ container }) => {
+				const root = createRoot(container);
+				root.render(
+					<div className="max-w-60 truncate rounded-md border bg-popover px-3 py-2 text-sm font-medium text-popover-foreground shadow-md">
+						{label}
+					</div>,
+				);
+				return () => root.unmount();
+			},
+		});
+	};
 
 export type CanvasSource = Record<string, unknown>;
 type Target = CanvasTarget & {
@@ -70,9 +99,40 @@ function Drop({
 	const ref = useRef<HTMLDivElement>(null);
 	const grip = useRef<HTMLButtonElement>(null);
 	const [over, setOver] = useState<"before" | "after" | null>(null);
+	const [dropTop, setDropTop] = useState<number>();
 	useEffect(() => {
 		const element = ref.current;
 		if (!element) return;
+		const updateIndicator = ({
+			self,
+			location,
+			source,
+		}: Parameters<
+			NonNullable<Parameters<typeof dropTargetForElements>[0]["onDrag"]>
+		>[0]) => {
+			setDropTop(
+				target.kind === "root"
+					? (
+							element.querySelector(
+								"[data-canvas-footer]",
+							) as HTMLElement
+						).getBoundingClientRect().top -
+							element.getBoundingClientRect().top -
+							8
+					: undefined,
+			);
+			setOver(
+				location.current.dropTargets[0]?.element !== element
+					? null
+					: (target.kind === "section" &&
+								source.data.type !== "canvas-section") ||
+						  target.kind === "root"
+						? "after"
+						: self.data.after
+							? "after"
+							: "before",
+			);
+		};
 		return combine(
 			...(drag && grip.current
 				? [
@@ -80,6 +140,9 @@ function Drop({
 							element,
 							dragHandle: grip.current,
 							getInitialData: () => drag,
+							onGenerateDragPreview: dragPreview(
+								target.kind === "section" ? "Section" : "Row",
+							),
 						}),
 					]
 				: []),
@@ -108,10 +171,8 @@ function Drop({
 						element.getBoundingClientRect().top +
 							element.getBoundingClientRect().height / 2,
 				}),
-				onDragEnter: ({ self }) =>
-					setOver(self.data.after ? "after" : "before"),
-				onDrag: ({ self }) =>
-					setOver(self.data.after ? "after" : "before"),
+				onDragEnter: updateIndicator,
+				onDrag: updateIndicator,
 				onDragLeave: () => setOver(null),
 				onDrop: ({ source, location, self }) => {
 					setOver(null);
@@ -129,12 +190,17 @@ function Drop({
 			ref={ref}
 			role={target.kind === "slot" ? "group" : "region"}
 			aria-label={label}
-			className={`relative ${className} ${over ? "ring-2 ring-primary/60" : ""}`}
+			className={`relative ${className}`}
 		>
-			{over && target.kind !== "slot" && (
+			{over && (
 				<div
-					className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-primary ${over === "before" ? "top-0" : "bottom-0"}`}
-				/>
+					role="status"
+					style={dropTop === undefined ? undefined : { top: dropTop }}
+					aria-label={`Drop at ${label}`}
+					className={`pointer-events-none absolute inset-x-0 z-10 h-0.5 bg-primary ${target.kind === "root" ? "" : target.kind === "slot" ? "top-1/2" : over === "before" ? "-top-2" : "-bottom-2"}`}
+				>
+					<span className="absolute -top-1 -left-1 size-2.5 rounded-full border-2 border-primary bg-background" />
+				</div>
 			)}
 			{children(
 				drag ? (
@@ -183,15 +249,18 @@ function FieldCard({
 			element: ref.current,
 			dragHandle: grip.current,
 			getInitialData: () => ({ type: "canvas-field", field: field.name }),
+			onGenerateDragPreview: dragPreview(
+				`${typeLabel(field.type)} · ${field.label}`,
+			),
 		});
-	}, [field.name]);
+	}, [field.name, field.label, field.type]);
 	return (
 		<div
 			ref={ref}
 			data-field-card={field.name}
-			className="min-w-0 rounded border bg-background p-3"
+			className="min-w-0 rounded-md border bg-background p-3 shadow-sm"
 		>
-			<div className="flex items-start gap-1">
+			<div className="flex flex-wrap items-start gap-1">
 				<Button
 					ref={grip}
 					type="button"
@@ -202,7 +271,7 @@ function FieldCard({
 				>
 					<GripVertical className="size-4" />
 				</Button>
-				<div className="min-w-0 flex-1 py-1">
+				<div className="min-w-20 flex-1 py-1">
 					<p className="font-medium break-words">
 						{field.label}
 						{field.required ? " *" : ""}
@@ -210,6 +279,102 @@ function FieldCard({
 					<p className="font-mono text-xs text-muted-foreground break-all">
 						{field.name}
 					</p>
+				</div>
+				<div className="ml-auto flex flex-col items-end gap-1">
+					<ComponentTypeBadge type={field.type} />{" "}
+					<div className="flex flex-wrap justify-end gap-1">
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-9"
+							aria-label={`Move ${field.label} up`}
+							disabled={!canUp}
+							onClick={() => {
+								flushSync(() => onMove(-1));
+								onRestoreFocus(field.name);
+							}}
+						>
+							<ArrowUp className="size-4" />
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-9"
+							aria-label={`Move ${field.label} down`}
+							disabled={!canDown}
+							onClick={() => {
+								flushSync(() => onMove(1));
+								onRestoreFocus(field.name);
+							}}
+						>
+							<ArrowDown className="size-4" />
+						</Button>
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									type="button"
+									variant="ghost"
+									size="icon"
+									className="size-9"
+									aria-label={`Move ${field.label}`}
+									title="Move to Column"
+								>
+									<Columns3 className="size-4" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent
+								onCloseAutoFocus={(event) => {
+									if (movedName.current) {
+										event.preventDefault();
+										onRestoreFocus(movedName.current);
+										movedName.current = null;
+									}
+								}}
+							>
+								<DropdownMenuSub>
+									<DropdownMenuSubTrigger>
+										Move to Column
+									</DropdownMenuSubTrigger>
+									<DropdownMenuSubContent className="max-h-72 overflow-auto">
+										{destinations.map((item) => (
+											<DropdownMenuItem
+												key={item.label}
+												onSelect={() => {
+													movedName.current =
+														field.name;
+													onPlace(item.target);
+												}}
+											>
+												{item.label}
+											</DropdownMenuItem>
+										))}
+									</DropdownMenuSubContent>
+								</DropdownMenuSub>
+							</DropdownMenuContent>
+						</DropdownMenu>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-9"
+							aria-label={`Edit ${field.label}`}
+							onClick={onEdit}
+						>
+							<Pencil className="size-4" />
+						</Button>
+						<Button
+							type="button"
+							variant="ghost"
+							size="icon"
+							className="size-9"
+							aria-label={`Delete ${field.label}`}
+							onClick={onDelete}
+						>
+							<Trash2 className="size-4" />
+						</Button>
+					</div>
 				</div>
 			</div>
 			<div
@@ -234,87 +399,6 @@ function FieldCard({
 					{field.help_text}
 				</p>
 			)}
-			<div className="mt-2 flex flex-wrap justify-end gap-1">
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							type="button"
-							variant="ghost"
-							size="icon"
-							className="size-9"
-							aria-label={`Move ${field.label}`}
-						>
-							<ArrowUpDown className="size-4" />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent
-						onCloseAutoFocus={(event) => {
-							if (movedName.current) {
-								event.preventDefault();
-								onRestoreFocus(movedName.current);
-								movedName.current = null;
-							}
-						}}
-					>
-						<DropdownMenuItem
-							disabled={!canUp}
-							onSelect={() => {
-								movedName.current = field.name;
-								onMove(-1);
-							}}
-						>
-							Move Up
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							disabled={!canDown}
-							onSelect={() => {
-								movedName.current = field.name;
-								onMove(1);
-							}}
-						>
-							Move Down
-						</DropdownMenuItem>
-						<DropdownMenuSub>
-							<DropdownMenuSubTrigger>
-								Move to Column
-							</DropdownMenuSubTrigger>
-							<DropdownMenuSubContent className="max-h-72 overflow-auto">
-								{destinations.map((item) => (
-									<DropdownMenuItem
-										key={item.label}
-										onSelect={() => {
-											movedName.current = field.name;
-											onPlace(item.target);
-										}}
-									>
-										{item.label}
-									</DropdownMenuItem>
-								))}
-							</DropdownMenuSubContent>
-						</DropdownMenuSub>
-					</DropdownMenuContent>
-				</DropdownMenu>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="size-9"
-					aria-label={`Edit ${field.label}`}
-					onClick={onEdit}
-				>
-					<Pencil className="size-4" />
-				</Button>
-				<Button
-					type="button"
-					variant="ghost"
-					size="icon"
-					className="size-9"
-					aria-label={`Delete ${field.label}`}
-					onClick={onDelete}
-				>
-					<Trash2 className="size-4" />
-				</Button>
-			</div>
 		</div>
 	);
 }
@@ -512,7 +596,7 @@ export function FormCanvas({
 									onDrop={receive}
 									className={
 										named
-											? "space-y-3 rounded-lg border bg-muted/20 p-3"
+											? "space-y-4 rounded-lg border-2 border-border bg-muted/40 p-4"
 											: "space-y-3"
 									}
 								>
@@ -521,6 +605,7 @@ export function FormCanvas({
 											{named && (
 												<div className="flex flex-wrap items-center gap-2">
 													{grip}
+													<ComponentTypeBadge type="section" />
 													<Input
 														aria-label={`Section ${si + 1} Title`}
 														value={
@@ -643,16 +728,13 @@ export function FormCanvas({
 															row: ri,
 														}}
 														onDrop={receive}
-														className="space-y-3 rounded-md border bg-card p-3"
+														className="space-y-3 rounded-md border border-dashed border-border bg-card p-3"
 													>
 														{(rowGrip) => (
 															<>
 																<div className="flex flex-wrap items-center gap-2">
 																	{rowGrip}
-																	<span className="text-sm font-medium">
-																		Row{" "}
-																		{ri + 1}
-																	</span>
+																	<ComponentTypeBadge type="row" />
 																	<select
 																		aria-label={`Columns for row ${ri + 1} in section ${si + 1}`}
 																		className="h-9 rounded border bg-background px-2 text-sm"
@@ -1002,7 +1084,10 @@ export function FormCanvas({
 								</Drop>
 							);
 						})}
-						<div className="rounded-lg border-2 border-dashed p-6 text-center text-sm text-muted-foreground">
+						<div
+							data-canvas-footer
+							className="rounded-lg border-2 border-dashed p-6 text-center text-sm text-muted-foreground"
+						>
 							<p className="font-medium">
 								{fields.length ||
 								layout.sections.some((s) => s.rows.length)

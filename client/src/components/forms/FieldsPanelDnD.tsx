@@ -1,22 +1,12 @@
 import { useState, useEffect, useRef } from "react";
 import {
 	Plus,
-	Columns3,
-	LayoutPanelTop,
 	Type,
-	Mail,
-	Hash,
 	ChevronDown,
-	CheckSquare,
-	TextCursorInput,
 	Star,
 	Workflow as WorkflowIcon,
-	CircleDot,
-	Calendar,
-	FileText,
-	Code,
-	Upload,
 } from "lucide-react";
+import { FORM_COMPONENT_TYPES } from "./ComponentTypeBadge";
 import {
 	Card,
 	CardContent,
@@ -67,42 +57,18 @@ interface FieldsPanelProps {
 
 // Field type templates for the palette
 const FIELD_TEMPLATES = [
-	{ type: "text", icon: Type, label: "Text Input" },
-	{ type: "email", icon: Mail, label: "Email" },
-	{ type: "number", icon: Hash, label: "Number" },
-	{
-		type: "select",
-		icon: ChevronDown,
-		label: "Dropdown",
-	},
-	{
-		type: "checkbox",
-		icon: CheckSquare,
-		label: "Checkbox",
-	},
-	{
-		type: "textarea",
-		icon: TextCursorInput,
-		label: "Text Area",
-	},
-	{
-		type: "radio",
-		icon: CircleDot,
-		label: "Radio Buttons",
-	},
-	{
-		type: "datetime",
-		icon: Calendar,
-		label: "Date & Time",
-	},
-	{
-		type: "markdown",
-		icon: FileText,
-		label: "Markdown",
-	},
-	{ type: "html", icon: Code, label: "HTML Content" },
-	{ type: "file", icon: Upload, label: "File Upload" },
-];
+	"text",
+	"email",
+	"number",
+	"select",
+	"checkbox",
+	"textarea",
+	"radio",
+	"datetime",
+	"markdown",
+	"html",
+	"file",
+].map((type) => ({ type, ...FORM_COMPONENT_TYPES[type]! }));
 
 interface PaletteItemProps {
 	template: (typeof FIELD_TEMPLATES)[0];
@@ -112,7 +78,7 @@ interface PaletteItemProps {
 function PaletteItem({ template, onChoose }: PaletteItemProps) {
 	const ref = useRef<HTMLButtonElement>(null);
 	const [dragging, setDragging] = useState(false);
-	const Icon = template.icon;
+	const { icon: Icon, color } = FORM_COMPONENT_TYPES[template.type]!;
 
 	useEffect(() => {
 		const el = ref.current;
@@ -138,7 +104,7 @@ function PaletteItem({ template, onChoose }: PaletteItemProps) {
 				dragging ? "opacity-50" : ""
 			}`}
 		>
-			<div className="rounded-md bg-muted p-2 text-muted-foreground">
+			<div className={`rounded-md border p-2 ${color}`}>
 				<Icon className="h-4 w-4" />
 			</div>
 			<span className="text-sm font-medium">{template.label}</span>
@@ -183,6 +149,8 @@ function WorkflowInputItem({ param, onChoose }: WorkflowInputItemProps) {
 	const fieldType = getFieldType(param.type ?? "text");
 	const template = FIELD_TEMPLATES.find((t) => t.type === fieldType);
 	const Icon = param.dataProvider ? ChevronDown : (template?.icon ?? Type);
+	const color =
+		FORM_COMPONENT_TYPES[param.dataProvider ? "select" : fieldType]!.color;
 
 	useEffect(() => {
 		const el = ref.current;
@@ -212,7 +180,7 @@ function WorkflowInputItem({ param, onChoose }: WorkflowInputItemProps) {
 				dragging ? "opacity-50" : ""
 			}`}
 		>
-			<div className="rounded-md bg-muted p-2 text-muted-foreground">
+			<div className={`rounded-md border p-2 ${color}`}>
 				<Icon className="h-4 w-4" />
 			</div>
 			<div className="flex-1 min-w-0">
@@ -396,7 +364,7 @@ export function FieldsPanelDnD({
 						<PaletteItem
 							template={{
 								type: "row",
-								icon: Columns3,
+								...FORM_COMPONENT_TYPES.row!,
 								label: "Row",
 							}}
 							onChoose={() => addComponent("row")}
@@ -404,7 +372,7 @@ export function FieldsPanelDnD({
 						<PaletteItem
 							template={{
 								type: "section",
-								icon: LayoutPanelTop,
+								...FORM_COMPONENT_TYPES.section!,
 								label: "Section",
 							}}
 							onChoose={() => addComponent("section")}

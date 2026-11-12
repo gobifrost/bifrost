@@ -207,8 +207,9 @@ describe("unified form builder", () => {
 		const { user } = renderWithProviders(
 			<Harness fields={[first, second]} />,
 		);
-		await user.click(screen.getByRole("button", { name: "Move First" }));
-		await user.click(screen.getByRole("menuitem", { name: "Move Down" }));
+		await user.click(
+			screen.getByRole("button", { name: "Move First down" }),
+		);
 		expect(screen.getByRole("status")).toHaveTextContent(
 			"First moved to position 2 of 2.",
 		);
@@ -324,4 +325,22 @@ describe("unified form builder", () => {
 			screen.getByRole("dialog", { name: "field-config" }),
 		).toBeInTheDocument();
 	});
+});
+it("matches palette icon color to the Row badge in the canvas", async () => {
+	const { user } = renderWithProviders(<Harness />);
+	const palette = screen.getByRole("button", { name: "Row" });
+	const paletteIcon = palette.querySelector("svg")!;
+	const paletteColors = paletteIcon.parentElement!.className;
+	await user.click(palette);
+	const badge = screen
+		.getByRole("region", { name: "Form Canvas" })
+		.querySelector('[data-slot="badge"]')!;
+	expect(badge.textContent).toBe("Row");
+	expect(badge.querySelector("svg")!.getAttribute("class")).toContain(
+		"lucide-columns-3",
+	);
+	for (const token of paletteColors
+		.split(" ")
+		.filter((c) => /^(bg-|text-|dark:text-|border-sky)/.test(c)))
+		expect(badge.className).toContain(token);
 });
