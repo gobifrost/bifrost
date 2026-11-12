@@ -9,7 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 import pydantic_core
-from openai import APIStatusError
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -264,7 +264,7 @@ class ObservedModel(WrapperModel):
             )
         except NotImplementedError:
             return self._local_token_estimate(messages, model_request_parameters)
-        except APIStatusError as error:
+        except ModelHTTPError as error:
             # Server-side counting rides the same wire API as requests. A
             # provider that rejects Responses for this model (400 "not
             # supported by Responses API") must not turn a token budget into a
