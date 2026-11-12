@@ -644,8 +644,7 @@ export function MCPConnectionEdit() {
 									) : (
 										<>
 											<Badge
-												variant="default"
-												className="bg-amber-600 hover:bg-amber-700"
+												variant="warning"
 											>
 												Not connected
 											</Badge>

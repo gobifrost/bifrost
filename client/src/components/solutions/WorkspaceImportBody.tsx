@@ -371,7 +371,7 @@ export function WorkspaceImportBody({
 			)}
 			{loading ? (
 				<div className="flex min-h-0 flex-1 items-center justify-center gap-2 px-6 py-8">
-					<Loader2 className="size-4 animate-spin" />
+					<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
 					Reading package…
 				</div>
 			) : preview ? (

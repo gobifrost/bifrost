@@ -1150,11 +1150,11 @@ export function AgentSettingsTab({
 													className={cn(
 														"mr-1 h-auto min-h-5 max-w-full text-left leading-normal whitespace-normal [overflow-wrap:anywhere]",
 														deactivated &&
-															"border-amber-500/30 bg-amber-500/10",
+															"border-warning/30 bg-warning-soft",
 													)}
 												>
 													{deactivated ? (
-														<AlertTriangle className="mr-1 h-3 w-3 text-amber-500" />
+														<AlertTriangle className="mr-1 h-3 w-3 text-warning" />
 													) : null}
 													{tool.name}
 													<button
@@ -1317,7 +1317,7 @@ export function AgentSettingsTab({
 																				tool.name
 																			}
 																			{isMismatch ? (
-																				<span className="ml-2 text-[11px] text-rose-500">
+																				<span className="ml-2 text-[11px] text-destructive">
 																					Different
 																					org
 																				</span>

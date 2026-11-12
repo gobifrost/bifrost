@@ -774,7 +774,7 @@ export function ExecutionDetails({
 						aria-label="Rerun execution"
 					>
 						{isRerunning ? (
-							<Loader2 className="h-3.5 w-3.5 animate-spin" />
+							<Loader2 className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" />
 						) : (
 							<RefreshCw className="h-3.5 w-3.5" />
 						)}

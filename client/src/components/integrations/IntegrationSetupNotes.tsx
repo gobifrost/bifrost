@@ -178,7 +178,7 @@ function IntegrationSetupNotesEditor({
 			</DialogHeader>
 			<Suspense
 				fallback={
-					<div className="min-h-[260px] animate-pulse rounded-[var(--bf-radius-surface)] border bg-muted/50" />
+					<div className="min-h-[260px] animate-pulse motion-reduce:animate-none rounded-[var(--bf-radius-surface)] border bg-muted/50" />
 				}
 			>
 				<TiptapEditor

@@ -105,7 +105,7 @@ export function RunStatusBadge({
 			return (
 				<Badge
 					variant="outline"
-					className="bf-running-border relative min-w-24 gap-1 overflow-visible font-normal text-foreground"
+					className="relative min-w-24 gap-1 overflow-visible font-normal text-foreground"
 				>
 					<span
 						data-testid="run-status-activity-indicator"

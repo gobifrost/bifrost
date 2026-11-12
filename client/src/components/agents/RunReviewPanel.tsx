@@ -81,11 +81,11 @@ function ActivityFallbackRow({ item }: { item: RunActivityItem }) {
 				? Check
 				: CircleDot;
 	const iconTone = failed
-		? "bg-rose-500/15 text-rose-600 dark:text-rose-300"
+		? "bg-destructive/15 text-destructive"
 		: delegated
-			? "bg-violet-500/15 text-violet-600 dark:text-violet-300"
+			? "bg-power-soft text-power"
 			: completed
-				? "bg-emerald-500/15 text-emerald-600 dark:text-emerald-300"
+				? "bg-success-soft text-success"
 				: "bg-muted text-muted-foreground";
 	return (
 		<div
@@ -202,7 +202,7 @@ export function RunReviewPanel({
 							// websocket flips summary_status to generating.
 							"flex flex-wrap items-center justify-between gap-3 rounded-[var(--bf-radius-control)] ring-1 px-3 py-2 animate-in fade-in duration-200 motion-reduce:animate-none",
 							summaryStatus === "failed"
-								? "ring-rose-500/30 bg-rose-500/10"
+								? "ring-destructive/30 bg-destructive/10"
 								: "ring-foreground/5 bg-muted/50",
 							compact ? "text-xs" : "text-[13px]",
 						)}
@@ -260,7 +260,7 @@ export function RunReviewPanel({
 				{hasDidProse ? (
 					<Section
 						icon={<Wrench size={13} />}
-						iconClassName="bg-blue-500/15 text-blue-600 dark:text-blue-400"
+						iconClassName="bg-info-soft text-info"
 						label="What the agent did"
 						compact={compact}
 					>
@@ -286,7 +286,7 @@ export function RunReviewPanel({
 					// — preserve visibility with human-readable action names.
 					<Section
 						icon={<Wrench size={13} />}
-						iconClassName="bg-blue-500/15 text-blue-600 dark:text-blue-400"
+						iconClassName="bg-info-soft text-info"
 						label={`What the agent did · ${fallbackActions.length} action${fallbackActions.length === 1 ? "" : "s"}`}
 						compact={compact}
 					>
@@ -322,7 +322,7 @@ export function RunReviewPanel({
 				{run.status === "completed" ? (
 					<Section
 						icon={<Bot size={13} />}
-						iconClassName="bg-emerald-500/15 text-emerald-600 dark:text-emerald-400"
+						iconClassName="bg-success-soft text-success"
 						label="What the agent answered"
 						compact={compact}
 					>
@@ -368,7 +368,7 @@ export function RunReviewPanel({
 				  ].includes(run.status) ? (
 					<Section
 						icon={<AlertCircle size={13} />}
-						iconClassName="bg-rose-500/15 text-rose-600 dark:text-rose-400"
+						iconClassName="bg-destructive/15 text-destructive"
 						label={
 							run.status === "budget_exceeded"
 								? "Budget exceeded"
@@ -382,7 +382,7 @@ export function RunReviewPanel({
 					>
 						<div
 							className={cn(
-								"rounded-md bg-rose-500/10 px-3 py-2 whitespace-pre-wrap break-words",
+								"rounded-md bg-destructive/10 px-3 py-2 whitespace-pre-wrap break-words",
 								compact ? "text-xs" : "text-sm",
 							)}
 						>
@@ -411,7 +411,7 @@ export function RunReviewPanel({
 					<Section label="Summary error" compact={compact} plain>
 						<div
 							className={cn(
-								"rounded-md bg-rose-500/10 ring-1 ring-rose-500/30 px-3 py-2 text-rose-700 dark:text-rose-300 whitespace-pre-wrap break-words",
+								"rounded-md bg-destructive/10 ring-1 ring-destructive/30 px-3 py-2 text-destructive whitespace-pre-wrap break-words",
 								compact ? "text-xs" : "text-sm",
 							)}
 						>
@@ -649,7 +649,7 @@ export function MetadataChips({ metadata, highlight }: MetadataChipsProps) {
 						className={cn(
 							"inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-[11px]",
 							isHit
-								? "border-transparent bg-yellow-500/15 text-yellow-700 dark:text-yellow-300"
+								? "border-transparent bg-warning-soft text-warning"
 								: "border-border bg-card text-foreground",
 						)}
 					>

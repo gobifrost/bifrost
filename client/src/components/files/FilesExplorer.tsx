@@ -655,7 +655,7 @@ export function FilesExplorer({
 					<aside
 						aria-label="Share navigation"
 						inert={inspectorBusy || undefined}
-						className="flex w-[17rem] shrink-0 flex-col border-r bg-muted/10"
+						className="flex w-[17rem] max-w-[85vw] shrink-0 flex-col border-r bg-muted/10"
 					>
 						<div className="flex h-14 shrink-0 items-center gap-2 border-b px-4 text-sm font-semibold">
 							<HardDrive className="size-4 text-primary" />

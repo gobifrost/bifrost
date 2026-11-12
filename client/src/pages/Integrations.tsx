@@ -408,7 +408,7 @@ export function Integrations() {
 						{[...Array(3)].map((_, index) => (
 							<div
 								key={index}
-								className="h-16 w-full animate-pulse rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/30"
+								className="h-16 w-full animate-pulse motion-reduce:animate-none rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/30"
 							/>
 						))}
 					</div>

@@ -96,7 +96,7 @@ export function TiptapEditor({
 
 	if (!editor) {
 		return (
-			<div className="min-h-[200px] animate-pulse rounded-[var(--bf-radius-surface)] border border-border/70 bg-muted/50" />
+			<div className="min-h-[200px] animate-pulse motion-reduce:animate-none rounded-[var(--bf-radius-surface)] border border-border/70 bg-muted/50" />
 		);
 	}
 

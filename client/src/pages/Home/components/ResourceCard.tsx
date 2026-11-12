@@ -36,10 +36,10 @@ export function ResourceCard({
 					size="card"
 					className={
 						resource.kind === "app"
-							? "border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300 [&_svg]:text-current"
+							? "border-info/20 bg-info-soft text-info [&_svg]:text-current"
 							: resource.kind === "form"
-								? "border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-300 [&_svg]:text-current"
-								: "border-violet-500/20 bg-violet-500/10 text-violet-700 dark:text-violet-300 [&_svg]:text-current"
+								? "border-warning/20 bg-warning-soft text-warning [&_svg]:text-current"
+								: "border-power/20 bg-power-soft text-power [&_svg]:text-current"
 					}
 				/>
 			}

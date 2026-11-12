@@ -484,7 +484,7 @@ export function CodeEditor() {
 		return (
 			<div className="flex h-full items-center justify-center">
 				<div className="text-center">
-					<Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto mb-2" />
+					<Loader2 className="h-8 w-8 animate-spin motion-reduce:animate-none text-muted-foreground mx-auto mb-2" />
 					<p className="text-sm text-muted-foreground">
 						Loading file...
 					</p>

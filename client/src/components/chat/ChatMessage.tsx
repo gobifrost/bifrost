@@ -289,6 +289,7 @@ function ChatMessageView({
 								if (isCodeBlock) {
 									if (isStreaming) {
 										return (
+											// eslint-disable-next-line shadcn/no-raw-colors -- Code blocks are intentionally fixed-dark in both themes for contrast.
 											<pre className="my-2 overflow-x-auto rounded-[var(--bf-radius-control)] bg-slate-950 p-3 text-slate-100">
 												<code>{content}</code>
 											</pre>

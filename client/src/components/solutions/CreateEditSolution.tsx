@@ -232,10 +232,10 @@ function KnowledgeNamespaceNote({
 	if (namespaces.length === 0) return null;
 	return (
 		<div
-			className="mt-3 flex gap-2 rounded-lg border border-yellow-500/40 bg-yellow-500/5 p-3 text-xs"
+			className="mt-3 flex gap-2 rounded-lg border border-warning/40 bg-warning-soft p-3 text-xs"
 			data-testid="knowledge-namespace-note"
 		>
-			<Plug className="mt-0.5 h-3.5 w-3.5 shrink-0 text-yellow-600 dark:text-yellow-400" />
+			<Plug className="mt-0.5 h-3.5 w-3.5 shrink-0 text-warning" />
 			<div>
 				<p className="font-medium">Knowledge required after install</p>
 				<p className="mt-0.5 text-muted-foreground">
@@ -266,7 +266,7 @@ function DiffSection({
 		<div className="text-sm">
 			<span className="font-medium">{label}</span>
 			{added.length > 0 && (
-				<p className="text-green-600 dark:text-green-500">
+				<p className="text-success">
 					Added: {added.join(", ")}
 				</p>
 			)}
@@ -339,7 +339,7 @@ export function UpgradeDiffView({ diff }: { diff: SolutionUpgradeDiff }) {
 				<div className="text-sm">
 					<span className="font-medium">Configs</span>
 					{(configs.added?.length ?? 0) > 0 && (
-						<p className="text-green-600 dark:text-green-500">
+						<p className="text-success">
 							Added: {(configs.added ?? []).join(", ")}
 						</p>
 					)}

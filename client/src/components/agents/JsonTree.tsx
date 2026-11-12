@@ -202,7 +202,7 @@ function NullToken() {
 
 function BoolToken({ value }: { value: boolean }) {
 	return (
-		<span className="text-amber-700 dark:text-amber-300">
+		<span className="text-warning">
 			{String(value)}
 		</span>
 	);
@@ -210,7 +210,7 @@ function BoolToken({ value }: { value: boolean }) {
 
 function NumberToken({ value }: { value: number }) {
 	return (
-		<span className="text-violet-700 dark:text-violet-300">
+		<span className="text-power">
 			{String(value)}
 		</span>
 	);
@@ -219,7 +219,7 @@ function NumberToken({ value }: { value: number }) {
 function StringToken({ value }: { value: string }) {
 	// Long strings wrap; short ones render inline.
 	return (
-		<span className="break-words text-emerald-700 dark:text-emerald-300">
+		<span className="break-words text-success">
 			&quot;{value}&quot;
 		</span>
 	);

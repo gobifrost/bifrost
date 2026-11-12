@@ -55,7 +55,7 @@ export function ExecutionRow({ execution }: ExecutionRowProps) {
 				<div
 					className={cn(
 						"w-2 h-2 shrink-0 rounded-full",
-						statusStyles[execution.status] || "bg-gray-400",
+						statusStyles[execution.status] || "bg-muted-foreground",
 					)}
 				/>
 				{execution.status === "STUCK" && (

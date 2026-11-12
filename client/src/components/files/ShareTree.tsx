@@ -180,7 +180,7 @@ function BrowseNode(props: NodeProps) {
 									"size-4 shrink-0",
 									prefix === ""
 										? "text-primary"
-										: "text-amber-600 dark:text-amber-400",
+										: "text-warning",
 								)}
 							/>
 							<span className="min-w-0">

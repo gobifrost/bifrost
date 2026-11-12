@@ -25,4 +25,26 @@ describe("Badge", () => {
 		);
 		expect(badge).not.toHaveClass("bg-secondary");
 	});
+
+	it("draws the success variant from the success tokens", () => {
+		render(<Badge variant="success">Completed</Badge>);
+
+		const badge = screen.getByText("Completed");
+		expect(badge).toHaveClass(
+			"bg-[var(--bf-success-soft)]",
+			"text-[var(--bf-success)]",
+		);
+		expect(badge.className).not.toContain("emerald");
+	});
+
+	it("draws the info variant from the info tokens", () => {
+		render(<Badge variant="info">Data Provider</Badge>);
+
+		const badge = screen.getByText("Data Provider");
+		expect(badge).toHaveClass(
+			"bg-[var(--bf-info-soft)]",
+			"text-[var(--bf-info)]",
+		);
+		expect(badge.className).not.toContain("blue");
+	});
 });

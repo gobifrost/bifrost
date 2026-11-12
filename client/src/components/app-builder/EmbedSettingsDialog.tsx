@@ -552,7 +552,7 @@ export function EmbedSettingsDialog({
         <DialogContent className="w-[calc(100vw-1rem)] max-h-[92dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
-              <Check className="h-5 w-5 text-green-500" />
+              <Check className="h-5 w-5 text-success" />
               Secret Created
             </DialogTitle>
           </DialogHeader>

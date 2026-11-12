@@ -406,7 +406,7 @@ export function FormListSurface({
 								logo={form.logo_url ?? null}
 								cacheKey={form.logo_version ?? undefined}
 								size="card"
-								className="border-amber-500/20 bg-amber-500/10 text-amber-800 dark:text-amber-300 [&_svg]:text-current"
+								className="border-warning/20 bg-warning-soft text-warning [&_svg]:text-current"
 							/>
 						}
 						title={form.name}

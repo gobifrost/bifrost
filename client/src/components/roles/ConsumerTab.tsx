@@ -473,7 +473,7 @@ export function OrgBadge({ org }: { org: OrgInfo | null }) {
 	return (
 		<span className="inline-flex items-center gap-1">
 			{org.isProvider ? (
-				<Star className="h-3.5 w-3.5 text-amber-500 fill-amber-500" />
+				<Star className="h-3.5 w-3.5 text-warning fill-warning" />
 			) : (
 				<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
 			)}

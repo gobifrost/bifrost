@@ -53,7 +53,7 @@ export function ImpersonateUserButton({ user }: { user: User }) {
 			}}
 		>
 			{isStarting ? (
-				<Loader2 aria-hidden="true" className="size-4 animate-spin" />
+				<Loader2 aria-hidden="true" className="size-4 animate-spin motion-reduce:animate-none" />
 			) : (
 				<UserRoundCheck aria-hidden="true" className="size-4" />
 			)}

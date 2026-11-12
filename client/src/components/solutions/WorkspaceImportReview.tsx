@@ -304,7 +304,7 @@ function ImportGroupRow({
 					</span>
 				) : (
 					<span
-						className={`text-xs font-medium ${first.classification === "create" ? "text-emerald-700" : "text-muted-foreground"}`}
+						className={`text-xs font-medium ${first.classification === "create" ? "text-success" : "text-muted-foreground"}`}
 					>
 						{first.classification === "create" ? "Create" : "Unchanged"}
 					</span>
