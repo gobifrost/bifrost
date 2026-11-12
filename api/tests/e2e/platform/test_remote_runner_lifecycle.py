@@ -465,3 +465,41 @@ async def {function_name}():
 
 async def _one_document(async_session_factory, table_id: UUID) -> bool | None:
     return True if await _document_count(async_session_factory, table_id) == 1 else None
+
+
+async def test_mixed_key_locals_complete_and_worker_accepts_next_execution(
+    async_session_factory, e2e_client, platform_admin, remote_launcher,
+):
+    launcher, _worker_id = remote_launcher
+    function_name = f"e2e_mixed_keys_{uuid4().hex}"
+    source = f'''from bifrost import workflow
+
+@workflow(name="{function_name}")
+async def {function_name}():
+    ids = {{None: 1, "abc": 2}}
+    return {{"ok": True}}
+'''
+    try:
+        workflow = await _register_workflow(
+            e2e_client, platform_admin.headers, source=source, function_name=function_name,
+        )
+        generation = launcher.generation
+        # Two executions prove the worker remains usable after the offending
+        # locals travel through real child IPC, the control socket and storage.
+        for _ in range(2):
+            execution_id = await _start(e2e_client, platform_admin.headers, workflow["id"])
+
+            async def complete() -> Execution | None:
+                execution = await _execution(async_session_factory, execution_id)
+                if execution is not None and execution.status == ExecutionStatus.SUCCESS:
+                    return execution
+                return None
+
+            execution = await _wait_for(complete, timeout=30, description="mixed-key workflow result")
+            assert execution.result == {"ok": True}
+            assert execution.variables["ids"] == {"null": 1, "abc": 2}
+            assert launcher.generation == generation
+    finally:
+        e2e_client.delete(
+            f"/api/files/editor?path=workflows/{function_name}.py", headers=platform_admin.headers,
+        )

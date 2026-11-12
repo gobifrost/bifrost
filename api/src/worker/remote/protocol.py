@@ -107,6 +107,10 @@ class ProtocolError(ValueError):
     """A peer supplied an invalid or unsafe control frame."""
 
 
+class PayloadSerializationError(ProtocolError):
+    """A local control payload cannot be represented by the JSON wire contract."""
+
+
 class AuthenticationError(ProtocolError):
     """A peer did not prove possession of the platform control secret."""
 
@@ -213,8 +217,18 @@ class ControlEnvelope:
         if not self.kind or len(self.kind) > 64:
             raise ProtocolError("invalid control message kind")
 
+    def _encode(self) -> str:
+        # Payloads follow execution-result JSON semantics, including mixed keys.
+        # Deterministic sorting is required only for signed Hello bytes.
+        try:
+            return json.dumps(asdict(self), default=str, separators=(",", ":"))
+        except Exception:
+            # Values may implement arbitrary __str__/deepcopy hooks. Never echo
+            # their exception text (which can contain secrets) onto the wire.
+            raise PayloadSerializationError("Control payload could not be serialized") from None
+
     def to_json(self) -> str:
-        raw = json.dumps(asdict(self), default=str, separators=(",", ":"), sort_keys=True)
+        raw = self._encode()
         if len(raw.encode()) > MAX_FRAME_BYTES:
             raise ProtocolError("control frame exceeds limit")
         return raw
@@ -255,7 +269,7 @@ class ControlEnvelope:
 
 def fragment(envelope: ControlEnvelope) -> Iterator[ControlEnvelope]:
     """Encode one logical envelope into bounded ordered transport frames."""
-    raw = json.dumps(asdict(envelope), default=str, separators=(",", ":"), sort_keys=True).encode()
+    raw = envelope._encode().encode()
     # A base64 fragment plus JSON envelope must fit in MAX_FRAME_BYTES.
     chunk_size = ((MAX_FRAME_BYTES - 1024) * 3) // 4
     if len(raw) <= chunk_size:
