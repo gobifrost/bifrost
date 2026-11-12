@@ -12,6 +12,13 @@ experimental YELLOW; arbitrary untrusted execution remains RED under unresolved
 isolation, abnormal cancellation and resource-accounting guarantees. A source PR, an approved research review,
 green CI or an HTTP 200 envelope cannot substitute for runtime acceptance.
 
+2026-11-12 trust-model decision ([backend/TRUST-MODEL.md](backend/TRUST-MODEL.md)):
+org publishers are trusted operators (AD/GPO analogy). Least-privilege
+gates stay enforcing; non-cooperative CPU termination is retired as a
+ship-blocker and documented as operator risk (their bill, their timeouts).
+The RED that remains is for genuinely untrusted authorship and for the
+platform-hard limits (durable execution, memory, native deps, accounting).
+
 Normal completion is distinct from abnormal cancellation: await required work,
 finish the response/stream/RPC and dispose returned RPC object stubs when done.
 Destroying a physical isolate after every successful job is not an acceptance
