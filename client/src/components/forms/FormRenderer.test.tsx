@@ -156,6 +156,78 @@ beforeEach(() => {
 	});
 });
 
+describe("FormRenderer — display blocks", () => {
+	it.each(["markdown", "html"] as const)(
+		"submits input values without the %s block",
+		async (type) => {
+			const form = makeForm([
+				{
+					name: "comment",
+					label: "Comment",
+					type: "text",
+					required: true,
+				},
+				{
+					name: "instructions",
+					label: "Instructions",
+					type,
+					content: "Read before submitting",
+					required: false,
+				},
+			]);
+			const { user } = renderWithProviders(<FormRenderer form={form} />);
+			expect(
+				screen.getByText("Read before submitting"),
+			).toBeInTheDocument();
+			await user.type(screen.getByLabelText(/comment/i), "hello");
+			await user.click(screen.getByRole("button", { name: /submit/i }));
+			await waitFor(() =>
+				expect(mockMutateAsync).toHaveBeenCalledWith(
+					expect.objectContaining({
+						body: expect.objectContaining({
+							form_data: { comment: "hello" },
+						}),
+					}),
+				),
+			);
+		},
+	);
+
+	it("ignores required flags and stale defaults on display-only blocks", async () => {
+		const form = makeForm([
+			{
+				name: "instructions",
+				label: "Instructions",
+				type: "markdown",
+				content: "Read me",
+				required: true,
+			},
+			{
+				name: "details",
+				label: "Details",
+				type: "html",
+				content: "Details",
+				default_value: "old input value",
+				required: true,
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		await waitFor(() =>
+			expect(
+				screen.getByRole("button", { name: /submit/i }),
+			).toBeEnabled(),
+		);
+		await user.click(screen.getByRole("button", { name: /submit/i }));
+		await waitFor(() =>
+			expect(mockMutateAsync).toHaveBeenCalledWith(
+				expect.objectContaining({
+					body: expect.objectContaining({ form_data: {} }),
+				}),
+			),
+		);
+	});
+});
+
 describe("FormRenderer — required validation", () => {
 	it("keeps the Submit button disabled when a required field is empty", () => {
 		const form = makeForm([

@@ -104,6 +104,8 @@ async function submitAssignedFormAndVerifyResult(
 	await expect(
 		page.getByRole("heading", { name: ASSIGNED_FORM_NAME }),
 	).toBeVisible();
+	await expect(page.getByText("Read the request instructions")).toBeVisible();
+	await expect(page.getByText("Include your contact details")).toBeVisible();
 	await page.getByLabel("Request ID").fill(requestId);
 	await page.getByLabel("Requester Email").fill(requesterEmail);
 	await page.getByRole("combobox", { name: "Priority *" }).click();
@@ -146,7 +148,7 @@ async function submitAssignedFormAndVerifyResult(
 		adminApi,
 		submissionBody.execution_id,
 	);
-	expect(execution.input_data).toMatchObject({
+	expect(execution.input_data).toEqual({
 		request_id: requestId,
 		requester_email: requesterEmail,
 		priority: "urgent",
@@ -245,6 +247,18 @@ test.describe("Form Acceptance for Org Users", () => {
 
 		const formSchema = {
 			fields: [
+				{
+					name: "instructions",
+					label: "Instructions",
+					type: "markdown",
+					content: "Read the request instructions",
+				},
+				{
+					name: "details",
+					label: "Details",
+					type: "html",
+					content: "<p>Include your contact details</p>",
+				},
 				{
 					name: "request_id",
 					label: "Request ID",
