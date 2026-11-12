@@ -6,6 +6,7 @@ Tests OAuth configuration and authorization endpoints.
 """
 
 import asyncio
+import json
 
 import pytest
 import pytest_asyncio
@@ -159,6 +160,92 @@ class TestIntegrationsCRUD:
         assert response.status_code == 200, f"Update failed: {response.text}"
         updated = response.json()
         assert updated["name"] == new_name
+
+    def test_notes_persist_export_import_and_clear(self, e2e_client, platform_admin):
+        """Notes round-trip through the live REST and archive surfaces."""
+        name = f"e2e_notes_{uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": name, "notes": "## Prepare\n\nCreate an API key."},
+        )
+        assert created.status_code == 201, created.text
+        integration = created.json()
+        try:
+            assert integration["notes"] == "## Prepare\n\nCreate an API key."
+
+            exported = e2e_client.post(
+                "/api/export-import/export/integrations",
+                headers=platform_admin.headers,
+                json={"ids": [integration["id"]]},
+            )
+            assert exported.status_code == 200, exported.text
+            archive = exported.json()
+            assert len(archive["items"]) == 1
+            assert archive["items"][0]["name"] == name
+            assert archive["items"][0]["notes"] == "## Prepare\n\nCreate an API key."
+
+            cleared = e2e_client.put(
+                f"/api/integrations/{integration['id']}",
+                headers=platform_admin.headers,
+                json={"notes": None},
+            )
+            assert cleared.status_code == 200, cleared.text
+            assert cleared.json()["notes"] is None
+
+            multipart_headers = {
+                key: value
+                for key, value in platform_admin.headers.items()
+                if key.lower() != "content-type"
+            }
+            restored = e2e_client.post(
+                "/api/export-import/import/integrations",
+                headers=multipart_headers,
+                data={"replace_existing": "true"},
+                files={"file": ("integrations.json", exported.content, "application/json")},
+            )
+            assert restored.status_code == 200, restored.text
+            fetched = e2e_client.get(
+                f"/api/integrations/{integration['id']}", headers=platform_admin.headers
+            )
+            assert fetched.status_code == 200, fetched.text
+            assert fetched.json()["notes"] == "## Prepare\n\nCreate an API key."
+
+            # An archive from an older server must not erase current notes.
+            archive["items"][0].pop("notes")
+            legacy_import = e2e_client.post(
+                "/api/export-import/import/integrations",
+                headers=multipart_headers,
+                data={"replace_existing": "true"},
+                files={"file": ("legacy.json", json.dumps(archive), "application/json")},
+            )
+            assert legacy_import.status_code == 200, legacy_import.text
+            assert legacy_import.json()["updated"] == 1
+            assert legacy_import.json()["errors"] == 0
+            retained = e2e_client.get(
+                f"/api/integrations/{integration['id']}", headers=platform_admin.headers
+            )
+            assert retained.status_code == 200, retained.text
+            assert retained.json()["notes"] == "## Prepare\n\nCreate an API key."
+
+            archive["items"][0]["notes"] = None
+            cleared_import = e2e_client.post(
+                "/api/export-import/import/integrations",
+                headers=multipart_headers,
+                data={"replace_existing": "true"},
+                files={"file": ("clear.json", json.dumps(archive), "application/json")},
+            )
+            assert cleared_import.status_code == 200, cleared_import.text
+            assert cleared_import.json()["updated"] == 1
+            cleared_again = e2e_client.get(
+                f"/api/integrations/{integration['id']}", headers=platform_admin.headers
+            )
+            assert cleared_again.status_code == 200, cleared_again.text
+            assert cleared_again.json()["notes"] is None
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{integration['id']}", headers=platform_admin.headers
+            )
 
     def test_delete_integration(self, e2e_client, platform_admin):
         """Platform admin can soft-delete an integration."""
@@ -1977,3 +2064,24 @@ class TestBatchMappingUpsert:
         assert response.status_code == 404, (
             f"Expected 404 for nonexistent integration, got {response.status_code}: {response.text}"
         )
+
+
+@pytest.mark.e2e
+def test_integration_choice_labels_persist_on_create_and_update(e2e_client, platform_admin):
+    name = f"Choice metadata {uuid4().hex}"
+    schema = {"key": "region", "type": "string", "options": ["eu"], "option_labels": {"eu": "Europe"}}
+    response = e2e_client.post("/api/integrations", headers=platform_admin.headers, json={"name": name, "config_schema": [schema]})
+    assert response.status_code == 201, response.text
+    integration_id = response.json()["id"]
+    try:
+        created = e2e_client.get(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert created.json()["config_schema"][0]["option_labels"] == {"eu": "Europe"}
+        schema["option_labels"] = {"eu": "European Union"}
+        updated = e2e_client.put(f"/api/integrations/{integration_id}", headers=platform_admin.headers, json={"config_schema": [schema]})
+        assert updated.status_code == 200, updated.text
+        read = e2e_client.get(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert read.json()["config_schema"][0]["options"] == ["eu"]
+        assert read.json()["config_schema"][0]["option_labels"] == {"eu": "European Union"}
+    finally:
+        deleted = e2e_client.delete(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+        assert deleted.status_code in {200, 204}, deleted.text

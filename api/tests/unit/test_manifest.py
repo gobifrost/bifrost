@@ -1264,7 +1264,8 @@ class TestEventManifest:
         assert len(evt_rest.subscriptions) == len(evt_orig.subscriptions)
         assert evt_rest.subscriptions[0].workflow_id == evt_orig.subscriptions[0].workflow_id
 
-    def test_webhook_config_never_carries_the_signing_secret(self):
+    @pytest.mark.parametrize("public_config", [{"signature_header": "X-Sig"}, {"header_auth": True, "auth_header": "X-Token"}])
+    def test_webhook_config_never_carries_the_signing_secret(self, public_config):
         """A manifest written before the secret moved out of config still
         parses, and neither import nor export carries the secret."""
         from types import SimpleNamespace
@@ -1279,11 +1280,11 @@ class TestEventManifest:
                     "name": "Signed hook",
                     "source_type": "webhook",
                     "adapter_name": "generic",
-                    "webhook_config": {"secret": "LEGACY-PLAINTEXT", "signature_header": "X-Sig"},
+                    "webhook_config": {"secret": "LEGACY-PLAINTEXT", **public_config},
                 },
             },
         }))
-        assert legacy.events[es_id].webhook_config == {"signature_header": "X-Sig"}
+        assert legacy.events[es_id].webhook_config == public_config
         assert "LEGACY-PLAINTEXT" not in serialize_manifest(legacy)
 
         row = SimpleNamespace(
@@ -1292,11 +1293,11 @@ class TestEventManifest:
         )
         webhook = SimpleNamespace(
             adapter_name="generic", integration_id=None,
-            config={"secret": "ROW-PLAINTEXT", "signature_header": "X-Sig"},
+            config={"secret": "ROW-PLAINTEXT", **public_config},
             rate_limit_per_minute=60, rate_limit_window_seconds=60, rate_limit_enabled=True,
         )
         exported = ManifestEventSource.from_row(row, webhook=webhook)
-        assert exported.webhook_config == {"signature_header": "X-Sig"}
+        assert exported.webhook_config == public_config
 
     def test_event_split_file(self, full_manifest_data):
         """Events serialize to events.yaml in split format."""
@@ -3240,3 +3241,36 @@ def test_manifest_workflow_git_sync_view_ignores_requested_permissions():
     )
     assert "requested_permissions" not in wf.view(Destination.GIT_SYNC)
     assert wf.view(Destination.INSTALL)["requested_permissions"] == {"mode": "full", "grants": []}
+
+
+def test_integration_choice_labels_round_trip():
+    from bifrost.manifest import ManifestIntegrationConfigSchema
+    from src.models.orm.integrations import IntegrationConfigSchema
+
+    row = IntegrationConfigSchema(key="region", type="string", options=["eu"], option_labels={"eu": "Europe"}, required=False, position=0)
+    manifest = ManifestIntegrationConfigSchema.from_row(row)
+    restored = ManifestIntegrationConfigSchema.model_validate_json(manifest.model_dump_json())
+    assert restored.options == ["eu"]
+    assert restored.option_labels == {"eu": "Europe"}
+
+
+def test_integration_notes_round_trip_from_row_through_yaml_to_import_values():
+    from types import SimpleNamespace
+
+    from bifrost.manifest import Manifest, ManifestIntegration, parse_manifest, serialize_manifest
+    from bifrost.manifest_codec import Destination
+
+    notes = "## Setup\n\n1. Create an API key.\n\n[Runbook](https://example.com/runbook)\n"
+    row = SimpleNamespace(
+        id=uuid4(),
+        name="Service Desk",
+        description=None,
+        notes=notes,
+        entity_id=None,
+        entity_id_name=None,
+        default_entity_id=None,
+        list_entities_data_provider_id=None,
+    )
+    manifest = Manifest(integrations={str(row.id): ManifestIntegration.from_row(row)})
+    restored = parse_manifest(serialize_manifest(manifest)).integrations[str(row.id)]
+    assert restored.to_orm_values(Destination.GIT_SYNC).direct["notes"] == notes

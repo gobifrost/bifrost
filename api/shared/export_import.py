@@ -280,6 +280,7 @@ async def _build_integrations_export(
                 required=cs.required,
                 description=cs.description,
                 options=cs.options,
+                option_labels=cs.option_labels,
                 position=cs.position,
             )
             for cs in sorted(integ.config_schema, key=lambda x: x.position)
@@ -357,6 +358,7 @@ async def _build_integrations_export(
         items.append(IntegrationExportItem(
             name=integ.name,
             description=integ.description,
+            notes=integ.notes,
             entity_id=integ.entity_id,
             entity_id_name=integ.entity_id_name,
             default_entity_id=integ.default_entity_id,
@@ -692,6 +694,8 @@ async def import_integrations(
 
                     # Update basic fields
                     existing.description = item.description
+                    if "notes" in item.model_fields_set:
+                        existing.notes = item.notes
                     existing.entity_id = item.entity_id
                     existing.entity_id_name = item.entity_id_name
                     existing.default_entity_id = item.default_entity_id
@@ -713,6 +717,7 @@ async def import_integrations(
                     integ = Integration(
                         name=item.name,
                         description=item.description,
+                        notes=item.notes,
                         entity_id=item.entity_id,
                         entity_id_name=item.entity_id_name,
                         default_entity_id=item.default_entity_id,
@@ -736,6 +741,7 @@ async def import_integrations(
                             required=cs_item.required,
                             description=cs_item.description,
                             options=cs_item.options,
+                            option_labels=cs_item.option_labels,
                             position=cs_item.position,
                         ))
 
@@ -889,6 +895,7 @@ async def _sync_config_schema(
             existing_cs.required = cs_item.required
             existing_cs.description = cs_item.description
             existing_cs.options = cs_item.options
+            existing_cs.option_labels = cs_item.option_labels
             existing_cs.position = cs_item.position
         else:
             db.add(IntegrationConfigSchema(
@@ -898,6 +905,7 @@ async def _sync_config_schema(
                 required=cs_item.required,
                 description=cs_item.description,
                 options=cs_item.options,
+                option_labels=cs_item.option_labels,
                 position=cs_item.position,
             ))
 

@@ -201,6 +201,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # Optional form layout and empty authoring slots are additive; --form-schema
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
+# Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new

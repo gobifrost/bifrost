@@ -52,6 +52,7 @@ async def upsert_integration_shells(
                     required=bool(s.get("required")),
                     description=s.get("description"),
                     options=s.get("options"),
+                    option_labels=s.get("option_labels"),
                     position=s.get("position", 0),
                 )
             )

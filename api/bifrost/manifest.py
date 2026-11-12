@@ -630,6 +630,7 @@ class ManifestIntegrationConfigSchema(EntityCodec, BaseModel):
     required: bool = Field(default=False, description="Whether this config must be set", **classify(FieldClass.CONTENT))
     description: str | None = Field(default=None, description="Human-readable description", **classify(FieldClass.CONTENT))
     options: list[str] | None = Field(default=None, description="Allowed values (for string type)", **classify(FieldClass.CONTENT))
+    option_labels: dict[str, str] | None = Field(default=None, description="Display labels keyed by stored option value", **classify(FieldClass.CONTENT))
     position: int = Field(default=0, description="Display order in UI", **classify(FieldClass.CONTENT))
 
     @classmethod
@@ -641,6 +642,7 @@ class ManifestIntegrationConfigSchema(EntityCodec, BaseModel):
             required=cs.required,
             description=cs.description,
             options=cs.options,
+            option_labels=cs.option_labels,
             position=cs.position,
         )
 
@@ -721,6 +723,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
     id: str = Field(description="Integration UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="Integration display name", **classify(FieldClass.CONTENT, match_key=True))
     description: str | None = Field(default=None, description="Integration description", **classify(FieldClass.CONTENT))
+    notes: str | None = Field(default=None, description="Markdown setup notes", **classify(FieldClass.CONTENT))
     entity_id: str | None = Field(default=None, description="Field name for entity identifier", **classify(FieldClass.REFERENCE))
     entity_id_name: str | None = Field(default=None, description="Display label for entity ID field", **classify(FieldClass.CONTENT))
     default_entity_id: str | None = Field(default=None, description="Default entity ID value", **classify(FieldClass.REFERENCE))
@@ -743,6 +746,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
             id=str(integ.id),
             name=integ.name,
             description=integ.description,
+            notes=integ.notes,
             entity_id=integ.entity_id,
             entity_id_name=integ.entity_id_name,
             default_entity_id=integ.default_entity_id,
@@ -776,6 +780,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
                 "id": self.id,
                 "name": self.name,
                 "description": self.description,
+                "notes": self.notes,
                 "entity_id": self.entity_id,
                 "entity_id_name": self.entity_id_name,
                 "default_entity_id": self.default_entity_id,

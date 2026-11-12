@@ -79,6 +79,7 @@ class ConfigSchemaExportItem(BaseModel):
     required: bool = False
     description: str | None = None
     options: list[str] | None = None
+    option_labels: dict[str, str] | None = None
     position: int = 0
 
 
@@ -108,6 +109,7 @@ class OAuthProviderExportItem(BaseModel):
 class IntegrationExportItem(BaseModel):
     name: str
     description: str | None = None
+    notes: str | None = None
     entity_id: str | None = None
     entity_id_name: str | None = None
     default_entity_id: str | None = None

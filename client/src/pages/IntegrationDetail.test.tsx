@@ -4,6 +4,7 @@ import { renderWithProviders, screen } from "@/test-utils";
 const mockUseAuthorization = vi.fn();
 const mockUseIntegration = vi.fn();
 const mockUseOrganizations = vi.fn();
+const mockExportEntities = vi.fn();
 
 vi.mock("react-router-dom", async () => {
 	const actual =
@@ -35,7 +36,12 @@ vi.mock("@/services/integrations", () => ({
 	useAuthorizeMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useDisconnectMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useRefreshMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
+	useUpdateIntegration: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	planOrgConfigSave: () => ({ kind: "noop" }),
+}));
+
+vi.mock("@/services/exportImport", () => ({
+	exportEntities: (...args: unknown[]) => mockExportEntities(...args),
 }));
 
 vi.mock("@/hooks/useOAuth", () => ({
@@ -72,15 +78,20 @@ vi.mock("@/components/integrations/IntegrationPageHeader", () => ({
 	IntegrationPageHeader: ({
 		canManageDefinitions,
 		canTestConnection,
+		canExport,
+		onExport,
 	}: {
 		canManageDefinitions: boolean;
 		canTestConnection: boolean;
+		canExport: boolean;
+		onExport: () => void;
 	}) => (
 		<div>
 			{canTestConnection && (
 				<button type="button">Test Connection</button>
 			)}
 			{canManageDefinitions && <button type="button">Edit</button>}
+			{canExport && <button type="button" onClick={onExport}>Export</button>}
 			{canManageDefinitions && (
 				<button type="button">Generate SDK</button>
 			)}
@@ -252,5 +263,13 @@ describe("IntegrationDetail authorization", () => {
 		expect(
 			screen.getByRole("button", { name: "Configure Defaults" }),
 		).toBeInTheDocument();
+	});
+
+	it("exports only the current integration", async () => {
+		mockExportEntities.mockResolvedValue(undefined);
+		setAuthorization({ globalRead: true });
+		const { user } = renderDetail();
+		await user.click(screen.getByRole("button", { name: "Export" }));
+		expect(mockExportEntities).toHaveBeenCalledWith("integrations", ["integration-1"]);
 	});
 });

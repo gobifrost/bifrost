@@ -1502,25 +1502,17 @@ async def recreate_workflow_file(
     try:
         orphan_service = WorkflowOrphanService(db)
 
-        # Get the workflow and mark as not orphaned
-        workflow = await orphan_service.recreate_file(workflow_id)
-
-        # Load code via Redis→S3 cache chain
-        from src.core.module_cache import get_module
-        cached = await get_module(workflow.path)
-        code_content = cached["content"] if cached else None
-
-        if not code_content:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Workflow has no stored code to recreate",
-            )
+        prepared = await orphan_service.recreate_file(workflow_id)
+        workflow = prepared.workflow
         file_storage = FileStorageService(db)
-        await file_storage.write_file(
+        written = await file_storage.write_file(
             path=workflow.path,
-            content=code_content.encode("utf-8"),
+            content=prepared.content,
             updated_by=user.email,
         )
+        if written.pending_deactivations:
+            raise HTTPException(status_code=409, detail="Workflow recreation requires deactivation confirmation")
+        await db.commit()
 
         logger.info(f"Recreated file for workflow {log_safe(workflow_id)} at {log_safe(workflow.path)}")
 

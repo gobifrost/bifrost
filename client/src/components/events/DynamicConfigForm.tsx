@@ -846,6 +846,9 @@ export function DynamicConfigForm({
 
 	const handleFieldChange = (fieldName: string, value: unknown) => {
 		const newConfig = { ...config };
+		if (adapterName === "generic" && fieldName === "header_auth" && value === true) {
+			delete newConfig.delivery_id_header;
+		}
 		if (!hasConfigValue(value)) delete newConfig[fieldName];
 		else newConfig[fieldName] = value;
 		if (!Object.is(config[fieldName], value))
@@ -860,8 +863,16 @@ export function DynamicConfigForm({
 	return (
 		<div className="min-w-0 space-y-4">
 			{fieldOrder.map((fieldName) => {
-				const property = properties[fieldName];
+				let property = properties[fieldName];
 				if (!property) return null;
+				if (adapterName === "generic") {
+					const headerAuth = config.header_auth === true;
+					if ((fieldName === "auth_header" && !headerAuth) ||
+						(headerAuth && ["signature_header", "signature_prefix", "delivery_id_header"].includes(fieldName))) return null;
+					if (fieldName === "secret" && headerAuth) {
+						property = { ...property, title: "Expected Header Value", description: "Enter the complete value sent in the authentication header, including Bearer if needed.", "x-help": undefined };
+					}
+				}
 
 				return (
 					<DynamicField

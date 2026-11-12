@@ -361,3 +361,34 @@ async def test_event_agent_run_is_for_the_agent_organization_identity():
     load.assert_awaited_once_with(processor.session, identity)
     authorize.assert_awaited_once_with(processor.session, caller, agent.id)
     assert mock_enqueue.call_args.kwargs["lineage"] == lineage
+
+@pytest.mark.asyncio
+async def test_header_credentials_do_not_reach_agent_event_metadata():
+    from src.services.webhooks.adapters.generic import GenericWebhookAdapter
+    from src.services.webhooks.protocol import Deliver, WebhookRequest
+    from src.services.webhooks.signing_secret import with_signing_secret
+
+    result = await GenericWebhookAdapter().handle_request(
+        WebhookRequest("POST", "/", {
+            "x-token": "synthetic-token", "authorization": "Bearer other",
+            "cookie": "session=other", "x-safe": "visible",
+        }, {}, b'{}'),
+        {"header_auth": True, "auth_header": "X-Token"},
+        with_signing_secret({}, "synthetic-token"),
+    )
+    assert isinstance(result, Deliver)
+    event = _make_event()
+    event.headers = result.raw_headers
+    processor = _create_processor()
+    delivery = _make_delivery(target_type="agent")
+    identity = uuid.uuid4()
+    caller = _identity_caller(identity, delivery.subscription.agent.organization_id)
+    with (
+        patch("shared.run_lineage.identity_lineage", new=AsyncMock(return_value=MagicMock(run_user_id=identity))),
+        patch("src.services.authorization.callers.load_human_caller", new=AsyncMock(return_value=caller)),
+        patch("src.services.authorization.agent_runtime.authorize_agent_execution", new=AsyncMock()),
+        patch("src.services.execution.agent_run_service.stage_agent_run_request", new_callable=AsyncMock,
+              return_value=MagicMock(run_id=str(uuid.uuid4()))) as stage,
+    ):
+        await processor._queue_agent_run(delivery, event)
+    assert stage.call_args.kwargs["input_data"]["_event"]["headers"] == {"x-safe": "visible"}

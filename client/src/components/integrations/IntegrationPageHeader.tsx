@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Code, Pencil, Zap } from "lucide-react";
+import { Code, Download, Pencil, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function IntegrationPageHeader({
@@ -8,6 +8,11 @@ export function IntegrationPageHeader({
 	onTest,
 	onGenerateSDK,
 	onEdit,
+	onExport,
+	canExport,
+	hasSetupNotes,
+	showSetupNotes,
+	onToggleSetupNotes,
 	canTestConnection,
 	canManageDefinitions,
 }: {
@@ -16,6 +21,11 @@ export function IntegrationPageHeader({
 	onTest: () => void;
 	onGenerateSDK: () => void;
 	onEdit: () => void;
+	onExport: () => void;
+	canExport: boolean;
+	hasSetupNotes: boolean;
+	showSetupNotes: boolean;
+	onToggleSetupNotes: () => void;
 	canTestConnection: boolean;
 	canManageDefinitions: boolean;
 }) {
@@ -47,6 +57,17 @@ export function IntegrationPageHeader({
 					</p>
 				</div>
 				<div className="flex flex-wrap items-center gap-2 xl:shrink-0">
+					{hasSetupNotes && (
+						<Button type="button" variant="outline" className="min-h-11" onClick={onToggleSetupNotes}>
+							{showSetupNotes ? "Hide Setup Instructions" : "Show Setup Instructions"}
+						</Button>
+					)}
+					{canExport && (
+						<Button type="button" variant="outline" className="min-h-11" onClick={onExport}>
+							<Download className="size-4" />
+							Export
+						</Button>
+					)}
 					{canTestConnection && (
 						<Button
 							type="button"

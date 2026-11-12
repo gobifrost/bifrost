@@ -826,7 +826,8 @@ async def test_deploy_schedule_trigger_under_guard(db_session) -> None:
     assert sub.workflow_id == wf.id  # same-install identity preserved
 
 
-async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_session) -> None:
+@pytest.mark.parametrize("config", [{"signature_header": "X-Sig"}, {"header_auth": True, "auth_header": "X-Token"}])
+async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_session, config) -> None:
     """Capture omits the signing secret, and redeploying, even a legacy bundle
     whose config still holds a plaintext secret, keeps the stored one."""
     from src.models.orm.events import EventSource, WebhookSource
@@ -848,7 +849,7 @@ async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_sess
     await db.flush()
     db.add(WebhookSource(
         id=uuid.uuid4(), event_source_id=es.id, adapter_name="generic",
-        config={"signature_header": "X-Sig"},
+        config=config,
         state=with_signing_secret({}, "STORED-SECRET"),
     ))
     await db.flush()
@@ -865,7 +866,7 @@ async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_sess
     assert "STORED-SECRET" not in str(bundle.events)
     assert "secret_encrypted" not in str(bundle.events)
 
-    bundle.events[0]["webhook_config"] = {"signature_header": "X-Sig", "secret": "LEGACY-PLAINTEXT"}
+    bundle.events[0]["webhook_config"] = {**config, "secret": "LEGACY-PLAINTEXT"}
     await SolutionDeployer(db).deploy(bundle)
     await db.flush()
 
@@ -873,7 +874,7 @@ async def test_redeploy_keeps_a_webhook_signing_secret_no_bundle_carries(db_sess
         select(WebhookSource).where(WebhookSource.event_source_id == es.id)
         .execution_options(populate_existing=True)
     )).scalar_one()
-    assert webhook.config == {"signature_header": "X-Sig"}
+    assert webhook.config == config
     assert read_signing_secret(webhook.state) == "STORED-SECRET"
 
 

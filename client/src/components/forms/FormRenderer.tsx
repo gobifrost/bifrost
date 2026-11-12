@@ -16,6 +16,8 @@ import { FormConfirmation } from "@/components/forms/FormConfirmation";
 import { FormCaptcha } from "@/components/forms/FormCaptcha";
 import { JsxTemplateRenderer } from "@/components/ui/jsx-template-renderer";
 import { Input } from "@/components/ui/input";
+import { DatePicker } from "@/components/ui/date-picker";
+import { DateTimeFieldInput } from "@/components/forms/DateTimeFieldInput";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
@@ -215,6 +217,15 @@ function FormRendererInner({
 				? normalizeFormLayout(form.form_schema.layout)
 				: null,
 		[form.form_schema],
+	);
+
+	// Display blocks render content but are not values accepted by the form API.
+	const inputFields = useMemo(
+		() =>
+			fields.filter(
+				(field) => field.type !== "markdown" && field.type !== "html",
+			),
+		[fields],
 	);
 
 	// Single state object for all data provider state to batch updates
@@ -551,7 +562,7 @@ function FormRendererInner({
 	const buildSchema = useCallback(() => {
 		const schemaFields: Record<string, z.ZodTypeAny> = {};
 
-		fields.forEach((field: FormField) => {
+		inputFields.forEach((field: FormField) => {
 			let fieldSchema: z.ZodTypeAny;
 
 			switch (field.type) {
@@ -652,7 +663,7 @@ function FormRendererInner({
 		});
 
 		return z.object(schemaFields);
-	}, [fields, dataProviderState.successfullyLoaded]);
+	}, [inputFields, dataProviderState.successfullyLoaded]);
 
 	// Create a custom resolver that calls buildSchema() to get the latest schema
 	const customResolver = useCallback<Resolver<Record<string, unknown>>>(
@@ -673,7 +684,7 @@ function FormRendererInner({
 	} = useForm({
 		resolver: customResolver,
 		mode: "onChange", // Validate on change to keep isValid up-to-date
-		defaultValues: fields.reduce(
+		defaultValues: inputFields.reduce(
 			(acc: Record<string, unknown>, field: FormField) => {
 				if (field.type === "multi_select") {
 					// default_value is a comma-separated list of option values
@@ -1035,6 +1046,55 @@ function FormRendererInner({
 		}
 
 		switch (field.type) {
+			case "date":
+			case "datetime": {
+				const DateControl =
+					field.type === "date" ? DatePicker : DateTimeFieldInput;
+				return (
+					<div className="space-y-2">
+						<Label htmlFor={field.name}>
+							{field.label}
+							{field.required && (
+								<span className="text-destructive ml-1">*</span>
+							)}
+						</Label>
+						<DateControl
+							id={field.name}
+							aria-label={field.label ?? field.name}
+							value={(formValues[field.name] as string) || ""}
+							onChange={(value) =>
+								setValue(field.name, value, {
+									shouldValidate: true,
+									shouldDirty: true,
+								})
+							}
+							onBlur={handleFieldBlur}
+							placeholder={field.placeholder ?? undefined}
+							aria-invalid={!!error}
+							aria-describedby={
+								field.help_text || error
+									? `${field.name}-description`
+									: undefined
+							}
+						/>
+						{(field.help_text || error) && (
+							<div id={`${field.name}-description`}>
+								{field.help_text && (
+									<p className="text-sm text-muted-foreground">
+										{field.help_text}
+									</p>
+								)}
+								{error && (
+									<p className="text-sm text-destructive">
+										{error.message as string}
+									</p>
+								)}
+							</div>
+						)}
+					</div>
+				);
+			}
+
 			case "textarea":
 				return (
 					<div className="space-y-2">
@@ -1271,34 +1331,6 @@ function FormRendererInner({
 					</div>
 				);
 			}
-
-			case "datetime":
-				return (
-					<div className="space-y-2">
-						<Label htmlFor={field.name}>
-							{field.label}
-							{field.required && (
-								<span className="text-destructive ml-1">*</span>
-							)}
-						</Label>
-						<Input
-							id={field.name}
-							type="datetime-local"
-							placeholder={field.placeholder ?? undefined}
-							{...register(field.name)}
-						/>
-						{field.help_text && (
-							<p className="text-sm text-muted-foreground">
-								{field.help_text}
-							</p>
-						)}
-						{error && (
-							<p className="text-sm text-destructive">
-								{error.message as string}
-							</p>
-						)}
-					</div>
-				);
 
 			case "markdown":
 				return (

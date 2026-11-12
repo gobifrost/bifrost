@@ -6,7 +6,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "20261110_form_layout"
-down_revision = "20261110_profile_prompt_cache"
+down_revision = "20261111_integration_notes"
 branch_labels = None
 depends_on = None
 

@@ -16364,6 +16364,13 @@ export interface components {
              * @description List of valid string options for dropdown UI
              */
             options?: string[] | null;
+            /**
+             * Option Labels
+             * @description Display labels keyed by stored option value
+             */
+            option_labels?: {
+                [key: string]: string;
+            } | null;
         };
         /**
          * ConfigType
@@ -21552,6 +21559,11 @@ export interface components {
              */
             description?: string | null;
             /**
+             * Notes
+             * @description Optional Markdown setup notes for configuring this integration
+             */
+            notes?: string | null;
+            /**
              * Config Schema
              * @description Optional schema defining available configuration for this integration
              */
@@ -21595,6 +21607,11 @@ export interface components {
              * @description Optional integration description for admin UI cards
              */
             description?: string | null;
+            /**
+             * Notes
+             * @description Optional Markdown setup notes for configuring this integration
+             */
+            notes?: string | null;
             /**
              * List Entities Data Provider Id
              * @description Associated data provider ID for listing entities
@@ -21956,6 +21973,11 @@ export interface components {
              */
             description?: string | null;
             /**
+             * Notes
+             * @description Optional Markdown setup notes for configuring this integration
+             */
+            notes?: string | null;
+            /**
              * List Entities Data Provider Id
              * @description Associated data provider ID for listing entities
              */
@@ -22111,6 +22133,11 @@ export interface components {
              * @description Optional integration description for admin UI cards
              */
             description?: string | null;
+            /**
+             * Notes
+             * @description Optional Markdown setup notes; null explicitly clears saved notes
+             */
+            notes?: string | null;
             /**
              * List Entities Data Provider Id
              * @description Data provider ID for listing entities

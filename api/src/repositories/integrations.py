@@ -109,6 +109,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         integration = Integration(
             name=data.name,
             description=data.description,
+            notes=data.notes,
             entity_id=data.entity_id,
             entity_id_name=data.entity_id_name,
         )
@@ -122,6 +123,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                     required=item.required,
                     description=item.description,
                     options=item.options,
+                    option_labels=item.option_labels,
                     position=idx,
                 )
                 integration.config_schema.append(schema_item)
@@ -225,6 +227,8 @@ class IntegrationsRepository(BaseRepository[Integration]):
             integration.name = data.name
         if "description" in data.model_fields_set:
             integration.description = data.description
+        if "notes" in data.model_fields_set:
+            integration.notes = data.notes
         if data.list_entities_data_provider_id is not None:
             integration.list_entities_data_provider_id = (
                 data.list_entities_data_provider_id
@@ -257,6 +261,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                     existing.required = item_data.required
                     existing.description = item_data.description
                     existing.options = item_data.options
+                    existing.option_labels = item_data.option_labels
                     existing.position = idx
                 else:
                     # Add new
@@ -267,6 +272,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
                         required=item_data.required,
                         description=item_data.description,
                         options=item_data.options,
+                        option_labels=item_data.option_labels,
                         position=idx,
                     )
                     integration.config_schema.append(new_item)

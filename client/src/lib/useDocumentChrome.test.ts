@@ -1,11 +1,9 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderHook } from "@testing-library/react";
-import { useDocumentChrome } from "./useDocumentChrome";
+import { useDocumentChrome, setPlatformFavicon } from "./useDocumentChrome";
 
-const SVG_DATA_URL =
-	"data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
-const PNG_DATA_URL =
-	"data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
+const SVG_DATA_URL = "data:image/svg+xml;base64,PHN2Zz48L3N2Zz4=";
+const PNG_DATA_URL = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
 
 function faviconLink(): HTMLLinkElement {
 	const link = document.querySelector<HTMLLinkElement>("link[rel='icon']");
@@ -85,6 +83,54 @@ describe("useDocumentChrome", () => {
 			);
 			expect(faviconLink().getAttribute("href")).toBe("/logo.svg");
 			expect(faviconLink().getAttribute("type")).toBe("image/svg+xml");
+		});
+	});
+
+	describe("platform branding", () => {
+		it("uses a previously saved square logo without an upload", () => {
+			setPlatformFavicon("/api/branding/logo/square");
+			expect(new URL(faviconLink().href).pathname).toBe(
+				"/api/branding/logo/square",
+			);
+			expect(faviconLink().getAttribute("type")).toBeNull();
+		});
+
+		it("refreshes cached logo bytes and resets to the shipped icon", () => {
+			vi.spyOn(Date, "now")
+				.mockReturnValueOnce(100)
+				.mockReturnValueOnce(200);
+			setPlatformFavicon("/api/branding/logo/square");
+			const first = faviconLink().href;
+			setPlatformFavicon("/api/branding/logo/square");
+			expect(faviconLink().href).not.toBe(first);
+			setPlatformFavicon(null);
+			expect(faviconLink().getAttribute("href")).toBe("/logo.svg");
+			expect(faviconLink().type).toBe("image/svg+xml");
+			vi.restoreAllMocks();
+		});
+
+		it("keeps the app override during branding refresh and restores the latest platform icon", () => {
+			setPlatformFavicon("/api/branding/logo/square");
+			const { unmount } = renderHook(() =>
+				useDocumentChrome({ title: null, logo: PNG_DATA_URL }),
+			);
+			setPlatformFavicon("/api/branding/logo/square?replacement=1");
+			expect(faviconLink().getAttribute("href")).toBe(PNG_DATA_URL);
+			unmount();
+			expect(
+				new URL(faviconLink().href).searchParams.get("replacement"),
+			).toBe("1");
+		});
+
+		it("restores the default after branding is reset while an app is open", () => {
+			setPlatformFavicon("/api/branding/logo/square");
+			const { unmount } = renderHook(() =>
+				useDocumentChrome({ title: null, logo: SVG_DATA_URL }),
+			);
+			setPlatformFavicon(null);
+			expect(faviconLink().getAttribute("href")).toBe(SVG_DATA_URL);
+			unmount();
+			expect(faviconLink().getAttribute("href")).toBe("/logo.svg");
 		});
 	});
 

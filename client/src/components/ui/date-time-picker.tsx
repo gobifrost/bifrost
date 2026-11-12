@@ -28,6 +28,13 @@ export interface DateTimePickerProps {
 	maxDate?: Date;
 	disabled?: boolean;
 	ariaLabel?: string;
+	id?: string;
+	className?: string;
+	placeholder?: string;
+	onBlur?: React.FocusEventHandler<HTMLButtonElement>;
+	"aria-describedby"?: string;
+	"aria-invalid"?: React.AriaAttributes["aria-invalid"];
+	clearable?: boolean;
 }
 
 const DISPLAY_FORMAT = "MMM d, yyyy · h:mm a";
@@ -74,14 +81,20 @@ export function DateTimePicker({
 	maxDate,
 	disabled,
 	ariaLabel,
+	id,
+	className,
+	placeholder = "Pick a date and time",
+	onBlur,
+	"aria-describedby": describedBy,
+	"aria-invalid": invalid,
+	clearable = false,
 }: DateTimePickerProps): React.JSX.Element {
 	const [open, setOpen] = React.useState(false);
 	const timeInputId = React.useId();
+	const valueDescriptionId = React.useId();
 
 	const label = ariaLabel ?? "Pick date and time";
-	const triggerText = value
-		? format(value, DISPLAY_FORMAT)
-		: "Pick a date and time";
+	const triggerText = value ? format(value, DISPLAY_FORMAT) : placeholder;
 
 	const timeInputValue = value ? format(value, TIME_INPUT_FORMAT) : "";
 
@@ -139,24 +152,36 @@ export function DateTimePicker({
 					type="button"
 					variant="outline"
 					disabled={disabled}
+					id={id}
+					onBlur={onBlur}
 					aria-label={label}
+					aria-describedby={[valueDescriptionId, describedBy]
+						.filter(Boolean)
+						.join(" ")}
+					aria-invalid={invalid}
 					className={cn(
 						"h-auto min-h-11 w-full min-w-0 max-w-[260px] justify-start whitespace-normal text-left font-normal",
 						!value && "text-muted-foreground",
+						className,
 					)}
 				>
 					<CalendarIcon className="mr-2 h-4 w-4" />
-					<span className="min-w-0 [overflow-wrap:anywhere]">
+					<span
+						id={valueDescriptionId}
+						className="min-w-0 [overflow-wrap:anywhere]"
+					>
 						{triggerText}
 					</span>
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent
-				className="w-auto max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) gap-0 overflow-y-auto p-0"
+				className="w-[min(20.5rem,calc(100vw-2rem))] sm:w-auto max-w-[calc(100vw-2rem)] max-h-(--radix-popover-content-available-height) gap-0 overflow-y-auto p-0"
 				align="start"
 			>
 				<Calendar
 					mode="single"
+					required
+					autoFocus
 					selected={value ?? undefined}
 					defaultMonth={value ?? minDate ?? undefined}
 					onSelect={handleDaySelect}
@@ -178,6 +203,23 @@ export function DateTimePicker({
 						className="h-11 min-w-0 flex-1"
 					/>
 				</div>
+				{clearable && (
+					<div className="border-t p-2">
+						<Button
+							type="button"
+							variant="ghost"
+							className="w-full"
+							disabled={!value}
+							onClick={() => {
+								if (disabled) return;
+								onChange(null);
+								setOpen(false);
+							}}
+						>
+							Clear Date &amp; Time
+						</Button>
+					</div>
+				)}
 			</PopoverContent>
 		</Popover>
 	);

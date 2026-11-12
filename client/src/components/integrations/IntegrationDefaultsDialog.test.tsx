@@ -95,6 +95,14 @@ it("keeps Not set distinct from false", () => {
 	});
 	expect(onFormValuesChange).toHaveBeenLastCalledWith({ enabled: "" });
 });
+
+it("does not submit defaults while setup instructions are collapsed", async () => {
+	const { user, onSave } = renderDialog({ notes: "## Prepare credentials" });
+	await user.click(screen.getByRole("button", { name: "Collapse setup instructions" }));
+	expect(onSave).not.toHaveBeenCalled();
+	await user.click(screen.getByRole("button", { name: "Expand setup instructions" }));
+	expect(onSave).not.toHaveBeenCalled();
+});
 it("preserves zero and invalid integer drafts until save validation", () => {
 	const { onFormValuesChange } = renderDialog({
 		configSchema: [{ key: "count", type: "int" }],
@@ -120,4 +128,16 @@ it("renders stored JSON as multiline text and preserves unfinished JSON edits", 
 	expect(onFormValuesChange).toHaveBeenLastCalledWith({
 		options: '{"enabled":',
 	});
+});
+
+it("offers packaged static choices when setting a default", async () => {
+	const { user, onFormValuesChange } = renderDialog({
+		configSchema: [
+			{ key: "region", type: "string", options: ["us", "eu"] },
+		],
+		formValues: { region: "us" },
+	});
+	await user.click(screen.getByRole("combobox", { name: /region/ }));
+	await user.click(screen.getByRole("option", { name: "eu" }));
+	expect(onFormValuesChange).toHaveBeenLastCalledWith({ region: "eu" });
 });

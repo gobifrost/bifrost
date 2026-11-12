@@ -340,6 +340,7 @@ class IntegrationsRepository:
         integration = Integration(
             name=request.name,
             description=request.description,
+            notes=request.notes,
             entity_id=request.entity_id,
             entity_id_name=request.entity_id_name,
             default_entity_id=request.default_entity_id,
@@ -357,6 +358,7 @@ class IntegrationsRepository:
                     required=item.required,
                     description=item.description,
                     options=item.options,
+                    option_labels=item.option_labels,
                     position=idx,
                 )
                 integration.config_schema.append(schema_item)
@@ -378,6 +380,8 @@ class IntegrationsRepository:
             integration.name = request.name
         if "description" in request.model_fields_set:
             integration.description = request.description
+        if "notes" in request.model_fields_set:
+            integration.notes = request.notes
         if request.list_entities_data_provider_id is not None:
             integration.list_entities_data_provider_id = (
                 request.list_entities_data_provider_id
@@ -413,6 +417,7 @@ class IntegrationsRepository:
                     existing.required = item_data.required
                     existing.description = item_data.description
                     existing.options = item_data.options
+                    existing.option_labels = item_data.option_labels
                     existing.position = idx
                 else:
                     # Add new
@@ -423,6 +428,7 @@ class IntegrationsRepository:
                         required=item_data.required,
                         description=item_data.description,
                         options=item_data.options,
+                        option_labels=item_data.option_labels,
                         position=idx,
                     )
                     integration.config_schema.append(new_item)
@@ -995,6 +1001,7 @@ async def get_integration(
         id=integration.id,
         name=integration.name,
         description=integration.description,
+        notes=integration.notes,
         list_entities_data_provider_id=integration.list_entities_data_provider_id,
         config_schema=config_schema_items,
         config_defaults=config_defaults if config_defaults else None,

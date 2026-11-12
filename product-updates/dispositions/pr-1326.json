@@ -1,0 +1,15 @@
+{
+  "key": "pr:1326",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Your existing square branding logo now appears as the browser-tab icon automatically, without reuploading it.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1326",
+      "https://github.com/gobifrost/bifrost/issues/1323",
+      "Native Jack Approve Wording response in the existing Issue #1323 owner conversation on November 10, 2026 approves the exact PR title/body and this release sentence. Merge separately authorized."
+    ]
+  }
+}

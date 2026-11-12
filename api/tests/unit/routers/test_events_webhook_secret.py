@@ -142,3 +142,33 @@ async def test_adapter_without_a_signing_secret_rejects_one(registry):
 
     assert exc_info.value.status_code == 422
     assert "signing secret" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_header_secret_lifecycle_and_mode_transition(registry):
+    source, ws = _generic_source("original")
+    header = {"header_auth": True, "auth_header": "X-Token"}
+    await _update(source, {"config": header})
+    assert read_signing_secret(ws.state) == "original"
+    await _update(source, {"config": {**header, "secret": "replacement"}})
+    assert read_signing_secret(ws.state) == "replacement"
+    assert "replacement" not in str(ws.config) + str(ws.state)
+    await _update(source, {"config": {**header, "secret": ""}})
+    assert read_signing_secret(ws.state) is None
+    await _update(source, {"config": {"secret": "hmac-key"}})
+    assert read_signing_secret(ws.state) == "hmac-key"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config", [
+    {"header_auth": True},
+    {"header_auth": True, "auth_header": "bad header"},
+    {"header_auth": True, "auth_header": "X-Forwarded-For"},
+    {"header_auth": True, "auth_header": "X-Token", "event_type_header": "x-token"},
+    {"header_auth": True, "auth_header": "X-Token", "delivery_id_header": "X-ID"},
+])
+async def test_invalid_header_configuration_is_rejected(registry, config):
+    source, _ = _generic_source("original")
+    with pytest.raises(HTTPException) as exc:
+        await _update(source, {"config": config})
+    assert exc.value.status_code == 422

@@ -1,3 +1,4 @@
+import { StaticConfigChoice } from "./StaticConfigChoice";
 import { useId } from "react";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -103,6 +104,22 @@ export function ConfigFieldInput({
 	}
 
 	const renderInput = () => {
+		if (field.type === "string" && field.options?.length) {
+			return (
+				<StaticConfigChoice
+					id={inputId}
+					options={field.options}
+					optionLabels={field.option_labels}
+					value={value}
+					aria-describedby={
+						field.description ? descriptionId : undefined
+					}
+					onChange={(next) =>
+						onChange(next === "" ? undefined : next)
+					}
+				/>
+			);
+		}
 		switch (field.type) {
 			case "bool":
 				return (

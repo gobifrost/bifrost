@@ -1463,7 +1463,7 @@ async def get_file_content_editor(
             encoding = "base64"
             content_str = base64.b64encode(content).decode("ascii")
 
-        etag = hashlib.md5(content).hexdigest()
+        etag = hashlib.sha256(content).hexdigest()
 
         return FileContentResponse(
             path=path,
@@ -1519,7 +1519,7 @@ async def put_file_content_editor(
         if request.expected_etag:
             try:
                 existing_content, _ = await storage.read_file(request.path)
-                existing_etag = hashlib.md5(existing_content).hexdigest()
+                existing_etag = hashlib.sha256(existing_content).hexdigest()
                 if existing_etag != request.expected_etag:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
@@ -1586,7 +1586,7 @@ async def put_file_content_editor(
                 }
             )
 
-        etag = hashlib.md5(write_result.final_content).hexdigest()
+        etag = hashlib.sha256(write_result.final_content).hexdigest()
 
         if write_result.content_modified:
             response_content = write_result.final_content.decode("utf-8")

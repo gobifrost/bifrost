@@ -23,7 +23,7 @@ _PROBE_PROMPT = "Reply with OK."
 _PROBE_MAX_TOKENS = 16
 
 # Markers for "this surface does not serve this model" (mirrors
-# openai_transport_detection._responses_are_unsupported).
+# openai_transport_detection.responses_are_unsupported).
 _UNSUPPORTED_MARKERS = (
     "model not supported",
     "model is unavailable",

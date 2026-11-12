@@ -1,0 +1,14 @@
+{
+  "key": "pr:1342",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "OpenCode Go connections send the required session headers on the provider\u2019s new inference endpoints.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1342",
+      "Jack requested the necessary changes and merge in the existing native PR owner on 2026-11-12, retaining credit to Will (wilhil). Original implementation commit 078a5255b6d41e0bcddf4a851a82ae050e6928f4 is retained."
+    ]
+  }
+}

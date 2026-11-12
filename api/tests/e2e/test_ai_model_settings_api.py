@@ -212,7 +212,7 @@ def test_opencode_go_connection_and_profiles_round_trip(e2e_client, platform_adm
     assert connection_resp.status_code == 201, connection_resp.text
     connection = connection_resp.json()
     assert connection["provider"] == "opencode_go"
-    assert connection["endpoint"] == "https://opencode.ai/zen/go/v1"
+    assert connection["endpoint"] == "https://opencode.ai/inference/go/openai/v1"
 
     for name, model in (
         ("Go Chat E2E", "deepseek-v4.1-flash"),

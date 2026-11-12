@@ -1,0 +1,54 @@
+.integration-setup-notes-container {
+	container-type: inline-size;
+}
+.integration-setup-notes-context {
+	display: grid;
+	grid-template-columns: minmax(0, 1fr);
+	gap: 1.5rem;
+	align-items: start;
+}
+.integration-setup-notes {
+	overflow: hidden;
+	border: 1px solid var(--border);
+	border-radius: var(--bf-radius-surface);
+	background: var(--card);
+}
+.integration-setup-notes-empty {
+	display: flex;
+	justify-content: flex-end;
+}
+.integration-setup-notes-content {
+	max-height: min(60dvh, 42rem);
+	overflow: auto;
+}
+@container (min-width: 1000px) {
+	.integration-setup-notes-context {
+		grid-template-columns: minmax(0, 1fr) 21.25rem;
+	}
+	.integration-setup-notes-context > aside {
+		grid-column: 2;
+		grid-row: 1;
+		position: sticky;
+		top: 1rem;
+	}
+	.integration-setup-notes-work {
+		grid-column: 1;
+		grid-row: 1;
+	}
+}
+@media (max-width: 640px) {
+	.integration-setup-notes-content {
+		max-height: none;
+	}
+}
+
+.integration-setup-notes-context[data-has-notes="false"] {
+	grid-template-columns: minmax(0, 1fr);
+}
+.integration-setup-notes-context[data-has-notes="false"] > aside,
+.integration-setup-notes-context[data-has-notes="false"]
+	> .integration-setup-notes-work {
+	grid-column: 1;
+	grid-row: auto;
+	position: static;
+}

@@ -24,3 +24,31 @@ it("names schema controls and routes edits/add/remove to the correct field", asy
 		"tenant",
 	);
 });
+
+it("authors display labels separately from stored values", async () => {
+	const onUpdate = vi.fn();
+	const { user } = renderWithProviders(
+		<IntegrationSchemaEditor
+			fields={[
+				{
+					key: "region",
+					type: "string",
+					required: false,
+					options: ["eu"],
+					option_labels: { eu: "Europe" },
+				},
+			]}
+			onAdd={vi.fn()}
+			onRemove={vi.fn()}
+			onUpdate={onUpdate}
+		/>,
+	);
+	await user.type(
+		screen.getByRole("textbox", { name: "Option 1 label" }),
+		"!",
+	);
+	expect(onUpdate).toHaveBeenLastCalledWith(0, {
+		options: ["eu"],
+		option_labels: { eu: "Europe!" },
+	});
+});

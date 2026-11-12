@@ -362,7 +362,7 @@ def test_openrouter_stream_class_uses_bifrost_usage_mapper() -> None:
     assert stream.provider_details["cost"] == Decimal("0.000106904")
 
 
-OPENCODE_GO_ENDPOINT = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_ENDPOINT = "https://opencode.ai/inference/go/openai/v1"
 
 
 def test_opencode_go_settings_carry_identity_headers() -> None:
@@ -382,6 +382,46 @@ def test_opencode_go_settings_carry_identity_headers() -> None:
     assert headers["x-opencode-session"] == "run-123"
     assert "openai_store" not in settings
     assert "extra_body" not in settings
+
+
+def test_opencode_go_headers_follow_the_linked_catalog_provider() -> None:
+    config = LLMConfig(
+        provider="openai",
+        model="glm-5.3",
+        api_key="test-key",
+        endpoint="https://gateway.internal.example/v1",
+        catalog_provider_id="opencode-go",
+    )
+
+    assert provider_name_for_config(config) == "opencode_go"
+    settings = agent_model_settings(config, max_tokens=None, session_id="run-42")
+    headers = cast(dict[str, str], settings["extra_headers"])
+
+    assert headers["x-opencode-session"] == "run-42"
+    assert headers["User-Agent"].startswith("Bifrost/")
+    assert "openai_store" not in settings
+
+
+def test_sdk_client_opencode_go_headers_follow_the_linked_catalog_provider() -> None:
+    client = PydanticAIClient(
+        LLMConfig(
+            provider="openai",
+            model="glm-5.3",
+            api_key="test-key",
+            endpoint="https://gateway.internal.example/v1",
+            catalog_provider_id="opencode-go",
+        ),
+        session_id="sdk-conversation",
+    )
+
+    settings = client._model_settings(max_tokens=64)
+    assert "extra_headers" in settings
+    headers = cast(dict[str, str], settings["extra_headers"])
+
+    assert headers["x-opencode-session"] == "sdk-conversation"
+    assert headers["User-Agent"].startswith("Bifrost/")
+    assert "openai_store" not in settings
+    assert client.provider_name == "opencode_go"
 
 
 def test_create_agent_model_uses_chat_completions_for_opencode_go() -> None:
@@ -426,7 +466,7 @@ def test_create_agent_model_uses_anthropic_messages_for_opencode_go_messages_mod
         provider="anthropic",
         model="qwen3.8-flash",
         api_key="test-key",
-        endpoint="https://opencode.ai/zen/go",
+        endpoint="https://opencode.ai/inference/go/anthropic",
     )
 
     model = create_agent_model(config)
@@ -464,7 +504,7 @@ async def test_opencode_go_messages_requests_target_the_messages_surface() -> No
         provider="anthropic",
         model="qwen3.8-flash",
         api_key="test-key",
-        endpoint="https://opencode.ai/zen/go",
+        endpoint="https://opencode.ai/inference/go/anthropic",
     )
     settings = agent_model_settings(config, max_tokens=64, session_id="conv-msg")
 
@@ -486,7 +526,7 @@ async def test_opencode_go_messages_requests_target_the_messages_surface() -> No
     assert response.text == "hi"
     assert len(seen_requests) == 1
     request = seen_requests[0]
-    assert request.url.path == "/zen/go/v1/messages"
+    assert request.url.path == "/inference/go/anthropic/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["x-opencode-session"] == "conv-msg"
     assert request.headers["User-Agent"].startswith("Bifrost/")
@@ -628,6 +668,111 @@ async def test_uncountable_provider_uses_local_estimate_for_preflight_guard() ->
         )
 
     assert provider_model.provider_requests == 0
+
+
+def _responses_counting_model(status_code: int, message: str):
+    """Exercise SDK HTTP errors and Pydantic AI's real error mapping."""
+    import httpx2
+    from openai import AsyncOpenAI
+    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    paths: list[str] = []
+
+    def respond(request: httpx2.Request) -> httpx2.Response:
+        paths.append(request.url.path)
+        if request.url.path.endswith("/input_tokens"):
+            return httpx2.Response(
+                status_code,
+                json={"error": {"message": message, "type": "invalid_request_error"}},
+            )
+        assert request.url.path == "/v1/responses"
+        return httpx2.Response(
+            200,
+            json={
+                "id": "resp_test",
+                "object": "response",
+                "created_at": 1,
+                "model": "test-model",
+                "status": "completed",
+                "output": [
+                    {
+                        "type": "message",
+                        "id": "msg_test",
+                        "role": "assistant",
+                        "status": "completed",
+                        "content": [
+                            {"type": "output_text", "text": "done", "annotations": []}
+                        ],
+                    }
+                ],
+                "usage": {"input_tokens": 10, "output_tokens": 1, "total_tokens": 11},
+            },
+        )
+
+    http_client = httpx2.AsyncClient(transport=httpx2.MockTransport(respond))
+    client = AsyncOpenAI(
+        api_key="test-key",
+        base_url="https://provider.invalid/v1",
+        http_client=http_client,
+        max_retries=0,
+    )
+    model = OpenAIResponsesModel(
+        "test-model", provider=OpenAIProvider(openai_client=client)
+    )
+    return model, http_client, paths
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 404, 405, 501])
+@pytest.mark.parametrize("budget_limit", [100, 10_000])
+async def test_rejected_server_side_counting_uses_local_budget(
+    status_code: int,
+    budget_limit: int,
+) -> None:
+    provider_model, http_client, paths = _responses_counting_model(
+        status_code, "This model is not supported by Responses API."
+    )
+    model = ObservedModel(provider_model, AsyncMock())
+    runtime = PydanticAgent(model)
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=budget_limit)
+
+    async with http_client:
+        if budget_limit == 100:
+            with pytest.raises(UsageLimitExceeded):
+                await runtime.run(
+                    "one more request",
+                    usage=RunUsage(input_tokens=95),
+                    usage_limits=budget.usage_limits(),
+                )
+            assert paths == ["/v1/responses/input_tokens"]
+        else:
+            result = await runtime.run(
+                "one more request", usage_limits=budget.usage_limits()
+            )
+            assert result.output == "done"
+            assert paths == ["/v1/responses/input_tokens", "/v1/responses"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status_code", [400, 401, 429, 500])
+async def test_unrelated_provider_error_during_counting_still_raises(
+    status_code: int,
+) -> None:
+    from pydantic_ai.exceptions import ModelHTTPError
+
+    provider_model, http_client, paths = _responses_counting_model(
+        status_code, "Provider fault"
+    )
+    runtime = PydanticAgent(ObservedModel(provider_model, AsyncMock()))
+    budget = AgentRunBudget(max_requests=5, max_total_tokens=10_000)
+
+    async with http_client:
+        with pytest.raises(ModelHTTPError) as raised:
+            await runtime.run("one more request", usage_limits=budget.usage_limits())
+
+    assert raised.value.status_code == status_code
+    assert paths == ["/v1/responses/input_tokens"]
 
 
 def test_delegated_subtree_shares_parent_ledger_and_keeps_local_cap() -> None:

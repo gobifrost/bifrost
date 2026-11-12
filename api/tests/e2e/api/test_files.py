@@ -4,6 +4,8 @@ E2E tests for file operations (Editor API).
 Tests workspace file listing, reading, writing, and folder operations.
 """
 
+import hashlib
+
 import pytest
 
 from tests.e2e.conftest import write_and_register
@@ -430,3 +432,31 @@ async def e2e_discovery_test_workflow(value: str):
         assert "parameters" in workflow, "Workflow missing parameters"
         param_names = [p["name"] for p in workflow["parameters"]]
         assert "value" in param_names, "Missing 'value' parameter"
+
+
+@pytest.mark.e2e
+def test_editor_etag_round_trip(e2e_client, platform_admin):
+    """A read validator can save, and the returned validator describes persisted bytes."""
+    path = "e2e_sha256_validator.txt"
+    headers = platform_admin.headers
+    try:
+        created = e2e_client.put(
+            "/api/files/editor/content", headers=headers,
+            json={"path": path, "content": "original"},
+        )
+        assert created.status_code == 200, created.text
+        read = e2e_client.get("/api/files/editor/content", headers=headers, params={"path": path})
+        assert read.status_code == 200, read.text
+        assert read.json()["etag"] == hashlib.sha256(b"original").hexdigest()
+        saved = e2e_client.put(
+            "/api/files/editor/content", headers=headers,
+            json={"path": path, "content": "updated", "expected_etag": read.json()["etag"]},
+        )
+        assert saved.status_code == 200, saved.text
+        persisted = e2e_client.get("/api/files/editor/content", headers=headers, params={"path": path})
+        assert persisted.status_code == 200, persisted.text
+        assert persisted.json()["content"] == "updated"
+        assert saved.json()["etag"] == persisted.json()["etag"] == hashlib.sha256(b"updated").hexdigest()
+    finally:
+        deleted = e2e_client.delete("/api/files/editor", headers=headers, params={"path": path})
+        assert deleted.status_code == 204, deleted.text

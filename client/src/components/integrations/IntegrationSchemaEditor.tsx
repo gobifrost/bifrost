@@ -2,6 +2,7 @@ import { useId } from "react";
 import { Plus, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { OptionsEditor } from "@/components/forms/OptionsEditor";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import {
@@ -92,6 +93,9 @@ function SchemaField({
 						onValueChange={(value) =>
 							onUpdate(index, {
 								type: value as ConfigSchemaItem["type"],
+								...(value !== "string"
+									? { options: null, option_labels: null }
+									: {}),
 							})
 						}
 					>
@@ -127,6 +131,31 @@ function SchemaField({
 					Required
 				</Label>
 			</div>
+			{field.type === "string" && (
+				<OptionsEditor
+					options={(field.options ?? []).map((value) => ({
+						value,
+						label: field.option_labels?.[value] ?? value,
+					}))}
+					onChange={(choices) =>
+						onUpdate(index, {
+							options: choices.length
+								? choices.map((choice) => choice.value)
+								: null,
+							option_labels: choices.length
+								? Object.fromEntries(
+										choices.map((choice) => [
+											choice.value,
+											choice.label,
+										]),
+									)
+								: null,
+						})
+					}
+					label="Dropdown Options"
+					helpText="Add choices for a dropdown, or leave empty for free text. Labels are shown to users; stored values are passed to workflows and included in Solution templates."
+				/>
+			)}
 			<Button
 				type="button"
 				variant="ghost"

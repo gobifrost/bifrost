@@ -256,6 +256,31 @@ describe("EventSourceDetail — populated", () => {
 		).not.toBeInTheDocument();
 	});
 
+	it("sets an instance token for a Solution-managed header webhook without revealing it", async () => {
+		useEventSourceMock.mockReturnValue({
+			data: makeSource({ solution_id: "solution-1", webhook: {
+				adapter_name: "generic", callback_url: "/api/hooks/src-1",
+				secret_set: true, config: { header_auth: true, auth_header: "X-Token" },
+				rate_limit_per_minute: 60, rate_limit_window_seconds: 60,
+				rate_limit_enabled: true, rate_limited_count_24h: 0,
+			} } as Partial<EventSource>),
+			isLoading: false, refetch: vi.fn(),
+		});
+		const { user } = renderWithProviders(<EventSourceDetail sourceId="src-1" onClose={() => {}} />);
+		await user.click(screen.getByRole("button", { name: / actions$/ }));
+		expect(screen.queryByRole("menuitem", { name: "Rotate signing secret" })).not.toBeInTheDocument();
+        mockRotate.mockResolvedValue({ raw_secret: null });
+        await user.click(screen.getByRole("menuitem", { name: "Set Authentication Token" }));
+        expect(screen.getByRole("button", { name: "Save Token" })).toBeDisabled();
+        const input = screen.getByLabelText("Expected Header Value");
+        expect(input).toHaveAttribute("type", "password");
+        await user.type(input, "Bearer replacement");
+        await user.click(screen.getByRole("button", { name: "Save Token" }));
+        await waitFor(() => expect(mockRotate).toHaveBeenCalledWith({params: {path: {source_id: "src-1"}}, body: {secret: "Bearer replacement"}}));
+        await waitFor(() => expect(screen.queryByLabelText("Expected Header Value")).not.toBeInTheDocument());
+        expect(mockRotateReset).toHaveBeenCalled();
+	});
+
 	it("offers no secret rotation for adapters without a signing secret", async () => {
 		useEventSourceMock.mockReturnValue({
 			data: makeSource(),

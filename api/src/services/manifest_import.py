@@ -2109,6 +2109,7 @@ class ManifestResolver:
         integ_values: dict = {
             "name": integ_name,
             "description": fields.get("description"),
+            "notes": fields.get("notes"),
             "entity_id": fields["entity_id"],
             "entity_id_name": fields["entity_id_name"],
             "default_entity_id": fields["default_entity_id"],
@@ -2197,6 +2198,7 @@ class ManifestResolver:
                 existing_cs.required = cs.required
                 existing_cs.description = cs.description
                 existing_cs.options = cs.options
+                existing_cs.option_labels = cs.option_labels
                 existing_cs.position = cs.position
             else:
                 cs_stmt = insert(IntegrationConfigSchema).values(
@@ -2206,6 +2208,7 @@ class ManifestResolver:
                     required=cs.required,
                     description=cs.description,
                     options=cs.options,
+                    option_labels=cs.option_labels,
                     position=cs.position,
                 )
                 await self.db.execute(cs_stmt)

@@ -49,7 +49,7 @@ def test_layout_upgrade_preserves_existing_forms_and_fields():
 
     asyncio.run(_create_database(database_name))
     try:
-        _upgrade(database_url, "20261110_profile_prompt_cache")
+        _upgrade(database_url, "20261111_integration_notes")
         asyncio.run(_run_in_database(database_url, seed))
         before_form, before_fields = asyncio.run(_run_in_database(database_url, snapshot))
         assert "layout" not in before_form

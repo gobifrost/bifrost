@@ -21,6 +21,7 @@ def build_integration_template(integration: Any) -> dict[str, Any]:
         {
             "key": s.key, "type": s.type, "required": bool(s.required),
             "description": s.description, "options": s.options,
+            "option_labels": s.option_labels,
             "position": s.position,
         }
         for s in (integration.config_schema or [])
