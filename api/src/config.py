@@ -86,6 +86,14 @@ class Settings(BaseSettings):
         ),
     )
 
+    database_statement_timeout_ms: int = Field(
+        default=60000,
+        description=(
+            "statement_timeout applied to every transaction on every "
+            "connection, in milliseconds. 0 disables the timeout."
+        ),
+    )
+
     database_pool_size: int = Field(
         default=5,
         description=(
