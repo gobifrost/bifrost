@@ -1,0 +1,53 @@
+{
+  "mode": "get",
+  "tag": "meterget1",
+  "count": 3,
+  "started_at": "2026-11-13T05:54:54.595Z",
+  "steps": [
+    {
+      "phase": "first-use",
+      "index": 0,
+      "tenant": "meterget1-0",
+      "tenant_worker_id": "tenant-py-b64cd64a2b166c3457bdf2165164fac3",
+      "worker_reused": false
+    },
+    {
+      "phase": "first-use",
+      "index": 1,
+      "tenant": "meterget1-1",
+      "tenant_worker_id": "tenant-py-f1c123880b74acbc89bd48c2159ac969",
+      "worker_reused": false
+    },
+    {
+      "phase": "first-use",
+      "index": 2,
+      "tenant": "meterget1-2",
+      "tenant_worker_id": "tenant-py-835c3793406e508889d7d0e1861ef3d2",
+      "worker_reused": false
+    },
+    {
+      "phase": "reuse",
+      "index": 0,
+      "tenant": "meterget1-0",
+      "worker_reused": true
+    },
+    {
+      "phase": "reuse",
+      "index": 1,
+      "tenant": "meterget1-1",
+      "worker_reused": true
+    },
+    {
+      "phase": "reuse",
+      "index": 2,
+      "tenant": "meterget1-2",
+      "worker_reused": true
+    }
+  ],
+  "before": 22,
+  "after_first_use": 22,
+  "after_reuse": 22,
+  "first_use_delta": 0,
+  "reuse_delta": 0,
+  "finished_at": "2026-11-13T05:54:57.866Z"
+}

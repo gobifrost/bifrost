@@ -70,7 +70,14 @@ function gatewaySources(modules) {
 
 export default {
   async fetch(request, env, ctx) {
-    if (env.LOCAL_PROBE !== 'true') return new Response('Local prototype only', {status: 403});
+    // Local workerd sets LOCAL_PROBE=true. A deployed instance instead needs the
+    // spike auth header inside an unexpired window (same shape as the other
+    // spike entries); anything else fails closed before any tenant work.
+    if (env.LOCAL_PROBE !== 'true' &&
+        (!env.SPIKE_AUTH || request.headers.get('X-Spike-Auth') !== env.SPIKE_AUTH ||
+         !(Date.now() < Number(env.SPIKE_EXPIRES_AT)))) {
+      return new Response('Local prototype only', {status: 403});
+    }
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/__code_digest') {
       return Response.json({generic_code_sha256: await genericCodeDigest()});
@@ -88,6 +95,18 @@ export default {
       workerId = await tenantWorkerId(body.tenant_id);
     } catch {
       return json(400, {phase: 'bad-request', error: 'Invalid tenant_id'});
+    }
+
+    // Per-attempt posture control (diagnostic only): LOADER.load with no id
+    // bills one Dynamic Worker per invocation, unlike the per-tenant
+    // LOADER.get below. Never used by tenant routing; used to measure the
+    // creation-meter difference in the billed account.
+    if (body.action === 'legacy_load') {
+      const worker = env.LOADER.load(genericWorkerCode());
+      const response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
+        method: 'POST', body: JSON.stringify({action: 'honest', credential: DUMMY_CREDENTIAL}),
+      }));
+      return Response.json({mode: 'legacy_load', output: await readBudgetedJson(response)});
     }
 
     // Capability gate BEFORE any loader/network/SDK effect.

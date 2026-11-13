@@ -188,3 +188,23 @@ test('/__code_digest exposes the constant script hash', async () => {
     {LOCAL_PROBE: 'true'}, {});
   assert.equal((await res.json()).generic_code_sha256, await genericCodeDigest());
 });
+
+test('legacy_load uses LOADER.load with no id (per-attempt meter control)', async () => {
+  resetTenantState();
+  const seen = {get: 0, load: 0, bodies: []};
+  const child = {getEntrypoint: () => ({fetch: async (request) => {
+    seen.bodies.push(await request.json());
+    return Response.json({clean: {builtins: null}});
+  }})};
+  const env = {LOCAL_PROBE: 'true', LOADER: {
+    get: () => { seen.get++; return child; },
+    load: () => { seen.load++; return child; },
+  }};
+  const res = await entry.fetch(post({tenant_id: 'org-meter', action: 'legacy_load'}), env, {});
+  const body = await res.json();
+  assert.equal(res.status, 200);
+  assert.equal(body.mode, 'legacy_load');
+  assert.equal(seen.load, 1, 'per-attempt control must call LOADER.load');
+  assert.equal(seen.get, 0, 'per-attempt control must not use a stable tenant id');
+  assert.equal(seen.bodies[0].credential, 'gateway-injected');
+});

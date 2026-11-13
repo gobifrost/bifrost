@@ -175,17 +175,24 @@ Residual risks:
 
 Acceptance evidence still needed (none of this is established by this ADR):
 
-1. Re-run of the hostile canary suite against **cloud** workers for the chosen
-   variant (expect: cross-tenant PASS, within-tenant FAIL — confirming the
-   documented boundary in the billed environment).
-2. Cloud-metered confirmation of the creation rule (`load`-with-no-id = one
-   billable worker per invocation; `get`-stable-id = one per tenant per day)
-   and of the free-tier unit (invocations vs concurrent workers).
+1. ~~Re-run of the hostile canary suite against **cloud** workers for the chosen
+   variant~~ — **closed 2026-11-13**: 22/22 checks on the deployed per-tenant
+   supervisor, cross-tenant PASS and within-tenant residue FAIL as predicted
+   (`CLOUD-TENANT-ACCEPTANCE.md`).
+2. ~~Cloud-metered confirmation of the creation rule (`load`-with-no-id = one
+   billable worker per invocation; `get`-stable-id = one per tenant per day)~~
+   — **closed 2026-11-13**: stable ids +0 creations for 3 invocations;
+   `LOADER.load` +3 creations for 3 invocations, repeated (+3 again)
+   (`CLOUD-TENANT-ACCEPTANCE.md`).
 3. Cloud-metered CPU-ms per representative workflow (parent + guest) over a
    full billing window, plus log-event volume, to confirm the free-tier
-   headroom assumed in §3.
+   headroom assumed in §3. **Still open** — only creation and request meters
+   were read back.
 4. Rotation + generic-loader drill: engine-code update with stable tenant ids
    takes effect without id rotation; rotation itself bounds bleed to the
-   rotation window.
-5. Serialization proof: concurrent same-tenant attempts do not corrupt or
-   observe each other beyond the already-accepted sequential bleed.
+   rotation window. **Still open** — a redeploy of the constant script was not
+   measured as a rotation event.
+5. ~~Serialization proof: concurrent same-tenant attempts do not corrupt or
+   observe each other beyond the already-accepted sequential bleed.~~
+   **Closed 2026-11-13** in cloud: two concurrent same-tenant attempts did not
+   overlap; two tenants ran in parallel (546 ms wall for 2 × 500 ms).

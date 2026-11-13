@@ -1,0 +1,119 @@
+{
+  "runtime": "deployed-cloudflare",
+  "started_at": "2026-11-13T06:10:23.030Z",
+  "probes": [
+    {
+      "name": "auth-required",
+      "pass": true,
+      "detail": "status=403"
+    },
+    {
+      "name": "a-plant-accepted",
+      "pass": true,
+      "detail": "{\"tenant_worker_id\":\"tenant-py-ca65bafd7aed3596d4fde615a8a20865\",\"worker_reused\":false,\"queue_wait_ms\":0,\"output\":{\"planted\":true},\"api_calls\":[]}"
+    },
+    {
+      "name": "a-cross-tenant-builtins",
+      "pass": true,
+      "detail": "{\"builtins\":null}"
+    },
+    {
+      "name": "a-plant-module-accepted",
+      "pass": true,
+      "detail": "{\"tenant_worker_id\":\"tenant-py-44c68b63927f3670e793e62d86da6f12\",\"worker_reused\":true,\"queue_wait_ms\":0,\"output\":{\"planted\":true},\"api_calls\":[]}"
+    },
+    {
+      "name": "a-cross-tenant-module",
+      "pass": true,
+      "detail": "{\"present\":false,\"marker\":null}"
+    },
+    {
+      "name": "a-tenant-A-unaffected",
+      "pass": true,
+      "detail": "{\"builtins\":\"marker-A\"}"
+    },
+    {
+      "name": "b-same-tenant-residue-documented",
+      "pass": true,
+      "detail": "expected residue visible within one tenant: {\"builtins\":\"marker-A\"}"
+    },
+    {
+      "name": "a-tenant-worker-id-deterministic",
+      "pass": true,
+      "detail": "expected=tenant-py-ca65bafd7aed3596d4fde615a8a20865 actual=tenant-py-ca65bafd7aed3596d4fde615a8a20865"
+    },
+    {
+      "name": "b-serialized-no-interleave",
+      "pass": true,
+      "detail": "{\"r1\":{\"marker\":\"first\",\"started_at\":1794550226.666,\"ended_at\":1794550227.1660001},\"r2\":{\"marker\":\"second\",\"started_at\":1794550226.15,\"ended_at\":1794550226.6499999}}"
+    },
+    {
+      "name": "b-queue-wait-recorded",
+      "pass": true,
+      "detail": "waits=[0,1419] (second waiter should queue ~500ms)"
+    },
+    {
+      "name": "b-cross-tenant-parallel",
+      "pass": true,
+      "detail": "wall=539ms for 2x500ms across tenants"
+    },
+    {
+      "name": "c-warm-faster-than-cold",
+      "pass": true,
+      "detail": "cold=741ms warm=54ms"
+    },
+    {
+      "name": "d-capability-rejects-before-effects",
+      "pass": true,
+      "detail": "{\"phase\":\"capability-rejected\",\"missing_modules\":[\"workflows/ghost.py\"],\"api_calls\":[]}"
+    },
+    {
+      "name": "d-capability-before-any-module-fetch",
+      "pass": true,
+      "detail": "[]"
+    },
+    {
+      "name": "d-rejected-workflow-never-ran",
+      "pass": true,
+      "detail": "{\"clean\":{\"builtins\":null,\"module\":false,\"module_marker\":null,\"env\":null,\"fs\":null}}"
+    },
+    {
+      "name": "d-egress-rejects-before-effects",
+      "pass": true,
+      "detail": "{\"phase\":\"egress-rejected\",\"reason\":\"unlisted\",\"api_calls\":[]}"
+    },
+    {
+      "name": "d-undeclared-import-terminal",
+      "pass": true,
+      "detail": "{\"phase\":\"undeclared-import\",\"error_type\":\"ExecutorUndeclaredImportError\",\"error\":\"Executor ran modules outside its declared requirements; effects may have occurred\",\"provider_outcome\":{\"kind\":\"terminal_undeclared_import\",\"engine_outcome_delivered\":true,\"undeclared_modules\":[\"workflows/helper.py\"],\"declared_count\":1,\"recorded_count\":2},\"api_calls\":[{\"path\":\"/api/sdk/modules-resolve?name=workflows.wf\",\"method\":\"GET\",\"status\":200},{\"path\":\"/api/sdk/modules/workflows/wf.py\",\"method\":\"GET\",\"status\":"
+    },
+    {
+      "name": "d-undeclared-terminal-names-paths",
+      "pass": true,
+      "detail": "{\"kind\":\"terminal_undeclared_import\",\"engine_outcome_delivered\":true,\"undeclared_modules\":[\"workflows/helper.py\"],\"declared_count\":1,\"recorded_count\":2}"
+    },
+    {
+      "name": "d-declared-run-succeeds",
+      "pass": true,
+      "detail": "{\"tenant_worker_id\":\"tenant-py-9761e50a83048b162f94f3a731b927d5\",\"worker_reused\":true,\"queue_wait_ms\":0,\"output\":{\"result\":{\"ok\":true},\"recorded\":[\"workflows/wf.py\"]},\"api_calls\":[{\"path\":\"/api/sdk/modules-resolve?name=workflows.wf\",\"method\":\"GET\",\"status\":200},{\"path\":\"/api/sdk/modules/workflows/wf.py\",\"method\":\"GET\",\"status\":200}]}"
+    },
+    {
+      "name": "d-declared-path-recorded-reconciles-clean",
+      "pass": true,
+      "detail": "{\"recorded\":[\"workflows/wf.py\"],\"api_calls\":[{\"path\":\"/api/sdk/modules-resolve?name=workflows.wf\",\"method\":\"GET\",\"status\":200},{\"path\":\"/api/sdk/modules/workflows/wf.py\",\"method\":\"GET\",\"status\":200}]}"
+    },
+    {
+      "name": "d-child-holds-no-credentials",
+      "pass": true,
+      "detail": "{\"token_shaped_present\":false,\"dummy_credential_present\":false}"
+    },
+    {
+      "name": "code-digest-exposed",
+      "pass": true,
+      "detail": "{\"generic_code_sha256\":\"3260cfa713c31d28cb53a30652208d20ba51a534e8359dcb8d59d8c99bbe6965\"}"
+    }
+  ],
+  "finished_at": "2026-11-13T06:10:32.236Z",
+  "invocations": 20,
+  "failures": 0
+}
