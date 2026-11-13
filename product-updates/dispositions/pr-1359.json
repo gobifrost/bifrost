@@ -1,0 +1,13 @@
+{
+  "key": "pr:1359",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Development lint enforcement and a bounded replacement of the mobile field-context overlay with the shared Sheet; no release announcement needed.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1359",
+      "November 13 delegated factual review: seven severity promotions preserved; context overlay uses shared Sheet. No assertion of zero warnings, browser acceptance or completed merge. Original contribution credited to MTG-Thomas."
+    ]
+  }
+}

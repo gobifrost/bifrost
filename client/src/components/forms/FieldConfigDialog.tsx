@@ -1,5 +1,6 @@
 import { useBifrostMonacoTheme } from "@/hooks/useBifrostMonacoTheme";
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { useMediaQuery } from "@/hooks/useMediaQuery";
 import Editor from "@monaco-editor/react";
 import {
 	Dialog,
@@ -28,7 +29,14 @@ import {
 	validateExpression,
 } from "@/components/ui/expression-editor";
 import { ContextViewer } from "@/components/ui/context-viewer";
-import { AlertCircle, PanelRightOpen, X } from "lucide-react";
+import {
+	Sheet,
+	SheetContent,
+	SheetHeader,
+	SheetTitle,
+	SheetDescription,
+} from "@/components/ui/sheet";
+import { AlertCircle, PanelRightOpen } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import type {
 	FormField,
@@ -194,6 +202,8 @@ function FieldConfigDialogContent({
 		string | null
 	>(null);
 	const [showContextSidebar, setShowContextSidebar] = useState(false);
+	const contextTriggerRef = useRef<HTMLButtonElement>(null);
+	const isNarrow = useMediaQuery("(max-width: 1023px)");
 
 	// Data Provider Inputs (T038 - User Story 1)
 	const [dataProviderInputs, setDataProviderInputs] = useState<
@@ -388,6 +398,7 @@ function FieldConfigDialogContent({
 								variant="outline"
 								size="sm"
 								className="self-start lg:hidden"
+								ref={contextTriggerRef}
 								onClick={() => setShowContextSidebar(true)}
 							>
 								<PanelRightOpen className="h-4 w-4 mr-2" />
@@ -1044,137 +1055,125 @@ function FieldConfigDialogContent({
 				</div>
 
 				{/* Mobile/tablet slideout sidebar */}
-				{showContextSidebar && (
-					<>
-						{/* Backdrop */}
-						<div
-							className="lg:hidden fixed inset-0 bg-black/50 z-50"
-							onClick={() => setShowContextSidebar(false)}
-						/>
-						{/* Slideout panel */}
-						<div className="lg:hidden fixed right-0 top-0 bottom-0 w-[calc(100vw-1rem)] max-w-80 bg-background border-l z-50 flex flex-col shadow-xl">
-							<div className="p-4 border-b flex items-center justify-between">
-								<div>
-									<h3 className="text-sm font-semibold">
-										Context & Helpers
-									</h3>
-									<p className="text-xs text-muted-foreground mt-1">
-										Tools and context for building forms
+				<Sheet
+					open={showContextSidebar && isNarrow}
+					onOpenChange={setShowContextSidebar}
+				>
+					<SheetContent
+						className="w-[calc(100vw-1rem)] max-w-80 sm:max-w-80"
+						onCloseAutoFocus={(event) => {
+							event.preventDefault();
+							contextTriggerRef.current?.focus();
+						}}
+					>
+						<SheetHeader>
+							<SheetTitle>Context & Helpers</SheetTitle>
+							<SheetDescription>
+								Tools and context for building forms
+							</SheetDescription>
+						</SheetHeader>
+						<div className="flex-1 overflow-y-auto p-4 space-y-6">
+							{/* Visibility Expression Help */}
+							<div className="space-y-2">
+								<h4 className="text-sm font-semibold">
+									Visibility Expression
+								</h4>
+								<p className="text-xs text-muted-foreground">
+									Control when this field appears based on
+									other field values or context.
+								</p>
+								<div className="space-y-2">
+									<p className="text-xs font-medium">
+										Examples:
 									</p>
+									<div className="space-y-2">
+										<div>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												context.field.country === "US"
+											</code>
+											<p className="text-xs text-muted-foreground mt-1">
+												Show only if country is US
+											</p>
+										</div>
+										<div>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												context.field.age &gt;= 18
+											</code>
+											<p className="text-xs text-muted-foreground mt-1">
+												Show only if age 18 or older
+											</p>
+										</div>
+										<div>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												context.workflow.is_admin ===
+												true
+											</code>
+											<p className="text-xs text-muted-foreground mt-1">
+												Show only for admin users
+											</p>
+										</div>
+									</div>
 								</div>
-								<Button
-									variant="ghost"
-									size="sm"
-									onClick={() => setShowContextSidebar(false)}
-									aria-label="Close context panel"
-								>
-									<X className="h-4 w-4" />
-								</Button>
 							</div>
-							<div className="flex-1 overflow-y-auto p-4 space-y-6">
-								{/* Visibility Expression Help */}
+
+							{/* HTML/JSX Examples */}
+							{type === "html" && (
 								<div className="space-y-2">
 									<h4 className="text-sm font-semibold">
-										Visibility Expression
+										JSX Template Examples
 									</h4>
-									<p className="text-xs text-muted-foreground">
-										Control when this field appears based on
-										other field values or context.
-									</p>
-									<div className="space-y-2">
-										<p className="text-xs font-medium">
-											Examples:
-										</p>
-										<div className="space-y-2">
-											<div>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													context.field.country ===
-													"US"
-												</code>
-												<p className="text-xs text-muted-foreground mt-1">
-													Show only if country is US
-												</p>
-											</div>
-											<div>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													context.field.age &gt;= 18
-												</code>
-												<p className="text-xs text-muted-foreground mt-1">
-													Show only if age 18 or older
-												</p>
-											</div>
-											<div>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													context.workflow.is_admin
-													=== true
-												</code>
-												<p className="text-xs text-muted-foreground mt-1">
-													Show only for admin users
-												</p>
-											</div>
+									<div className="space-y-3">
+										<div>
+											<p className="text-xs text-muted-foreground mb-2">
+												Basic usage:
+											</p>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												{
+													"<div>\n  <p>User: {context.workflow.user_email}</p>\n</div>"
+												}
+											</code>
+										</div>
+										<div>
+											<p className="text-xs text-muted-foreground mb-2">
+												Mapping arrays:
+											</p>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												{
+													"{context.workflow.items?.map((item, i) =>\n  <div key={i}>{item.name}</div>\n)}"
+												}
+											</code>
+										</div>
+										<div>
+											<p className="text-xs text-muted-foreground mb-2">
+												Use className for styling:
+											</p>
+											<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
+												{
+													'<div className="text-lg font-bold">\n  Content\n</div>'
+												}
+											</code>
 										</div>
 									</div>
 								</div>
+							)}
 
-								{/* HTML/JSX Examples */}
-								{type === "html" && (
-									<div className="space-y-2">
-										<h4 className="text-sm font-semibold">
-											JSX Template Examples
-										</h4>
-										<div className="space-y-3">
-											<div>
-												<p className="text-xs text-muted-foreground mb-2">
-													Basic usage:
-												</p>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													{
-														"<div>\n  <p>User: {context.workflow.user_email}</p>\n</div>"
-													}
-												</code>
-											</div>
-											<div>
-												<p className="text-xs text-muted-foreground mb-2">
-													Mapping arrays:
-												</p>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													{
-														"{context.workflow.items?.map((item, i) =>\n  <div key={i}>{item.name}</div>\n)}"
-													}
-												</code>
-											</div>
-											<div>
-												<p className="text-xs text-muted-foreground mb-2">
-													Use className for styling:
-												</p>
-												<code className="block rounded-md bg-muted p-2 text-xs ring-1 ring-foreground/5">
-													{
-														'<div className="text-lg font-bold">\n  Content\n</div>'
-													}
-												</code>
-											</div>
-										</div>
-									</div>
-								)}
-
-								{/* Available Context */}
-								<div className="space-y-2">
-									<h4 className="text-sm font-semibold">
-										Available Context
-									</h4>
-									<p className="text-xs text-muted-foreground">
-										Preview based on your current session.
-									</p>
-									<ContextViewer
-										context={displayContext}
-										maxHeight="none"
-										fieldNames={allFieldNames}
-									/>
-								</div>
+							{/* Available Context */}
+							<div className="space-y-2">
+								<h4 className="text-sm font-semibold">
+									Available Context
+								</h4>
+								<p className="text-xs text-muted-foreground">
+									Preview based on your current session.
+								</p>
+								<ContextViewer
+									context={displayContext}
+									maxHeight="none"
+									fieldNames={allFieldNames}
+								/>
 							</div>
 						</div>
-					</>
-				)}
+					</SheetContent>
+				</Sheet>
 			</div>
 		</DialogContent>
 	);
