@@ -69,6 +69,31 @@ class Settings(BaseSettings):
         description="Sync PostgreSQL connection URL (for Alembic)"
     )
 
+    database_application_name: str = Field(
+        default="bifrost",
+        description=(
+            "application_name reported by every connection this process opens. "
+            "A database_application_name set in the DSN takes precedence."
+        ),
+    )
+
+    database_idle_in_transaction_timeout_ms: int = Field(
+        default=60000,
+        description=(
+            "idle_in_transaction_session_timeout applied to every "
+            "transaction on every connection, in milliseconds. 0 disables "
+            "the timeout."
+        ),
+    )
+
+    database_statement_timeout_ms: int = Field(
+        default=60000,
+        description=(
+            "statement_timeout applied to every transaction on every "
+            "connection, in milliseconds. 0 disables the timeout."
+        ),
+    )
+
     database_pool_size: int = Field(
         default=5,
         description=(

@@ -7,6 +7,7 @@ from src.config import Settings
 @pytest.fixture
 def engines(monkeypatch):
     calls: list[dict] = []
+    installed: list[int] = []
 
     def fake_create_async_engine(url, **kwargs):
         calls.append(kwargs)
@@ -14,6 +15,11 @@ def engines(monkeypatch):
 
     monkeypatch.setattr(database, "create_async_engine", fake_create_async_engine)
     monkeypatch.setattr(database, "async_sessionmaker", lambda *args, **kwargs: object())
+    monkeypatch.setattr(
+        database,
+        "install_session_timeouts",
+        lambda engine, **timeouts: installed.append(timeouts),
+    )
     for name in ("_engine", "_dispatch_engine", "_dispatch_session_factory", "_liveness_engine", "_liveness_session_factory"):
         monkeypatch.setattr(database, name, None)
     created: dict[str, dict] = {}
@@ -25,6 +31,12 @@ def engines(monkeypatch):
         build()
         assert len(calls) == len(created) + 1, f"{pool} should build exactly one engine"
         created[pool] = calls[-1]
+    assert installed == [
+        {
+            "idle_in_transaction_session_timeout_ms": database.get_settings().database_idle_in_transaction_timeout_ms,
+            "statement_timeout_ms": database.get_settings().database_statement_timeout_ms,
+        }
+    ] * 3
     return created
 
 
@@ -70,6 +82,7 @@ def test_main_pool_preserves_configured_limits_without_mutating_settings(monkeyp
 
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "create_async_engine", create)
+    monkeypatch.setattr(database, "install_session_timeouts", lambda *args, **kwargs: None)
     assert database.get_engine(settings) is engine
     assert database.get_engine(settings) is engine
     assert len(calls) == 1, "the process reuses one engine"
@@ -77,9 +90,9 @@ def test_main_pool_preserves_configured_limits_without_mutating_settings(monkeyp
     assert (settings.database_pool_size, settings.database_max_overflow) == (base, overflow)
 
 
-def test_connections_carry_no_per_pool_application_name(engines):
+def test_connections_share_one_application_name(engines):
     # Behind PgBouncer transaction pooling, differing application names make
-    # PgBouncer re-send SET application_name whenever a server connection
-    # passes between pools.
-    for kwargs in engines.values():
-        assert "server_settings" not in kwargs["connect_args"]
+    # server connections keep switching names as they pass between pools.
+    # One name for every pool keeps that from happening.
+    names = {kwargs["connect_args"]["server_settings"]["application_name"] for kwargs in engines.values()}
+    assert names == {database.get_settings().database_application_name}

@@ -1,0 +1,15 @@
+{
+  "key": "pr:1389",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Database connections now fail a runaway statement instead of holding a connection indefinitely.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1389",
+      "https://github.com/gobifrost/bifrost/pull/1388",
+      "Agent-recorded notice reviewed against the exact diff: the statement timeout is configurable, 0 disables it, and the long-backfill risk is stated in the PR body. Stacked on #1388; maintainer-directed contribution with principal authorization and provenance recorded in the PR body."
+    ]
+  }
+}

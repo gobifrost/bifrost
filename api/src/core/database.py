@@ -10,6 +10,8 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from urllib.parse import parse_qs, urlencode, urlparse, urlunparse
 
+from sqlalchemy import event
+from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
     AsyncSession,
@@ -21,7 +23,11 @@ from src.config import Settings, get_settings
 from src.models import Base  # noqa: F401 - imported for Alembic
 
 
-def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
+def _prepare_asyncpg_url(
+    url: str,
+    *,
+    application_name: str = "bifrost",
+) -> tuple[str, dict]:
     """
     Prepare a database URL for asyncpg compatibility.
 
@@ -29,11 +35,17 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
     SSL to be configured via connect_args instead. This function extracts
     sslmode from the URL and converts it to the appropriate SSL context.
 
+    connect_args also carry ``application_name``, which PgBouncer accepts as a
+    startup parameter. Server timeouts are not startup parameters; they are
+    applied per transaction by ``install_session_timeouts``.
+
     Args:
         url: PostgreSQL database URL (may contain sslmode parameter)
+        application_name: Reported name, unless the DSN already sets one
 
     Returns:
-        Tuple of (cleaned_url without sslmode, connect_args dict with ssl config)
+        Tuple of (cleaned_url without sslmode, connect_args dict with ssl and
+        allowed session settings)
 
     Example:
         URL with ?sslmode=require -> (URL without param, {"ssl": SSLContext})
@@ -60,6 +72,15 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
             connect_args["ssl"] = "prefer"
         # "disable" and "allow" don't need ssl parameter
 
+    # PgBouncer in transaction mode rejects startup parameters it does not
+    # allowlist ("unsupported startup parameter"), which kills the connection.
+    # application_name is allowlisted; timeouts are not, so they are applied
+    # per transaction instead. A DSN-specified application_name wins: asyncpg
+    # applies server_settings after the DSN, so copying it here would silently
+    # overwrite the operator's value.
+    if "application_name" not in query_params:
+        connect_args["server_settings"] = {"application_name": application_name}
+
     # Rebuild URL without sslmode
     new_query = urlencode(query_params, doseq=True)
     cleaned_url = urlunparse(parsed._replace(query=new_query))
@@ -67,7 +88,44 @@ def _prepare_asyncpg_url(url: str) -> tuple[str, dict]:
     return cleaned_url, connect_args
 
 
-def create_pool_engine(url: str, *, pool_size: int, max_overflow: int, pool_timeout: int, echo: bool = False) -> AsyncEngine:
+def install_session_timeouts(
+    engine: AsyncEngine,
+    *,
+    idle_in_transaction_session_timeout_ms: int,
+    statement_timeout_ms: int,
+) -> None:
+    """Apply the session timeouts to every transaction this engine starts.
+
+    PgBouncer in transaction mode only accepts allowlisted startup
+    parameters, so this cannot ride in ``connect_args``. ``SET LOCAL`` is
+    transaction scoped: it resets at COMMIT or ROLLBACK, so the setting never
+    leaks onto the server connection a later client is handed. ``0`` disables
+    either timeout, as the server settings themselves do.
+    """
+
+    def begin(conn: Connection) -> None:
+        conn.exec_driver_sql(
+            "SET LOCAL idle_in_transaction_session_timeout = "
+            f"{int(idle_in_transaction_session_timeout_ms)}"
+        )
+        conn.exec_driver_sql(
+            f"SET LOCAL statement_timeout = {int(statement_timeout_ms)}"
+        )
+
+    event.listen(engine.sync_engine, "begin", begin)
+
+
+def create_pool_engine(
+    url: str,
+    *,
+    pool_size: int,
+    max_overflow: int,
+    pool_timeout: int,
+    echo: bool = False,
+    application_name: str = "bifrost",
+    idle_in_transaction_session_timeout_ms: int = 60000,
+    statement_timeout_ms: int = 60000,
+) -> AsyncEngine:
     """An engine for one of the process's connection pools.
 
     There is no pre-ping. After a database or pooler restart, the first
@@ -82,8 +140,11 @@ def create_pool_engine(url: str, *, pool_size: int, max_overflow: int, pool_time
     shorter than ``pool_recycle`` would fail the first statement on every
     connection that sat idle that long.
     """
-    db_url, connect_args = _prepare_asyncpg_url(url)
-    return create_async_engine(
+    db_url, connect_args = _prepare_asyncpg_url(
+        url,
+        application_name=application_name,
+    )
+    engine = create_async_engine(
         db_url,
         echo=echo,
         pool_size=pool_size,
@@ -93,6 +154,12 @@ def create_pool_engine(url: str, *, pool_size: int, max_overflow: int, pool_time
         pool_recycle=1800,  # Recycle connections every 30 min
         connect_args=connect_args,
     )
+    install_session_timeouts(
+        engine,
+        idle_in_transaction_session_timeout_ms=idle_in_transaction_session_timeout_ms,
+        statement_timeout_ms=statement_timeout_ms,
+    )
+    return engine
 
 
 # Global engine and session factory (initialized on startup)
@@ -140,6 +207,9 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
             max_overflow=max_overflow,
             pool_timeout=30,  # Fail fast when pool is exhausted
             echo=settings.debug,
+            application_name=settings.database_application_name,
+            idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
 
     return _engine
@@ -246,6 +316,9 @@ def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
             max_overflow=settings.database_dispatch_max_overflow,
             pool_timeout=30,
             echo=settings.debug,
+            application_name=settings.database_application_name,
+            idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
         _dispatch_session_factory = async_sessionmaker(
             _dispatch_engine,
@@ -279,6 +352,9 @@ def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
             max_overflow=0,
             pool_timeout=10,
             echo=settings.debug,
+            application_name=settings.database_application_name,
+            idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
         _liveness_session_factory = async_sessionmaker(
             _liveness_engine,
