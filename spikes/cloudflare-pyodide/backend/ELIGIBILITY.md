@@ -12,7 +12,7 @@ measurement that produced it; nothing here is aspirational.
 | Multi-minute wait/poll workflows | ✅ Eligible with a subrequest estimate | 9×40 s poll held 332.5 s, Success |
 | Data providers | ✅ Eligible | Miss 280 ms; cache hit 99 ms without executing user code |
 | Agent runs | ✅ Eligible (single-step proven) | `agent.run` completed, 1 iteration, $0.0000344 |
-| Long tail of PyPI packages | ⚠️ Curated allowlist only | Bundle ships 11 distributions; +13 % for requests/msal |
+| Curated PyPI allowlist | ✅ 22 distributions | 11 shipped + `requests`/`msal`/`PyJWT`/`urllib3`/`charset-normalizer` + 5 qualified in a real Worker (`pypdf`, `beautifulsoup4`, `mammoth`, `openrouter`, `reportlab`) and their closure |
 | Persistent/supervised services | ❌ Linux | Runtime rejects them by design |
 | Native-extension dependencies | ❌ Linux | No pip; wasm wheels only |
 | Arbitrary CPU-heavy loops | ❌ Linux | Provider throws, does not kill; operator cost |
@@ -26,14 +26,17 @@ These map 1:1 to the enforcing gates already live in the executor.
    staged bundle manifest, else the capability gate rejects with 422 before any effect.
 2. **Third-party packages** — every imported distribution must be in the curated allowlist
    (`backend/DEPENDENCY-CENSUS.md`). Today: httpx, pydantic(+core), python-dotenv, PyYAML,
-   redis, requests, urllib3, charset-normalizer, msal, PyJWT, certifi.
+   redis, requests, urllib3, charset-normalizer, msal, PyJWT, certifi, plus the five packages
+   qualified in a real Worker on 2026-11-13 (pypdf, beautifulsoup4, mammoth, openrouter,
+   reportlab) and their closure.
 3. **Egress** (`egress.hosts`) — exact HTTPS hosts the workflow may reach. Unlisted destinations
    are rejected with zero calls. Anything requiring an unlisted host needs an explicit allowlist
    entry, not a silent fallback.
 4. **Subrequests** — the dispatcher must estimate request count (SDK calls + third-party HTTP +
    module resolution) and require it to fit the configured allowance. **This is the real bound,
    not wall clock**: a 5.35-minute poll workflow succeeded; the tenth poll at `subRequests: 12`
-   would not.
+   would not. **Configured allowance is 50**; 12 was the qualification fixture and nothing more
+   (`WORKSPACE-NEXT-CENSUS.md`: 12 → 95.9 % of the real workspace, 50 → 100 %).
 5. **CPU** — a bounded budget the operator sets per workload class. CPU burn is an operator
    cost, not a platform safety gate; no kill primitive is assumed.
 

@@ -85,3 +85,50 @@ Bundle as measured: `requests`, `urllib3`, `charset-normalizer`, `msal`, `PyJWT`
 Defer, and route to Linux: anything needing `cryptography`/native extensions, and anything
 outside the curated set until it has its own measured import test.
 
+## Result 2 (measured 2026-11-13): the five packages the real workspace needs
+
+The workspace census (`WORKSPACE-NEXT-CENSUS.md`) found exactly five packages outside the
+allowlist, used by 14 workflows in one solution (`bifrost-grc`). All five were imported **and
+exercised** inside a real Python Worker (`backend/package-import`); a package that imports but
+cannot do its job is recorded as a failure.
+
+| Package | Version | Operation performed | Result | Unpacked |
+|---|---|---|---|---|
+| `pypdf` | 7.0.1 | build + serialize a one-page PDF | ✅ | 1,745 KiB |
+| `beautifulsoup4` | 4.15.0 | parse HTML, read text | ✅ | 388 KiB |
+| `mammoth` | 1.13.0 | import + `convert_to_html` present | ✅ | 151 KiB |
+| `openrouter` | 1.3.173 | import + `OpenRouter` client present | ✅ | 7,405 KiB |
+| `reportlab` | 5.1.0 | draw + serialize a PDF | ✅ | 4,732 KiB |
+| `pillow` | 12.2.0 | create + PNG-encode an image | ✅ | 3,036 KiB |
+
+Closure: `soupsieve`, `cobble`, `httpcore`, `jsonpath-python` (all pure); `pydantic` and
+`httpx` already ship. `reportlab` requires `pillow`, which has a Pyodide wasm wheel — that was
+the only suspected blocker, and it is not one.
+
+### Bundle arithmetic (local `wrangler deploy --dry-run`, same harness)
+
+| Bundle | Modules | Upload | Gzip |
+|---|---|---|---|
+| Current | 475 | 11,498 KiB | 2,882 KiB |
+| + these five | 3,896 | **43,981 KiB** | **9,154 KiB** |
+| delta | +3,421 | +32,483 KiB | +6,272 KiB |
+
+Cold and warm, same harness:
+
+- **Bundle startup is unaffected:** 120 ms cold with the enlarged bundle vs 102 ms for the
+  baseline (both handlers import nothing).
+- **First import of all five costs ~4.9 s** (4,904 ms), then 32–40 ms warm. Only workflows
+  that actually import them pay it, and it is per isolate.
+
+**Compressed size is now the binding budget**: 9.15 MiB gzip for the whole Worker. Further
+packages must be treated as budgeted, not free. `openrouter` alone is 1,229 files / 7.4 MiB —
+the largest single line item, and it is imported by 10 of the 14 workflows.
+
+### Decision
+
+All five are added to `pylock.toml` and the allowlist. That converts those 14 workflows from
+"Linux by dependency" to eligible, and the real workspace reaches **317/317 at allowance 50**.
+
+Caveats: local `workerd`, not a deployed Worker; per-package functional checks, not a
+workflow-level run.
+

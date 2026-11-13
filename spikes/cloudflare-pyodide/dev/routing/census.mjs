@@ -65,7 +65,7 @@ const SOFT_TRAPS = [
 
 const args = process.argv.slice(2);
 const flag = (name, fallback) => args.includes(`--${name}`) ? args[args.indexOf(`--${name}`) + 1] : fallback;
-const allowance = Number(flag('allowance', '12'));
+const allowance = Number(flag('allowance', '50'));
 const outPath = flag('out', null);
 const wsRoot = flag('workspace', null);
 const repoRoot = flag('repo', null);

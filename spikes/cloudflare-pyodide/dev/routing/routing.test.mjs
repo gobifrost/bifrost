@@ -105,3 +105,11 @@ test('native and uncurated imports still fail closed', () => {
   assert.equal(decision.backend, 'linux');
   assert.equal(decision.reasons.filter((r) => r.includes('allowlist miss')).length, 3);
 });
+
+test('packages qualified inside a real Worker are allowlisted', () => {
+  const decision = decideBackend(
+    eligibleAttempt({ declaration: { packages: ['pypdf', 'bs4', 'mammoth', 'openrouter', 'reportlab', 'pillow'] } }),
+  );
+  assert.equal(decision.backend, 'cloudflare');
+  assert.deepEqual(decision.reasons, []);
+});

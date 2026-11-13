@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-11-13T06:46:10.226Z",
+  "generated_at": "2026-11-13T07:05:13.064Z",
   "allowance": 50,
   "workspaces": [
     {
@@ -929,12 +929,10 @@
       "root": "solutions/bifrost-grc",
       "label": "solutions\\bifrost-grc",
       "files": 89,
-      "eligible": 75,
-      "ineligible": 14,
-      "eligible_pct": 84.3,
-      "by_reason": {
-        "allowlist miss": 29
-      },
+      "eligible": 89,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
       "traps": {
         "resource is not available in Pyodide": 35
       },
@@ -1650,11 +1648,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1677,11 +1672,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1704,11 +1696,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1731,11 +1720,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1758,11 +1744,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1785,11 +1768,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1812,11 +1792,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_questionnaires.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'pypdf' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "pypdf",
             "openrouter"
@@ -1839,10 +1816,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_recommendations.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "openrouter"
           ],
@@ -1862,10 +1837,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_recommendations.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "openrouter"
           ],
@@ -1885,10 +1858,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_recommendations.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'openrouter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "openrouter"
           ],
@@ -1985,12 +1956,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_source_documents.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'mammoth' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'bs4' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'reportlab' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "mammoth",
             "bs4",
@@ -2012,12 +1979,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_source_documents.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'mammoth' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'bs4' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'reportlab' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "mammoth",
             "bs4",
@@ -2039,12 +2002,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_source_documents.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'mammoth' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'bs4' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'reportlab' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "mammoth",
             "bs4",
@@ -2066,12 +2025,8 @@
         },
         {
           "path": "workflows/grc_v2/grc_source_documents.py",
-          "backend": "linux",
-          "reasons": [
-            "allowlist miss: package 'mammoth' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'bs4' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
-            "allowlist miss: package 'reportlab' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
-          ],
+          "backend": "cloudflare",
+          "reasons": [],
           "packages": [
             "mammoth",
             "bs4",
@@ -5472,5 +5427,5 @@
       "reason": "reference manifest, files not present"
     }
   ],
-  "summary_text": "# Eligibility census\n\n- workspace `solutions/bifrost-design-system`: 0/0 eligible (null%)\n- workspace `solutions/bifrost-dmarc`: 26/26 eligible (100%)\n- workspace `solutions/bifrost-docs`: 30/30 eligible (100%)\n- workspace `solutions/bifrost-grc`: 75/89 eligible (84.3%)\n- workspace `solutions/billing`: 16/16 eligible (100%)\n- workspace `solutions/cloudflare-zone-inventory`: 2/2 eligible (100%)\n- workspace `solutions/cove-test-restore-ticketing`: 2/2 eligible (100%)\n- workspace `solutions/csp-mail-forwarding`: 2/2 eligible (100%)\n- workspace `solutions/customer-contract-lifecycle`: 7/7 eligible (100%)\n- workspace `solutions/employee-onboarding`: 3/3 eligible (100%)\n- workspace `solutions/estate-server-reboots`: 22/22 eligible (100%)\n- workspace `solutions/event-lead-capture`: 5/5 eligible (100%)\n- workspace `solutions/event-rules-smoke`: 1/1 eligible (100%)\n- workspace `solutions/field-visit-briefing`: 4/4 eligible (100%)\n- workspace `solutions/gdap-acceptance-tickets`: 2/2 eligible (100%)\n- workspace `solutions/halo-dispatch-portal`: 10/10 eligible (100%)\n- workspace `solutions/halo-email-rule-proposals`: 2/2 eligible (100%)\n- workspace `solutions/halo-kb-knowledge`: 1/1 eligible (100%)\n- workspace `solutions/halo-sql-studio`: 4/4 eligible (100%)\n- workspace `solutions/halo-voicemail-routing`: 3/3 eligible (100%)\n- workspace `solutions/mail-security`: 1/1 eligible (100%)\n- workspace `solutions/meraki-admin-governance`: 8/8 eligible (100%)\n- workspace `solutions/meraki-report-routing`: 3/3 eligible (100%)\n- workspace `solutions/microsoft-defender-posture`: 1/1 eligible (100%)\n- workspace `solutions/microsoft-productivity`: 5/5 eligible (100%)\n- workspace `solutions/multica-signal-forwarding`: 1/1 eligible (100%)\n- workspace `solutions/netbird-inventory`: 6/6 eligible (100%)\n- workspace `solutions/ninja-support-intake`: 1/1 eligible (100%)\n- workspace `solutions/ninjaone-alert-operations`: 6/6 eligible (100%)\n- workspace `solutions/quick-support`: 13/13 eligible (100%)\n- workspace `solutions/scan-findings`: 3/3 eligible (100%)\n- workspace `solutions/scim-lite`: 4/4 eligible (100%)\n- workspace `solutions/synology`: 5/5 eligible (100%)\n- workspace `solutions/wondernote`: 22/22 eligible (100%)\n- workspace `solutions/workstation-reboots`: 7/7 eligible (100%)\n\nSubrequest allowance: 50. Static analysis only."
+  "summary_text": "# Eligibility census\n\n- workspace `solutions/bifrost-design-system`: 0/0 eligible (null%)\n- workspace `solutions/bifrost-dmarc`: 26/26 eligible (100%)\n- workspace `solutions/bifrost-docs`: 30/30 eligible (100%)\n- workspace `solutions/bifrost-grc`: 89/89 eligible (100%)\n- workspace `solutions/billing`: 16/16 eligible (100%)\n- workspace `solutions/cloudflare-zone-inventory`: 2/2 eligible (100%)\n- workspace `solutions/cove-test-restore-ticketing`: 2/2 eligible (100%)\n- workspace `solutions/csp-mail-forwarding`: 2/2 eligible (100%)\n- workspace `solutions/customer-contract-lifecycle`: 7/7 eligible (100%)\n- workspace `solutions/employee-onboarding`: 3/3 eligible (100%)\n- workspace `solutions/estate-server-reboots`: 22/22 eligible (100%)\n- workspace `solutions/event-lead-capture`: 5/5 eligible (100%)\n- workspace `solutions/event-rules-smoke`: 1/1 eligible (100%)\n- workspace `solutions/field-visit-briefing`: 4/4 eligible (100%)\n- workspace `solutions/gdap-acceptance-tickets`: 2/2 eligible (100%)\n- workspace `solutions/halo-dispatch-portal`: 10/10 eligible (100%)\n- workspace `solutions/halo-email-rule-proposals`: 2/2 eligible (100%)\n- workspace `solutions/halo-kb-knowledge`: 1/1 eligible (100%)\n- workspace `solutions/halo-sql-studio`: 4/4 eligible (100%)\n- workspace `solutions/halo-voicemail-routing`: 3/3 eligible (100%)\n- workspace `solutions/mail-security`: 1/1 eligible (100%)\n- workspace `solutions/meraki-admin-governance`: 8/8 eligible (100%)\n- workspace `solutions/meraki-report-routing`: 3/3 eligible (100%)\n- workspace `solutions/microsoft-defender-posture`: 1/1 eligible (100%)\n- workspace `solutions/microsoft-productivity`: 5/5 eligible (100%)\n- workspace `solutions/multica-signal-forwarding`: 1/1 eligible (100%)\n- workspace `solutions/netbird-inventory`: 6/6 eligible (100%)\n- workspace `solutions/ninja-support-intake`: 1/1 eligible (100%)\n- workspace `solutions/ninjaone-alert-operations`: 6/6 eligible (100%)\n- workspace `solutions/quick-support`: 13/13 eligible (100%)\n- workspace `solutions/scan-findings`: 3/3 eligible (100%)\n- workspace `solutions/scim-lite`: 4/4 eligible (100%)\n- workspace `solutions/synology`: 5/5 eligible (100%)\n- workspace `solutions/wondernote`: 22/22 eligible (100%)\n- workspace `solutions/workstation-reboots`: 7/7 eligible (100%)\n\nSubrequest allowance: 50. Static analysis only."
 }

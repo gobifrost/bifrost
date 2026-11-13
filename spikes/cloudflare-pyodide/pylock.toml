@@ -59,3 +59,54 @@ wheels = [{ url = "https://files.pythonhosted.org/packages/67/81/4add07e5172b7ac
 name = "workers-runtime-sdk"
 version = "1.9.5"
 wheels = [{ url = "https://files.pythonhosted.org/packages/ad/33/1154f8d518becf3ca3dea57627dea7a84888937cf7b313e6dc4e6f7c7fdf/workers_runtime_sdk-1.9.5-py3-none-any.whl", upload-time = 2026-10-20T07:54:21Z, size = 41297, hashes = { sha256 = "f2b912660a3ab60d2a24920106422f9eaf4cd7a794e42b022237ad2444287fef" } }]
+
+
+[[packages]]
+name = "beautifulsoup4"
+version = "4.15.0"
+wheels = [{ url = "https://files.pythonhosted.org/packages/88/c6/92fcd42f1ba33e1184263f25bfabf3d27c383410470f169e4b8163bf9c17/beautifulsoup4-4.15.0-py3-none-any.whl", hashes = { sha256 = "d6f88de62e1d4e38ecb1077eb9724cd0eff29d2a08ca16a401e9b9e93f117cf9" } }]
+
+[[packages]]
+name = "cobble"
+version = "0.1.4"
+wheels = [{ url = "https://files.pythonhosted.org/packages/d5/e1/3714a2f371985215c219c2a70953d38e3eed81ef165aed061d21de0e998b/cobble-0.1.4-py3-none-any.whl", hashes = { sha256 = "36c91b1655e599fd428e2b95fdd5f0da1ca2e9f1abb0bc871dec21a0e78a2b44" } }]
+
+[[packages]]
+name = "httpcore"
+version = "1.0.9"
+wheels = [{ url = "https://files.pythonhosted.org/packages/7e/f5/f66802a942d491edb555dd61e3a9961140fd64c90bce1eafd741609d334d/httpcore-1.0.9-py3-none-any.whl", hashes = { sha256 = "2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55" } }]
+
+[[packages]]
+name = "jsonpath-python"
+version = "1.1.6"
+wheels = [{ url = "https://files.pythonhosted.org/packages/55/8a/1270a6803bd821cbfcdda387eaa13cb41a7b1f7b9bd145979b3bfb9d6cb7/jsonpath_python-1.1.6-py3-none-any.whl", hashes = { sha256 = "a1c50afd8d3fbbaf47a4873bc890dcb3c15da96f5c020327977d844d8731a2d4" } }]
+
+[[packages]]
+name = "mammoth"
+version = "1.13.0"
+wheels = [{ url = "https://files.pythonhosted.org/packages/af/2a/47d72b27689f3c7cd1d270dd1d4699df2fe3b78b2f293b6b08f565548a45/mammoth-1.13.0-py2.py3-none-any.whl", hashes = { sha256 = "dd7629fa9d0a5e82207b3f481a9dcb8308fb43f6206258e062f11121efba9991" } }]
+
+[[packages]]
+name = "openrouter"
+version = "1.3.173"
+wheels = [{ url = "https://files.pythonhosted.org/packages/c2/02/b481271f16a377139d6eb883af531c3eb792295971b1390a72cf6621afaa/openrouter-1.3.173-py3-none-any.whl", hashes = { sha256 = "c3cdc9ef6a41431590af44b1c54f2a33567bdf71eb894a16590dfebbc084e8d8" } }]
+
+[[packages]]
+name = "pypdf"
+version = "7.0.1"
+wheels = [{ url = "https://files.pythonhosted.org/packages/d5/a9/ae11deef21eaac5113f8c3848da1c42423b7abeca0abc349bfec7abf4c4e/pypdf-7.0.1-py3-none-any.whl", hashes = { sha256 = "6131b764b046282357037309e7ef2a1b7679d4a5c53eed3db2bfbf7c673ddc2b" } }]
+
+[[packages]]
+name = "reportlab"
+version = "5.1.0"
+wheels = [{ url = "https://files.pythonhosted.org/packages/4a/3c/bf68d44f160b44685fc714f746a954c71d0091b3dc4fd3c8670154b44841/reportlab-5.1.0-py3-none-any.whl", hashes = { sha256 = "59fdbaec5efe437095ad1d7292ec9a271c8ca2d3ec75e889c6e61400929b90df" } }]
+
+[[packages]]
+name = "soupsieve"
+version = "4.1"
+wheels = [{ url = "https://files.pythonhosted.org/packages/88/73/6a2087c72975cfc07394623bca8d17654342ea4055ae368deafe5a81a542/soupsieve-4.1-py3-none-any.whl", hashes = { sha256 = "e4d667b3974ce6e038e7390486b8093369854a1d345ffdd4c121dfc4a782e809" } }]
+
+[[packages]]
+name = "pillow"
+version = "12.2.0"
+wheels = [{ url = "https://cdn.jsdelivr.net/pyodide/v314.0.7/full/pillow-12.2.0-cp314-cp314-pyemscripten_2026_0_wasm32.whl", hashes = { sha256 = "e29838b7a756e4ee0f27a9cfa9a387ee0dfa2e9dd44be2dd595130b9f9d93ac3" } }]

@@ -1,100 +1,88 @@
 # Workspace census: `bifrost-workspace-next`
 
 Measured 2026-11-13 against **`MTG-Thomas/bifrost-workspace-next` @ `37581f6`**
-(private), the real workspace repo: 35 deployable Solution workspaces, 317
-workflow entries. Static analysis with `dev/routing/census.mjs`, which drives the
-dispatcher's own `decideBackend`. Nothing was executed.
-
-An earlier run against the upstream repo's two example workspaces (11/11
-eligible) is in [`WORKSPACE-CENSUS.md`](WORKSPACE-CENSUS.md); this supersedes it
-as the measurement that matters.
+(private): 35 deployable Solution workspaces, 317 workflow entries. Static
+analysis with `dev/routing/census.mjs`, which drives the dispatcher's own
+`decideBackend`. Nothing was executed.
 
 ## Headline
 
 | Subrequest allowance | Eligible | Share |
 |---|---|---|
-| **12** (qualification fixture) | **295 / 317** | **93.1 %** |
-| 50 | 303 / 317 | 95.6 % |
-| 200 | 303 / 317 | 95.6 % |
+| 12 (the original qualification fixture) | 304 / 317 | 95.9 % |
+| **50 (configured policy)** | **317 / 317** | **100 %** |
 
 `reference/community` was excluded: its manifest points at community files that
-are not present in this repo (85 entries, 31 of them missing on disk). It is
-reference material, not a deployable workspace.
+are not present in this repo. It is reference material, not a deployable
+workspace.
 
-## What the 22 ineligible workflows are
+## What changed since the first run
 
-| Cause | Workflows | Detail |
-|---|---|---|
-| Unlisted package | 14 | `openrouter`, `pypdf`, `mammoth`, `bs4`, `reportlab` |
-| Call density only | 8 | estimated 13–21 subrequests vs allowance 12 |
-| (of which both) | 5 | package miss *and* over budget |
+The first pass measured **295/317 at allowance 12** with five unlisted packages.
+Two things closed the gap, both now done:
 
-By solution: `bifrost-grc` 19, `bifrost-dmarc` 1, `bifrost-docs` 1,
-`wondernote` 1. Every other solution is 100 % eligible.
+1. **The allowance was a fixture value, not a policy.** 12 was chosen to prove
+   the estimate mechanism. 50 is a normal dispatcher setting; at 50 only 13
+   workflows remained blocked, all by call density.
+2. **The five packages were qualified in a real Worker** (`DEPENDENCY-CENSUS.md`
+   "Result 2"): `pypdf`, `beautifulsoup4`, `mammoth`, `openrouter`, `reportlab`
+   (+ `pillow`, `soupsieve`, `cobble`, `httpcore`, `jsonpath-python`). All import
+   and perform their job; bundle cost is +32.5 MB uncompressed / +6.3 MB gzip.
 
-Package-miss files: `grc_questionnaires.py` (7 entries, `pypdf` + `openrouter`),
-`grc_recommendations.py` (3, `openrouter`), `grc_source_documents.py` (4,
-`mammoth` + `bs4` + `reportlab`).
+## The remaining 13 (at allowance 12)
 
-## Three findings that change the position
+All are call-density, not dependencies: `grc_agent_tools` (5), `grc_questionnaires`
+(5), `dmarc` (1), `docs/migration` (1), `wondernote` (1), estimated 13–21
+subrequests. They are eligible at 50 with no code change.
 
-1. **Zero native-extension blocks across 317 workflows.** The entire
-   third-party surface outside the allowlist is five pure-Python packages. That
-   is strategy-1 territory (`DEPENDENCY-CENSUS.md`): bundle + measure each one,
-   not route to Linux forever. The `cryptography`/`azure-*`/`pandas` cliff that
-   dominated the theoretical discussion does not appear in this workspace.
-2. **The allowance, not the code, is the second blocker.** Only eight workflows
-   exceed 12 estimated subrequests (max 21). A dispatcher configured at 50 clears
-   all eight with no workspace change. Twelve was a qualification fixture, never
-   a platform ceiling.
-3. **Failures cluster, they don't scatter.** 19 of 22 are in one solution
-   (`bifrost-grc`, which does document extraction and LLM calls). Four solutions
-   out of 35 carry every miss — a rollout can start with the other 31 today.
+## Findings
 
-## Census defects this run forced out
+1. **Zero native-extension blocks across 317 workflows.** The whole non-allowlist
+   surface was five pure-Python packages, now qualified. The
+   `cryptography`/`azure-*`/`pandas` cliff does not appear in this workspace.
+2. **The allowance is a policy decision, not a wall.** 12 → 95.9 %, 50 → 100 %.
+   The dispatcher's subrequest estimate is the control, and the estimate is
+   conservative (call sites + entry/module resolution).
+3. **Compressed bundle size is now the binding budget.** 9.15 MiB gzip for the
+   full Worker. Any further package is a budgeted decision, and `openrouter`
+   alone is 1.2 MB gzip / 1,229 files. Bundle startup is unaffected (120 ms), but
+   first import of the heavy set costs ~4.9 s once per isolate.
 
-Each was a real false verdict on real code:
+## What the census forced out
 
-- **Shared-module resolution.** Solutions import repo-root `modules/`,
-  `helpers/` and `features/`; resolving only inside the solution root produced
-  false `unresolved module` failures.
-- **Namespace packages.** `functions/` directories without `__init__.py` are
-  importable in Python 3 and by the engine's importer. Six dmarc workflows were
-  wrongly rejected until namespaces resolved.
-- **`reference/` manifests.** 85 entries, 31 absent on disk — now skipped
-  explicitly rather than counted as failures.
-- **Distribution vs import names** (`yaml`/`pyyaml`, `jwt`/`pyjwt`) — fixed
-  earlier; would have false-rejected 19 files.
-- **Test-file contamination** from Windows path separators — fixed earlier.
+Five false verdicts on real code, all fixed:
+
+- **Shared modules** — solutions import repo-root `modules/`, `helpers/`,
+  `features/`; per-solution resolution failed them.
+- **Namespace packages** — `functions/` without `__init__.py`; 6 dmarc workflows
+  were wrongly rejected.
+- **`reference/` manifests** — 85 entries, 31 absent on disk.
+- **Distribution vs import names** — `yaml`/`pyyaml`, `jwt`/`pyjwt`; 19 files
+  would have been false-rejected.
+- **Test-file contamination** from Windows path separators.
 
 ## Limits
 
-- **Eligibility ≠ qualification.** 93.1 % means "would be routed to Workers",
-  not "has run there". The per-tenant runtime is cloud-accepted
-  (`CLOUD-TENANT-ACCEPTANCE.md`); these specific workflows are not.
-- **Egress is not modelled** (a dispatch-time declaration), so a workflow
-  needing an unlisted host is not detected here.
-- **The subrequest figure is a heuristic**: SDK-looking call sites in the named
-  workflow function + entry resolve + entry load + resolved local modules.
-- **Dynamic imports are invisible**; stdlib traps are only the known hard set.
-- **Lifecycle is invisible**: no daemons, durable sleep, or threading
-  requirements are assessed.
+- **Eligibility ≠ qualification.** 317/317 means "would be routed to Workers",
+  not "has run there". The per-tenant runtime is cloud-accepted; these specific
+  workflows are not.
+- **Egress is not modelled** (dispatch-time declaration).
+- **The subrequest figure is a heuristic**, and it is conservative.
+- **Dynamic imports and lifecycle are invisible** (daemons, durable sleep).
 
 ## Recommendation
 
-1. **Configure the Cloudflare allowance at 50, not 12.** 95.6 % with no code
-   changes; 12 was a fixture value that was never a platform bound.
-2. **Bundle the five pure-Python packages** behind per-package measured import
-   tests (`requests`/`msal` show the method: +13 % for a bundle with ~47 MiB
-   headroom). That closes the remaining 14.
-3. **Pilot on the 31 fully-eligible solutions**, leave `bifrost-grc` on Linux
-   until its package line is tested.
-4. **Run the census in CI** on workspace changes so the routing split cannot
-   silently rot.
+1. **Run at allowance 50.** 100 % static eligibility for 317 workflows.
+2. **Ship the five packages** — measured, functional, and paid for only by the
+   solution that uses them. Watch the 9.15 MiB gzip budget for anything further.
+3. **Pilot any solution** — the routing split no longer excludes one. What
+   remains is runtime qualification per workflow, not routing.
+4. **Gate the census in CI** so the split cannot rot (`dev/routing/census-gate.mjs`
+   plus the workflow template in `dev/routing/workspace-census.workflow.yml`).
 
 ## Receipts
 
 - [`results/workspace-next-census-12.json`](../results/workspace-next-census-12.json)
 - [`results/workspace-next-census-50.json`](../results/workspace-next-census-50.json)
-- [`results/workspace-next-census-200.json`](../results/workspace-next-census-200.json)
-- Tool: `dev/routing/census.mjs` (9 routing tests pass)
+- `dev/routing/census.mjs`, `eligibility.mjs`, `census-gate.mjs`, 10 routing tests
+- `backend/package-import/` (functional import qualification)

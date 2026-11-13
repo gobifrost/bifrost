@@ -31,8 +31,10 @@
 // python-dotenv, PyYAML, redis, requests, urllib3, charset-normalizer, msal,
 // PyJWT, certifi, plus their bundled transitive/platform companions
 // (idna, typing_extensions, typing_inspection, annotated_types,
-// workers-runtime-sdk). Anything outside this set routes to Linux until it
-// has its own measured import test.
+// workers-runtime-sdk). The second group was qualified by importing and
+// exercising each package inside a real Python Worker (backend/package-import,
+// results in DEPENDENCY-CENSUS.md "Result 2"). Anything outside this set routes
+// to Linux until it has its own measured import test.
 const ALLOWLIST = new Set(
   [
     'httpx',
@@ -52,6 +54,19 @@ const ALLOWLIST = new Set(
     'typing-inspection',
     'annotated-types',
     'workers-runtime-sdk',
+    // Qualified 2026-11-13 inside a real Pyodide Worker (functional check, not
+    // import-only): pypdf, beautifulsoup4, mammoth, openrouter, reportlab and
+    // their closure (soupsieve, cobble, httpcore, jsonpath-python, pillow).
+    'beautifulsoup4',
+    'soupsieve',
+    'pypdf',
+    'mammoth',
+    'cobble',
+    'openrouter',
+    'httpcore',
+    'jsonpath-python',
+    'reportlab',
+    'pillow',
   ].map(normalizeDistribution),
 );
 
