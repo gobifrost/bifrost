@@ -391,7 +391,7 @@ class OAuthService:
         except Exception as exc:
             # Log the real cause server-side; never echo Authlib/joserfc
             # exception text to the browser (the router returns detail=str(e)).
-            logger.error(
+            logger.exception(
                 "OIDC id_token verification failed for %s: %s",
                 log_safe(provider),
                 log_safe(str(exc)),

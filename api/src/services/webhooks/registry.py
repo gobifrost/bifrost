@@ -87,7 +87,7 @@ class AdapterRegistry:
             self._instances[name] = instance
             return instance
         except Exception as e:
-            logger.error(f"Failed to instantiate adapter {log_safe(name)}: {log_safe(e)}")
+            logger.exception(f"Failed to instantiate adapter {log_safe(name)}: {log_safe(e)}")
             return None
 
     def get_all(self) -> list[WebhookAdapter]:

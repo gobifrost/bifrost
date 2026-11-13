@@ -172,7 +172,7 @@ class ResilientPubSubListener:
                     self._consecutive_failures += 1
 
                     if self._consecutive_failures >= self.extended_failure_threshold:
-                        logger.error(
+                        logger.exception(
                             f"Redis pub/sub error (failure #{self._consecutive_failures}): {e}"
                         )
                     else:
@@ -251,7 +251,7 @@ class ResilientPubSubListener:
         except json.JSONDecodeError:
             logger.warning(f"Invalid JSON in pub/sub message: {message.get('data')}")
         except Exception as e:
-            logger.error(f"Error handling pub/sub message: {e}")
+            logger.exception(f"Error handling pub/sub message: {e}")
 
     def is_healthy(self) -> bool:
         """

@@ -1626,7 +1626,7 @@ async def websocket_connect(
         manager.disconnect(websocket)
         logger.info(f"WebSocket disconnected for user {user.user_id}")
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.exception(f"WebSocket error: {e}")
         manager.disconnect(websocket)
     finally:
         access_checks.stop_collecting(checks)
@@ -1683,5 +1683,5 @@ async def websocket_execution(
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.exception(f"WebSocket error: {e}")
         manager.disconnect(websocket)

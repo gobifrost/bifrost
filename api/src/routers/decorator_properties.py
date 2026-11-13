@@ -89,7 +89,7 @@ async def get_decorator_properties(
             detail=f"File not found: {path}",
         )
     except Exception as e:
-        logger.error(f"Error reading decorator properties from {log_safe(path)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Error reading decorator properties from {log_safe(path)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to read decorator properties",
@@ -194,7 +194,7 @@ async def update_decorator_properties(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(
+        logger.exception(
             f"Error updating decorator properties in {log_safe(request.path)}: {log_safe(e)}",
             exc_info=True,
         )

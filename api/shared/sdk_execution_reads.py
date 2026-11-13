@@ -462,7 +462,7 @@ async def list_sdk_workflows(
                 )
             )
         except Exception as e:
-            logger.error(f"Failed to convert workflow '{w.name}': {e}")
+            logger.exception(f"Failed to convert workflow '{w.name}': {e}")
 
     logger.info(f"Returning {len(workflow_list)} workflows (scope={log_safe(scope) or 'default'})")
     return workflow_list

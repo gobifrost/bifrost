@@ -1197,7 +1197,7 @@ class GitHubSyncService:
                 await _progress("Fetching remote...")
                 return await self._do_fetch(work_dir, repo)
         except Exception as e:
-            logger.error(f"Fetch failed: {e}", exc_info=True)
+            logger.exception(f"Fetch failed: {e}", exc_info=True)
             return FetchResult(success=False, error=str(e))
 
     async def desktop_status(self) -> "WorkingTreeStatus":
@@ -1212,7 +1212,7 @@ class GitHubSyncService:
         except GitStatusError:
             raise
         except Exception as e:
-            logger.error(f"Status failed: {e}", exc_info=True)
+            logger.exception(f"Status failed: {e}", exc_info=True)
             raise GitStatusError(f"status failed: {e}") from e
 
     @staticmethod
@@ -1303,7 +1303,7 @@ class GitHubSyncService:
                 repo = await self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
         except Exception as e:
-            logger.error(f"Commit failed: {e}", exc_info=True)
+            logger.exception(f"Commit failed: {e}", exc_info=True)
             return CommitResult(success=False, error=str(e))
 
     async def prepare_desktop_sync(self, work_dir: Path, repo: GitRepo, *, progress_fn=None) -> WorkspaceSyncPlan:
@@ -1555,7 +1555,7 @@ class GitHubSyncService:
                 error=str(error),
             )
         except Exception as error:
-            logger.error("Sync failed: %s", error, exc_info=True)
+            logger.exception("Sync failed: %s", error, exc_info=True)
             return SyncResult(success=False, error=str(error))
 
     async def desktop_abort_merge(self) -> "AbortMergeResult":
@@ -1574,7 +1574,7 @@ class GitHubSyncService:
                 logger.info("Merge aborted successfully")
                 return AbortMergeResult(success=True)
         except Exception as e:
-            logger.error(f"Abort merge failed: {e}", exc_info=True)
+            logger.exception(f"Abort merge failed: {e}", exc_info=True)
             return AbortMergeResult(success=False, error=str(e))
 
     async def desktop_resolve(self, resolutions: dict[str, str]) -> "ResolveResult":
@@ -1649,7 +1649,7 @@ class GitHubSyncService:
                 logger.info("Resolved conflicts, created merge commit (local)")
                 return ResolveResult(success=True, commits_ahead=ahead, commits_behind=behind)
         except Exception as e:
-            logger.error(f"Resolve failed: {e}", exc_info=True)
+            logger.exception(f"Resolve failed: {e}", exc_info=True)
             return ResolveResult(success=False, error=str(e))
 
     async def desktop_diff(self, path: str) -> "DiffResult":
@@ -1680,7 +1680,7 @@ class GitHubSyncService:
                     working_content=working_content,
                 )
         except Exception as e:
-            logger.error(f"Diff failed: {e}", exc_info=True)
+            logger.exception(f"Diff failed: {e}", exc_info=True)
             return DiffResult(path=path)
 
     async def desktop_discard(self, paths: list[str]) -> "DiscardResult":
@@ -1741,7 +1741,7 @@ class GitHubSyncService:
                 logger.info(f"Discarded {len(discarded)} file(s)")
                 return DiscardResult(success=True, discarded=discarded)
         except Exception as e:
-            logger.error(f"Discard failed: {e}", exc_info=True)
+            logger.exception(f"Discard failed: {e}", exc_info=True)
             return DiscardResult(success=False, error=str(e))
 
     # -----------------------------------------------------------------

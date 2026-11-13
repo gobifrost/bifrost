@@ -442,7 +442,7 @@ async def sdk_integrations_get(
         # Auth/scope failures must surface.
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.get failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.get failed: {log_safe(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve integration") from None
 
     if result is None:
@@ -482,7 +482,7 @@ async def sdk_integrations_list_mappings(
         # Authorization failures must surface to the client.
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.list_mappings failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.list_mappings failed: {log_safe(e)}")
         raise HTTPException(status_code=500, detail="Failed to list integration mappings") from None
 
     if items is None:
@@ -526,7 +526,7 @@ async def sdk_integrations_get_mapping(
         # Auth/scope failures must surface.
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.get_mapping failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.get_mapping failed: {log_safe(e)}")
         raise HTTPException(status_code=500, detail="Failed to retrieve integration mapping") from None
 
     if result is None:
@@ -568,7 +568,7 @@ async def sdk_integrations_find_mapping(
         # Auth failures (e.g. no reach) must surface.
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.find_mapping failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.find_mapping failed: {log_safe(e)}")
         raise HTTPException(status_code=500, detail="Failed to find integration mapping") from None
 
     if result is None:
@@ -618,7 +618,7 @@ async def sdk_integrations_upsert_mapping(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.upsert_mapping failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.upsert_mapping failed: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to upsert mapping: {str(e)}",
@@ -662,7 +662,7 @@ async def sdk_integrations_delete_mapping(
         # Auth/scope failures (e.g. 403 from the scope gate) must surface.
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.delete_mapping failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.delete_mapping failed: {log_safe(e)}")
         raise HTTPException(status_code=500, detail="Failed to delete integration mapping") from None
 
 
@@ -713,7 +713,7 @@ async def sdk_integrations_refresh_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"SDK integrations.refresh_token failed: {log_safe(e)}")
+        logger.exception(f"SDK integrations.refresh_token failed: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Token refresh failed: {str(e)}",

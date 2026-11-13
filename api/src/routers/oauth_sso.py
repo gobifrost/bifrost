@@ -369,7 +369,7 @@ async def oauth_callback(
     try:
         state_data = json.loads(state_data_raw)
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid OAuth state data format: {log_safe(e)}")
+        logger.exception(f"Invalid OAuth state data format: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OAuth state data",
@@ -412,7 +412,7 @@ async def oauth_callback(
         )
 
     except OAuthError as e:
-        logger.error(f"OAuth callback error: {log_safe(e)}")
+        logger.exception(f"OAuth callback error: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -450,7 +450,7 @@ async def oauth_callback(
                 user_info, tokens, trust_provider_email=trust_provider_email
             )
         except OAuthError as e:
-            logger.error(f"OAuth callback linking error: {log_safe(e)}")
+            logger.exception(f"OAuth callback linking error: {log_safe(e)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),

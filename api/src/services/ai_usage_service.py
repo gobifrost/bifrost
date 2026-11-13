@@ -166,7 +166,7 @@ async def record_ai_usage(
         # caller must see it (a retrying caller decides whether to retry).
         raise
     except Exception as e:
-        logger.error(f"Failed to record AI usage: {e}", exc_info=True)
+        logger.exception(f"Failed to record AI usage: {e}", exc_info=True)
         # Don't re-raise - AI usage recording should not block the main flow
 
 
@@ -723,7 +723,7 @@ async def backfill_model_costs(
         return updated_count
 
     except Exception as e:
-        logger.error(f"Failed to backfill costs for {log_safe(provider)}/{log_safe(model)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Failed to backfill costs for {log_safe(provider)}/{log_safe(model)}: {log_safe(e)}", exc_info=True)
         raise
 
 

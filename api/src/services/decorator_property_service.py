@@ -641,7 +641,7 @@ class DecoratorPropertyService:
                 changes=transformer.changes_made,
             )
         except cst.ParserSyntaxError as e:
-            logger.error(f"Failed to parse Python source: {e}")
+            logger.exception(f"Failed to parse Python source: {e}")
             return PropertyWriteResult(
                 modified=False,
                 new_content=content,
@@ -676,7 +676,7 @@ class DecoratorPropertyService:
                 changes=transformer.changes_made,
             )
         except cst.ParserSyntaxError as e:
-            logger.error(f"Failed to parse Python source: {e}")
+            logger.exception(f"Failed to parse Python source: {e}")
             return PropertyWriteResult(
                 modified=False,
                 new_content=content,
@@ -707,7 +707,7 @@ class DecoratorPropertyService:
                 changes=transformer.changes_made,
             )
         except cst.ParserSyntaxError as e:
-            logger.error(f"Failed to parse Python source: {e}")
+            logger.exception(f"Failed to parse Python source: {e}")
             return PropertyWriteResult(
                 modified=False,
                 new_content=content,

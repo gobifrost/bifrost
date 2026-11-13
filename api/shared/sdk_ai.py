@@ -173,7 +173,7 @@ async def complete_sdk_ai(
     try:
         llm_messages = _build_llm_messages(messages, input_files)
     except (KeyError, TypeError) as e:
-        logger.error(f"CLI AI complete failed: {log_safe(e)}")
+        logger.exception(f"CLI AI complete failed: {log_safe(e)}")
         raise SdkAIError(
             500, "AI completion failed. See server logs for details."
         ) from None
@@ -233,7 +233,7 @@ async def complete_sdk_ai(
                 401,
                 f"{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.",
             ) from None
-        logger.error(f"CLI AI complete failed: {log_safe(e)}")
+        logger.exception(f"CLI AI complete failed: {log_safe(e)}")
         raise SdkAIError(
             500, "AI completion failed. See server logs for details."
         ) from None
@@ -454,7 +454,7 @@ async def stream_sdk_ai(
                 )
             }
         else:
-            logger.error(f"CLI AI stream failed: {log_safe(e)}")
+            logger.exception(f"CLI AI stream failed: {log_safe(e)}")
             yield {"error": "AI stream failed. See server logs for details."}
 
 

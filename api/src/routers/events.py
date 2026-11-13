@@ -622,7 +622,7 @@ async def get_dynamic_values(
             detail=str(e),
         )
     except Exception as e:
-        logger.error(
+        logger.exception(
             f"Failed to get dynamic values for {log_safe(adapter_name)}/{log_safe(request.operation)}: {log_safe(e)}",
             exc_info=True,
         )
@@ -896,7 +896,7 @@ async def create_source(
             webhook_source.expires_at = result.expires_at
 
         except Exception as e:
-            logger.error(f"Failed to subscribe webhook: {e}", exc_info=True)
+            logger.exception(f"Failed to subscribe webhook: {e}", exc_info=True)
             await db.delete(source)
             await db.commit()
             raise HTTPException(
@@ -1208,7 +1208,7 @@ async def resubscribe_source(
             _build_public_callback_url(source.id),
         )
     except Exception as exc:
-        logger.error(
+        logger.exception(
             "Failed to resubscribe webhook %s: %s",
             log_safe(source_id),
             log_safe(exc),
@@ -1352,7 +1352,7 @@ async def delete_source(
             source.error_message = f"Provider deletion failed: {error_message}"
             source.updated_at = datetime.now(timezone.utc)
             await db.commit()
-            logger.error(
+            logger.exception(
                 "Refusing to delete webhook %s because provider cleanup failed: %s",
                 log_safe(source_id),
                 log_safe(error_message),
@@ -2157,7 +2157,7 @@ async def create_delivery(
             e,
             context="queueing event delivery",
         )
-        logger.error(f"Failed to queue delivery: {error_message}", exc_info=True)
+        logger.exception(f"Failed to queue delivery: {error_message}", exc_info=True)
         delivery.status = EventDeliveryStatus.FAILED
         delivery.error_message = error_message
         await db.flush()
