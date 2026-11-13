@@ -58,6 +58,7 @@ export function MentionPicker({
 	const filteredAgents = useMemo(() => {
 		const filtered =
 			agents?.filter((agent) => {
+				if (!agent.channels.includes("chat")) return false;
 				if (!searchTerm) return true;
 				const term = searchTerm.toLowerCase();
 				return (

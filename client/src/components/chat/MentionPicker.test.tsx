@@ -34,10 +34,11 @@ beforeEach(() => {
 		{
 			id: "a-1",
 			name: "SupportBot",
+			channels: ["chat"],
 			description: "answers support tickets",
 		},
-		{ id: "a-2", name: "DevBot", description: "writes code" },
-		{ id: "a-3", name: "DataBot", description: null },
+		{ id: "a-2", name: "DevBot", channels: ["chat"], description: "writes code" },
+		{ id: "a-3", name: "DataBot", channels: ["chat"], description: null },
 	];
 });
 
@@ -73,6 +74,24 @@ describe("MentionPicker — visibility", () => {
 });
 
 describe("MentionPicker — filtering", () => {
+	it("excludes non-chat agents even when their names match", () => {
+		agentsRef.data.push(
+			{ id: "a-4", name: "HiddenBot", channels: [] },
+			{ id: "a-5", name: "TeamsBot", channels: ["teams"] },
+		);
+		renderWithProviders(
+			<MentionPicker
+				open
+				onOpenChange={vi.fn()}
+				onSelect={vi.fn()}
+				searchTerm="bot"
+			/>,
+		);
+		expect(screen.getByText("SupportBot")).toBeInTheDocument();
+		expect(screen.queryByText("HiddenBot")).not.toBeInTheDocument();
+		expect(screen.queryByText("TeamsBot")).not.toBeInTheDocument();
+	});
+
 	it("filters by name match (case-insensitive)", () => {
 		renderWithProviders(
 			<MentionPicker
