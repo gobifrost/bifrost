@@ -1,5 +1,7 @@
 // Bifrost frontend edge worker: static client assets on Cloudflare,
-// backend traffic reverse-proxied to the canonical API origin.
+// backend traffic reverse-proxied through the existing Bifrost frontend gateway.
+// API_ORIGIN must serve client/nginx.conf: it supplies /api/auth rewrites and
+// embedded-form HTML with the API-resolved framing policy. A bare API is insufficient.
 //
 // The API keeps full authority (auth, scheduling, data, websockets source).
 // This worker only decides, per path, whether to serve a local asset or
