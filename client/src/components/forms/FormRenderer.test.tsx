@@ -981,3 +981,39 @@ it("submits and reloads form inputs within the selected organization", async () 
 		),
 	);
 });
+
+it("renders opted-in layout sections in their configured field order", () => {
+	const form = makeForm([
+		{ name: "first", label: "First", type: "text", required: false },
+		{ name: "email", label: "Email", type: "email", required: false },
+	]);
+	const formSchema = form.form_schema!;
+	form.form_schema = {
+		fields: formSchema.fields,
+		layout: {
+			sections: [
+				{
+					title: "Contact",
+					rows: [
+						{
+							columns: [
+								{ field: "email", width: 4 },
+								{ field: "first", width: 8 },
+							],
+						},
+					],
+				},
+			],
+		},
+	};
+	renderWithProviders(<FormRenderer form={form} />);
+
+	expect(screen.getByText("Contact")).toBeInTheDocument();
+	expect(screen.getAllByRole("textbox").map((input) => input.id)).toEqual([
+		"email",
+		"first",
+	]);
+	expect(screen.getByLabelText("Email").parentElement?.parentElement).toHaveClass(
+		"md:col-span-4",
+	);
+});
