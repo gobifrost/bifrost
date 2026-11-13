@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
 import pytest
@@ -1058,3 +1058,46 @@ async def test_deleted_original_user_does_not_erase_an_enforced_decision(db_sess
     [row] = await _rows(db_session, collector)
     assert (row.action, row.outcome, row.user_id) == ("access.check", "failure", None)
     assert row.details["trace"]["steps"][0]["facts"]["user_id"] == str(original_id)
+
+
+async def test_judging_propagates_assertions_without_recording_an_operational_gap(monkeypatch) -> None:
+    from src.services import access_check_writer as writer_module
+
+    failure = AssertionError("invalid judge state")
+    monkeypatch.setattr(writer_module, "judge", Mock(side_effect=failure))
+    writer = Mock(stored_run_user_id=None, gap=AsyncMock())
+
+    with pytest.raises(AssertionError, match="invalid judge state") as raised:
+        await writer_module._judge_and_write(
+            Mock(), writer, Mock(), None, Note("entry", None), None, direct=True,
+        )
+
+    assert raised.value is failure
+    writer.gap.assert_not_awaited()
+
+
+async def test_judging_records_operational_errors_as_retryable_gaps(monkeypatch) -> None:
+    from src.services import access_check_writer as writer_module
+
+    monkeypatch.setattr(writer_module, "judge", Mock(side_effect=TimeoutError("database unavailable")))
+    writer = Mock(stored_run_user_id=None, gap=AsyncMock())
+
+    completed = await writer_module._judge_and_write(
+        Mock(), writer, Mock(), None, Note("entry", None), None, direct=True,
+    )
+
+    assert completed is False
+    writer.gap.assert_awaited_once_with("entry", "observer_error:TimeoutError", None)
+
+
+async def test_flush_contains_a_judging_assertion_without_changing_the_request(monkeypatch, caplog) -> None:
+    from src.services import access_check_writer as writer_module
+
+    monkeypatch.setattr(writer_module, "_write", AsyncMock(side_effect=AssertionError("invalid judge state")))
+    collector = _collector(uuid4(), Note("entry", None))
+
+    await flush(Mock(), collector, **ROUTE)
+
+    assert collector.closed
+    assert "access checks not written" in caplog.text
+    assert "AssertionError" in caplog.text
