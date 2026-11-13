@@ -149,6 +149,25 @@ request (auto span) → enqueue: persist traceparent in WorkDispatch.message
 logs (unchanged path) → Loki, now carrying trace_id/span_id
 ```
 
+## Implementation status (v1)
+
+- `src/core/telemetry.py` initializes providers only when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise every helper is a no-op.
+- `stage_dispatch` injects `traceparent` into the dispatch message;
+  `PoolWorker._run_claim` extracts it and emits the `run.<handler>` span
+  with `started`/`duration`/`failed` metrics.
+- **Gap, deliberate:** the `run.<handler>` span lives in the executor
+  (launcher/pool) process. Spans for work *inside* the forked execution
+  child (its own SQL/HTTP calls) are not emitted yet: fork does not carry
+  the SDK's exporter thread, so the child needs an at-fork re-init. Until
+  that lands, child-internal calls are untraced; the run span still
+  correctly covers claim → routed/finished and links to its request.
+- `ScrubbingSpanExporter` enforces the export privacy boundary in-process
+  before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
+  returned document fields, HTTP query strings, exception events, and
+  SDK-generated error descriptions never leave the process. Covered by
+  `api/tests/unit/test_telemetry.py`.
+
 ## Test seams
 
 - Unit: in-memory exporters/readers assert ID-only run attributes, bounded

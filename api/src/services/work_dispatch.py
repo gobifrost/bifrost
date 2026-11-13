@@ -99,18 +99,24 @@ def stage_dispatch(
     Executors claim it from PostgreSQL.
     """
     dispatch_id = uuid4()
+    from src.core.telemetry import inject_traceparent
+
+    final_message = {
+        **message,
+        "dispatch_id": str(dispatch_id),
+        "handler": handler,
+        "handler_version": handler_version,
+    }
+    # Link the run span back to the dispatching trace (request or
+    # scheduler). No-op when telemetry is off or no span is active.
+    inject_traceparent(final_message)
     dispatch = WorkDispatch(
         id=dispatch_id,
         family=family,
         subject_id=subject_id,
         handler=handler,
         handler_version=handler_version,
-        message={
-            **message,
-            "dispatch_id": str(dispatch_id),
-            "handler": handler,
-            "handler_version": handler_version,
-        },
+        message=final_message,
         payload=payload,
         memory_request_bytes=memory_request_bytes,
         execution_lane=execution_lane,

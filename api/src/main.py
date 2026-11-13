@@ -146,6 +146,12 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Bifrost API...")
     settings = get_settings()
 
+    # Observability first: request spans should cover everything below.
+    # No-op unless the operator set OTEL_EXPORTER_OTLP_ENDPOINT.
+    from src.core.telemetry import init_telemetry, shutdown_telemetry
+
+    init_telemetry()
+
     # Initialize database
     logger.info("Initializing database connection...")
     await init_db()
@@ -253,6 +259,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await close_shared_redis()
     await close_health_check_clients()
     await close_db()
+    shutdown_telemetry()
     logger.info("Bifrost API shutdown complete")
 
 

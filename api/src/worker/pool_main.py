@@ -599,60 +599,69 @@ class PoolWorker:
 
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self.admission is not None
-        handed_back = False
-        try:
-            # Workflow runs return once routed to a child (then counted by the
-            # pool); agent runs return when finished.
-            if claim.handler == "workflow.execute":
-                assert self._workflow_consumer is not None
-                try:
-                    await self._workflow_consumer.process_message(
-                        claim.message,
-                        PendingExecution(**claim.claimed)  # type: ignore[typeddict-item]
-                        if claim.claimed is not None
-                        else None,
-                    )
-                except MemoryError:
-                    # Memory rose between the claim and the fork: the run
-                    # goes back to waiting for an executor with room.
-                    from src.services.execution.workflow_dispatch import release_workflow_run
+        from src.core.telemetry import run_span
 
-                    self.admission.release(str(claim.subject_id))
-                    handed_back = True
-                    if claim.claimed is None:
-                        logger.error(
-                            "Pool cannot hand back workflow run without payload",
-                            extra={"dispatch_id": str(claim.dispatch_id)},
+        # Server span for the claimed run, linked to the dispatching trace.
+        # No-op (and no metrics) unless the operator enabled OTel.
+        with run_span(
+            handler=claim.handler,
+            run_id=str(claim.subject_id),
+            message=claim.message,
+        ):
+            handed_back = False
+            try:
+                # Workflow runs return once routed to a child (then counted by the
+                # pool); agent runs return when finished.
+                if claim.handler == "workflow.execute":
+                    assert self._workflow_consumer is not None
+                    try:
+                        await self._workflow_consumer.process_message(
+                            claim.message,
+                            PendingExecution(**claim.claimed)  # type: ignore[typeddict-item]
+                            if claim.claimed is not None
+                            else None,
                         )
-                        return
-                    await release_workflow_run(
-                        worker_id=self.incarnation_id,
-                        message=claim.message,
-                        payload=claim.claimed,
-                        memory_request_bytes=claim.memory_request_bytes,
-                        queued_at=claim.queued_at,
-                    )
-            elif claim.handler == "agent.run":
-                assert self._agent_consumer is not None
-                await self._agent_consumer.process_message(claim.message)
-            else:
-                await self._execute_summary(claim)
-        except AssertionError:
-            raise
-        except Exception:
-            logger.exception(
-                "Pool run failed in its consumer",
-                extra={"dispatch_id": str(claim.dispatch_id)},
-            )
-        finally:
-            if claim.handler == "workflow.execute":
-                # A routed workflow run stays held until its child ends. A run
-                # handed back may already be claimed again (its own hold).
-                if not handed_back:
-                    self.admission.started(str(claim.subject_id))
-            else:
-                self.admission.release(str(claim.dispatch_id))
-            self.runs_handled += 1
+                    except MemoryError:
+                        # Memory rose between the claim and the fork: the run
+                        # goes back to waiting for an executor with room.
+                        from src.services.execution.workflow_dispatch import release_workflow_run
+
+                        self.admission.release(str(claim.subject_id))
+                        handed_back = True
+                        if claim.claimed is None:
+                            logger.error(
+                                "Pool cannot hand back workflow run without payload",
+                                extra={"dispatch_id": str(claim.dispatch_id)},
+                            )
+                            return
+                        await release_workflow_run(
+                            worker_id=self.incarnation_id,
+                            message=claim.message,
+                            payload=claim.claimed,
+                            memory_request_bytes=claim.memory_request_bytes,
+                            queued_at=claim.queued_at,
+                        )
+                elif claim.handler == "agent.run":
+                    assert self._agent_consumer is not None
+                    await self._agent_consumer.process_message(claim.message)
+                else:
+                    await self._execute_summary(claim)
+            except AssertionError:
+                raise
+            except Exception:
+                logger.exception(
+                    "Pool run failed in its consumer",
+                    extra={"dispatch_id": str(claim.dispatch_id)},
+                )
+            finally:
+                if claim.handler == "workflow.execute":
+                    # A routed workflow run stays held until its child ends. A run
+                    # handed back may already be claimed again (its own hold).
+                    if not handed_back:
+                        self.admission.started(str(claim.subject_id))
+                else:
+                    self.admission.release(str(claim.dispatch_id))
+                self.runs_handled += 1
 
     async def _execute_summary(self, claim: PoolClaim) -> None:
         """Execute a summary on this executor's physical runtime."""
