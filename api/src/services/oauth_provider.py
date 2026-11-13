@@ -358,7 +358,7 @@ class OAuthProviderClient:
                     continue
 
             except Exception as e:
-                logger.error(f"Unexpected error during token request: {str(e)}", exc_info=True)
+                logger.exception(f"Unexpected error during token request: {str(e)}", exc_info=True)
                 return (False, {
                     "error": "unexpected_error",
                     "error_description": str(e)
@@ -733,7 +733,7 @@ async def refresh_oauth_token_http(td: dict[str, Any]) -> dict[str, Any]:
         return outcome
 
     except Exception as e:
-        logger.error(f"Error refreshing OAuth token: {e}", exc_info=True)
+        logger.exception(f"Error refreshing OAuth token: {e}", exc_info=True)
         outcome["error"] = f"Token refresh failed: {str(e)[:200]}"
         return outcome
 

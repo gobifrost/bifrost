@@ -92,7 +92,7 @@ def run_migrations() -> bool:
         return False
 
     except subprocess.CalledProcessError as e:
-        logger.error(f"Migration failed with exit code {e.returncode}")
+        logger.exception(f"Migration failed with exit code {e.returncode}")
         if e.stderr:
             for line in e.stderr.strip().split("\n"):
                 logger.error(f"alembic: {line}")
@@ -132,11 +132,11 @@ async def warm_requirements_cache() -> bool:
         return found
 
     except ImportError as e:
-        logger.error(f"Failed to import requirements_cache: {e}")
+        logger.exception(f"Failed to import requirements_cache: {e}")
         raise
 
     except Exception as e:
-        logger.error(f"Failed to warm requirements cache: {e}")
+        logger.exception(f"Failed to warm requirements cache: {e}")
         raise
 
 
@@ -172,7 +172,7 @@ async def main() -> int:
     try:
         requirements_found = await warm_requirements_cache()
     except Exception as e:
-        logger.error(f"FAILED: Requirements cache warming failed - {e}")
+        logger.exception(f"FAILED: Requirements cache warming failed - {e}")
         return 2
 
     # Success

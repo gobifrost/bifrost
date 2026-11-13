@@ -140,7 +140,7 @@ class DistributedLockService:
             return False, existing
 
         except Exception as e:
-            logger.error(f"Failed to acquire lock {lock_name}: {e}")
+            logger.exception(f"Failed to acquire lock {lock_name}: {e}")
             raise
 
     async def release_lock(
@@ -182,7 +182,7 @@ class DistributedLockService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to release lock {lock_name}: {e}")
+            logger.exception(f"Failed to release lock {lock_name}: {e}")
             raise
 
     async def extend_lock(
@@ -228,7 +228,7 @@ class DistributedLockService:
             return True
 
         except Exception as e:
-            logger.error(f"Failed to extend lock {lock_name}: {e}")
+            logger.exception(f"Failed to extend lock {lock_name}: {e}")
             raise
 
     async def get_lock_info(
@@ -255,7 +255,7 @@ class DistributedLockService:
             return LockInfo.from_dict(json.loads(data))
 
         except Exception as e:
-            logger.error(f"Failed to get lock info {lock_name}: {e}")
+            logger.exception(f"Failed to get lock info {lock_name}: {e}")
             raise
 
     async def is_locked(self, lock_name: str) -> bool:
@@ -285,7 +285,7 @@ class DistributedLockService:
             return False
 
         except Exception as e:
-            logger.error(f"Failed to force release lock {lock_name}: {e}")
+            logger.exception(f"Failed to force release lock {lock_name}: {e}")
             raise
 
     async def close(self) -> None:

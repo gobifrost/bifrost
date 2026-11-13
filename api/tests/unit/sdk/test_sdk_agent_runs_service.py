@@ -21,6 +21,9 @@ import pytest
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.constants import PROVIDER_ORG_ID
+from src.models.orm.organizations import Organization as OrganizationModel
+
 from shared.run_lineage import person_lineage
 
 from shared.sdk_agent_runs import (
@@ -116,12 +119,9 @@ def _assert_execute_permission_note(notes, *, organization_id, user_id) -> None:
 
 
 async def _seed_org(db_session, **kwargs):
-    from src.models.orm.organizations import Organization as OrganizationModel
-
     row = OrganizationModel(
         name=f"sdk-agent-runs-org-{uuid4().hex[:8]}",
         is_active=kwargs.get("is_active", True),
-        is_provider=kwargs.get("is_provider", False),
         created_by="sdk-agent-runs-test",
     )
     db_session.add(row)
@@ -556,7 +556,8 @@ class TestEnqueueRunAs:
     async def test_a_person_naming_themselves_launches_exactly_as_without_run_as(self, db_session):
         from shared import access_checks
 
-        provider = await _seed_org(db_session, is_provider=True)
+        provider = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert provider is not None
         contoso = await _seed_org(db_session)
         await _seed_agent(db_session, "Contoso Self Agent", organization_id=contoso.id)
         admin = _principal(

@@ -114,5 +114,5 @@ async def refresh_knowledge_storage_daily() -> dict[str, Any]:
             }
 
     except Exception as e:
-        logger.error(f"✗ Knowledge storage refresh failed: {e}", exc_info=True)
+        logger.exception(f"✗ Knowledge storage refresh failed: {e}", exc_info=True)
         return {"error": str(e)}

@@ -29,7 +29,7 @@ from PIL import Image, UnidentifiedImageError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.models import User, UserOAuthAccount
 from src.services.oauth_config_service import OAuthConfigService
 from src.services.oauth_client_assertion import encode_ec_client_assertion
@@ -391,7 +391,8 @@ class OAuthService:
         except Exception as exc:
             # Log the real cause server-side; never echo Authlib/joserfc
             # exception text to the browser (the router returns detail=str(e)).
-            logger.error(
+            log_safe_exception(
+                logger,
                 "OIDC id_token verification failed for %s: %s",
                 log_safe(provider),
                 log_safe(str(exc)),

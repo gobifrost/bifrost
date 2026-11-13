@@ -354,7 +354,7 @@ class EventProcessor:
             return "Delivery queued for retry", queued
         except Exception as exc:
             error_message = format_exception_message(exc, context="queueing event delivery retry")
-            logger.error("Failed to queue retry: %s", error_message, exc_info=True)
+            logger.exception("Failed to queue retry: %s", error_message, exc_info=True)
             delivery.status = EventDeliveryStatus.FAILED
             delivery.error_message = error_message
             delivery.completed_at = datetime.now(timezone.utc)
@@ -399,7 +399,7 @@ class EventProcessor:
         try:
             result = await adapter.handle_request(request, config, state)
         except Exception as e:
-            logger.error(f"Adapter error handling webhook: {e}", exc_info=True)
+            logger.exception(f"Adapter error handling webhook: {e}", exc_info=True)
             return Rejected(
                 message="Error processing webhook",
                 status_code=500,
@@ -781,7 +781,7 @@ class EventProcessor:
                     e,
                     context="queueing event delivery",
                 )
-                logger.error(
+                logger.exception(
                     f"Failed to queue delivery {delivery.id}: {error_message}",
                     exc_info=True,
                 )

@@ -99,3 +99,32 @@ def test_combined_control_and_ansi():
 
 def test_custom_max_len():
     assert log_safe("abcdefghij", max_len=5) == "abcde..."
+
+
+def test_safe_exception_preserves_frames_and_sanitizes_chained_details(caplog):
+    import logging
+
+    from src.core.log_safety import log_safe_exception
+
+    logger = logging.getLogger(__name__)
+    payload = "remote\nFORGED\r\x1b[31m\x00" + "x" * 500
+    try:
+        try:
+            raise ValueError(payload)
+        except ValueError as cause:
+            raise RuntimeError(payload) from cause
+    except RuntimeError:
+        log_safe_exception(logger, "Operation %s failed", "test")
+
+    output = caplog.text
+    assert "Operation test failed" in output
+    assert "test_safe_exception_preserves_frames_and_sanitizes_chained_details" in output
+    assert 'File "' in output
+    assert "direct cause" in output
+    assert "ValueError: " + log_safe(payload) in output
+    assert "RuntimeError: " + log_safe(payload) in output
+    assert "\nFORGED" not in output
+    assert "\x1b" not in output
+    assert "\x00" not in output
+    assert "x" * 201 not in output
+

@@ -23,27 +23,12 @@ from fastapi import HTTPException
 
 from shared.sdk_organizations import OrganizationServiceError
 from src.services.authorization.reach import EVERYTHING
+from src.core.constants import PROVIDER_ORG_ID
+from src.models.orm.organizations import Organization as OrganizationModel
 
 
 def _stub_user(email: str = "admin@test.local"):
     return SimpleNamespace(email=email)
-
-
-async def _make_provider(db_session, org_id):
-    from sqlalchemy import select
-
-    from src.models.orm.organizations import Organization as OrganizationModel
-
-    row = (
-        await db_session.execute(
-            select(OrganizationModel).where(OrganizationModel.id == org_id)
-        )
-    ).scalar_one()
-    row.is_provider = True
-    db_session.add(row)
-    await db_session.flush()
-    await db_session.refresh(row)
-    return row
 
 
 @pytest.mark.asyncio
@@ -110,21 +95,10 @@ class TestOrganizationService:
             settings=None, actor_email="a@t.local",
         )
         assert alpha.id != beta.id
-        provider = await create_organization(
-            db_session, name=f"Zulu Provider {tag}", domain=None, is_active=True,
-            settings=None, actor_email="a@t.local",
-        )
-        await _make_provider(db_session, provider.id)
-
-        from src.models.orm.organizations import Organization as OrganizationModel
-        from sqlalchemy import select
-
-        row = (
-            await db_session.execute(
-                select(OrganizationModel).where(OrganizationModel.id == provider.id)
-            )
-        ).scalar_one()
-        assert row.is_provider is True
+        provider = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert provider is not None
+        provider.name = f"Zulu Provider {tag}"
+        await db_session.flush()
 
         await delete_organization(db_session, org_id=beta.id)
 
@@ -172,13 +146,10 @@ class TestOrganizationService:
         assert exc_info.value.status_code == 404
 
     async def test_update_provider_cannot_be_disabled(self, db_session):
-        from shared.sdk_organizations import create_organization, update_organization
+        from shared.sdk_organizations import update_organization
 
-        created = await create_organization(
-            db_session, name=f"Prov {uuid4().hex[:8]}", domain=None,
-            is_active=True, settings=None, actor_email="a@t.local",
-        )
-        await _make_provider(db_session, created.id)
+        created = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert created is not None
 
         with pytest.raises(OrganizationServiceError) as exc_info:
             await update_organization(
@@ -215,13 +186,10 @@ class TestOrganizationService:
         assert exc_info.value.status_code == 404
 
     async def test_delete_provider_forbidden(self, db_session):
-        from shared.sdk_organizations import create_organization, delete_organization
+        from shared.sdk_organizations import delete_organization
 
-        created = await create_organization(
-            db_session, name=f"ProvDel {uuid4().hex[:8]}", domain=None,
-            is_active=True, settings=None, actor_email="a@t.local",
-        )
-        await _make_provider(db_session, created.id)
+        created = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert created is not None
 
         with pytest.raises(OrganizationServiceError) as exc_info:
             await delete_organization(db_session, org_id=created.id)

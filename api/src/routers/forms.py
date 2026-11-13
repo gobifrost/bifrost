@@ -28,7 +28,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.core.rate_limit import RateLimiter
 from src.models.enums import FormAccessLevel
 from src.services.audit import emit_audit
@@ -1681,7 +1681,11 @@ async def submit_form(
             )
 
         if ctx.user.embed:
-            assert request.submission_nonce is not None
+            if request.submission_nonce is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="submission_nonce is required for embedded form submissions",
+                )
             await accept_external_submission(ctx.user, request.submission_nonce)
             logger.info(
                 "Embedded form submission accepted",
@@ -1728,7 +1732,7 @@ async def submit_form(
     except WorkflowNotFoundError as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.error(f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow not found: {form.workflow_id}",
@@ -1748,7 +1752,7 @@ async def submit_form(
     except Exception as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.error(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute form",
@@ -1930,13 +1934,13 @@ async def execute_startup_workflow(
         )
 
     except WorkflowNotFoundError as e:
-        logger.error(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     except WorkflowLoadError as e:
-        logger.error(f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load launch workflow: {str(e)}",
@@ -2235,7 +2239,7 @@ async def generate_upload_url(
             expires_in=600,  # 10 minutes
         )
     except Exception as e:
-        logger.error(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate upload URL",

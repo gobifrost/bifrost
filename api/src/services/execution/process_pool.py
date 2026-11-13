@@ -1329,7 +1329,7 @@ class ProcessPoolManager:
                                 try:
                                     await self._start_template()
                                 except Exception as e:
-                                    logger.error(f"Failed to restart template: {e}")
+                                    logger.exception(f"Failed to restart template: {e}")
 
                 await self._check_timeouts()
                 await self._check_process_health()
@@ -1603,7 +1603,7 @@ class ProcessPoolManager:
                         if execution_id:
                             await self._handle_cancel_request(execution_id)
             except Exception as e:
-                logger.error(f"Cancel listener error: {e}; reconnecting in 1s")
+                logger.exception(f"Cancel listener error: {e}; reconnecting in 1s")
                 await asyncio.sleep(1.0)
             finally:
                 if pubsub is not None:
@@ -1652,7 +1652,7 @@ class ProcessPoolManager:
                         data = json.loads(message["data"])
                         await self._handle_command(data)
             except Exception as e:
-                logger.error(f"Command listener error: {e}; reconnecting in 1s")
+                logger.exception(f"Command listener error: {e}; reconnecting in 1s")
                 await asyncio.sleep(1.0)
             finally:
                 if pubsub is not None:
@@ -2266,7 +2266,7 @@ class ProcessPoolManager:
                 heartbeat = self._build_heartbeat()
                 await self._publish_heartbeat(heartbeat)
             except Exception as e:
-                logger.error(f"Heartbeat error: {e}")
+                logger.exception(f"Heartbeat error: {e}")
 
             await asyncio.sleep(self.heartbeat_interval_seconds)
 
@@ -2365,7 +2365,7 @@ class ProcessPoolManager:
                 logger.warning(f"Failed to publish worker_offline event: {e}")
 
         except Exception as e:
-            logger.error(f"Error unregistering worker: {e}")
+            logger.exception(f"Error unregistering worker: {e}")
 
     def _apply_requirements_status(self, result: RequirementsInstallResult) -> None:
         """Apply helper-computed requirements counts for heartbeat reporting."""

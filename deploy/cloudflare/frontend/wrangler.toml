@@ -1,0 +1,21 @@
+# Bifrost frontend edge worker. Fill in name/routes and API_ORIGIN, then:
+#   npm run build:client # Docker builds ./assets from the repo client/
+#   npx wrangler deploy
+name = "bifrost-frontend"
+main = "./edge.mjs"
+compatibility_date = "2026-10-30"
+workers_dev = false
+preview_urls = false
+
+[assets]
+directory = "./assets"
+not_found_handling = "single-page-application"
+run_worker_first = true
+
+[vars]
+# Existing Bifrost frontend gateway (client/nginx.conf), NOT the bare API service.
+# HTTPS root only, no path/query/fragment. Must not route back to this Worker.
+API_ORIGIN = "https://api.example.invalid"
+
+[observability]
+enabled = true

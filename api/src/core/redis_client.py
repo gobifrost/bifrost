@@ -219,7 +219,7 @@ class RedisClient:
             await cast(Awaitable[bool], redis_client.expire(key, RESULT_TTL_SECONDS))
             logger.debug(f"Pushed result to Redis: {key}")
         except Exception as e:
-            logger.error(f"Failed to push result to Redis: {e}")
+            logger.exception(f"Failed to push result to Redis: {e}")
             raise
 
     async def wait_for_result(
@@ -259,7 +259,7 @@ class RedisClient:
             return json.loads(value)
 
         except Exception as e:
-            logger.error(f"Error waiting for result: {e}")
+            logger.exception(f"Error waiting for result: {e}")
             raise
 
     # =========================================================================
@@ -282,7 +282,7 @@ class RedisClient:
             await redis_client.setex(key, 3600, "1")
             logger.debug(f"Set agent run cancel flag: {log_safe(key)}")
         except Exception as e:
-            logger.error(f"Failed to set agent run cancel flag: {e}")
+            logger.exception(f"Failed to set agent run cancel flag: {e}")
             raise
 
     async def check_agent_run_cancel_flag(self, run_id: str) -> bool:
@@ -325,7 +325,7 @@ class RedisClient:
             await redis_client.setex(key, 3600, "1")
             logger.debug(f"Set cancel flag: {log_safe(key)}")
         except Exception as e:
-            logger.error(f"Failed to set cancel flag: {e}")
+            logger.exception(f"Failed to set cancel flag: {e}")
             raise
 
     async def publish_cancel_event(self, execution_id: str) -> None:
@@ -346,7 +346,7 @@ class RedisClient:
             await redis_client.publish(channel, message)
             logger.debug(f"Published cancel event for execution: {log_safe(execution_id)}")
         except Exception as e:
-            logger.error(f"Failed to publish cancel event: {e}")
+            logger.exception(f"Failed to publish cancel event: {e}")
             # Don't raise - the cancel flag is set as a fallback
 
     async def close(self) -> None:

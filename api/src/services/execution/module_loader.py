@@ -280,14 +280,14 @@ def exec_from_db(
     try:
         code_obj = compile(code, filename=file_path_for_traceback, mode='exec')
     except SyntaxError as e:
-        logger.error(f"Syntax error in workflow code at {path}: {e}")
+        logger.exception(f"Syntax error in workflow code at {path}: {e}")
         raise
 
     # Execute in the namespace
     try:
         exec(code_obj, namespace)
     except Exception as e:
-        logger.error(f"Error executing workflow code at {path}: {e}")
+        logger.exception(f"Error executing workflow code at {path}: {e}")
         raise ImportError(f"Failed to execute workflow from DB: {e}") from e
 
     # Copy namespace to module for attribute access
@@ -329,7 +329,7 @@ def load_workflow_from_db(
     try:
         module = exec_from_db(code=code, path=path, function_name=function_name)
     except (SyntaxError, ImportError) as e:
-        logger.error(f"Failed to execute workflow from DB: {e}")
+        logger.exception(f"Failed to execute workflow from DB: {e}")
         user_friendly_error = (
             "An unexpected error happened outside of your workflow's function. "
             "This could be because you used an invalid property on a decorator, "

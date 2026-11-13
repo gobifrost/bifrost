@@ -466,11 +466,11 @@ class PoolWorker:
         while not self._stop.is_set():
             # A database error (a failover, a dropped connection) must not
             # end the executor and its runs: back off and look again.
+            assert self.admission is not None
             try:
                 # Clear before looking, so a hint that lands during the claim
                 # attempt still wakes the wait below instead of being lost.
                 self._wake.clear()
-                assert self.admission is not None
                 claim = await self._claim_and_start()
                 if claim is not None:
                     last_activity = time.monotonic()
@@ -619,7 +619,12 @@ class PoolWorker:
 
                     self.admission.release(str(claim.subject_id))
                     handed_back = True
-                    assert claim.claimed is not None
+                    if claim.claimed is None:
+                        logger.error(
+                            "Pool cannot hand back workflow run without payload",
+                            extra={"dispatch_id": str(claim.dispatch_id)},
+                        )
+                        return
                     await release_workflow_run(
                         worker_id=self.incarnation_id,
                         message=claim.message,
@@ -632,6 +637,8 @@ class PoolWorker:
                 await self._agent_consumer.process_message(claim.message)
             else:
                 await self._execute_summary(claim)
+        except AssertionError:
+            raise
         except Exception:
             logger.exception(
                 "Pool run failed in its consumer",

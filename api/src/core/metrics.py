@@ -128,7 +128,7 @@ async def update_daily_metrics(
             )
 
     except Exception as e:
-        logger.error(f"Error updating daily metrics: {e}", exc_info=True)
+        logger.exception(f"Error updating daily metrics: {e}", exc_info=True)
         # Don't raise - metrics update failure shouldn't fail the execution
 
 
@@ -375,14 +375,14 @@ async def update_workflow_roi_daily(
             if db is not None:
                 await db.rollback()
             return
-        logger.error(
+        logger.exception(
             f"Integrity error updating workflow ROI (not FK violation): {e}",
             exc_info=True,
         )
         if db is not None:
             await db.rollback()
     except Exception as e:
-        logger.error(
+        logger.exception(
             f"Error updating workflow ROI: {e}",
             exc_info=True,
         )

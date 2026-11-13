@@ -263,10 +263,10 @@ class VirtualModuleLoader(Loader):
             code = compile(self.content, filename=self.path, mode="exec")
             exec(code, module.__dict__)
         except SyntaxError as e:
-            logger.error(f"Syntax error in virtual module {self.path}: {e}")
+            logger.exception(f"Syntax error in virtual module {self.path}: {e}")
             raise
         except Exception as e:
-            logger.error(f"Error executing virtual module {self.path}: {e}")
+            logger.exception(f"Error executing virtual module {self.path}: {e}")
             raise
 
 

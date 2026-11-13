@@ -49,7 +49,7 @@ async def get_llm_config(
     except ValueError:
         raise
     except Exception as e:
-        logger.error(f"Failed to resolve LLM configuration: {e}")
+        logger.exception(f"Failed to resolve LLM configuration: {e}")
         raise ValueError("Failed to resolve LLM configuration.") from e
 
 
@@ -79,7 +79,7 @@ async def get_llm_configs(
     except ValueError:
         raise
     except Exception as e:
-        logger.error(f"Failed to resolve LLM configuration: {e}")
+        logger.exception(f"Failed to resolve LLM configuration: {e}")
         raise ValueError("Failed to resolve LLM configuration.") from e
 
 
