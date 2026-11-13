@@ -1,0 +1,193 @@
+{
+  "generated_at": "2026-11-13T06:38:51.025Z",
+  "allowance": 12,
+  "workspaces": [
+    {
+      "root": "examples/rewst-migration",
+      "label": "examples\\rewst-migration",
+      "files": 8,
+      "eligible": 8,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "migration_get_overview"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_create"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_validate_connection"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_export_environment"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_get_context"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_save_plan"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_update_item"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/rewst_migration/core.py",
+            "modules/rewst_migration/rewst.py",
+            "modules/rewst_migration/storage.py",
+            "modules/rewst_migration/storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "migration_read_artifact"
+        }
+      ]
+    },
+    {
+      "root": "examples/workspace-import-kitchen-sink",
+      "label": "examples\\workspace-import-kitchen-sink",
+      "files": 3,
+      "eligible": 3,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "workflows/sink_alpha.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "sink_alpha"
+        },
+        {
+          "path": "workflows/sink_beta.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "sink_beta"
+        },
+        {
+          "path": "workflows/sink_tool.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "sink_lookup"
+        }
+      ]
+    }
+  ],
+  "repo": null,
+  "summary_text": "# Eligibility census\n\n- workspace `examples/rewst-migration`: 8/8 eligible (100%)\n- workspace `examples/workspace-import-kitchen-sink`: 3/3 eligible (100%)\n\nSubrequest allowance: 12. Static analysis only."
+}

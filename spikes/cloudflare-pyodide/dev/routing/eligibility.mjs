@@ -55,6 +55,44 @@ const ALLOWLIST = new Set(
   ].map(normalizeDistribution),
 );
 
+// Import name -> distribution name. The curated allowlist is keyed by
+// distribution (what `pip` installs); workflow code imports module names, and
+// several differ. Dispatchers may declare either, so normalize here rather than
+// letting a correct import read as an allowlist miss.
+const IMPORT_TO_DISTRIBUTION = new Map(Object.entries({
+  yaml: 'pyyaml',
+  jwt: 'pyjwt',
+  dotenv: 'python-dotenv',
+  pydantic_core: 'pydantic-core',
+  typing_extensions: 'typing-extensions',
+  typing_inspection: 'typing-inspection',
+  annotated_types: 'annotated-types',
+  charset_normalizer: 'charset-normalizer',
+  workers: 'workers-runtime-sdk',
+  bs4: 'beautifulsoup4',
+  PIL: 'pillow',
+  cv2: 'opencv-python',
+  crypto: 'pycryptodome',
+  OpenSSL: 'pyopenssl',
+  dateutil: 'python-dateutil',
+}));
+
+export function distributionNameForImport(name) {
+  return IMPORT_TO_DISTRIBUTION.get(name) ?? name;
+}
+
+// Exported so the workspace census and the dispatcher cannot drift from the
+// decision rule (single source of truth for the curated allowlist).
+export function isAllowlistedPackage(name) {
+  if (typeof name !== 'string') return false;
+  const raw = name.trim();
+  return ALLOWLIST.has(normalizeDistribution(distributionNameForImport(raw)));
+}
+
+export function allowlistPackages() {
+  return [...ALLOWLIST];
+}
+
 // Python distribution-name normalization (PEP 503 style): case-insensitive,
 // runs of '-', '_', '.' are equivalent.
 function normalizeDistribution(name) {
@@ -146,7 +184,7 @@ export function decideBackend(attempt) {
         reasons.push('missing declaration: package entry is not a parseable distribution name; failing closed to linux');
         continue;
       }
-      if (!ALLOWLIST.has(normalizeDistribution(pkg.trim()))) {
+      if (!isAllowlistedPackage(pkg.trim())) {
         reasons.push(`allowlist miss: package '${pkg}' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux`);
       }
     }

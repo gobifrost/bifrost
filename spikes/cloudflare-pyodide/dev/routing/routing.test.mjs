@@ -87,3 +87,21 @@ test('clean allowlist hit => cloudflare', () => {
   assert.equal(decision.backend, 'cloudflare');
   assert.deepEqual(decision.reasons, []);
 });
+
+test('import names normalize to allowlisted distributions', () => {
+  const decision = decideBackend(
+    eligibleAttempt({
+      declaration: { packages: ['yaml', 'jwt', 'dotenv', 'charset_normalizer', 'pydantic_core'] },
+    }),
+  );
+  assert.equal(decision.backend, 'cloudflare');
+  assert.deepEqual(decision.reasons, []);
+});
+
+test('native and uncurated imports still fail closed', () => {
+  const decision = decideBackend(
+    eligibleAttempt({ declaration: { packages: ['cryptography', 'pandas', 'azure.identity'] } }),
+  );
+  assert.equal(decision.backend, 'linux');
+  assert.equal(decision.reasons.filter((r) => r.includes('allowlist miss')).length, 3);
+});
