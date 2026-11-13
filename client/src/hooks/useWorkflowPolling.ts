@@ -171,7 +171,7 @@ export function useWorkflowPolling(options: WorkflowPollingOptions) {
 		};
 
 		// Start initial poll immediately
-		pollExecutions();
+		void pollExecutions();
 
 		// Set up interval for continuous polling
 		intervalRef.current = setInterval(pollExecutions, intervalMs);

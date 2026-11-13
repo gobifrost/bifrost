@@ -220,7 +220,7 @@ export function useAutoSave() {
 				if (isPythonFile) {
 					// Incrementally reload workflows for this file
 					// This updates the workflows store to reflect workflow changes
-					reloadWorkflowFile();
+					void reloadWorkflowFile();
 				}
 			},
 			(reason, conflictData) => {
@@ -404,7 +404,7 @@ export function useAutoSave() {
 
 			// Reload workflows if Python file
 			if (isPythonFile) {
-				reloadWorkflowFile();
+				void reloadWorkflowFile();
 			}
 		} catch (error) {
 			if (error instanceof FileConflictError) {

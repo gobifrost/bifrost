@@ -193,7 +193,7 @@ export function OrgScopeProvider({ children }: { children: ReactNode }) {
 			}
 		}
 
-		loadBrandingAndLogo();
+		void loadBrandingAndLogo();
 	}, [scope.orgId, refreshTrigger]);
 
 	const isGlobalScope = scope.type === "global";

@@ -259,7 +259,7 @@ export function useInfiniteTable(
       }
     }
 
-    init();
+    void init();
     return () => {
       effectCancelled = true;
       cancelledRef.current = true;

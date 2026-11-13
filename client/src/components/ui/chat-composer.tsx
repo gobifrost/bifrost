@@ -69,7 +69,7 @@ export function ChatComposer({
 						e.nativeEvent.keyCode !== 229
 					) {
 						e.preventDefault();
-						submit();
+						void submit();
 					}
 				}}
 				className="min-w-0 flex-1 field-sizing-content resize-none overflow-y-auto border-none bg-transparent px-1 py-2 text-base sm:text-sm leading-6 outline-none placeholder:text-muted-foreground min-h-11 max-h-[180px] [overflow-wrap:anywhere]"

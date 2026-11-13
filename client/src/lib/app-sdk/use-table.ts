@@ -401,7 +401,7 @@ export function useTable(
       }
     }
 
-    init();
+    void init();
     return () => {
       cancelled = true;
       unsubscribe?.();

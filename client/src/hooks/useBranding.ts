@@ -281,7 +281,7 @@ export function useBranding(): BrandingState {
 		}
 
 		if (!isLoading) {
-			processBranding();
+			void processBranding();
 		}
 	}, [branding, isLoading]);
 

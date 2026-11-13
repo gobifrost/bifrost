@@ -211,7 +211,7 @@ export function FileTree({
 
 	const handleFolderToggle = useCallback(
 		(folder: FileNode) => {
-			toggleFolder(folder.path);
+			void toggleFolder(folder.path);
 		},
 		[toggleFolder],
 	);

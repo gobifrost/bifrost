@@ -196,13 +196,13 @@ export function useAppCodeUpdates(options: UseAppCodeUpdatesOptions) {
 			}
 		};
 
-		init();
+		void init();
 
 		return () => {
 			unsubscribers.forEach((unsub) => unsub());
 			// Unsubscribe from channels
-			webSocketService.unsubscribe(`app:draft:${appId}`);
-			webSocketService.unsubscribe(`app:live:${appId}`);
+			void webSocketService.unsubscribe(`app:draft:${appId}`);
+			void webSocketService.unsubscribe(`app:live:${appId}`);
 		};
 	}, [appId, enabled, handleCodeFileUpdate, handlePublished]);
 

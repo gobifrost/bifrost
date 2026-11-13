@@ -179,7 +179,7 @@ export function WorkflowSelector({
 			}
 		};
 
-		loadRoles();
+		void loadRoles();
 	}, [showRoleBadges, workflows]);
 
 	// Enhance workflows with role status information

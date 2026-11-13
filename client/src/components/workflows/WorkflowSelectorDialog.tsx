@@ -171,7 +171,7 @@ export function WorkflowSelectorDialog({
 			}
 		};
 
-		loadRoles();
+		void loadRoles();
 	}, [open, workflows]);
 
 	// Enhance workflows with role information
