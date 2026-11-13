@@ -48,6 +48,7 @@ async def execute_agent_workflow_tool(
     execution_id: str | None = None,
     artifact_workspace_id: str | None = None,
     sync: bool = True,
+    result_wait_seconds: int | None = None,
 ) -> "WorkflowExecutionResponse":
     """Authorize and enqueue one explicitly bound workflow tool.
 
@@ -137,6 +138,7 @@ async def execute_agent_workflow_tool(
             execution_id=execution_id,
             artifact_workspace_id=artifact_workspace_id,
             sync=sync,
+            result_wait_seconds=result_wait_seconds,
             lineage=await principal_lineage(db, refreshed.principal),
         )
         await db.commit()

@@ -50,6 +50,9 @@ logger = logging.getLogger(__name__)
 MAX_CAPABILITY_RESULTS = 20
 MAX_CAPABILITY_RESPONSE_BYTES = 24_000
 MAX_EXECUTION_RESULT_BYTES = 24_000
+# Leave room for dispatch within the bridge's 30-second network timeout and
+# common 60-second MCP client deadlines.
+MCP_SYNC_RESULT_WAIT_SECONDS = 20
 
 DiscoveryScope = Literal["accessible", "all"]
 
@@ -86,6 +89,14 @@ class AgentToolSnapshot:
 
     agent: Agent
     tools: list[ResolvedGatewayTool]
+
+
+@dataclass(frozen=True)
+class _WorkflowContinuation:
+    """An accepted workflow whose result outlived this MCP response's wait."""
+
+    execution_id: str
+    status: str
 
 
 def _json_pointer(path: Any) -> str:
@@ -986,6 +997,13 @@ class MCPAgentGatewayService:
             tool.source,
             duration_ms,
         )
+        if isinstance(result, _WorkflowContinuation):
+            resolved_async = True
+            result = {
+                "execution_id": result.execution_id,
+                "execution_type": "workflow",
+                "status": result.status,
+            }
         response = {
             "agent_id": str(snapshot.agent.id),
             "agent_name": snapshot.agent.name,
@@ -1107,6 +1125,7 @@ class MCPAgentGatewayService:
                 parameters=arguments,
                 caller=caller,
                 sync=not async_execution,
+                result_wait_seconds=None if async_execution else MCP_SYNC_RESULT_WAIT_SECONDS,
             )
         except HTTPException as exc:
             raise GatewayError("AUTHORIZATION_FORBIDDEN", str(exc.detail)) from exc
@@ -1128,6 +1147,8 @@ class MCPAgentGatewayService:
                 "execution_type": "workflow",
                 "status": response.status.value,
             }
+        if response.status.value in {"Pending", "Running"}:
+            return _WorkflowContinuation(response.execution_id, response.status.value)
         if response.status.value != "Success":
             raise GatewayError(
                 "TOOL_EXECUTION_FAILED",
