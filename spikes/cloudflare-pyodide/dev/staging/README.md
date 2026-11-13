@@ -1,66 +1,101 @@
-# Staging harness (Stage 1 / Stage 2)
+# Staging harness (Stage 1 / Stage 2 / Stage 3)
 
-## Status: Stage 1 integration proven on pve-t340 (2026-11-13)
+## Status 2026-11-13
 
-First end-to-end attempt with the **real API**, **real module pins**, **real
-token**, and the per-tenant supervisor in the same `workerd` runtime:
-
-```
-POST /  {"tenant_id":"staging-pve","action":"run","entry":"workflows/probe.py", ...}
-→ status 200
-  result:    {"ok": true, "doubled": 42}
-  recorded:  workflows/helper.py, workflows/probe.py
-  api_calls: 3   (modules-resolve + 2 module fetches, all 200)
-```
-
-That is the transport seam working: the Worker fetched module source from a real
-Bifrost API through the gateway, verified both sha256 pins, executed the
-workflow, and reconciled the import audit to real storage paths.
-
-### Where it runs
-
-| Component | Location |
+| Stage | State |
 |---|---|
-| Bifrost API + Postgres + Redis + SeaweedFS | pve-t340 container `128` (`bifrost-pyodide-test-01`), `172.16.15.181:18000` |
-| Worker (workerd) | `wrangler dev` on the workstation, `API_ORIGIN=http://127.0.0.1:18000` |
-| Transport | `ssh -N -L 18000:172.16.15.181:18000 pve-t340` |
+| 1 — real API integration | **Proven**, deployed Worker through a named tunnel |
+| 2 — differential replay | **3/3 cases match** (result + failure class) |
+| 3 — production canary | **Prepared, not executed** (needs production authorization) |
 
-The API port is firewalled from the LAN, so the SSH forward is how the harness
-reaches it — which conveniently keeps the gateway's loopback-HTTP allowance.
+## Infrastructure
 
-### Capacity note
+| Piece | Value |
+|---|---|
+| Bifrost API stack | pve-t340 container `128` (`bifrost-pyodide-test-01`), `172.16.15.181:18000` |
+| Tunnel | `bifrost-stage` (`06e4a44f-47ad-424e-b261-ce942730afee`) |
+| Public origin | `https://bifrost-stage.midtowntg.com` |
+| Worker | `bifrost-pyodide-tenant-ddf316c1`, version `a21f94cf` |
 
-Container 128: 2 cores, 8 GB, 47 GB disk (13 GB free). Host pve-t340: 16 cores,
-62 GB with ~13 GB available and swap fully used. Building the API image there
-works but is tight; run `docker image prune -f` first and avoid parallel builds.
+### Stage 1 result (deployed, real API)
 
-Two host-specific fixes were needed for the debug compose on 128:
-
-```sh
-# 1. read-only source mount blocks Docker creating nested volume dirs
-sed -i 's#- ./api/src:/app/src:ro#- ./api/src:/app/src#g' docker-compose.debug.yml
-# 2. publish the API for the harness
-#    (docker-compose.staging.yml: api.ports: ["18000:8000"])
+```
+POST → 200
+result:    {"ok": true, "doubled": 42}
+recorded:  workflows/helper.py, workflows/probe.py
+api_calls: 3 (modules-resolve + 2 fetches, all 200)
+gateway probe from the Worker: {"configured": true, "status": 200}
 ```
 
-## What is still blocked
+The earlier `trycloudflare.com` 502 does not occur on a named tunnel — the
+Worker reached the API normally.
 
-- **Deployed-Cloudflare leg:** the edge returns 502 for Worker subrequests to
-  `*.trycloudflare.com`, so a quick tunnel cannot expose the API to a deployed
-  Worker. A non-Cloudflare public origin is required.
-- **Stage 2 differential replay:** the Linux worker now runs on 128; the harness
-  that submits the same attempt to both backends and compares results is the
-  next increment.
+### Stage 2 result
 
-## Bring-up (reproduce)
+`differential.mjs` runs each case twice: Cloudflare per-tenant supervisor and the
+Linux worker (`/api/workflows/execute` with the same source), then compares the
+result and the failure class.
+
+```
+PASS imports-helper  — cloud=200/ok          linux=Success
+PASS stdlib-only     — cloud=200/ok          linux=Success
+PASS raises          — cloud=502/dynamic-runtime linux=Failed
+DIFFERENTIAL: ALL CASES MATCH
+```
+
+Receipt: [`../../results/differential-replay.json`](../../results/differential-replay.json).
+
+The error case is deliberately included: both backends fail, and the harness
+compares failure *class* rather than message. Log and effect comparison is the
+next increment (needs the execution-log endpoint, not just the result).
+
+## Stage 3 — prepared, not executed
+
+A production canary needs, at minimum:
+
+1. A per-tenant route flag that sends one tenant to Cloudflare and a kill switch
+   that sends it back to Linux.
+2. A read-only solution and a dedicated tenant, no external writes.
+3. Production authorization — this is a reserved gate; the harness is ready but
+   nothing in production has been touched.
+
+## Reproduce
 
 ```powershell
-$env:COMPOSE_PROJECT_NAME='stage128'
-docker compose -f docker-compose.debug.yml -f docker-compose.staging.yml up -d api worker
-ssh -N -L 18000:172.16.15.181:18000 pve-t340
-cd spikes/cloudflare-pyodide/dev/staging
-npx wrangler dev --config wrangler.tenant-staging.jsonc --port 8844 --ip 127.0.0.1
+# 1. API stack on 128 (persistent, isolated project)
+docker compose -f docker-compose.debug.yml -f docker-compose.staging.yml -p stage128 up -d api worker
+
+# 2. Connector (token is on pve at /root/bifrost-stage-tunnel.token)
+ssh pve-t340 'TUNNEL_TOKEN=$(cat /root/bifrost-stage-tunnel.token) nohup cloudflared tunnel run >/root/bifrost-stage-tunnel.log 2>&1 &'
+
+# 3. Deploy the supervisor against the public origin
+$env:STAGING_API_ORIGIN='https://bifrost-stage.midtowntg.com'
+$env:SPIKE_EXPIRES_AT='<epoch-ms>'
+cd spikes/cloudflare-pyodide/dev/tenant-workers
+cf deploy --secrets-file "$env:TEMP\bifrost-pyodide-tenant-staging-secrets.json"
+
+# 4. Differential replay
+cd ../staging
+node differential.mjs --worker https://bifrost-pyodide-tenant-ddf316c1.midtown-technology-group.workers.dev
 ```
 
-Attempt body: `entry`, `requirements.modules` (declared closure), `manifest`
-(sha256 pins from the API), `context.engine_token` (real login token).
+## Security and cleanup
+
+The named tunnel makes the dev API reachable from the internet at a stable
+hostname. It authenticates with the seeded dev user, so **stop the connector
+when testing ends**:
+
+```sh
+ssh pve-t340 'pkill -f "cloudflared tunnel run"'
+```
+
+Teardown of the tunnel resources (when no longer needed):
+
+```sh
+cf tunnels delete 06e4a44f-47ad-424e-b261-ce942730afee
+cf dns records delete --zone midtowntg.com <record-id>
+```
+
+Two host-specific fixes were required and are documented in the compose overlay:
+the debug compose's read-only `/app/src` mount blocks Docker's nested volume
+directories, and the API port must be published for the tunnel origin.

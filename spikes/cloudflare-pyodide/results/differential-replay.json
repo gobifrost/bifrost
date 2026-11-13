@@ -1,0 +1,82 @@
+{
+  "started_at": "2026-11-13T23:45:18.776Z",
+  "run_id": "mwfmjxdk",
+  "cases": [
+    {
+      "name": "imports-helper",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "result": {
+          "ok": true,
+          "doubled": 42
+        },
+        "error": null
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true,
+          "doubled": 42
+        },
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true
+    },
+    {
+      "name": "stdlib-only",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "result": {
+          "sum": 55,
+          "sorted": [
+            1,
+            2,
+            3
+          ]
+        },
+        "error": null
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "sum": 55,
+          "sorted": [
+            1,
+            2,
+            3
+          ]
+        },
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true
+    },
+    {
+      "name": "raises",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 502,
+        "phase": "dynamic-runtime",
+        "result": null,
+        "error": "dynamic-runtime"
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Failed",
+        "result": null,
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true
+    }
+  ],
+  "finished_at": "2026-11-13T23:45:29.450Z",
+  "failures": 0
+}
