@@ -1,0 +1,1 @@
+{"classification":"omit","entry_ids":[],"key":"pr:1372","reason":"Design proposal only; no runtime, contract, or customer-facing change.","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1372"],"status":"approved"}}
