@@ -1,0 +1,589 @@
+[
+ {
+  "case_id": "gobifrost-bifrost-1360",
+  "number": 1360,
+  "url": "https://github.com/gobifrost/bifrost/issues/1360",
+  "filed_at": "2026-11-12T23:33:58Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, static code-read repro, license provenance",
+  "candidate_count": 1353,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 1353 searched issues/PRs",
+   "bug evidence: safe_repro, failing_test (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1353",
+  "number": 1353,
+  "url": "https://github.com/gobifrost/bifrost/issues/1353",
+  "filed_at": "2026-11-12T16:03:11Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, synthetic failing-test repro, explicit non-claim",
+  "candidate_count": 1346,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "evidence_provenance": [
+   "reproduced"
+  ],
+  "reasons": [
+   "no duplicate among 1346 searched issues/PRs",
+   "bug evidence: safe_repro, failing_test (provenance: reproduced); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1349",
+  "number": 1349,
+  "url": "https://github.com/gobifrost/bifrost/issues/1349",
+  "filed_at": "2026-11-12T14:12:17Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, live-service repro with control runs",
+  "candidate_count": 1342,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "redacted_incident"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 1342 searched issues/PRs",
+   "bug evidence: safe_repro, redacted_incident (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1243",
+  "number": 1243,
+  "url": "https://github.com/gobifrost/bifrost/issues/1243",
+  "filed_at": "2026-11-04T19:15:21Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, redacted incident + synthetic repro, no secrets",
+  "candidate_count": 1238,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test",
+   "redacted_incident"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 1238 searched issues/PRs",
+   "bug evidence: safe_repro, failing_test, redacted_incident (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1345",
+  "number": 1345,
+  "url": "https://github.com/gobifrost/bifrost/issues/1345",
+  "filed_at": "2026-11-12T14:07:20Z",
+  "kind_hint": "unknown",
+  "selection_note": "discord bug with repro snippet, kind inference",
+  "candidate_count": 1338,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 1338 searched issues/PRs",
+   "bug evidence: safe_repro (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1335",
+  "number": 1335,
+  "url": "https://github.com/gobifrost/bifrost/issues/1335",
+  "filed_at": "2026-11-11T20:27:32Z",
+  "kind_hint": "unknown",
+  "selection_note": "discord bug, gutted body (see-linked-idea)",
+  "candidate_count": 1329,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1329 searched issues/PRs",
+   "bug draft is missing required evidence"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1329",
+  "number": 1329,
+  "url": "https://github.com/gobifrost/bifrost/issues/1329",
+  "filed_at": "2026-11-11T15:23:54Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, spike evidence + acceptance checklist",
+  "candidate_count": 1323,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1323 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1292",
+  "number": 1292,
+  "url": "https://github.com/gobifrost/bifrost/issues/1292",
+  "filed_at": "2026-11-09T02:06:35Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, problem/proposal/acceptance + design link",
+  "candidate_count": 1287,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1287 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1311",
+  "number": 1311,
+  "url": "https://github.com/gobifrost/bifrost/issues/1311",
+  "filed_at": "2026-11-10T14:24:02Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, long; operator+constraint+outcome",
+  "candidate_count": 1306,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": {
+   "number": 1167,
+   "url": "https://github.com/gobifrost/bifrost/issues/1167",
+   "confidence": "possible",
+   "reason": "6 shared title terms (overlap 0.67) with issue #1167 (OPEN); titles differ by a contrast pair, human must decide; same author"
+  },
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "6 shared title terms (overlap 0.67) with issue #1167 (OPEN); titles differ by a contrast pair, human must decide; same author"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1340",
+  "number": 1340,
+  "url": "https://github.com/gobifrost/bifrost/issues/1340",
+  "filed_at": "2026-11-12T03:17:06Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC design discussion, open decisions",
+  "candidate_count": 1334,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1334 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1374",
+  "number": 1374,
+  "url": "https://github.com/gobifrost/bifrost/issues/1374",
+  "filed_at": "2026-11-13T16:15:17Z",
+  "kind_hint": "other",
+  "selection_note": "support question miscast as idea",
+  "candidate_count": 1367,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "support",
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1367 searched issues/PRs",
+   "draft reads as support, not a bug/feature report"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1352",
+  "number": 1352,
+  "url": "https://github.com/gobifrost/bifrost/issues/1352",
+  "filed_at": "2026-11-12T16:01:45Z",
+  "kind_hint": "other",
+  "selection_note": "speculative interest-check idea",
+  "candidate_count": 1345,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1345 searched issues/PRs",
+   "draft reads as idea, not a bug/feature report"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1183",
+  "number": 1183,
+  "url": "https://github.com/gobifrost/bifrost/issues/1183",
+  "filed_at": "2026-11-02T13:22:05Z",
+  "kind_hint": "bug",
+  "selection_note": "empty duplicate filed 13s after twin #1182",
+  "candidate_count": 1178,
+  "verdict": "confirmed_duplicate",
+  "subtype": null,
+  "duplicate_of": {
+   "number": 1182,
+   "url": "https://github.com/gobifrost/bifrost/issues/1182",
+   "confidence": "confirmed",
+   "reason": "identical normalized title to issue #1182 (CLOSED)"
+  },
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "identical normalized title to issue #1182 (CLOSED)"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-24",
+  "number": 24,
+  "url": "https://github.com/gobifrost/bifrost/issues/24",
+  "filed_at": "2026-04-21T08:32:00Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, client redirect repro + root cause + workaround",
+  "candidate_count": 23,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 23 searched issues/PRs",
+   "bug evidence: safe_repro (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-239",
+  "number": 239,
+  "url": "https://github.com/gobifrost/bifrost/issues/239",
+  "filed_at": "2026-05-12T01:17:42Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, UI repro + server error log, 'potential regression'",
+  "candidate_count": 238,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 238 searched issues/PRs",
+   "bug evidence: safe_repro (provenance: reproduced, observed); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-498",
+  "number": 498,
+  "url": "https://github.com/gobifrost/bifrost/issues/498",
+  "filed_at": "2026-07-17T19:13:42Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, API repro + traceback + root cause, fix offered",
+  "candidate_count": 496,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "evidence_provenance": [
+   "reproduced"
+  ],
+  "reasons": [
+   "no duplicate among 496 searched issues/PRs",
+   "bug evidence: safe_repro, failing_test (provenance: reproduced); expected and actual behavior both stated"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-726",
+  "number": 726,
+  "url": "https://github.com/gobifrost/bifrost/issues/726",
+  "filed_at": "2026-09-11T14:25:28Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request: problem/proposal/acceptance",
+  "candidate_count": 721,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 721 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-1169",
+  "number": 1169,
+  "url": "https://github.com/gobifrost/bifrost/issues/1169",
+  "filed_at": "2026-11-01T16:10:28Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request: edit-and-rerun, thin acceptance",
+  "candidate_count": 1164,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 1164 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-649",
+  "number": 649,
+  "url": "https://github.com/gobifrost/bifrost/issues/649",
+  "filed_at": "2026-08-26T03:50:25Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request, large; clears bar even if declined",
+  "candidate_count": 646,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 646 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-120",
+  "number": 120,
+  "url": "https://github.com/gobifrost/bifrost/issues/120",
+  "filed_at": "2026-04-26T15:45:02Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC direction-request, open questions (inference)",
+  "candidate_count": 119,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 119 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-157",
+  "number": 157,
+  "url": "https://github.com/gobifrost/bifrost/issues/157",
+  "filed_at": "2026-04-30T10:43:11Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC detailed proposal + acceptance (inference)",
+  "candidate_count": 156,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 156 searched issues/PRs",
+   "feature states a concrete operator/workflow, a workaround-or-constraint, and a desired outcome"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-230",
+  "number": 230,
+  "url": "https://github.com/gobifrost/bifrost/issues/230",
+  "filed_at": "2026-05-09T19:43:43Z",
+  "kind_hint": "other",
+  "selection_note": "support-style naming question",
+  "candidate_count": 229,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 229 searched issues/PRs",
+   "draft reads as idea, not a bug/feature report"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-418",
+  "number": 418,
+  "url": "https://github.com/gobifrost/bifrost/issues/418",
+  "filed_at": "2026-06-28T01:14:57Z",
+  "kind_hint": "unknown",
+  "selection_note": "mixed 3-ask contributor report (inference)",
+  "candidate_count": 416,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "support",
+  "duplicate_of": null,
+  "question": null,
+  "evidence_kinds": [],
+  "evidence_provenance": [],
+  "reasons": [
+   "no duplicate among 416 searched issues/PRs",
+   "draft reads as support, not a bug/feature report"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-318",
+  "number": 318,
+  "url": "https://github.com/gobifrost/bifrost/issues/318",
+  "filed_at": "2026-05-26T21:07:52Z",
+  "kind_hint": "bug",
+  "selection_note": "rich incident report, earlier twin #316 in window",
+  "candidate_count": 316,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 316 searched issues/PRs",
+   "bug draft is missing required evidence"
+  ],
+  "warnings": [],
+  "returncode": 0
+ },
+ {
+  "case_id": "gobifrost-bifrost-316",
+  "number": 316,
+  "url": "https://github.com/gobifrost/bifrost/issues/316",
+  "filed_at": "2026-05-26T18:56:18Z",
+  "kind_hint": "bug",
+  "selection_note": "deep diagnostic report with traces + asks",
+  "candidate_count": 314,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "evidence_provenance": [
+   "reproduced",
+   "observed"
+  ],
+  "reasons": [
+   "no duplicate among 314 searched issues/PRs",
+   "bug draft is missing required evidence"
+  ],
+  "warnings": [],
+  "returncode": 0
+ }
+]

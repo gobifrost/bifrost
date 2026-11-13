@@ -1,0 +1,5909 @@
+[
+ {
+  "number": 15,
+  "url": "https://github.com/gobifrost/bifrost/issues/15",
+  "kind_hint": "unknown",
+  "candidate_count": 14,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-09T13:16:43Z"
+  }
+ },
+ {
+  "number": 16,
+  "url": "https://github.com/gobifrost/bifrost/issues/16",
+  "kind_hint": "unknown",
+  "candidate_count": 15,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-09T13:16:47Z"
+  }
+ },
+ {
+  "number": 20,
+  "url": "https://github.com/gobifrost/bifrost/issues/20",
+  "kind_hint": "unknown",
+  "candidate_count": 19,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:40:04Z"
+  }
+ },
+ {
+  "number": 24,
+  "url": "https://github.com/gobifrost/bifrost/issues/24",
+  "kind_hint": "unknown",
+  "candidate_count": 23,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-21T10:00:59Z"
+  }
+ },
+ {
+  "number": 30,
+  "url": "https://github.com/gobifrost/bifrost/issues/30",
+  "kind_hint": "unknown",
+  "candidate_count": 29,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-04-24T19:04:29Z"
+  }
+ },
+ {
+  "number": 31,
+  "url": "https://github.com/gobifrost/bifrost/issues/31",
+  "kind_hint": "unknown",
+  "candidate_count": 30,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-04-24T19:04:29Z"
+  }
+ },
+ {
+  "number": 32,
+  "url": "https://github.com/gobifrost/bifrost/issues/32",
+  "kind_hint": "unknown",
+  "candidate_count": 31,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-04-24T19:04:29Z"
+  }
+ },
+ {
+  "number": 34,
+  "url": "https://github.com/gobifrost/bifrost/issues/34",
+  "kind_hint": "unknown",
+  "candidate_count": 33,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-24T21:06:46Z"
+  }
+ },
+ {
+  "number": 36,
+  "url": "https://github.com/gobifrost/bifrost/issues/36",
+  "kind_hint": "unknown",
+  "candidate_count": 35,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-25T03:45:33Z"
+  }
+ },
+ {
+  "number": 39,
+  "url": "https://github.com/gobifrost/bifrost/issues/39",
+  "kind_hint": "unknown",
+  "candidate_count": 38,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-27T01:42:49Z"
+  }
+ },
+ {
+  "number": 74,
+  "url": "https://github.com/gobifrost/bifrost/issues/74",
+  "kind_hint": "unknown",
+  "candidate_count": 73,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-04-30T13:21:17Z"
+  }
+ },
+ {
+  "number": 83,
+  "url": "https://github.com/gobifrost/bifrost/issues/83",
+  "kind_hint": "unknown",
+  "candidate_count": 82,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-04-26T23:08:27Z"
+  }
+ },
+ {
+  "number": 92,
+  "url": "https://github.com/gobifrost/bifrost/issues/92",
+  "kind_hint": "unknown",
+  "candidate_count": 91,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-04-26T06:48:01Z"
+  }
+ },
+ {
+  "number": 100,
+  "url": "https://github.com/gobifrost/bifrost/issues/100",
+  "kind_hint": "unknown",
+  "candidate_count": 99,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-04T20:07:31Z"
+  }
+ },
+ {
+  "number": 101,
+  "url": "https://github.com/gobifrost/bifrost/issues/101",
+  "kind_hint": "unknown",
+  "candidate_count": 101,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-26T19:08:50Z"
+  }
+ },
+ {
+  "number": 102,
+  "url": "https://github.com/gobifrost/bifrost/issues/102",
+  "kind_hint": "unknown",
+  "candidate_count": 101,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-26T19:08:50Z"
+  }
+ },
+ {
+  "number": 120,
+  "url": "https://github.com/gobifrost/bifrost/issues/120",
+  "kind_hint": "unknown",
+  "candidate_count": 119,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:40:04Z"
+  }
+ },
+ {
+  "number": 130,
+  "url": "https://github.com/gobifrost/bifrost/issues/130",
+  "kind_hint": "unknown",
+  "candidate_count": 129,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-04-27T12:03:02Z"
+  }
+ },
+ {
+  "number": 134,
+  "url": "https://github.com/gobifrost/bifrost/issues/134",
+  "kind_hint": "unknown",
+  "candidate_count": 133,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What observable outcome would show this is done (acceptance criteria)?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-28T12:39:22Z"
+  }
+ },
+ {
+  "number": 136,
+  "url": "https://github.com/gobifrost/bifrost/issues/136",
+  "kind_hint": "unknown",
+  "candidate_count": 135,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-04-28T03:38:41Z"
+  }
+ },
+ {
+  "number": 139,
+  "url": "https://github.com/gobifrost/bifrost/issues/139",
+  "kind_hint": "unknown",
+  "candidate_count": 138,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-15T16:18:59Z"
+  }
+ },
+ {
+  "number": 140,
+  "url": "https://github.com/gobifrost/bifrost/issues/140",
+  "kind_hint": "unknown",
+  "candidate_count": 139,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-30T13:22:52Z"
+  }
+ },
+ {
+  "number": 142,
+  "url": "https://github.com/gobifrost/bifrost/issues/142",
+  "kind_hint": "unknown",
+  "candidate_count": 141,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-28T22:21:29Z"
+  }
+ },
+ {
+  "number": 145,
+  "url": "https://github.com/gobifrost/bifrost/issues/145",
+  "kind_hint": "unknown",
+  "candidate_count": 144,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-30T13:22:57Z"
+  }
+ },
+ {
+  "number": 147,
+  "url": "https://github.com/gobifrost/bifrost/issues/147",
+  "kind_hint": "unknown",
+  "candidate_count": 146,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:40Z"
+  }
+ },
+ {
+  "number": 148,
+  "url": "https://github.com/gobifrost/bifrost/issues/148",
+  "kind_hint": "unknown",
+  "candidate_count": 147,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-29T22:26:29Z"
+  }
+ },
+ {
+  "number": 149,
+  "url": "https://github.com/gobifrost/bifrost/issues/149",
+  "kind_hint": "unknown",
+  "candidate_count": 148,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-04-30T01:21:09Z"
+  }
+ },
+ {
+  "number": 153,
+  "url": "https://github.com/gobifrost/bifrost/issues/153",
+  "kind_hint": "unknown",
+  "candidate_count": 152,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-30T05:26:27Z"
+  }
+ },
+ {
+  "number": 157,
+  "url": "https://github.com/gobifrost/bifrost/issues/157",
+  "kind_hint": "unknown",
+  "candidate_count": 156,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:40:04Z"
+  }
+ },
+ {
+  "number": 158,
+  "url": "https://github.com/gobifrost/bifrost/issues/158",
+  "kind_hint": "unknown",
+  "candidate_count": 157,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-04-30T14:35:06Z"
+  }
+ },
+ {
+  "number": 162,
+  "url": "https://github.com/gobifrost/bifrost/issues/162",
+  "kind_hint": "unknown",
+  "candidate_count": 161,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-04-30T22:36:57Z"
+  }
+ },
+ {
+  "number": 167,
+  "url": "https://github.com/gobifrost/bifrost/issues/167",
+  "kind_hint": "unknown",
+  "candidate_count": 166,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-04T20:08:19Z"
+  }
+ },
+ {
+  "number": 170,
+  "url": "https://github.com/gobifrost/bifrost/issues/170",
+  "kind_hint": "unknown",
+  "candidate_count": 169,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T03:41:38Z"
+  }
+ },
+ {
+  "number": 171,
+  "url": "https://github.com/gobifrost/bifrost/issues/171",
+  "kind_hint": "unknown",
+  "candidate_count": 170,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-01T21:51:39Z"
+  }
+ },
+ {
+  "number": 172,
+  "url": "https://github.com/gobifrost/bifrost/issues/172",
+  "kind_hint": "unknown",
+  "candidate_count": 171,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-01T16:33:32Z"
+  }
+ },
+ {
+  "number": 181,
+  "url": "https://github.com/gobifrost/bifrost/issues/181",
+  "kind_hint": "unknown",
+  "candidate_count": 180,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-30T19:51:41Z"
+  }
+ },
+ {
+  "number": 183,
+  "url": "https://github.com/gobifrost/bifrost/issues/183",
+  "kind_hint": "unknown",
+  "candidate_count": 182,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore",
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-04T19:01:03Z"
+  }
+ },
+ {
+  "number": 191,
+  "url": "https://github.com/gobifrost/bifrost/issues/191",
+  "kind_hint": "unknown",
+  "candidate_count": 190,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-05-05T20:09:33Z"
+  }
+ },
+ {
+  "number": 193,
+  "url": "https://github.com/gobifrost/bifrost/issues/193",
+  "kind_hint": "unknown",
+  "candidate_count": 192,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-06T04:38:42Z"
+  }
+ },
+ {
+  "number": 198,
+  "url": "https://github.com/gobifrost/bifrost/issues/198",
+  "kind_hint": "unknown",
+  "candidate_count": 197,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-06T15:50:05Z"
+  }
+ },
+ {
+  "number": 200,
+  "url": "https://github.com/gobifrost/bifrost/issues/200",
+  "kind_hint": "unknown",
+  "candidate_count": 199,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-08T00:41:48Z"
+  }
+ },
+ {
+  "number": 203,
+  "url": "https://github.com/gobifrost/bifrost/issues/203",
+  "kind_hint": "unknown",
+  "candidate_count": 202,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T00:10:22Z"
+  }
+ },
+ {
+  "number": 205,
+  "url": "https://github.com/gobifrost/bifrost/issues/205",
+  "kind_hint": "unknown",
+  "candidate_count": 204,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T20:59:05Z"
+  }
+ },
+ {
+  "number": 206,
+  "url": "https://github.com/gobifrost/bifrost/issues/206",
+  "kind_hint": "unknown",
+  "candidate_count": 205,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T17:30:08Z"
+  }
+ },
+ {
+  "number": 208,
+  "url": "https://github.com/gobifrost/bifrost/issues/208",
+  "kind_hint": "unknown",
+  "candidate_count": 207,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T21:43:20Z"
+  }
+ },
+ {
+  "number": 213,
+  "url": "https://github.com/gobifrost/bifrost/issues/213",
+  "kind_hint": "unknown",
+  "candidate_count": 212,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T22:47:26Z"
+  }
+ },
+ {
+  "number": 214,
+  "url": "https://github.com/gobifrost/bifrost/issues/214",
+  "kind_hint": "unknown",
+  "candidate_count": 213,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T22:27:35Z"
+  }
+ },
+ {
+  "number": 217,
+  "url": "https://github.com/gobifrost/bifrost/issues/217",
+  "kind_hint": "unknown",
+  "candidate_count": 216,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-07T23:17:23Z"
+  }
+ },
+ {
+  "number": 226,
+  "url": "https://github.com/gobifrost/bifrost/issues/226",
+  "kind_hint": "unknown",
+  "candidate_count": 225,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug",
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-21T22:39:20Z"
+  }
+ },
+ {
+  "number": 227,
+  "url": "https://github.com/gobifrost/bifrost/issues/227",
+  "kind_hint": "unknown",
+  "candidate_count": 226,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-21T22:39:20Z"
+  }
+ },
+ {
+  "number": 228,
+  "url": "https://github.com/gobifrost/bifrost/issues/228",
+  "kind_hint": "unknown",
+  "candidate_count": 227,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-21T22:39:20Z"
+  }
+ },
+ {
+  "number": 230,
+  "url": "https://github.com/gobifrost/bifrost/issues/230",
+  "kind_hint": "unknown",
+  "candidate_count": 229,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-12T16:04:37Z"
+  }
+ },
+ {
+  "number": 231,
+  "url": "https://github.com/gobifrost/bifrost/issues/231",
+  "kind_hint": "unknown",
+  "candidate_count": 230,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-05-11T18:29:03Z"
+  }
+ },
+ {
+  "number": 239,
+  "url": "https://github.com/gobifrost/bifrost/issues/239",
+  "kind_hint": "unknown",
+  "candidate_count": 238,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-12T16:22:05Z"
+  }
+ },
+ {
+  "number": 242,
+  "url": "https://github.com/gobifrost/bifrost/issues/242",
+  "kind_hint": "unknown",
+  "candidate_count": 240,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T03:41:37Z"
+  }
+ },
+ {
+  "number": 244,
+  "url": "https://github.com/gobifrost/bifrost/issues/244",
+  "kind_hint": "unknown",
+  "candidate_count": 242,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-13T21:38:20Z"
+  }
+ },
+ {
+  "number": 245,
+  "url": "https://github.com/gobifrost/bifrost/issues/245",
+  "kind_hint": "unknown",
+  "candidate_count": 243,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-05-13T18:18:20Z"
+  }
+ },
+ {
+  "number": 255,
+  "url": "https://github.com/gobifrost/bifrost/issues/255",
+  "kind_hint": "unknown",
+  "candidate_count": 253,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-21T17:08:27Z"
+  }
+ },
+ {
+  "number": 256,
+  "url": "https://github.com/gobifrost/bifrost/issues/256",
+  "kind_hint": "unknown",
+  "candidate_count": 254,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-18T17:50:39Z"
+  }
+ },
+ {
+  "number": 276,
+  "url": "https://github.com/gobifrost/bifrost/issues/276",
+  "kind_hint": "unknown",
+  "candidate_count": 274,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-30T19:55:04Z"
+  }
+ },
+ {
+  "number": 278,
+  "url": "https://github.com/gobifrost/bifrost/issues/278",
+  "kind_hint": "unknown",
+  "candidate_count": 276,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-22T02:52:15Z"
+  }
+ },
+ {
+  "number": 283,
+  "url": "https://github.com/gobifrost/bifrost/issues/283",
+  "kind_hint": "unknown",
+  "candidate_count": 281,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:45:31Z"
+  }
+ },
+ {
+  "number": 284,
+  "url": "https://github.com/gobifrost/bifrost/issues/284",
+  "kind_hint": "unknown",
+  "candidate_count": 282,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-22T17:18:44Z"
+  }
+ },
+ {
+  "number": 286,
+  "url": "https://github.com/gobifrost/bifrost/issues/286",
+  "kind_hint": "unknown",
+  "candidate_count": 284,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-22T19:46:59Z"
+  }
+ },
+ {
+  "number": 287,
+  "url": "https://github.com/gobifrost/bifrost/issues/287",
+  "kind_hint": "unknown",
+  "candidate_count": 285,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-23T02:17:22Z"
+  }
+ },
+ {
+  "number": 295,
+  "url": "https://github.com/gobifrost/bifrost/issues/295",
+  "kind_hint": "unknown",
+  "candidate_count": 293,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What observable outcome would show this is done (acceptance criteria)?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-05-24T18:47:47Z"
+  }
+ },
+ {
+  "number": 298,
+  "url": "https://github.com/gobifrost/bifrost/issues/298",
+  "kind_hint": "unknown",
+  "candidate_count": 296,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-25T11:46:34Z"
+  }
+ },
+ {
+  "number": 301,
+  "url": "https://github.com/gobifrost/bifrost/issues/301",
+  "kind_hint": "unknown",
+  "candidate_count": 299,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-25T18:46:46Z"
+  }
+ },
+ {
+  "number": 309,
+  "url": "https://github.com/gobifrost/bifrost/issues/309",
+  "kind_hint": "unknown",
+  "candidate_count": 307,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T03:41:35Z"
+  }
+ },
+ {
+  "number": 310,
+  "url": "https://github.com/gobifrost/bifrost/issues/310",
+  "kind_hint": "unknown",
+  "candidate_count": 308,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T18:00:45Z"
+  }
+ },
+ {
+  "number": 311,
+  "url": "https://github.com/gobifrost/bifrost/issues/311",
+  "kind_hint": "unknown",
+  "candidate_count": 309,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T17:49:08Z"
+  }
+ },
+ {
+  "number": 312,
+  "url": "https://github.com/gobifrost/bifrost/issues/312",
+  "kind_hint": "unknown",
+  "candidate_count": 310,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T17:33:41Z"
+  }
+ },
+ {
+  "number": 313,
+  "url": "https://github.com/gobifrost/bifrost/issues/313",
+  "kind_hint": "unknown",
+  "candidate_count": 311,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T03:41:34Z"
+  }
+ },
+ {
+  "number": 314,
+  "url": "https://github.com/gobifrost/bifrost/issues/314",
+  "kind_hint": "unknown",
+  "candidate_count": 312,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:55:04Z"
+  }
+ },
+ {
+  "number": 315,
+  "url": "https://github.com/gobifrost/bifrost/issues/315",
+  "kind_hint": "unknown",
+  "candidate_count": 313,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T19:53:20Z"
+  }
+ },
+ {
+  "number": 316,
+  "url": "https://github.com/gobifrost/bifrost/issues/316",
+  "kind_hint": "unknown",
+  "candidate_count": 314,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T20:50:49Z"
+  }
+ },
+ {
+  "number": 317,
+  "url": "https://github.com/gobifrost/bifrost/issues/317",
+  "kind_hint": "unknown",
+  "candidate_count": 315,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What observable outcome would show this is done (acceptance criteria)?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T21:52:56Z"
+  }
+ },
+ {
+  "number": 318,
+  "url": "https://github.com/gobifrost/bifrost/issues/318",
+  "kind_hint": "unknown",
+  "candidate_count": 316,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-26T21:09:03Z"
+  }
+ },
+ {
+  "number": 324,
+  "url": "https://github.com/gobifrost/bifrost/issues/324",
+  "kind_hint": "unknown",
+  "candidate_count": 322,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-05-29T02:52:50Z"
+  }
+ },
+ {
+  "number": 329,
+  "url": "https://github.com/gobifrost/bifrost/issues/329",
+  "kind_hint": "unknown",
+  "candidate_count": 327,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-05-30T20:46:55Z"
+  }
+ },
+ {
+  "number": 348,
+  "url": "https://github.com/gobifrost/bifrost/issues/348",
+  "kind_hint": "unknown",
+  "candidate_count": 346,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-06-05T12:57:17Z"
+  }
+ },
+ {
+  "number": 361,
+  "url": "https://github.com/gobifrost/bifrost/issues/361",
+  "kind_hint": "unknown",
+  "candidate_count": 359,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-06-10T04:45:01Z"
+  }
+ },
+ {
+  "number": 363,
+  "url": "https://github.com/gobifrost/bifrost/issues/363",
+  "kind_hint": "unknown",
+  "candidate_count": 361,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-06-10T18:17:48Z"
+  }
+ },
+ {
+  "number": 372,
+  "url": "https://github.com/gobifrost/bifrost/issues/372",
+  "kind_hint": "unknown",
+  "candidate_count": 370,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-06-15T05:11:26Z"
+  }
+ },
+ {
+  "number": 378,
+  "url": "https://github.com/gobifrost/bifrost/issues/378",
+  "kind_hint": "unknown",
+  "candidate_count": 376,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-06-16T01:36:49Z"
+  }
+ },
+ {
+  "number": 381,
+  "url": "https://github.com/gobifrost/bifrost/issues/381",
+  "kind_hint": "unknown",
+  "candidate_count": 379,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 283,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:held"
+   ],
+   "maintainer_closed_at": "2026-11-05T05:34:59Z"
+  }
+ },
+ {
+  "number": 387,
+  "url": "https://github.com/gobifrost/bifrost/issues/387",
+  "kind_hint": "unknown",
+  "candidate_count": 385,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-06-18T10:21:47Z"
+  }
+ },
+ {
+  "number": 390,
+  "url": "https://github.com/gobifrost/bifrost/issues/390",
+  "kind_hint": "unknown",
+  "candidate_count": 388,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:33Z"
+  }
+ },
+ {
+  "number": 409,
+  "url": "https://github.com/gobifrost/bifrost/issues/409",
+  "kind_hint": "unknown",
+  "candidate_count": 407,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-06-26T17:31:42Z"
+  }
+ },
+ {
+  "number": 418,
+  "url": "https://github.com/gobifrost/bifrost/issues/418",
+  "kind_hint": "unknown",
+  "candidate_count": 416,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "support",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-02T17:02:52Z"
+  }
+ },
+ {
+  "number": 436,
+  "url": "https://github.com/gobifrost/bifrost/issues/436",
+  "kind_hint": "unknown",
+  "candidate_count": 434,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:31Z"
+  }
+ },
+ {
+  "number": 437,
+  "url": "https://github.com/gobifrost/bifrost/issues/437",
+  "kind_hint": "unknown",
+  "candidate_count": 435,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-08-25T16:09:59Z"
+  }
+ },
+ {
+  "number": 438,
+  "url": "https://github.com/gobifrost/bifrost/issues/438",
+  "kind_hint": "unknown",
+  "candidate_count": 436,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-08-25T16:09:59Z"
+  }
+ },
+ {
+  "number": 439,
+  "url": "https://github.com/gobifrost/bifrost/issues/439",
+  "kind_hint": "unknown",
+  "candidate_count": 437,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:30Z"
+  }
+ },
+ {
+  "number": 440,
+  "url": "https://github.com/gobifrost/bifrost/issues/440",
+  "kind_hint": "unknown",
+  "candidate_count": 438,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:28Z"
+  }
+ },
+ {
+  "number": 442,
+  "url": "https://github.com/gobifrost/bifrost/issues/442",
+  "kind_hint": "unknown",
+  "candidate_count": 440,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-07-03T06:11:42Z"
+  }
+ },
+ {
+  "number": 444,
+  "url": "https://github.com/gobifrost/bifrost/issues/444",
+  "kind_hint": "unknown",
+  "candidate_count": 442,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-06T14:44:47Z"
+  }
+ },
+ {
+  "number": 445,
+  "url": "https://github.com/gobifrost/bifrost/issues/445",
+  "kind_hint": "unknown",
+  "candidate_count": 443,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-06T14:45:02Z"
+  }
+ },
+ {
+  "number": 450,
+  "url": "https://github.com/gobifrost/bifrost/issues/450",
+  "kind_hint": "unknown",
+  "candidate_count": 448,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-06T19:51:34Z"
+  }
+ },
+ {
+  "number": 454,
+  "url": "https://github.com/gobifrost/bifrost/issues/454",
+  "kind_hint": "unknown",
+  "candidate_count": 452,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-07-08T00:52:54Z"
+  }
+ },
+ {
+  "number": 459,
+  "url": "https://github.com/gobifrost/bifrost/issues/459",
+  "kind_hint": "unknown",
+  "candidate_count": 457,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T16:40:26Z"
+  }
+ },
+ {
+  "number": 460,
+  "url": "https://github.com/gobifrost/bifrost/issues/460",
+  "kind_hint": "unknown",
+  "candidate_count": 458,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T16:40:27Z"
+  }
+ },
+ {
+  "number": 461,
+  "url": "https://github.com/gobifrost/bifrost/issues/461",
+  "kind_hint": "unknown",
+  "candidate_count": 459,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T16:40:27Z"
+  }
+ },
+ {
+  "number": 462,
+  "url": "https://github.com/gobifrost/bifrost/issues/462",
+  "kind_hint": "unknown",
+  "candidate_count": 460,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T14:19:47Z"
+  }
+ },
+ {
+  "number": 463,
+  "url": "https://github.com/gobifrost/bifrost/issues/463",
+  "kind_hint": "unknown",
+  "candidate_count": 461,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T14:19:48Z"
+  }
+ },
+ {
+  "number": 464,
+  "url": "https://github.com/gobifrost/bifrost/issues/464",
+  "kind_hint": "unknown",
+  "candidate_count": 462,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T17:35:10Z"
+  }
+ },
+ {
+  "number": 465,
+  "url": "https://github.com/gobifrost/bifrost/issues/465",
+  "kind_hint": "unknown",
+  "candidate_count": 463,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-09T14:19:48Z"
+  }
+ },
+ {
+  "number": 466,
+  "url": "https://github.com/gobifrost/bifrost/issues/466",
+  "kind_hint": "unknown",
+  "candidate_count": 464,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What observable outcome would show this is done (acceptance criteria)?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-07-09T14:19:49Z"
+  }
+ },
+ {
+  "number": 469,
+  "url": "https://github.com/gobifrost/bifrost/issues/469",
+  "kind_hint": "unknown",
+  "candidate_count": 467,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:27Z"
+  }
+ },
+ {
+  "number": 472,
+  "url": "https://github.com/gobifrost/bifrost/issues/472",
+  "kind_hint": "unknown",
+  "candidate_count": 470,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-11T00:06:06Z"
+  }
+ },
+ {
+  "number": 473,
+  "url": "https://github.com/gobifrost/bifrost/issues/473",
+  "kind_hint": "unknown",
+  "candidate_count": 471,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-25T03:41:24Z"
+  }
+ },
+ {
+  "number": 480,
+  "url": "https://github.com/gobifrost/bifrost/issues/480",
+  "kind_hint": "unknown",
+  "candidate_count": 478,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-14T21:40:14Z"
+  }
+ },
+ {
+  "number": 481,
+  "url": "https://github.com/gobifrost/bifrost/issues/481",
+  "kind_hint": "unknown",
+  "candidate_count": 479,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-14T18:44:45Z"
+  }
+ },
+ {
+  "number": 484,
+  "url": "https://github.com/gobifrost/bifrost/issues/484",
+  "kind_hint": "unknown",
+  "candidate_count": 482,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-07-15T03:33:52Z"
+  }
+ },
+ {
+  "number": 485,
+  "url": "https://github.com/gobifrost/bifrost/issues/485",
+  "kind_hint": "unknown",
+  "candidate_count": 483,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-15T01:25:48Z"
+  }
+ },
+ {
+  "number": 488,
+  "url": "https://github.com/gobifrost/bifrost/issues/488",
+  "kind_hint": "unknown",
+  "candidate_count": 486,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-07-15T05:09:00Z"
+  }
+ },
+ {
+  "number": 490,
+  "url": "https://github.com/gobifrost/bifrost/issues/490",
+  "kind_hint": "unknown",
+  "candidate_count": 488,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-07-15T06:48:33Z"
+  }
+ },
+ {
+  "number": 492,
+  "url": "https://github.com/gobifrost/bifrost/issues/492",
+  "kind_hint": "unknown",
+  "candidate_count": 490,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-15T18:41:43Z"
+  }
+ },
+ {
+  "number": 495,
+  "url": "https://github.com/gobifrost/bifrost/issues/495",
+  "kind_hint": "unknown",
+  "candidate_count": 493,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-07-23T21:15:53Z"
+  }
+ },
+ {
+  "number": 498,
+  "url": "https://github.com/gobifrost/bifrost/issues/498",
+  "kind_hint": "unknown",
+  "candidate_count": 496,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-07-18T13:14:22Z"
+  }
+ },
+ {
+  "number": 499,
+  "url": "https://github.com/gobifrost/bifrost/issues/499",
+  "kind_hint": "unknown",
+  "candidate_count": 497,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-22T20:10:17Z"
+  }
+ },
+ {
+  "number": 508,
+  "url": "https://github.com/gobifrost/bifrost/issues/508",
+  "kind_hint": "unknown",
+  "candidate_count": 506,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-07-23T03:08:01Z"
+  }
+ },
+ {
+  "number": 510,
+  "url": "https://github.com/gobifrost/bifrost/issues/510",
+  "kind_hint": "unknown",
+  "candidate_count": 508,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "redacted_incident"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-23T03:19:20Z"
+  }
+ },
+ {
+  "number": 518,
+  "url": "https://github.com/gobifrost/bifrost/issues/518",
+  "kind_hint": "unknown",
+  "candidate_count": 516,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-07-29T00:05:34Z"
+  }
+ },
+ {
+  "number": 522,
+  "url": "https://github.com/gobifrost/bifrost/issues/522",
+  "kind_hint": "unknown",
+  "candidate_count": 520,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-07-27T21:05:28Z"
+  }
+ },
+ {
+  "number": 525,
+  "url": "https://github.com/gobifrost/bifrost/issues/525",
+  "kind_hint": "unknown",
+  "candidate_count": 523,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-07-28T06:22:32Z"
+  }
+ },
+ {
+  "number": 528,
+  "url": "https://github.com/gobifrost/bifrost/issues/528",
+  "kind_hint": "unknown",
+  "candidate_count": 526,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-07-28T18:20:21Z"
+  }
+ },
+ {
+  "number": 532,
+  "url": "https://github.com/gobifrost/bifrost/issues/532",
+  "kind_hint": "unknown",
+  "candidate_count": 530,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-07T21:19:59Z"
+  }
+ },
+ {
+  "number": 561,
+  "url": "https://github.com/gobifrost/bifrost/issues/561",
+  "kind_hint": "unknown",
+  "candidate_count": 559,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-08T00:45:10Z"
+  }
+ },
+ {
+  "number": 564,
+  "url": "https://github.com/gobifrost/bifrost/issues/564",
+  "kind_hint": "unknown",
+  "candidate_count": 562,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-08T11:23:24Z"
+  }
+ },
+ {
+  "number": 567,
+  "url": "https://github.com/gobifrost/bifrost/issues/567",
+  "kind_hint": "unknown",
+  "candidate_count": 565,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-04T13:42:56Z"
+  }
+ },
+ {
+  "number": 579,
+  "url": "https://github.com/gobifrost/bifrost/issues/579",
+  "kind_hint": "unknown",
+  "candidate_count": 577,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-13T03:48:50Z"
+  }
+ },
+ {
+  "number": 582,
+  "url": "https://github.com/gobifrost/bifrost/issues/582",
+  "kind_hint": "unknown",
+  "candidate_count": 580,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-13T15:40:55Z"
+  }
+ },
+ {
+  "number": 584,
+  "url": "https://github.com/gobifrost/bifrost/issues/584",
+  "kind_hint": "unknown",
+  "candidate_count": 582,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-13T23:09:56Z"
+  }
+ },
+ {
+  "number": 588,
+  "url": "https://github.com/gobifrost/bifrost/issues/588",
+  "kind_hint": "unknown",
+  "candidate_count": 586,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-14T19:48:55Z"
+  }
+ },
+ {
+  "number": 589,
+  "url": "https://github.com/gobifrost/bifrost/issues/589",
+  "kind_hint": "unknown",
+  "candidate_count": 587,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-15T02:41:04Z"
+  }
+ },
+ {
+  "number": 590,
+  "url": "https://github.com/gobifrost/bifrost/issues/590",
+  "kind_hint": "unknown",
+  "candidate_count": 588,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-15T02:41:05Z"
+  }
+ },
+ {
+  "number": 591,
+  "url": "https://github.com/gobifrost/bifrost/issues/591",
+  "kind_hint": "unknown",
+  "candidate_count": 589,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-15T02:41:05Z"
+  }
+ },
+ {
+  "number": 594,
+  "url": "https://github.com/gobifrost/bifrost/issues/594",
+  "kind_hint": "unknown",
+  "candidate_count": 592,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-15T09:04:44Z"
+  }
+ },
+ {
+  "number": 599,
+  "url": "https://github.com/gobifrost/bifrost/issues/599",
+  "kind_hint": "unknown",
+  "candidate_count": 597,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-15T16:12:00Z"
+  }
+ },
+ {
+  "number": 603,
+  "url": "https://github.com/gobifrost/bifrost/issues/603",
+  "kind_hint": "unknown",
+  "candidate_count": 601,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore",
+    "priority:3",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": "2026-11-09T02:36:43Z"
+  }
+ },
+ {
+  "number": 604,
+  "url": "https://github.com/gobifrost/bifrost/issues/604",
+  "kind_hint": "unknown",
+  "candidate_count": 602,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-15T21:23:45Z"
+  }
+ },
+ {
+  "number": 605,
+  "url": "https://github.com/gobifrost/bifrost/issues/605",
+  "kind_hint": "unknown",
+  "candidate_count": 603,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-16T21:29:38Z"
+  }
+ },
+ {
+  "number": 606,
+  "url": "https://github.com/gobifrost/bifrost/issues/606",
+  "kind_hint": "unknown",
+  "candidate_count": 604,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-15T19:43:56Z"
+  }
+ },
+ {
+  "number": 612,
+  "url": "https://github.com/gobifrost/bifrost/issues/612",
+  "kind_hint": "unknown",
+  "candidate_count": 610,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-16T04:06:25Z"
+  }
+ },
+ {
+  "number": 622,
+  "url": "https://github.com/gobifrost/bifrost/issues/622",
+  "kind_hint": "unknown",
+  "candidate_count": 619,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-22T16:48:15Z"
+  }
+ },
+ {
+  "number": 625,
+  "url": "https://github.com/gobifrost/bifrost/issues/625",
+  "kind_hint": "unknown",
+  "candidate_count": 622,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-23T22:15:16Z"
+  }
+ },
+ {
+  "number": 627,
+  "url": "https://github.com/gobifrost/bifrost/issues/627",
+  "kind_hint": "unknown",
+  "candidate_count": 624,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-24T03:51:13Z"
+  }
+ },
+ {
+  "number": 630,
+  "url": "https://github.com/gobifrost/bifrost/issues/630",
+  "kind_hint": "unknown",
+  "candidate_count": 627,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-24T03:30:05Z"
+  }
+ },
+ {
+  "number": 635,
+  "url": "https://github.com/gobifrost/bifrost/issues/635",
+  "kind_hint": "unknown",
+  "candidate_count": 632,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-24T22:55:37Z"
+  }
+ },
+ {
+  "number": 637,
+  "url": "https://github.com/gobifrost/bifrost/issues/637",
+  "kind_hint": "unknown",
+  "candidate_count": 634,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T04:23:31Z"
+  }
+ },
+ {
+  "number": 639,
+  "url": "https://github.com/gobifrost/bifrost/issues/639",
+  "kind_hint": "unknown",
+  "candidate_count": 636,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "enhancement",
+    "priority:3",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 640,
+  "url": "https://github.com/gobifrost/bifrost/issues/640",
+  "kind_hint": "unknown",
+  "candidate_count": 637,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement",
+    "priority:3",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-07T23:57:09Z"
+  }
+ },
+ {
+  "number": 645,
+  "url": "https://github.com/gobifrost/bifrost/issues/645",
+  "kind_hint": "unknown",
+  "candidate_count": 642,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-26T13:31:43Z"
+  }
+ },
+ {
+  "number": 647,
+  "url": "https://github.com/gobifrost/bifrost/issues/647",
+  "kind_hint": "unknown",
+  "candidate_count": 644,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-25T21:10:25Z"
+  }
+ },
+ {
+  "number": 649,
+  "url": "https://github.com/gobifrost/bifrost/issues/649",
+  "kind_hint": "unknown",
+  "candidate_count": 646,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-26T14:27:28Z"
+  }
+ },
+ {
+  "number": 652,
+  "url": "https://github.com/gobifrost/bifrost/issues/652",
+  "kind_hint": "unknown",
+  "candidate_count": 648,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-08-27T01:18:20Z"
+  }
+ },
+ {
+  "number": 656,
+  "url": "https://github.com/gobifrost/bifrost/issues/656",
+  "kind_hint": "unknown",
+  "candidate_count": 652,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-27T22:44:49Z"
+  }
+ },
+ {
+  "number": 657,
+  "url": "https://github.com/gobifrost/bifrost/issues/657",
+  "kind_hint": "unknown",
+  "candidate_count": 653,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:in-progress"
+   ],
+   "maintainer_closed_at": "2026-11-04T15:04:50Z"
+  }
+ },
+ {
+  "number": 658,
+  "url": "https://github.com/gobifrost/bifrost/issues/658",
+  "kind_hint": "unknown",
+  "candidate_count": 654,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:blocked"
+   ],
+   "maintainer_closed_at": "2026-11-05T20:16:10Z"
+  }
+ },
+ {
+  "number": 659,
+  "url": "https://github.com/gobifrost/bifrost/issues/659",
+  "kind_hint": "unknown",
+  "candidate_count": 655,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-28T11:24:19Z"
+  }
+ },
+ {
+  "number": 661,
+  "url": "https://github.com/gobifrost/bifrost/issues/661",
+  "kind_hint": "unknown",
+  "candidate_count": 657,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-08-28T02:32:51Z"
+  }
+ },
+ {
+  "number": 663,
+  "url": "https://github.com/gobifrost/bifrost/issues/663",
+  "kind_hint": "unknown",
+  "candidate_count": 659,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-09T01:31:14Z"
+  }
+ },
+ {
+  "number": 666,
+  "url": "https://github.com/gobifrost/bifrost/issues/666",
+  "kind_hint": "unknown",
+  "candidate_count": 661,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-09-02T21:50:30Z"
+  }
+ },
+ {
+  "number": 670,
+  "url": "https://github.com/gobifrost/bifrost/issues/670",
+  "kind_hint": "unknown",
+  "candidate_count": 665,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-08-30T17:15:01Z"
+  }
+ },
+ {
+  "number": 682,
+  "url": "https://github.com/gobifrost/bifrost/issues/682",
+  "kind_hint": "unknown",
+  "candidate_count": 677,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-01T20:09:54Z"
+  }
+ },
+ {
+  "number": 684,
+  "url": "https://github.com/gobifrost/bifrost/issues/684",
+  "kind_hint": "unknown",
+  "candidate_count": 679,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-02T01:48:30Z"
+  }
+ },
+ {
+  "number": 685,
+  "url": "https://github.com/gobifrost/bifrost/issues/685",
+  "kind_hint": "unknown",
+  "candidate_count": 680,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What actually happens today -- what is the observed behavior versus the expected one?",
+  "evidence_kinds": [
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-02T20:30:11Z"
+  }
+ },
+ {
+  "number": 688,
+  "url": "https://github.com/gobifrost/bifrost/issues/688",
+  "kind_hint": "unknown",
+  "candidate_count": 683,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-02T04:45:14Z"
+  }
+ },
+ {
+  "number": 690,
+  "url": "https://github.com/gobifrost/bifrost/issues/690",
+  "kind_hint": "unknown",
+  "candidate_count": 685,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-09-02T05:47:16Z"
+  }
+ },
+ {
+  "number": 692,
+  "url": "https://github.com/gobifrost/bifrost/issues/692",
+  "kind_hint": "unknown",
+  "candidate_count": 687,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-23T20:52:01Z"
+  }
+ },
+ {
+  "number": 693,
+  "url": "https://github.com/gobifrost/bifrost/issues/693",
+  "kind_hint": "unknown",
+  "candidate_count": 688,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-28T18:37:41Z"
+  }
+ },
+ {
+  "number": 695,
+  "url": "https://github.com/gobifrost/bifrost/issues/695",
+  "kind_hint": "unknown",
+  "candidate_count": 690,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-02T23:34:33Z"
+  }
+ },
+ {
+  "number": 699,
+  "url": "https://github.com/gobifrost/bifrost/issues/699",
+  "kind_hint": "unknown",
+  "candidate_count": 694,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-03T11:49:31Z"
+  }
+ },
+ {
+  "number": 703,
+  "url": "https://github.com/gobifrost/bifrost/issues/703",
+  "kind_hint": "unknown",
+  "candidate_count": 698,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-03T22:12:43Z"
+  }
+ },
+ {
+  "number": 705,
+  "url": "https://github.com/gobifrost/bifrost/issues/705",
+  "kind_hint": "unknown",
+  "candidate_count": 700,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-09-10T17:17:07Z"
+  }
+ },
+ {
+  "number": 721,
+  "url": "https://github.com/gobifrost/bifrost/issues/721",
+  "kind_hint": "unknown",
+  "candidate_count": 716,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-10T23:42:06Z"
+  }
+ },
+ {
+  "number": 722,
+  "url": "https://github.com/gobifrost/bifrost/issues/722",
+  "kind_hint": "unknown",
+  "candidate_count": 717,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-10T23:15:58Z"
+  }
+ },
+ {
+  "number": 726,
+  "url": "https://github.com/gobifrost/bifrost/issues/726",
+  "kind_hint": "unknown",
+  "candidate_count": 721,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-14T17:56:51Z"
+  }
+ },
+ {
+  "number": 728,
+  "url": "https://github.com/gobifrost/bifrost/issues/728",
+  "kind_hint": "unknown",
+  "candidate_count": 723,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-11T16:23:58Z"
+  }
+ },
+ {
+  "number": 731,
+  "url": "https://github.com/gobifrost/bifrost/issues/731",
+  "kind_hint": "unknown",
+  "candidate_count": 726,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-12T18:13:28Z"
+  }
+ },
+ {
+  "number": 734,
+  "url": "https://github.com/gobifrost/bifrost/issues/734",
+  "kind_hint": "unknown",
+  "candidate_count": 729,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-09-12T14:23:24Z"
+  }
+ },
+ {
+  "number": 748,
+  "url": "https://github.com/gobifrost/bifrost/issues/748",
+  "kind_hint": "unknown",
+  "candidate_count": 743,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-14T11:03:54Z"
+  }
+ },
+ {
+  "number": 749,
+  "url": "https://github.com/gobifrost/bifrost/issues/749",
+  "kind_hint": "unknown",
+  "candidate_count": 744,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-09-14T05:53:41Z"
+  }
+ },
+ {
+  "number": 769,
+  "url": "https://github.com/gobifrost/bifrost/issues/769",
+  "kind_hint": "unknown",
+  "candidate_count": 764,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-10-24T10:31:50Z"
+  }
+ },
+ {
+  "number": 784,
+  "url": "https://github.com/gobifrost/bifrost/issues/784",
+  "kind_hint": "unknown",
+  "candidate_count": 779,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-18T21:38:02Z"
+  }
+ },
+ {
+  "number": 790,
+  "url": "https://github.com/gobifrost/bifrost/issues/790",
+  "kind_hint": "unknown",
+  "candidate_count": 785,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-23T04:35:17Z"
+  }
+ },
+ {
+  "number": 793,
+  "url": "https://github.com/gobifrost/bifrost/issues/793",
+  "kind_hint": "unknown",
+  "candidate_count": 788,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-09-23T18:57:32Z"
+  }
+ },
+ {
+  "number": 804,
+  "url": "https://github.com/gobifrost/bifrost/issues/804",
+  "kind_hint": "unknown",
+  "candidate_count": 799,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-09-25T05:05:25Z"
+  }
+ },
+ {
+  "number": 806,
+  "url": "https://github.com/gobifrost/bifrost/issues/806",
+  "kind_hint": "unknown",
+  "candidate_count": 801,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-25T11:03:58Z"
+  }
+ },
+ {
+  "number": 808,
+  "url": "https://github.com/gobifrost/bifrost/issues/808",
+  "kind_hint": "unknown",
+  "candidate_count": 803,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-09-25T11:38:11Z"
+  }
+ },
+ {
+  "number": 865,
+  "url": "https://github.com/gobifrost/bifrost/issues/865",
+  "kind_hint": "unknown",
+  "candidate_count": 860,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-01T04:45:46Z"
+  }
+ },
+ {
+  "number": 872,
+  "url": "https://github.com/gobifrost/bifrost/issues/872",
+  "kind_hint": "unknown",
+  "candidate_count": 867,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-02T12:03:05Z"
+  }
+ },
+ {
+  "number": 883,
+  "url": "https://github.com/gobifrost/bifrost/issues/883",
+  "kind_hint": "unknown",
+  "candidate_count": 878,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-02T22:31:51Z"
+  }
+ },
+ {
+  "number": 884,
+  "url": "https://github.com/gobifrost/bifrost/issues/884",
+  "kind_hint": "unknown",
+  "candidate_count": 879,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-02T22:33:53Z"
+  }
+ },
+ {
+  "number": 943,
+  "url": "https://github.com/gobifrost/bifrost/issues/943",
+  "kind_hint": "unknown",
+  "candidate_count": 938,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-10-10T19:19:50Z"
+  }
+ },
+ {
+  "number": 944,
+  "url": "https://github.com/gobifrost/bifrost/issues/944",
+  "kind_hint": "unknown",
+  "candidate_count": 939,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T02:20:22Z"
+  }
+ },
+ {
+  "number": 946,
+  "url": "https://github.com/gobifrost/bifrost/issues/946",
+  "kind_hint": "unknown",
+  "candidate_count": 941,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T03:35:01Z"
+  }
+ },
+ {
+  "number": 948,
+  "url": "https://github.com/gobifrost/bifrost/issues/948",
+  "kind_hint": "unknown",
+  "candidate_count": 943,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T05:00:52Z"
+  }
+ },
+ {
+  "number": 949,
+  "url": "https://github.com/gobifrost/bifrost/issues/949",
+  "kind_hint": "unknown",
+  "candidate_count": 944,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T05:00:52Z"
+  }
+ },
+ {
+  "number": 952,
+  "url": "https://github.com/gobifrost/bifrost/issues/952",
+  "kind_hint": "unknown",
+  "candidate_count": 947,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T05:56:54Z"
+  }
+ },
+ {
+  "number": 953,
+  "url": "https://github.com/gobifrost/bifrost/issues/953",
+  "kind_hint": "unknown",
+  "candidate_count": 948,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T05:57:37Z"
+  }
+ },
+ {
+  "number": 954,
+  "url": "https://github.com/gobifrost/bifrost/issues/954",
+  "kind_hint": "unknown",
+  "candidate_count": 949,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-09T06:29:19Z"
+  }
+ },
+ {
+  "number": 958,
+  "url": "https://github.com/gobifrost/bifrost/issues/958",
+  "kind_hint": "unknown",
+  "candidate_count": 953,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-09T07:13:34Z"
+  }
+ },
+ {
+  "number": 965,
+  "url": "https://github.com/gobifrost/bifrost/issues/965",
+  "kind_hint": "unknown",
+  "candidate_count": 960,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-29T13:20:18Z"
+  }
+ },
+ {
+  "number": 969,
+  "url": "https://github.com/gobifrost/bifrost/issues/969",
+  "kind_hint": "unknown",
+  "candidate_count": 964,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-11T12:49:49Z"
+  }
+ },
+ {
+  "number": 970,
+  "url": "https://github.com/gobifrost/bifrost/issues/970",
+  "kind_hint": "unknown",
+  "candidate_count": 965,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-11T12:49:49Z"
+  }
+ },
+ {
+  "number": 973,
+  "url": "https://github.com/gobifrost/bifrost/issues/973",
+  "kind_hint": "unknown",
+  "candidate_count": 968,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-12T04:23:27Z"
+  }
+ },
+ {
+  "number": 982,
+  "url": "https://github.com/gobifrost/bifrost/issues/982",
+  "kind_hint": "unknown",
+  "candidate_count": 977,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-13T18:53:46Z"
+  }
+ },
+ {
+  "number": 986,
+  "url": "https://github.com/gobifrost/bifrost/issues/986",
+  "kind_hint": "unknown",
+  "candidate_count": 981,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-10-14T05:49:57Z"
+  }
+ },
+ {
+  "number": 988,
+  "url": "https://github.com/gobifrost/bifrost/issues/988",
+  "kind_hint": "unknown",
+  "candidate_count": 983,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-15T06:41:37Z"
+  }
+ },
+ {
+  "number": 1014,
+  "url": "https://github.com/gobifrost/bifrost/issues/1014",
+  "kind_hint": "unknown",
+  "candidate_count": 1009,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-29T13:14:52Z"
+  }
+ },
+ {
+  "number": 1015,
+  "url": "https://github.com/gobifrost/bifrost/issues/1015",
+  "kind_hint": "unknown",
+  "candidate_count": 1010,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-10-24T01:52:32Z"
+  }
+ },
+ {
+  "number": 1016,
+  "url": "https://github.com/gobifrost/bifrost/issues/1016",
+  "kind_hint": "unknown",
+  "candidate_count": 1011,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement",
+    "priority:2",
+    "triage:in-progress"
+   ],
+   "maintainer_closed_at": "2026-11-06T02:30:33Z"
+  }
+ },
+ {
+  "number": 1018,
+  "url": "https://github.com/gobifrost/bifrost/issues/1018",
+  "kind_hint": "unknown",
+  "candidate_count": 1013,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-20T18:31:28Z"
+  }
+ },
+ {
+  "number": 1020,
+  "url": "https://github.com/gobifrost/bifrost/issues/1020",
+  "kind_hint": "unknown",
+  "candidate_count": 1015,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-20T19:18:04Z"
+  }
+ },
+ {
+  "number": 1052,
+  "url": "https://github.com/gobifrost/bifrost/issues/1052",
+  "kind_hint": "unknown",
+  "candidate_count": 1047,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-10-24T12:27:02Z"
+  }
+ },
+ {
+  "number": 1053,
+  "url": "https://github.com/gobifrost/bifrost/issues/1053",
+  "kind_hint": "unknown",
+  "candidate_count": 1048,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1085,
+  "url": "https://github.com/gobifrost/bifrost/issues/1085",
+  "kind_hint": "unknown",
+  "candidate_count": 1080,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-27T14:07:21Z"
+  }
+ },
+ {
+  "number": 1095,
+  "url": "https://github.com/gobifrost/bifrost/issues/1095",
+  "kind_hint": "unknown",
+  "candidate_count": 1090,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-27T21:31:21Z"
+  }
+ },
+ {
+  "number": 1097,
+  "url": "https://github.com/gobifrost/bifrost/issues/1097",
+  "kind_hint": "unknown",
+  "candidate_count": 1092,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-28T05:21:32Z"
+  }
+ },
+ {
+  "number": 1098,
+  "url": "https://github.com/gobifrost/bifrost/issues/1098",
+  "kind_hint": "unknown",
+  "candidate_count": 1093,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-29T02:59:23Z"
+  }
+ },
+ {
+  "number": 1105,
+  "url": "https://github.com/gobifrost/bifrost/issues/1105",
+  "kind_hint": "unknown",
+  "candidate_count": 1100,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-01T19:56:10Z"
+  }
+ },
+ {
+  "number": 1108,
+  "url": "https://github.com/gobifrost/bifrost/issues/1108",
+  "kind_hint": "unknown",
+  "candidate_count": 1103,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-28T19:21:50Z"
+  }
+ },
+ {
+  "number": 1113,
+  "url": "https://github.com/gobifrost/bifrost/issues/1113",
+  "kind_hint": "unknown",
+  "candidate_count": 1108,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test",
+   "redacted_incident"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-29T01:30:45Z"
+  }
+ },
+ {
+  "number": 1120,
+  "url": "https://github.com/gobifrost/bifrost/issues/1120",
+  "kind_hint": "unknown",
+  "candidate_count": 1115,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-29T05:39:02Z"
+  }
+ },
+ {
+  "number": 1131,
+  "url": "https://github.com/gobifrost/bifrost/issues/1131",
+  "kind_hint": "unknown",
+  "candidate_count": 1126,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-10-29T06:10:14Z"
+  }
+ },
+ {
+  "number": 1141,
+  "url": "https://github.com/gobifrost/bifrost/issues/1141",
+  "kind_hint": "unknown",
+  "candidate_count": 1136,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-10-30T14:11:41Z"
+  }
+ },
+ {
+  "number": 1142,
+  "url": "https://github.com/gobifrost/bifrost/issues/1142",
+  "kind_hint": "unknown",
+  "candidate_count": 1137,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:held"
+   ],
+   "maintainer_closed_at": "2026-11-05T19:50:32Z"
+  }
+ },
+ {
+  "number": 1165,
+  "url": "https://github.com/gobifrost/bifrost/issues/1165",
+  "kind_hint": "unknown",
+  "candidate_count": 1160,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-10-31T19:34:07Z"
+  }
+ },
+ {
+  "number": 1167,
+  "url": "https://github.com/gobifrost/bifrost/issues/1167",
+  "kind_hint": "unknown",
+  "candidate_count": 1162,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:waiting-contributor"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1168,
+  "url": "https://github.com/gobifrost/bifrost/issues/1168",
+  "kind_hint": "unknown",
+  "candidate_count": 1163,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1169,
+  "url": "https://github.com/gobifrost/bifrost/issues/1169",
+  "kind_hint": "unknown",
+  "candidate_count": 1164,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-01T19:22:35Z"
+  }
+ },
+ {
+  "number": 1174,
+  "url": "https://github.com/gobifrost/bifrost/issues/1174",
+  "kind_hint": "unknown",
+  "candidate_count": 1169,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-11-01T23:55:05Z"
+  }
+ },
+ {
+  "number": 1176,
+  "url": "https://github.com/gobifrost/bifrost/issues/1176",
+  "kind_hint": "unknown",
+  "candidate_count": 1171,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-02T13:31:44Z"
+  }
+ },
+ {
+  "number": 1177,
+  "url": "https://github.com/gobifrost/bifrost/issues/1177",
+  "kind_hint": "unknown",
+  "candidate_count": 1172,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-02T13:31:43Z"
+  }
+ },
+ {
+  "number": 1182,
+  "url": "https://github.com/gobifrost/bifrost/issues/1182",
+  "kind_hint": "unknown",
+  "candidate_count": 1177,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-02T13:24:17Z"
+  }
+ },
+ {
+  "number": 1183,
+  "url": "https://github.com/gobifrost/bifrost/issues/1183",
+  "kind_hint": "unknown",
+  "candidate_count": 1178,
+  "verdict": "confirmed_duplicate",
+  "subtype": null,
+  "duplicate_of": 1182,
+  "duplicate_confidence": "confirmed",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-02T13:23:53Z"
+  }
+ },
+ {
+  "number": 1193,
+  "url": "https://github.com/gobifrost/bifrost/issues/1193",
+  "kind_hint": "unknown",
+  "candidate_count": 1188,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:1",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-09T03:21:33Z"
+  }
+ },
+ {
+  "number": 1194,
+  "url": "https://github.com/gobifrost/bifrost/issues/1194",
+  "kind_hint": "unknown",
+  "candidate_count": 1189,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 1193,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:1",
+    "triage:blocked"
+   ],
+   "maintainer_closed_at": "2026-11-09T00:50:29Z"
+  }
+ },
+ {
+  "number": 1195,
+  "url": "https://github.com/gobifrost/bifrost/issues/1195",
+  "kind_hint": "unknown",
+  "candidate_count": 1190,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1196,
+  "url": "https://github.com/gobifrost/bifrost/issues/1196",
+  "kind_hint": "unknown",
+  "candidate_count": 1191,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": "2026-11-10T22:04:13Z"
+  }
+ },
+ {
+  "number": 1197,
+  "url": "https://github.com/gobifrost/bifrost/issues/1197",
+  "kind_hint": "unknown",
+  "candidate_count": 1192,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 1193,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:1",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1198,
+  "url": "https://github.com/gobifrost/bifrost/issues/1198",
+  "kind_hint": "unknown",
+  "candidate_count": 1193,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "Which concrete operator or workflow needs this, and what do they do today instead?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": "2026-11-10T21:38:30Z"
+  }
+ },
+ {
+  "number": 1199,
+  "url": "https://github.com/gobifrost/bifrost/issues/1199",
+  "kind_hint": "unknown",
+  "candidate_count": 1194,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 1197,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-07T21:59:15Z"
+  }
+ },
+ {
+  "number": 1205,
+  "url": "https://github.com/gobifrost/bifrost/issues/1205",
+  "kind_hint": "unknown",
+  "candidate_count": 1200,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What is painful or blocked today -- the workaround or constraint this removes?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-03T05:03:03Z"
+  }
+ },
+ {
+  "number": 1207,
+  "url": "https://github.com/gobifrost/bifrost/issues/1207",
+  "kind_hint": "unknown",
+  "candidate_count": 1202,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-03T11:50:43Z"
+  }
+ },
+ {
+  "number": 1220,
+  "url": "https://github.com/gobifrost/bifrost/issues/1220",
+  "kind_hint": "unknown",
+  "candidate_count": 1215,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1221,
+  "url": "https://github.com/gobifrost/bifrost/issues/1221",
+  "kind_hint": "unknown",
+  "candidate_count": 1216,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement",
+    "priority:3",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-04T22:29:00Z"
+  }
+ },
+ {
+  "number": 1228,
+  "url": "https://github.com/gobifrost/bifrost/issues/1228",
+  "kind_hint": "unknown",
+  "candidate_count": 1223,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-03T19:16:09Z"
+  }
+ },
+ {
+  "number": 1239,
+  "url": "https://github.com/gobifrost/bifrost/issues/1239",
+  "kind_hint": "unknown",
+  "candidate_count": 1234,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 297,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement",
+    "priority:3",
+    "triage:waiting-contributor"
+   ],
+   "maintainer_closed_at": "2026-11-10T15:56:51Z"
+  }
+ },
+ {
+  "number": 1243,
+  "url": "https://github.com/gobifrost/bifrost/issues/1243",
+  "kind_hint": "unknown",
+  "candidate_count": 1238,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test",
+   "redacted_incident"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:accepted"
+   ],
+   "maintainer_closed_at": "2026-11-07T23:57:10Z"
+  }
+ },
+ {
+  "number": 1246,
+  "url": "https://github.com/gobifrost/bifrost/issues/1246",
+  "kind_hint": "unknown",
+  "candidate_count": 1241,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-decision"
+   ],
+   "maintainer_closed_at": "2026-11-06T03:37:21Z"
+  }
+ },
+ {
+  "number": 1247,
+  "url": "https://github.com/gobifrost/bifrost/issues/1247",
+  "kind_hint": "unknown",
+  "candidate_count": 1242,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:3",
+    "triage:in-progress"
+   ],
+   "maintainer_closed_at": "2026-11-05T18:56:21Z"
+  }
+ },
+ {
+  "number": 1248,
+  "url": "https://github.com/gobifrost/bifrost/issues/1248",
+  "kind_hint": "unknown",
+  "candidate_count": 1243,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "priority:2",
+    "triage:needs-research"
+   ],
+   "maintainer_closed_at": "2026-11-05T02:40:37Z"
+  }
+ },
+ {
+  "number": 1255,
+  "url": "https://github.com/gobifrost/bifrost/issues/1255",
+  "kind_hint": "unknown",
+  "candidate_count": 1250,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-11-05T21:22:21Z"
+  }
+ },
+ {
+  "number": 1261,
+  "url": "https://github.com/gobifrost/bifrost/issues/1261",
+  "kind_hint": "unknown",
+  "candidate_count": 1256,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-06T18:54:29Z"
+  }
+ },
+ {
+  "number": 1263,
+  "url": "https://github.com/gobifrost/bifrost/issues/1263",
+  "kind_hint": "unknown",
+  "candidate_count": 1258,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-08T04:47:01Z"
+  }
+ },
+ {
+  "number": 1267,
+  "url": "https://github.com/gobifrost/bifrost/issues/1267",
+  "kind_hint": "unknown",
+  "candidate_count": 1262,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-09T01:02:31Z"
+  }
+ },
+ {
+  "number": 1268,
+  "url": "https://github.com/gobifrost/bifrost/issues/1268",
+  "kind_hint": "unknown",
+  "candidate_count": 1263,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-09T01:02:10Z"
+  }
+ },
+ {
+  "number": 1269,
+  "url": "https://github.com/gobifrost/bifrost/issues/1269",
+  "kind_hint": "unknown",
+  "candidate_count": 1264,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-09T01:02:27Z"
+  }
+ },
+ {
+  "number": 1270,
+  "url": "https://github.com/gobifrost/bifrost/issues/1270",
+  "kind_hint": "unknown",
+  "candidate_count": 1265,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-09T01:02:29Z"
+  }
+ },
+ {
+  "number": 1288,
+  "url": "https://github.com/gobifrost/bifrost/issues/1288",
+  "kind_hint": "unknown",
+  "candidate_count": 1283,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-09T16:03:52Z"
+  }
+ },
+ {
+  "number": 1292,
+  "url": "https://github.com/gobifrost/bifrost/issues/1292",
+  "kind_hint": "unknown",
+  "candidate_count": 1287,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-09T23:36:52Z"
+  }
+ },
+ {
+  "number": 1297,
+  "url": "https://github.com/gobifrost/bifrost/issues/1297",
+  "kind_hint": "unknown",
+  "candidate_count": 1292,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-10T15:56:51Z"
+  }
+ },
+ {
+  "number": 1310,
+  "url": "https://github.com/gobifrost/bifrost/issues/1310",
+  "kind_hint": "unknown",
+  "candidate_count": 1305,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-11T01:39:08Z"
+  }
+ },
+ {
+  "number": 1311,
+  "url": "https://github.com/gobifrost/bifrost/issues/1311",
+  "kind_hint": "unknown",
+  "candidate_count": 1306,
+  "verdict": "possible_duplicate",
+  "subtype": null,
+  "duplicate_of": 1167,
+  "duplicate_confidence": "possible",
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1320,
+  "url": "https://github.com/gobifrost/bifrost/issues/1320",
+  "kind_hint": "unknown",
+  "candidate_count": 1314,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-13T14:42:01Z"
+  }
+ },
+ {
+  "number": 1321,
+  "url": "https://github.com/gobifrost/bifrost/issues/1321",
+  "kind_hint": "unknown",
+  "candidate_count": 1315,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-11T12:35:29Z"
+  }
+ },
+ {
+  "number": 1322,
+  "url": "https://github.com/gobifrost/bifrost/issues/1322",
+  "kind_hint": "unknown",
+  "candidate_count": 1316,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-11T13:24:25Z"
+  }
+ },
+ {
+  "number": 1323,
+  "url": "https://github.com/gobifrost/bifrost/issues/1323",
+  "kind_hint": "unknown",
+  "candidate_count": 1317,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-11T05:40:54Z"
+  }
+ },
+ {
+  "number": 1324,
+  "url": "https://github.com/gobifrost/bifrost/issues/1324",
+  "kind_hint": "unknown",
+  "candidate_count": 1318,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-12T00:43:02Z"
+  }
+ },
+ {
+  "number": 1325,
+  "url": "https://github.com/gobifrost/bifrost/issues/1325",
+  "kind_hint": "unknown",
+  "candidate_count": 1319,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-11T20:27:10Z"
+  }
+ },
+ {
+  "number": 1329,
+  "url": "https://github.com/gobifrost/bifrost/issues/1329",
+  "kind_hint": "unknown",
+  "candidate_count": 1323,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": "2026-11-13T03:29:15Z"
+  }
+ },
+ {
+  "number": 1333,
+  "url": "https://github.com/gobifrost/bifrost/issues/1333",
+  "kind_hint": "unknown",
+  "candidate_count": 1327,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [],
+   "maintainer_closed_at": "2026-11-13T03:19:44Z"
+  }
+ },
+ {
+  "number": 1335,
+  "url": "https://github.com/gobifrost/bifrost/issues/1335",
+  "kind_hint": "unknown",
+  "candidate_count": 1329,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-11T21:55:44Z"
+  }
+ },
+ {
+  "number": 1339,
+  "url": "https://github.com/gobifrost/bifrost/issues/1339",
+  "kind_hint": "unknown",
+  "candidate_count": 1333,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1340,
+  "url": "https://github.com/gobifrost/bifrost/issues/1340",
+  "kind_hint": "unknown",
+  "candidate_count": 1334,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "enhancement"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1344,
+  "url": "https://github.com/gobifrost/bifrost/issues/1344",
+  "kind_hint": "unknown",
+  "candidate_count": 1337,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What should happen instead -- what is the expected behavior for this report?",
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1345,
+  "url": "https://github.com/gobifrost/bifrost/issues/1345",
+  "kind_hint": "unknown",
+  "candidate_count": 1338,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-12T20:33:09Z"
+  }
+ },
+ {
+  "number": 1346,
+  "url": "https://github.com/gobifrost/bifrost/issues/1346",
+  "kind_hint": "unknown",
+  "candidate_count": 1339,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1347,
+  "url": "https://github.com/gobifrost/bifrost/issues/1347",
+  "kind_hint": "unknown",
+  "candidate_count": 1340,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1348,
+  "url": "https://github.com/gobifrost/bifrost/issues/1348",
+  "kind_hint": "unknown",
+  "candidate_count": 1341,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": "2026-11-12T17:12:03Z"
+  }
+ },
+ {
+  "number": 1349,
+  "url": "https://github.com/gobifrost/bifrost/issues/1349",
+  "kind_hint": "unknown",
+  "candidate_count": 1342,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "redacted_incident"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-11-12T16:56:27Z"
+  }
+ },
+ {
+  "number": 1352,
+  "url": "https://github.com/gobifrost/bifrost/issues/1352",
+  "kind_hint": "unknown",
+  "candidate_count": 1345,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "idea",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1353,
+  "url": "https://github.com/gobifrost/bifrost/issues/1353",
+  "kind_hint": "unknown",
+  "candidate_count": 1346,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-11-12T16:56:27Z"
+  }
+ },
+ {
+  "number": 1357,
+  "url": "https://github.com/gobifrost/bifrost/issues/1357",
+  "kind_hint": "unknown",
+  "candidate_count": 1350,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "chore"
+   ],
+   "maintainer_closed_at": "2026-11-13T17:03:39Z"
+  }
+ },
+ {
+  "number": 1360,
+  "url": "https://github.com/gobifrost/bifrost/issues/1360",
+  "kind_hint": "unknown",
+  "candidate_count": 1353,
+  "verdict": "ready_to_file",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [
+   "safe_repro",
+   "failing_test"
+  ],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-11-13T01:07:51Z"
+  }
+ },
+ {
+  "number": 1361,
+  "url": "https://github.com/gobifrost/bifrost/issues/1361",
+  "kind_hint": "unknown",
+  "candidate_count": 1354,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "support",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1364,
+  "url": "https://github.com/gobifrost/bifrost/issues/1364",
+  "kind_hint": "unknown",
+  "candidate_count": 1357,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "wrong_destination",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1374,
+  "url": "https://github.com/gobifrost/bifrost/issues/1374",
+  "kind_hint": "unknown",
+  "candidate_count": 1367,
+  "verdict": "idea_support_wrong_destination",
+  "subtype": "support",
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": null,
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "OPEN",
+   "maintainer_labels": [
+    "idea"
+   ],
+   "maintainer_closed_at": null
+  }
+ },
+ {
+  "number": 1375,
+  "url": "https://github.com/gobifrost/bifrost/issues/1375",
+  "kind_hint": "unknown",
+  "candidate_count": 1368,
+  "verdict": "needs_evidence",
+  "subtype": null,
+  "duplicate_of": null,
+  "duplicate_confidence": null,
+  "question": "What are the shortest reliable steps to trigger this (or the failing test / redacted incident evidence), and on which commit or version did you see it?",
+  "evidence_kinds": [],
+  "returncode": 0,
+  "disposition": {
+   "maintainer_state": "CLOSED",
+   "maintainer_labels": [
+    "bug"
+   ],
+   "maintainer_closed_at": "2026-11-13T19:18:20Z"
+  }
+ }
+]

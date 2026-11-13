@@ -1,0 +1,208 @@
+[
+ {
+  "case_id": "gobifrost-bifrost-1360",
+  "number": 1360,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "bug"
+  ],
+  "maintainer_closed_at": "2026-11-13T01:07:51Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1353",
+  "number": 1353,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "bug"
+  ],
+  "maintainer_closed_at": "2026-11-12T16:56:27Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1349",
+  "number": 1349,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "bug"
+  ],
+  "maintainer_closed_at": "2026-11-12T16:56:27Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1243",
+  "number": 1243,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "priority:2",
+   "triage:accepted"
+  ],
+  "maintainer_closed_at": "2026-11-07T23:57:10Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1345",
+  "number": 1345,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "idea"
+  ],
+  "maintainer_closed_at": "2026-11-12T20:33:09Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1335",
+  "number": 1335,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "idea"
+  ],
+  "maintainer_closed_at": "2026-11-11T21:55:44Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1329",
+  "number": 1329,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": "2026-11-13T03:29:15Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1292",
+  "number": 1292,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": "2026-11-09T23:36:52Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1311",
+  "number": 1311,
+  "maintainer_state": "OPEN",
+  "maintainer_labels": [],
+  "maintainer_closed_at": null
+ },
+ {
+  "case_id": "gobifrost-bifrost-1340",
+  "number": 1340,
+  "maintainer_state": "OPEN",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": null
+ },
+ {
+  "case_id": "gobifrost-bifrost-1374",
+  "number": 1374,
+  "maintainer_state": "OPEN",
+  "maintainer_labels": [
+   "idea"
+  ],
+  "maintainer_closed_at": null
+ },
+ {
+  "case_id": "gobifrost-bifrost-1352",
+  "number": 1352,
+  "maintainer_state": "OPEN",
+  "maintainer_labels": [
+   "idea"
+  ],
+  "maintainer_closed_at": null
+ },
+ {
+  "case_id": "gobifrost-bifrost-1183",
+  "number": 1183,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-11-02T13:23:53Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-24",
+  "number": 24,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-04-21T10:00:59Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-239",
+  "number": 239,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "bug"
+  ],
+  "maintainer_closed_at": "2026-05-12T16:22:05Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-498",
+  "number": 498,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-07-18T13:14:22Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-726",
+  "number": 726,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": "2026-09-14T17:56:51Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-1169",
+  "number": 1169,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": "2026-11-01T19:22:35Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-649",
+  "number": 649,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [
+   "enhancement"
+  ],
+  "maintainer_closed_at": "2026-08-26T14:27:28Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-120",
+  "number": 120,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-05-30T19:40:04Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-157",
+  "number": 157,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-05-30T19:40:04Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-230",
+  "number": 230,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-05-12T16:04:37Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-418",
+  "number": 418,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-08-02T17:02:52Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-318",
+  "number": 318,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-05-26T21:09:03Z"
+ },
+ {
+  "case_id": "gobifrost-bifrost-316",
+  "number": 316,
+  "maintainer_state": "CLOSED",
+  "maintainer_labels": [],
+  "maintainer_closed_at": "2026-05-26T20:50:49Z"
+ }
+]

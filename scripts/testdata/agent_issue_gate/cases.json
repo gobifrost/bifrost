@@ -1,0 +1,377 @@
+[
+ {
+  "case_id": "gobifrost-bifrost-1360",
+  "number": 1360,
+  "url": "https://github.com/gobifrost/bifrost/issues/1360",
+  "filed_at": "2026-11-12T23:33:58Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, static code-read repro, license provenance",
+  "draft": {
+   "number": 1360,
+   "title": "[bug]: Instance SDK tarball ships no LICENSE file",
+   "body": "## Summary\n\n`GET /api/sdk/download` serves an npm-installable `bifrost` tarball built by `build_sdk_tarball()` that contains no license file and no `license` field, so every App install/redeploy vendors an unlicensed artifact.\n\n## Steps to reproduce\n\n1. Read `api/src/services/sdk_package/__init__.py:214-255` (`build_sdk_tarball`): it adds only `package/package.json`, `package/dist/index.mjs`, `package/types/*.d.ts`.\n2. Confirm statically: `LICENSE` never appears in that module, and `package_json` has no `\"license\"` key.\n3. Root `LICENSE` exists (AGPL-3.0, FSF verbatim) but `.dockerignore:9` ignores `LICENSE` and neither `api/Dockerfile` nor `api/Dockerfile.dev` `COPY` it into the image, so the runtime builder cannot include it.\n\n## Expected behavior\n\nThe instance tarball reproduces licence + provenance the same way our source tree does: `package/LICENSE` (AGPL-3.0 verbatim) plus a `license: AGPL-3.0-only` field in `package/package.json`, alongside the existing version/fingerprint/contract stamps.\n\n## Actual behavior\n\nTarball entries are exactly: `package/package.json`, `package/dist/index.mjs`, `package/types/*.d.ts`. No `package/LICENSE`, no `license` field. Same-class gap exists in the CLI artifact builder (`api/shared/cli_artifact.py` only packs `.py/.toml`), left as a follow-up.\n\n## Environment\n\nBranch `t3/sdk-license-provenance` @ `eaa98d92d`. Validated by code read plus a small AST/content check (no Docker build needed).\n\n## Notes\n\n- Fix sketch: un-ignore root `LICENSE` in `.dockerignore`, `COPY LICENSE /app/LICENSE` in both API Dockerfiles, read it in `build_sdk_tarball` (prefer `/app/LICENSE`, fall back to repo-root for host/test runs), emit `package/LICENSE` + `license` field, cover with unit/shape tests.\n- `sdk_built_at` stays on the Application row at deploy time (tarball is a pure function of version+source, cached) — no change there.\n",
+   "kind": "bug",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1353",
+  "number": 1353,
+  "url": "https://github.com/gobifrost/bifrost/issues/1353",
+  "filed_at": "2026-11-12T16:03:11Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, synthetic failing-test repro, explicit non-claim",
+  "draft": {
+   "number": 1353,
+   "title": "[bug]: Generated SDK retries before Retry-After expires",
+   "body": "## Summary\nThe generated integration SDK caps a server's Retry-After delay to max_backoff, retrying before the requested recovery time. HTTP-date values fall back to exponential backoff rather than being honored.\n\n## Steps to reproduce\nAt a14568d63, execute the unchanged `_request_with_retry` method from `api/src/services/templates/sdk.py.j2` with a fake session: GET always returns status429 and `Retry-After: 300`; max_backoff=60, max_retries=3; replace time.sleep with a recording stub. No real upstream requests are necessary.\n\n## Expected behavior\nNever internally retry before a valid server retry floor. Preserve bounded caller latency: when that floor exceeds the configured wait budget, return the last response instead of retrying early. Parse HTTP-date values. Keep signatures/defaults compatible; do not add workflow replay or broaden write retry eligibility.\n\n## Actual behavior\nFour requests with waits `[60, 60, 60]`, despite Retry-After300. Dates fall back to ordinary backoff. This is a synthetic, source-verified defect, not proof of the cause of any particular operational failure; no upstream response-header receipt has been captured.\n\n## Environment\nRemote development checkout a14568d63; Python synthetic test; no network requests.\n\n## Acceptance / tests\n- Numeric Retry-After within budget is honored.\n- A floor above budget returns without early retry or excessive sleep.\n- HTTP-date, expired date, invalid, absent and zero values are deterministic.\n- Existing retry count and non-retryable status behavior remain covered.\n- Render a generated client and test its ordinary direct-call path (also used from workflow and agent tools), with no production mutations.\n",
+   "kind": "bug",
+   "author": "jackmusick"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1349",
+  "number": 1349,
+  "url": "https://github.com/gobifrost/bifrost/issues/1349",
+  "filed_at": "2026-11-12T14:12:17Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, live-service repro with control runs",
+  "draft": {
+   "number": 1349,
+   "title": "[bug]: Agent run with max_token_budget fails on Responses-API models with 400 'not supported by Responses API'",
+   "body": "# Issue draft — agent max_token_budget breaks Responses-transport models\n\nTitle: `[bug]: Agent run with max_token_budget fails on Responses-API models with 400 'not supported by Responses API'`\n\nLabels: `bug`\n\n## Summary\nSetting `max_token_budget` on an agent run makes the run fail before the first model request with HTTP 400 `This model is not supported by Responses API` (Azure OpenAI, `openai_compatible` provider, profile with `openai_transport='responses'`). The identical run without a token budget completes successfully.\n\n## Steps to reproduce\n1. Configure an AI provider connection (`openai_compatible`, Azure endpoint) and a model profile with `openai_transport='responses'` for a model the endpoint does not serve over Responses (e.g. `gpt-6-luna` on the Azure endpoint used in testing).\n2. Create an agent with `max_iterations=1`, no tools.\n3. Run it with `max_token_budget=1000` (any value triggers it).\n4. Observe `status=failed`, `iterations_used=0`, error `status_code: 400 ... This model is not supported by Responses API`.\n\nControl runs: same agent without `max_token_budget` completes (`Success`, tokens billed normally).\n\n## Expected behavior\nA token budget must never change which wire API serves the model. When server-side pre-request token counting is unavailable for the configured transport, the run should degrade to the existing local usage estimation (the documented `ObservedModel.count_tokens` contract: \"Use native counting when available, otherwise fail closed locally\") and proceed — or surface a clear configuration error naming the profile/transport, not a raw provider 400 with zero iterations.\n\n## Actual behavior\nThe budget path forces a server-side `responses.input_tokens.count` pre-request call (Pydantic AI `UsageLimits(count_tokens_before_request=True)` → `OpenAIResponsesModel.count_tokens` → HTTP). Azure rejects it with 400. `ObservedModel.count_tokens` only falls back to local estimation on `NotImplementedError`, so the provider error escapes and fails the run before any work happens.\n\n## Environment\n- Bifrost API (main), Pydantic AI 2.66.0 (`pydantic-ai-slim[openai]`).\n- Provider: Azure OpenAI-compatible endpoint; model `gpt-6-luna`; profile `openai_transport='responses'`.\n\n## Notes\n- Evidence: `ObservedModel.count_tokens` at `api/src/services/agent_runtime/observed_model.py:242` catches only `NotImplementedError`; installed Pydantic AI 2.66/2.63 `OpenImageResponsesModel.count_tokens` performs `responses.input_tokens.count(...)` over HTTP.\n- The repo already classifies exactly this failure shape in `openai_transport_detection._responses_are_unsupported` (400 + \"model not supported ...\" markers) for one-time transport probing — the per-request budget path does not consult it.\n- Suggested direction: catch the unsupported-transport API error in the budget counting path and fall back to local estimation, consistent with the existing contract; do not silently switch transports mid-run.\n",
+   "kind": "bug",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1243",
+  "number": 1243,
+  "url": "https://github.com/gobifrost/bifrost/issues/1243",
+  "filed_at": "2026-11-04T19:15:21Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, redacted incident + synthetic repro, no secrets",
+  "draft": {
+   "number": 1243,
+   "title": "[bug]: Windows CLI login credential exceeds Credential Manager blob limit",
+   "body": "﻿## Summary\n\nOn Windows, a successful device-code login fails when the CLI serializes the complete connection credential into a single Windows Credential Manager entry exceeding the native generic-credential blob limit. Authentication succeeds, persistence fails with `(1783, CredWrite, The stub received bad data.)`, and the old expired profile remains selected.\n\n## Observed evidence\n\n- Target-served CLI: `1.4.2-dev.1793766440`; SDK contract3.\n- Unmodified `bifrost.credentials.KeyringBackend.save` calls python-keyring's Windows backend with the complete serialized credential.\n- Reviewed metadata-only tracing observed write1 (preserve existing index) succeed at150 UTF16 bytes, then write2 (new connection profile) fail at3328 UTF16 bytes with native error1783.\n- Windows documents a maximum generic credential blob of2560 bytes: https://learn.microsoft.com/en-us/windows/win32/api/wincred/ns-wincred-credentialw\n- Official CLI session readback still resolves an expired token afterward.\n- No token values, JWT identity claims or credential-store contents were logged or attached. No backend, account, storage permissions or server contracts were changed.\n\n## Reproduction\n\nUse synthetic credential strings whose serialized connection record exceeds1280 UTF16 code units. Exercise the actual KeyringBackend and Windows write adapter through an in-memory WinCred fake enforcing the documented byte limit. A3328-byte record reproduces the oversize native write. A live device login with a sufficiently large issued record reaches the same native failure after approval; live authentication is not needed for regression tests.\n\n## Expected behavior\n\nOS-protected Windows persistence supports realistically sized access/refresh credentials, or refuses before any mutation with a safe actionable size/stage error. Never fall back silently to plaintext, lose existing profiles, expose token values, or report complete login before persistence/readback succeeds.\n\n## Fix acceptance\n\nPreserve the existing OS-protected backend and multi-instance/legacy profile compatibility. Cover oversized records, Unicode byte boundaries, interrupted/partial writes, profile/index ordering, concurrent saves where applicable, readback, cleanup and safe diagnostics. Metadata must identify failure stage without secret values. Add synthetic regression tests; do not require real credentials or native live-store mutations. No server-side auth/contract change is needed by this report. Prepare a draft PR only; no merge or deployment is requested.\r\n",
+   "kind": "bug",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1345",
+  "number": 1345,
+  "url": "https://github.com/gobifrost/bifrost/issues/1345",
+  "filed_at": "2026-11-12T14:07:20Z",
+  "kind_hint": "unknown",
+  "selection_note": "discord bug with repro snippet, kind inference",
+  "draft": {
+   "number": 1345,
+   "title": "🪲 Worker hangs when a workflow has a dict with None and str keys",
+   "body": "<!-- discord-idea:1570336281093734460 -->\n## Discord idea\n\nSource: https://discord.com/channels/1557131781751308350/1570336281093734460\n\nAuthor: scubes13 (Discord user ID: 439551857690673152)\n\n## Original message\n\n**Version:** self-hosted, image built from `bab4fdc`, Python 3.14 worker.\n\n**What happens:** A workflow has a local variable holding a dict whose keys mix `None` and `str` (e.g. `{None: 1, \"abc\": 2}`). The workflow itself finishes, but sending its result envelope fails in the remote launcher:\n\n```\nFile \"/app/src/worker/remote/launcher.py\", line 228, in send\n    for frame in fragment(envelope):\nFile \"/app/src/worker/remote/protocol.py\", line 242, in fragment\n    raw = json.dumps(asdict(envelope), default=str, separators=(\",\", \":\"), sort_keys=True).encode()\nTypeError: '<' not supported between instances of 'str' and 'NoneType'\nwhen serializing dict item 'ids'\nwhen serializing dict item 'variables'\nwhen serializing dict item 'result'\nwhen serializing dict item 'payload'\n```\n\nThe execution then stays **Running** forever. Later executions also hang until the worker container is restarted.\n\n**Repro:**\n\n```python\nfrom bifrost import workflow\n\n@workflow\nasync def wedge_repro() -> dict:\n    ids = {None: 1, \"abc\": 2}   # only lives in locals; not returned\n    return {\"ok\": True}\n```\n\nRun it once. The execution never completes, and subsequent runs hang.\n\n**Expected:**\n1. A serialization error in captured `variables` must not lose the result. Fall back to `repr` for that variable, or drop it with a warning.\n2. Any failure in `send()` should mark the execution **Failed** with the error, not leave it Running.\n3. One bad envelope must not block the launcher loop for other executions.\n\n**Notes:**\n- `sort_keys=True` is what raises. `default=str` doesn't help, because it only applies to values, not keys. Options: drop `sort_keys`, or normalise keys (`str(k)`) before dumping.\n- Workaround: avoid `None` keys in any local dict (filter them out before building the dict).",
+   "kind": "unknown",
+   "author": "jackmusick"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1335",
+  "number": 1335,
+  "url": "https://github.com/gobifrost/bifrost/issues/1335",
+  "filed_at": "2026-11-11T20:27:32Z",
+  "kind_hint": "unknown",
+  "selection_note": "discord bug, gutted body (see-linked-idea)",
+  "draft": {
+   "number": 1335,
+   "title": "🪲 Bug: forms with HTML / Markdown block can't be submitted via browser (422 \"Unknown form field\")",
+   "body": "<!-- discord-idea:1570055485493612565 -->\n## Discord idea\n\nSource: https://discord.com/channels/1557131781751308350/1570055485493612565\n\nAuthor: scubes13 (Discord user ID: 439551857690673152)\n\n## Original message\n\nSee the linked Discord idea for its description.",
+   "kind": "unknown",
+   "author": "jackmusick"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1329",
+  "number": 1329,
+  "url": "https://github.com/gobifrost/bifrost/issues/1329",
+  "filed_at": "2026-11-11T15:23:54Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, spike evidence + acceptance checklist",
+  "draft": {
+   "number": 1329,
+   "title": "[feature]: Cloudflare Workers frontend hosting (edge static assets + API proxy)",
+   "body": "## Summary\nHost the Bifrost web client on Cloudflare Workers: static assets served from the edge, API/websocket/auth traffic reverse-proxied to the canonical API origin (which stays on existing infrastructure — no authority, scheduling, DB, or execution changes).\n\n## Evidence (spike, all closed/verified)\n- Route classification unit-tested (`_public_form_frame_policy` 404s, SPA vs backend route split, origin never taken from request, HTML no-store).\n- E2E through a real edge deployment: login valid/invalid, static assets, health, module serving, HMAC frame-policy (real + fake IDs), all correct.\n- WebSocket: 2.5-min idle with zero drops, delivery instant post-connect; 30-min idle run clean. Edge adds ~50ms to connect (isolated via same-tunnel A/B: direct 113ms vs edge 165ms median); zero per-message cost.\n- Uploads: 1 MiB and 10 MiB pass intact (hash-verified); 50 MiB correctly refused by origin nginx (50m), 100 MiB correctly refused at the edge (Workers 100 MB body limit on Free/Pro).\n- API needs no changes: CORS is already `allow_origins=[\"*\"]`, and the SPA keeps calling relative `/api` URLs through the proxy.\n\n## Proposed change\nPromote the spike edge worker into a supported deployment recipe with docs:\n- Worker serving client assets, proxying backend routes to a configured `API_ORIGIN`.\n- Docs page: build client → deploy worker → set origin → DNS/TLS.\n- Tests: keep the routing unit tests; document the manual E2E checklist (login, websocket, form embed) until browser coverage exists.\n\n## Acceptance\n- [ ] Recipe deploys from a clean checkout with only documented steps.\n- [ ] Login, websocket notifications, and embedded forms verified through the edge deployment.\n- [ ] Documented limits: Workers Paid recommended (100k req/day free cap), 100 MB upload ceiling on Free/Pro, websocket reconnect on runtime updates.\n\n## Notes\n- No API, auth, scheduling, or execution semantics change. Frontend and API remain independently selectable (edge UI can point at any API origin).\n- Out of scope: Cloudflare execution backend (separate track), D1/Queues/DO.\n",
+   "kind": "feature",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1292",
+  "number": 1292,
+  "url": "https://github.com/gobifrost/bifrost/issues/1292",
+  "filed_at": "2026-11-09T02:06:35Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, problem/proposal/acceptance + design link",
+  "draft": {
+   "number": 1292,
+   "title": "[feature]: GitHub App authentication for repository sync",
+   "body": "## Problem\n\nBifrost's GitHub repository sync requires a stored personal access token. Operators need App-owned, repository-scoped credentials without copying keys or depending on a person's long-lived token.\n\n## Proposed Solution\n\nReplace Git authentication with an operator-owned GitHub App while preserving the current connection previews, conflict handling, pull/push and PlatformJob execution. Include manifest registration and OAuth-assisted installation/repository selection in the first delivery. Encrypt private keys and client secrets; use short-lived repository-scoped installation tokens for Git operations.\n\nThis replaces the Git-auth scope of closed PR #1274. Generic integration events, webhooks, workflow automation, repository creation, App transfer and fleet/broker changes are outside this proposal. Existing PAT connections keep working until explicitly migrated; App failures never fall back to personal credentials.\n\n## Acceptance Criteria\n\n- [ ] An administrator can create the deployment's App from a manifest, authorize/install it and connect an existing repository/branch without copying a PEM, client secret or installation ID.\n- [ ] Callbacks use expiring single-use state; installation/repository access is verified against GitHub and the connecting user's authority.\n- [ ] Interrupted, denied, pending and uncertain registration outcomes preserve the working connection and do not create duplicate Apps.\n- [ ] REST and Git paths resolve fresh installation credentials, coordinate refresh and invalidate changed/revoked authority without leaking secrets.\n- [ ] Focused backend, component and browser coverage proves setup, migration, expiry/revocation/isolation and existing Git behavior; normal review and merge gates pass.\n\n## Design\n\n`docs/plans/2026-11-08-github-app-git-auth.md` in the replacement source branch. The broad native integration architecture from #1274 is not reused.",
+   "kind": "feature",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1311",
+  "number": 1311,
+  "url": "https://github.com/gobifrost/bifrost/issues/1311",
+  "filed_at": "2026-11-10T14:24:02Z",
+  "kind_hint": "feature",
+  "selection_note": "feature, long; operator+constraint+outcome",
+  "draft": {
+   "number": 1311,
+   "title": "[feature]: Keyless inbound auth for CI via workload identity federation",
+   "body": "## Motivation\n\nCI jobs need to call the Bifrost API and CLI without a human present and without a stored password or refresh token. The CLI today has device-code login, password login (refused when MFA is required; documented for isolated dev stacks), and `BIFROST_ACCESS_TOKEN` plus `BIFROST_REFRESH_TOKEN`. Refresh tokens rotate. `EnvBackend` does not persist rotations; `save_refreshed_credentials` can update the current process environment, but the next job still holds the old secret. A stateless runner cannot keep that session alive. Other platforms solve this with workload identity federation: the job presents a short-lived OIDC token, and the target issues its own short-lived access token.\n\nThis is the opposite direction of #1167, which federates *outbound* from Bifrost to cloud APIs. This issue is *inbound*: GitHub Actions or Azure federates to Bifrost.\n\n## Current auth surface\n\n`api/src/routers/auth.py` issues human sessions via `POST /auth/login` (password), MFA setup and verification, `POST /auth/refresh` (rotating refresh tokens), and the RFC 8628-style device grant (`/auth/device/code`, `/auth/device/token`, `/auth/device/authorize`). Password login requires MFA when `BIFROST_MFA_ENABLED` is on (the default) and can be disabled under the SSO-only policy. There is no grant that accepts an external workload OIDC token.\n\nHuman SSO was hardened in #1263 and landed in #1265 and #1271: a maintained OIDC relying party with JWKS-backed `id_token` checks for `iss`, `aud`, `exp`, `iat`, and `nonce`. Reuse that library here. It is not a CI login path. Related but not a substitute: #149 (multi-instance CLI sessions), #472 (coordinated refresh), #1220 (unattended *run* identities), #567 (SSO-only human login). Searches of gobifrost/bifrost issues and PRs found no inbound federation, token-exchange, or GitHub Actions OIDC login proposal.\n\n## Proposed change\n\nAdd a token-exchange endpoint, RFC 8693 style or the platform's closest idiom: `POST /auth/token` with `grant_type=urn:ietf:params:oauth:grant-type:token-exchange`, `subject_token` as the OIDC JWT, and `subject_token_type=urn:ietf:params:oauth:token-type:id_token`.\n\n1. Discover and cache JWKS for a trusted issuer.\n2. Verify signature, `iss`, `aud`, `exp`, and `iat`. Reject anything else, with no fallback grant.\n3. Match `sub` plus issuer-specific claims against an admin trust mapping. GitHub Actions first: `repository`, `ref`, `job_workflow_ref`, and `environment` as configured. Entra federated credentials second: tenant, app id, and subject.\n4. Map a successful match to a *service principal* (a non-human identity with a role set), never to a human user and never by email.\n5. Return a short-lived access token for that principal. Do not return a refresh token. The job must exchange again when it expires.\n\nAdmin config is a small trust table: issuer, expected audience, claim matchers, mapped identity, token lifetime. Default audience should be the instance public URL or a dedicated value such as `bifrost:token-exchange`. Mappings are created and revoked by platform admins and are audited.\n\nCLI UX: `bifrost login --oidc`. In GitHub Actions it should detect `ACTIONS_ID_TOKEN_REQUEST_URL` and `ACTIONS_ID_TOKEN_REQUEST_TOKEN`, request a token for the instance audience, exchange it, and use the access token for the rest of the process. This grant needs an access-token-only session. Today's `EnvBackend.get()` requires both access and refresh tokens; that must change for this path only. A non-Actions environment can pass the subject token explicitly. After login, the same CLI and API clients work as they do today, limited to the principal's roles.\n\n## MFA and human policy\n\nMFA and SSO-only apply to human login only. This grant never issues tokens for a human user, never skips MFA for a person, and cannot be used to obtain a refresh token or to enroll MFA. Service principals cannot use password or device-code login.\n\n## Security\n\nTrust mappings must be exact. A `repository` or `environment` mismatch is a hard deny. Audience must be instance-specific so a token minted for another system cannot be replayed here. Returned access tokens are short-lived, scoped to the mapped role set, and not refreshable. Audit successes and failures with issuer, subject, repo, ref, environment, mapped identity, and result. Never log raw tokens. Failed exchanges should not leak whether a mapping exists, except in admin audit logs. Reuse the #1263 verification stack. Do not hand-roll JWT checks.\n\n## Alternatives considered\n\n- **Static API keys for the CLI.** Long-lived, painful to rotate, and a second credential type beside workflow endpoint keys.\n- **Password grant for a service user.** Conflicts with default MFA and with SSO-only. The CLI already refuses MFA on this path.\n- **Store a refresh token in CI or Key Vault.** Still a secret, and rotation breaks the next job unless something persists the new token.\n- **Persistent runner device-code login.** Requires durable disk and periodic human recovery. It is not stateless.\n\n## Acceptance criteria\n\n- [ ] A GitHub Actions job can run `bifrost login --oidc` and call the API with no stored Bifrost secret and no refresh token.\n- [ ] A mapping can be restricted to a repo, a ref, and an environment; a token that misses any required claim is rejected. Entra federated credentials use the same mapping model.\n- [ ] The issued access token acts only as the mapped service principal and expires without a refresh path.\n- [ ] A bad signature, wrong `iss`, wrong `aud`, or expired token is rejected, with a test for each. Password, device-code, and human SSO behavior are unchanged.\n- [ ] Docs cover GitHub Actions (`id-token: write`) and Entra federated-credential setup.\n\n## Verified against\n\n`gobifrost/bifrost` `main` `5b9916ac4319798152f3fad397bd502bb5f16671` (release `v2.0.0`): `api/src/routers/auth.py`, `api/bifrost/credentials.py` (`EnvBackend`, `save_refreshed_credentials`). Issue and PR search as of 2026-11-10: #1167, #1263 (closed; implemented by #1265 and #1271), #149, #472, #1220, #567. No inbound WIF issue or PR found. I did not re-read the full post-#1265 `oauth_sso.py` implementation, only the issue, the merged PRs, and the current auth router.\n",
+   "kind": "feature",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1340",
+  "number": 1340,
+  "url": "https://github.com/gobifrost/bifrost/issues/1340",
+  "filed_at": "2026-11-12T03:17:06Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC design discussion, open decisions",
+  "draft": {
+   "number": 1340,
+   "title": "[RFC] First-class provider selection and Cloudflare onboarding for worker capacity",
+   "body": "## Status RFC design discussion, no implementation yet. Related: #1338 (capacity status endpoint), #1339 (incarnation visibility). ## Problem Worker capacity provider selection is environment-only. The product cannot show which provider is active, let alone switch. Cloudflare setup is runbook-only. ## Decisions needed 1. Stored vs env config and the secret-storage story. 2. Validation boundary: live capabilities fetch at save vs async verification. 3. Onboarding depth: guided form vs push-button deploy vs validate-only. 4. Multi-provider future vs single-active. 5. Migration for env-configured deployments. ## Non-goals Fast Path over external, isolated builds outside Kubernetes, spending caps. ## Proposal sketch Stored provider record plus verify-and-save flow reusing validate_external_policy; Settings shows active provider with the #1338 bounds card.",
+   "kind": "unknown",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1374",
+  "number": 1374,
+  "url": "https://github.com/gobifrost/bifrost/issues/1374",
+  "filed_at": "2026-11-13T16:15:17Z",
+  "kind_hint": "other",
+  "selection_note": "support question miscast as idea",
+  "draft": {
+   "number": 1374,
+   "title": "\"Hide\" an agent",
+   "body": "<!-- discord-idea:1570834389682880563 -->\n## Discord idea\n\nSource: https://discord.com/channels/1557131781751308350/1570834389682880563\n\nAuthor: wil (Discord user ID: 269460692610842625)\n\n## Original message\n\nI built an app that is basically an interface to an agent, with the ability to make certain selections and enable/disable checkboxes that will build/add to the context of the agent.\n\nThe app calls the agent and if the user has no access to the agent, the app fails to generate a response.\n\nI don't want the end user to contact the agent directly. Is there anyway to keep access open, but hide the icon - or, should I be structuring the app differently?",
+   "kind": "other",
+   "author": "jackmusick"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1352",
+  "number": 1352,
+  "url": "https://github.com/gobifrost/bifrost/issues/1352",
+  "filed_at": "2026-11-12T16:01:45Z",
+  "kind_hint": "other",
+  "selection_note": "speculative interest-check idea",
+  "draft": {
+   "number": 1352,
+   "title": "Bifrost Org Integration Mapping Graph",
+   "body": "<!-- discord-idea:1570468579353038969 -->\n## Discord idea\n\nSource: https://discord.com/channels/1557131781751308350/1570468579353038969\n\nAuthor: thomas_bray (Discord user ID: 622569178242482237)\n\n## Original message\n\nAnybody else have an interest in a visual representation of how your existing Bifrost orgs map to your variety of integrations? It may be handy for finding weird outliers where you have a Bifrost org that's a dupe imported from a non-canonical downstream platform.",
+   "kind": "other",
+   "author": "jackmusick"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1183",
+  "number": 1183,
+  "url": "https://github.com/gobifrost/bifrost/issues/1183",
+  "filed_at": "2026-11-02T13:22:05Z",
+  "kind_hint": "bug",
+  "selection_note": "empty duplicate filed 13s after twin #1182",
+  "draft": {
+   "number": 1183,
+   "title": "[bug]: PUT /api/oauth/connections/{name} silently ignores token_url_defaults",
+   "body": "",
+   "kind": "bug",
+   "author": "jwood-raven"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-24",
+  "number": 24,
+  "url": "https://github.com/gobifrost/bifrost/issues/24",
+  "filed_at": "2026-04-21T08:32:00Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, client redirect repro + root cause + workaround",
+  "draft": {
+   "number": 24,
+   "title": "MCP OAuth flow broken: Login.tsx uses React Router navigate() for absolute redirect URLs",
+   "body": "## Summary\n\nThe MCP OAuth 2.1 authorization flow fails for all MCP clients (including Claude Code) because `Login.tsx` uses React Router's `navigate()` to handle the `return_to` parameter, which doesn't work with absolute URLs.\n\n## Steps to Reproduce\n\n1. Configure an MCP client (e.g. Claude Code) to connect to Bifrost's MCP endpoint\n2. MCP client initiates OAuth flow, hitting `/authorize` with `redirect_uri=http://localhost:<port>/callback`\n3. Backend correctly stores OAuth state in Redis and redirects to `/login?return_to=https://bifrost.example.com/mcp/callback?internal_state=XXX`\n4. User logs in successfully\n5. **Expected:** Browser redirects to `https://bifrost.example.com/mcp/callback?internal_state=XXX`, which then redirects back to `http://localhost:<port>/callback?code=...&state=...`\n6. **Actual:** Browser navigates to `https://bifrost.example.com/login/https:/bifrost.example.com/mcp/callback?internal_state=XXX` (broken path)\n\n## Root Cause\n\n`Login.tsx` line 73 extracts `return_to` into the `from` variable, and all login success paths call `navigate(from, { replace: true })`. React Router's `navigate()` interprets absolute URLs as relative paths, so `https://bifrost.example.com/mcp/callback?internal_state=XXX` gets appended to the current route instead of being treated as a full redirect.\n\nThe backend OAuth flow in `src/services/mcp_server/auth.py` is correctly designed - the bug is entirely in the client-side redirect handling.\n\n## Fix\n\nIn `Login.tsx`, check if `from` is an absolute URL and use `window.location.href` instead of React Router's `navigate()`:\n\n```tsx\nconst redirectToFrom = () => {\n    if (from.startsWith(\"http://\") || from.startsWith(\"https://\")) {\n        window.location.href = from;\n    } else {\n        navigate(from, { replace: true });\n    }\n};\n```\n\nThen replace all `navigate(from, { replace: true })` calls with `redirectToFrom()`.\n\n## Impact\n\n- All MCP OAuth 2.1 client connections are broken (Claude Code, any other MCP-compliant client)\n- Workaround: Use the device code flow (`/auth/device/code`) instead, which bypasses the login page redirect entirely",
+   "kind": "bug",
+   "author": "Fireworrks"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-239",
+  "number": 239,
+  "url": "https://github.com/gobifrost/bifrost/issues/239",
+  "filed_at": "2026-05-12T01:17:42Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, UI repro + server error log, 'potential regression'",
+  "draft": {
+   "number": 239,
+   "title": "[bug]: potential regression of max_tokens and max_completion_tokens",
+   "body": "### Summary\n\nUnable to save modern OpenAI models via the platform AI configuration page\n\n### Steps to reproduce\n\n1.) Goto Settings -> AI\n2.) Select OpenAI as a Provider\n3.) Select a modern OpenAI model (o1 or newer, I believe)\n\nThis did work at one point. But seems to have regressed.\n \n\n### Expected behavior\n\nModel saves successfully.\n\n### Actual behavior\n\nModel fails to save.\n\n### Environment\n\n0.9.0\n\n### Logs / screenshots\n\nConfiguration not saved — Model 'gpt-5.4' rejected a test completion: Error code: 400 - {'error': {'message': \"Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.\", 'type': 'invalid_request_error', 'param': 'max_tokens', 'code': 'unsupported_parameter'}}. For OpenAI project keys, enable this model under Project Settings → Model Permissions.",
+   "kind": "bug",
+   "author": "dtbrandon"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-498",
+  "number": 498,
+  "url": "https://github.com/gobifrost/bifrost/issues/498",
+  "filed_at": "2026-07-17T19:13:42Z",
+  "kind_hint": "bug",
+  "selection_note": "bug, API repro + traceback + root cause, fix offered",
+  "draft": {
+   "number": 498,
+   "title": "[bug]: Editing a knowledge document 500s — update path stores a nested vector and never embeds",
+   "body": "**Summary**\nUpdating a knowledge document (`PUT /api/knowledge-sources/{namespace}/documents/{id}`) fails with a 500; the edit is never saved and the document is left un-re-embedded.\n\n**Steps to reproduce**\n1. Configure an embedding provider (System Settings → AI Configuration).\n2. Create a knowledge document in a namespace (this succeeds).\n3. Edit that document — via the UI, or `PUT /api/knowledge-sources/{namespace}/documents/{id}` with a new `content`.\n\n**Expected behavior**\nThe document is re-embedded and saved (same as create), returning 200.\n\n**Actual behavior**\n500 Internal Server Error. The request rolls back, so the edit is lost. Server log:\n\n```\nsqlalchemy.exc.StatementError: (builtins.TypeError) float() argument must be a string or a real number, not 'list'\n  File \"src/routers/knowledge_sources.py\", line 500, in update_document\n  File \"src/models/orm/vector_type.py\", line 26, in <genexpr>\n[SQL: UPDATE knowledge_store SET content=$1, embedding=$2, updated_at=$3 WHERE knowledge_store.id = $4]\n```\n\n**Root cause**\nIn `update_document` (`api/src/routers/knowledge_sources.py:500`):\n\n```python\nembedding = await client.embed(data.content)   # embed() returns list[list[float]]\n...\ndoc.embedding = embedding                       # assigns the whole batch to one row\n```\n\n`BaseEmbeddingClient.embed()` takes a `list[str]` and returns a `list[list[float]]` (one vector per input). The result is assigned directly to a single row's `embedding` column, so the `Vector` bind processor calls `float()` on an inner list and raises. (The `create_document` path avoids this by going through `KnowledgeRepository.store_chunked`.) The update path also never chunks, so even without the crash it would collapse long content into a single row — diverging from create.\n\n**Environment**\n`main` @ 37bd1f71, dev stack (`./debug.sh`), embedding provider configured. Reproduced against the running API.\n\n---\n\n*(I have a fix ready with regression tests — happy to open a PR if you'd like.)*",
+   "kind": "bug",
+   "author": "pszatkowski"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-726",
+  "number": 726,
+  "url": "https://github.com/gobifrost/bifrost/issues/726",
+  "filed_at": "2026-09-11T14:25:28Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request: problem/proposal/acceptance",
+  "draft": {
+   "number": 726,
+   "title": "[feature]: Accept base64-encoded webhook HMAC signatures",
+   "body": "### Problem\n\nIncoming webhook HMAC verification only accepts hex-encoded signatures. Senders that base64-encode the same HMAC-SHA256 digest are rejected as invalid, even when the shared secret is correct. Base64 is a common convention across PSA/RMM and cloud event vendors.\n\nRelated: HaloPSA sends a space between the prefix and the digest (sha256= <sig>), which also fails verification because the prefix is stripped by length without trimming.\n\nThe result is that users with a correctly configured secret see signature failures they can’t diagnose or work around.\n\n### Proposed solution\n\nAccept either canonical encoding of the same HMAC-SHA256 digest — hex or base64 — and tolerate whitespace around the prefix and header value. Verification stays constant-time, and existing hex behaviour is unchanged.\n\n### Acceptance criteria\n\n- [ ] Base64 signatures verify successfully, with or without a configured prefix\n- [ ] HaloPSA’s sha256= <sig> form (space after the prefix) verifies successfully\n- [ ] Tampered or malformed signatures are still rejected\n- [ ] Existing hex signature behaviour is unchanged\n- [ ] The public SDK webhook helper behaves identically to the runtime verifier\n- [ ] Unit and endpoint-level test coverage for the new formats\n\n### Design doc link (optional)\n\n_No response_",
+   "kind": "feature",
+   "author": "pszatkowski"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-1169",
+  "number": 1169,
+  "url": "https://github.com/gobifrost/bifrost/issues/1169",
+  "filed_at": "2026-11-01T16:10:28Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request: edit-and-rerun, thin acceptance",
+  "draft": {
+   "number": 1169,
+   "title": "[feature]: Edit and Rerun workflow",
+   "body": "### Problem\n\nWhen testing a complicated workflow, it's a bit annoying to copy and paste all fields to rerun.\n\nJust a nice idea to make it simpler!\n\nAdding for tracking, and, I'll happily try to add this when I get a moment if it is considered useful.\n\n### Proposed solution\n\nUnder history, or in the full page execution history, next to the rerun button, it would be great to have a \"Edit and rerun\" button (or better wording!).\n\nInstead of just rerunning straight away, it should go back to the workflow, but, with all the inputs filled in of the previous run so that you can just make a few quick edits.\n\n### Acceptance criteria\n\nAbility to edit and rerun past workflows.\n\n### Design doc link (optional)\n\n_No response_",
+   "kind": "feature",
+   "author": "wilhil"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-649",
+  "number": 649,
+  "url": "https://github.com/gobifrost/bifrost/issues/649",
+  "filed_at": "2026-08-26T03:50:25Z",
+  "kind_hint": "feature",
+  "selection_note": "concrete request, large; clears bar even if declined",
+  "draft": {
+   "number": 649,
+   "title": "[feature]: Add Codex as a supported AI Provider with ChatGPT subcription authentication",
+   "body": "### Problem\n\n## Summary\n\nPlease add **Codex** as an officially supported Bifrost AI provider, including authentication through an existing ChatGPT subscription.\n\nOpenAI supports two Codex authentication methods:\n\n- **Sign in with ChatGPT** for subscription-backed access\n- **OpenAI API key** for usage-based API billing\n\nAPI key usage is billed separately and does not consume included ChatGPT subscription credits.\n\nReference: [OpenAI Codex authentication documentation](https://developers.openai.com/codex/auth)\n\n## Current behaviour\n\nOur Bifrost workflows successfully use `ai.complete()` through a globally configured Codex provider, but Codex is not represented correctly in the Bifrost UI.\n\nThe current AI settings page:\n\n- Only allows `openai` or `anthropic`\n- Calls `GET /api/admin/llm/config`\n- Reports `AI Chat Not Configured`\n- Rejects the active provider because the API schema only permits OpenAI or Anthropic\n\nThis creates a mismatch between the provider used by workflows and the configuration shown to administrators.\n\n\n\n### Proposed solution\n\nAdd `codex` as a supported provider across:\n\n- [ ] AI Provider Configuration UI\n- [ ] `GET /api/admin/llm/config`\n- [ ] Provider configuration create and update endpoints\n- [ ] `/api/sdk/ai/complete`\n- [ ] Workflow execution and usage reporting\n- [ ] Model selection\n- [ ] Provider health checks\n\n## Authentication modes\n\n### 1. Sign in with ChatGPT\n\nSupport the browser or device-code authentication flow provided by Codex.\n\nThis mode should use the customer’s eligible ChatGPT subscription instead of OpenAI API billing.\n\n### 2. Codex access token\n\nSupport Codex access tokens for trusted, unattended Bifrost installations where the ChatGPT workspace permits their use.\n\nThis would be suitable for private workflow runners and scheduled jobs.\n\n### 3. OpenAI API key\n\nRetain API-key authentication for customers who prefer usage-based OpenAI Platform billing.\n\nThe UI should clearly distinguish API billing from ChatGPT subscription access.\n\n## Functional requirements\n\n- [ ] Show Codex as a selectable provider\n- [ ] Clearly label subscription and API-billed authentication\n- [ ] Support browser authentication\n- [ ] Support device-code authentication for headless servers\n- [ ] Display the authenticated ChatGPT account or workspace\n- [ ] Never expose authentication credentials\n- [ ] List models available to the authenticated account\n- [ ] Allow selection of a default Codex model\n- [ ] Allow selection of the default reasoning effort\n- [ ] Support `ai.complete()` calls\n- [ ] Support system instructions\n- [ ] Support structured JSON and Pydantic responses\n- [ ] Support timeouts and token limits\n- [ ] Report the effective provider and model on workflow executions\n- [ ] Refresh credentials through the supported Codex mechanism\n- [ ] Allow administrators to disconnect or revoke the Codex session\n- [ ] Return clear errors for expired, revoked, or unauthorized sessions\n\n## Provider switching and billing safety\n\nBifrost must not silently switch from subscription authentication to:\n\n- OpenAI API-key billing\n- Another configured provider\n- A different model with separate billing\n\nIf Codex subscription authentication is unavailable, the workflow should fail with a clear error.\n\nAny provider or billing-mode change should require an explicit administrator action.\n\n## Security requirements\n\n- [ ] Encrypt access and refresh tokens at rest\n- [ ] Never expose credentials through browser code\n- [ ] Never include credentials in workflow inputs or outputs\n- [ ] Never write credentials to workflow or application logs\n- [ ] Do not require users to manually copy `auth.json`\n- [ ] Restrict provider configuration to authorized administrators\n- [ ] Record authentication and provider changes in the audit log\n- [ ] Support explicit session revocation\n\n### Acceptance criteria\n\n- [ ] The backend provider schema accepts `codex`\n- [ ] The Settings UI displays an active Codex configuration\n- [ ] An administrator can authenticate using a ChatGPT subscription\n- [ ] No OpenAI API key is required for subscription authentication\n- [ ] A test completion confirms the effective Codex model\n- [ ] Interactive workflows can call `ai.complete()`\n- [ ] Scheduled workflows can call `ai.complete()`\n- [ ] Structured Pydantic responses continue to work\n- [ ] Expired authentication returns a clear error\n- [ ] Authentication failure does not change providers or billing modes\n- [ ] Existing OpenAI and Anthropic configurations remain compatible\n\n### Design doc link (optional)\n\n_No response_",
+   "kind": "feature",
+   "author": "Fireworrks"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-120",
+  "number": 120,
+  "url": "https://github.com/gobifrost/bifrost/issues/120",
+  "filed_at": "2026-04-26T15:45:02Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC direction-request, open questions (inference)",
+  "draft": {
+   "number": 120,
+   "title": "RFC: scan findings lifecycle primitive for external security signals",
+   "body": "## RFC\n\nThis is a request for direction before treating the accompanying implementation as a normal feature PR.\n\nBifrost already has workflows, org-scoped storage, apps, and operator-facing execution history. One reusable capability that seems adjacent to that vision is a small platform primitive for recurring external observations: ingest results from an external scanner, track each run, deduplicate repeated observations, resolve observations that disappear in later runs, and let operators transition finding state.\n\nThe prototype branch uses Nuclei as the first concrete producer because its output is structured and repeatable. The intended platform question is broader than Nuclei:\n\n> Should Bifrost have a first-class scan/finding lifecycle API for external security or compliance signals, or should this remain workspace-specific code built only on tables/workflows?\n\n## Prototype shape\n\nThe draft implementation adds an admin-only FastAPI router under `/api/scans/*` that stores data in existing org-scoped table documents instead of introducing new database tables.\n\nIt includes:\n\n- scan run creation and history\n- Nuclei finding ingestion\n- severity validation\n- occurrence-key hashing\n- re-alert suppression for already open or acknowledged findings\n- resolve-on-absence behavior for scanned hosts\n- incomplete-run handling\n- findings filtering by state, severity, and template tag\n- bulk finding state transitions\n\n## Why this might fit upstream\n\n- It is a reusable lifecycle primitive for workflow-produced or externally produced findings, not an MSP-specific ticketing flow.\n- It gives Bifrost apps and workflows a consistent backend surface for recurring scan observations.\n- It avoids schema/migration overhead for the first slice by using the existing table/document store.\n- It leaves downstream policy decisions, PSA tickets, and reporting in workspace code.\n\n## Open questions\n\n- Should the API remain Nuclei-specific for an initial concrete slice, or be generalized first to `security_findings` / `scanner_findings`?\n- Should this stay as a thin router over existing tables, or move to explicit contracts/service modules before merge?\n- Is admin-only access the right initial permission model?\n- Is resolve-on-absence appropriate as default behavior, or should it be opt-in per scan run?\n- Does this belong in core Bifrost at all, or should it be demonstrated as a workspace integration first?\n\n## Related prototype\n\nI am opening a draft PR from `MTG-Thomas:codex/nuclei-scan-ingestion-lifecycle` as a concrete reference implementation, not as a request to merge without design feedback.",
+   "kind": "unknown",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-157",
+  "number": 157,
+  "url": "https://github.com/gobifrost/bifrost/issues/157",
+  "filed_at": "2026-04-30T10:43:11Z",
+  "kind_hint": "unknown",
+  "selection_note": "RFC detailed proposal + acceptance (inference)",
+  "draft": {
+   "number": 157,
+   "title": "RFC: Add durable webhook inbox for reliable event ingestion and replay",
+   "body": "## Summary\nIntroduce a durable webhook inbox layer for Bifrost's event system so inbound webhooks are persisted immediately, processed asynchronously by workers, and safely replayable/retriable when downstream validation, event routing, delivery creation, or workflow queueing fails.\nThe goal is not to replace the existing event/workflow queue architecture. It is to strengthen the edge of the system by treating external webhooks as unreliable ingress signals and converting them into durable internal records before doing meaningful application work.\n## Problem\nWebhooks are not a delivery guarantee. Even when delivered over HTTPS/TCP, they are usually only a best-effort HTTP request from a vendor. Vendor retry semantics vary, ordering is not guaranteed, and many providers provide limited or no replay capability.\nToday, Bifrost already has strong internal async execution primitives:\n- RabbitMQ for async workflow execution.\n- Worker consumers for queued workflow/agent work.\n- Event and EventDelivery records for normalized platform events and subscription delivery tracking.\n- Postgres as the durable system of record.\nHowever, the webhook request path appears to do meaningful work synchronously before returning to the vendor:\n\n```text\n/api/hooks/{source_id}\n  -> read raw body\n  -> route through webhook adapter\n  -> validate/parse/normalize request\n  -> create Event + EventDelivery rows\n  -> commit\n  -> queue workflow/agent deliveries\n  -> return 202\n\nThis is already better than direct webhook execution, but it still leaves reliability gaps:\n\n1. If adapter validation/parsing, DB writes, or delivery queueing has a transient failure, the vendor may or may not retry.\n2. If the event is recorded but delivery queueing fails, Bifrost needs an explicit recovery path for pending/stuck deliveries.\n3. Raw webhook payloads are not clearly modeled as first-class durable ingress records that can be replayed, audited, deduplicated, or reprocessed after code changes.\n4. The boundary between external webhook receipt and internal event processing is not as strong as it could be.\n\nProposal\n\nAdd a first-class WebhookInbox model and processing pipeline.\n\nThe webhook receiver should do as little as possible:\n\nWebhook received\n  -> minimal source lookup\n  -> optional cheap adapter pre-check if required\n  -> write WebhookInbox row with raw request envelope\n  -> commit\n  -> enqueue webhook-inbox processing message\n  -> return 202 Accepted\n\nA worker then processes the inbox record asynchronously:\n\nWebhookInbox worker\n  -> load raw inbox row\n  -> run adapter validation/parsing/normalization\n  -> create Event row\n  -> create EventDelivery rows\n  -> queue workflow/agent executions\n  -> mark inbox processed/rejected/failed\n\nA scheduled reconciler should recover stuck work:\n\nperiodic reconciler\n  -> find WebhookInbox rows stuck in received/processing\n  -> find EventDelivery rows stuck in pending/queued without execution\n  -> retry safely with idempotency controls\n\nProposed data model\n\nA rough webhook_inbox table:\n\nid uuid primary key\nsource_id uuid not null\nwebhook_source_id uuid nullable\nadapter_name text nullable\nmethod text not null\npath text not null\nheaders jsonb not null\nquery_params jsonb not null\nbody bytea or text/blob reference not null\nbody_sha256 text not null\nsource_ip text nullable\nreceived_at timestamptz not null\nstatus text not null -- received | processing | processed | rejected | failed | dead_lettered\nattempt_count integer not null default 0\nnext_attempt_at timestamptz nullable\nlocked_at timestamptz nullable\nlocked_by text nullable\nprovider_event_id text nullable\nidempotency_key text nullable\nnormalized_event_id uuid nullable\nlast_error text nullable\nlast_error_type text nullable\nprocessed_at timestamptz nullable\ncreated_at timestamptz not null\nupdated_at timestamptz not null\n\nNotes:\n\n* Store the raw request envelope before adapter processing.\n* For large bodies, consider storing body content in object storage and only keeping a reference + hash in Postgres.\n* Add unique constraints where reliable provider event IDs exist.\n* Preserve headers/body sufficiently for signature validation and replay.\n* Redact or avoid displaying sensitive headers in the UI, but keep enough raw material for validation and forensic replay.\n\nProposed queue\n\nAdd a new RabbitMQ queue, for example:\n\nwebhook-inbox-processing\n\nMessage shape:\n\n{\n  \"inbox_id\": \"uuid\",\n  \"source_id\": \"uuid\"\n}\n\nThe queue message should be treated as a dispatch hint. The canonical state should remain the WebhookInbox row.\n\nRetry and idempotency behavior\n\nThe worker should be idempotent:\n\n* If WebhookInbox.status = processed, skip.\n* If the inbox row already has normalized_event_id, do not create a duplicate Event.\n* If provider event IDs are available, deduplicate per source/provider event ID.\n* If no provider event ID exists, use a best-effort key such as (source_id, body_sha256, received time window) only where safe.\n* Delivery queueing should be retryable without duplicating executions.\n\nRetries should distinguish:\n\n* rejected: adapter says invalid signature, wrong challenge, unsupported event, etc. Usually terminal.\n* failed: transient or internal processing failure. Retryable.\n* dead_lettered: retry budget exceeded or manual intervention required.\n\nReconciliation\n\nAdd a scheduler job or platform maintenance task that periodically checks for:\n\n1. WebhookInbox rows in received that were never queued.\n2. WebhookInbox rows stuck in processing past a lease timeout.\n3. EventDelivery rows in pending that were never queued.\n4. EventDelivery rows in queued without corresponding execution/agent run after a threshold.\n\nThis reconciler is the real reliability win: RabbitMQ can dispatch, but Postgres should remain the source of truth for what was accepted and what still needs work.\n\nUI / operator experience\n\nEventually expose an operator-facing view for webhook ingress:\n\n* Raw received time.\n* Source / adapter.\n* Status.\n* Attempt count.\n* Linked Event.\n* Linked EventDelivery records.\n* Linked workflow execution or agent run.\n* Last error.\n* Manual actions:\n    * retry processing\n    * mark rejected\n    * dead-letter\n    * replay into event system\n\nThis would make webhook ingestion auditable in the same spirit as workflow executions.\n\nSecurity considerations\n\n* Webhook endpoints remain unauthenticated at the platform auth layer, but protected by UUID callback paths and adapter-specific validation.\n* Preserve raw body bytes exactly for HMAC validation.\n* Do not log full raw bodies or sensitive headers.\n* Redact common sensitive headers in UI/API responses.\n* Consider retention controls for raw webhook data.\n* Consider size limits and content-type handling before writing raw bodies.\n* Consider per-source rate limits to avoid inbox flooding.\n\nIncremental implementation plan\n\nPhase 1: Durable inbox foundation\n\n* Add WebhookInbox ORM model and migration.\n* Add repository methods for create, lease, status update, and retry queries.\n* Modify /api/hooks/{source_id} to persist raw request envelope and return 202 after enqueueing inbox processing.\n* Preserve existing validation/handshake behavior where providers require a synchronous response.\n\nPhase 2: Inbox worker\n\n* Add WebhookInboxConsumer on a new RabbitMQ queue.\n* Move adapter processing + Event/EventDelivery creation into the worker path.\n* Ensure queue message only references inbox_id.\n* Preserve existing EventProcessor behavior behind a service method so current logic is reused rather than forked.\n\nPhase 3: Reconciler and retry controls\n\n* Add scheduled reconciliation for stuck inbox rows and pending deliveries.\n* Add retry budget/backoff.\n* Add dead-letter state.\n* Add idempotency protections.\n\nPhase 4: UI/API observability\n\n* Add platform/admin endpoints for listing inbox records.\n* Link inbox records to Event, EventDelivery, Execution, and AgentRun records.\n* Add manual retry/dead-letter actions.\n\nCompatibility notes\n\nSome webhook providers require synchronous challenge/validation responses, especially during webhook registration. Those flows may need to remain adapter-handled in the request path.\n\nSuggested split:\n\nvalidation/challenge request\n  -> adapter returns ValidationResponse synchronously\ndelivery request\n  -> persist to WebhookInbox\n  -> process asynchronously\n\nAcceptance criteria\n\n* Inbound delivery webhooks are durably recorded before meaningful processing.\n* The webhook endpoint returns quickly after durable acceptance.\n* Raw payloads can be replayed/reprocessed by ID.\n* Worker processing is idempotent.\n* Delivery queueing can be retried without creating duplicate workflow executions.\n* Stuck inbox rows and pending deliveries are automatically reconciled.\n* Operators can determine: received payload -> normalized event -> delivery -> execution/result.\n* Existing webhook adapter behavior continues to work, including validation/challenge flows.\n\nWhy this matters\n\nThis would make Bifrost’s webhook/event system more durable and operationally trustworthy for MSP automation use cases.\n\nFor things like RMM events, network alerts, security alerts, customer-facing automations, and vendor integrations, the desired posture should be:\n\nWe accepted the webhook.\nWe can prove exactly what we received.\nWe can show how it was normalized.\nWe can show what matched.\nWe can show what ran.\nWe can retry or replay safely.\n\nIn short: webhooks should be an ingress mechanism, not the delivery guarantee. Bifrost should convert them into durable, replayable internal events.",
+   "kind": "unknown",
+   "author": "MTG-Thomas"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-230",
+  "number": 230,
+  "url": "https://github.com/gobifrost/bifrost/issues/230",
+  "filed_at": "2026-05-09T19:43:43Z",
+  "kind_hint": "other",
+  "selection_note": "support-style naming question",
+  "draft": {
+   "number": 230,
+   "title": "Relation to identically-named project maximhq/bifrost ?",
+   "body": "Hi, I stumbled onto Bifrost Integrations yesterday and it looks very interesting. Still trying to digest exactly what it is... seems to be something like n8n ?\n\nI was wondering if there's any relation to \n- [www.getmaxim.ai/bifrost](https://www.getmaxim.ai/bifrost)\n- https://github.com/maximhq/bifrost\n\nIs it just pure coincidence that these 2 projects are named identically?",
+   "kind": "other",
+   "author": "luckman212"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-418",
+  "number": 418,
+  "url": "https://github.com/gobifrost/bifrost/issues/418",
+  "filed_at": "2026-06-28T01:14:57Z",
+  "kind_hint": "unknown",
+  "selection_note": "mixed 3-ask contributor report (inference)",
+  "draft": {
+   "number": 418,
+   "title": "First-party workflows needing platform internals: DB-access proxy + two virtual-import edge cases",
+   "body": "## Context\n\nWe run a fleet of first-party workflows/data-providers inside Bifrost workers. Recently we hit three rough edges around the workflow execution model + the virtual import system. Filing together since they're related; happy to split or PR any of them.\n\n### 1. A sanctioned DB-access path for first-party workflows\n\nExecution children are (correctly) sandboxed from `BIFROST_DATABASE_URL`, with the intended model being \"workflow code uses the SDK over HTTP.\" That works well for most things, but for apps with genuinely **relational** data (FKs, joins, aggregations) the only options today are:\n\n- keep DB credentials in the child (defeats the sandbox), or\n- hand-build a REST layer (router + repo + contracts) per entity in the platform.\n\nIt would help to have a **blessed, scoped, authenticated in-child query/ORM proxy** — conceptually mirroring the S3 \"API endpoint fallback\" — so first-party/platform-owned workflows can do scoped relational access without holding platform credentials. Org-scoping/auth would resolve from the execution context as the SDK calls already do.\n\n### 2. `STDLIB_PREFIXES` allowlist in the virtual import finder is incomplete\n\n`VirtualModuleFinder` (in `services/execution/virtual_import.py`) intercepts any top-level module name **not** in `STDLIB_PREFIXES` and tries to load it from the module cache. `httpx` and `anyio` are listed, but their transitive deps (`httpcore`, `h11`, `h2`, `hpack`, `hyperframe`, `socksio`, `trio`, `outcome`, …) and other common third-party libs (`azure`, `numpy`, `pandas`, …) are not. When a workspace module imports one of those at module level, the finder intercepts the transitive dep, attempts a cache fetch, and can hit a partial-initialization circular import.\n\nMaintaining the denylist is fragile. Consider deriving \"is this a workspace module?\" from the workspace module **index** (return `None` immediately for anything not present) instead of an allowlist of everything-that-isn't-workspace.\n\n### 3. `find_spec` precedence — platform files can shadow workspace packages\n\n`VirtualModuleFinder` is appended to `sys.meta_path` (so it runs **after** the default `PathFinder`). If a platform module on the filesystem path shares a name with a workspace **package** (e.g. a platform `src/services/<name>.py` vs a workspace `<name>/` package), `import <name>` resolves to the platform file (a module, no `__path__`), and any `from .sub import …` inside the workspace package then fails with `'<name>' is not a package`.\n\nPrepending the finder for known workspace names (or otherwise giving workspace packages precedence) would prevent this collision class. It's subtle to debug because it only manifests in the real worker execution context, not in isolated imports.\n\nThanks for Bifrost — happy to contribute PRs for (2)/(3) if the direction sounds right.\n",
+   "kind": "unknown",
+   "author": "sdc53"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-318",
+  "number": 318,
+  "url": "https://github.com/gobifrost/bifrost/issues/318",
+  "filed_at": "2026-05-26T21:07:52Z",
+  "kind_hint": "bug",
+  "selection_note": "rich incident report, earlier twin #316 in window",
+  "draft": {
+   "number": 318,
+   "title": "process-pool #294: KeyError 'process-N' in Monitor loop + No worker slot timeout under load + DB-pool pressure",
+   "body": "## Symptom\n\nCherry-picked #294 onto our deploy (alongside #293). Within 90 seconds of the prod redeploy, a 30-concurrent burst test against the trivial `get_halo_base_url` data provider produced:\n\n- 11/30 `Success`\n- 14/30 HTTP 500 / connection errors from the client\n- 3/30 `Timeout` at the 15s workflow timeout\n- 2/30 `Failed` with `error_message=\"No worker slot available after timeout\"` (the new `_wait_for_slot` raising)\n\nWall time for all 30 calls: 35.8s. All durations clustered between 22.9s and 35.8s.\n\nWorker logs during the same window showed:\n\n```\nworker-1  | 2026-05-26 20:37:09,278 - workflow_execution - ERROR - Error processing message from workflow-executions: No worker slot available after timeout\nworker-1  | RuntimeError: No worker slot available after timeout\nworker-1  | 2026-05-26 20:37:09,317 - process_pool - ERROR - Result loop error for process-3: \nworker-1  | EOFError\nworker-1  | 2026-05-26 20:37:14,383 - process_pool - ERROR - Monitor loop error: 'process-4'\nworker-1  | Traceback (most recent call last):\nworker-1  | KeyError: 'process-4'\n```\n\nAPI logs showed `sqlalchemy.exc.TimeoutError: QueuePool limit of size 5 overflow 10 reached, connection timed out` for many of the burst requests — so the API was DB-pool-saturated at the same moment as the slot-wait was timing out in the worker.\n\nReverted #294 immediately after capture; everything quiet again, no further occurrences.\n\n## What I tried for a clean repro\n\nRan the same 30-burst (and 50-burst) against `get_halo_base_url` on a quiet dev stack with #294 applied. **Zero** KeyError / RuntimeError / slot-wait timeouts across multiple runs. The new path appears to work cleanly when the stack has spare capacity.\n\nFactors I think tipped prod over and not dev:\n\n1. **Concurrent baseline traffic** on prod (15-min cron syncs, 5-min scheduled publishers, periodic agent runs) was contending for worker slots before the burst hit\n2. **DB pool exhaustion** in the API layer (5 base + 10 overflow = 15 max) cascaded — API requests waiting on connections, workflow rows not getting persisted, retries piling up\n3. **Slower fork** on the production VM vs the dev box — `_wait_for_slot` timeout (looks like 30s default) more likely to actually elapse\n\n## Specific asks\n\n1. **The `KeyError: 'process-N'` in `Monitor loop error`** is a state-management bug regardless of the surrounding load shape — the monitor is referencing a process_id that's already been removed from `self.processes`. Would appreciate a look at where the iteration captures the ID vs where it's removed. (Sorry I don't have the full stack trace; the log got truncated and I didn't have tracing in place during the window.)\n2. **The `_wait_for_slot` default timeout** — what is it? On a system under unrelated DB pressure, a 30s slot-wait that bubbles up as a worker-side `RuntimeError` is harder to debug than e.g. a 60s wait or a configurable knob. Worth surfacing as a setting.\n3. **Test scenarios for #294 itself** — your verification mentioned 30✓/60✓ on a clean rig. Worth adding a \"burst test under simulated DB-pool pressure\" scenario to catch the cascade.\n\n## Environment\n\n- Deploy includes #293, with #294 cherry-picked and then reverted (the diff capturing the failure window is preserved in our git log)\n- Repro attempted on dev at the same base + locally-applied #294: did not trigger\n- `min_workers=0, max_workers=10` in both prod and dev\n",
+   "kind": "bug",
+   "author": "sdc53"
+  }
+ },
+ {
+  "case_id": "gobifrost-bifrost-316",
+  "number": 316,
+  "url": "https://github.com/gobifrost/bifrost/issues/316",
+  "filed_at": "2026-05-26T18:56:18Z",
+  "kind_hint": "bug",
+  "selection_note": "deep diagnostic report with traces + asks",
+  "draft": {
+   "number": 316,
+   "title": "ProcessCrashError reported for workflows that actually completed successfully (10s grace elapses; suspect template-side result_send.close)",
+   "body": "## Symptom\n\nAfter upgrading past #243, ~20-30% of workflow executions across multiple types (`halo_sync`, `gather_data`, `cs_generate_content_plan`, `cs_fact_check`, `cs_draft_social_from_url`, etc.) are recorded as `status=Failed` with `error_message=\"Worker process crashed unexpectedly\"`, **but the worker subprocess itself logs `success=True` for the same execution moments later.** The failure duration is **always 10–11 seconds**, matching `_CLEAN_EXIT_RESULT_GRACE = timedelta(seconds=10)` exactly.\n\nExample from prod (running v0.10 with #243, #289, #292):\n\n```\n2026-05-26 18:00:00,121 - Routed c944e15d... to process-2 (timeout=600s)\n[process-2] INFO - Worker process-2 processing execution: c944e15d...\n[process-2] INFO - Processing 3 captured logs for execution c944e15d-...\n[process-2] DEBUG - Cleared bifrost execution context for execution c944e15d-...\n2026-05-26 18:00:10,580 - WARNING - Execution failed: c944e15d... status=Failed error=ProcessCrashError\n[process-2] INFO - Worker process-2 completed execution: c944e15d... success=True\n```\n\n`halo_sync` (a 15-min cron) fails this way **every run** on our prod. Dev doesn't reproduce.\n\n## Empirically traced on dev under concurrent load\n\nAdded warning-level traces to `_RecvQueue.get`, `_check_process_health`, `_handle_result`, `_report_crash` on our dev stack, then fired 20 concurrent workflow invocations. Captured three distinct race patterns, **all handled correctly**:\n\n**Pattern A — `_result_loop` wins (most common):**\n```\n_RecvQueue.get_nowait() poll(0)=True\n_RecvQueue: recv -> dict\n_handle_result: ENTER for process-N exec=<id> was_reported=False\n```\n\n**Pattern B — `_check_process_health` sees dead process first, drains via blocking get (PR #243's recovery path):**\n```\n_check_process_health: dead process process-8 exec=b9194e00 reported=False exitcode=0\n_RecvQueue.get(block=True,timeout=0.25) poll=True\n_RecvQueue: recv -> dict\n_handle_result: ENTER for process-8 exec=b9194e00 was_reported=False\n```\n\n**Pattern C — Stale `_check_process_health` after `_result_loop` already drained:**\n```\n_result_loop drains for process-9\n_handle_result: ENTER for process-9 was_reported=False  # clears current_execution\n_check_process_health: dead process process-9 exec=noexec reported=True\n_RecvQueue.get(block=True,timeout=0.25) poll=True\n_RecvQueue: recv -> EOFError    # uncaught by `except Empty`\n```\n\nThe EOFError in Pattern C propagates out of `_check_process_health` uncaught (line 1173 only catches `Empty`). But `current_execution=None` at that point, so `_report_crash` doesn't fire — no false crash.\n\n## Where the prod failure must be coming from\n\nFor `_report_crash` to fire, we need:\n\n1. `_check_process_health` sees a dead process\n2. `handle.current_execution` is still set AND `handle.result_reported` is False\n3. `get(block=True, timeout=0.25)` returns **Empty** (not EOFError)\n4. Falls into the 10s grace branch; 10s elapses; Case A fires `_report_crash`\n\nThe 10s duration on prod **is** the grace window elapsing. For `get()` to return Empty (not EOFError) when the child has died:\n\n- Result must not be in the pipe at that moment, AND\n- The write fd must still be open in some process (preventing EOF detection)\n\nWhich points at the template-side cleanup in `template_process.py:241-250`:\n\n```python\ntry:\n    work_recv.close()\nexcept (OSError, BrokenPipeError) as e:\n    logger.debug(f\"parent: work_recv.close ignored: {e}\")\ntry:\n    result_send.close()                                       # <— this one\nexcept (OSError, BrokenPipeError) as e:\n    logger.debug(f\"parent: result_send.close ignored: {e}\")   # <— silently swallowed\n```\n\nIf `result_send.close()` fails on the template-side after fork, the template retains a fd to the write end. The child writes its result and exits, but the main process's read end never sees EOF because the write end is still open in the template. `poll()` returns False (no data, no EOF) → Empty → grace window → 10s later → false crash.\n\nThis would correlate with load (which prod has and dev doesn't) because high concurrent fork/close traffic is exactly when transient fd-handling glitches manifest.\n\n## Could also be different\n\nI haven't been able to reproduce on dev to confirm. Other candidates:\n\n- Under prod load, `_result_loop`'s 100ms polling cadence + sync `poll()` calls block the asyncio event loop long enough that one of the cycles misses, and the timing aligns with `_check_process_health` racing in. But `get(block=True, timeout=0.25)` should still drain the buffered data in that case unless EOF is broken (back to the close hypothesis).\n- The child's `result_send.send(result)` partially writes then the process exits, leaving the message in an inconsistent state in the kernel pipe buffer. Less likely for sub-pipe-buffer-size payloads — verified small results survive child exit in an out-of-band repro.\n\n## Asks\n\n1. Does the silent-close in `template_process.py:247` look like a real candidate, or is there an invariant that guarantees it can't fail there?\n2. Would you accept a PR that:\n   - Catches `EOFError` alongside `Empty` in `_check_process_health` (defensive, doesn't fix the close issue but cleans up the related noise in `_result_loop`'s `Result loop error for process-X: ... EOFError` logs we're seeing on prod)\n   - Logs at warning-level when `result_send.close()` fails in the template, so we can confirm whether the hypothesis holds\n   - Or directly fixes the underlying issue, depending on what you decide is the root cause?\n3. If you have a different hypothesis or know the prod-vs-dev factor, very happy to test something specific.\n\n## Repro details\n\n- SpireTech bifrost fork, deploy branch at `e5d98610` (upstream sync of 2026-05-23 includes #243, #259, #277, #285, #288, #289, #291, #292)\n- Workflows from our bifrost-workflows\n- ProcessPoolManager: `min_workers=0, max_workers=10`\n- Dev: doesn't repro under 20-concurrent-fire load (handled both A/B/C correctly via traces).\n- Prod: 4 distinct workflow types failing with this pattern in last 4 hours; `halo_sync` fails every 15-min cron.\n\nHappy to add more tracing, run specific repro scenarios, or test patches.\n",
+   "kind": "bug",
+   "author": "sdc53"
+  }
+ }
+]
