@@ -159,6 +159,12 @@ def test_build_sdk_tarball_shape_and_exports():
 
     with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
         names = tar.getnames()
+        assert "package/LICENSE" in names
+        license_file = tar.extractfile("package/LICENSE")
+        assert license_file is not None
+        license_text = license_file.read()
+        assert license_text == Path("/app/LICENSE").read_bytes()
+        assert b"GNU AFFERO GENERAL PUBLIC LICENSE" in license_text
         assert "package/package.json" in names
         assert "package/dist/index.mjs" in names
         assert "package/types/hosted-binding.d.ts" in names
@@ -167,6 +173,7 @@ def test_build_sdk_tarball_shape_and_exports():
         assert pkg_file is not None
         pkg = json.loads(pkg_file.read())
         assert pkg["name"] == "bifrost"
+        assert pkg["license"] == "AGPL-3.0-only"
         # git-describe "v1.2-3-gabc1234" has no patch component → coerced to 1.2.0.
         assert pkg["version"] == "1.2.0"
         # No runtime deps — the binding shares the App's React singleton.
@@ -208,3 +215,31 @@ def test_hosted_factory_is_static_and_content_addressed(tmp_path: Path):
     assert "??=" not in source
     assert artifact.fingerprint == hashlib.sha256(output.read_bytes()).hexdigest()
     assert artifact.factory_id in source
+
+
+def test_tarball_preserves_license_bytes(monkeypatch, tmp_path):
+    import src.services.sdk_package as sdkpkg
+
+    license_path = tmp_path / "LICENSE"
+    license_bytes = b"Canonical license bytes\r\nwith final newline\n"
+    license_path.write_bytes(license_bytes)
+    monkeypatch.setattr(sdkpkg, "_LICENSE_PATH", license_path)
+    monkeypatch.setattr(sdkpkg, "_built_bundle", lambda version: b"//binding")
+    monkeypatch.setattr(sdkpkg, "sdk_contract_version", lambda: 3)
+    monkeypatch.setattr(sdkpkg, "_build_types", lambda workdir: tmp_path)
+    sdkpkg.build_sdk_tarball.cache_clear()
+    try:
+        data = sdkpkg.build_sdk_tarball("v1.2.3")
+    finally:
+        sdkpkg.build_sdk_tarball.cache_clear()
+    with tarfile.open(fileobj=io.BytesIO(data), mode="r:gz") as tar:
+        license_file = tar.extractfile("package/LICENSE")
+        assert license_file is not None
+        assert license_file.read() == license_bytes
+        package_file = tar.extractfile("package/package.json")
+        assert package_file is not None
+        package = json.load(package_file)
+        assert package["license"] == "AGPL-3.0-only"
+        assert package["version"] == "1.2.3"
+        assert package["bifrost"]["contract"] == 3
+        assert package["bifrost"]["fingerprint"] == sdkpkg.sdk_fingerprint("v1.2.3")
