@@ -83,7 +83,9 @@ async def record_external_reconcile_state(
 
 def _reconcile_error_message(exc: BaseException) -> str:
     if isinstance(exc, CapacityProtocolError):
-        return "Capacity provider response is invalid"
+        # Usually the policy-vs-capabilities mismatch, whose detail names the
+        # offending bound. It carries no secrets: both sides are operator config.
+        return str(exc)[:200] or "Capacity provider rejected the configuration"
     if isinstance(exc, httpx.HTTPError):
         return "Capacity provider is unreachable"
     return f"{type(exc).__name__}: {str(exc)[:200]}"
