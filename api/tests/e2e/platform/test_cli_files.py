@@ -262,3 +262,68 @@ def test_files_search_finds_written_content(engine_creds) -> None:
         assert any(m["file_path"].endswith(leaf) for m in body["matches"])
     finally:
         _run_bifrost(["files", "delete", path])
+
+
+@pytest.mark.e2e
+@pytest.mark.asyncio
+async def test_removed_workflow_refuses_guarded_write_until_explicit_deactivation(
+    engine_creds, e2e_client, platform_admin, db_session,
+):
+    """The shipped CLI must surface a real storage refusal in both output modes."""
+    from src.models.orm.workflows import Workflow
+
+    path = f"e2e/{uuid.uuid4().hex}.py"
+    kept_id, removed_id = uuid.uuid4(), uuid.uuid4()
+    kept = b"from bifrost import workflow\n\n@workflow\nasync def kept():\n    return 'kept'\n"
+    original = kept + b"\n@workflow\nasync def removed():\n    return 'removed'\n"
+    headers = platform_admin.headers
+    try:
+        initial = e2e_client.post("/api/files/write", headers=headers, json={
+            "path": path, "content": original.decode(), "location": "workspace",
+        })
+        assert initial.status_code == 204, initial.text
+        for workflow_id, function in ((kept_id, "kept"), (removed_id, "removed")):
+            db_session.add(Workflow(
+                id=workflow_id, name=f"{function}_{workflow_id.hex}",
+                function_name=function, path=path,
+            ))
+        await db_session.commit()
+        stat = _run_bifrost(["files", "stat", path, "--json"])
+        assert stat.returncode == 0, stat.stderr
+        version = json.loads(stat.stdout)["version"]
+        for output_flags in ([], ["--json"]):
+            refused = _run_bifrost([
+                "files", "write", path, "--content", kept.decode(),
+                "--expected-version", version, *output_flags,
+            ])
+            assert refused.returncode != 0
+            assert str(removed_id) in refused.stderr
+            assert "explicitly deactivate" in refused.stderr
+            if output_flags:
+                detail = json.loads(refused.stderr)["body"]["detail"]
+                assert detail["reason"] == "workflows_would_deactivate"
+                assert [item["id"] for item in detail["pending_deactivations"]] == [str(removed_id)]
+        read = _run_bifrost(["files", "read", path])
+        assert read.returncode == 0, read.stderr
+        assert read.stdout == original.decode()
+        after = _run_bifrost(["files", "stat", path, "--json"])
+        assert after.returncode == 0, after.stderr
+        assert json.loads(after.stdout)["version"] == version
+        deactivated = e2e_client.post(f"/api/workflows/{removed_id}/deactivate", headers=headers)
+        assert deactivated.status_code == 200, deactivated.text
+        written = _run_bifrost([
+            "files", "write", path, "--content", kept.decode(), "--expected-version", version,
+        ])
+        assert written.returncode == 0, written.stderr
+        assert _run_bifrost(["files", "read", path]).stdout == kept.decode()
+        db_session.expire_all()
+        assert (await db_session.get(Workflow, kept_id)).is_active is True
+        assert (await db_session.get(Workflow, removed_id)).is_active is False
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(Workflow).where(Workflow.id.in_([kept_id, removed_id])))
+        await db_session.commit()
+        cleanup = e2e_client.post("/api/files/delete", headers=headers, json={
+            "path": path, "location": "workspace",
+        })
+        assert cleanup.status_code == 204, cleanup.text

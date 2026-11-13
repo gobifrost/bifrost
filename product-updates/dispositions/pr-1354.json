@@ -1,0 +1,14 @@
+{
+  "key": "pr:1354",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Newly generated integration SDKs honor Retry-After delays without retrying early or exceeding the configured wait limit. Regenerate an existing SDK to receive the fix.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1354",
+      "Native Jack web message 60abd0db-39e7-4443-abbd-a6ed7459db74 on 2026-11-12: go for it, approving the exact PR and Product Update text displayed in the existing issue #1353 owner. Native message 7d0793d7-9124-4c4d-8dca-b233cfe38a82 authorizes the scoped fix and protected merge."
+    ]
+  }
+}

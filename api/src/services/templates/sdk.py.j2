@@ -8,8 +8,11 @@ Auth Type: {{ auth_type }}
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
+from datetime import timezone
+from email.utils import parsedate_to_datetime
 from typing import Any, Dict, List, Optional
 
 import requests
@@ -135,24 +138,27 @@ class _{{ class_name }}Client:
             if attempt >= self.max_retries:
                 break
 
-            # Calculate wait time
+            wait = min(self.base_backoff * (2 ** attempt), self.max_backoff)
             if response.status_code == 429:
-                # Respect Retry-After header if present
                 retry_after = response.headers.get("Retry-After")
-                if retry_after:
+                if retry_after is not None:
                     try:
-                        wait = float(retry_after)
+                        server_wait = float(retry_after)
                     except ValueError:
-                        # Retry-After can be a date string, fall back to backoff
-                        wait = self.base_backoff * (2 ** attempt)
-                else:
-                    wait = self.base_backoff * (2 ** attempt)
-            else:
-                # Exponential backoff for 5xx errors
-                wait = self.base_backoff * (2 ** attempt)
-
-            # Cap the wait time
-            wait = min(wait, self.max_backoff)
+                        try:
+                            retry_at = parsedate_to_datetime(retry_after)
+                            if retry_at.tzinfo is None:
+                                retry_at = retry_at.replace(tzinfo=timezone.utc)
+                            server_wait = retry_at.timestamp() - time.time()
+                        except (ValueError, TypeError, OverflowError):
+                            server_wait = None
+                    if server_wait is not None and math.isfinite(server_wait):
+                        server_wait = max(0.0, server_wait)
+                        # Keep the configured wait bound without violating the
+                        # server's retry floor. Let the caller handle exhaustion.
+                        if server_wait > self.max_backoff:
+                            return response
+                        wait = server_wait
             time.sleep(wait)
 
         return last_response

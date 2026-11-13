@@ -161,6 +161,7 @@ RUN PYTHONPATH=/tmp/cli-build python /tmp/cli-build/build_cli_artifact.py \
 COPY api/entrypoint.sh /entrypoint.sh
 COPY api/scripts/api-allocator.sh /usr/local/bin/api-allocator.sh
 COPY api/scripts/uvicorn-shim.sh /usr/local/bin/uvicorn
+COPY LICENSE /app/LICENSE
 COPY assets/ /app/assets/
 RUN chmod -R a+rX /app/assets
 RUN chmod 755 /entrypoint.sh /usr/local/bin/api-allocator.sh /usr/local/bin/uvicorn

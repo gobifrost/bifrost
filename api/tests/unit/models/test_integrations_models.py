@@ -81,6 +81,9 @@ class TestIntegrationCreate:
         errors = exc_info.value.errors()
         assert any(e["type"] == "missing" and e["loc"] == ("name",) for e in errors)
 
+    def test_integration_create_accepts_setup_notes(self):
+        assert IntegrationCreate(name="Acme", notes="## Connect").notes == "## Connect"
+
 class TestIntegrationUpdate:
     """Tests for IntegrationUpdate model."""
 
@@ -90,6 +93,10 @@ class TestIntegrationUpdate:
             IntegrationUpdate(name="")
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("name",) for e in errors)
+
+    def test_integration_update_distinguishes_omitted_notes_from_clear(self):
+        assert "notes" not in IntegrationUpdate().model_fields_set
+        assert IntegrationUpdate(notes=None).model_fields_set == {"notes"}
 
 
 class TestIntegrationMappingCreate:
@@ -154,3 +161,15 @@ class TestIntegrationMappingUpdate:
         update = IntegrationMappingUpdate(entity_id="")
         assert update.entity_id == ""
 
+
+
+@pytest.mark.parametrize("options, labels", [(["eu", "eu"], {"eu": "Europe"}), ([""], {"": "Europe"}), (["eu"], {"us": "USA"}), (["eu"], {"eu": ""})])
+def test_choice_labels_reject_ambiguous_or_invalid_values(options, labels):
+    with pytest.raises(ValidationError):
+        ConfigSchemaItem(key="region", type="string", options=options, option_labels=labels)
+
+
+def test_choice_labels_preserve_scalar_values():
+    schema = ConfigSchemaItem(key="region", type="string", options=["eu"], option_labels={"eu": "Europe"})
+    assert schema.model_dump()["options"] == ["eu"]
+    assert schema.model_dump()["option_labels"] == {"eu": "Europe"}

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1363",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "SDK distribution license packaging repair only; no runtime behavior, customer upgrade action or announcement value.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1363",
+      "https://github.com/gobifrost/bifrost/issues/1360",
+      "Narrow internal-fix continuation authorized by Jack in the existing issue owner; reported and diagnosed by MTG-Thomas. Canonical license text is included unchanged."
+    ]
+  }
+}

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1337",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine form submission bug fix; no new capability or customer action requiring an in-app announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1337",
+      "https://github.com/gobifrost/bifrost/issues/1335",
+      "Reviewed as a routine bug fix under Jack's standing customer-facing selection policy; shared renderer correction preserves the API and authorization boundaries."
+    ]
+  }
+}

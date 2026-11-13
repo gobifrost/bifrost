@@ -1,11 +1,15 @@
 """OpenCode Go gateway identity and required request headers.
 
-OpenCode Go (https://opencode.ai/docs/go) is an OpenAI-compatible gateway
-that serves its catalog across three wire surfaces:
+OpenCode Go (https://opencode.ai/docs/console/go) is an OpenAI-compatible
+gateway that serves its catalog across three wire surfaces:
 
-- ``/chat/completions`` for most coding models,
-- ``/responses`` for Grok, GPT Luna, and Muse Spark models,
-- ``/messages`` (Anthropic Messages) for MiniMax and Qwen models.
+- ``/inference/go/openai/v1/chat/completions`` for most coding models,
+- ``/inference/go/openai/v1/responses`` for Grok, GPT Luna, and Muse Spark,
+- ``/inference/go/anthropic/v1/messages`` (Anthropic Messages) for MiniMax
+  and Qwen models.
+
+It also publishes a ``/google/v1beta`` surface. Older deployments used
+``/zen/go``; both paths are recognized so stored connections keep working.
 
 Its docs also ask every client to identify itself with a client user agent and
 to send a stable session id in ``x-opencode-session`` for each conversation so
@@ -20,8 +24,11 @@ from urllib.parse import urlparse, urlunparse
 
 from shared.version import get_version
 
-OPENCODE_GO_DEFAULT_ENDPOINT = "https://opencode.ai/zen/go/v1"
+OPENCODE_GO_DEFAULT_ENDPOINT = "https://opencode.ai/inference/go/openai/v1"
 OPENCODE_GO_SESSION_HEADER = "x-opencode-session"
+#: Path prefixes that identify an OpenCode Go gateway. ``/zen/go`` is the
+#: previous layout; connections created then keep their stored endpoint.
+OPENCODE_GO_ENDPOINT_PREFIXES = ("/inference/go", "/zen/go")
 
 #: Model-id prefixes served through the OpenAI Responses API.
 OPENCODE_GO_RESPONSES_MODEL_PREFIXES = (
@@ -45,7 +52,7 @@ def is_opencode_go_endpoint(endpoint: str | None) -> bool:
     hostname = parsed.hostname or ""
     if hostname != "opencode.ai" and not hostname.endswith(".opencode.ai"):
         return False
-    return parsed.path.rstrip("/").startswith("/zen/go")
+    return parsed.path.rstrip("/").startswith(OPENCODE_GO_ENDPOINT_PREFIXES)
 
 
 def opencode_go_wire_api(model: str) -> OpenCodeGoWireApi:
@@ -78,15 +85,22 @@ def opencode_go_known_wire_api(model: str) -> OpenCodeGoWireApi | None:
 def opencode_go_anthropic_endpoint(endpoint: str | None) -> str | None:
     """Return the Anthropic SDK base URL for the OpenCode Go Messages surface.
 
-    The Anthropic SDK concatenates its ``/v1/messages`` path onto the base
-    URL path, so the Go ``/v1`` suffix is dropped to reach
-    ``https://opencode.ai/zen/go/v1/messages`` instead of a doubled ``/v1``.
+    Current deployments publish one base per wire API and the Anthropic SDK
+    concatenates its ``/v1/messages`` path onto the base, so the OpenAI base
+    (``.../inference/go/openai/v1``) maps to ``.../inference/go/anthropic``.
+
+    Legacy ``/zen/go/v1`` deployments drop the ``/v1`` suffix instead, which
+    reaches the same ``/v1/messages`` path.
     """
 
     if not endpoint:
         return endpoint
     parsed = urlparse(endpoint)
     path = parsed.path.rstrip("/")
+    marker = "/inference/go/"
+    if marker in f"{path}/":
+        prefix = path.split(marker, 1)[0]
+        return urlunparse(parsed._replace(path=f"{prefix}{marker}anthropic"))
     if path.endswith("/v1"):
         path = path[: -len("/v1")]
     return urlunparse(parsed._replace(path=path))

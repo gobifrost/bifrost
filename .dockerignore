@@ -6,7 +6,6 @@
 # Documentation
 *.md
 docs/
-LICENSE
 
 # CI/CD
 .github/

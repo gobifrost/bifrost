@@ -42,7 +42,7 @@ async def test_openai_catalog_forwards_opencode_go_identity_headers():
     with patch("openai.AsyncOpenAI", return_value=client):
         result = await ProviderCatalogService().list_openai(
             "sk-test",
-            "https://opencode.ai/zen/go/v1",
+            "https://opencode.ai/inference/go/openai/v1",
             extra_headers=headers,
         )
 

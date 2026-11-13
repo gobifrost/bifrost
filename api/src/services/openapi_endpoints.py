@@ -236,7 +236,7 @@ def register_workflow_endpoint(app: FastAPI, workflow: Workflow) -> None:
     ) -> EndpointExecuteResponse:
         # Delegate to the main execute_endpoint function
         return await execute_endpoint(
-            workflow_name=workflow_name,
+            workflow_id=str(workflow.id),
             request=request,
             x_bifrost_key=x_bifrost_key,
         )

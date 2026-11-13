@@ -60,3 +60,25 @@ it("does not submit whitespace as JSON", async () => {
 	expect(onSave).not.toHaveBeenCalled();
 	expect(screen.getByRole("alert")).toHaveTextContent("Enter valid JSON.");
 });
+
+it("offers the schema choices while editing an override", async () => {
+	const onChange = vi.fn();
+	const { user } = renderWithProviders(
+		<OverrideValueEditor
+			name="region"
+			type="string"
+			options={["us", "eu"]}
+			value="us"
+			pending={false}
+			error={null}
+			onChange={onChange}
+			onSave={vi.fn()}
+			onCancel={vi.fn()}
+		/>,
+	);
+	await user.click(
+		screen.getByRole("combobox", { name: "Value for region" }),
+	);
+	await user.click(screen.getByRole("option", { name: "eu" }));
+	expect(onChange).toHaveBeenLastCalledWith("eu");
+});

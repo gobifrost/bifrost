@@ -476,3 +476,25 @@ async def test_full_export_overlays_live_payload_on_stored_source(
     content = decode_secrets_blob(blob, password="pw")
     assert content.config_values == {"API_KEY": "secret-value"}
     assert content.table_data == {"things": [{"title": "row"}]}
+
+
+def test_export_round_trips_integration_static_choices() -> None:
+    bundle = _bundle()
+    bundle.connection_schemas = [{
+        "integration_name": "Region Demo",
+        "template": {
+            "name": "Region Demo",
+            "config_schema": [{
+                "key": "region", "type": "string", "required": True,
+                "options": ["us", "eu", "apac"],
+                "option_labels": {"us": "United States", "eu": "Europe"},
+            }],
+            "oauth": None,
+        },
+        "position": 0,
+    }]
+    result = preview_zip(build_workspace_zip(bundle))
+    assert result.connection_schemas[0]["template"]["config_schema"][0]["option_labels"]["eu"] == "Europe"
+    assert result.connection_schemas[0]["template"]["config_schema"][0]["options"] == [
+        "us", "eu", "apac",
+    ]

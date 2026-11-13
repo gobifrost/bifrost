@@ -25,6 +25,7 @@ class _Schema:
     required = True
     description = None
     options = None
+    option_labels = None
     position = 0
 
 
@@ -63,3 +64,18 @@ def test_template_no_oauth_when_provider_absent():
     t = build_integration_template(_NoOauth())
     assert t["oauth"] is None
     assert t["name"] == "ApiKeyInteg"
+
+
+def test_template_carries_static_choices_without_connection_credentials():
+    class _Choices(_Schema):
+        key = "region"
+        options = ["us", "eu", "apac"]
+        option_labels = {"us": "United States", "eu": "Europe"}
+
+    class _WithChoices(_Integration):
+        config_schema = [_Choices()]
+
+    template = build_integration_template(_WithChoices())
+    assert template["config_schema"][0]["options"] == ["us", "eu", "apac"]
+    assert template["config_schema"][0]["option_labels"] == {"us": "United States", "eu": "Europe"}
+    assert "client_id" not in template["oauth"]

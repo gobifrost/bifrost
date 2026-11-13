@@ -735,3 +735,79 @@ async def test_memory_pressure_can_stop_an_agent_child():
     launcher.terminate.assert_awaited_once_with(
         "agent", "MemoryLimitExceeded", "Runner memory pressure", grace=0,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid", ["key", "string", "cycle"])
+async def test_unencodable_result_becomes_replayable_failure_and_next_result_completes(invalid):
+    # An object with a failing string conversion covers exceptions beyond JSON's
+    # usual TypeError; neither the object nor its error text may enter replay.
+    class BadString:
+        def __str__(self):
+            raise RuntimeError("sensitive exception text")
+
+    cycle = []
+    cycle.append(cycle)
+    bad_result = {"output": {"key": {(1, 2): "invalid key"}, "string": BadString(), "cycle": cycle}[invalid]}
+    socket = Mock(send=AsyncMock())
+    launcher = _launcher(socket)
+    for route, result in [("bad", bad_result), ("good", {"success": True, "result": {"ok": True}})]:
+        child = Child(route, route, 123, Mock(), Mock(), time.monotonic(), 0)
+        child.result.fileno.return_value = 456
+        launcher.children[route] = child
+        with patch.object(asyncio.get_running_loop(), "remove_reader"):
+            await launcher.finish(child, result)
+
+    sent = [ControlEnvelope.from_json(call.args[0]).payload for call in socket.send.await_args_list]
+    assert len(sent) == 2
+    assert sent[0]["result"]["status"] == "Failed"
+    assert sent[0]["result"]["error_type"] == "SerializationError"
+    assert sent[1]["result"]["success"] is True
+    assert not launcher.children
+    assert len(launcher.pending_terminal) == len(launcher.pending_terminal_inventory) == 2
+    assert "sensitive" not in json.dumps(sent)
+
+    new_socket = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
+        "event": "welcome", "session_generation": 2,
+    })))
+    await launcher.reconnect(new_socket, {})
+    for event in list(launcher.pending_terminal.values()):
+        await launcher.send(event)
+    replayed = [ControlEnvelope.from_json(call.args[0]).payload for call in new_socket.send.await_args_list[1:]]
+    assert replayed == sent
+    acks = [ControlEnvelope(session_generation=2, sequence=i, kind="ack",
+                            payload={"event_id": event["_event_id"]}).to_json()
+            for i, event in enumerate(replayed, start=1)]
+    retired = ControlEnvelope(session_generation=2, sequence=3, kind="command",
+                              payload={"id": "retire", "action": "retired", "payload": {}}).to_json()
+    frames = iter([*acks, retired])
+
+    async def receive() -> str:
+        frame = next(frames, None)
+        if frame is not None:
+            return frame
+        # A real socket stays open while the scheduled retirement runs.
+        return await asyncio.Future[str]()
+
+    new_socket.recv.side_effect = receive
+    await _receive_control_commands(launcher, new_socket, asyncio.Event())
+    assert not launcher.pending_terminal
+    assert not launcher.pending_terminal_inventory
+
+
+@pytest.mark.asyncio
+async def test_transport_failure_retains_original_result_for_replay() -> None:
+    socket = Mock(send=AsyncMock(side_effect=OSError("connection lost")))
+    launcher = _launcher(socket)
+    child = Child("route", "execution", 123, Mock(), Mock(), time.monotonic(), 0)
+    child.result.fileno.return_value = 456
+    launcher.children[child.route_id] = child
+    result = {"success": True, "result": {"ok": True}}
+    with patch.object(asyncio.get_running_loop(), "remove_reader"):
+        with pytest.raises(ConnectionError):
+            await launcher.finish(child, result)
+    pending = next(iter(launcher.pending_terminal.values()))
+    assert pending["result"]["success"] is True
+    socket.send.side_effect = None
+    await launcher.send(pending)
+    assert [ControlEnvelope.from_json(call.args[0]).payload for call in socket.send.await_args_list][-1] == pending

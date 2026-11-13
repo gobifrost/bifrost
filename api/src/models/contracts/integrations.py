@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 if TYPE_CHECKING:
     pass
@@ -55,6 +55,24 @@ class ConfigSchemaItem(BaseModel):
         default=None,
         description="List of valid string options for dropdown UI",
     )
+    option_labels: dict[str, str] | None = Field(
+        default=None, description="Display labels keyed by stored option value"
+    )
+
+    @model_validator(mode="after")
+    def validate_option_labels(self):
+        if self.option_labels is not None:
+            options = self.options or []
+            if self.type != "string" or not options:
+                raise ValueError("Choice labels require string options")
+            if any(not value.strip() for value in options) or len(set(options)) != len(options):
+                raise ValueError("Choice values must be nonempty and unique")
+            if not set(self.option_labels).issubset(options):
+                raise ValueError("Choice labels must reference declared options")
+            if any(not label.strip() for label in self.option_labels.values()):
+                raise ValueError("Choice labels must not be empty")
+        return self
+
 
 
 # ==================== INTEGRATION REQUEST MODELS ====================
@@ -76,6 +94,11 @@ class IntegrationCreate(BaseModel):
         default=None,
         max_length=2000,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=50000,
+        description="Optional Markdown setup notes for configuring this integration",
     )
     config_schema: list[ConfigSchemaItem] | None = Field(
         default=None,
@@ -115,6 +138,11 @@ class IntegrationUpdate(BaseModel):
         default=None,
         max_length=2000,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        max_length=50000,
+        description="Optional Markdown setup notes; null explicitly clears saved notes",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,
@@ -288,6 +316,10 @@ class IntegrationResponse(BaseModel):
     description: str | None = Field(
         default=None,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Optional Markdown setup notes for configuring this integration",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,
@@ -466,6 +498,10 @@ class IntegrationDetailResponse(BaseModel):
     description: str | None = Field(
         default=None,
         description="Optional integration description for admin UI cards",
+    )
+    notes: str | None = Field(
+        default=None,
+        description="Optional Markdown setup notes for configuring this integration",
     )
     list_entities_data_provider_id: UUID | None = Field(
         default=None,

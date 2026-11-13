@@ -28,6 +28,8 @@ def provider_name_for_config(config: LLMConfig) -> str:
     share an adapter (and so a wire-level provider name) with others.
     """
 
+    if config.catalog_provider_id == "opencode-go":
+        return "opencode_go"
     if (
         config.catalog_provider_id
         and config.catalog_provider_id not in NATIVE_PROVIDER_KINDS
@@ -62,7 +64,10 @@ def agent_model_settings(
         settings["max_tokens"] = resolved_max_tokens
     if is_openrouter_endpoint(config.endpoint):
         settings["extra_body"] = {"session_id": session_id[:256]}
-    opencode_go = is_opencode_go_endpoint(config.endpoint)
+    opencode_go = (
+        is_opencode_go_endpoint(config.endpoint)
+        or config.catalog_provider_id == "opencode-go"
+    )
     if opencode_go:
         settings["extra_headers"] = opencode_go_extra_headers(session_id)
     if (
