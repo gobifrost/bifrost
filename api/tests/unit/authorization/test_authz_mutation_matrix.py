@@ -14,6 +14,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from src.models.contracts.workflow_permissions import (
@@ -162,16 +163,19 @@ async def test_deleting_the_acting_user_ends_the_runs_authority(async_engine: As
             await issue_access_token(subject)
 
 
-async def test_provider_flag(async_engine: AsyncEngine) -> None:
+async def test_provider_flag_cannot_change(async_engine: AsyncEngine) -> None:
     async with committed_world(async_engine) as world:
         subject, organization, _, _ = await _workflow_run(world)
         await world.session.commit()
-
-        async def promote(session: AsyncSession) -> None:
-            await session.execute(update(Organization).where(Organization.id == organization.id).values(is_provider=True))
-
-        before, after = await _change(async_engine, subject, promote)
-    assert (before.usr.prov, after.usr.prov) == (False, True)
+        before = (await issue_access_token(subject)).claims
+        async with AsyncSession(async_engine) as session:
+            with pytest.raises(IntegrityError, match="ck_organizations_provider_identity"):
+                await session.execute(
+                    update(Organization).where(Organization.id == organization.id).values(is_provider=True)
+                )
+            await session.rollback()
+        assert await token_accepted(async_engine, before)
+        assert before.usr.prov is False
 
 
 # --- Roles ---------------------------------------------------------------------

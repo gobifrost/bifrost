@@ -4400,7 +4400,7 @@ class TestOrgImport:
         org_id = uuid4()
         db_session.add(Organization(
             id=org_id, name="DomainOrg", domain="example.com",
-            is_active=True, is_provider=True, settings={"key": "val"},
+            is_active=True, is_provider=False, settings={"key": "val"},
             created_by="git-sync",
         ))
         await db_session.commit()
@@ -4422,7 +4422,7 @@ class TestOrgImport:
             select(Organization).where(Organization.id == org_id)
         )).scalar_one()
         assert row.domain == "example.com", "Domain should be preserved"
-        assert row.is_provider is True, "is_provider should be preserved"
+        assert row.is_provider is False, "is_provider should be preserved"
         assert row.settings == {"key": "val"}, "Settings should be preserved"
 
     async def test_org_idempotent(
