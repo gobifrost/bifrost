@@ -13,12 +13,10 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-import socket
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
-from uuid import UUID, uuid4
+from uuid import UUID
 
 if TYPE_CHECKING:
     from fastapi import WebSocket
@@ -39,28 +37,10 @@ from src.core.redis_reconnect import ResilientPubSubListener
 logger = logging.getLogger(__name__)
 
 
-# Process identity for the pub/sub envelope (PR-1a).
-#
-# One UUID per process: stable for the process lifetime, unique across
-# restarts. Hostname/PID are unsafe (container names and PIDs are reused).
-# POD_NAME, when set, rides along as a human-readable hint for logs only.
-PROCESS_ORIGIN_ID = str(uuid4())
-
+# Reader preparation only. Keep publishers on the bare wire format so old
+# replicas remain compatible during direct upgrades and rollback. Enabling
+# envelope writers requires a separately verified rollout.
 ENVELOPE_VERSION = 1
-
-
-def _origin_hint() -> str:
-    return os.environ.get("POD_NAME") or socket.gethostname()
-
-
-def _wrap_envelope(payload: dict[str, Any]) -> dict[str, Any]:
-    """Stamp an outgoing message. PR-1a: stamp + parse only, no behavior change."""
-    return {
-        "v": ENVELOPE_VERSION,
-        "origin": PROCESS_ORIGIN_ID,
-        "origin_hint": _origin_hint(),
-        "payload": payload,
-    }
 
 
 def _unwrap_envelope(data: Any) -> tuple[Any, str | None]:
@@ -244,10 +224,10 @@ class ConnectionManager:
         """
         try:
             async with get_redis() as r:
-                # PR-1a: stamp the envelope; delivery path unchanged.
+                # Keep the existing wire contract until all readers can unwrap.
                 await r.publish(
                     f"bifrost:{channel}",
-                    json.dumps(_wrap_envelope(message)),
+                    json.dumps(message),
                 )
             return True
         except Exception as e:
@@ -265,10 +245,8 @@ class ConnectionManager:
             async def on_message(channel: str, data: dict) -> None:
                 # Strip "bifrost:" prefix from channel
                 local_channel = channel.replace("bifrost:", "")
-                # PR-1a: unwrap but deliver everything, including self-origin.
-                # Suppression activates in PR-1b together with local-first
-                # delivery — suppressing here would drop messages that were
-                # never delivered locally.
+                # Read envelopes without changing delivery semantics. Origin
+                # suppression and local-first delivery are separate work.
                 payload, _origin = _unwrap_envelope(data)
                 if local_channel == "queue:positions":
                     self.request_queue_position_refresh()
@@ -534,10 +512,6 @@ async def publish_chat_run_event(
             status,
             occurred_at.isoformat(),
             "86400",
-            # PR-1a: chat stays on its bare versioned envelope (the Lua
-            # script owns the wire shape). Origin stamping + local-first
-            # for chat land in PR-1b; until then the listener treats
-            # origin-less messages as foreign and delivers them.
             f"bifrost:chat:{conversation_id_str}",
         )
 

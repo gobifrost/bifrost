@@ -1,44 +1,25 @@
-"""PR-1a: pub/sub envelope compatibility. No behavior change.
-
-Covers the audit findings R-01/R-02 rollout: every publish stamps a
-versioned origin envelope, and the listener delivers wrapped (self and
-foreign) and bare messages alike. Suppression is PR-1b's job — a test
-below pins that PR-1a code must NOT suppress self-origin.
-"""
+"""Reader preparation preserves the bare wire contract across replica versions."""
 
 import json
 from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
-from uuid import UUID
 
 import pytest
 
 from src.core.pubsub import (
-    PROCESS_ORIGIN_ID,
     ConnectionManager,
     _unwrap_envelope,
-    _wrap_envelope,
 )
 
 
-def test_origin_id_is_stable_process_uuid():
-    UUID(PROCESS_ORIGIN_ID)  # raises if not a UUID
-    assert _wrap_envelope({})["origin"] == PROCESS_ORIGIN_ID
-    assert _wrap_envelope({})["origin"] == _wrap_envelope({})["origin"]
-
-
-def test_envelope_round_trip_preserves_payload():
-    payload = {
-        "type": "execution_update",
-        "executionId": "abc",
-        "payload": "a bare 'payload' key must survive",
-    }
-    wrapped = _wrap_envelope(payload)
-    assert wrapped["v"] == 1
-    body, origin = _unwrap_envelope(wrapped)
+def test_reader_preserves_enclosed_payload():
+    payload = {"type": "execution_update", "payload": "application data"}
+    body, origin = _unwrap_envelope(
+        {"v": 1, "origin": "publisher", "payload": payload}
+    )
     assert body == payload
-    assert origin == PROCESS_ORIGIN_ID
+    assert origin == "publisher"
 
 
 def test_bare_messages_pass_through_untouched():
@@ -60,7 +41,7 @@ def test_bare_messages_pass_through_untouched():
 
 
 @pytest.mark.asyncio
-async def test_broadcast_publishes_wrapped_envelope():
+async def test_broadcast_preserves_bare_wire_contract():
     manager = ConnectionManager()
     published = []
 
@@ -85,14 +66,12 @@ async def test_broadcast_publishes_wrapped_envelope():
     assert len(published) == 1
     channel, body = published[0]
     assert channel == "bifrost:agent-runs"
-    unwrapped, origin = _unwrap_envelope(json.loads(body))
-    assert unwrapped == payload
-    assert origin == PROCESS_ORIGIN_ID
+    assert json.loads(body) == payload
 
 
 @pytest.mark.asyncio
-async def test_listener_delivers_wrapped_self_foreign_and_bare():
-    """PR-1a must not suppress: self-origin wrapped messages deliver."""
+async def test_listener_delivers_every_origin_and_bare():
+    """No origin filtering or local-first delivery is introduced."""
     manager = ConnectionManager()
     manager._send_local = AsyncMock()  # type: ignore[method-assign]
     captured = {}
@@ -119,10 +98,10 @@ async def test_listener_delivers_wrapped_self_foreign_and_bare():
             foreign_payload = {"type": "n2"}
             bare_payload = {"type": "n3"}
 
-            await on_message("bifrost:agent-runs", _wrap_envelope(self_payload))
+            await on_message("bifrost:agent-runs", {"v": 1, "origin": "same-process", "payload": self_payload})
             await on_message(
                 "bifrost:agent-runs",
-                {**_wrap_envelope(foreign_payload), "origin": "other-process"},
+                {"v": 1, "origin": "other-process", "payload": foreign_payload},
             )
             await on_message("bifrost:agent-runs", bare_payload)
         finally:
@@ -130,3 +109,105 @@ async def test_listener_delivers_wrapped_self_foreign_and_bare():
 
     sent = [c.args[1] for c in manager._send_local.await_args_list]
     assert sent == [self_payload, foreign_payload, bare_payload]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("publisher_version", ["old", "new"])
+@pytest.mark.parametrize("listener_version", ["old", "new"])
+@pytest.mark.parametrize(
+    ("channel", "payload", "delivered_channels"),
+    [
+        (
+            "agent-runs",
+            {"type": "agent_run_update", "run_id": "r1"},
+            ["agent-runs"],
+        ),
+        (
+            "service-logs:attempt",
+            {"type": "service_log", "service_id": "service", "message": "ready"},
+            ["service-logs:attempt", "service:service"],
+        ),
+        (
+            "files:workspace:GLOBAL",
+            {"type": "file_change", "path": "example.txt", "action": "write"},
+            ["files:workspace:GLOBAL"],
+        ),
+    ],
+)
+async def test_mixed_versions_preserve_client_payload_and_authorized_delivery(
+    publisher_version, listener_version, channel, payload, delivered_channels
+):
+    """Frozen eaa98d92 wire/callback contracts versus the actual new manager.
+
+    All four directions cover direct upgrades from the pre-envelope version
+    without an intermediate install, mixed replicas, and rollback. This is
+    a transport contract test; Redis subscription/reconnect is covered elsewhere.
+    No intermediate reader deployment is required while writers stay bare.
+    """
+    sender = ConnectionManager()
+    receiver = ConnectionManager()
+    delivered = []
+
+    # Exercise the real local delivery authorization seam for each destination.
+    for destination in delivered_channels:
+        socket = AsyncMock()
+
+        async def dispatch(received_channel, message):
+            delivered.append((received_channel, message))
+
+        socket._delivery_dispatcher = dispatch
+        receiver.connections[destination] = {socket}
+
+    async def old_receive(redis_channel, data):
+        # Frozen pre-envelope callback from eaa98d92, pubsub.py:223-229.
+        local_channel = redis_channel.replace("bifrost:", "")
+        if local_channel == "queue:positions":
+            receiver.request_queue_position_refresh()
+            return
+        await receiver._send_local(local_channel, data)
+        await receiver._bridge_service_log(local_channel, data)
+
+    captured = {}
+
+    class FakeListener:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        async def start(self):
+            return None
+
+        async def stop(self):
+            return None
+
+    wire_messages = []
+
+    async def publish(redis_channel, encoded):
+        wire_messages.append(json.loads(encoded))
+        callback = old_receive if listener_version == "old" else captured["on_message"]
+        await callback(redis_channel, json.loads(encoded))
+
+    redis = AsyncMock()
+    redis.publish.side_effect = publish
+
+    @asynccontextmanager
+    async def redis_context():
+        yield redis
+
+    with (
+        patch("src.core.pubsub.get_redis", redis_context),
+        patch("src.core.pubsub.ResilientPubSubListener", FakeListener),
+        patch("src.core.pubsub.get_settings", return_value=SimpleNamespace(redis_url="redis://unused")),
+    ):
+        if listener_version == "new":
+            await receiver._init_redis()
+        try:
+            if publisher_version == "old":
+                # Frozen eaa98d92 publish contract: bare JSON on bifrost:<channel>.
+                await redis.publish(f"bifrost:{channel}", json.dumps(payload))
+            else:
+                await sender.broadcast(channel, payload)
+        finally:
+            await receiver.close()
+
+    assert wire_messages == [payload]
+    assert delivered == [(destination, payload) for destination in delivered_channels]
