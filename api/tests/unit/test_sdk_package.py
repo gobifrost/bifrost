@@ -199,7 +199,8 @@ def test_build_sdk_tarball_shape_and_exports():
 @pytest.mark.e2e
 def test_hosted_factory_is_static_and_content_addressed(tmp_path: Path):
     assert _ensure_sdk_src(), "SDK source must be staged in the Docker test image"
-    assert (_SDK_SERVICE / "node_modules" / "esbuild").exists(), "SDK factory toolchain must be installed"
+    assert (_SDK_SERVICE.parent / "app_bundler" / "node_modules" / "esbuild").exists(), "Shared bundler toolchain must be installed"
+    assert not (_SDK_SERVICE / "node_modules" / "esbuild").exists(), "SDK must reuse the bundler installation"
 
     import src.services.sdk_package as sdkpkg
 

@@ -19,6 +19,7 @@ curl --fail --location --silent --show-error \
     "https://registry.npmjs.org/npm/-/npm-${NPM_VERSION}.tgz"
 printf '%s  %s\n' "$NPM_TARBALL_SHA512" "$tarball" | sha512sum --check --status
 npm install --global --prefix /usr/local "$tarball" --no-audit --no-fund
+npm cache clean --force
 installed_version="$(/usr/local/bin/npm --version)"
 if [ "$installed_version" != "$NPM_VERSION" ]; then
     echo "installed npm version $installed_version does not match $NPM_VERSION" >&2

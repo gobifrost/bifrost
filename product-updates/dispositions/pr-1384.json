@@ -1,0 +1,13 @@
+{
+  "key": "pr:1384",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal container cache cleanup and build-tool dependency consolidation; no customer-facing behavior, installation action, or security announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1384",
+      "https://github.com/gobifrost/bifrost/issues/1381"
+    ]
+  }
+}

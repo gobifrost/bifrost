@@ -36,8 +36,8 @@ _LICENSE_PATH = Path("/app/LICENSE")
 _SDK_SRC = _HERE / "sdk_src"
 _BUILDER = _HERE / "build_sdk.js"
 _TYPE_BUILDER = _HERE / "build_types.js"
-# The hosted factory also bundles lucide, so use this package's complete build
-# toolchain instead of the app bundler's esbuild-only dependency directory.
+# Resolve SDK imports (including lucide) from this package's dependencies.
+# build_sdk.js shares esbuild with app_bundler; declaration tools stay here.
 _NODE_MODULES = _HERE / "node_modules"
 
 # The binding shares the App's React singleton.  The hosted factory contains its

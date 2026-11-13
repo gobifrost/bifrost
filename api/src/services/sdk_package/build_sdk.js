@@ -14,7 +14,8 @@
  *   srcDir : directory holding the SDK .ts/.tsx sources + index.ts barrel
  *   outFile: path to write the bundled index.mjs
  */
-const esbuild = require("esbuild");
+// Reuse the bundler toolchain; keep SDK declaration dependencies in their own tree.
+const esbuild = require("../app_bundler/node_modules/esbuild");
 const crypto = require("crypto");
 const fs = require("fs");
 const path = require("path");

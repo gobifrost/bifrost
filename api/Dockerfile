@@ -110,11 +110,11 @@ RUN python -m compileall -f --invalidation-mode checked-hash -q /app/src /app/sh
 COPY api/src/services/app_compiler/package.json api/src/services/app_compiler/package-lock.json* /app/src/services/app_compiler/
 COPY api/src/services/app_compiler/compile.js /app/src/services/app_compiler/
 COPY api/src/services/app_compiler/tailwind.js /app/src/services/app_compiler/
-RUN cd /app/src/services/app_compiler && npm ci --omit=dev
+RUN cd /app/src/services/app_compiler && npm ci --omit=dev && npm cache clean --force
 
 # Install app bundler Node.js dependencies (esbuild)
 COPY api/src/services/app_bundler/package.json api/src/services/app_bundler/package-lock.json* /app/src/services/app_bundler/
-RUN cd /app/src/services/app_bundler && npm ci --omit=dev
+RUN cd /app/src/services/app_bundler && npm ci --omit=dev && npm cache clean --force
 
 # SDK package builder (esbuild) + the v2 `bifrost` SDK source it bundles. The
 # SDK source of truth lives in client/src/lib/app-sdk; it is copied here so
@@ -122,7 +122,7 @@ RUN cd /app/src/services/app_bundler && npm ci --omit=dev
 # the client/ tree at runtime. A unit test enforces this file list stays in sync.
 COPY api/src/services/sdk_package/package.json api/src/services/sdk_package/package-lock.json /app/src/services/sdk_package/
 COPY api/src/services/sdk_package/build_sdk.js api/src/services/sdk_package/build_types.js api/src/services/sdk_package/tsconfig.types.json /app/src/services/sdk_package/
-RUN cd /app/src/services/sdk_package && npm ci --omit=dev
+RUN cd /app/src/services/sdk_package && npm ci --omit=dev && npm cache clean --force
 COPY client/src/lib/app-sdk/provider.tsx \
      client/src/lib/app-sdk/tables.ts \
      client/src/lib/app-sdk/transport.ts \

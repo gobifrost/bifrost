@@ -9,7 +9,7 @@ WORKDIR /app
 
 # Copy package files and install dependencies
 COPY package*.json ./
-RUN npm ci
+RUN npm ci && npm cache clean --force
 
 # Don't copy source code - it comes from volume mounts in docker-compose.dev.yml
 # This prevents any risk of stale built code overwriting live source
