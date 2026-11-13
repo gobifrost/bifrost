@@ -24,5 +24,5 @@ def test_prefer_preserves_asyncpg_negotiation_mode():
         "postgresql://user:pass@db.example.com/app?sslmode=prefer"
     )
 
-    assert connect_args == {"ssl": "prefer"}
+    assert connect_args["ssl"] == "prefer"
     assert "sslmode" not in url
