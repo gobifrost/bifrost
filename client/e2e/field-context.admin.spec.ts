@@ -62,6 +62,7 @@ test("mobile field context closes independently and preserves editing", async ({
 		).toBeVisible();
 		await page.screenshot({
 			path: "playwright-results/field-context-mobile.png",
+			animations: "disabled",
 		});
 		await page.keyboard.press("Escape");
 		await expect(sheet).toBeHidden();
@@ -81,6 +82,7 @@ test("mobile field context closes independently and preserves editing", async ({
 			.scrollIntoViewIfNeeded();
 		await page.screenshot({
 			path: "playwright-results/field-context-landscape.png",
+			animations: "disabled",
 		});
 		await sheet.getByRole("button", { name: "Close", exact: true }).click();
 		await expect(sheet).toBeHidden();
