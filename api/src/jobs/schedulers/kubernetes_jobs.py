@@ -292,7 +292,7 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
     except KubernetesConfigurationError as exc:
         # Not in a cluster (wrong environment, missing token mount): the
         # host process must not go down. Fixing this needs a restart.
-        logger.error("Kubernetes build controller disabled: %s", exc)
+        logger.exception("Kubernetes build controller disabled: %s", exc)
         await shutdown_event.wait()
         return
     try:
@@ -320,7 +320,7 @@ async def kubernetes_build_loop(shutdown_event: asyncio.Event) -> None:
                     raise
                 except Exception as exc:
                     # Client exceptions never include tokens or API response bodies.
-                    logger.error("Kubernetes build reconciliation failed (%s): %s", type(exc).__name__, exc)
+                    logger.exception("Kubernetes build reconciliation failed (%s): %s", type(exc).__name__, exc)
                 if busy:
                     with suppress(TimeoutError):
                         await asyncio.wait_for(shutdown_event.wait(), timeout=BUILD_POLL_SECONDS)

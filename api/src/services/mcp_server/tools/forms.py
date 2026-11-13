@@ -126,12 +126,14 @@ async def bifrost_form_create(
     access_level: str | None = None,
     role_ids: list[str] | None = None,
     scope: str | None = None,
+    layout: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Create a Form through ``POST /api/forms`` (platform admin only).
 
     ``workflow_id`` / ``launch_workflow_id`` accept UUIDs or human refs.
     ``scope`` is ``global``, an organization UUID/name, or omitted for the
-    caller's home organization.
+    caller's home organization. ``layout`` optionally places the supplied fields
+    into sections, rows, and columns.
     """
     body_fields = {
         "name": name,
@@ -141,7 +143,7 @@ async def bifrost_form_create(
         "launch_workflow_id": launch_workflow_id,
         "default_launch_params": default_launch_params,
         "allowed_query_params": allowed_query_params,
-        "form_schema": {"fields": fields} if fields is not None else None,
+        "form_schema": {"fields": fields, "layout": layout} if fields is not None else None,
         "access_level": access_level or "role_based",
         "role_ids": role_ids,
     }
@@ -173,6 +175,7 @@ async def bifrost_form_update(
     role_ids: list[str] | None = None,
     clear_roles: bool | None = None,
     scope: str | None = None,
+    layout: dict[str, Any] | None = None,
 ) -> ToolResult:
     """Update a Form through ``PATCH /api/forms/{uuid}`` (platform admin only).
 
@@ -181,7 +184,9 @@ async def bifrost_form_update(
     as "clear this field" and an omitted field as "leave unchanged" — this
     wrapper's underlying ``assemble_body`` call omits any kwarg the caller
     didn't pass, so it can never accidentally clear a field the caller
-    meant to leave alone.
+    meant to leave alone. Supplying ``fields`` replaces the complete schema;
+    include ``layout`` to retain or change its placement, or omit it to return
+    to a vertical form. A layout update requires the complete field list.
     """
     if not form_ref:
         return error_result("form_ref is required")
@@ -189,6 +194,9 @@ async def bifrost_form_update(
         form_id = await _resolve_ref(context, "form", form_ref)
     except Exception as exc:
         return error_result(f"could not resolve form {form_ref!r}", _ref_error_payload(exc))
+
+    if layout is not None and fields is None:
+        return error_result("fields is required when updating layout")
 
     body_fields: dict[str, Any] = {
         "name": name,
@@ -198,7 +206,7 @@ async def bifrost_form_update(
         "launch_workflow_id": launch_workflow_id,
         "default_launch_params": default_launch_params,
         "allowed_query_params": allowed_query_params,
-        "form_schema": {"fields": fields} if fields is not None else None,
+        "form_schema": {"fields": fields, "layout": layout} if fields is not None else None,
         "is_active": is_active,
         "access_level": access_level,
         "role_ids": role_ids,

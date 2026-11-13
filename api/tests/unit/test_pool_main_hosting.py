@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import datetime, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -580,3 +581,50 @@ async def test_a_lost_executor_cancels_its_agent_work() -> None:
     await asyncio.gather(agent, return_exceptions=True)
 
     assert agent.cancelled()
+
+
+async def test_a_missing_workflow_consumer_propagates_without_leaking_admission() -> None:
+    worker = _worker_with_pool()
+    claim = _workflow_claim(str(uuid4()), 100 * MIB)
+    worker._reserve_claim(claim)
+    worker._workflow_consumer = None
+
+    with pytest.raises(AssertionError):
+        await worker._run_claim(claim)
+
+    assert worker.admission.starting_workflows() == 0
+    assert worker.admission.free_bytes() == GIB
+    assert worker.runs_handled == 1
+
+
+async def test_a_refused_fork_without_payload_releases_admission_and_logs(monkeypatch, caplog) -> None:
+    from src.services.execution import workflow_dispatch
+
+    worker = _worker_with_pool()
+    worker._workflow_consumer.process_message = AsyncMock(side_effect=MemoryError("pressure"))  # type: ignore[union-attr]
+    release = AsyncMock()
+    monkeypatch.setattr(workflow_dispatch, "release_workflow_run", release)
+    claim = replace(_workflow_claim(str(uuid4()), 100 * MIB), claimed=None)
+
+    await _run_to_routed(worker, claim)
+
+    release.assert_not_awaited()
+    assert worker.admission.starting_workflows() == 0
+    assert worker.admission.free_bytes() == GIB
+    assert worker.runs_handled == 1
+    assert "Pool cannot hand back workflow run without payload" in caplog.text
+
+
+async def test_a_workflow_consumer_assertion_propagates_after_releasing_admission() -> None:
+    worker = _worker_with_pool()
+    failure = AssertionError("invalid workflow state")
+    worker._workflow_consumer.process_message = AsyncMock(side_effect=failure)  # type: ignore[union-attr]
+    claim = _workflow_claim(str(uuid4()), 100 * MIB)
+    worker._reserve_claim(claim)
+
+    with pytest.raises(AssertionError, match="invalid workflow state") as raised:
+        await worker._run_claim(claim)
+
+    assert raised.value is failure
+    assert worker.admission.starting_workflows() == 0
+    assert worker.admission.free_bytes() == GIB

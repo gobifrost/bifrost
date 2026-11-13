@@ -128,7 +128,7 @@ class RemoteAgentConsumer:
             return
         except Exception as exc:
             self.routes.pop(route.route_id, None)
-            logger.error("Launcher refused an agent run", extra={"run_id": str(run_id)}, exc_info=True)
+            logger.exception("Launcher refused an agent run", extra={"run_id": str(run_id)}, exc_info=True)
             await self._settle(route, f"{LAUNCH_ERROR}: {exc}")
             return
         await self.supervise(route)

@@ -186,7 +186,7 @@ async def run_refresh_job(
                     "token_id": str(td["token_id"]),
                     "error": str(e),
                 })
-                logger.error(f"Error refreshing token {td['token_id']}: {e}", exc_info=True)
+                logger.exception(f"Error refreshing token {td['token_id']}: {e}", exc_info=True)
 
         # Phase 3: Persist refresh results (short-lived session)
         if refresh_outcomes:
@@ -318,7 +318,7 @@ async def run_refresh_job(
             )
 
     except Exception as e:
-        logger.error(f"✗ OAuth token refresh failed: {e}", exc_info=True)
+        logger.exception(f"✗ OAuth token refresh failed: {e}", exc_info=True)
         results["errors"].append({"error": str(e)})
 
     return results

@@ -27,7 +27,7 @@ function staticClassString(node) {
 	return null;
 }
 
-const local = {
+export const local = {
 	rules: {
 		"one-primary-action": {
 			meta: {
@@ -151,7 +151,9 @@ const local = {
 							cls.includes("items-center") ||
 							cls.includes("justify-center") ||
 							cls.includes("place-content-center");
-						if (!viewportHeight || !centered || cls.includes("overflow-"))
+						const scrollsVertically =
+							/(^|\s)overflow(?:-y)?-(auto|scroll)(\s|$)/.test(cls);
+						if (!viewportHeight || !centered || scrollsVertically)
 							return;
 						context.report({
 							node,
@@ -173,17 +175,7 @@ const local = {
 			create(context) {
 				const filename = context.filename ?? context.getFilename?.() ?? "";
 				if (filename.includes("src/components/ui/")) return {};
-				let hasOverlayImport = false;
 				return {
-					ImportDeclaration(node) {
-						const source = node.source.value ?? "";
-						if (
-							source.includes("components/ui/dialog") ||
-							source.includes("components/ui/sheet") ||
-							source.includes("components/ui/popover")
-						)
-							hasOverlayImport = true;
-					},
 					JSXOpeningElement(node) {
 						if (node.name.type !== "JSXIdentifier") return;
 						if (!/^[a-z]/.test(node.name.name)) return;
@@ -200,7 +192,7 @@ const local = {
 							/(^|\s)fixed(\s|$)/.test(cls) &&
 							cls.includes("inset-0") &&
 							/(^|\s|:)z-\d/.test(cls);
-						if (!isOverlay || hasOverlayImport) return;
+						if (!isOverlay) return;
 						context.report({
 							node,
 							message:

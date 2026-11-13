@@ -19,7 +19,7 @@ from typing import Any
 from sqlalchemy import and_, delete, func, select, union, update
 
 from src.core.auth import Context, CurrentActiveUser
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from sqlalchemy.orm import defer, joinedload, selectinload
 
 from src.models import (
@@ -1671,7 +1671,7 @@ async def batch_upsert_mappings(
                 created += 1
         except Exception as e:
             errors.append(f"org {item.organization_id}: {str(e)}")
-            logger.error(f"Batch mapping error for org {item.organization_id}: {log_safe(e)}")
+            log_safe_exception(logger, f"Batch mapping error for org {item.organization_id}: {log_safe(e)}")
 
     await ctx.db.commit()
 
@@ -2403,7 +2403,7 @@ async def test_integration_connection(
 
     except Exception as e:
         import traceback
-        logger.error(
+        logger.exception(
             f"Integration test error for {integration.name}: {e}\n{traceback.format_exc()}"
         )
         return IntegrationTestResponse(

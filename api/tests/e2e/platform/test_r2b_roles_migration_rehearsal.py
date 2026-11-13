@@ -204,7 +204,6 @@ async def _seed_legacy_rows(database_url: str, ids: dict[str, str]) -> None:
                 """
                 INSERT INTO organizations (id, name, domain, is_active, is_provider, settings, created_by)
                 VALUES
-                    (CAST(:provider_org AS uuid), 'Provider MSP', 'provider.example', TRUE, TRUE, '{}'::jsonb, :actor),
                     (CAST(:customer_org AS uuid), 'Customer Org', 'customer.example', TRUE, FALSE, '{}'::jsonb, :actor)
                 """
             ),
@@ -374,13 +373,14 @@ async def _snapshot_state(database_url: str, ids: dict[str, str]) -> dict[str, A
 
 
 def _boundaries_for(snapshot: dict[str, Any], *, user_id: str) -> list[dict[str, Any]]:
-    """The user's boundaries, apart from Secrets Reader, which the later
-    20261003_r3_operator_secrets migration gives Platform Admins (its
-    own rehearsal covers it)."""
+    """Legacy boundaries, apart from the later operator/secrets assignments.
+
+    The operator/secrets migration has its own rehearsal for those grants.
+    """
     return [
         b
         for b in snapshot["boundaries"]
-        if str(b["user_id"]) == user_id and b["role_id"] != DECRYPTION_ROLE_ID
+        if str(b["user_id"]) == user_id and b["role_id"] not in (DECRYPTION_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID)
     ]
 
 
@@ -470,7 +470,7 @@ def _assert_migrated_state(snapshot: dict[str, Any], ids: dict[str, str]) -> Non
 @pytest.fixture
 def rehearsal_ids() -> dict[str, str]:
     return {
-        "provider_org": str(uuid4()),
+        "provider_org": "00000000-0000-0000-0000-000000000002",
         "customer_org": str(uuid4()),
         "superuser": str(uuid4()),
         "provider_non_admin": str(uuid4()),

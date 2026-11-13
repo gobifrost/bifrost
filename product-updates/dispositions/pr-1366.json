@@ -1,0 +1,1 @@
+{"category":"fix","classification":"other","entry_ids":[],"key":"pr:1366","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1366"],"status":"approved"},"summary":"Invoking a workflow's REST endpoint no longer fails with an argument error."}

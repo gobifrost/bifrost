@@ -3,12 +3,12 @@
   "classification": "other",
   "entry_ids": [],
   "category": "fix",
-  "summary": "Client visuals now follow the shared token system; status and kind colors adapt to light and dark automatically.",
+  "summary": "Status badges and resource icons use shared theme colors.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1358",
-      "Pending maintainer review of the lint governance setup and token migration."
+      "November 13, 2026 delegated factual review: verified the status and resource-icon token replacements in the final diff. Original contribution credited to MTG-Thomas. This disposition makes no claim that all lint findings or UI surfaces are resolved."
     ]
   }
 }

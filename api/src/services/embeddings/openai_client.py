@@ -103,7 +103,7 @@ class OpenAIEmbeddingClient(BaseEmbeddingClient):
                     encoding_format="float",
                 )
         except Exception as e:
-            logger.error(f"Failed to generate embeddings: {e}")
+            logger.exception(f"Failed to generate embeddings: {e}")
             raise
 
         if not response.data:

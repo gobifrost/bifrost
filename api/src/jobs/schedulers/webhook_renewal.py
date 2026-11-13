@@ -216,7 +216,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
                     "adapter": wh["adapter_name"],
                     "error": str(e),
                 })
-                logger.error(
+                logger.exception(
                     f"Error renewing webhook {wh['id']}: {e}",
                     exc_info=True,
                 )
@@ -267,7 +267,7 @@ async def renew_expiring_webhooks() -> dict[str, Any]:
             )
 
     except Exception as e:
-        logger.error(f"✗ Webhook renewal failed: {e}", exc_info=True)
+        logger.exception(f"✗ Webhook renewal failed: {e}", exc_info=True)
         results["errors"].append({"error": str(e)})
 
     return results

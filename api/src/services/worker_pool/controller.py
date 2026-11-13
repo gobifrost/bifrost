@@ -204,7 +204,7 @@ class WorkerCapacityController(ABC):
         try:
             await self.reconcile_worker(worker_id, policy)
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Reusable worker reconciliation failed (%s): %s",
                 type(exc).__name__,
                 exc,
@@ -1011,7 +1011,7 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
     try:
         client = KubernetesJobClient(settings)
     except KubernetesConfigurationError as exc:
-        logger.error("Reusable worker controller disabled: %s", exc)
+        logger.exception("Reusable worker controller disabled: %s", exc)
         await stop_event.wait()
         return
     try:
@@ -1042,7 +1042,7 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
-                    logger.error(
+                    logger.exception(
                         "Reusable worker reconciliation failed (%s): %s",
                         type(exc).__name__,
                         exc,

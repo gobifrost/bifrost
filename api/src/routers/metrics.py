@@ -145,7 +145,7 @@ async def get_metrics(
         return await _compute_metrics_directly(ctx, user, failure_reach)
 
     except Exception as e:
-        logger.error(f"Error getting metrics: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting metrics: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get metrics",
@@ -209,7 +209,7 @@ async def get_metrics_snapshot(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting metrics snapshot: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting metrics snapshot: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get metrics snapshot",
@@ -353,7 +353,7 @@ async def get_daily_metrics(
         )
 
     except Exception as e:
-        logger.error(f"Error getting daily metrics: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting daily metrics: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get daily metrics",
@@ -438,7 +438,7 @@ async def get_organization_metrics(
         )
 
     except Exception as e:
-        logger.error(f"Error getting organization metrics: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting organization metrics: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get organization metrics",
@@ -504,7 +504,7 @@ async def get_resource_metrics(
         )
 
     except Exception as e:
-        logger.error(f"Error getting resource metrics: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting resource metrics: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get resource metrics",
@@ -626,7 +626,7 @@ async def get_workflow_metrics(
         )
 
     except Exception as e:
-        logger.error(f"Error getting workflow metrics: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting workflow metrics: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get workflow metrics",

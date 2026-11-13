@@ -104,6 +104,7 @@ class FormIndexer:
         # metadata/field rows. That prevents a malformed replacement from
         # partially updating a form or deleting its existing fields.
         fields_data: list[dict] | None = None
+        form_schema: dict = {}
         if "form_schema" in form_data:
             form_schema = form_data["form_schema"]
             if not isinstance(form_schema, dict):
@@ -119,6 +120,7 @@ class FormIndexer:
                 return False
             fields_data = form_data["fields"]
 
+        validated_schema: FormSchema | None = None
         validated_fields: list[FormField] | None = None
         if fields_data is not None:
             normalized_fields: list[dict] = []
@@ -131,9 +133,10 @@ class FormIndexer:
                     normalized["default_value"] = normalized.pop("default")
                 normalized_fields.append(normalized)
             try:
-                validated_fields = FormSchema.model_validate(
-                    {"fields": normalized_fields}
-                ).fields
+                validated_schema = FormSchema.model_validate(
+                    {**form_schema, "fields": normalized_fields}
+                )
+                validated_fields = validated_schema.fields
             except ValidationError as exc:
                 logger.warning(f"Invalid form schema in {path}: {exc}")
                 return False
@@ -189,6 +192,31 @@ class FormIndexer:
 
         # Upsert form - updates definition but NOT organization_id or access_level
         # These env-specific fields are only set via the API, not from file sync
+        form_layout = (
+            validated_schema.layout.model_dump(mode="json")
+            if validated_schema and validated_schema.layout is not None
+            else None
+        )
+        update_values = {
+            # Update definition fields from file
+            "name": name,
+            "description": form_data.get("description"),
+            "confirmation_markdown": form_data.get(
+                "confirmation_markdown", "## Form submitted\n\nThank you!"
+            ),
+            "workflow_id": workflow_id,
+            "launch_workflow_id": launch_workflow_id,
+            "default_launch_params": form_data.get("default_launch_params"),
+            "allowed_query_params": form_data.get("allowed_query_params"),
+            "is_active": form_data.get("is_active", True),
+            "last_seen_at": now,
+            "updated_at": now,
+            # NOTE: organization_id and access_level are NOT updated
+            # These are preserved from the database (env-specific)
+        }
+        if "form_schema" in form_data:
+            update_values["layout"] = form_layout
+
         stmt = insert(Form).values(
             id=form_id,
             name=name,
@@ -200,28 +228,13 @@ class FormIndexer:
             launch_workflow_id=launch_workflow_id,
             default_launch_params=form_data.get("default_launch_params"),
             allowed_query_params=form_data.get("allowed_query_params"),
+            layout=form_layout,
             is_active=form_data.get("is_active", True),
             last_seen_at=now,
             created_by="file_sync",
         ).on_conflict_do_update(
             index_elements=[Form.id],
-            set_={
-                # Update definition fields from file
-                "name": name,
-                "description": form_data.get("description"),
-                "confirmation_markdown": form_data.get(
-                    "confirmation_markdown", "## Form submitted\n\nThank you!"
-                ),
-                "workflow_id": workflow_id,
-                "launch_workflow_id": launch_workflow_id,
-                "default_launch_params": form_data.get("default_launch_params"),
-                "allowed_query_params": form_data.get("allowed_query_params"),
-                "is_active": form_data.get("is_active", True),
-                "last_seen_at": now,
-                "updated_at": now,
-                # NOTE: organization_id and access_level are NOT updated
-                # These are preserved from the database (env-specific)
-            },
+            set_=update_values,
         )
         await self.db.execute(stmt)
 

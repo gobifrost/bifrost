@@ -1,0 +1,9 @@
+{
+  "name": "bifrost-frontend-edge",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build:client": "sh ./build-client.sh",
+    "test": "node --test edge.test.mjs"
+  }
+}

@@ -19,6 +19,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select, text
 
+from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.models.orm.organizations import Organization
 
@@ -59,8 +60,8 @@ def _migration_sql() -> list[str]:
     return captured
 
 
-async def _org(db, name, *, is_provider=False):
-    o = Organization(name=name, created_by="test", is_provider=is_provider)
+async def _org(db, name):
+    o = Organization(name=name, created_by="test")
     db.add(o)
     await db.flush()
     return o
@@ -100,7 +101,8 @@ async def _run_migration(db):
 
 @pytest.mark.asyncio
 async def test_promotes_provider_org_token_of_global_provider(db_session):
-    provider_org = await _org(db_session, f"Provider {uuid4().hex[:6]}", is_provider=True)
+    provider_org = await db_session.get(Organization, PROVIDER_ORG_ID)
+    assert provider_org is not None
     gp = await _provider(db_session, organization_id=None)  # GLOBAL provider
     tok = await _token(db_session, provider_id=gp.id, organization_id=provider_org.id)
 
@@ -116,7 +118,8 @@ async def test_leaves_org_specific_connection_token_alone(db_session):
     connection — its token must not be touched even if stamped with the
     provider org.
     """
-    provider_org = await _org(db_session, f"Provider {uuid4().hex[:6]}", is_provider=True)
+    provider_org = await db_session.get(Organization, PROVIDER_ORG_ID)
+    assert provider_org is not None
     op_ = await _provider(db_session, organization_id=provider_org.id)  # org-scoped provider
     tok = await _token(db_session, provider_id=op_.id, organization_id=provider_org.id)
 
@@ -128,7 +131,8 @@ async def test_leaves_org_specific_connection_token_alone(db_session):
 
 @pytest.mark.asyncio
 async def test_drops_redundant_provider_org_token_when_global_exists(db_session):
-    provider_org = await _org(db_session, f"Provider {uuid4().hex[:6]}", is_provider=True)
+    provider_org = await db_session.get(Organization, PROVIDER_ORG_ID)
+    assert provider_org is not None
     gp = await _provider(db_session, organization_id=None)
     good = await _token(db_session, provider_id=gp.id, organization_id=None)
     dup = await _token(db_session, provider_id=gp.id, organization_id=provider_org.id)
@@ -151,7 +155,7 @@ async def test_ignores_non_provider_org_token(db_session):
     """A token stamped with a normal (non-provider) org is a real per-org
     token and must never be promoted.
     """
-    normal_org = await _org(db_session, f"Managed {uuid4().hex[:6]}", is_provider=False)
+    normal_org = await _org(db_session, f"Managed {uuid4().hex[:6]}")
     gp = await _provider(db_session, organization_id=None)
     tok = await _token(db_session, provider_id=gp.id, organization_id=normal_org.id)
 

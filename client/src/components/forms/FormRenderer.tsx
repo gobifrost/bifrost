@@ -38,6 +38,8 @@ import type {
 } from "@/lib/client-types";
 import { getEmbedTokenClaims } from "@/lib/auth-token";
 import { formRuntimeQueryParams } from "@/lib/form-embed-presentation";
+import { normalizeFormLayout } from "./form-layout";
+import { FormLayoutView } from "./FormLayoutView";
 
 type Form =
 	| components["schemas"]["FormPublic"]
@@ -207,6 +209,13 @@ function FormRendererInner({
 	// Get typed fields array - memoized to prevent unnecessary re-renders
 	const fields = useMemo(
 		() => (isFormSchema(form.form_schema) ? form.form_schema.fields : []),
+		[form.form_schema],
+	);
+	const layout = useMemo(
+		() =>
+			isFormSchema(form.form_schema)
+				? normalizeFormLayout(form.form_schema.layout)
+				: null,
 		[form.form_schema],
 	);
 
@@ -1737,52 +1746,67 @@ function FormRendererInner({
 									mode="popLayout"
 									initial={false}
 								>
-									{visibleFields.map((field: FormField) => (
-										<motion.div
-											key={field.name}
-											initial={
-												reduceMotion
-													? false
-													: {
-															opacity: 0,
-															height: 0,
-															marginBottom: 0,
-														}
-											}
-											animate={{
-												opacity: 1,
-												height: "auto",
-												marginBottom: 16,
-											}}
-											exit={{
-												opacity: 0,
-												height: 0,
-												marginBottom: 0,
-											}}
-											transition={{
-												opacity: {
-													duration: reduceMotion
-														? 0
-														: 0.12,
-												},
-												height: {
-													duration: reduceMotion
-														? 0
-														: 0.22,
-													ease: "easeInOut",
-												},
-												marginBottom: {
-													duration: reduceMotion
-														? 0
-														: 0.22,
-													ease: "easeInOut",
-												},
-											}}
-											style={{ overflow: "hidden" }}
-										>
-											{renderField(field)}
-										</motion.div>
-									))}
+									{layout ? (
+										<FormLayoutView
+											layout={layout}
+											fields={visibleFields}
+											renderField={renderField}
+										/>
+									) : (
+										visibleFields.map(
+											(field: FormField) => (
+												<motion.div
+													key={field.name}
+													initial={
+														reduceMotion
+															? false
+															: {
+																	opacity: 0,
+																	height: 0,
+																	marginBottom: 0,
+																}
+													}
+													animate={{
+														opacity: 1,
+														height: "auto",
+														marginBottom: 16,
+													}}
+													exit={{
+														opacity: 0,
+														height: 0,
+														marginBottom: 0,
+													}}
+													transition={{
+														opacity: {
+															duration:
+																reduceMotion
+																	? 0
+																	: 0.12,
+														},
+														height: {
+															duration:
+																reduceMotion
+																	? 0
+																	: 0.22,
+															ease: "easeInOut",
+														},
+														marginBottom: {
+															duration:
+																reduceMotion
+																	? 0
+																	: 0.22,
+															ease: "easeInOut",
+														},
+													}}
+													style={{
+														overflow: "hidden",
+													}}
+												>
+													{renderField(field)}
+												</motion.div>
+											),
+										)
+									)}
 								</AnimatePresence>
 							</fieldset>
 							<input
