@@ -25,16 +25,19 @@ agentsRef.data = [
 	{
 		id: "agent-1",
 		name: "SupportBot",
+		channels: ["chat"],
 		description: "answers support tickets",
 	},
 	{
 		id: "agent-2",
 		name: "DevBot",
+		channels: ["chat"],
 		description: "writes code",
 	},
 	{
 		id: "agent-3",
 		name: "DataBot",
+		channels: ["chat"],
 		description: null,
 	},
 ];
