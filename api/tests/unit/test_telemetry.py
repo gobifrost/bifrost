@@ -113,9 +113,14 @@ def test_run_span_marks_error_without_user_data():
     from opentelemetry.trace import StatusCode
 
     exporter = _capture()
-    with pytest.raises(ValueError, match="user secret detail"):
+    raised: str | None = None
+    try:
         with run_span(handler="agent.run", run_id="run-2", message={}):
             raise ValueError("user secret detail")
+    except ValueError as exc:
+        raised = str(exc)
+    assert raised == "user secret detail"
+
     span = exporter.get_finished_spans()[-1]
     assert span.name == "run.agent.run"
     assert span.status.status_code == StatusCode.ERROR
