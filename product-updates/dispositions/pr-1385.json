@@ -1,0 +1,10 @@
+{
+  "key": "pr:1385",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Small consistency correction making Chat discovery honor the existing agent channel setting; no standalone announcement warranted.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1385", "https://github.com/gobifrost/bifrost/issues/1374"]
+  }
+}
