@@ -16,6 +16,8 @@
 //   so node --test can exercise it without workerd. tenant-entry.mjs calls it
 //   directly in the run path (no extra binding, no second orchestration layer).
 import {DUMMY_CREDENTIAL} from '../executor/gateway-injection.mjs';
+import {verifyModuleResponse} from '../../backend/module-response.mjs';
+import {verifyResolutionResponse} from '../../backend/resolution-response.mjs';
 
 const HEX64 = /^[0-9a-f]{64}$/;
 const NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*(?:[./][A-Za-z_][A-Za-z0-9_]*)*$/;
@@ -101,6 +103,67 @@ export function createTenantGateway({store, manifest, runToken} = {}) {
           return Response.json({phase: 'digest-mismatch', error: 'Workspace module digest mismatch'}, {status: 409, headers});
         }
         return Response.json({path, content, hash: pin}, {headers});
+      }
+      return new Response('Not found', {status: 404});
+    },
+  };
+}
+
+// Remote gateway for staging: forwards module resolve/fetch to the real Bifrost
+// API with the run token in the parent, then verifies the response against the
+// trusted manifest pins (same verifiers the executor uses). The child still
+// presents only DUMMY_CREDENTIAL and never sees the token or the raw attempt.
+export function createRemoteTenantGateway({apiOrigin, manifest, runToken, fetchImpl = fetch} = {}) {
+  const pins = isRecord(manifest) ? manifest : {};
+  const token = typeof runToken === 'string' && runToken.length >= 10 ? runToken : null;
+  let origin = null;
+  try {
+    const parsed = new URL(apiOrigin);
+    const loopback = parsed.hostname === 'localhost' || parsed.hostname === '127.0.0.1';
+    // Production posture is HTTPS-only; loopback HTTP exists solely for the
+    // local staging harness and never for a deployed worker.
+    if (parsed.protocol === 'https:' || (loopback && parsed.protocol === 'http:')) origin = parsed.origin;
+  } catch {
+    origin = null;
+  }
+
+  async function upstream(path) {
+    if (origin === null || token === null) {
+      return Response.json({phase: 'gateway-unconfigured',
+        has_origin: origin !== null, has_token: token !== null,
+        origin_length: typeof apiOrigin === 'string' ? apiOrigin.length : 0}, {status: 503});
+    }
+    return fetchImpl(`${origin}${path}`, {
+      headers: {Authorization: `Bearer ${token}`},
+      redirect: 'manual',
+    });
+  }
+
+  return {
+    runToken: token,
+    remote: true,
+    async fetch(request) {
+      const url = new URL(request.url);
+      if (request.headers.get('Authorization') !== `Bearer ${DUMMY_CREDENTIAL}`) {
+        return Response.json({phase: 'gateway-auth', error: 'Child presents dummy credential only'}, {status: 401});
+      }
+      if (url.pathname === '/api/sdk/modules-resolve') {
+        const name = url.searchParams.get('name') ?? '';
+        const response = await upstream(`/api/sdk/modules-resolve?name=${encodeURIComponent(name)}`);
+        return verifyResolutionResponse(response, pins);
+      }
+      const prefix = '/api/sdk/modules/';
+      if (url.pathname.startsWith(prefix)) {
+        const path = decodeURIComponent(url.pathname.slice(prefix.length));
+        if (!isStoragePath(path)) {
+          return Response.json({phase: 'invalid-path', error: 'Invalid module path'}, {status: 400});
+        }
+        const pin = pins[path];
+        if (!HEX64.test(pin ?? '')) {
+          return Response.json({phase: 'unpinned', error: 'Workspace module is not pinned'}, {status: 404});
+        }
+        const response = await upstream(`${prefix}${encodeURIComponent(path)}`);
+        return verifyModuleResponse(response, path, pin);
       }
       return new Response('Not found', {status: 404});
     },

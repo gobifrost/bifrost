@@ -1,0 +1,6 @@
+# Staging-only compose overlay: publish the API on a host port so a tunnel can
+# reach it. Never use this for a shared environment.
+services:
+  api:
+    ports:
+      - "18000:8000"

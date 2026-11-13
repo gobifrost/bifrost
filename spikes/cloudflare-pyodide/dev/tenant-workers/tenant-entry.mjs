@@ -27,7 +27,7 @@
 //   imports map to a terminal (effects may already exist, same as executor).
 import {genericWorkerCode, genericCodeDigest} from './generic-worker-code.mjs';
 import {tenantWorkerId} from './tenant-registry.mjs';
-import {createTenantGateway, isStoragePath} from './tenant-gateway.mjs';
+import {createTenantGateway, createRemoteTenantGateway, isStoragePath} from './tenant-gateway.mjs';
 import {capabilityRejection} from '../executor/capability-requirements.mjs';
 import {egressRejection, isUrlAllowed} from '../executor/egress-allowlist.mjs';
 import {reconcileImports, deniedTerminal} from '../executor/import-audit.mjs';
@@ -81,6 +81,18 @@ export default {
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/__code_digest') {
       return Response.json({generic_code_sha256: await genericCodeDigest()});
+    }
+    if (request.method === 'GET' && url.pathname === '/__gateway_probe') {
+      // Diagnostic: can this Worker reach the configured API origin at all?
+      const origin = typeof env.API_ORIGIN === 'string' ? env.API_ORIGIN : '';
+      if (!origin) return Response.json({configured: false});
+      try {
+        const response = await fetch(`${origin}/health/ready`, {redirect: 'manual'});
+        return Response.json({configured: true, status: response.status});
+      } catch (error) {
+        return Response.json({configured: true, error_type: error?.name ?? 'Error',
+          error: String(error?.message ?? error).slice(0, 200)});
+      }
     }
     if (request.method !== 'POST') return new Response('POST required', {status: 405});
     let body;
@@ -142,8 +154,15 @@ export default {
       const apiCalls = [];
       let childBody;
       if (body.action === 'run') {
-        const gateway = createTenantGateway({store: body.modules,
-          manifest: body.manifest, runToken: body.context?.engine_token});
+        // Staging mode: fetch through the real API with the run token held in
+        // the parent. The attempt declares the module closure; anything outside
+        // it is never fetched.
+        const remote = typeof env.API_ORIGIN === 'string' && env.API_ORIGIN !== '';
+        const gateway = remote
+          ? createRemoteTenantGateway({apiOrigin: env.API_ORIGIN, manifest: body.manifest,
+              runToken: body.context?.engine_token})
+          : createTenantGateway({store: body.modules, manifest: body.manifest,
+              runToken: body.context?.engine_token});
         const gatewayGet = async (path) => {
           const response = await gateway.fetch(new Request(`https://test-api.invalid${path}`, {
             headers: {Authorization: `Bearer ${DUMMY_CREDENTIAL}`},
@@ -163,10 +182,14 @@ export default {
           return {terminal: {phase: 'module-preflight', module_status: resolvedResponse.status,
             path: body.entry, resolution: resolved.kind, api_calls: apiCalls}};
         }
-        // Fetch every stored path through the gateway (declared paths plus any
-        // extra loadable path the attempt supplied for the audit to judge).
+        // Fetch every declared path through the gateway. Local mode keeps the
+        // attempt-supplied store (plus extra loadable paths for the audit);
+        // remote mode fetches exactly the declared closure from the real API.
+        const modulePaths = remote
+          ? [...new Set((body.requirements?.modules ?? []).filter(id => isStoragePath(id)))]
+          : Object.keys(gatewaySources(body.modules));
         const fetched = {};
-        for (const path of Object.keys(gatewaySources(body.modules))) {
+        for (const path of modulePaths) {
           const moduleResponse = await gatewayGet(`/api/sdk/modules/${path}`);
           if (moduleResponse.status !== 200) {
             return {terminal: {phase: 'module-preflight', module_status: moduleResponse.status,

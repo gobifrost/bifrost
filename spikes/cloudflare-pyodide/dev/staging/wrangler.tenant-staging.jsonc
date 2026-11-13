@@ -1,0 +1,16 @@
+﻿{
+  // Local workerd staging harness: the same supervisor code and the same
+  // workerd runtime as the deployed Worker, but pointed at a real Bifrost API
+  // on localhost. Not a deployed-Cloudflare claim.
+  "name": "bifrost-tenant-staging-local",
+  "main": "../tenant-workers/tenant-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["python_workers"],
+  "worker_loaders": [{"binding": "LOADER"}],
+  "vars": {
+    "LOCAL_PROBE": "true",
+    "API_ORIGIN": "http://127.0.0.1:18000"
+  },
+  "observability": {"enabled": false}
+}
+

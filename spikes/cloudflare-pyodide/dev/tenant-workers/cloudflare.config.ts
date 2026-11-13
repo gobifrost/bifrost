@@ -14,7 +14,10 @@ export default defineConfig({
     previewUrls: false,
     env: {
       LOADER: {type: 'worker-loader'},
-      SPIKE_EXPIRES_AT: {type: 'text', value: '1794563405678'},
+      SPIKE_EXPIRES_AT: {type: 'text', value: process.env.SPIKE_EXPIRES_AT ?? '0'},
+      // Staging only: when set, the supervisor fetches modules from this real
+      // Bifrost API instead of an attempt-supplied store.
+      API_ORIGIN: {type: 'text', value: process.env.STAGING_API_ORIGIN ?? ''},
     },
     limits: {cpuMs: 1000},
     observability: {enabled: false},
