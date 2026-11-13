@@ -14,7 +14,11 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { renderWithProviders, screen } from "@/test-utils";
+import { renderWithProviders, screen, within } from "@/test-utils";
+
+vi.mock("@/hooks/useMediaQuery", () => ({
+	useMediaQuery: (query: string) => query === "(max-width: 1023px)",
+}));
 
 // Monaco editor ("@monaco-editor/react") — huge and slow to load; stub it.
 vi.mock("@monaco-editor/react", () => ({
@@ -282,4 +286,36 @@ it("starts each palette opening with its chosen type and a fresh field draft", a
 	expect(
 		screen.getByRole("combobox", { name: "Field Type" }),
 	).toHaveTextContent("Email");
+});
+
+describe("FieldConfigDialog — context sheet", () => {
+	it("closes only context on Escape and restores focus without losing the field", async () => {
+		const { user, onClose } = renderDialog();
+		await user.type(screen.getByLabelText(/field name/i), "kept_field");
+		const trigger = screen.getByRole("button", {
+			name: "Context",
+		});
+		await user.click(trigger);
+		const sheet = screen.getByRole("dialog", { name: "Context & Helpers" });
+		expect(
+			within(sheet).getByText("Available Context"),
+		).toBeInTheDocument();
+		await user.keyboard("{Escape}");
+		expect(
+			screen.queryByRole("dialog", { name: "Context & Helpers" }),
+		).not.toBeInTheDocument();
+		expect(onClose).not.toHaveBeenCalled();
+		expect(trigger).toHaveFocus();
+		expect(screen.getByLabelText(/field name/i)).toHaveValue("kept_field");
+		await user.click(trigger);
+		await user.click(
+			within(
+				screen.getByRole("dialog", { name: "Context & Helpers" }),
+			).getByRole("button", { name: "Close" }),
+		);
+		expect(
+			screen.queryByRole("dialog", { name: "Context & Helpers" }),
+		).not.toBeInTheDocument();
+		expect(onClose).not.toHaveBeenCalled();
+	});
 });
