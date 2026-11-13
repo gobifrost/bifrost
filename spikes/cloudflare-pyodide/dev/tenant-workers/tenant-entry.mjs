@@ -6,6 +6,16 @@
 // tenant are serialized through a per-tenant promise chain (Pyodide is
 // single-threaded); different tenants run in different isolates.
 //
+// Module source path (PATH-keyed, gateway-mediated): the attempt supplies
+// body.modules as storage path -> source and body.manifest as storage path ->
+// sha256. The supervisor never forwards the raw store: every byte the child
+// receives comes out of createTenantGateway responses to
+// GET /api/sdk/modules/<path> (pin-verified) after
+// GET /api/sdk/modules-resolve resolves the entry, matching how dev/executor
+// fetches. Recorded workspace loads are therefore REAL storage paths and the
+// import audit reconciles paths. The gateway holds the run token
+// (body.context?.engine_token) in props only; callers present DUMMY_CREDENTIAL.
+//
 // Security posture (reused, not reimplemented):
 // - capability-requirements.mjs: undeclared modules rejected BEFORE any
 //   loader/network/SDK effect.
@@ -17,6 +27,7 @@
 //   imports map to a terminal (effects may already exist, same as executor).
 import {genericWorkerCode, genericCodeDigest} from './generic-worker-code.mjs';
 import {tenantWorkerId} from './tenant-registry.mjs';
+import {createTenantGateway, isStoragePath} from './tenant-gateway.mjs';
 import {capabilityRejection} from '../executor/capability-requirements.mjs';
 import {egressRejection, isUrlAllowed} from '../executor/egress-allowlist.mjs';
 import {reconcileImports, deniedTerminal} from '../executor/import-audit.mjs';
@@ -49,6 +60,12 @@ export async function enqueueTenant(tenantId, fn) {
 
 function json(status, value) {
   return Response.json(value, {status});
+}
+
+// Attempt store as a record (storage path -> source); anything else behaves
+// as an empty store so the gateway preflight fails closed after the gates.
+function gatewaySources(modules) {
+  return modules !== null && typeof modules === 'object' && !Array.isArray(modules) ? modules : {};
 }
 
 export default {
@@ -88,17 +105,68 @@ export default {
       return json(422, {phase: 'egress-rejected', reason: 'unlisted', api_calls: []});
     }
 
+    // Run entries are storage paths (e.g. 'workflows/wf.py'), validated BEFORE
+    // any loader/network/SDK effect alongside the capability/egress gates.
+    if (body.action === 'run' && !isStoragePath(body.entry)) {
+      return json(400, {phase: 'bad-request', error: 'Invalid entry path', api_calls: []});
+    }
+
     const workerReused = seenTenants.has(workerId);
     let outcome;
     try {
       outcome = await enqueueTenant(workerId, async () => {
       seenTenants.add(workerId);
       // One long-lived generic worker PER TENANT. The factory closes over NO
-      // per-attempt data: the script is constant; workflow source travels as
-      // attempt DATA below (body.modules/body.entry) into the virtual importer.
+      // per-attempt data: the script is constant. Workflow source travels as
+      // PATH-keyed DATA below, but only bytes the TenantGateway served after
+      // manifest-pin verification (never the raw attempt store).
+      const apiCalls = [];
+      let childBody;
+      if (body.action === 'run') {
+        const gateway = createTenantGateway({store: body.modules,
+          manifest: body.manifest, runToken: body.context?.engine_token});
+        const gatewayGet = async (path) => {
+          const response = await gateway.fetch(new Request(`https://test-api.invalid${path}`, {
+            headers: {Authorization: `Bearer ${DUMMY_CREDENTIAL}`},
+          }));
+          apiCalls.push({path, method: 'GET', status: response.status});
+          return response;
+        };
+        // Resolve the entry through the gateway first (mirrors executor's
+        // modules-resolve + modules/<path> preflight): declared modules must
+        // resolve in the manifest BEFORE the loader effect below.
+        const resolveName = body.entry.slice(0, -'.py'.length).replaceAll('/', '.');
+        const resolvedResponse = await gatewayGet(
+          `/api/sdk/modules-resolve?name=${encodeURIComponent(resolveName)}`);
+        const resolved = await resolvedResponse.json();
+        if ((resolved.kind !== 'module' && resolved.kind !== 'package') ||
+            resolved.storage_path !== body.entry) {
+          return {terminal: {phase: 'module-preflight', module_status: resolvedResponse.status,
+            path: body.entry, resolution: resolved.kind, api_calls: apiCalls}};
+        }
+        // Fetch every stored path through the gateway (declared paths plus any
+        // extra loadable path the attempt supplied for the audit to judge).
+        const fetched = {};
+        for (const path of Object.keys(gatewaySources(body.modules))) {
+          const moduleResponse = await gatewayGet(`/api/sdk/modules/${path}`);
+          if (moduleResponse.status !== 200) {
+            return {terminal: {phase: 'module-preflight', module_status: moduleResponse.status,
+              path, api_calls: apiCalls}};
+          }
+          const served = await moduleResponse.json();
+          fetched[served.path] = served.content;
+        }
+        if (!(body.entry in fetched)) {
+          return {terminal: {phase: 'module-preflight', module_status: 404,
+            path: body.entry, api_calls: apiCalls}};
+        }
+        childBody = {action: body.action, entry: body.entry,
+          modules: fetched, credential: DUMMY_CREDENTIAL};
+      } else {
+        childBody = {action: body.action, marker: body.marker, ms: body.ms,
+          credential: DUMMY_CREDENTIAL};
+      }
       const worker = env.LOADER.get(workerId, () => genericWorkerCode());
-      const childBody = {action: body.action, marker: body.marker, ms: body.ms,
-        modules: body.modules, entry: body.entry, credential: DUMMY_CREDENTIAL};
       const response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
         method: 'POST', body: JSON.stringify(childBody),
       }));
@@ -112,16 +180,16 @@ export default {
             provider_outcome: {kind: 'terminal_body_too_large', response_eof: true,
               engine_outcome_delivered: false,
               response_bytes: error.observedBytes, retention_limit_bytes: error.limitBytes},
-            api_calls: []}};
+            api_calls: apiCalls}};
         }
         throw error;
       }
       if (body.action === 'run') {
         const audit = reconcileImports(body.requirements?.modules, output.recorded);
         const denied = deniedTerminal(audit);
-        if (denied) return {terminal: {...denied, api_calls: []}, output};
+        if (denied) return {terminal: {...denied, api_calls: apiCalls}, output};
       }
-      return {output};
+      return {output, apiCalls};
       });
     } catch (error) {
       // Never echo exception strings (may contain workflow data or credentials).
@@ -135,6 +203,6 @@ export default {
         queue_wait_ms: queueWaitMs});
     }
     return Response.json({tenant_worker_id: workerId, worker_reused: workerReused,
-      queue_wait_ms: queueWaitMs, output: result.output, api_calls: []});
+      queue_wait_ms: queueWaitMs, output: result.output, api_calls: result.apiCalls ?? []});
   },
 };

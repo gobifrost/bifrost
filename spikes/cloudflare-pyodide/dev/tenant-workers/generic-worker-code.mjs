@@ -2,9 +2,13 @@
 //
 // This is the whole point of the pivot: one immutable script per tenant,
 // created once via env.LOADER.get(tenantWorkerId, () => genericWorkerCode()).
-// Workflow source NEVER appears here; it arrives per attempt as DATA
-// (body.modules / body.entry) and is loaded through a virtual import hook
-// that records every workspace load for the existing import-audit path.
+// Workflow source NEVER appears here; it arrives per attempt as PATH-keyed
+// DATA (body.modules: storage path -> source, body.entry: entry storage path)
+// and is loaded through a path-keyed virtual import hook that records REAL
+// storage paths (e.g. 'workflows/wf.py') for the existing import-audit path.
+// Module bytes reach the child only via the in-supervisor TenantGateway
+// (GET /api/sdk/modules/<path>, GET /api/sdk/modules-resolve), which verifies
+// manifest pins before serving; the child never sees the raw attempt store.
 // The child env is {}: the child holds NO credentials. Where the real
 // executor needs a credential to satisfy run_authorized_attempt, the parent
 // supplies the existing DUMMY_CREDENTIAL placeholder and the real gateway
@@ -29,21 +33,45 @@ from pathlib import Path
 from workers import WorkerEntrypoint, Response
 
 RECORDED = []
+_VIRTUAL_NAMES = set()
 _JWT_RE = re.compile(r'[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}\\.[A-Za-z0-9_-]{10,}')
 
-class _DataImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+class _PathImporter(importlib.abc.MetaPathFinder, importlib.abc.Loader):
+    # PATH-keyed virtual importer. Keys are storage paths
+    # ('workflows/helper.py'); import names map to candidate paths the same
+    # way production resolves logical names (dots/slashes -> base path).
+    # Every concrete workspace load records its STORAGE PATH, so the parent
+    # import audit reconciles paths, not module names. Namespace parents
+    # (e.g. 'workflows' for 'workflows.helper') resolve transparently and are
+    # not recorded: only concrete module/package loads count.
     def __init__(self, modules):
         self._modules = dict(modules)
+    def _concrete(self, name):
+        base = name.replace('.', '/')
+        for cand in (base + '.py', base + '/__init__.py'):
+            if cand in self._modules:
+                return cand
+        return None
     def find_spec(self, name, path=None, target=None):
-        if name.split('.')[0] in self._modules:
+        if self._concrete(name) is not None:
             return importlib.machinery.ModuleSpec(name, self)
+        base = name.replace('.', '/')
+        if any(p.startswith(base + '/') for p in self._modules):
+            spec = importlib.machinery.ModuleSpec(name, self, is_package=True)
+            spec.submodule_search_locations = []
+            return spec
         return None
     def create_module(self, spec):
         return None
     def exec_module(self, module):
-        RECORDED.append(module.__name__)
-        top = module.__name__.split('.')[0]
-        exec(compile(self._modules[top], '<tenant-data>/' + top, 'exec'), module.__dict__)
+        cand = self._concrete(module.__name__)
+        if cand is None:
+            module.__path__ = []
+            _VIRTUAL_NAMES.add(module.__name__)
+            return
+        RECORDED.append(cand)
+        _VIRTUAL_NAMES.add(module.__name__)
+        exec(compile(self._modules[cand], '<tenant-path>/' + cand, 'exec'), module.__dict__)
 
 def _clean():
     _p = Path("/tmp/tenant-hostile-pwn.txt")
@@ -98,21 +126,29 @@ class Default(WorkerEntrypoint):
         if action == "run":
             RECORDED.clear()
             modules = data.get("modules") or {}
-            entry = data.get("entry")
-            # Fresh DATA per attempt: evict prior attempts' virtual modules so
-            # the import below re-executes the supplied source. This is module
-            # refresh, not residue hiding: builtins/env/fs/sys residue outside
-            # the supplied module set (e.g. _tenant_pwn) is left untouched and
-            # stays observable as the documented within-tenant limitation.
-            for _name in [n for n in sys.modules if n.split('.')[0] in modules]:
-                del sys.modules[_name]
-            sys.meta_path.insert(0, _DataImporter(modules))
+            entry_path = data.get("entry_path", data.get("entry"))
+            # Entry is a gateway-served storage path, loaded directly (like the
+            # real executor loads file_path): no parent import, no name guess.
+            if not isinstance(entry_path, str) or entry_path not in modules:
+                return Response.json({"error": "unknown entry path"}, status=400)
+            # Fresh DATA per attempt: evict only the names this worker loaded
+            # through the path importer, so sub-imports below re-execute the
+            # supplied source. This is module refresh, not residue hiding:
+            # builtins/env/fs/sys residue outside the importer (e.g.
+            # _tenant_pwn) is left untouched and stays observable as the
+            # documented within-tenant limitation.
+            for _name in list(_VIRTUAL_NAMES):
+                sys.modules.pop(_name, None)
+            _VIRTUAL_NAMES.clear()
+            sys.meta_path.insert(0, _PathImporter(modules))
             try:
-                mod = importlib.import_module(entry)
-                fn = getattr(mod, "main", None)
+                entry_mod = types.ModuleType("__tenant_entry__")
+                RECORDED.append(entry_path)
+                exec(compile(modules[entry_path], '<tenant-path>/' + entry_path, 'exec'), entry_mod.__dict__)
+                fn = getattr(entry_mod, "main", None)
                 result = fn() if callable(fn) else {"imported": True}
             finally:
-                sys.meta_path = [f for f in sys.meta_path if not isinstance(f, _DataImporter)]
+                sys.meta_path = [f for f in sys.meta_path if not isinstance(f, _PathImporter)]
             return Response.json({"result": result, "recorded": sorted(set(RECORDED))})
         if action == "env_check":
             values = list(os.environ.values())

@@ -23,16 +23,17 @@ creation cost and no per-attempt boot.
 | File | Purpose |
 |---|---|
 | `tenant-registry.mjs` | deterministic `tenant id -> worker id` (`tenant-py-<sha256[:32]>`); reused across code changes because the script is constant |
-| `generic-worker-code.mjs` | the CONSTANT Python script plus `genericWorkerCode()` and a digest; workflow source never appears here |
-| `tenant-entry.mjs` | supervisor: capability + egress gates before any loader effect, per-tenant serialization chain, output budget, import audit/deny |
-| `wrangler.tenant-local.jsonc` | local `workerd` config |
-| `*.test.mjs` | 17 unit tests plus a `workerd` integration suite |
+| `generic-worker-code.mjs` | the CONSTANT Python script plus `genericWorkerCode()` and a digest; workflow source never appears here (path-keyed `_PathImporter` records storage paths) |
+| `tenant-gateway.mjs` | in-supervisor module gateway: serves the attempt store pin-verified via `GET /api/sdk/modules/<path>` + `GET /api/sdk/modules-resolve` (mirrors `dev/executor`); holds the run token parent-side, callers present `DUMMY_CREDENTIAL` |
+| `tenant-entry.mjs` | supervisor: capability + egress gates before any loader effect, gateway resolve/fetch preflight, per-tenant serialization chain, output budget, import audit/deny |
+| `wrangler.tenant-local.jsonc` | local `workerd` config (LOADER binding only; the gateway is in-supervisor, no extra binding) |
+| `*.test.mjs` | 27 unit tests plus a `workerd` integration suite |
 
 ## Run
 
 ```sh
 cd spikes/cloudflare-pyodide/dev/tenant-workers
-node --test tenant-registry.test.mjs generic-code.test.mjs tenant-gates.test.mjs
+node --test tenant-registry.test.mjs generic-code.test.mjs tenant-gateway.test.mjs tenant-gates.test.mjs
 npx wrangler dev --config wrangler.tenant-local.jsonc --port 8811 --ip 127.0.0.1 &
 node tenant-isolation.test.mjs
 ```
@@ -44,9 +45,11 @@ node tenant-isolation.test.mjs
   marker. Mutually distrusting workloads need separate tenants.
 - Serialization: two concurrent same-tenant attempts do not interleave (`queue_wait_ms` records
   the wait); two different tenants run in parallel (518 ms wall for 2 × 500 ms work).
-- Cold vs warm for one tenant: **2363 ms cold / 9 ms warm** (`worker_reused` flag proves reuse).
-- Gates still reject before effects: capability (missing module), egress (unlisted host),
-  undeclared-import terminal, and the child holds no credentials.
+- Cold vs warm for one tenant: **2617–3180 ms cold / 11 ms warm** (`worker_reused` flag proves reuse).
+- Gates still reject before effects: capability (missing path), egress (unlisted host),
+  undeclared-import terminal naming storage paths, and the child holds no
+  credentials. Capability rejection provably precedes any gateway module fetch
+  (`api_calls` is empty on the 422).
 
 ## Proven nothing (explicit)
 
@@ -56,7 +59,23 @@ containment beyond the canary surface are **not** established here. All timings 
 
 ## Known prototype gap
 
-The data importer records **module names** while the production import audit reconciles
-**storage paths** (`workflows/x.py`). The prototype therefore proves the gate ordering and the
-terminal mapping, not path-level attribution fidelity. Production must feed the gateway-fetched
-module source with its real paths (as `dev/executor` does) rather than a name-keyed data map.
+**Closed (this change):** path-level attribution. The name-keyed data map is
+gone: module source is PATH-keyed (`workflows/x.py`), served to the child only
+as pin-verified `TenantGateway` responses to `/api/sdk/modules/<path>` after
+`/api/sdk/modules-resolve` resolves the entry — the same two endpoints
+`dev/executor` uses. The child's `_PathImporter` records REAL storage paths,
+so the production `reconcileImports`/`deniedTerminal` audit reconciles paths
+and the undeclared-import terminal names paths. The workerd suite proves: (a)
+a declared path that loads appears in recorded paths and reconciles clean; (b)
+an undeclared-but-loadable path maps to the terminal with paths named; (c)
+capability rejection happens before any gateway module fetch (`api_calls: []`
+on the 422 plus loader untouched); (d) cross-tenant isolation unchanged; (e)
+same-tenant residue unchanged/documented. The generic script stays constant
+(no per-tenant bake) and the child stays credential-free (gateway injects the
+run token parent-side; the child presents only `DUMMY_CREDENTIAL`).
+
+**Remains:** the gateway serves the attempt-supplied store, not Redis/S3 via a
+real API (no upstream `api/` changes in this prototype); cloud deploy/billing,
+token refresh through the gateway, CPU termination, rotation of tenant ids on
+engine-code change, and adversarial containment beyond the canary surface are
+**not** established here. All timings are local `workerd`, not cloud-metered.

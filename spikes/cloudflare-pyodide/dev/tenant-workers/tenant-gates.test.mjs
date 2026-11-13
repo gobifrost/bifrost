@@ -1,9 +1,21 @@
 // Pure unit (fake LOADER, no workerd): per-tenant serialization, queue wait
-// accounting, and gates firing BEFORE any loader effect.
+// accounting, and gates firing BEFORE any loader effect. Run attempts are
+// PATH-keyed: body.modules maps storage paths to source, body.entry is a
+// storage path, and every child byte comes out of the TenantGateway after
+// manifest-pin verification (never the raw store).
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
 import entry, {enqueueTenant, resetTenantState} from './tenant-entry.mjs';
 import {genericCodeDigest} from './generic-worker-code.mjs';
+
+const WF = 'workflows/wf.py';
+const GHOST = 'workflows/ghost.py';
+const HELPER = 'workflows/helper.py';
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
 
 const delay = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -62,16 +74,28 @@ test('a failing attempt does not break the chain', async () => {
   assert.equal((await good).result, 'recovered');
 });
 
-test('capability gate rejects BEFORE loader get (no worker effect)', async () => {
+test('capability gate rejects BEFORE loader get AND before any module fetch', async () => {
+  resetTenantState();
+  const log = {getCalls: [], fetchCalls: []};
+  const res = await entry.fetch(post({tenant_id: 'org-x', action: 'run',
+    modules: {[WF]: 'X=1\n'}, entry: WF,
+    requirements: {modules: [WF, GHOST]},
+    manifest: {[WF]: await sha256Hex('X=1\n')}}), fakeEnv(log), {});
+  assert.equal(res.status, 422);
+  const body = await res.json();
+  assert.deepEqual(body.missing_modules, [GHOST]);
+  assert.deepEqual(body.api_calls, [], 'no gateway module fetch may happen on gate reject');
+  assert.deepEqual(log.getCalls, [], 'loader must not be touched on gate reject');
+});
+
+test('non-path entry is rejected before any effect', async () => {
   resetTenantState();
   const log = {getCalls: [], fetchCalls: []};
   const res = await entry.fetch(post({tenant_id: 'org-x', action: 'run',
     modules: {wf: 'X=1'}, entry: 'wf',
-    requirements: {modules: ['wf', 'ghost-module']},
-    manifest: {wf: 'hash'}}), fakeEnv(log), {});
-  assert.equal(res.status, 422);
-  assert.deepEqual((await res.json()).missing_modules, ['ghost-module']);
-  assert.deepEqual(log.getCalls, [], 'loader must not be touched on gate reject');
+    requirements: {modules: ['wf']}, manifest: {wf: 'hash'}}), fakeEnv(log), {});
+  assert.equal(res.status, 400);
+  assert.deepEqual(log.getCalls, []);
 });
 
 test('egress gate rejects BEFORE loader get (no worker effect)', async () => {
@@ -83,20 +107,56 @@ test('egress gate rejects BEFORE loader get (no worker effect)', async () => {
   assert.deepEqual(log.getCalls, [], 'loader must not be touched on gate reject');
 });
 
-test('undeclared import maps to terminal AFTER run (post-hoc, like executor)', async () => {
+test('undeclared STORAGE PATH import maps to terminal AFTER run (post-hoc, like executor)', async () => {
   resetTenantState();
   const log = {getCalls: [], fetchCalls: []};
   const child = {getEntrypoint: () => ({fetch: async () =>
-    Response.json({result: {ok: true}, recorded: ['wf', 'helper']})})};
+    Response.json({result: {ok: true}, recorded: [WF, HELPER]})})};
   const env = {LOCAL_PROBE: 'true', LOADER: {get: (id, f) => { log.getCalls.push(id); f(); return child; }}};
+  const wfSrc = 'X = 1\n';
   const res = await entry.fetch(post({tenant_id: 'org-x', action: 'run',
-    modules: {wf: 'import helper', helper: 'X=1'}, entry: 'wf',
-    requirements: {modules: ['wf']}, manifest: {wf: 'h', helper: 'h'}}), env, {});
+    modules: {[WF]: wfSrc, [HELPER]: wfSrc}, entry: WF,
+    requirements: {modules: [WF]},
+    manifest: {[WF]: await sha256Hex(wfSrc), [HELPER]: await sha256Hex(wfSrc)}}), env, {});
   assert.equal(res.status, 502);
   const body = await res.json();
   assert.equal(body.phase, 'undeclared-import');
-  assert.deepEqual(body.provider_outcome.undeclared_modules, ['helper']);
+  assert.deepEqual(body.provider_outcome.undeclared_modules, [HELPER]);
+  assert.ok(body.api_calls.some((c) => c.path === `/api/sdk/modules/${HELPER}` && c.status === 200),
+    `gateway fetched the undeclared-but-loadable path: ${JSON.stringify(body.api_calls)}`);
   assert.equal(log.getCalls.length, 1, 'run executed, then mapped post-hoc');
+});
+
+test('entry that the gateway cannot resolve fails BEFORE the loader effect', async () => {
+  resetTenantState();
+  const log = {getCalls: [], fetchCalls: []};
+  const res = await entry.fetch(post({tenant_id: 'org-x', action: 'run',
+    modules: {}, entry: WF,
+    requirements: {modules: [WF]}, manifest: {[WF]: await sha256Hex('X = 1\n')}}), fakeEnv(log), {});
+  assert.equal(res.status, 502);
+  assert.equal((await res.json()).phase, 'module-preflight');
+  assert.deepEqual(log.getCalls, [], 'unresolvable entry must never reach the loader');
+});
+
+test('declared path run succeeds with gateway api_calls and path-keyed child body', async () => {
+  resetTenantState();
+  let seen;
+  const child = {getEntrypoint: () => ({fetch: async (req) => {
+    seen = await req.json();
+    return Response.json({result: {ok: true}, recorded: [WF]});
+  }})};
+  const env = {LOCAL_PROBE: 'true', LOADER: {get: () => child}};
+  const wfSrc = 'X = 1\n';
+  const res = await entry.fetch(post({tenant_id: 'org-x', action: 'run',
+    modules: {[WF]: wfSrc}, entry: WF,
+    requirements: {modules: [WF]}, manifest: {[WF]: await sha256Hex(wfSrc)}}), env, {});
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.output.result.ok, true);
+  assert.deepEqual(Object.keys(seen.modules), [WF]);
+  assert.equal(seen.entry, WF);
+  assert.ok(body.api_calls.some((c) => c.path === `/api/sdk/modules/${WF}` && c.status === 200));
+  assert.ok(body.api_calls.some((c) => c.path.startsWith('/api/sdk/modules-resolve')));
 });
 
 test('success envelope carries tenant id, reuse flag and queue wait', async () => {

@@ -18,7 +18,16 @@ test('script contains no tenant identity and no per-attempt data', () => {
   assert.ok(!GENERIC_PYTHON.includes('org-'), 'must not bake tenant ids');
   assert.ok(!GENERIC_PYTHON.includes('tenant-py-'), 'must not bake worker ids');
   assert.ok(!GENERIC_PYTHON.includes('Bearer'), 'must not carry credentials');
+  assert.ok(!GENERIC_PYTHON.includes('<tenant-data>/'), 'name-keyed data map is gone');
   assert.ok(GENERIC_PYTHON.includes('class Default(WorkerEntrypoint)'));
+});
+
+test('importer is path-keyed: records storage paths, maps names like production', () => {
+  assert.ok(GENERIC_PYTHON.includes('class _PathImporter'), 'path-keyed importer present');
+  assert.ok(!GENERIC_PYTHON.includes('_DataImporter'), 'old name-keyed importer removed');
+  assert.ok(GENERIC_PYTHON.includes('<tenant-path>/'), 'tracebacks name storage paths');
+  assert.ok(GENERIC_PYTHON.includes("__init__.py"), 'package entries resolve by path');
+  assert.ok(GENERIC_PYTHON.includes('entry_path'), 'entry loads by storage path, not import name');
 });
 
 test('child env is empty: the child holds NO credentials', () => {

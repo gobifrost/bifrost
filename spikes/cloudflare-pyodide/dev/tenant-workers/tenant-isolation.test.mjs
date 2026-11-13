@@ -5,8 +5,19 @@
 // Proves: (a) different tenants get different isolates (hostile canary style);
 // (b) same-tenant attempts serialize, with within-tenant residue reported as a
 // documented limitation; (c) warm latency vs cold first-attempt latency;
-// (d) gates reject undeclared modules/egress before effects.
+// (d) gates reject undeclared modules/egress before effects; module source is
+// PATH-keyed through the gateway (/api/sdk/modules/<path>,
+// /api/sdk/modules-resolve) so recorded loads are REAL storage paths.
 import assert from 'node:assert/strict';
+
+async function sha256Hex(text) {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const WF = 'workflows/wf.py';
+const GHOST = 'workflows/ghost.py';
+const HELPER = 'workflows/helper.py';
 
 const args = process.argv.slice(2);
 const urlIdx = args.indexOf('--url');
@@ -100,13 +111,19 @@ try {
   verdict('c-warm-faster-than-cold', warm.wallMs < cold.wallMs,
     `cold=${cold.wallMs}ms warm=${warm.wallMs}ms`);
 
-  // (d) Gates reject before effects: capability.
+  // (d) Gates reject before effects: capability (declared path missing from
+  // the manifest rejects BEFORE any gateway module fetch: api_calls is empty).
+  const wfSrcCap = 'X = 1\n';
   const capReject = await post({tenant_id: tenantF, action: 'run',
-    modules: {wf: 'X=1'}, entry: 'wf',
-    requirements: {modules: ['wf', 'ghost-module']}, manifest: {wf: 'hash'}});
+    modules: {[WF]: wfSrcCap}, entry: WF,
+    requirements: {modules: [WF, GHOST]}, manifest: {[WF]: await sha256Hex(wfSrcCap)}});
   verdict('d-capability-rejects-before-effects',
-    capReject.status === 422 && capReject.body.phase === 'capability-rejected',
+    capReject.status === 422 && capReject.body.phase === 'capability-rejected' &&
+    (capReject.body.missing_modules ?? []).includes(GHOST),
     JSON.stringify(capReject.body));
+  verdict('d-capability-before-any-module-fetch',
+    Array.isArray(capReject.body.api_calls) && capReject.body.api_calls.length === 0,
+    JSON.stringify(capReject.body.api_calls));
   const afterCap = await post({tenant_id: tenantF, action: 'honest'});
   verdict('d-rejected-workflow-never-ran',
     afterCap.status === 200 && afterCap.body.output.clean.builtins == null,
@@ -119,22 +136,35 @@ try {
     egReject.status === 422 && egReject.body.phase === 'egress-rejected',
     JSON.stringify(egReject.body));
 
-  // (d) Import audit denies undeclared workspace imports post-hoc (effects may exist).
-  const wfSrc = 'import helper\ndef main():\n    return {"ok": True}\n';
+  // (d) Import audit denies undeclared workspace PATH imports post-hoc
+  // (effects may exist). A declared path that loads appears in recorded paths
+  // and reconciles clean; the undeclared-but-loadable path is named as a path.
+  const denyWfSrc = 'import workflows.helper\ndef main():\n    return {"ok": True}\n';
+  const denyHelperSrc = 'X = 1\n';
   const deny = await post({tenant_id: tenantH, action: 'run',
-    modules: {wf: wfSrc, helper: 'X = 1\n'}, entry: 'wf',
-    requirements: {modules: ['wf']}, manifest: {wf: 'h1', helper: 'h2'}});
+    modules: {[WF]: denyWfSrc, [HELPER]: denyHelperSrc}, entry: WF,
+    requirements: {modules: [WF]},
+    manifest: {[WF]: await sha256Hex(denyWfSrc), [HELPER]: await sha256Hex(denyHelperSrc)}});
   verdict('d-undeclared-import-terminal',
     deny.status === 502 && deny.body.phase === 'undeclared-import' &&
-    (deny.body.provider_outcome.undeclared_modules ?? []).includes('helper'),
+    (deny.body.provider_outcome.undeclared_modules ?? []).includes(HELPER),
     JSON.stringify(deny.body));
-  // Declared run succeeds and reports its audit trail.
+  verdict('d-undeclared-terminal-names-paths',
+    (deny.body.provider_outcome.undeclared_modules ?? []).every((m) => m.endsWith('.py') && m.includes('/')),
+    JSON.stringify(deny.body.provider_outcome));
+  // Declared run succeeds and reports its path-level audit trail.
+  const okWfSrc = 'def main():\n    return {"ok": True}\n';
   const okRun = await post({tenant_id: tenantH, action: 'run',
-    modules: {wf: 'def main():\n    return {"ok": True}\n'}, entry: 'wf',
-    requirements: {modules: ['wf']}, manifest: {wf: 'h1'}});
+    modules: {[WF]: okWfSrc}, entry: WF,
+    requirements: {modules: [WF]}, manifest: {[WF]: await sha256Hex(okWfSrc)}});
   verdict('d-declared-run-succeeds',
     okRun.status === 200 && okRun.body.output.result.ok === true,
     JSON.stringify(okRun.body));
+  verdict('d-declared-path-recorded-reconciles-clean',
+    okRun.status === 200 &&
+    (okRun.body.output.recorded ?? []).includes(WF) &&
+    (okRun.body.api_calls ?? []).some((c) => c.path === `/api/sdk/modules/${WF}` && c.status === 200),
+    JSON.stringify({recorded: okRun.body.output?.recorded, api_calls: okRun.body.api_calls}));
 
   // Child holds no credentials: no token-shaped env, dummy never lands in env.
   const envCheck = await post({tenant_id: tenantB, action: 'env_check'});
