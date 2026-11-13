@@ -338,7 +338,7 @@ export function WorkflowKeyRevealDialog({
 			>
 				<DialogHeader className="shrink-0">
 					<DialogTitle className="flex items-center gap-2">
-						<Check className="h-5 w-5 text-green-500" />
+						<Check className="h-5 w-5 text-success" />
 						API Key Created Successfully
 					</DialogTitle>
 					<DialogDescription>

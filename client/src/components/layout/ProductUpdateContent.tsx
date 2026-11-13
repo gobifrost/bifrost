@@ -494,6 +494,7 @@ export function CommunityFooter({
 		>
 			<div
 				aria-hidden="true"
+				// eslint-disable-next-line shadcn/no-raw-colors -- Footer brand hairline; fuchsia/amber stops echo the Bifrost bridge spectrum.
 				className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-primary via-fuchsia-500 to-amber-400"
 			/>
 			<div

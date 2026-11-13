@@ -334,7 +334,7 @@ function AgentGridCard({
 						id={agent.id}
 						logo={agent.logo_url ?? null}
 						size="card"
-						className="border-violet-500/20 bg-violet-500/10 text-violet-700 dark:text-violet-300 [&_svg]:text-current"
+						className="border-power/20 bg-power-soft text-power [&_svg]:text-current"
 					/>
 				}
 				title={agent.name}

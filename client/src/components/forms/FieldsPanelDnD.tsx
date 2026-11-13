@@ -190,7 +190,7 @@ function WorkflowInputItem({ param, onChoose }: WorkflowInputItemProps) {
 						{param.name ?? "unnamed"}
 					</span>
 					{param.required && (
-						<Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+						<Star className="h-3 w-3 text-warning fill-warning" />
 					)}
 				</div>
 				{param.helpText && (
@@ -383,11 +383,11 @@ export function FieldsPanelDnD({
 								<h4 className="text-xs font-semibold uppercase tracking-wide text-primary">
 									Workflow Inputs
 								</h4>
-								<Star className="h-3 w-3 text-amber-500 fill-amber-500" />
+								<Star className="h-3 w-3 text-warning fill-warning" />
 							</div>
 							<p className="text-[10px] text-muted-foreground mb-2">
 								Required inputs are marked by{" "}
-								<Star className="h-2.5 w-2.5 text-amber-500 fill-amber-500 inline" />
+								<Star className="h-2.5 w-2.5 text-warning fill-warning inline" />
 							</p>
 							<div className="space-y-2">
 								{workflowParams.map(

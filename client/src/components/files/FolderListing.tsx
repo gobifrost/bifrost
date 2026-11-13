@@ -263,7 +263,7 @@ export function FolderListing({
 								className={cn(
 									"flex size-8 shrink-0 items-center justify-center rounded-[var(--bf-radius-surface)] border",
 									isFolder
-										? "border-amber-500/20 bg-amber-500/10 text-amber-600 dark:text-amber-400"
+										? "border-warning/20 bg-warning-soft text-warning"
 										: "border-border bg-muted/40 text-muted-foreground",
 								)}
 							>

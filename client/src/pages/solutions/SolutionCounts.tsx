@@ -40,7 +40,7 @@ const COUNT_ITEMS: {
 		shortLabel: "Forms",
 		Icon: FileCode,
 		className:
-			"border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
+			"border-success/30 bg-success-soft text-success",
 	},
 	{
 		key: "agents",
@@ -48,7 +48,7 @@ const COUNT_ITEMS: {
 		shortLabel: "Agents",
 		Icon: Bot,
 		className:
-			"border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300",
+			"border-power/30 bg-power-soft text-power",
 	},
 	{
 		key: "tables",
@@ -56,7 +56,7 @@ const COUNT_ITEMS: {
 		shortLabel: "Tables",
 		Icon: Database,
 		className:
-			"border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+			"border-warning/30 bg-warning-soft text-warning",
 	},
 	{
 		key: "claims",
@@ -64,7 +64,7 @@ const COUNT_ITEMS: {
 		shortLabel: "Claims",
 		Icon: KeyRound,
 		className:
-			"border-rose-500/30 bg-rose-500/10 text-rose-700 dark:text-rose-300",
+			"border-destructive/30 bg-destructive/10 text-destructive",
 	},
 	{
 		key: "files",
@@ -72,7 +72,7 @@ const COUNT_ITEMS: {
 		shortLabel: "Files",
 		Icon: FolderOpen,
 		className:
-			"border-cyan-500/30 bg-cyan-500/10 text-cyan-700 dark:text-cyan-300",
+			"border-reach/30 bg-reach-soft text-reach",
 	},
 ];
 

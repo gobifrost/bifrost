@@ -3,6 +3,7 @@
 
 @import "tailwindcss";
 @import "tw-animate-css";
+@plugin "@tailwindcss/typography";
 @import "./styles/bifrost-tokens.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -219,6 +220,19 @@
 	--color-destructive: var(--destructive);
 	--color-destructive-foreground: var(--destructive-foreground);
 	--color-border: var(--border);
+	/* Semantic Bifrost roles as first-class utilities (text-warning,
+	   bg-warning-soft, border-info/60, ...). Values resolve through the
+	   --bf-* tokens so light/dark stay in one place. */
+	--color-warning: var(--bf-warning);
+	--color-warning-soft: var(--bf-warning-soft);
+	--color-success: var(--bf-success);
+	--color-success-soft: var(--bf-success-soft);
+	--color-info: var(--bf-info);
+	--color-info-soft: var(--bf-info-soft);
+	--color-reach: var(--bf-reach);
+	--color-reach-soft: var(--bf-reach-soft);
+	--color-power: var(--bf-power);
+	--color-power-soft: var(--bf-power-soft);
 	--color-input: var(--input);
 	--color-ring: var(--ring);
 	--color-chart-1: var(--chart-1);

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1358",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Status badges and resource icons use shared theme colors.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1358",
+      "November 13, 2026 delegated factual review: verified the status and resource-icon token replacements in the final diff. Original contribution credited to MTG-Thomas. This disposition makes no claim that all lint findings or UI surfaces are resolved."
+    ]
+  }
+}

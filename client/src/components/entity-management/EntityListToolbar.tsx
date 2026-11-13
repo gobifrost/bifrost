@@ -105,7 +105,7 @@ export function EntityListToolbar({
 				</div>
 
 				<div className="grid min-w-0 flex-1 grid-cols-[minmax(0,1fr)_auto] gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-center lg:contents">
-					<div className="col-span-2 flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:col-span-1 lg:col-span-auto">
+					<div className="col-span-2 flex min-w-0 flex-1 flex-wrap items-center gap-2 sm:col-span-1 lg:col-auto">
 						{filters}
 					</div>
 					<Select

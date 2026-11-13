@@ -217,31 +217,31 @@ const ENTITY_TABS: {
 		key: "forms",
 		label: "Forms",
 		Icon: FileCode,
-		iconClassName: "text-emerald-600 dark:text-emerald-300",
+		iconClassName: "text-success",
 	},
 	{
 		key: "agents",
 		label: "Agents",
 		Icon: Bot,
-		iconClassName: "text-violet-600 dark:text-violet-300",
+		iconClassName: "text-power",
 	},
 	{
 		key: "tables",
 		label: "Tables",
 		Icon: Database,
-		iconClassName: "text-amber-600 dark:text-amber-300",
+		iconClassName: "text-warning",
 	},
 	{
 		key: "claims",
 		label: "Custom Claims",
 		Icon: KeyRound,
-		iconClassName: "text-rose-600 dark:text-rose-300",
+		iconClassName: "text-destructive",
 	},
 	{
 		key: "files",
 		label: "Files",
 		Icon: FolderOpen,
-		iconClassName: "text-cyan-600 dark:text-cyan-300",
+		iconClassName: "text-reach",
 	},
 ];
 
@@ -419,10 +419,7 @@ function downloadBlob(blob: Blob, filename: string) {
 function workflowTypeBadge(entity: EntitySummary) {
 	if (entity.type === "tool") {
 		return (
-			<Badge
-				variant="secondary"
-				className="bg-purple-100 text-purple-700 dark:bg-purple-900 dark:text-purple-300"
-			>
+			<Badge variant="power">
 				<Bot className="mr-1 h-3 w-3" />
 				Tool
 			</Badge>
@@ -430,10 +427,7 @@ function workflowTypeBadge(entity: EntitySummary) {
 	}
 	if (entity.type === "data_provider") {
 		return (
-			<Badge
-				variant="secondary"
-				className="bg-blue-100 text-blue-700 dark:bg-blue-900 dark:text-blue-300"
-			>
+			<Badge variant="info">
 				<Database className="mr-1 h-3 w-3" />
 				Data Provider
 			</Badge>
@@ -2741,8 +2735,8 @@ export function SolutionDetail() {
 								{effectiveSetupComplete === false && (
 									<Badge
 										data-testid="incomplete-badge"
-										variant="outline"
-										className="gap-1 border-yellow-500/60 bg-yellow-500/10 text-yellow-700 dark:text-yellow-400"
+										variant="warning"
+										className="gap-1"
 									>
 										<AlertTriangle className="h-3 w-3" />
 										Incomplete
@@ -2831,8 +2825,8 @@ export function SolutionDetail() {
 								sol.status !== "inactive" && (
 									<Button
 										data-testid="continue-setup"
-										variant="outline"
-										className="min-h-11 whitespace-nowrap border-yellow-500/60 text-yellow-700 hover:text-yellow-700 dark:text-yellow-400"
+										variant="warning"
+										className="min-h-11 whitespace-nowrap"
 										onClick={() => setTab("configuration")}
 									>
 										<AlertTriangle className="mr-1.5 h-4 w-4" />
@@ -2937,10 +2931,10 @@ export function SolutionDetail() {
 					{requiredUnset.length > 0 && (
 						<div
 							data-testid="required-config-warning"
-							className="flex items-center justify-between gap-3 rounded-lg border border-yellow-500/60 bg-yellow-500/10 px-4 py-3"
+							className="flex items-center justify-between gap-3 rounded-lg border border-warning/60 bg-warning-soft px-4 py-3"
 						>
 							<div className="flex items-center gap-2 text-sm">
-								<AlertTriangle className="h-4 w-4 text-yellow-600 dark:text-yellow-500" />
+								<AlertTriangle className="h-4 w-4 text-warning" />
 								<span>
 									Setup incomplete — {requiredUnset.length}{" "}
 									required config
@@ -3010,7 +3004,7 @@ export function SolutionDetail() {
 								{effectiveSetupComplete === false ? (
 									<AlertTriangle
 										data-testid="config-tab-warning"
-										className="ml-0.5 h-3.5 w-3.5 text-yellow-500"
+										className="ml-0.5 h-3.5 w-3.5 text-warning"
 									/>
 								) : (
 									configsCount > 0 && (

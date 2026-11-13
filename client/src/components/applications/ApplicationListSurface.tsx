@@ -627,7 +627,7 @@ export function ApplicationListSurface({
 									id={app.id}
 									logo={app.logo_url ?? null}
 									size="card"
-									className="border-sky-500/20 bg-sky-500/10 text-sky-700 dark:text-sky-300 [&_svg]:text-current"
+									className="border-info/20 bg-info-soft text-info [&_svg]:text-current"
 								/>
 							}
 							title={app.name}

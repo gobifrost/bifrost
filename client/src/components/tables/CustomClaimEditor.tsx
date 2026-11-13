@@ -93,7 +93,7 @@ export function CustomClaimEditor({
 		<div className="min-w-0 space-y-6" aria-busy={isSaving}>
 			<div className="flex items-center justify-between gap-3">
 				<div>
-					<h2 className="font-heading text-xl font-semibold">
+					<h2 className="font-display text-xl font-semibold">
 						{nameDisabled
 							? "Edit custom claim"
 							: "New custom claim"}
