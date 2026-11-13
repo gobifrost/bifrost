@@ -39,8 +39,10 @@ live input schema before execution. Do not guess tool references or arguments.
 If the user's request authorizes the action, call bifrost_execute_tool. The
 capability result declares supports_async and default_async. Delegations are
 asynchronous by default; other tools are synchronous by default. Set async
-explicitly only to override that declared default. For asynchronous calls, use
-bifrost_get_execution until it reaches a terminal state. If the request does
+explicitly only to override that declared default. A workflow still running
+after the response wait returns an asynchronous execution receipt. For any
+asynchronous receipt, use bifrost_get_execution until it reaches a terminal
+state; do not execute the tool again to retrieve its result. If the request does
 not authorize execution, offer the action instead of executing it.
 
 If validation fails, correct the arguments using the returned live schema and
@@ -185,7 +187,9 @@ async def bifrost_execute_tool(
         return _rest_error("Tool execution", status_code, data)
     if data.get("async") is True:
         return success_result(
-            f"Queued execution {data['execution_id']}.",
+            f"Execution {data['execution_id']} will continue in the background. "
+            "Use bifrost_get_execution with this execution_id to watch it and "
+            "retrieve its result. Do not start the tool again to retrieve the result.",
             data,
         )
     return direct_result(data["result"])
@@ -240,7 +244,9 @@ TOOLS = [
         "Execute a tool reference through its selected agent after inspecting its "
         "live schema. Arguments are strictly validated and authorization is "
         "rechecked on every call. Capability results declare supports_async and "
-        "default_async; delegations default to an async AgentRun receipt.",
+        "default_async; delegations default to an async AgentRun receipt. Slow "
+        "workflow calls return an execution receipt; use bifrost_get_execution "
+        "to retrieve their result without running the tool again.",
     ),
     (
         "bifrost_get_execution",

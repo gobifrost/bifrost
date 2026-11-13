@@ -504,15 +504,20 @@ async def _enqueue_workflow_async(
     trusted_app_context: bool = False,
     *,
     lineage: RunLineage | None,
+    result_wait_seconds: int | None = None,
 ) -> WorkflowExecutionResponse:
     """
     Accept a workflow run for the executors.
 
-    If sync=True, waits for result via Redis BLPOP.
+    If sync=True, waits for result via Redis BLPOP. An explicit
+    ``result_wait_seconds`` limits that wait while the worker continues.
     If sync=False, returns immediately with PENDING status.
     """
     from src.services.execution.async_executor import enqueue_workflow_execution
     from src.core.redis_client import get_redis_client
+
+    if result_wait_seconds is not None and result_wait_seconds <= 0:
+        raise ValueError("result_wait_seconds must be positive")
 
     execution_id = await enqueue_workflow_execution(
         context=context,
@@ -538,11 +543,19 @@ async def _enqueue_workflow_async(
     redis_client = get_redis_client()
     if timeout_seconds is None:
         timeout_seconds = (await get_workflow_metadata_only(workflow_id)).timeout_seconds
-    result = await redis_client.wait_for_result(
-        execution_id, timeout_seconds=sync_wait_seconds(timeout_seconds)
-    )
+    wait_seconds = sync_wait_seconds(timeout_seconds)
+    if result_wait_seconds is not None:
+        wait_seconds = min(wait_seconds, result_wait_seconds)
+    result = await redis_client.wait_for_result(execution_id, timeout_seconds=wait_seconds)
 
     if result is None:
+        if result_wait_seconds is not None:
+            return WorkflowExecutionResponse(
+                execution_id=execution_id,
+                workflow_id=workflow_id,
+                workflow_name=workflow_name,
+                status=ExecutionStatus.PENDING,
+            )
         return WorkflowExecutionResponse(
             execution_id=execution_id,
             workflow_id=workflow_id,
@@ -616,6 +629,7 @@ async def execute_tool(
     sync: bool = True,
     *,
     lineage: RunLineage | None,
+    result_wait_seconds: int | None = None,
 ) -> WorkflowExecutionResponse:
     """
     Execute a workflow as a tool (for AI agent tool calls).
@@ -636,6 +650,7 @@ async def execute_tool(
         execution_id: Optional pre-generated execution ID (for streaming)
         sync: Whether to wait for the result instead of returning Pending
         lineage: The agent run's run user (shared.run_lineage)
+        result_wait_seconds: Optional cap for a synchronous result wait
 
     Returns:
         WorkflowExecutionResponse with execution results
@@ -687,4 +702,5 @@ async def execute_tool(
         parameters=parameters,
         sync=sync,
         lineage=lineage,
+        result_wait_seconds=result_wait_seconds,
     )

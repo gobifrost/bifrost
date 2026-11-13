@@ -5,7 +5,7 @@ import pytest
 
 from src.models.enums import ExecutionStatus
 from src.services.execution.module_loader import WorkflowMetadata
-from src.services.execution.service import run_workflow
+from src.services.execution.service import _enqueue_workflow_async, run_workflow
 
 
 @pytest.mark.asyncio
@@ -40,6 +40,137 @@ async def test_run_workflow_reuses_validated_timeout_for_sync_wait() -> None:
         trusted_app_context=False,
         lineage=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_bounded_sync_wait_returns_pending_when_result_is_not_ready() -> None:
+    context = MagicMock(execution_id="accepted-execution")
+    redis_client = MagicMock(wait_for_result=AsyncMock(return_value=None))
+
+    with (
+        patch(
+            "src.services.execution.async_executor.enqueue_workflow_execution",
+            new_callable=AsyncMock,
+            return_value="accepted-execution",
+        ) as enqueue,
+        patch(
+            "src.core.redis_client.get_redis_client",
+            return_value=redis_client,
+        ),
+    ):
+        response = await _enqueue_workflow_async(
+            context=context,
+            workflow_id="workflow-1",
+            workflow_name="fast",
+            parameters={},
+            sync=True,
+            timeout_seconds=120,
+            result_wait_seconds=30,
+            lineage=None,
+        )
+
+    enqueue.assert_awaited_once()
+    redis_client.wait_for_result.assert_awaited_once_with(
+        "accepted-execution", timeout_seconds=30
+    )
+    assert response.execution_id == "accepted-execution"
+    assert response.status is ExecutionStatus.PENDING
+    assert response.error is None
+
+
+@pytest.mark.asyncio
+async def test_bounded_sync_wait_returns_completed_worker_result() -> None:
+    context = MagicMock(execution_id="execution-1")
+    redis_client = MagicMock(
+        wait_for_result=AsyncMock(
+            return_value={
+                "status": ExecutionStatus.SUCCESS.value,
+                "result": {"ticket_id": 7},
+                "duration_ms": 42,
+            }
+        )
+    )
+
+    with (
+        patch(
+            "src.services.execution.async_executor.enqueue_workflow_execution",
+            new_callable=AsyncMock,
+            return_value="execution-1",
+        ),
+        patch(
+            "src.core.redis_client.get_redis_client",
+            return_value=redis_client,
+        ),
+    ):
+        response = await _enqueue_workflow_async(
+            context=context,
+            workflow_id="workflow-1",
+            workflow_name="fast",
+            parameters={},
+            sync=True,
+            timeout_seconds=120,
+            result_wait_seconds=30,
+            lineage=None,
+        )
+
+    assert response.status is ExecutionStatus.SUCCESS
+    assert response.result == {"ticket_id": 7}
+    assert response.duration_ms == 42
+
+
+@pytest.mark.asyncio
+async def test_default_sync_wait_returns_timeout_when_result_is_not_ready() -> None:
+    context = MagicMock(execution_id="execution-1")
+    redis_client = MagicMock(wait_for_result=AsyncMock(return_value=None))
+
+    with (
+        patch(
+            "src.services.execution.async_executor.enqueue_workflow_execution",
+            new_callable=AsyncMock,
+            return_value="execution-1",
+        ),
+        patch(
+            "src.core.redis_client.get_redis_client",
+            return_value=redis_client,
+        ),
+    ):
+        response = await _enqueue_workflow_async(
+            context=context,
+            workflow_id="workflow-1",
+            workflow_name="fast",
+            parameters={},
+            sync=True,
+            timeout_seconds=120,
+            lineage=None,
+        )
+
+    redis_client.wait_for_result.assert_awaited_once_with(
+        "execution-1", timeout_seconds=180
+    )
+    assert response.status is ExecutionStatus.TIMEOUT
+    assert response.error == "Execution timed out waiting for result"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("result_wait_seconds", [0, -1])
+async def test_nonpositive_result_wait_does_not_enqueue(result_wait_seconds: int) -> None:
+    context = MagicMock(execution_id="execution-1")
+
+    with patch(
+        "src.services.execution.async_executor.enqueue_workflow_execution",
+        new_callable=AsyncMock,
+    ) as enqueue:
+        with pytest.raises(ValueError, match="result_wait_seconds must be positive"):
+            await _enqueue_workflow_async(
+                context=context,
+                workflow_id="workflow-1",
+                workflow_name="fast",
+                parameters={},
+                result_wait_seconds=result_wait_seconds,
+                lineage=None,
+            )
+
+    enqueue.assert_not_awaited()
 
 
 def test_request_only_publishes_nonterminal_execution_state() -> None:

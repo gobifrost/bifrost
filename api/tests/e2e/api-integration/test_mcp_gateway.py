@@ -43,6 +43,7 @@ def _mcp_request(
     *,
     path: str = "/mcp",
     request_id: int = 1,
+    timeout: float = 15,
 ) -> dict:
     response = requests.post(
         f"{TEST_API_URL}{path}",
@@ -53,6 +54,7 @@ def _mcp_request(
             "method": method,
             "params": params,
         },
+        timeout=timeout,
     )
     assert response.status_code == 200, response.text
     payload = response.json()
@@ -60,11 +62,12 @@ def _mcp_request(
     return payload
 
 
-def _call_gateway(token: str, name: str, arguments: dict) -> dict:
+def _call_gateway(token: str, name: str, arguments: dict, *, timeout: float = 15) -> dict:
     payload = _mcp_request(
         token,
         "tools/call",
         {"name": name, "arguments": arguments},
+        timeout=timeout,
     )
     result = payload["result"]
     structured = result.get("structuredContent")
@@ -87,9 +90,10 @@ class TestMCPAgentGateway:
         headers = _api_headers(token)
 
         content = (
-            "from bifrost import tool\n\n"
+            "import asyncio\nfrom bifrost import tool\n\n"
             "@tool(description='Echo a message for the MCP gateway proof.')\n"
-            f"async def {function_name}(message: str) -> list[dict]:\n"
+            f"async def {function_name}(message: str, delay_seconds: int = 0) -> list[dict]:\n"
+            "    await asyncio.sleep(delay_seconds)\n"
             "    return [{'echo': message}]\n"
         )
         write_response = requests.put(
@@ -427,15 +431,17 @@ class TestMCPAgentGateway:
             {"echo": "hello"}
         ]
 
+        # Reuse the second workflow run to prove the worker-to-MCP continuation
+        # boundary: no extra job, and no client-side timeout increase or retry.
         async_receipt = _call_gateway(
             self.token,
             "bifrost_execute_tool",
             {
                 "agent_id": self.agent_id,
                 "tool_ref": tool_ref,
-                "arguments": {"message": "later"},
-                "async": True,
+                "arguments": {"message": "later", "delay_seconds": 25},
             },
+            timeout=30,
         )
         assert async_receipt["async"] is True
         assert async_receipt["execution_type"] == "workflow"
