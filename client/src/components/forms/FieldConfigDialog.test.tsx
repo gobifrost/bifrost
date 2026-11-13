@@ -240,13 +240,46 @@ describe("FieldConfigDialog — conditional rendering", () => {
 	});
 });
 
-
 it("saves query parameter opt-in from the settings switch", async () => {
 	const { user, onSave } = renderDialog();
 	await user.type(screen.getByLabelText(/field name/i), "customer");
-	const toggle = screen.getByRole("switch", { name: /allow as query parameter/i });
+	const toggle = screen.getByRole("switch", {
+		name: /allow as query parameter/i,
+	});
 	expect(toggle).not.toBeChecked();
 	await user.click(toggle);
 	await user.click(screen.getByRole("button", { name: /add field/i }));
-	expect(onSave.mock.calls[0]![0]).toMatchObject({ allow_as_query_param: true });
+	expect(onSave.mock.calls[0]![0]).toMatchObject({
+		allow_as_query_param: true,
+	});
+});
+
+it("starts each palette opening with its chosen type and a fresh field draft", async () => {
+	const onSave = vi.fn();
+	const view = (open: boolean, defaultType: string) => (
+		<ThemeProvider>
+			<FieldConfigDialog
+				open={open}
+				defaultType={defaultType}
+				onClose={() => {}}
+				onSave={onSave}
+			/>
+		</ThemeProvider>
+	);
+	const { user, rerender } = renderWithProviders(view(false, "text"));
+	rerender(view(true, "email"));
+	expect(
+		screen.getByRole("combobox", { name: "Field Type" }),
+	).toHaveTextContent("Email");
+	await user.type(screen.getByLabelText(/field name/i), "email");
+	await user.click(screen.getByRole("button", { name: "Add Field" }));
+	expect(onSave).toHaveBeenCalledWith(
+		expect.objectContaining({ name: "email", type: "email" }),
+	);
+	rerender(view(false, "email"));
+	rerender(view(true, "email"));
+	expect(screen.getByLabelText(/field name/i)).toHaveValue("");
+	expect(
+		screen.getByRole("combobox", { name: "Field Type" }),
+	).toHaveTextContent("Email");
 });

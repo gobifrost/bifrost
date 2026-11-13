@@ -88,13 +88,20 @@ vi.mock("@/components/forms/FormShareDialog", () => ({
 }));
 vi.mock("@/components/forms/FieldsPanelDnD", () => ({
 	FieldsPanelDnD: ({
-		setFields,
+		onChange,
 	}: {
-		setFields: (fields: import("@/lib/client-types").FormField[]) => void;
+		onChange: (
+			state: import("@/components/forms/form-layout").FormCanvasState,
+		) => void;
 	}) => (
 		<button
 			onClick={() =>
-				setFields([{ name: "request", label: "Request", type: "text" }])
+				onChange({
+					fields: [
+						{ name: "request", label: "Request", type: "text" },
+					],
+					layout: null,
+				})
 			}
 		>
 			Add test field
@@ -397,6 +404,11 @@ it("preserves loaded role assignments in an existing-form patch without additive
 			body: expect.objectContaining({
 				role_ids: ["existing-role"],
 				clear_roles: false,
+				form_schema: {
+					fields: [
+						{ name: "summary", label: "Summary", type: "text" },
+					],
+				},
 			}),
 		}),
 	);

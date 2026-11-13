@@ -607,6 +607,12 @@ class SolutionCaptureService:
             # form_schema for install uses _form_field_entry (includes position) — passed
             # via extras to override the model's schema (built without position).
             form_schema = {"fields": [self._form_field_entry(f) for f in fields]}
+            if form.layout is not None:
+                from src.models.contracts.forms import FormLayout
+
+                form_schema["layout"] = FormLayout.model_validate(form.layout).model_dump(
+                    mode="json"
+                )
             out.append(
                 ManifestForm.from_row(form, roles=roles).view(
                     Destination.INSTALL,

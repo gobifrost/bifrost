@@ -110,6 +110,9 @@ class Form(Base):
     launch_workflow_id: Mapped[str | None] = mapped_column(String(255), default=None)
     default_launch_params: Mapped[dict | None] = mapped_column(JSONB, default=None)
     allowed_query_params: Mapped[list | None] = mapped_column(JSONB, default=None)
+    # Portable presentation structure for the normalized form_fields rows.
+    # NULL preserves the legacy vertical field order.
+    layout: Mapped[dict | None] = mapped_column(JSONB, default=None)
     access_level: Mapped[FormAccessLevel] = mapped_column(
         SQLAlchemyEnum(
             FormAccessLevel,

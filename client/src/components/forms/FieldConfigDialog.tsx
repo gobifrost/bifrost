@@ -89,7 +89,7 @@ export function FieldConfigDialog({
 	return (
 		<Dialog open={open} onOpenChange={onClose}>
 			<FieldConfigDialogContent
-				key={field?.name || workflowInputData?.name || "new"}
+				key={`${field?.name || workflowInputData?.name || "new"}:${defaultType ?? "text"}:${open}`}
 				field={field}
 				defaultType={defaultType}
 				workflowInputData={workflowInputData}
@@ -125,7 +125,7 @@ function FieldConfigDialogContent({
 }) {
 	const monacoAppearance = useBifrostMonacoTheme();
 	// Initialize state based on props - these won't trigger effect warnings
-	// because the component remounts when field?.name or workflowInputData?.name changes (via key prop)
+	// because each dialog opening and palette type gets a fresh keyed editor.
 	const [name, setName] = useState(
 		() => field?.name ?? workflowInputData?.name ?? "",
 	);

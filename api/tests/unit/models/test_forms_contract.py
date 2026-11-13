@@ -102,6 +102,81 @@ class TestFormSchema:
         errors = exc_info.value.errors()
         assert any(e["loc"] == ("fields",) and e["type"] == "missing" for e in errors)
 
+    def test_layout_places_fields_in_sections_and_rows(self):
+        schema = FormSchema.model_validate({
+            "fields": [
+                {"name": "first_name", "label": "First name", "type": "text"},
+                {"name": "last_name", "label": "Last name", "type": "text"},
+                {"name": "notes", "label": "Notes", "type": "textarea"},
+            ],
+            "layout": {
+                "sections": [{
+                    "title": "Contact",
+                    "rows": [
+                        {"columns": [
+                            {"field": "first_name", "width": 6},
+                            {"field": "last_name", "width": 6},
+                        ]},
+                        {"columns": [{"field": "notes", "width": 12}]},
+                    ],
+                }],
+            },
+        })
+
+        assert schema.layout is not None
+        assert schema.layout.sections[0].rows[0].columns[0].width == 6
+
+    def test_layout_allows_standalone_fields_and_validates_their_references(self):
+        fields = [{"name": "first", "label": "First", "type": "text"}]
+        schema = FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "first"}]}]}})
+        assert schema.layout.sections[0].rows[0].field == "first"
+        assert schema.layout.sections[0].rows[0].columns == []
+        with pytest.raises(ValidationError, match="non-existent"):
+            FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "missing"}]}]}})
+        with pytest.raises(ValidationError, match="cannot also contain columns"):
+            FormSchema.model_validate({"fields": fields, "layout": {"sections": [{"rows": [{"field": "first", "columns": [{"field": "first", "width": 12}]}]}]}})
+
+    def test_layout_preserves_empty_column_slots_and_still_requires_real_fields(self):
+        schema = FormSchema.model_validate({
+            "fields": [{"name": "first", "label": "First", "type": "text"}],
+            "layout": {"sections": [{"rows": [{"columns": [
+                {"field": None, "width": 6}, {"field": "first", "width": 6},
+            ]}]}]},
+        })
+        assert schema.layout.sections[0].rows[0].columns[0].field is None
+        with pytest.raises(ValidationError, match="must place every field"):
+            FormSchema.model_validate({
+                "fields": [{"name": "first", "label": "First", "type": "text"}],
+                "layout": {"sections": [{"rows": [{"columns": [{"field": None, "width": 12}]}]}]},
+            })
+
+    @pytest.mark.parametrize(
+        "layout, message",
+        [
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "missing", "width": 12}]}]}]},
+                "non-existent field",
+            ),
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "first", "width": 6}, {"field": "first", "width": 6}]}]}]},
+                "only once",
+            ),
+            (
+                {"sections": [{"rows": [{"columns": [{"field": "first", "width": 12}, {"field": "second", "width": 12}]}]}]},
+                "cannot exceed",
+            ),
+        ],
+    )
+    def test_layout_rejects_invalid_placements(self, layout, message):
+        with pytest.raises(ValidationError, match=message):
+            FormSchema.model_validate({
+                "fields": [
+                    {"name": "first", "label": "First", "type": "text"},
+                    {"name": "second", "label": "Second", "type": "text"},
+                ],
+                "layout": layout,
+            })
+
 
 class TestFormField:
     """Test validation for FormField model"""

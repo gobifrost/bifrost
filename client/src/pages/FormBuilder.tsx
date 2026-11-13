@@ -30,6 +30,11 @@ import { FormShareDialog } from "@/components/forms/FormShareDialog";
 import type { FormInfoValues } from "@/components/forms/FormInfoDialog";
 import { FieldsPanelDnD } from "@/components/forms/FieldsPanelDnD";
 import { FormPreview } from "@/components/forms/FormPreview";
+import {
+	normalizeFormLayout,
+	type FormCanvasState,
+	type FormLayout,
+} from "@/components/forms/form-layout";
 import { WorkflowParametersForm } from "@/components/workflows/WorkflowParametersForm";
 import { useOrgScope } from "@/contexts/OrgScopeContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -99,6 +104,11 @@ export function FormBuilder() {
 
 	// Fields state for the drag-and-drop builder (separate from dialog metadata)
 	const [fields, setFields] = useState<FormField[]>([]);
+	const [layout, setLayout] = useState<FormLayout | null>();
+	const updateCanvas = (state: FormCanvasState) => {
+		setFields(state.fields);
+		setLayout(state.layout);
+	};
 
 	// UI state
 	const [isInfoDialogOpen, setIsInfoDialogOpen] = useState(() => !isEditing);
@@ -134,8 +144,10 @@ export function FormBuilder() {
 		) {
 			const schema = existingForm.form_schema as {
 				fields: unknown[];
+				layout?: FormLayout | null;
 			};
 			setFields(schema.fields as FormField[]);
+			setLayout(normalizeFormLayout(schema.layout));
 		}
 
 		// Sync formInfo from existingForm (only if not already overridden by dialog save)
@@ -216,7 +228,10 @@ export function FormBuilder() {
 					name: formName,
 					description: formDescription || null,
 					workflow_id: linkedWorkflow || null,
-					form_schema: { fields },
+					form_schema: {
+						fields,
+						...(layout ? { layout } : {}),
+					},
 					is_active: true,
 					access_level: accessLevel,
 					launch_workflow_id: launchWorkflowId || null,
@@ -250,7 +265,10 @@ export function FormBuilder() {
 					description: formDescription || null,
 					confirmation_markdown: "## Form submitted\n\nThank you!",
 					workflow_id: linkedWorkflow || null,
-					form_schema: { fields },
+					form_schema: {
+						fields,
+						...(layout ? { layout } : {}),
+					},
 					access_level: accessLevel,
 					organization_id: organizationId,
 					launch_workflow_id: launchWorkflowId || null,
@@ -696,14 +714,17 @@ export function FormBuilder() {
 				<TabsContent
 					value="builder"
 					inert={!canManageForm || isSolutionManaged}
-					className="flex-1 lg:min-h-0 lg:overflow-hidden data-[state=active]:flex"
+					className="flex-1 lg:min-h-0 lg:overflow-auto data-[state=active]:block"
 				>
-					<FieldsPanelDnD
-						fields={fields}
-						setFields={setFields}
-						linkedWorkflow={linkedWorkflow}
-						previewContext={previewContext}
-					/>
+					<div className="h-full min-h-0 py-4">
+						<FieldsPanelDnD
+							fields={fields}
+							layout={layout}
+							onChange={updateCanvas}
+							linkedWorkflow={linkedWorkflow}
+							previewContext={previewContext}
+						/>
+					</div>
 				</TabsContent>
 
 				<TabsContent
@@ -714,6 +735,7 @@ export function FormBuilder() {
 						formName={formName}
 						formDescription={formDescription}
 						fields={fields}
+						layout={layout}
 					/>
 				</TabsContent>
 			</Tabs>
