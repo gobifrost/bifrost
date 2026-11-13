@@ -95,8 +95,9 @@ export function WorkerCapacityCard({
 					<CardTitle>External Workers</CardTitle>
 				</div>
 				<CardDescription>
-					Extra execution capacity beyond Kubernetes, from an
-					external container provider.
+					{capacity?.configured && capacity.bounds
+						? `Active provider scope: ${capacity.bounds.scope}.`
+						: "Extra execution capacity beyond Kubernetes, from an external container provider."}
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">

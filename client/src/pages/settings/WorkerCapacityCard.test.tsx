@@ -66,6 +66,11 @@ describe("WorkerCapacityCard", () => {
 				/No external provider is configured, so workers scale on Kubernetes only/,
 			),
 		).toBeVisible();
+		expect(
+			screen.getByText(
+				/Extra execution capacity beyond Kubernetes/,
+			),
+		).toBeVisible();
 	});
 
 	it("names the host fallback when Kubernetes is unavailable", () => {
@@ -102,6 +107,9 @@ describe("WorkerCapacityCard", () => {
 		expect(screen.getByText("test-build")).toBeVisible();
 		expect(screen.getByText("4096 MiB")).toBeVisible();
 		expect(screen.getByText("15 minutes")).toBeVisible();
+		expect(
+			screen.getByText("Active provider scope: test-scope."),
+		).toBeVisible();
 		expect(screen.getByText("Ready")).toBeVisible();
 		expect(screen.getByText("Starting")).toBeVisible();
 		expect(screen.queryByText("Draining")).not.toBeInTheDocument();
