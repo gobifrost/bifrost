@@ -806,7 +806,7 @@ async def execute_sdk_workflow(
     except ValueError as e:
         raise SdkWorkflowExecutionError(400, str(e)) from None
     except Exception as e:
-        logger.error(f"Error executing workflow: {str(e)}", exc_info=True)
+        logger.exception(f"Error executing workflow: {str(e)}", exc_info=True)
         raise SdkWorkflowExecutionError(
             500, f"Failed to execute workflow: {type(e).__name__}: {str(e)}"
         ) from None

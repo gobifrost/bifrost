@@ -165,7 +165,7 @@ async def check_package_updates() -> list[PackageUpdate]:
         logger.error("Failed to parse pip outdated output")
         return []
     except Exception as e:
-        logger.error(f"Error checking package updates: {str(e)}")
+        logger.exception(f"Error checking package updates: {str(e)}")
         return []
 
 
@@ -206,7 +206,7 @@ async def get_installed_packages_local() -> list[InstalledPackage]:
         logger.error("Failed to parse pip output")
         return []
     except Exception as e:
-        logger.error(f"Error getting installed packages: {str(e)}")
+        logger.exception(f"Error getting installed packages: {str(e)}")
         return []
 
 
@@ -258,7 +258,7 @@ async def list_packages(
         )
 
     except Exception as e:
-        logger.error(f"Error listing packages: {str(e)}", exc_info=True)
+        logger.exception(f"Error listing packages: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list packages",
@@ -290,7 +290,7 @@ async def check_updates(
         )
 
     except Exception as e:
-        logger.error(f"Error checking package updates: {str(e)}", exc_info=True)
+        logger.exception(f"Error checking package updates: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to check for package updates",
@@ -363,7 +363,7 @@ async def install_package(
         )
 
     except Exception as e:
-        logger.error(f"Error updating requirements: {str(e)}", exc_info=True)
+        logger.exception(f"Error updating requirements: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to update requirements",
@@ -420,7 +420,7 @@ async def uninstall_package(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error uninstalling package: {str(e)}", exc_info=True)
+        logger.exception(f"Error uninstalling package: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to uninstall package",

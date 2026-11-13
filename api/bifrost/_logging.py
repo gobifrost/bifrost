@@ -709,7 +709,7 @@ async def flush_logs_to_postgres(
         logger.debug("Flushed %d logs to Postgres for %s", receipt.count, log_safe(str(execution_id)))
         return receipt.count
     except Exception as exc:
-        logger.error("Failed to flush logs to Postgres: %s", exc)
+        logger.exception("Failed to flush logs to Postgres: %s", exc)
         return 0
 
 

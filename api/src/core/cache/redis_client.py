@@ -86,10 +86,10 @@ async def get_redis() -> AsyncIterator[redis.Redis]:
         try:
             yield _shared_client
         except redis.ConnectionError as e:
-            logger.error(f"Redis connection failed: {e}")
+            logger.exception(f"Redis connection failed: {e}")
             raise CacheConnectionError(f"Failed to connect to Redis: {e}") from e
         except redis.RedisError as e:
-            logger.error(f"Redis operation failed: {e}")
+            logger.exception(f"Redis operation failed: {e}")
             raise CacheOperationError(f"Redis error: {e}") from e
         return
 
@@ -100,10 +100,10 @@ async def get_redis() -> AsyncIterator[redis.Redis]:
         await client.ping()  # type: ignore[misc]
         yield client
     except redis.ConnectionError as e:
-        logger.error(f"Redis connection failed: {e}")
+        logger.exception(f"Redis connection failed: {e}")
         raise CacheConnectionError(f"Failed to connect to Redis: {e}") from e
     except redis.RedisError as e:
-        logger.error(f"Redis operation failed: {e}")
+        logger.exception(f"Redis operation failed: {e}")
         raise CacheOperationError(f"Redis error: {e}") from e
     finally:
         if client:
@@ -163,10 +163,10 @@ async def initialize_shared_redis() -> redis.Redis:
                 except BaseException:
                     logger.exception("Failed to close uninitialized Redis client")
             if isinstance(error, redis.ConnectionError):
-                logger.error(f"Redis connection failed: {error}")
+                logger.exception(f"Redis connection failed: {error}")
                 raise CacheConnectionError(f"Failed to connect to Redis: {error}") from error
             if isinstance(error, redis.RedisError):
-                logger.error(f"Redis operation failed: {error}")
+                logger.exception(f"Redis operation failed: {error}")
                 raise CacheOperationError(f"Redis error: {error}") from error
             raise
 

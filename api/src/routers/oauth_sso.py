@@ -22,7 +22,7 @@ from src.core.cache.keys import (
     oauth_state_key,
     TTL_OAUTH_STATE,
 )
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
 from src.models import User
@@ -369,7 +369,7 @@ async def oauth_callback(
     try:
         state_data = json.loads(state_data_raw)
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid OAuth state data format: {log_safe(e)}")
+        log_safe_exception(logger, f"Invalid OAuth state data format: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid OAuth state data",
@@ -412,7 +412,7 @@ async def oauth_callback(
         )
 
     except OAuthError as e:
-        logger.error(f"OAuth callback error: {log_safe(e)}")
+        log_safe_exception(logger, f"OAuth callback error: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(e),
@@ -450,7 +450,7 @@ async def oauth_callback(
                 user_info, tokens, trust_provider_email=trust_provider_email
             )
         except OAuthError as e:
-            logger.error(f"OAuth callback linking error: {log_safe(e)}")
+            log_safe_exception(logger, f"OAuth callback linking error: {log_safe(e)}")
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=str(e),

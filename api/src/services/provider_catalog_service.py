@@ -164,5 +164,5 @@ class ProviderCatalogService:
                 await client.aio.aclose()
             return ProviderTestResult(True, f"Connected to Google. Listed {len(models)} model(s).", models)
         except Exception as error:
-            logger.error("Google connection test failed: %s", error)
+            logger.exception("Google connection test failed: %s", error)
             return ProviderTestResult(False, f"Google connection failed: {error}")

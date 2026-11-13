@@ -1155,7 +1155,7 @@ class AgentExecutor:
             )
 
         except Exception as e:
-            logger.error(f"Agent execution error: {e}", exc_info=True)
+            logger.exception(f"Agent execution error: {e}", exc_info=True)
             self._active_llm_model = model_name
             self._active_failover_path = (
                 chain.failover.fallback_path()
@@ -1751,7 +1751,7 @@ class AgentExecutor:
                 )
 
         except Exception as e:
-            logger.error(f"Tool execution error for {tool_call.name}: {e}", exc_info=True)
+            logger.exception(f"Tool execution error for {tool_call.name}: {e}", exc_info=True)
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
@@ -1841,7 +1841,7 @@ class AgentExecutor:
                 },
             )
         except MisconfigError as exc:
-            logger.error(
+            logger.exception(
                 "MCP misconfig on connection %s tool %s: %s",
                 connection_id,
                 remote_tool_name,
@@ -1871,7 +1871,7 @@ class AgentExecutor:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 "Unexpected MCP error on connection %s tool %s: %s",
                 connection_id,
                 remote_tool_name,
@@ -2163,7 +2163,7 @@ class AgentExecutor:
             )
 
         except Exception as e:
-            logger.error(f"Knowledge search error: {e}", exc_info=True)
+            logger.exception(f"Knowledge search error: {e}", exc_info=True)
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,
@@ -2278,7 +2278,7 @@ class AgentExecutor:
                 duration_ms=int((time.time() - start_time) * 1000),
             )
         except Exception as e:
-            logger.error(f"Delegation error for {tool_call.name}: {e}", exc_info=True)
+            logger.exception(f"Delegation error for {tool_call.name}: {e}", exc_info=True)
             return ToolResult(
                 tool_call_id=tool_call.id,
                 tool_name=tool_call.name,

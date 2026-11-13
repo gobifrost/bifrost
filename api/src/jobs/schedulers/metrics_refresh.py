@@ -207,5 +207,5 @@ async def refresh_metrics_snapshot() -> dict[str, Any]:
             return result
 
     except Exception as e:
-        logger.error(f"✗ Metrics snapshot refresh failed: {e}", exc_info=True)
+        logger.exception(f"✗ Metrics snapshot refresh failed: {e}", exc_info=True)
         return {"error": str(e)}

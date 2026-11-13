@@ -35,7 +35,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.scope_resolver import RequestedScope, ScopeNotAllowed, UNSET, resolve_effective_scope
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.services.authorization.enforce import (
     Caller,
     external_credential_restrictions,
@@ -182,7 +182,7 @@ async def store_knowledge_document(
         raise SDKKnowledgeError(503, str(e)) from None
     except Exception as e:
         await session.rollback()
-        logger.error(f"CLI knowledge store failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge store failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge store failed: {str(e)}") from None
 
 
@@ -246,7 +246,7 @@ async def store_many_knowledge_documents(
         raise SDKKnowledgeError(503, str(e)) from None
     except Exception as e:
         await session.rollback()
-        logger.error(f"CLI knowledge store-many failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge store-many failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge store failed: {str(e)}") from None
 
 
@@ -310,7 +310,7 @@ async def search_knowledge_documents(
     except SDKKnowledgeError:
         raise
     except Exception as e:
-        logger.error(f"CLI knowledge search failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge search failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge search failed: {str(e)}") from None
 
 
@@ -350,7 +350,7 @@ async def delete_knowledge_document(
         return {"deleted": deleted}
     except Exception as e:
         await session.rollback()
-        logger.error(f"CLI knowledge delete failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge delete failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge delete failed: {str(e)}") from None
 
 
@@ -388,7 +388,7 @@ async def delete_knowledge_namespace(
         return {"deleted_count": deleted_count}
     except Exception as e:
         await session.rollback()
-        logger.error(f"CLI knowledge delete namespace failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge delete namespace failed: {log_safe(e)}")
         raise SDKKnowledgeError(
             500, f"Knowledge delete namespace failed: {str(e)}"
         ) from None
@@ -423,7 +423,7 @@ async def list_knowledge_namespaces(
             {"namespace": ns.namespace, "scopes": ns.scopes} for ns in results
         ]
     except Exception as e:
-        logger.error(f"CLI knowledge list namespaces failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge list namespaces failed: {log_safe(e)}")
         raise SDKKnowledgeError(
             500, f"Knowledge list namespaces failed: {str(e)}"
         ) from None
@@ -465,7 +465,7 @@ async def get_knowledge_document(
     except SDKKnowledgeError:
         raise
     except Exception as e:
-        logger.error(f"CLI knowledge get failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI knowledge get failed: {log_safe(e)}")
         raise SDKKnowledgeError(500, f"Knowledge get failed: {str(e)}") from None
 
 

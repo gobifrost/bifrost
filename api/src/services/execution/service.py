@@ -408,7 +408,7 @@ async def run_workflow(
         except WorkflowNotFoundError:
             raise
         except Exception as e:
-            logger.error(f"Failed to validate workflow {workflow_id}: {e}", exc_info=True)
+            logger.exception(f"Failed to validate workflow {workflow_id}: {e}", exc_info=True)
             raise WorkflowNotFoundError(
                 f"Failed to validate workflow '{workflow_id}': {str(e)}"
             )
