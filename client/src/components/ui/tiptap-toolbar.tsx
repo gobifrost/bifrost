@@ -23,9 +23,16 @@ interface TiptapToolbarProps {
 
 export function TiptapToolbar({ editor }: TiptapToolbarProps) {
 	const handleLinkClick = () => {
-		const url = window.prompt("Enter URL:");
-		if (url) {
-			editor.chain().focus().setLink({ href: url }).run();
+		const url = window.prompt(
+			"Enter URL (leave empty to remove link):",
+			editor.getAttributes("link").href ?? "",
+		);
+		if (url === null) return;
+		const chain = editor.chain().focus().extendMarkRange("link");
+		if (url === "") {
+			chain.unsetLink().run();
+		} else {
+			chain.setLink({ href: url }).run();
 		}
 	};
 
