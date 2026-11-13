@@ -37,6 +37,28 @@ from src.core.redis_reconnect import ResilientPubSubListener
 logger = logging.getLogger(__name__)
 
 
+# Reader preparation only. Keep publishers on the bare wire format so old
+# replicas remain compatible during direct upgrades and rollback. Enabling
+# envelope writers requires a separately verified rollout.
+ENVELOPE_VERSION = 1
+
+
+def _unwrap_envelope(data: Any) -> tuple[Any, str | None]:
+    """Split (payload, origin). Pre-envelope messages return (data, None).
+
+    All three keys are required: an application payload that happens to
+    contain a "payload" key must never be mistaken for an envelope.
+    """
+    if (
+        isinstance(data, dict)
+        and data.get("v") == ENVELOPE_VERSION
+        and isinstance(data.get("origin"), str)
+        and "payload" in data
+    ):
+        return data["payload"], data["origin"]
+    return data, None
+
+
 def service_channel_for_log(channel: str, data: Any) -> str | None:
     """Service-wide channel for an attempt-scoped log pubsub message.
 
@@ -202,6 +224,7 @@ class ConnectionManager:
         """
         try:
             async with get_redis() as r:
+                # Keep the existing wire contract until all readers can unwrap.
                 await r.publish(
                     f"bifrost:{channel}",
                     json.dumps(message),
@@ -222,11 +245,14 @@ class ConnectionManager:
             async def on_message(channel: str, data: dict) -> None:
                 # Strip "bifrost:" prefix from channel
                 local_channel = channel.replace("bifrost:", "")
+                # Read envelopes without changing delivery semantics. Origin
+                # suppression and local-first delivery are separate work.
+                payload, _origin = _unwrap_envelope(data)
                 if local_channel == "queue:positions":
                     self.request_queue_position_refresh()
                     return
-                await self._send_local(local_channel, data)
-                await self._bridge_service_log(local_channel, data)
+                await self._send_local(local_channel, payload)
+                await self._bridge_service_log(local_channel, payload)
 
             self._pubsub_listener = ResilientPubSubListener(
                 redis_url=settings.redis_url,
