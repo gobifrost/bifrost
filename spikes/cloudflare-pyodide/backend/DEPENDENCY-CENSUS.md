@@ -51,3 +51,37 @@ construction; pure-Python ones are strategy-1 candidates pending the measured im
 Bundle `requests` (+`urllib3`, `charset-normalizer`) and `msal` into the qualified runtime,
 prove import + a trivial call inside the real Worker child, and record bundle growth. That
 converts the census into a bounded allowlist proposal.
+
+## Result (measured 2026-11-12, spike `05439e42c`)
+
+Both package lines qualify inside the real Worker child (Pyodide 314.0.6 / `emscripten-5.0.3-wasm32`):
+
+| Check | Result |
+|---|---|
+| `import requests` | ✅ 2.34.2 |
+| `import msal` | ✅ 1.39.0 |
+| `msal.ConfidentialClientApplication(...)` | ✅ built (no-network OIDC stub) |
+| `requests.post` to allowlisted test endpoint via gateway | ✅ HTTP 200, child never held the bearer |
+| Import-time failure | none |
+
+Bundle growth for `requests` 2.34.2, `urllib3` 2.8.0, `charset-normalizer` 3.5.2,
+`msal` 1.39.0, `PyJWT` 2.15.1: **+1,996,147 B (+13.0 %)**, 472 → 607 modules,
+upload 14,986 → 16,936 KiB. No existing module key changed. `cryptography` deliberately
+not bundled.
+
+### Boundaries this established
+
+- **`requests` is genuinely usable**, not merely importable — it rode urllib3's Emscripten
+  transport through the gateway bridge.
+- **msal is only partly offline.** `Authority` eagerly performs OIDC tenant discovery.
+  Real token acquisition needs an allowlisted egress host plus a tenant, and RSA/EC signing
+  needs `cryptography` (unbundled); HS256 needs only PyJWT.
+- Curated pre-bundling is therefore viable for pure-Python HTTP/auth packages at roughly
+  2 MB per family, well inside the 64 MiB Worker limit with ~47 MiB headroom remaining.
+
+### Proposed initial allowlist
+
+Bundle as measured: `requests`, `urllib3`, `charset-normalizer`, `msal`, `PyJWT`.
+Defer, and route to Linux: anything needing `cryptography`/native extensions, and anything
+outside the curated set until it has its own measured import test.
+
