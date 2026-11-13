@@ -26,7 +26,7 @@ from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.core.rate_limit import RateLimiter
 from src.models.enums import FormAccessLevel
 from src.services.audit import emit_audit
@@ -1714,7 +1714,7 @@ async def submit_form(
     except WorkflowNotFoundError as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.exception(f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow not found: {form.workflow_id}",
@@ -1916,13 +1916,13 @@ async def execute_startup_workflow(
         )
 
     except WorkflowNotFoundError as e:
-        logger.exception(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     except WorkflowLoadError as e:
-        logger.exception(f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load launch workflow: {str(e)}",

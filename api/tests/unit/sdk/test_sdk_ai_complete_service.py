@@ -300,11 +300,11 @@ async def test_complete_provider_auth_is_401():
 
 
 @pytest.mark.asyncio
-async def test_complete_generic_error_is_sanitized_500():
+async def test_complete_generic_error_is_sanitized_500(caplog):
     from shared import sdk_ai
 
     client = AsyncMock()
-    client.complete.side_effect = RuntimeError("secret boom")
+    client.complete.side_effect = RuntimeError("secret boom\nFORGED\x1b[31m" + "x" * 500)
     session = AsyncMock()
     principal = _principal()
 
@@ -319,6 +319,11 @@ async def test_complete_generic_error_is_sanitized_500():
     assert exc_info.value.status_code == 500
     assert exc_info.value.detail == "AI completion failed. See server logs for details."
     assert "boom" not in exc_info.value.detail
+    assert "complete_sdk_ai" in caplog.text
+    assert "RuntimeError:" in caplog.text
+    assert "\nFORGED" not in caplog.text
+    assert "\x1b" not in caplog.text
+    assert "x" * 201 not in caplog.text
 
 
 @pytest.mark.asyncio
