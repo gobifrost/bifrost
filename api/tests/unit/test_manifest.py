@@ -2157,6 +2157,41 @@ class TestInlineFormContent:
         yaml_out2 = serialize_manifest(parsed)
         assert yaml_out == yaml_out2
 
+    def test_form_layout_is_portable_inline_manifest_content(self):
+        """Layout stays with the portable form schema, not environment metadata."""
+        from bifrost.manifest import Manifest, ManifestForm, parse_manifest, serialize_manifest
+
+        form_id = str(uuid4())
+        form = ManifestForm(
+            id=form_id,
+            name="Contact",
+            form_schema={
+                "fields": [
+                    {"name": "first_name", "type": "text", "label": "First name"},
+                    {"name": "email", "type": "email", "label": "Email"},
+                ],
+                "layout": {
+                    "sections": [
+                        {
+                            "title": "Contact details",
+                            "rows": [
+                                {
+                                    "columns": [
+                                        {"field": "first_name", "width": 4},
+                                        {"field": None, "width": 4},
+                                        {"field": None, "width": 4},
+                                    ]
+                                }
+                            ],
+                        }, {"rows": [{"field": "email"}]}
+                    ]
+                },
+            },
+        )
+
+        parsed = parse_manifest(serialize_manifest(Manifest(forms={form_id: form})))
+        assert parsed.forms[form_id].form_schema == form.form_schema
+
     def test_form_path_optional(self):
         """ManifestForm should accept missing path (inline-content layout)."""
         from bifrost.manifest import ManifestForm

@@ -1,0 +1,15 @@
+{
+  "key": "pr:1369",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Fix scrolling and link editing in setup instructions.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1369",
+      "https://github.com/gobifrost/bifrost/issues/1344",
+      "Approved exact Product Update and bounded scroll/link publication by Jack cleanup delegation relayed in existing owner. Original #1336 authored by Jack Musick; reported by scubes13. Markdown/source-editor scope remains deferred."
+    ]
+  }
+}

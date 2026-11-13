@@ -473,6 +473,8 @@ async def _judge_and_write(
             if run_as is None:
                 return await writer.missing_run_as(resolved, writer.stored_run_user_id)
         trace = judge(run_user, powers, resolved, entry, run_as) if resolved.decision is None else resolved.decision[1]
+    except AssertionError:
+        raise
     except Exception as exc:
         logger.warning("access check could not be judged (kind=%s): %s", noted.kind, type(exc).__name__)
         await writer.gap(noted.kind, f"observer_error:{type(exc).__name__}", writer.stored_run_user_id)

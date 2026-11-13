@@ -299,7 +299,7 @@ async def get_config_endpoint(
         )
 
     except Exception as e:
-        logger.error(f"Failed to get GitHub config: {e}", exc_info=True)
+        logger.exception(f"Failed to get GitHub config: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get GitHub configuration",
@@ -377,7 +377,7 @@ async def get_github_status(
         )
 
     except Exception as e:
-        logger.error(f"Failed to get GitHub status: {e}", exc_info=True)
+        logger.exception(f"Failed to get GitHub status: {e}", exc_info=True)
         return GitRefreshStatusResponse(
             success=False,
             initialized=False,
@@ -473,7 +473,7 @@ async def validate_github_token(
         )
 
     except GitHubAPIError as e:
-        logger.error(f"GitHub API error validating token: {e}")
+        logger.exception(f"GitHub API error validating token: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -485,7 +485,7 @@ async def validate_github_token(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to validate GitHub token: {e}", exc_info=True)
+        logger.exception(f"Failed to validate GitHub token: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to validate GitHub token: {str(e)}",
@@ -530,7 +530,7 @@ async def list_github_repos(
         return GitHubReposResponse(repositories=repositories, detected_repo=None)
 
     except GitHubAPIError as e:
-        logger.error(f"GitHub API error listing repositories: {e}")
+        logger.exception(f"GitHub API error listing repositories: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"GitHub API error: {e.message}",
@@ -538,7 +538,7 @@ async def list_github_repos(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to list repositories: {e}", exc_info=True)
+        logger.exception(f"Failed to list repositories: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list repositories",
@@ -590,7 +590,7 @@ async def list_github_branches(
         return GitHubBranchesResponse(branches=branches)
 
     except GitHubAPIError as e:
-        logger.error(f"GitHub API error listing branches: {e}")
+        logger.exception(f"GitHub API error listing branches: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"GitHub API error: {e.message}",
@@ -598,7 +598,7 @@ async def list_github_branches(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to list branches: {e}", exc_info=True)
+        logger.exception(f"Failed to list branches: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to list branches",
@@ -641,7 +641,7 @@ async def create_github_repository(
         return CreateRepoResponse(**result)
 
     except GitHubAPIError as e:
-        logger.error(f"GitHub API error creating repository: {e}")
+        logger.exception(f"GitHub API error creating repository: {e}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Failed to create repository: {e.message}",
@@ -649,7 +649,7 @@ async def create_github_repository(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to create repository: {e}", exc_info=True)
+        logger.exception(f"Failed to create repository: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to create repository",
@@ -676,7 +676,7 @@ async def disconnect_github(
         return {"success": True, "message": "GitHub integration disconnected"}
 
     except Exception as e:
-        logger.error(f"Failed to disconnect GitHub: {e}", exc_info=True)
+        logger.exception(f"Failed to disconnect GitHub: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to disconnect GitHub",
@@ -756,7 +756,7 @@ async def get_commits(
         )
 
     except GitHubAPIError as e:
-        logger.error(f"GitHub API error getting commits: {e}")
+        logger.exception(f"GitHub API error getting commits: {e}")
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"GitHub API error: {e.message}",
@@ -764,7 +764,7 @@ async def get_commits(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error getting commits: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting commits: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get commit history",

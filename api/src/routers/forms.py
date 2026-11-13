@@ -19,14 +19,16 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, Request, UploadFile, status
+from fastapi.encoders import jsonable_encoder
 from fastapi.responses import Response
+from pydantic import ValidationError
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.core.rate_limit import RateLimiter
 from src.models.enums import FormAccessLevel
 from src.services.audit import emit_audit
@@ -83,6 +85,19 @@ from shared.scope_resolver import UNSET, RequestedScope
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/forms", tags=["Forms"])
+
+
+def _normalize_form_schema(form_schema: dict) -> dict:
+    """Validate an opaque schema payload before persisting its normalized form."""
+    from src.models import FormSchema
+
+    try:
+        return FormSchema.model_validate(form_schema).model_dump(mode="json")
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=jsonable_encoder(exc.errors()),
+        ) from exc
 
 
 async def _require_form_permission(
@@ -438,6 +453,7 @@ async def create_form(
     form_schema_data: dict = request.form_schema  # type: ignore[assignment]
     if hasattr(form_schema_data, 'model_dump'):
         form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
+    form_schema_data = _normalize_form_schema(form_schema_data)
 
     # Validate all references before creating the form
     await _validate_form_references(
@@ -477,6 +493,7 @@ async def create_form(
         launch_workflow_id=request.launch_workflow_id,
         default_launch_params=request.default_launch_params,
         allowed_query_params=request.allowed_query_params,
+        layout=form_schema_data.get("layout"),
         access_level=request.access_level,
         organization_id=target_org_id,
         is_active=True,
@@ -854,17 +871,18 @@ async def update_form(
     assert_not_solution_managed(form)
 
     # Validate references being updated
-    form_schema_for_validation = None
+    form_schema_data = None
     if request.form_schema is not None:
-        form_schema_for_validation = request.form_schema
-        if hasattr(form_schema_for_validation, 'model_dump'):
-            form_schema_for_validation = form_schema_for_validation.model_dump()
+        form_schema_data = request.form_schema
+        if hasattr(form_schema_data, 'model_dump'):
+            form_schema_data = form_schema_data.model_dump()
+        form_schema_data = _normalize_form_schema(form_schema_data)
 
     await _validate_form_references(
         db=db,
         workflow_id=request.workflow_id,
         launch_workflow_id=request.launch_workflow_id,
-        form_schema=form_schema_for_validation,
+        form_schema=form_schema_data,
     )
 
     if request.name is not None:
@@ -890,9 +908,9 @@ async def update_form(
         db.expire(form, ["fields"])
 
         # Convert new form_schema to FormField records
-        form_schema_data: dict = request.form_schema  # type: ignore[assignment]
-        if hasattr(form_schema_data, 'model_dump'):
-            form_schema_data = form_schema_data.model_dump()  # type: ignore[union-attr]
+        assert form_schema_data is not None
+
+        form.layout = form_schema_data.get("layout")
 
         field_records = _form_schema_to_fields(form_schema_data, form_id)
         for field in field_records:
@@ -1663,7 +1681,11 @@ async def submit_form(
             )
 
         if ctx.user.embed:
-            assert request.submission_nonce is not None
+            if request.submission_nonce is None:
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="submission_nonce is required for embedded form submissions",
+                )
             await accept_external_submission(ctx.user, request.submission_nonce)
             logger.info(
                 "Embedded form submission accepted",
@@ -1710,7 +1732,7 @@ async def submit_form(
     except WorkflowNotFoundError as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.error(f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Workflow not found: {form.workflow_id}",
@@ -1730,7 +1752,7 @@ async def submit_form(
     except Exception as e:
         if ctx.user.embed and not external_workflow_accepted:
             await release_external_submission(ctx.user)
-        logger.error(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Error executing form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to execute form",
@@ -1912,13 +1934,13 @@ async def execute_startup_workflow(
         )
 
     except WorkflowNotFoundError as e:
-        logger.error(f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow not found for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Launch workflow not found: {form.launch_workflow_id}",
         )
     except WorkflowLoadError as e:
-        logger.error(f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
+        log_safe_exception(logger, f"Launch workflow load error for form {log_safe(form_id)}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to load launch workflow: {str(e)}",
@@ -2217,7 +2239,7 @@ async def generate_upload_url(
             expires_in=600,  # 10 minutes
         )
     except Exception as e:
-        logger.error(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Failed to generate presigned URL for form {log_safe(form_id)}: {log_safe(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate upload URL",

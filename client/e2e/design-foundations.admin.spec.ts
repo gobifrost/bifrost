@@ -89,7 +89,7 @@ test("a mobile designer can add a field by tapping the palette and inspect its p
 		.getByRole("button", { name: "Close", exact: true })
 		.click();
 	await page
-		.getByRole("button", { name: "Choose a field", exact: true })
+		.getByRole("button", { name: "Choose a Component", exact: true })
 		.click();
 	await page.getByRole("button", { name: "Text Input", exact: true }).click();
 	const field = page.getByRole("dialog", { name: "Add Field", exact: true });

@@ -130,9 +130,9 @@ def admin_context(platform_admin, mcp_bridge_env) -> MockMCPContext:
 # ``field_renames`` maps ``dto_field_name → tool_kwarg_name`` for the small
 # set of intentional renames where the MCP tool exposes a different name
 # than the DTO field (because ``assemble_body`` rewrites the wire payload
-# or the field is a ref the tool resolves before sending). Adding to this
-# map is a deliberate act — an unexpected divergence should leave the test
-# failing so the drift is visible.
+# or the field is a ref the tool resolves before sending). A tuple explicitly
+# expands one nested DTO into multiple tool kwargs. Adding to this map is a
+# deliberate act — unexpected divergence must fail so the drift stays visible.
 SIGNATURE_PARITY_SPECS: list[dict] = [
     {
         "model_path": "src.models.contracts.users:RoleCreate",
@@ -288,13 +288,13 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
         # ``organization_id`` is excluded (FormCreate is in _ORG_TARGET_EXCLUDE);
         # the tool exposes org targeting as ``scope`` instead.
         "extra_args": {"scope"},
-        "field_renames": {"form_schema": "fields"},
+        "field_renames": {"form_schema": ("fields", "layout")},
     },
     {
         "model_path": "src.models.contracts.forms:FormUpdate",
         "tool_path": "src.services.mcp_server.tools.forms:bifrost_form_update",
         "extra_args": {"form_ref", "scope"},
-        "field_renames": {"form_schema": "fields"},
+        "field_renames": {"form_schema": ("fields", "layout")},
     },
     {
         "model_path": "src.models.contracts.tables:TableCreate",
@@ -344,7 +344,7 @@ class TestMcpParitySchemas:
 
         model_name = model_cls.__name__
         excludes = DTO_EXCLUDES.get(model_name, set())
-        renames: dict[str, str] = spec["field_renames"]
+        renames: dict[str, str | tuple[str, ...]] = spec["field_renames"]
 
         # Expected tool kwargs = (writable DTO fields − excludes), with any
         # renamed DTO field swapped for its tool-side name.
@@ -352,7 +352,8 @@ class TestMcpParitySchemas:
         for field_name in model_cls.model_fields:
             if field_name in excludes:
                 continue
-            expected.add(renames.get(field_name, field_name))
+            mapped = renames.get(field_name, field_name)
+            expected.update((mapped,) if isinstance(mapped, str) else mapped)
 
         # Actual tool kwargs = signature params minus ``context`` and
         # the per-tool ``extra_args`` (target refs / non-DTO kwargs).

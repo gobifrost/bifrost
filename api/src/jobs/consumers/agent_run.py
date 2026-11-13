@@ -265,7 +265,8 @@ class AgentRunConsumer:
                     agent_execution_mode = await AIBehaviorService(
                         db
                     ).resolve_agent_run_execution_mode(agent_run)
-                    assert agent_execution_mode is not None
+                    if agent_execution_mode is None:
+                        raise RuntimeError(f"Chat run {run_id} has no execution mode")
                     agent_run.status = "running"
                     agent_run.started_at = datetime.now(timezone.utc)
                     await db.commit()

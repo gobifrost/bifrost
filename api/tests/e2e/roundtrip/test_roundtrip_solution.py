@@ -694,6 +694,16 @@ async def seed_solution_form(db: AsyncSession, sol: Solution) -> tuple[str, str]
         organization_id=sol.organization_id,
         solution_id=sol.id,
         allowed_query_params=["foo"],
+        layout={
+            "sections": [{
+                "title": "Details",
+                "rows": [{"columns": [
+                    {"field": "title", "width": 4},
+                    {"field": None, "width": 4},
+                    {"field": None, "width": 4},
+                ]}],
+            }, {"rows": [{"field": "lookup"}]}],
+        },
         created_by="roundtrip@test.local",
     ))
     db.add(FormField(

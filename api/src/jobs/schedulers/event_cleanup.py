@@ -219,7 +219,7 @@ async def cleanup_stuck_events() -> dict[str, Any]:
             logger.info("✓ Stuck event cleanup completed: nothing to clean up")
 
     except Exception as e:
-        logger.error(f"✗ Stuck event cleanup failed: {e}", exc_info=True)
+        logger.exception(f"✗ Stuck event cleanup failed: {e}", exc_info=True)
         results["errors"].append({"error": str(e)})
 
     return results

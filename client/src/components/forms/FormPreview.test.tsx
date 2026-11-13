@@ -179,4 +179,43 @@ describe("FormPreview", () => {
 		const submit = screen.getByRole("button", { name: /submit/i });
 		expect(submit).toBeDisabled();
 	});
+
+	it("renders opted-in sections and desktop column widths", () => {
+		const fields: FormField[] = [
+			{ name: "first", label: "First", type: "text", required: false },
+			{ name: "last", label: "Last", type: "text", required: false },
+		];
+		renderWithProviders(
+			<FormPreview
+				formName="F"
+				formDescription=""
+				fields={fields}
+				layout={{
+					sections: [
+						{
+							title: "Your Details",
+							description: "Tell us who you are",
+							rows: [
+								{
+									columns: [
+										{ field: "first", width: 4 },
+										{ field: "last", width: 8 },
+									],
+								},
+							],
+						},
+					],
+				}}
+			/>,
+		);
+
+		expect(screen.getByText("Your Details")).toBeInTheDocument();
+		expect(screen.getByText("Tell us who you are")).toBeInTheDocument();
+		expect(
+			screen.getByText("First").closest('[class~="md:col-span-4"]'),
+		).toHaveClass("md:col-span-4");
+		expect(
+			screen.getByText("Last").closest('[class~="md:col-span-8"]'),
+		).toHaveClass("md:col-span-8");
+	});
 });

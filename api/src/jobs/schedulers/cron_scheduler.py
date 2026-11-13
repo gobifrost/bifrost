@@ -187,7 +187,7 @@ async def process_schedule_sources() -> dict[str, Any]:
                                 f"{interval_seconds}s (< 5 minutes)"
                             )
                     except Exception as e:
-                        logger.error(
+                        logger.exception(
                             f"Failed to validate schedule interval for source {source.id}: {e}"
                         )
 
@@ -374,7 +374,7 @@ async def process_schedule_sources() -> dict[str, Any]:
                         "error": str(source_error),
                     }
                     results["errors"].append(error_info)
-                    logger.error(
+                    logger.exception(
                         "Error processing schedule source",
                         extra=error_info,
                         exc_info=True,
@@ -384,7 +384,7 @@ async def process_schedule_sources() -> dict[str, Any]:
             await db.commit()
 
     except Exception as e:
-        logger.error(f"Schedule sources processor failed: {e}", exc_info=True)
+        logger.exception(f"Schedule sources processor failed: {e}", exc_info=True)
         results["errors"].append({"error": str(e)})
 
     logger.info(

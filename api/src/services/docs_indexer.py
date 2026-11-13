@@ -55,7 +55,7 @@ async def index_docs_background() -> None:
             logger.warning(f"Documentation indexing result: {result}")
     except Exception as e:
         # Don't fail startup if docs indexing fails
-        logger.error(f"Documentation indexing failed: {e}", exc_info=True)
+        logger.exception(f"Documentation indexing failed: {e}", exc_info=True)
 
 
 async def index_platform_docs() -> dict[str, Any]:

@@ -31,5 +31,5 @@ async def cleanup_old_worker_metrics() -> dict:
         logger.info(f"Worker metrics cleanup: deleted {deleted} rows older than {cutoff.isoformat()}")
         return {"rows_deleted": deleted}
     except Exception as e:
-        logger.error(f"Worker metrics cleanup failed: {e}", exc_info=True)
+        logger.exception(f"Worker metrics cleanup failed: {e}", exc_info=True)
         return {"rows_deleted": 0, "error": str(e)}

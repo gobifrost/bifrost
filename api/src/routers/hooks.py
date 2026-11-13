@@ -171,7 +171,7 @@ async def receive_webhook(
         # DbSession commits on a normal response, including this 500. Failed
         # admission must not retain a partial event/identity without fan-out.
         await db.rollback()
-        logger.error(f"Error processing webhook: {log_safe(e)}", exc_info=True)
+        logger.exception(f"Error processing webhook: {log_safe(e)}", exc_info=True)
         # Return 500 but don't expose internal error details
         return Response(
             content="Internal server error",
@@ -215,7 +215,7 @@ async def receive_webhook(
                 async with db.begin_nested():
                     queued = await processor.queue_event_deliveries(result.event_id)
             except Exception as e:
-                logger.error(f"Error queueing deliveries: {log_safe(e)}", exc_info=True)
+                logger.exception(f"Error queueing deliveries: {log_safe(e)}", exc_info=True)
         await db.commit()
         await queued.hand_off()
 

@@ -159,7 +159,7 @@ class WorkflowExecutionConsumer:
             else:
                 await self._process_failure(execution_id, result)
         except Exception as e:
-            logger.error(f"Failed to process result for {execution_id}: {e}")
+            logger.exception(f"Failed to process result for {execution_id}: {e}")
             raise
 
     async def _load_completion_metadata(
@@ -1205,7 +1205,7 @@ class WorkflowExecutionConsumer:
                     duration_ms=duration_ms,
                 )
 
-            logger.error(
+            logger.exception(
                 f"Workflow execution error: {execution_id}",
                 extra={
                     "execution_id": execution_id,

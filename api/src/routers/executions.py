@@ -849,7 +849,7 @@ async def trigger_cleanup(
             execution.error_message = f"Execution timed out after {hours} hours"
             execution.completed_at = now
         except Exception as e:
-            logger.error(f"Failed to cleanup execution {execution.id}: {e}")
+            logger.exception(f"Failed to cleanup execution {execution.id}: {e}")
             failed_count += 1
 
     # CANCELLING -> CANCELLED (they were being cancelled but got stuck)
@@ -859,7 +859,7 @@ async def trigger_cleanup(
             execution.error_message = "Cancellation completed by cleanup job"
             execution.completed_at = now
         except Exception as e:
-            logger.error(f"Failed to cleanup cancelling execution {execution.id}: {e}")
+            logger.exception(f"Failed to cleanup cancelling execution {execution.id}: {e}")
             failed_count += 1
 
     await ctx.db.flush()

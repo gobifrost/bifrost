@@ -20,6 +20,9 @@ from unittest.mock import ANY, patch
 from uuid import uuid4
 
 import pytest
+
+from src.core.constants import PROVIDER_ORG_ID
+from src.models.orm.organizations import Organization as OrganizationModel
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -51,13 +54,10 @@ from src.services.authorization.enforce import Caller
 from src.services.solutions.guard import SOLUTION_MANAGED_MESSAGE
 
 
-async def _seed_org(db_session, *, is_provider=False):
-    from src.models.orm.organizations import Organization as OrganizationModel
-
+async def _seed_org(db_session):
     row = OrganizationModel(
         name=f"sdk-table-meta-org-{uuid4().hex[:8]}",
         is_active=True,
-        is_provider=is_provider,
         created_by="sdk-table-meta-test",
     )
     db_session.add(row)
@@ -659,7 +659,8 @@ class TestCreateHandler:
     async def test_handler_provider_membership_does_not_expand_reach(self, db_session):
         from src.routers.cli import cli_create_table
 
-        provider_org = await _seed_org(db_session, is_provider=True)
+        provider_org = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert provider_org is not None
         other_org = await _seed_org(db_session)
         user = _user(org_id=provider_org.id)
         tag = uuid4().hex[:8]

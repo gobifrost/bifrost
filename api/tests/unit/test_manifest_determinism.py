@@ -55,6 +55,7 @@ def _mock_form(form_id=FORM_ID, name="det_form"):
     form.launch_workflow_id = None
     form.default_launch_params = None
     form.allowed_query_params = None
+    form.layout = None
     return form
 
 

@@ -1,288 +1,366 @@
-/**
- * Component tests for FieldsPanelDnD.
- *
- * The full pragmatic-drag-and-drop machinery is impractical to drive in jsdom,
- * so we mock the @atlaskit primitives to no-ops and focus on render behavior,
- * the add/edit/delete flows that are driven via click events, and the workflow
- * input palette population logic.
- */
-
-import { describe, it, expect, vi } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { useState } from "react";
 import { renderWithProviders, screen, within } from "@/test-utils";
 import type { FormField } from "@/lib/client-types";
-
-// Stub out pragmatic-drag-and-drop — the cleanup-returning noops let useEffect
-// teardown succeed without errors, and canDrop / getInitialData don't fire
-// because we never dispatch real drag events.
+import type { FormCanvasState, FormLayout } from "./form-layout";
 vi.mock("@atlaskit/pragmatic-drag-and-drop/element/adapter", () => ({
 	draggable: () => () => {},
 	dropTargetForElements: () => () => {},
 }));
 vi.mock("@atlaskit/pragmatic-drag-and-drop/combine", () => ({
-	combine:
-		(..._cleanups: unknown[]) =>
-		() => {},
+	combine: () => () => {},
 }));
 vi.mock("@atlaskit/pragmatic-drag-and-drop-auto-scroll/element", () => ({
 	autoScrollForElements: () => () => {},
 }));
-
-// Stub the inner FieldConfigDialog to avoid Monaco / heavy deps.
-vi.mock("./FieldConfigDialog", () => ({
-	FieldConfigDialog: ({ open }: { open: boolean }) =>
-		open ? <div role="dialog" aria-label="field-config" /> : null,
-}));
-
-// Mock useWorkflowsMetadata since the palette reads linked-workflow params.
-const mockMetadata = vi.fn();
+const metadata = vi.hoisted(() => vi.fn());
+const dialogProps = vi.hoisted(() => vi.fn());
 vi.mock("@/hooks/useWorkflows", () => ({
-	useWorkflowsMetadata: () => ({ data: mockMetadata() }),
+	useWorkflowsMetadata: () => ({ data: metadata() }),
 }));
-
+vi.mock("./FieldConfigDialog", () => ({
+	FieldConfigDialog: (props: {
+		open: boolean;
+		onClose: () => void;
+		onSave: (f: FormField) => void;
+		defaultType?: FormField["type"];
+		field?: FormField;
+		workflowInputData?: unknown;
+	}) => {
+		dialogProps(props);
+		return props.open ? (
+			<div role="dialog" aria-label="field-config">
+				<button
+					onClick={() =>
+						props.onSave(
+							props.field
+								? {
+										...props.field,
+										name: "renamed",
+										label: "Renamed",
+									}
+								: {
+										name: "new_field",
+										label: "New Field",
+										type: props.defaultType ?? "text",
+									},
+						)
+					}
+				>
+					Save Test Field
+				</button>
+				<button onClick={props.onClose}>Cancel</button>
+			</div>
+		) : null;
+	},
+}));
 import { FieldsPanelDnD } from "./FieldsPanelDnD";
-
-function makeField(overrides: Partial<FormField> = {}): FormField {
-	return {
-		name: "first_name",
-		label: "First Name",
-		type: "text",
-		required: false,
-		...overrides,
-	};
+const first: FormField = { name: "first", label: "First", type: "text" };
+const second: FormField = { name: "second", label: "Second", type: "email" };
+function Harness({
+	fields = [],
+	layout = null,
+	onChange = () => {},
+	workflow,
+}: {
+	fields?: FormField[];
+	layout?: FormLayout | null;
+	onChange?: (s: FormCanvasState) => void;
+	workflow?: string;
+}) {
+	const [state, setState] = useState<FormCanvasState>({ fields, layout });
+	return (
+		<FieldsPanelDnD
+			fields={state.fields}
+			layout={state.layout}
+			onChange={(next) => {
+				setState(next);
+				onChange(next);
+			}}
+			{...(workflow ? { linkedWorkflow: workflow } : {})}
+		/>
+	);
 }
-
-describe("FieldsPanelDnD — layout", () => {
-	it("renders the field palette with all 11 field templates", () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-
-		renderWithProviders(<FieldsPanelDnD fields={[]} setFields={vi.fn()} />);
-
-		expect(screen.getByText("Field Palette")).toBeInTheDocument();
-		// Check for a few representative templates.
-		expect(screen.getByText("Text Input")).toBeInTheDocument();
-		expect(screen.getByText("Email")).toBeInTheDocument();
-		expect(screen.getByText("File Upload")).toBeInTheDocument();
-		expect(screen.getByText("Markdown")).toBeInTheDocument();
-	});
-
-	it("uses neutral swatches for palette templates", () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-
-		renderWithProviders(<FieldsPanelDnD fields={[]} setFields={vi.fn()} />);
-
-		const markdownTemplate = screen.getByRole("button", { name: "Markdown" });
-		expect(markdownTemplate.querySelector("div")).toHaveClass("bg-muted");
-		expect(markdownTemplate.querySelector("div")).not.toHaveClass(
-			"bg-slate-500",
-		);
-	});
-
-	it("renders the empty drop-zone copy when there are no fields", () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-
-		renderWithProviders(<FieldsPanelDnD fields={[]} setFields={vi.fn()} />);
-
-		expect(screen.getByText(/drop fields here/i)).toBeInTheDocument();
-	});
-
-	it("renders each existing field with its label and name", () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-
-		renderWithProviders(
-			<FieldsPanelDnD
-				fields={[
-					makeField({ name: "first_name", label: "First Name" }),
-					makeField({
-						name: "user_email",
-						label: "User Email",
-						type: "email",
-					}),
-				]}
-				setFields={vi.fn()}
-			/>,
-		);
-
-		// Field labels ("First Name" and "User Email") are unique; the names
-		// ("first_name", "user_email") appear in the field rows alongside the
-		// type badge.
-		expect(screen.getByText("First Name")).toBeInTheDocument();
-		expect(screen.getByText("User Email")).toBeInTheDocument();
-		expect(screen.getByText("first_name")).toBeInTheDocument();
-		expect(screen.getByText("user_email")).toBeInTheDocument();
-	});
+beforeEach(() => {
+	metadata.mockReturnValue({ workflows: [] });
+	dialogProps.mockClear();
 });
-
-describe("FieldsPanelDnD — Add Field button", () => {
-	it("opens the FieldConfigDialog", async () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-
-		const { user } = renderWithProviders(
-			<FieldsPanelDnD fields={[]} setFields={vi.fn()} />,
+describe("unified form builder", () => {
+	it("lets authors label sections and add descriptions without altering fields", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(<Harness onChange={changed} />);
+		await user.click(screen.getByRole("button", { name: "Section" }));
+		await user.clear(
+			screen.getByRole("textbox", { name: "Section 1 Title" }),
 		);
-
-		await user.click(screen.getByRole("button", { name: /add field/i }));
-
+		await user.type(
+			screen.getByRole("textbox", { name: "Section 1 Title" }),
+			"Contact Details",
+		);
+		await user.type(
+			screen.getByRole("textbox", { name: "Section 1 Description" }),
+			"How we can reach you.",
+		);
+		const state = changed.mock.lastCall![0] as FormCanvasState;
+		expect(state.layout!.sections[0]).toMatchObject({
+			title: "Contact Details",
+			description: "How we can reach you.",
+		});
+		expect(state.fields).toEqual([]);
+	});
+	it("keeps structural and field components in one palette beside one canvas", () => {
+		renderWithProviders(<Harness />);
+		expect(screen.getByText("Component Palette")).toBeInTheDocument();
+		for (const name of [
+			"Row",
+			"Section",
+			"Text Input",
+			"Email",
+			"File Upload",
+		])
+			expect(screen.getByRole("button", { name })).toBeInTheDocument();
+		expect(screen.getByText("Form Canvas")).toBeInTheDocument();
+		expect(screen.queryByText("Customize Layout")).not.toBeInTheDocument();
+		expect(screen.queryByText("Form Layout")).not.toBeInTheDocument();
+	});
+	it("adds a two-column row and saves a field directly into its chosen slot", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(<Harness onChange={changed} />);
+		await user.click(screen.getByRole("button", { name: "Row" }));
+		await user.click(
+			screen.getByRole("button", {
+				name: "Add field to column 2 of row 1 in section 1",
+			}),
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Save Test Field" }),
+		);
+		const state = changed.mock.lastCall![0] as FormCanvasState;
+		expect(state.fields.map((f) => f.name)).toEqual(["new_field"]);
 		expect(
-			screen.getByRole("dialog", { name: /field-config/i }),
+			state.layout!.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual([null, "new_field"]);
+		expect(
+			screen.getByRole("button", { name: "Edit New Field" }),
 		).toBeInTheDocument();
 	});
-});
-
-describe("FieldsPanelDnD — delete flow", () => {
-	it("removes the field when the user confirms deletion", async () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-		const fields = [
-			makeField({ name: "first_name", label: "First Name" }),
-			makeField({
-				name: "user_email",
-				label: "User Email",
-				type: "email",
+	it("cancels field creation without leaving a ghost field or changing slots", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(<Harness onChange={changed} />);
+		await user.click(screen.getByRole("button", { name: "Row" }));
+		changed.mockClear();
+		await user.click(
+			screen.getByRole("button", {
+				name: "Add field to column 1 of row 1 in section 1",
 			}),
-		];
-		const setFields = vi.fn();
-
-		const { user } = renderWithProviders(
-			<FieldsPanelDnD fields={fields} setFields={setFields} />,
 		);
-
-		await user.click(
-			screen.getByRole("button", { name: "Delete User Email" }),
-		);
-
-		// Confirm in AlertDialog.
-		await user.click(
-			await screen.findByRole("button", { name: /^remove field$/i }),
-		);
-
-		expect(setFields).toHaveBeenCalledTimes(1);
-		const remaining = setFields.mock.calls[0]![0];
-		expect(remaining).toHaveLength(1);
-		expect(remaining[0].name).toBe("first_name");
+		await user.click(screen.getByRole("button", { name: "Cancel" }));
+		expect(changed).not.toHaveBeenCalled();
+		expect(
+			screen.getByRole("button", {
+				name: "Add field to column 1 of row 1 in section 1",
+			}),
+		).toBeInTheDocument();
 	});
-});
+	it("renames a field in place and preserves its column when deleting it", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(
+			<Harness
+				fields={[first]}
+				layout={{
+					sections: [
+						{
+							rows: [
+								{
+									columns: [
+										{ field: null, width: 6 },
+										{ field: "first", width: 6 },
+									],
+								},
+							],
+						},
+					],
+				}}
+				onChange={changed}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: "Edit First" }));
+		await user.click(
+			screen.getByRole("button", { name: "Save Test Field" }),
+		);
+		expect(
+			(
+				changed.mock.lastCall![0] as FormCanvasState
+			).layout!.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual([null, "renamed"]);
+		await user.click(
+			screen.getByRole("button", { name: "Delete Renamed" }),
+		);
+		await user.click(screen.getByRole("button", { name: "Remove Field" }));
+		expect(
+			(
+				changed.mock.lastCall![0] as FormCanvasState
+			).layout!.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual([null, null]);
+	});
+	it("retains keyboard field movement and focuses the moved field", async () => {
+		const { user } = renderWithProviders(
+			<Harness fields={[first, second]} />,
+		);
+		await user.click(
+			screen.getByRole("button", { name: "Move First down" }),
+		);
+		expect(screen.getByRole("status")).toHaveTextContent(
+			"First moved to position 2 of 2.",
+		);
+		expect(
+			screen.getByRole("button", { name: "Move First" }),
+		).toHaveFocus();
+		expect(
+			screen
+				.getAllByRole("button", { name: /^Edit / })
+				.map((b) => b.getAttribute("aria-label")),
+		).toEqual(["Edit Second", "Edit First"]);
+	});
+	it("moves an existing field into an empty column through the keyboard menu", async () => {
+		const changed = vi.fn();
+		const { user } = renderWithProviders(
+			<Harness
+				fields={[first]}
+				layout={{
+					sections: [
+						{
+							rows: [
+								{
+									columns: [
+										{ field: "first", width: 6 },
+										{ field: null, width: 6 },
+									],
+								},
+							],
+						},
+					],
+				}}
+				onChange={changed}
+			/>,
+		);
+		await user.click(screen.getByRole("button", { name: "Move First" }));
+		await user.keyboard("{End}{ArrowRight}{Enter}");
+		expect(
+			(
+				changed.mock.lastCall![0] as FormCanvasState
+			).layout!.sections[0]!.rows[0]!.columns.map((c) => c.field),
+		).toEqual([null, "first"]);
+		expect(
+			screen.getByRole("button", { name: "Move First" }),
+		).toHaveFocus();
+	});
 
-describe("FieldsPanelDnD — workflow input palette", () => {
-	it("renders workflow inputs for the linked workflow, excluding already-added fields", () => {
-		mockMetadata.mockReturnValue({
+	it("keeps workflow input prefill and excludes inputs already on the canvas", async () => {
+		metadata.mockReturnValue({
 			workflows: [
 				{
-					id: "wf-1",
-					name: "Onboard",
+					id: "wf",
 					parameters: [
+						{ name: "first", type: "str" },
 						{
-							name: "user_email",
+							name: "email_param",
 							type: "str",
 							required: true,
-							description: "User's email",
-						},
-						{
-							name: "first_name",
-							type: "str",
-							required: false,
+							dataProvider: "provider-id",
+							description: "Choose user",
 						},
 					],
 				},
 			],
 		});
-
-		renderWithProviders(
-			<FieldsPanelDnD
-				fields={[makeField({ name: "first_name" })]}
-				setFields={vi.fn()}
-				linkedWorkflow="wf-1"
+		const { user } = renderWithProviders(
+			<Harness fields={[first]} workflow="wf" />,
+		);
+		const palette =
+			screen.getByText("Workflow Inputs").parentElement!.parentElement!;
+		expect(within(palette).queryByText("first")).not.toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: /email_param/ }));
+		expect(dialogProps.mock.lastCall![0].workflowInputData).toEqual({
+			name: "email_param",
+			required: true,
+			helpText: "Choose user",
+			dataProvider: "provider-id",
+		});
+	});
+	it("offers keyboard palette selection and rejects presets that would lose fields", async () => {
+		const { user } = renderWithProviders(
+			<Harness
+				fields={[first, second]}
+				layout={{
+					sections: [
+						{
+							rows: [
+								{
+									columns: [
+										{ field: "first", width: 6 },
+										{ field: "second", width: 6 },
+									],
+								},
+							],
+						},
+					],
+				}}
 			/>,
 		);
-
-		// user_email should show in the palette; first_name is already a field
-		// and is filtered out.
-		expect(screen.getByText("user_email")).toBeInTheDocument();
-		// "first_name" appears once — for the existing form field row — but NOT
-		// in the workflow inputs panel.
-		const palette = screen
-			.getByText(/workflow inputs/i)
-			.closest("div")!.parentElement!;
+		const columns = screen.getByRole("combobox", {
+			name: "Columns for row 1 in section 1",
+		});
 		expect(
-			within(palette).queryByText("first_name"),
-		).not.toBeInTheDocument();
-	});
-
-	it("does not render the workflow inputs section if no linkedWorkflow is provided", () => {
-		mockMetadata.mockReturnValue({
-			workflows: [
-				{
-					id: "wf-1",
-					name: "Onboard",
-					parameters: [{ name: "foo", type: "str" }],
-				},
-			],
-		});
-
-		renderWithProviders(<FieldsPanelDnD fields={[]} setFields={vi.fn()} />);
-
-		expect(screen.queryByText(/workflow inputs/i)).not.toBeInTheDocument();
-	});
-});
-
-describe("FieldsPanelDnD — keyboard palette selection", () => {
-	it("opens field configuration from a template without dragging", async () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-		const { user } = renderWithProviders(
-			<FieldsPanelDnD fields={[]} setFields={vi.fn()} />,
-		);
+			within(columns).getByRole("option", {
+				name: "1 Column",
+			}),
+		).toBeDisabled();
 		await user.click(
-			screen.getByRole("button", { name: "Choose a field" }),
+			screen.getByRole("button", { name: "Choose a Component" }),
 		);
-		const template = screen.getByRole("button", {
-			name: /^Text Input$/,
-		});
-		template.focus();
+		screen.getByRole("button", { name: "Text Input" }).focus();
 		await user.keyboard("{Enter}");
 		expect(
 			screen.getByRole("dialog", { name: "field-config" }),
 		).toBeInTheDocument();
 	});
 });
+it("matches palette icon color to the Row badge in the canvas", async () => {
+	const { user } = renderWithProviders(<Harness />);
+	const palette = screen.getByRole("button", { name: "Row" });
+	const paletteIcon = palette.querySelector("svg")!;
+	const paletteColors = paletteIcon.parentElement!.className;
+	await user.click(palette);
+	const badge = screen
+		.getByRole("region", { name: "Form Canvas" })
+		.querySelector('[data-slot="badge"]')!;
+	expect(badge.textContent).toBe("Row");
+	expect(badge.querySelector("svg")!.getAttribute("class")).toContain(
+		"lucide-columns-3",
+	);
+	for (const token of paletteColors
+		.split(" ")
+		.filter((c) => /^(bg-|text-|dark:text-|border-sky)/.test(c)))
+		expect(badge.className).toContain(token);
+});
 
-describe("FieldsPanelDnD — keyboard reordering", () => {
-	it("moves fields, preserves focus and disables moves past either boundary", async () => {
-		mockMetadata.mockReturnValue({ workflows: [] });
-		function StatefulFields() {
-			const [fields, setFields] = useState([
-				makeField(),
-				makeField({
-					name: "email",
-					label: "Email address",
-					type: "email",
-				}),
-			]);
-			return <FieldsPanelDnD fields={fields} setFields={setFields} />;
-		}
-		const { user } = renderWithProviders(<StatefulFields />);
-		const move = screen.getByRole("button", { name: "Move First Name" });
-		move.focus();
-		await user.keyboard("{Enter}");
-		expect(
-			screen.getByRole("menuitem", { name: "Move up" }),
-		).toHaveAttribute("aria-disabled", "true");
-		await user.keyboard("{ArrowDown}{Enter}");
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"First Name moved to position 2 of 2.",
-		);
-		expect(
-			screen
-				.getAllByRole("button", { name: /^Move / })
-				.map((button) => button.getAttribute("aria-label")),
-		).toEqual(["Move Email address", "Move First Name"]);
-		expect(move).toHaveFocus();
-		await user.keyboard("{Enter}");
-		expect(
-			screen.getByRole("menuitem", { name: "Move down" }),
-		).toHaveAttribute("aria-disabled", "true");
-		await user.keyboard("{ArrowDown}{Enter}");
-		expect(screen.getByRole("status")).toHaveTextContent(
-			"First Name moved to position 1 of 2.",
-		);
-		expect(move).toHaveFocus();
-	});
+it("keeps palette Row creation outside an existing section and shows legacy fields without wrappers", async () => {
+	const changed = vi.fn();
+	const { user } = renderWithProviders(
+		<Harness fields={[first]} onChange={changed} />,
+	);
+	expect(screen.queryByText("Row")).toBeInTheDocument(); // palette only
+	expect(
+		screen
+			.getByRole("region", { name: "Form Canvas" })
+			.querySelectorAll('[data-slot="badge"]'),
+	).toHaveLength(1);
+	await user.click(screen.getByRole("button", { name: "Section" }));
+	await user.click(screen.getByRole("button", { name: "Row" }));
+	const layout = (changed.mock.lastCall![0] as FormCanvasState).layout!;
+	expect(layout.sections[1]!.title).toBe("Section");
+	expect(layout.sections[1]!.rows).toEqual([]);
+	expect(layout.sections[2]!.rows).toHaveLength(1);
+	expect(layout.sections[2]!.title).toBeUndefined();
 });

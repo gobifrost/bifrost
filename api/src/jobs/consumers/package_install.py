@@ -71,7 +71,7 @@ class PackageInstallConsumer:
             logger.error(f"pip uninstall {package} timed out")
             return f"pip uninstall {package} timed out"
         except Exception as e:
-            logger.error(f"pip uninstall {package} error: {e}")
+            logger.exception(f"pip uninstall {package} error: {e}")
             return f"pip uninstall {package} error: {e}"
 
     async def _pip_install(self, package: str, version: str | None) -> str | None:
@@ -105,7 +105,7 @@ class PackageInstallConsumer:
             logger.error(f"pip install {package_spec} timed out")
             return f"pip install {package_spec} timed out"
         except Exception as e:
-            logger.error(f"pip install {package_spec} error: {e}")
+            logger.exception(f"pip install {package_spec} error: {e}")
             return f"pip install {package_spec} error: {e}"
 
     async def _pip_install_requirements(self) -> str | None:
@@ -157,7 +157,7 @@ class PackageInstallConsumer:
             logger.error("pip install -r requirements.txt timed out")
             return "pip install -r requirements.txt timed out"
         except Exception as e:
-            logger.error(f"pip install -r requirements.txt error: {e}")
+            logger.exception(f"pip install -r requirements.txt error: {e}")
             return f"pip install -r requirements.txt error: {e}"
 
     async def _update_pool_packages(self) -> None:

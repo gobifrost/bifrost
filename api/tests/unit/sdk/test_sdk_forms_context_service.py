@@ -14,6 +14,9 @@ from uuid import uuid4
 
 import pytest
 
+from src.core.constants import PROVIDER_ORG_ID
+from src.models.orm.organizations import Organization as OrganizationModel
+
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID, WILDCARD_PERMISSION
 from shared.sdk_context import SdkContextError, get_sdk_context
 from shared.sdk_forms import SdkFormError, get_sdk_form, list_sdk_forms
@@ -80,13 +83,10 @@ def _form_caller_context(monkeypatch):
     monkeypatch.setattr(enforce, "load_caller", _load_caller)
 
 
-async def _seed_org(db_session, *, is_provider=False, is_active=True):
-    from src.models.orm.organizations import Organization as OrganizationModel
-
+async def _seed_org(db_session, *, is_active=True):
     row = OrganizationModel(
         name=f"sdk-forms-org-{uuid4().hex[:8]}",
         is_active=is_active,
-        is_provider=is_provider,
         created_by="sdk-forms-test",
     )
     db_session.add(row)
@@ -341,7 +341,8 @@ class TestGetSdkContext:
         assert exc_info.value.status_code == 403
 
     async def test_provider_membership_alone_cannot_target_other_org(self, db_session) -> None:
-        provider = await _seed_org(db_session, is_provider=True)
+        provider = await db_session.get(OrganizationModel, PROVIDER_ORG_ID)
+        assert provider is not None
         other = await _seed_org(db_session)
         with pytest.raises(SdkContextError) as error:
             await get_sdk_context(db_session, _principal(provider.id), org_id=other.id)
