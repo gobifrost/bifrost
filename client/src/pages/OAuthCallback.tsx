@@ -212,7 +212,7 @@ export function OAuthCallback() {
 			}
 		};
 
-		handleCallback();
+		void handleCallback();
 	}, [integrationId, searchParams, navigate]);
 
 	return (

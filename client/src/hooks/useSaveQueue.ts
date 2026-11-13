@@ -182,7 +182,7 @@ export function useSaveQueue(
 
 				// Process next item recursively
 				if (queue.size > 0) {
-					processQueueInternal();
+					void processQueueInternal();
 				}
 				break;
 			}

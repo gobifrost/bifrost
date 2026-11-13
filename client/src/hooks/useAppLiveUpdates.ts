@@ -218,15 +218,15 @@ export function useAppLiveUpdates(options: UseAppLiveUpdatesOptions) {
 			}
 		};
 
-		init();
+		void init();
 
 		return () => {
 			unsubscribers.forEach((unsub) => unsub());
 			// Unsubscribe from channels
 			if (mode === "draft") {
-				webSocketService.unsubscribe(`app:draft:${appId}`);
+				void webSocketService.unsubscribe(`app:draft:${appId}`);
 			}
-			webSocketService.unsubscribe(`app:live:${appId}`);
+			void webSocketService.unsubscribe(`app:live:${appId}`);
 		};
 	}, [appId, mode, enabled, handleDraftUpdate, handlePublished]);
 

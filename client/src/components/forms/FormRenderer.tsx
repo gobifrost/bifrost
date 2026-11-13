@@ -536,6 +536,10 @@ function FormRendererInner({
 			.then(() => (active ? loadDataProviders() : undefined))
 			.then(() => {
 				if (active) setHasCompletedInitialLoad(true);
+			})
+			.catch((error: unknown) => {
+				console.error("[FormRenderer] Initial options load failed:", error);
+				if (active) setHasCompletedInitialLoad(true);
 			});
 		return () => {
 			active = false;
@@ -544,7 +548,7 @@ function FormRendererInner({
 
 	// Handler for field blur events
 	const handleFieldBlur = useCallback(() => {
-		loadDataProviders();
+		void loadDataProviders();
 	}, [loadDataProviders]);
 
 	// Build Zod schema dynamically from form fields

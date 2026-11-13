@@ -246,7 +246,7 @@ export function useNewExecutions(options: { enabled?: boolean } = {}) {
 		return () => {
 			disposed = true;
 			if (unsubscribe) {
-				unsubscribe();
+				void unsubscribe();
 			}
 		};
 	}, [enabled]);
@@ -407,7 +407,7 @@ export function useExecutionHistory(
 		return () => {
 			disposed = true;
 			if (unsubscribe) {
-				unsubscribe();
+				void unsubscribe();
 			}
 			if (channel) {
 				webSocketService.unsubscribe(channel);

@@ -348,7 +348,7 @@ export function BasicInfo() {
 					<form
 						onSubmit={(e) => {
 							e.preventDefault();
-							handleChangePassword();
+							void handleChangePassword();
 						}}
 					>
 						<div className="space-y-4">

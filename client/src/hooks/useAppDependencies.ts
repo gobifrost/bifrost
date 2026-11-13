@@ -66,7 +66,7 @@ export function useAppDependencies(appId: string): UseAppDependenciesResult {
 			}
 		}
 
-		load();
+		void load();
 		return () => {
 			cancelled = true;
 		};

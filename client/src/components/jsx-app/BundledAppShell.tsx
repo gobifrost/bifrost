@@ -610,7 +610,7 @@ export function BundledAppShell({
 		let unsub: (() => void) | null = null;
 		const initialLoad = loadBundle();
 		if (isPreview) {
-			(async () => {
+			void (async () => {
 				try {
 					const model = await initialLoad;
 					if (model === "standalone_v2") return;
@@ -627,7 +627,7 @@ export function BundledAppShell({
 								setBuildErrorDismissed(false);
 							} else if (update.bundle) {
 								invalidatePreparedAppBundle(appId, isPreview);
-								loadBundle(
+								void loadBundle(
 									update.bundle.entry,
 									update.bundle.css,
 								);

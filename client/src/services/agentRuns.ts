@@ -345,7 +345,7 @@ export function useAgentRunListStream(options: { enabled?: boolean } = {}) {
 
 		return () => {
 			if (unsubscribe) unsubscribe();
-			webSocketService.unsubscribe("agent-runs");
+			void webSocketService.unsubscribe("agent-runs");
 		};
 	}, [enabled, queryClient]);
 }
@@ -429,7 +429,7 @@ export function useAgentRunStream(
 			if (unsubUpdate) unsubUpdate();
 			if (unsubStep) unsubStep();
 			if (runId) {
-				webSocketService.unsubscribe(`agent-run:${runId}`);
+				void webSocketService.unsubscribe(`agent-run:${runId}`);
 				useAgentRunStepStore.getState().clearStream(runId);
 			}
 		};
