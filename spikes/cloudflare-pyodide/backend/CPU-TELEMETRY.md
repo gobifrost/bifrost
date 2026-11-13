@@ -56,3 +56,59 @@ as supervisor CPU rather than workflow CPU.
 If this works, `metrics.cpu_total_seconds` stops being `null` for Cloudflare executions —
 unblocking the capacity-planning and cost-attribution gap that currently forces every estimate
 to be a guess. It does not, by itself, make provider memory measurements available.
+
+## RAM and cost basis
+
+### RAM: not measurable, and not billed
+
+Workers allocate a fixed **128 MB per isolate**; there is no per-invocation memory meter and no
+memory dimension on the bill. Consequences:
+
+- RAM contributes **zero marginal cost**, so there is no "memory cost basis" to recover.
+- We cannot produce per-execution or per-tenant peak memory, ever, from this platform. The only
+  memory signal is the `exceededMemory` outcome on a failed invocation.
+- Any capacity model must treat memory as a fixed per-isolate reservation, not a measured
+  quantity. Bifrost's Linux `peak_memory_bytes` semantics have no Cloudflare equivalent.
+
+This is a durable incompatibility, not a missing integration.
+
+### Cost: derivable from the same telemetry
+
+Published rates (Workers Paid, verified 2026-11-12):
+
+| Meter | Included | Overage |
+|---|---|---|
+| Requests | 10 M/month | $0.30 / M |
+| CPU time | 30 M CPU-ms/month | $0.02 / M CPU-ms |
+| Unique Dynamic Workers | 1,000 / month | $0.002 per Dynamic Worker per day |
+| Workers Logs (invocation + custom) | 20 M events/month | $0.60 / M |
+| Logpush | 10 M/month | $0.05 / M |
+
+Service-binding calls incur no extra request fee, and CPU across both workers is counted once.
+
+Per-execution cost formula, once `CPUTimeMs` is delivered:
+
+```
+cost = cpu_ms * 0.02/1e6 + requests * 0.30/1e6 + creation * 0.002
+```
+
+**The creation meter is the important one.** Cloudflare bills a Dynamic Worker per unique
+(Worker ID, code) pair per day, and explicitly: `.load(code)` with no ID counts as **one Dynamic
+Worker per invocation**. Our executor uses `LOADER.load(code)` precisely to guarantee a fresh
+isolate per attempt, so:
+
+- fresh isolation costs **$0.002 per execution** after the first 1,000/month;
+- 10,000 executions/month ≈ **$18** in creation charges alone, versus ~$0.20 of CPU at 10 ms each;
+- switching to a stable `get(id, ...)` would remove that charge but reuse the isolate — the
+  exact isolation guarantee the hostile-canary suite validated.
+
+That is a real design trade-off to surface to operators, not a rounding error: at low volume the
+fresh-execution model is cheap; at high volume the creation meter dominates CPU by ~90×.
+
+### Second-order cost of measuring cost
+
+Enabling observability to obtain CPU time emits invocation logs, which are billed (20 M/month
+included, then $0.60/M). Measurement is cheap at spike volumes but scales with executions, so a
+production CPU-accounting design should sample or aggregate rather than log every attempt at
+`head_sampling_rate = 1`.
+
