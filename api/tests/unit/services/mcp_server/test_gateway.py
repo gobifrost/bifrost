@@ -845,6 +845,39 @@ async def test_workflow_dispatch_returns_only_the_workflow_result():
     assert result == [{"ticket": 42}]
     assert execute.await_args.kwargs["caller"].ctx.user_id == context.user_id
     assert execute.await_args.kwargs["workflow_id"] == tool.source_id
+    assert execute.await_args.kwargs["result_wait_seconds"] == 20
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_execution", [None, False])
+async def test_slow_workflow_returns_the_accepted_execution_without_redispatch(async_execution):
+    from types import SimpleNamespace
+
+    service = MCPAgentGatewayService(_context())
+    tool = _resolved_tool()
+    agent = _agent()
+    execution_id = str(uuid4())
+    response = SimpleNamespace(
+        execution_id=execution_id, status=ExecutionStatus.PENDING,
+        duration_ms=None, result=None, error=None, error_type=None,
+    )
+    with patch(
+        "src.services.mcp_server.gateway.execute_agent_workflow_tool",
+        new=AsyncMock(return_value=response),
+    ) as execute:
+        result = await service.execute_tool(
+            AgentToolSnapshot(agent=agent, tools=[tool]), tool, {"ticket_id": 42},
+            async_execution=async_execution, lineage=None,
+        )
+
+    execute.assert_awaited_once()
+    assert execute.await_args.kwargs["sync"] is True
+    assert execute.await_args.kwargs["result_wait_seconds"] == 20
+    assert result["async"] is True
+    assert result["execution_id"] == execution_id
+    assert result["execution_type"] == "workflow"
+    assert result["status"] == "Pending"
+    assert result["result"] is None
 
 
 @pytest.mark.asyncio
