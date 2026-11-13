@@ -710,7 +710,7 @@ async def oauth_callback(
         try:
             client_secret = decrypt_secret(provider.encrypted_client_secret.decode())
         except Exception as e:
-            logger.exception(f"Failed to decrypt client secret: {e}")
+            logger.error(f"Failed to decrypt client secret: {e}")
 
     # Get redirect URI from request (must match what was used in authorization)
     if not request.redirect_uri:

@@ -267,7 +267,7 @@ class OAuthConfigService:
             try:
                 return decrypt_secret(encrypted)
             except Exception as e:
-                logger.exception(f"Failed to decrypt secret {key}: {e}")
+                logger.error(f"Failed to decrypt secret {key}: {e}")
                 return None
         return None
 
