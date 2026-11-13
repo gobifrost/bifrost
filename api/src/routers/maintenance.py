@@ -456,7 +456,7 @@ async def get_maintenance_status(
         )
 
     except Exception as e:
-        logger.error(f"Error getting maintenance status: {e}", exc_info=True)
+        logger.exception(f"Error getting maintenance status: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get maintenance status",
@@ -536,7 +536,7 @@ async def index_documentation(
         )
 
     except Exception as e:
-        logger.error(f"Error indexing documentation: {e}", exc_info=True)
+        logger.exception(f"Error indexing documentation: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to index documentation: {str(e)}",
@@ -652,7 +652,7 @@ async def cleanup_orphaned(
         )
 
     except Exception as e:
-        logger.error(f"Error cleaning up orphaned entities: {e}", exc_info=True)
+        logger.exception(f"Error cleaning up orphaned entities: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clean up orphaned entities: {str(e)}",
@@ -829,7 +829,7 @@ async def scan_app_dependencies(
         )
 
     except Exception as e:
-        logger.error(f"Error rebuilding app dependencies: {e}", exc_info=True)
+        logger.exception(f"Error rebuilding app dependencies: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to rebuild app dependencies: {str(e)}",
@@ -860,7 +860,7 @@ async def run_preflight(
     try:
         all_files = await service.list_files("", recursive=True)
     except Exception as e:
-        logger.error(f"Preflight: failed to list files: {e}")
+        logger.exception(f"Preflight: failed to list files: {e}")
         return PreflightResponse(
             valid=False,
             issues=[

@@ -196,7 +196,7 @@ Your response (agent name or DIRECT):"""
             return None
 
         except Exception as e:
-            logger.error(f"Agent routing failed: {e}", exc_info=True)
+            logger.exception(f"Agent routing failed: {e}", exc_info=True)
             return None
 
     async def get_available_agents(self) -> list[Agent]:

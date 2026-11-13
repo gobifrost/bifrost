@@ -1,0 +1,1 @@
+{"category":"fix","classification":"other","entry_ids":[],"key":"pr:1371","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1371"],"status":"approved"},"summary":"Attach exception tracebacks to error logs in exception handlers."}

@@ -154,7 +154,7 @@ async def set_config(
 
         return write.response
     except Exception as e:
-        logger.error(f"Error setting config: {str(e)}", exc_info=True)
+        logger.exception(f"Error setting config: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to set configuration",

@@ -1,0 +1,16 @@
+{
+  "key": "pr:1330",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Deployment recipe and docs for optional Cloudflare frontend hosting; no customer-facing product change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1330",
+      "Jack cleanup delegation released the bounded PR1330 publication/protected-workflow hold after independent coordinator review of patch SHA256 00b6c6f372b7d42593ec84184c92e6fa7ad0facd89c24345ee0c9f046958bbf5 and local routing/build receipts."
+    ]
+  },
+  "security_review": {
+    "status": "not_required"
+  }
+}

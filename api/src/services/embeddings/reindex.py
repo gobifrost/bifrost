@@ -243,7 +243,7 @@ async def run_reindex(notification_id: str) -> ReindexOutcome:
                     await db.commit()
                 except Exception as e:
                     failed_batches += 1
-                    logger.error(f"Reindex group {namespace}/{org_id}/{key} failed: {e}")
+                    logger.exception(f"Reindex group {namespace}/{org_id}/{key} failed: {e}")
                     await db.rollback()
                     await _push_progress(
                         notif_service, notification_id, processed, total
@@ -291,7 +291,7 @@ async def run_reindex(notification_id: str) -> ReindexOutcome:
                     await db.commit()
                 except Exception as e:
                     failed_batches += 1
-                    logger.error(f"Reindex keyless row {row.id} failed: {e}")
+                    logger.exception(f"Reindex keyless row {row.id} failed: {e}")
                     await db.rollback()
                     await _push_progress(
                         notif_service, notification_id, processed, total

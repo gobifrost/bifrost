@@ -109,7 +109,7 @@ async def resolve_job_spec_when_ready(
         try:
             return await resolve_worker_job_spec(client, settings)
         except KubernetesConfigurationError as exc:
-            logger.error("%s disabled: %s", controller, exc)
+            logger.exception("%s disabled: %s", controller, exc)
             await stop_event.wait()
             return None
         except (KubernetesApiError, httpx.HTTPError) as exc:

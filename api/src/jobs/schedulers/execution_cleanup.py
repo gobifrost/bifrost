@@ -215,7 +215,7 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
                     })
 
                 except Exception as e:
-                    logger.error(
+                    logger.exception(
                         f"Error processing execution cleanup for {execution.id}",
                         extra={"error": str(e)},
                         exc_info=True,
@@ -260,7 +260,7 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
         )
 
     except Exception as e:
-        logger.error("Error in execution cleanup", extra={"error": str(e)}, exc_info=True)
+        logger.exception("Error in execution cleanup", extra={"error": str(e)}, exc_info=True)
         results["errors"].append({"error": str(e)})
     finally:
         try:
@@ -268,13 +268,13 @@ async def cleanup_stuck_executions() -> dict[str, Any]:
 
             results["execution_log_recovery"] = await recover_terminal_execution_logs()
         except Exception as e:
-            logger.error("Error recovering terminal execution logs", extra={"error": str(e)})
+            logger.exception("Error recovering terminal execution logs", extra={"error": str(e)})
             results["errors"].append({"execution_log_recovery": str(e)})
         try:
             agent_run_results = await _cleanup_stale_agent_runs(now)
             results.update(agent_run_results)
         except Exception as e:
-            logger.error("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
+            logger.exception("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
             results["agent_run_errors"].append({"error": str(e)})
         else:
             logger.info(
@@ -453,6 +453,6 @@ async def _cleanup_stale_agent_runs(now: datetime) -> dict[str, Any]:
 
         return results
     except Exception as e:
-        logger.error("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
+        logger.exception("Error in agent run cleanup", extra={"error": str(e)}, exc_info=True)
         results["agent_run_errors"].append({"error": str(e)})
         return results

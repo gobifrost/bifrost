@@ -1,0 +1,15 @@
+{
+  "key": "pr:1368",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "hardening",
+  "summary": "Reject organization records that conflict with Bifrost’s single provider identity.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1368",
+      "https://github.com/gobifrost/bifrost/issues/1333",
+      "Native Chief relay in existing #1333 owner confirms Jack’s delegated approval of the exact title/body/Product Update, contingent on accuracy and current-head validation. Current-main candidate faf3903d passed 59 focused tests and API type/lint checks. Reported by @MTG-Thomas; implementation authored by Jack Musick."
+    ]
+  }
+}

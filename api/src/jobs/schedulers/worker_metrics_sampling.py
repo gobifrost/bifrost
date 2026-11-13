@@ -78,5 +78,5 @@ async def sample_worker_metrics() -> dict:
         return {"workers_sampled": sampled}
 
     except Exception as e:
-        logger.error(f"Worker metrics sampling failed: {e}", exc_info=True)
+        logger.exception(f"Worker metrics sampling failed: {e}", exc_info=True)
         return {"workers_sampled": 0, "error": str(e)}

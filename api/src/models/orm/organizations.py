@@ -8,10 +8,11 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, Index, String, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Index, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from src.core.constants import PROVIDER_ORG_ID
 from src.models.orm.base import Base
 
 if TYPE_CHECKING:
@@ -73,4 +74,12 @@ class Organization(Base):
     # `Organization.custom_claims`. DB-level `ON DELETE CASCADE` on the
     # FK still handles cascading deletes.
 
-    __table_args__ = (Index("ix_organizations_domain", "domain"),)
+    __table_args__ = (
+        Index("ix_organizations_domain", "domain"),
+        # The fixed provider ID is also the authorization boundary. Keeping the
+        # flag equivalent makes a second provider impossible without changing it.
+        CheckConstraint(
+            f"is_provider = (id = '{PROVIDER_ORG_ID}'::uuid)",
+            name="ck_organizations_provider_identity",
+        ),
+    )

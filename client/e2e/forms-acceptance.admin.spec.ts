@@ -80,7 +80,9 @@ test("[FORM-02 desktop] designer saves and reopens form metadata", async ({
 		await expect(
 			page.getByText("Original designer metadata"),
 		).toBeVisible();
-		await expect(page.getByText("Summary", { exact: true })).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: "Edit Summary", exact: true }),
+		).toBeVisible();
 
 		await page.getByTitle("Edit Info").click();
 		const dialog = page.getByRole("dialog", { name: "Form Information" });
@@ -98,11 +100,16 @@ test("[FORM-02 desktop] designer saves and reopens form metadata", async ({
 		await page.getByRole("button", { name: "Save" }).click();
 		const updateResponse = await update;
 		await expectOk(updateResponse);
+		// Check the persisted result; Chromium may release request bodies after navigation.
 		const updated = (await updateResponse.json()) as {
 			name: string;
 			description: string;
-			form_schema?: { fields?: Array<{ name?: string; label?: string }> };
+			form_schema?: {
+				fields?: Array<{ name?: string; label?: string }>;
+				layout?: unknown;
+			};
 		};
+		expect(updated.form_schema?.layout ?? null).toBeNull();
 		expect(updated.name).toBe(EDITED_FORM_NAME);
 		expect(updated.description).toBe(EDITED_DESCRIPTION);
 		expect(updated.form_schema?.fields).toEqual([
@@ -122,7 +129,9 @@ test("[FORM-02 desktop] designer saves and reopens form metadata", async ({
 			page.getByRole("heading", { name: EDITED_FORM_NAME }),
 		).toBeVisible({ timeout: 10000 });
 		await expect(page.getByText(EDITED_DESCRIPTION)).toBeVisible();
-		await expect(page.getByText("Summary", { exact: true })).toBeVisible();
+		await expect(
+			page.getByRole("button", { name: "Edit Summary", exact: true }),
+		).toBeVisible();
 
 		const fetched = await api.get(`/api/forms/${formId}`);
 		await expectOk(fetched);

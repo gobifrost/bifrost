@@ -860,7 +860,7 @@ class AutonomousAgentExecutor:
                 },
             )
         except Exception as exc:
-            logger.error("Agent runtime failed in run %s: %s", run_id, exc, exc_info=True)
+            logger.exception("Agent runtime failed in run %s: %s", run_id, exc, exc_info=True)
             status = "failed"
             error = str(exc)
 
@@ -1260,7 +1260,7 @@ class AutonomousAgentExecutor:
             })
 
         except Exception as e:
-            logger.error(f"Knowledge search failed: {e}", exc_info=True)
+            logger.exception(f"Knowledge search failed: {e}", exc_info=True)
             raise ToolError(f"Knowledge search error: {e}") from e
 
     async def run_delegation(
@@ -1465,7 +1465,7 @@ class AutonomousAgentExecutor:
                 "error": f"Delegation to {target_agent.name} was cancelled",
             }
         except Exception as exc:
-            logger.error(
+            logger.exception(
                 f"Delegation to '{target_agent.name}' failed: {exc}",
                 exc_info=True,
             )
@@ -1675,7 +1675,7 @@ class AutonomousAgentExecutor:
             return json.dumps(result_data) if isinstance(result_data, (dict, list)) else str(result_data)
 
         except Exception as e:
-            logger.error(f"System tool {tool_call.name} failed: {e}", exc_info=True)
+            logger.exception(f"System tool {tool_call.name} failed: {e}", exc_info=True)
             raise ToolError(f"System tool error: {e}") from e
 
     # ------------------------------------------------------------------

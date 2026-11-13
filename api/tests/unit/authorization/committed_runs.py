@@ -20,6 +20,7 @@ from src.services.authorization.authz import read_authority_state
 from src.services.authorization.tokens import AccessTokenClaims
 
 from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID
+from src.core.constants import PROVIDER_ORG_ID
 from src.models.enums import AgentAccessLevel, ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
@@ -46,8 +47,13 @@ class World:
         return row
 
     async def organization(self, *, provider: bool = False) -> Organization:
+        if provider:
+            organization = await self.session.get(Organization, PROVIDER_ORG_ID)
+            assert organization is not None
+            # Reused seed data must stay out of this world's cleanup list.
+            return organization
         return await self._add(
-            Organization(name=f"Token World {uuid4().hex[:8]}", created_by="token-test", is_provider=provider)
+            Organization(name=f"Token World {uuid4().hex[:8]}", created_by="token-test")
         )
 
     async def person(self, organization: Organization, *, external: bool = False) -> User:
