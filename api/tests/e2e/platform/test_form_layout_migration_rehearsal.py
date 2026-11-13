@@ -57,7 +57,8 @@ def test_layout_upgrade_preserves_existing_forms_and_fields():
         _upgrade(database_url, "20261110_form_layout")
 
         after_form, after_fields = asyncio.run(_run_in_database(database_url, snapshot))
-        assert after_form.pop("layout") is None
+        layout = after_form.pop("layout")
+        assert layout is None
         assert after_form == before_form
         assert after_fields == before_fields
     finally:

@@ -104,6 +104,7 @@ class FormIndexer:
         # metadata/field rows. That prevents a malformed replacement from
         # partially updating a form or deleting its existing fields.
         fields_data: list[dict] | None = None
+        form_schema: dict = {}
         if "form_schema" in form_data:
             form_schema = form_data["form_schema"]
             if not isinstance(form_schema, dict):
@@ -133,9 +134,7 @@ class FormIndexer:
                 normalized_fields.append(normalized)
             try:
                 validated_schema = FormSchema.model_validate(
-                    {"fields": normalized_fields}
-                    if "form_schema" not in form_data
-                    else {**form_schema, "fields": normalized_fields}
+                    {**form_schema, "fields": normalized_fields}
                 )
                 validated_fields = validated_schema.fields
             except ValidationError as exc:
