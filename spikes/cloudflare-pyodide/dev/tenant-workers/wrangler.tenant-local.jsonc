@@ -1,0 +1,8 @@
+{
+  "name": "bifrost-pyodide-spike-ddf316c1",
+  "main": "tenant-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "worker_loaders": [{"binding": "LOADER"}],
+  "vars": {"LOCAL_PROBE": "true"},
+  "observability": {"enabled": false}
+}
