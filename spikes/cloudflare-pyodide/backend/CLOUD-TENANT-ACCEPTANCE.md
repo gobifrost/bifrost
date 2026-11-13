@@ -84,12 +84,25 @@ Caveats, stated plainly:
 
 - The absolute baseline (25) is account-level. A portion predates the controlled
   phases and is not fully attributed; only the deltas above are controlled.
+- A third full acceptance run after these phases added exactly **+7** workers
+  (31 -> 38 for the day), matching the seven unique tenant ids that reach the
+  loader; the two gate-rejected attempts never create one. Per-run accounting is
+  therefore consistent even though the initial account baseline is not.
 - `distinctDynamicWorkerCount` counts `(id, code)`. Changing the constant
   generic script therefore books one new worker per existing tenant id — the
   rotation behaviour described in `ISOLATION-POSTURES.md` §"cached name".
 - The acceptance runner mints a fresh tenant-id suffix per run, so each full
   suite re-run legitimately adds ~7 creations by design. Steady-state traffic on
   fixed ids adds none, as measured above.
+- Day total after all phases and three acceptance runs: 38 distinct workers /
+  74 requests across both spike workers in the account.
+
+## Teardown
+
+The worker was deleted immediately after evidence capture
+(`cf workers delete bifrost-pyodide-tenant-ddf316c1 --force`); the URL now
+returns 404. Re-creating it is one `cf deploy` with the same config. Dynamic
+workers already created today remain billed for the day regardless.
 
 ## Still not established
 
@@ -106,13 +119,3 @@ Caveats, stated plainly:
 5. **Multi-tenant parent.** All tenants shared one supervisor isolate; that is
    the intended design and the child isolation is per worker id. A parent
    compromise is out of scope and unchanged from the executor posture.
-
-## Teardown
-
-```powershell
-cf workers delete bifrost-pyodide-tenant-ddf316c1
-```
-
-The deployed worker also fails closed for everything after
-`SPIKE_EXPIRES_AT` (2026-11-13T09:50Z), so an undeleted worker goes inert
-without a code change.
