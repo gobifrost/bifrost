@@ -172,6 +172,9 @@ Residual risks:
 - Cost-model drift: cloud CPU-ms and log-event volumes for real guest
   workloads are unmeasured; the $0 CPU/requests lines above rest on one
   parent-side sample (1,757 ms CPU) and free-tier headroom, not on fleet data.
+  Measured allowance consumption and the account-wide spend policy are recorded
+  in `SPEND-GUARD.md`; the policy covers requests and CPU, **not** Dynamic
+  Worker creation, which is the dominant line.
 
 Acceptance evidence still needed (none of this is established by this ADR):
 

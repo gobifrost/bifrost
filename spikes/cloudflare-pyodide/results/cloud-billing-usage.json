@@ -1,0 +1,62 @@
+﻿{
+    "captured_at":  "2026-11-13T14:29:21.6149550Z",
+    "billing_period_start":  "2026-10-30T00:00:00Z",
+    "source":  "cf billing usage get-v1",
+    "note":  "Free-tier allowances are included in these meters; billed_cost_usd is the amount charged after allowances.",
+    "meters":  [
+                   {
+                       "service":  "Durable Objects Compute Duration (GB*S, First 400,000 GB*S is included)",
+                       "consumed_quantity":  10091.784399232,
+                       "pricing_unit":  "GB-seconds",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Durable Objects Compute Requests (First 1M is included)",
+                       "consumed_quantity":  966336,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Durable Objects SQL Storage (First 5 GB-month included)",
+                       "consumed_quantity":  0.022882599830555558,
+                       "pricing_unit":  "GB-months",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Durable Objects Storage Rows Read (First 25B included)",
+                       "consumed_quantity":  12613813,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Durable Objects Storage Rows Written (First 50M included)",
+                       "consumed_quantity":  2516851,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Dynamic Workers (First 1,000 are included)",
+                       "consumed_quantity":  105,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Regular Twitch Neurons (RTN)",
+                       "consumed_quantity":  1906,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Workers CPU ms (first 30M are included)",
+                       "consumed_quantity":  1666986,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   },
+                   {
+                       "service":  "Workers Standard Requests (first 10M are included)",
+                       "consumed_quantity":  904321,
+                       "pricing_unit":  "Count",
+                       "billed_cost_usd":  0
+                   }
+               ]
+}

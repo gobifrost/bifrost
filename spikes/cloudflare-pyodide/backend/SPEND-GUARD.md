@@ -65,18 +65,41 @@ Measured `plan` output (35 tenants, 500 runs/month, 30 days):
   Outside the policy:          $0.10
 ```
 
-## Current account state
+## Current account state (2026-11-13)
 
-- `cf billing spend-policies list` → `[]` (no policies).
-- `create` → **403 Authentication error**. The OAuth login has Account &
-  Billing `14/15` scopes; the missing one is the billing write scope. Writing a
-  policy needs a token with **Account → Billing → Edit** (the documented
-  permission). The tool validates the request body with `--dry-run` without
-  credentials.
-- `cf billing usage get-v1` also returns 403 (Billing → Read missing), so
-  dollar-level usage readback is not available through this login. Worker
-  counters still come from the GraphQL meter used in
-  `CLOUD-TENANT-ACCEPTANCE.md`.
+Metered with `cf billing usage get-v1` for the current period (starting
+2026-10-30), received through `results/cloud-billing-usage.json`:
+
+| Meter | Consumed | Included | Billed |
+|---|---|---|---|
+| Workers Standard Requests | 904,321 | 10M | $0.00 |
+| Workers CPU ms | 1,666,986 | 30M | $0.00 |
+| **Dynamic Workers** | **105** | **1,000** | $0.00 |
+
+That reads correctly against the architecture: requests and CPU are at ~9 % and
+~5.6 % of allowance, while Dynamic Workers is already at **10.5 %** of the
+monthly included 1,000 — from a spike that deployed, ran acceptance suites, and
+metered a handful of tenants. In the per-attempt posture the same traffic would
+consume one creation per invocation instead of one per tenant per day.
+
+Policy created (notification only, nothing blocks):
+
+| Field | Value |
+|---|---|
+| id | `3b06d25b-e0a3-4a8e-94f1-0745c924eeab` |
+| product | `workers` |
+| action | `notification` |
+| threshold | $25.00 |
+| email | account owner |
+| enabled | true, version 1 |
+
+`cf billing spend-policies list` → one policy. No `usage_block` exists; that
+remains behind `--confirm-block` and the account-wide blast radius above.
+
+Writing policies needed a token with **Account → Billing → Edit**; the normal
+OAuth login has Account & Billing `14/15` scopes and returns 403 on write and on
+`billable-usage`, but can read the policy list. Usage readback (`get-v1`) also
+required Billing Read.
 
 ## Where per-tenant cost control actually lives
 
