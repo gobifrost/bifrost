@@ -1,0 +1,15 @@
+{
+  "key": "pr:1376",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Slow MCP workflow tools return an execution ID before client connections time out.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1376",
+      "https://github.com/gobifrost/bifrost/issues/1375",
+      "Reviewed the concise Fixed summary against the bounded wait, unchanged worker execution, ownership checks, and passing delayed MCP wire test."
+    ]
+  }
+}
