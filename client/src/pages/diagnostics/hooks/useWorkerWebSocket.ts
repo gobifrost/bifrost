@@ -254,7 +254,7 @@ export function useWorkerWebSocket(): UseWorkerWebSocketReturn {
 			}
 		};
 
-		connect();
+		void connect();
 
 		return () => {
 			mounted = false;
@@ -262,7 +262,7 @@ export function useWorkerWebSocket(): UseWorkerWebSocketReturn {
 			if (unsubscribePoolMessages) {
 				unsubscribePoolMessages();
 			}
-			webSocketService.unsubscribe("platform_workers");
+			void webSocketService.unsubscribe("platform_workers");
 		};
 	}, [handleMessage]);
 

@@ -43,17 +43,23 @@ export function usePasskeySupport(): PasskeySupportStatus {
 
 	useEffect(() => {
 		async function checkSupport() {
-			const supported = supportsPasskeys();
-			const autofillSupported = supported
-				? await supportsPasskeyAutofill()
-				: false;
-			setStatus({
-				supported,
-				autofillSupported,
-				isLoading: false,
-			});
+			let supported = false;
+			try {
+				supported = supportsPasskeys();
+				const autofillSupported = supported
+					? await supportsPasskeyAutofill()
+					: false;
+				setStatus({
+					supported,
+					autofillSupported,
+					isLoading: false,
+				});
+			} catch (error) {
+				console.error("[usePasskeys] Capability check failed:", error);
+				setStatus({ supported, autofillSupported: false, isLoading: false });
+			}
 		}
-		checkSupport();
+		void checkSupport();
 	}, []);
 
 	return status;

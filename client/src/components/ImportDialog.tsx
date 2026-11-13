@@ -290,7 +290,7 @@ export function ImportDialog({
 			detectEncryptedValues(f);
 			// Only parse JSON files for preview; ZIP files pass through
 			if (!f.name.endsWith(".zip")) {
-				parseJsonFile(f);
+				void parseJsonFile(f);
 			}
 		},
 		[isImporting],

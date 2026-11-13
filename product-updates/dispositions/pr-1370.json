@@ -1,0 +1,1 @@
+{"category":"fix","classification":"other","entry_ids":[],"key":"pr:1370","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1370"],"status":"approved"},"summary":"Prevent failed form-option loads and passkey capability checks from leaving loading states stuck."}

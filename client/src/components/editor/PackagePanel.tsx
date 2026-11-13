@@ -77,7 +77,7 @@ export function PackagePanel() {
 			}
 		};
 
-		init();
+		void init();
 	}, []);
 
 	const loadPackages = useCallback(async () => {
@@ -101,7 +101,7 @@ export function PackagePanel() {
 		}
 
 		const packageChannel = "package:install";
-		webSocketService.subscribe(packageChannel);
+		void webSocketService.subscribe(packageChannel);
 
 		const unsubscribeProgress = webSocketService.onPackageProgress((p) => {
 			const id = currentInstallationIdRef.current;
@@ -120,13 +120,13 @@ export function PackagePanel() {
 			completionHandledRef.current = progressState.completionHandled;
 
 			if (triggered) {
-				loadPackages();
+				void loadPackages();
 			}
 		});
 
 		return () => {
 			unsubscribeProgress();
-			webSocketService.unsubscribe(packageChannel);
+			void webSocketService.unsubscribe(packageChannel);
 		};
 	}, [isConnected, loadPackages]);
 

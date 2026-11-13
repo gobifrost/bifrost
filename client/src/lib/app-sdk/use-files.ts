@@ -77,7 +77,7 @@ export function useFiles(
 			await load();
 		}
 
-		loadIfCurrent();
+		void loadIfCurrent();
 
 		unsubscribeRef.current = subscribeToFiles(
 			location,

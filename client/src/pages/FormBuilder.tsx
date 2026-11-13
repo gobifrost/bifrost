@@ -615,7 +615,7 @@ export function FormBuilder() {
 									if (launchWorkflowParameters.length > 0) {
 										setWorkflowParamsDialogOpen(true);
 									} else {
-										handleTestLaunchWorkflow();
+										void handleTestLaunchWorkflow();
 									}
 								}}
 								disabled={

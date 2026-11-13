@@ -73,7 +73,7 @@ export function useUser(): BifrostUser {
 
 	useEffect(() => {
 		let active = true;
-		requestMe(authedFetch).then((next) => {
+		void requestMe(authedFetch).then((next) => {
 			if (active) setState(next);
 		});
 		return () => {

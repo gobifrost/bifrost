@@ -91,7 +91,7 @@ export function AuthCallback() {
 			}
 		}
 
-		handleCallback();
+		void handleCallback();
 	}, [searchParams, provider, loginWithOAuth, navigate]);
 
 	if (error) {
