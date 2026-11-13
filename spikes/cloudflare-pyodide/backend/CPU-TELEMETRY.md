@@ -51,6 +51,45 @@ If the child does not appear as a trace record, the fallback is the supervisor's
 invocation time — a real number, but it includes marshalling and gaps, so it must be labelled
 as supervisor CPU rather than workflow CPU.
 
+## Probe result (measured 2026-11-12, spike `1968d106a`)
+
+One real engine/SDK workflow (`json_transform` + one `config.get`), observability enabled at
+`head_sampling_rate: 1`, reverted afterwards.
+
+| Question | Answer |
+|---|---|
+| Per-execution CPU available? | ✅ **Yes**, at the parent invocation: `$workers.cpuTimeMs` = **1757 ms**, `$workers.wallTimeMs` = **10610 ms** |
+| Dynamic child its own invocation record? | ❌ No. No script name of its own; 5 invocation records in the window were all the parent script (parent POST + 4 `DevApi` service-binding calls) |
+| Dynamic child visible at all? | ✅ As a **nested OTel span** (dataset `otel`): `url.full = https://attempt.invalid/`, `durationMS = 9980`, `traceId`/`parentSpanId` pointing at the parent POST span |
+| Child CPU/wall attributes? | ❌ **Absent.** The child span carries duration only |
+| Log-marker correlation? | ❌ Unproven generally: no `console.log` records appear for *any* worker in this account's telemetry, including two others with identical log settings |
+
+### What this means
+
+- **Correlation key must come from the request, not from logs.** The parent invocation record
+  carries `$metadata.trigger` and the request URL in `source.message`; giving each attempt a
+  unique path (e.g. `POST /attempt/<execution_id>`) yields a deterministic join, unlike the
+  unproven log marker.
+- **The number we can deliver is supervisor CPU**, which includes child execution, module
+  fetching and marshalling. It is a real, billable figure — it is not workflow CPU, and must be
+  labelled that way.
+- **Child-level CPU separation needs a Cloudflare change** (a cpu attribute on dynamic-child
+  spans). Until then, per-execution attribution is the finest granularity available.
+
+### Cost consequence of the measured number
+
+1757 ms of CPU per fresh execution is three orders of magnitude above the "average Worker"
+figure (2.2 ms). At $0.02 per million CPU-ms:
+
+- ~1.8 ms-CPU-seconds per execution → 30 M included CPU-ms lasts **~17,000 executions/month**;
+- 100,000 executions/month ≈ 175.7 M CPU-ms → ~$2.91 in CPU overage;
+- the Dynamic Worker creation meter ($0.002/execution past 1,000/month) remains the dominant
+  line item at **~$198** for the same 100,000 executions.
+
+Startup CPU is billable for Dynamic Workers, so cold-start cost cannot be avoided by reuse
+unless the fresh-isolate model changes.
+
+
 ## Consequence for Bifrost
 
 If this works, `metrics.cpu_total_seconds` stops being `null` for Cloudflare executions —
