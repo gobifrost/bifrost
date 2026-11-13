@@ -650,6 +650,7 @@ export function KubernetesSettings() {
 				capacity={capacity}
 				loading={capacityLoading}
 				loadFailed={capacityFailed}
+				kubernetesAvailable={kubernetesAvailable}
 				onRetry={reloadCapacity}
 			/>
 

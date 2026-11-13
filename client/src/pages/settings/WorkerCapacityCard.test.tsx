@@ -28,6 +28,7 @@ describe("WorkerCapacityCard", () => {
 				capacity={null}
 				loading={true}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={() => {}}
 			/>,
 		);
@@ -42,6 +43,7 @@ describe("WorkerCapacityCard", () => {
 				capacity={null}
 				loading={false}
 				loadFailed={true}
+				kubernetesAvailable={true}
 				onRetry={onRetry}
 			/>,
 		);
@@ -55,11 +57,29 @@ describe("WorkerCapacityCard", () => {
 				capacity={{ configured: false }}
 				loading={false}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={() => {}}
 			/>,
 		);
 		expect(
-			screen.getByText(/No external capacity provider is configured/),
+			screen.getByText(
+				/No external provider is configured, so workers scale on Kubernetes only/,
+			),
+		).toBeVisible();
+	});
+
+	it("names the host fallback when Kubernetes is unavailable", () => {
+		render(
+			<WorkerCapacityCard
+				capacity={{ configured: false }}
+				loading={false}
+				loadFailed={false}
+				kubernetesAvailable={false}
+				onRetry={() => {}}
+			/>,
+		);
+		expect(
+			screen.getByText(/Workers scale on this host without Kubernetes/),
 		).toBeVisible();
 	});
 
@@ -74,6 +94,7 @@ describe("WorkerCapacityCard", () => {
 				}}
 				loading={false}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={() => {}}
 			/>,
 		);
@@ -104,6 +125,7 @@ describe("WorkerCapacityCard", () => {
 				}}
 				loading={false}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={onRetry}
 			/>,
 		);
@@ -132,6 +154,7 @@ describe("WorkerCapacityCard", () => {
 				}}
 				loading={false}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={() => {}}
 			/>,
 		);
@@ -161,6 +184,7 @@ describe("WorkerCapacityCard", () => {
 				}}
 				loading={false}
 				loadFailed={false}
+				kubernetesAvailable={true}
 				onRetry={() => {}}
 			/>,
 		);

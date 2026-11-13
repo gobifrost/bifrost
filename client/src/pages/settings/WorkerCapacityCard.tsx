@@ -78,11 +78,13 @@ export function WorkerCapacityCard({
 	capacity,
 	loading,
 	loadFailed,
+	kubernetesAvailable,
 	onRetry,
 }: {
 	capacity: WorkerCapacityStatus | null;
 	loading: boolean;
 	loadFailed: boolean;
+	kubernetesAvailable: boolean;
 	onRetry: () => void;
 }) {
 	return (
@@ -90,10 +92,11 @@ export function WorkerCapacityCard({
 			<CardHeader>
 				<div className="flex items-center gap-2">
 					<Boxes aria-hidden="true" className="h-5 w-5" />
-					<CardTitle>External Capacity</CardTitle>
+					<CardTitle>External Workers</CardTitle>
 				</div>
 				<CardDescription>
-					Cloudflare Containers bursting as platform workers.
+					Extra execution capacity beyond Kubernetes, from an
+					external container provider.
 				</CardDescription>
 			</CardHeader>
 			<CardContent className="space-y-4">
@@ -117,8 +120,9 @@ export function WorkerCapacityCard({
 				)}
 				{!loading && !loadFailed && capacity && !capacity.configured && (
 					<p className="text-sm text-muted-foreground">
-						No external capacity provider is configured. Workers
-						scale on Kubernetes.
+						{kubernetesAvailable
+							? "No external provider is configured, so workers scale on Kubernetes only."
+							: "No external provider is configured. Workers scale on this host without Kubernetes isolation."}
 					</p>
 				)}
 				{!loading &&

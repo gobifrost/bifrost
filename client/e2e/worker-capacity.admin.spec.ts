@@ -12,12 +12,12 @@ test("an admin sees the external capacity card on worker settings", async ({
 	await page
 		.getByRole("button", { name: "Scaling & Isolation", exact: true })
 		.click();
-	await expect(page.getByText("External Capacity")).toBeVisible();
+	await expect(page.getByText("External Workers")).toBeVisible();
 	if (status.configured) {
 		await expect(page.getByText("Worker Memory")).toBeVisible();
 	} else {
 		await expect(
-			page.getByText("No external capacity provider is configured."),
+			page.getByText("No external provider is configured."),
 		).toBeVisible();
 	}
 });

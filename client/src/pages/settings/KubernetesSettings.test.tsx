@@ -537,7 +537,7 @@ describe("KubernetesSettings", () => {
 		});
 		render(<KubernetesSettings />);
 		expect(
-			await screen.findByText("External Capacity"),
+			await screen.findByText("External Workers"),
 		).toBeInTheDocument();
 		expect(screen.getByText("test-scope")).toBeVisible();
 	});
