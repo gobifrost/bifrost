@@ -981,3 +981,59 @@ it("submits and reloads form inputs within the selected organization", async () 
 		),
 	);
 });
+
+it("unblocks the initial loader when the options mount chain rejects", async () => {
+	const error = new Error("Options request could not start");
+	const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+	let resolveOptions!: (options: unknown[]) => void;
+	mockGetOptions
+		.mockImplementationOnce(
+			() =>
+				new Promise((resolve) => {
+					resolveOptions = resolve;
+				}),
+		)
+		.mockImplementationOnce(() => {
+			throw error;
+		});
+	const { unmount } = renderWithProviders(
+		<FormRenderer
+			form={makeForm([
+				{
+					name: "summary",
+					label: "Summary",
+					type: "text",
+					required: true,
+				},
+				{
+					name: "pending",
+					label: "Pending",
+					type: "select",
+					has_dynamic_options: true,
+				},
+				{
+					name: "broken",
+					label: "Broken",
+					type: "select",
+					has_dynamic_options: true,
+				},
+			])}
+		/>,
+	);
+	try {
+		await waitFor(() =>
+			expect(log).toHaveBeenCalledWith(
+				"[FormRenderer] Initial options load failed:",
+				error,
+			),
+		);
+		expect(screen.getByLabelText(/Summary/)).toBeInTheDocument();
+		expect(
+			screen.queryByText("Loading form options..."),
+		).not.toBeInTheDocument();
+	} finally {
+		unmount();
+		resolveOptions([]);
+		log.mockRestore();
+	}
+});
