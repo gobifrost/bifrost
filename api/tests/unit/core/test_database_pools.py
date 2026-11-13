@@ -18,9 +18,7 @@ def engines(monkeypatch):
     monkeypatch.setattr(
         database,
         "install_session_timeouts",
-        lambda engine, *, idle_in_transaction_session_timeout_ms: installed.append(
-            idle_in_transaction_session_timeout_ms
-        ),
+        lambda engine, **timeouts: installed.append(timeouts),
     )
     for name in ("_engine", "_dispatch_engine", "_dispatch_session_factory", "_liveness_engine", "_liveness_session_factory"):
         monkeypatch.setattr(database, name, None)
@@ -33,7 +31,12 @@ def engines(monkeypatch):
         build()
         assert len(calls) == len(created) + 1, f"{pool} should build exactly one engine"
         created[pool] = calls[-1]
-    assert installed == [database.get_settings().database_idle_in_transaction_timeout_ms] * 3
+    assert installed == [
+        {
+            "idle_in_transaction_session_timeout_ms": database.get_settings().database_idle_in_transaction_timeout_ms,
+            "statement_timeout_ms": database.get_settings().database_statement_timeout_ms,
+        }
+    ] * 3
     return created
 
 

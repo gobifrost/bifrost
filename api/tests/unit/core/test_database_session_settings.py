@@ -13,6 +13,12 @@ class FakeConnection:
         self.statements.append(statement)
 
 
+def _begin(engine) -> list[str]:
+    connection = FakeConnection()
+    engine.sync_engine.dispatch.begin(connection)
+    return connection.statements
+
+
 def test_connect_args_carry_only_allowlisted_startup_parameters():
     # PgBouncer in transaction mode rejects startup parameters it does not
     # allowlist, so a timeout in server_settings breaks every connection.
@@ -40,53 +46,55 @@ def test_dsn_application_name_wins_over_the_default():
     assert "server_settings" not in connect_args
 
 
-def test_timeout_is_set_locally_in_every_transaction():
+def test_timeouts_are_set_locally_in_every_transaction():
     engine = create_async_engine("postgresql+asyncpg://user:pass@db.example.com/app")
-    install_session_timeouts(engine, idle_in_transaction_session_timeout_ms=1234)
-    connection = FakeConnection()
+    install_session_timeouts(
+        engine,
+        idle_in_transaction_session_timeout_ms=1234,
+        statement_timeout_ms=5678,
+    )
 
-    engine.sync_engine.dispatch.begin(connection)
-
-    assert connection.statements == [
-        "SET LOCAL idle_in_transaction_session_timeout = 1234"
+    assert _begin(engine) == [
+        "SET LOCAL idle_in_transaction_session_timeout = 1234",
+        "SET LOCAL statement_timeout = 5678",
     ]
 
 
-def test_zero_disables_the_timeout_explicitly():
+def test_zero_disables_the_timeouts_explicitly():
     engine = create_async_engine("postgresql+asyncpg://user:pass@db.example.com/app")
-    install_session_timeouts(engine, idle_in_transaction_session_timeout_ms=0)
-    connection = FakeConnection()
+    install_session_timeouts(
+        engine,
+        idle_in_transaction_session_timeout_ms=0,
+        statement_timeout_ms=0,
+    )
 
-    engine.sync_engine.dispatch.begin(connection)
-
-    assert connection.statements == [
-        "SET LOCAL idle_in_transaction_session_timeout = 0"
+    assert _begin(engine) == [
+        "SET LOCAL idle_in_transaction_session_timeout = 0",
+        "SET LOCAL statement_timeout = 0",
     ]
 
 
-def test_engine_wires_the_configured_timeout(monkeypatch):
+def test_engine_wires_the_configured_timeouts(monkeypatch):
     settings = Settings(
         database_application_name="bifrost-worker",
         database_idle_in_transaction_timeout_ms=5000,
+        database_statement_timeout_ms=7000,
     )
     calls: list[dict] = []
-    installs: list[int] = []
+    installs: list[tuple[int, int]] = []
     engine = object()
 
     def create(url, **kwargs):
         calls.append(kwargs)
         return engine
 
+    def install(target, *, idle_in_transaction_session_timeout_ms, statement_timeout_ms):
+        installs.append((idle_in_transaction_session_timeout_ms, statement_timeout_ms))
+
     monkeypatch.setattr(database, "_engine", None)
     monkeypatch.setattr(database, "create_async_engine", create)
-    monkeypatch.setattr(
-        database,
-        "install_session_timeouts",
-        lambda target, *, idle_in_transaction_session_timeout_ms: installs.append(
-            idle_in_transaction_session_timeout_ms
-        ),
-    )
+    monkeypatch.setattr(database, "install_session_timeouts", install)
 
     assert database.get_engine(settings) is engine
     assert calls[0]["connect_args"] == {"server_settings": {"application_name": "bifrost-worker"}}
-    assert installs == [5000]
+    assert installs == [(5000, 7000)]

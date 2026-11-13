@@ -92,6 +92,7 @@ def install_session_timeouts(
     engine: AsyncEngine,
     *,
     idle_in_transaction_session_timeout_ms: int,
+    statement_timeout_ms: int,
 ) -> None:
     """Apply the session timeouts to every transaction this engine starts.
 
@@ -99,13 +100,16 @@ def install_session_timeouts(
     parameters, so this cannot ride in ``connect_args``. ``SET LOCAL`` is
     transaction scoped: it resets at COMMIT or ROLLBACK, so the setting never
     leaks onto the server connection a later client is handed. ``0`` disables
-    the timeout, as the server setting itself does.
+    either timeout, as the server settings themselves do.
     """
 
     def begin(conn: Connection) -> None:
         conn.exec_driver_sql(
             "SET LOCAL idle_in_transaction_session_timeout = "
             f"{int(idle_in_transaction_session_timeout_ms)}"
+        )
+        conn.exec_driver_sql(
+            f"SET LOCAL statement_timeout = {int(statement_timeout_ms)}"
         )
 
     event.listen(engine.sync_engine, "begin", begin)
@@ -120,6 +124,7 @@ def create_pool_engine(
     echo: bool = False,
     application_name: str = "bifrost",
     idle_in_transaction_session_timeout_ms: int = 60000,
+    statement_timeout_ms: int = 60000,
 ) -> AsyncEngine:
     """An engine for one of the process's connection pools.
 
@@ -152,6 +157,7 @@ def create_pool_engine(
     install_session_timeouts(
         engine,
         idle_in_transaction_session_timeout_ms=idle_in_transaction_session_timeout_ms,
+        statement_timeout_ms=statement_timeout_ms,
     )
     return engine
 
@@ -203,6 +209,7 @@ def get_engine(settings: Settings | None = None) -> AsyncEngine:
             echo=settings.debug,
             application_name=settings.database_application_name,
             idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
 
     return _engine
@@ -311,6 +318,7 @@ def _get_dispatch_session_factory() -> async_sessionmaker[AsyncSession]:
             echo=settings.debug,
             application_name=settings.database_application_name,
             idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
         _dispatch_session_factory = async_sessionmaker(
             _dispatch_engine,
@@ -346,6 +354,7 @@ def _get_liveness_session_factory() -> async_sessionmaker[AsyncSession]:
             echo=settings.debug,
             application_name=settings.database_application_name,
             idle_in_transaction_session_timeout_ms=settings.database_idle_in_transaction_timeout_ms,
+            statement_timeout_ms=settings.database_statement_timeout_ms,
         )
         _liveness_session_factory = async_sessionmaker(
             _liveness_engine,
