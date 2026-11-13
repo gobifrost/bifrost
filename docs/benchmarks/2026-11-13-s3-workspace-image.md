@@ -61,6 +61,7 @@ succeeded; no image-pull latency claim is inferred.
 - `./test.sh tests/unit/core/test_s3_workspace_mirror.py tests/unit/services/test_git_repo_manager.py -v` — 53 passed.
 - `./test.sh tests/unit/core/test_s3_workspace_mirror.py tests/unit/core/test_s3_transport.py tests/e2e/platform/test_s3_workspace_mirror.py tests/e2e/platform/test_object_storage.py::test_provider_checkpoint_restores_git_identity_and_uncommitted_bytes tests/e2e/platform/test_git_sync_local.py::TestRoundTrip::test_workflow_survives_round_trip tests/e2e/platform/test_git_sync_local.py::TestIncrementalPush -v --durations=0` — 71 passed on the final source, including cancellation during blocked local I/O.
 - `./test.sh quality api` — pyright and ruff passed.
+- `./test.sh tests/unit/core/test_s3_workspace_mirror.py -k "cancellation_drains or cancelled_local_io" -v` — 4 passed after changing cancellation result assertions to avoid CodeQL's false positive on a bare `await Task` statement.
 
 The new subprocess storage journey took 1.277 seconds. Existing checkpoint
 restoration took 0.164 seconds; the workflow round trip took 0.797 seconds and

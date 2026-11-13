@@ -154,8 +154,9 @@ async def test_cancellation_drains_transfers_before_releasing_owner(cancellation
             await asyncio.sleep(0)
             assert not owner.done()
         release.set()
+        await asyncio.wait({owner})
         with pytest.raises(asyncio.CancelledError):
-            await owner
+            owner.result()
         assert finished.is_set()
     finally:
         release.set()
@@ -228,8 +229,9 @@ async def test_cancelled_local_io_keeps_owner_until_thread_finishes(cancellation
             await asyncio.sleep(0)
             assert not owner.done()
         release.set()
+        await asyncio.wait({owner})
         with pytest.raises(asyncio.CancelledError):
-            await owner
+            owner.result()
         assert finished.is_set()
     finally:
         release.set()
