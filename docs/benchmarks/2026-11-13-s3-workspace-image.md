@@ -68,8 +68,27 @@ the two incremental push cases took 0.428 and 0.404 seconds. Stack build/boot an
 teardown dominate command wall time. No additional platform job was added.
 
 The full backend/client/browser suites were not run locally; the protected
-merge queue remains the complete-suite gate. External S3 acceptance is pending;
-local SeaweedFS coverage and historic DigitalOcean Spaces transport acceptance
-do not establish this candidate's live external-provider acceptance. Live AWS
-deployment credential chains remain a separate unverified environment unless
-explicitly exercised in the acceptance record.
+merge queue remains the complete-suite gate.
+
+## Live external-provider acceptance
+
+The final candidate's storage package and HTTPX/CRT transport passed the same
+workspace transfer operations against the already configured DigitalOcean
+Spaces target on November 14 (UTC). They ran in a short-lived Python subprocess
+using the deployed environment's existing storage configuration. The deployed
+application files and running server modules were not modified. The deployed
+version predates the storage package, so the exact candidate package and
+transport sources were loaded only into that subprocess's module namespace.
+No credential values were retrieved, printed or copied to the host; no
+1Password lookup was required.
+
+The test used a unique `_tmp/issue-1380-acceptance/<uuid>/` prefix and removed
+only that prefix's objects in a `finally` block. It verified 10 MiB multipart
+bytes, Git HEAD, Unicode/encoded punctuation, symlink upload, same-size updates,
+deleted-file synchronization and an empty-prefix cleanup check. It passed.
+The local SeaweedFS test independently covers the fresh worker subprocess with
+no executable search path. These checks close the required S3-compatible target
+acceptance gap for this mirror replacement. Actual AWS deployment credential
+chains remain unverified; default-provider process ownership and refresh logic
+retain the existing focused transport tests. No AWS-specific deployment
+acceptance is claimed from the Spaces result.
