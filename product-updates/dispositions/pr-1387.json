@@ -1,0 +1,12 @@
+{
+  "key": "pr:1387",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal container dependency maintenance; existing storage and workflow configuration remain supported without customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1387"
+    ]
+  }
+}
