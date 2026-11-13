@@ -1,0 +1,10 @@
+{
+  "key": "pr:1365",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal reliability envelope for pub/sub transport; no customer-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1365"]
+  }
+}
