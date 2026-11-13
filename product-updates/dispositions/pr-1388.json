@@ -1,5 +1,5 @@
 {
-  "key": "pr:1382",
+  "key": "pr:1388",
   "classification": "other",
   "entry_ids": [],
   "category": "fix",
@@ -7,7 +7,7 @@
   "review": {
     "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/pull/1382",
+      "https://github.com/gobifrost/bifrost/pull/1388",
       "Agent-recorded notice reviewed against the exact diff: no contract, schema or client-visible surface changes; both values are configurable and 0 restores the previous behavior. Maintainer-directed contribution; principal authorization and provenance are recorded in the PR body."
     ]
   }
