@@ -14,7 +14,7 @@
 		"build:full": "tsc -b && prettier --write . && vite build",
 		"build:prod": "npm run build",
 		"tsc": "tsc -b",
-		"lint": "eslint . --max-warnings 3983",
+		"lint": "node --test eslint.config.test.js && eslint . --max-warnings 3983",
 		"format": "prettier --write .",
 		"generate:types": "npx openapi-typescript ${OPENAPI_URL:-http://localhost:3000/openapi.json} -o src/lib/v1.d.ts",
 		"generate:types:docker": "npx openapi-typescript http://localhost/openapi.json -o src/lib/v1.d.ts",
