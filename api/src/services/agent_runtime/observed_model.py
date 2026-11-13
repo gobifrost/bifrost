@@ -9,6 +9,7 @@ from dataclasses import dataclass, replace
 from typing import Literal
 
 import pydantic_core
+from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -239,6 +240,14 @@ class ObservedModel(WrapperModel):
         )
         return result
 
+    def _local_token_estimate(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        breakdown = self._context_breakdown(messages, model_request_parameters)
+        return RequestUsage(input_tokens=int(breakdown["estimated_input_tokens"]))
+
     async def count_tokens(
         self,
         messages: list[ModelMessage],
@@ -254,10 +263,22 @@ class ObservedModel(WrapperModel):
                 model_request_parameters,
             )
         except NotImplementedError:
-            breakdown = self._context_breakdown(messages, model_request_parameters)
-            return RequestUsage(
-                input_tokens=int(breakdown["estimated_input_tokens"]),
+            return self._local_token_estimate(messages, model_request_parameters)
+        except ModelHTTPError as error:
+            # Server-side counting rides the same wire API as requests. A
+            # provider that rejects Responses for this model (400 "not
+            # supported by Responses API") must not turn a token budget into a
+            # hard failure: fall back to the local estimate exactly as an
+            # uncountable model does, and leave transport selection alone.
+            # Imported here: openai_transport_detection reaches back through
+            # agent_runtime.retry_transport, so a module-level import cycles.
+            from src.services.openai_transport_detection import (
+                responses_are_unsupported,
             )
+
+            if not responses_are_unsupported(error):
+                raise
+            return self._local_token_estimate(messages, model_request_parameters)
 
     async def request(
         self,

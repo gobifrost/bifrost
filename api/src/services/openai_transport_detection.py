@@ -3,13 +3,19 @@
 from typing import Literal
 
 from openai import APIStatusError, AsyncOpenAI
+from pydantic_ai.exceptions import ModelHTTPError
 
 from src.services.agent_runtime.retry_transport import get_ai_retry_http_client
 
 OpenAITransport = Literal["responses", "chat_completions"]
 
 
-def _responses_are_unsupported(error: APIStatusError) -> bool:
+def responses_are_unsupported(error: APIStatusError | ModelHTTPError) -> bool:
+    """True when the provider rejects the Responses API for this model/endpoint.
+
+    Shared by one-time transport detection and the pre-request token-count path:
+    both must recognize the same rejection shape instead of surfacing a raw 400.
+    """
     if error.status_code in (404, 405, 501):
         return True
     if error.status_code != 400:
@@ -19,6 +25,8 @@ def _responses_are_unsupported(error: APIStatusError) -> bool:
         marker in message
         for marker in (
             "model not supported",
+            "model is not supported",
+            "not supported by responses api",
             "does not support the responses api",
             "responses api is not supported",
             "unsupported endpoint",
@@ -47,7 +55,7 @@ async def detect_openai_transport(
         )
         return "responses"
     except APIStatusError as error:
-        if not _responses_are_unsupported(error):
+        if not responses_are_unsupported(error):
             raise ValueError(
                 f"Could not verify model '{model}' through the Responses API "
                 f"(HTTP {error.status_code}); transport was not changed."

@@ -215,7 +215,11 @@ class PydanticAIClient(BaseLLMClient):
         settings: dict[str, Any] = {}
         if resolved_max_tokens is not None:
             settings["max_tokens"] = resolved_max_tokens
-        if is_opencode_go_endpoint(config.endpoint):
+        opencode_go = (
+            is_opencode_go_endpoint(config.endpoint)
+            or config.catalog_provider_id == "opencode-go"
+        )
+        if opencode_go:
             settings["extra_headers"] = opencode_go_extra_headers(self._session_id)
         if (
             config.provider == "openai"

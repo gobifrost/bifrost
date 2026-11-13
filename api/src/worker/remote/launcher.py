@@ -31,6 +31,7 @@ from src.worker.remote.protocol import (
     ControlEnvelope,
     FragmentAssembler,
     Hello,
+    PayloadSerializationError,
     fragment,
     new_nonce,
     sign_hello,
@@ -226,8 +227,9 @@ class Launcher:
             )
             sent = 0
             for frame in fragment(envelope):
+                raw = frame.to_json()
                 try:
-                    await self.socket.send(frame.to_json())
+                    await self.socket.send(raw)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:
@@ -247,7 +249,14 @@ class Launcher:
         event = {**payload, "_event_id": event_id}
         self.pending_terminal[event_id] = event
         self.pending_terminal_inventory[event_id] = {"event_id": event_id, **inventory}
-        await self.send(event)
+        try:
+            await self.send(event)
+        except PayloadSerializationError:
+            # Encoding fails before fragment() yields any frames. This event
+            # cannot be replayed; transport failures still retain it for ACK.
+            self.pending_terminal.pop(event_id, None)
+            self.pending_terminal_inventory.pop(event_id, None)
+            raise
 
     def task(self, coroutine: Any) -> asyncio.Task[Any]:
         task = asyncio.create_task(coroutine)
@@ -634,19 +643,28 @@ class Launcher:
                                                      child.rss_peak)
             if child.sampler is not None and child.sampler.peak_cpu_cores is not None:
                 metrics["peak_cpu_cores"] = child.sampler.peak_cpu_cores
-        await self.send_terminal(
-            {"event": "result", "route_id": child.route_id, "result": result},
-            inventory={
-                "route_id": child.route_id,
-                "kind": child.kind,
-                "subject_id": child.execution_id,
-                "service": child.service,
-                "active_execution": child.active_execution,
-                "started_at": child.started_at,
-                "timeout_seconds": child.timeout,
-                "memory_request_bytes": child.memory_request_bytes,
-            },
-        )
+        inventory = {
+            "route_id": child.route_id,
+            "kind": child.kind,
+            "subject_id": child.execution_id,
+            "service": child.service,
+            "active_execution": child.active_execution,
+            "started_at": child.started_at,
+            "timeout_seconds": child.timeout,
+            "memory_request_bytes": child.memory_request_bytes,
+        }
+        try:
+            await self.send_terminal(
+                {"event": "result", "route_id": child.route_id, "result": result},
+                inventory=inventory,
+            )
+        except PayloadSerializationError:
+            logger.warning("Execution result could not be serialized; sending a failed result")
+            await self.send_terminal(
+                {"event": "result", "route_id": child.route_id,
+                 "result": self.failure(child, "SerializationError", "Execution result could not be serialized")},
+                inventory=inventory,
+            )
 
     async def terminate(self, route_id: str, error_type: str, error: str,
                         grace: float | None = None) -> None:
