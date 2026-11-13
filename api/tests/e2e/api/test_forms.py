@@ -72,6 +72,87 @@ class TestFormCRUD:
         # Cleanup
         e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
 
+    def test_create_form_persists_and_returns_layout(self, e2e_client, platform_admin):
+        """Layout survives the API -> normalized storage -> runtime projection path."""
+        schema = {
+            "fields": [
+                {"name": "first_name", "type": "text", "label": "First name"},
+                {"name": "last_name", "type": "text", "label": "Last name"},
+            ],
+            "layout": {
+                "sections": [{
+                    "title": "Contact details",
+                    "rows": [{"columns": [
+                        {"field": "first_name", "width": 4},
+                        {"field": "last_name", "width": 4},
+                        {"field": None, "width": 4},
+                    ]}],
+                }],
+            },
+        }
+        from src.models import FormSchema
+
+        normalized_schema = FormSchema.model_validate(schema).model_dump(mode="json")
+        response = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Layout Form {uuid.uuid4().hex[:8]}",
+                "workflow_id": None,
+                "form_schema": schema,
+                "access_level": "authenticated",
+            },
+        )
+        assert response.status_code == 201, response.text
+        form = response.json()
+        assert form["form_schema"]["layout"] == normalized_schema["layout"]
+
+        runtime = e2e_client.get(
+            f"/api/forms/{form['id']}/runtime",
+            headers=platform_admin.headers,
+        )
+        assert runtime.status_code == 200, runtime.text
+        assert runtime.json()["form_schema"]["layout"] == normalized_schema["layout"]
+        standalone_schema = {"fields": schema["fields"], "layout": {"sections": [schema["layout"]["sections"][0] | {"rows": [{"columns": [{"field": "first_name", "width": 12}]}]}, {"rows": [{"field": "last_name"}]}]}}
+        updated = e2e_client.patch(f"/api/forms/{form['id']}", headers=platform_admin.headers, json={"form_schema": standalone_schema})
+        assert updated.status_code == 200, updated.text
+        reloaded = e2e_client.get(f"/api/forms/{form['id']}/runtime", headers=platform_admin.headers)
+        assert reloaded.json()["form_schema"]["layout"]["sections"][1]["rows"][0]["field"] == "last_name"
+        assert reloaded.json()["form_schema"]["layout"]["sections"][0]["rows"][0]["columns"][0]["field"] == "first_name"
+        empty_schema = {
+            "fields": [],
+            "layout": {"sections": [{"rows": [{"columns": [
+                {"field": None, "width": 6}, {"field": None, "width": 6},
+            ]}]}]},
+        }
+        empty = e2e_client.patch(
+            f"/api/forms/{form['id']}", headers=platform_admin.headers,
+            json={"form_schema": empty_schema},
+        )
+        assert empty.status_code == 200, empty.text
+        assert empty.json()["form_schema"]["layout"] == FormSchema.model_validate(
+            empty_schema
+        ).model_dump(mode="json")["layout"]
+        e2e_client.delete(f"/api/forms/{form['id']}", headers=platform_admin.headers)
+
+    def test_create_form_rejects_invalid_layout_with_422(self, e2e_client, platform_admin):
+        """Malformed opaque schemas must surface a client error, not a router 500."""
+        response = e2e_client.post(
+            "/api/forms",
+            headers=platform_admin.headers,
+            json={
+                "name": f"Invalid Layout {uuid.uuid4().hex[:8]}",
+                "workflow_id": None,
+                "form_schema": {
+                    "fields": [{"name": "first_name", "type": "text", "label": "First name"}],
+                    "layout": {"sections": [{"rows": [{"columns": [{"field": "missing", "width": 12}]}]}]},
+                },
+                "access_level": "authenticated",
+            },
+        )
+        assert response.status_code == 422, response.text
+        assert "layout" in response.text
+
     def test_list_forms(self, e2e_client, platform_admin, test_form):
         """Platform admin can list forms."""
         response = e2e_client.get(

@@ -230,7 +230,7 @@ async def run_execution(execution_id: str, context_data: dict[str, Any]) -> dict
                             f"function_name={function_name}, file_path={file_path}"
                         )
                 except Exception as e:
-                    logger.error(f"Failed to load workflow from cache: {e}")
+                    logger.exception(f"Failed to load workflow from cache: {e}")
                     load_error = f"Cache load failed: {e}"
             else:
                 # Missing required fields for execution

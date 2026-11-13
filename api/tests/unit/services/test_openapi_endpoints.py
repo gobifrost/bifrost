@@ -7,6 +7,7 @@ including parameter mapping, method handling, and schema structure.
 
 import pytest
 import json
+from uuid import UUID
 from types import SimpleNamespace
 from unittest.mock import MagicMock, AsyncMock, patch
 
@@ -429,3 +430,29 @@ class TestOpenAPIResponseCache:
 
         assert app.openapi is installed_openapi
         assert len([route for route in app.routes if route.path == "/openapi.json"]) == 1
+
+
+class TestGeneratedWorkflowHandler:
+    def test_named_route_delegates_with_workflow_uuid(self):
+        app = FastAPI()
+        workflow = SimpleNamespace(
+            id=UUID("b6200347-e6f1-454b-a108-2d2318e8f543"),
+            name="named_workflow",
+            description="Named workflow",
+            allowed_methods=["POST"],
+            parameters_schema=[],
+        )
+        with patch("src.routers.endpoints.execute_endpoint", autospec=True) as execute:
+            execute.return_value = {"execution_id": "run-123", "status": "completed"}
+            register_workflow_endpoint(app, workflow)
+            response = TestClient(app).post(
+                "/api/endpoints/named_workflow",
+                headers={"X-Bifrost-Key": "test-key"},
+            )
+
+        assert response.status_code == 200
+        assert response.json()["execution_id"] == "run-123"
+        execute.assert_awaited_once()
+        assert execute.call_args.kwargs["workflow_id"] == str(workflow.id)
+        assert execute.call_args.kwargs["x_bifrost_key"] == "test-key"
+        assert execute.call_args.kwargs["request"].url.path == "/api/endpoints/named_workflow"

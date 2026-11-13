@@ -19,6 +19,8 @@ from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, Remot
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import AuthenticationError, ControlEnvelope, FragmentAssembler, Hello, sign_hello
 from src.worker.pool_main import PoolWorker
+from src.worker.admission import Admission
+from src.worker.remote.agent_route import AgentRoute
 
 
 LEASE = RemoteOwnerLease(
@@ -871,3 +873,27 @@ async def test_each_lane_reconciles_inventory_before_opening_claims(lane) -> Non
     await executor.reconcile_transport_inventory()
     executor._reconcile_transport_inventory.assert_awaited_once_with(None)
     assert executor.bridge.reconciliation_complete.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_an_adopted_agent_precondition_failure_releases_its_memory() -> None:
+    bridge = Bridge(Mock(), {"current": 1, "limit": 100, "hostname": "runner", "requirements": {}}, LEASE)
+    bridge.agents = Mock()
+    worker = ApiExecutor(bridge, LEASE.worker_id)
+    worker.admission = Admission(
+        budget_bytes=100, under_pressure=lambda: False,
+        running_workflow_ids=set, workflow_growth=dict,
+    )
+    route = AgentRoute(route_id="adopted", run_id=LEASE.owner_id)
+
+    worker._wait_for_adopted_agent_run(route, 40)
+    tasks = list(worker._tasks[route.handler])
+    assert worker.admission.free_bytes() == 60
+    # The scheduled coroutine must keep its cleanup even if its precondition
+    # is broken before it begins supervising the adopted child.
+    bridge.agents = None
+    with pytest.raises(AssertionError):
+        await asyncio.gather(*tasks)
+
+    assert worker.admission.free_bytes() == 100
+    assert worker._tasks[route.handler] == set()

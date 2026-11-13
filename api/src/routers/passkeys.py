@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException, Response, status
 from shared.browser_impersonation import is_browser_impersonation
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.models.contracts.passkeys import (
     PasskeyAuthOptionsRequest,
     PasskeyAuthOptionsResponse,
@@ -96,7 +96,7 @@ async def get_registration_options(
             detail=str(e),
         ) from e
     except Exception as e:
-        logger.error(f"Failed to generate registration options for user {user.user_id}: {e}")
+        logger.exception(f"Failed to generate registration options for user {user.user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate registration options",
@@ -149,7 +149,7 @@ async def verify_registration(
             detail=str(e),
         ) from e
     except Exception as e:
-        logger.error(f"Failed to verify registration for user {user.user_id}: {e}")
+        logger.exception(f"Failed to verify registration for user {user.user_id}: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify registration",
@@ -187,7 +187,7 @@ async def get_authentication_options(
             options=options,
         )
     except Exception as e:
-        logger.error(f"Failed to generate authentication options: {e}")
+        logger.exception(f"Failed to generate authentication options: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to generate authentication options",
@@ -240,7 +240,7 @@ async def verify_authentication(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to verify authentication: {e}")
+        logger.exception(f"Failed to verify authentication: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to verify authentication",
@@ -323,7 +323,7 @@ async def delete_passkey(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to delete passkey {log_safe(passkey_id)} for user {user.user_id}: {log_safe(e)}")
+        log_safe_exception(logger, f"Failed to delete passkey {log_safe(passkey_id)} for user {user.user_id}: {log_safe(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to delete passkey",

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1373",
+  "classification": "highlight",
+  "entry_ids": [
+    "d7010812-e4a4-4859-9e0c-466768362198"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1373",
+      "Jack approved the exact PR and Product Update text and explicitly resumed this forms scope on November 13, 2026: Please send it. Existing forms upgrade and runtime compatibility verified; ordinary upgrade only, no customer action required. Idea credited to scubes13 (Discord) in PR; no unverified GitHub identity attributed."
+    ]
+  }
+}

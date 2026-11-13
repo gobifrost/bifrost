@@ -582,11 +582,13 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
 
             # Convert scripts to callables for unified execution
             if is_script:
-                assert request.code is not None
+                if request.code is None:
+                    raise WorkflowError("invalid_request", "Script execution requires code")
                 func = _script_to_callable(request.code, request.name or "script")
 
             # Unified execution path for both workflows and scripts
-            assert func is not None
+            if func is None:
+                raise WorkflowError("invalid_request", "No workflow or script callable to execute")
 
             # Always capture logs AND variables for all executions
             # Filtering based on permissions happens at API response level
@@ -818,7 +820,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         )
 
         with _runtime_logging_scope(logging.getLogger(), context._collect_secret_values):
-            logger.error(
+            logger.exception(
                 f"Execution error: {request.name or 'script'}",
                 extra={
                     "execution_id": request.execution_id,
@@ -1483,7 +1485,7 @@ async def _execute_workflow_with_trace(
                 except Exception as e:
                     # Log errors but don't fail workflow execution
                     # Real-time updates are non-critical
-                    logger.error(
+                    logger.exception(
                         f"Failed to stream log (non-fatal): {str(e)}",
                         exc_info=True,
                         extra={"execution_id": execution_id, "_bifrost_log_transport": True}

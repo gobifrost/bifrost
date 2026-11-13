@@ -199,7 +199,7 @@ class PydanticAIClient(BaseLLMClient):
                         provider_cost=provider_reported_cost(response),
                     )
         except Exception as exc:
-            logger.error("Pydantic AI streaming error: %s", exc)
+            logger.exception("Pydantic AI streaming error: %s", exc)
             yield LLMStreamChunk(type="error", error=str(exc))
 
     def _model_settings(self, max_tokens: int | None, model: str | None = None) -> ModelSettings:

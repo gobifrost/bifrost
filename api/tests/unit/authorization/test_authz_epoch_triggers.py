@@ -197,8 +197,9 @@ _CASES: list[tuple[str, str, int]] = [
     ("users last login", "UPDATE users SET last_login = now() WHERE id = :user", 0),
     ("users same value", "UPDATE users SET name = name WHERE id = :user", 0),
     ("users delete", "DELETE FROM users WHERE id = :other_user", 1),
-    # organizations: provider flag, DELETE.
-    ("organizations provider", "UPDATE organizations SET is_provider = NOT is_provider WHERE id = :other_org", 1),
+    # organizations: immutable provider flag (rejection covered by the mutation
+    # matrix), metadata and DELETE.
+    ("organizations provider unchanged", "UPDATE organizations SET is_provider = is_provider WHERE id = :other_org", 0),
     ("organizations name", "UPDATE organizations SET name = name || ' renamed' WHERE id = :org", 0),
     ("organizations delete", "DELETE FROM organizations WHERE id = :other_org", 1),
     # user_roles, user_role_boundaries, role_permissions: every event.

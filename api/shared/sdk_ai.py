@@ -38,7 +38,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.core.principal import UserPrincipal
 from src.services.authorization.enforce import load_caller, require_permission
 from src.services.llm.base import LLMInputFile, LLMMessage
@@ -173,7 +173,7 @@ async def complete_sdk_ai(
     try:
         llm_messages = _build_llm_messages(messages, input_files)
     except (KeyError, TypeError) as e:
-        logger.error(f"CLI AI complete failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI AI complete failed: {log_safe(e)}")
         raise SdkAIError(
             500, "AI completion failed. See server logs for details."
         ) from None
@@ -233,7 +233,7 @@ async def complete_sdk_ai(
                 401,
                 f"{provider} API key is invalid or expired. Please update the API key in System Settings > AI Configuration.",
             ) from None
-        logger.error(f"CLI AI complete failed: {log_safe(e)}")
+        log_safe_exception(logger, f"CLI AI complete failed: {log_safe(e)}")
         raise SdkAIError(
             500, "AI completion failed. See server logs for details."
         ) from None
@@ -454,7 +454,7 @@ async def stream_sdk_ai(
                 )
             }
         else:
-            logger.error(f"CLI AI stream failed: {log_safe(e)}")
+            log_safe_exception(logger, f"CLI AI stream failed: {log_safe(e)}")
             yield {"error": "AI stream failed. See server logs for details."}
 
 

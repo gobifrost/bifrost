@@ -122,7 +122,7 @@ async def get_roi_summary(
         )
 
     except Exception as e:
-        logger.error(f"Error getting ROI summary: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting ROI summary: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get ROI summary",
@@ -226,7 +226,7 @@ async def get_roi_by_workflow(
         )
 
     except Exception as e:
-        logger.error(f"Error getting ROI by workflow: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting ROI by workflow: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get ROI by workflow",
@@ -317,7 +317,7 @@ async def get_roi_by_organization(
         )
 
     except Exception as e:
-        logger.error(f"Error getting ROI by organization: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting ROI by organization: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get ROI by organization",
@@ -418,7 +418,7 @@ async def get_roi_trends(
         )
 
     except Exception as e:
-        logger.error(f"Error getting ROI trends: {str(e)}", exc_info=True)
+        logger.exception(f"Error getting ROI trends: {str(e)}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to get ROI trends",

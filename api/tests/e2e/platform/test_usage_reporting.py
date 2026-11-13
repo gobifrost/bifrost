@@ -29,7 +29,9 @@ def _frozen_datetime(now: datetime) -> type[datetime]:
 async def test_report_usage_persists_one_installation_id_counts_the_completed_utc_day_and_acks_once(
     async_session_factory, monkeypatch
 ) -> None:
-    now = datetime.now(UTC).replace(hour=12, minute=0, second=0, microsecond=0)
+    # Own the reporting day: a shard can cross UTC midnight after earlier tests
+    # committed executions. A wall-clock-relative day would count those rows.
+    now = datetime(2012, 6, 15, 12, tzinfo=UTC)
     yesterday = now.date() - timedelta(days=1)
     start = datetime.combine(yesterday, datetime.min.time(), tzinfo=UTC)
     end = start + timedelta(days=1)
@@ -40,6 +42,15 @@ async def test_report_usage_persists_one_installation_id_counts_the_completed_ut
 
     async with async_session_factory() as db:
         kept = [
+            # Model an execution left by an earlier test before UTC midnight.
+            Execution(
+                id=uuid4(),
+                workflow_name="unrelated live-day execution",
+                status=ExecutionStatus.SUCCESS,
+                executed_by_name="test",
+                started_at=datetime.now(UTC),
+                completed_at=datetime.now(UTC),
+            ),
             Execution(
                 id=uuid4(),
                 workflow_name="usage reporting",

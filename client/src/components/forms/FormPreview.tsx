@@ -12,17 +12,21 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import type { FormField } from "@/lib/client-types";
+import type { FormLayout } from "./form-layout";
+import { FormLayoutView } from "./FormLayoutView";
 
 interface FormPreviewProps {
 	formName: string;
 	formDescription: string;
 	fields: FormField[];
+	layout?: FormLayout | null;
 }
 
 export function FormPreview({
 	formName,
 	formDescription,
 	fields,
+	layout,
 }: FormPreviewProps) {
 	const renderField = (field: FormField) => {
 		switch (field.type) {
@@ -107,6 +111,25 @@ export function FormPreview({
 		}
 	};
 
+	const renderPreviewField = (field: FormField) => (
+		<div className="space-y-2">
+			{field.type !== "checkbox" && (
+				<Label htmlFor={`preview-${field.name}`}>
+					{field.label}
+					{field.required && (
+						<span className="ml-1 text-destructive">*</span>
+					)}
+				</Label>
+			)}
+			{renderField(field)}
+			{field.help_text && (
+				<p className="text-sm text-muted-foreground">
+					{field.help_text}
+				</p>
+			)}
+		</div>
+	);
+
 	return (
 		<div className="flex justify-center">
 			<Card className="w-full max-w-2xl">
@@ -118,29 +141,20 @@ export function FormPreview({
 				</CardHeader>
 				<CardContent>
 					{fields.length > 0 ? (
-						<div className="space-y-4">
-							{fields.map((field, index) => (
-								<div key={index} className="space-y-2">
-									{field.type !== "checkbox" && (
-										<Label
-											htmlFor={`preview-${field.name}`}
-										>
-											{field.label}
-											{field.required && (
-												<span className="text-destructive ml-1">
-													*
-												</span>
-											)}
-										</Label>
-									)}
-									{renderField(field)}
-									{field.help_text && (
-										<p className="text-sm text-muted-foreground">
-											{field.help_text}
-										</p>
-									)}
-								</div>
-							))}
+						<div className="space-y-6">
+							{layout ? (
+								<FormLayoutView
+									layout={layout}
+									fields={fields}
+									renderField={renderPreviewField}
+								/>
+							) : (
+								fields.map((field) => (
+									<div key={field.name}>
+										{renderPreviewField(field)}
+									</div>
+								))
+							)}
 							<div className="pt-4">
 								<Button disabled>Submit</Button>
 							</div>

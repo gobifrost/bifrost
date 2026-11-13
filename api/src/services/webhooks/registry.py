@@ -10,7 +10,7 @@ import logging
 from typing import Any
 
 from src.config import get_settings
-from src.core.log_safety import log_safe
+from src.core.log_safety import log_safe, log_safe_exception
 from src.services.webhooks.adapters import BUILTIN_ADAPTERS
 from src.services.webhooks.protocol import WebhookAdapter
 
@@ -87,7 +87,7 @@ class AdapterRegistry:
             self._instances[name] = instance
             return instance
         except Exception as e:
-            logger.error(f"Failed to instantiate adapter {log_safe(name)}: {log_safe(e)}")
+            log_safe_exception(logger, f"Failed to instantiate adapter {log_safe(name)}: {log_safe(e)}")
             return None
 
     def get_all(self) -> list[WebhookAdapter]:
