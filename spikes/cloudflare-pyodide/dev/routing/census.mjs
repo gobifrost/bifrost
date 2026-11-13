@@ -113,14 +113,42 @@ async function exists(p) {
   try { await stat(p); return true; } catch { return false; }
 }
 
+// A root is workspace-local if it is a known hint OR the workspace actually
+// contains it. The dynamic check is what makes layouts like `features/`,
+// `delivery/` and solution-root `modules/` resolve without a hardcoded list.
+async function isLocalRoot(root, roots) {
+  if (PROVIDED.has(root)) return false;
+  if (LOCAL_HINT.has(root)) return true;
+  for (const r of roots) {
+    if (!r) continue;
+    if (await exists(join(r, root)) || await exists(join(r, `${root}.py`))) return true;
+  }
+  return false;
+}
+
 // Resolve a local dotted import to a workspace storage path, mirroring the
-// engine's logical-name -> base-path rule.
-async function localStoragePath(workspaceRoot, dotted) {
+// engine's logical-name -> base-path rule. Tries the workspace root first, then
+// the enclosing workspace repo (shared `modules/`, `helpers/`, `features/`).
+async function localStoragePath(roots, dotted) {
   const base = dotted.replaceAll('.', '/');
-  for (const cand of [`${base}.py`, `${base}/__init__.py`]) {
-    if (await exists(join(workspaceRoot, cand))) return cand;
+  for (const root of roots) {
+    if (!root) continue;
+    for (const cand of [`${base}.py`, `${base}/__init__.py`]) {
+      if (await exists(join(root, cand))) return cand;
+    }
   }
   return null;
+}
+
+// A directory without __init__.py is a namespace package: importable, but it
+// has no concrete module to declare. The engine's importer resolves these
+// transparently, so the census must not call them missing.
+async function localNamespace(roots, dotted) {
+  const base = dotted.replaceAll('.', '/');
+  for (const root of roots) {
+    if (root && (await exists(join(root, base)))) return true;
+  }
+  return false;
 }
 
 function subrequestEstimate(source, localCount) {
@@ -143,17 +171,21 @@ function functionSlice(source, name) {
 async function censusFile(workspaceRoot, file, opts) {
   const source = await readFile(file, 'utf8');
   const roots = importsOf(source);
+  const searchRoots = [workspaceRoot, opts.fallbackRoot].filter(Boolean);
+  const local = new Set();
+  for (const r of roots) if (await isLocalRoot(r, searchRoots)) local.add(r);
   const declaredModules = [];
   const unresolvedLocal = [];
   if (opts.resolveLocal !== false) {
     for (const dotted of dottedImports(source)) {
       const root = dotted.split('.')[0];
-      if (PROVIDED.has(root) || !LOCAL_HINT.has(root)) continue;
-      const p = await localStoragePath(workspaceRoot, dotted);
-      if (p) declaredModules.push(p); else unresolvedLocal.push(dotted);
+      if (!local.has(root)) continue;
+      const p = await localStoragePath(searchRoots, dotted);
+      if (p) declaredModules.push(p);
+      else if (!(await localNamespace(searchRoots, dotted))) unresolvedLocal.push(dotted);
     }
   }
-  const packages = [...roots].filter((r) => !STDLIB.has(r) && !LOCAL_HINT.has(r) && !PROVIDED.has(r));
+  const packages = [...roots].filter((r) => !STDLIB.has(r) && !local.has(r) && !PROVIDED.has(r));
   const scope = functionSlice(source, opts.functionName);
   const traps = [];
   for (const [re, why] of HARD_TRAPS) if (re.test(scope)) traps.push({severity: 'hard', why});
@@ -168,7 +200,12 @@ async function censusFile(workspaceRoot, file, opts) {
     cpuBudget: opts.cpuBudget,
     source: scope,
   };
-  const decision = decideBackend({declaration, bundleManifest: opts.manifest?.length ? opts.manifest : declaredModules,
+  // Modules that resolve on disk can be staged into the bundle, so the manifest
+  // used for the decision is the workspace manifest plus this file's resolved
+  // local imports. Whether the import resolves at all is checked separately
+  // (`unresolvedLocal`), which is the meaningful module gate here.
+  const judgedManifest = [...new Set([...(opts.manifest ?? []), ...declaredModules])];
+  const decision = decideBackend({declaration, bundleManifest: judgedManifest,
     subrequestAllowance: opts.allowance});
   // A local import that does not resolve on disk fails at dispatch, so the
   // census must not call it eligible just because it is not third-party.
@@ -228,6 +265,14 @@ if (wsRoot) {
   const touched = (await walk(wsRoot)).filter((f) => f.replaceAll('\\', '/').endsWith('.bifrost/workflows.yaml'));
   for (const manifestPath of touched) {
     const root = dirname(dirname(manifestPath));
+    const rel = relative(wsRoot, root).replaceAll('\\', '/');
+    // `reference/` manifests point at community files that are not present in
+    // this repo; they are reference material, not a deployable workspace.
+    if (rel.startsWith('reference/')) {
+      report.workspaces_skipped = report.workspaces_skipped ?? [];
+      report.workspaces_skipped.push({root: rel, reason: 'reference manifest, files not present'});
+      continue;
+    }
     const {manifest} = await workspaceManifest(root);
     const yaml = await readFile(manifestPath, 'utf8');
     const entries = [];
@@ -239,15 +284,25 @@ if (wsRoot) {
       if (f && cur) cur.function_name = f[1].trim();
     }
     if (cur?.path) entries.push(cur);
+    let outerManifest = null;
     const rows = [];
     for (const entry of entries) {
-      const file = join(root, entry.path);
+      let entryRoot = root;
+      let file = join(root, entry.path);
+      if (!(await exists(file)) && wsRoot && (await exists(join(wsRoot, entry.path)))) {
+        entryRoot = wsRoot;
+        file = join(wsRoot, entry.path);
+      }
       if (!(await exists(file))) {
-        rows.push({path: entry.path, workflow: entry.function_name ?? null, backend: 'linux', reasons: ['missing workflow file']});
+        rows.push({path: entry.path, workflow: entry.function_name ?? null, backend: 'linux',
+          reasons: ['missing workflow file'], traps: [], packages: [], declared_modules: [],
+          estimated_subrequests: null});
         continue;
       }
-      const row = await censusFile(root, file, {manifest, allowance,
-        cpuBudget: flag('cpu', '1000ms'), functionName: entry.function_name});
+      const manifestForEntry = entryRoot === root ? manifest
+        : (outerManifest ??= (await workspaceManifest(wsRoot)).manifest);
+      const row = await censusFile(entryRoot, file, {manifest: manifestForEntry, allowance,
+        cpuBudget: flag('cpu', '1000ms'), functionName: entry.function_name, fallbackRoot: wsRoot});
       rows.push({...row, workflow: entry.function_name ?? null});
     }
     report.workspaces.push({root: relative(wsRoot, root).replaceAll('\\', '/') || '.', ...summarize(rows, relative(wsRoot, root)), rows});

@@ -1,5 +1,11 @@
 # Workspace census: what share of normal workloads is eligible?
 
+> **Superseded as the headline measurement** by
+> [`WORKSPACE-NEXT-CENSUS.md`](WORKSPACE-NEXT-CENSUS.md): the real workspace
+> (`MTG-Thomas/bifrost-workspace-next`) measures **295/317 workflows (93.1 %)
+> eligible at allowance 12, 303/317 (95.6 %) at 50**. The example-workspace
+> result below stands as the first, smaller sample.
+
 Measured 2026-11-13 with `dev/routing/census.mjs`, which drives the dispatcher's
 own `decideBackend` rule (`dev/routing/eligibility.mjs`) over real files. Static
 analysis only — no workspace was executed, no API was called.
