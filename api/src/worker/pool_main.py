@@ -599,13 +599,12 @@ class PoolWorker:
 
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self.admission is not None
-        if claim.handler == "workflow.execute":
-            assert self._workflow_consumer is not None
         handed_back = False
         try:
             # Workflow runs return once routed to a child (then counted by the
             # pool); agent runs return when finished.
             if claim.handler == "workflow.execute":
+                assert self._workflow_consumer is not None
                 try:
                     await self._workflow_consumer.process_message(
                         claim.message,
@@ -638,6 +637,8 @@ class PoolWorker:
                 await self._agent_consumer.process_message(claim.message)
             else:
                 await self._execute_summary(claim)
+        except AssertionError:
+            raise
         except Exception:
             logger.exception(
                 "Pool run failed in its consumer",

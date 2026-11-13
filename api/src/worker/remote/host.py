@@ -709,9 +709,11 @@ class ApiExecutor(PoolWorker):
         self.admission.hold(key, request_bytes)
 
         async def wait() -> None:
-            assert self.bridge.agents is not None
             try:
+                assert self.bridge.agents is not None
                 await self.bridge.agents.supervise(route)
+            except AssertionError:
+                raise
             except Exception:
                 logging.getLogger(__name__).exception(
                     "Adopted agent run failed", extra={"run_id": str(route.run_id)}
