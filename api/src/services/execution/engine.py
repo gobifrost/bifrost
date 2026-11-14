@@ -511,7 +511,10 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         roi.time_saved = request.roi.get("time_saved", 0)
         roi.value = request.roi.get("value", 0.0)
 
-    from src.config import get_settings
+    public_url = request.public_url
+    if public_url is None:
+        from src.config import get_settings
+        public_url = get_settings().public_url
 
     context = ExecutionContext(
         user_id=request.caller.user_id,
@@ -530,7 +533,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         agent_id=request.agent_id,
         original_user_is_platform_admin=request.original_user_is_platform_admin,
         original_user_id=request.original_user_id,
-        public_url=request.public_url or get_settings().public_url,
+        public_url=public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
         form_inputs=request.form_inputs,
         embed=request.embed,
@@ -922,8 +925,6 @@ async def execute_service(
     - ``service.ready()`` reports are drained to the parent's Redis ready key
       and the renewable credential is refreshed from the parent's handoff.
     """
-    from src.config import get_settings
-
     cfg = request.service
     assert cfg is not None
     start_time = start_time or datetime.now(timezone.utc)
@@ -944,6 +945,11 @@ async def execute_service(
         roi.time_saved = request.roi.get("time_saved", 0)
         roi.value = request.roi.get("value", 0.0)
 
+    public_url = request.public_url
+    if public_url is None:
+        from src.config import get_settings
+        public_url = get_settings().public_url
+
     context = ExecutionContext(
         user_id=request.caller.user_id,
         email=request.caller.email,
@@ -954,7 +960,7 @@ async def execute_service(
         is_function_key=False,
         execution_id=cfg.attempt_id,
         workflow_name=request.name or "",
-        public_url=request.public_url or get_settings().public_url,
+        public_url=public_url,
         startup=request.startup,
         form_inputs=request.form_inputs,
         embed=request.embed,

@@ -20,8 +20,9 @@ async def test_engine_uses_explicit_runtime_url_without_loading_settings(monkeyp
     from src.sdk.context import Caller, ExecutionContext
     from src.services.execution.engine import ExecutionRequest, execute
 
-    forbidden = Mock(side_effect=AssertionError("Server settings must not be read"))
-    monkeypatch.setattr("src.config.get_settings", forbidden)
+    # Any import of the server settings module fails, not merely a get_settings
+    # call: an isolated runtime does not ship src.config.
+    monkeypatch.setitem(sys.modules, "src.config", None)
 
     async def workflow(context: ExecutionContext):
         return {"public_url": context.public_url, "is_agent": context.is_agent,
@@ -45,12 +46,30 @@ async def test_engine_uses_explicit_runtime_url_without_loading_settings(monkeyp
                              "execution_origin": "agent", "agent_id": "synthetic-agent",
                              "original_user_is_platform_admin": True,
                              "original_user_id": "synthetic-original-user"}
-    forbidden.assert_not_called()
+
+
+async def test_engine_without_explicit_url_requires_settings(monkeypatch):
+    from src.sdk.context import Caller
+    from src.services.execution.engine import ExecutionRequest, execute
+
+    monkeypatch.setitem(sys.modules, "src.config", None)
+
+    async def workflow(context):
+        return {"unreachable": True}
+
+    with pytest.raises(ModuleNotFoundError):
+        await execute(ExecutionRequest(
+            execution_id="runtime-metadata-control",
+            caller=Caller("user", "user@example.invalid", "User"),
+            organization=None,
+            func=workflow,
+        ))
 
 
 async def test_worker_preserves_unknown_provider_metrics_without_os_sampling(monkeypatch):
     from src.services.execution import worker
 
+    monkeypatch.setitem(sys.modules, "src.config", None)
     forbidden = Mock(side_effect=AssertionError("OS metrics unavailable"))
     monkeypatch.setattr(worker, "_get_resource_usage", forbidden)
     monkeypatch.setattr(worker, "_set_process_engine_credentials", lambda _: True)
