@@ -318,6 +318,28 @@ test.describe.serial("Public form iframe", () => {
 			await expect(
 				adminPage.getByLabel("Confirmation Message editor"),
 			).toContainText("Thank you");
+			const confirmationEditor = adminPage.getByRole("region", {
+				name: "Confirmation Message",
+			});
+			// The image is unsupported by the visual schema. Source mode keeps
+			// the complete draft available instead of dropping that image.
+			await expect(confirmationEditor.getByRole("status")).toContainText(
+				"Edit in Markdown mode",
+			);
+			await expect(
+				adminPage.getByLabel("Confirmation Message editor"),
+			).toHaveAttribute("contenteditable", "false");
+			await confirmationEditor
+				.getByRole("radio", {
+					name: "Markdown",
+					exact: true,
+				})
+				.click();
+			await expect(
+				adminPage.getByLabel("Confirmation Message editor"),
+			).toHaveValue(
+				"## Thank you\n\n**Your form was submitted.**\n\n![Bifrost mark](/vite.svg)",
+			);
 			await adminPage
 				.getByLabel("Confirmation Message editor")
 				.fill("## Preview check\n\nThis should render immediately.");
