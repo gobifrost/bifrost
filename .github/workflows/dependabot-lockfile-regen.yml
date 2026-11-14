@@ -119,10 +119,13 @@ jobs:
         run: |
           work="$(mktemp -d)"
           cp pyproject.toml requirements-piptools.lock requirements.lock requirements-dev.lock "$work/"
-          docker run --rm -v "$work":/work -w /work python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 sh -c "
+          docker run --rm --env SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTEST_ASYNCIO=2.0.0.dev0+g47bbcba -v "$work":/work -w /work python:3.16.0a1-slim@sha256:df293ba3b89f458e1aad6051b62ff1c4fad7b3b52b8147ae9cc4b667f9cf2741 sh -c "
+            set -e
+            apt-get update -qq
+            apt-get install -y --no-install-recommends build-essential libffi-dev libxml2-dev libxslt1-dev pkg-config
             pip install --quiet --require-hashes -r requirements-piptools.lock
-            pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
-            pip-compile --generate-hashes --extra dev --output-file=requirements-dev.lock pyproject.toml
+            pip-compile --generate-hashes --allow-unsafe --no-reuse-hashes --output-file=requirements.lock pyproject.toml
+            pip-compile --generate-hashes --allow-unsafe --no-reuse-hashes --extra dev --output-file=requirements-dev.lock pyproject.toml
           "
           cp "$work/requirements.lock" requirements.lock
           cp "$work/requirements-dev.lock" requirements-dev.lock

@@ -141,12 +141,15 @@ jobs:
       # requirements.lock (runtime closure) only (issue #1379). Pyright is
       # installed from its own hash-pinned lock because --require-hashes
       # forbids unpinned packages and pyright targets a different Python
-      # minor (3.12 here vs 3.15 in production) so it can't share either lock.
+      # minor (3.12 here vs 3.16 in production) so it can't share either lock.
       #
       # We deliberately do NOT `pip install --upgrade pip` — actions/setup-python
       # already ships a current pip into the venv and any explicit upgrade
       # would be flagged by Scorecard as an unpinned install.
       - name: Install Python deps into .venv
+        # Match the immutable archive version used by the dev image builder.
+        env:
+          SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTEST_ASYNCIO: 2.0.0.dev0+g47bbcba
         run: |
           python -m venv .venv
           ./.venv/bin/pip install --require-hashes -r requirements-dev.lock
