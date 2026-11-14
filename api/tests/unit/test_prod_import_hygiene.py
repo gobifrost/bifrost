@@ -204,7 +204,9 @@ def test_solution_dev_stays_lazily_loaded():
     assert offenders == [], f"solution_dev imported at module scope: {offenders}"
 
 
-_LOCK_NAME = re.compile(r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]+\])?==([^\s\\;]+)")
+_LOCK_NAME = re.compile(
+    r"^([A-Za-z0-9_.\-]+)(?:\[[^\]]+\])?(?:==([^\s\\;]+)|\s*@\s*(\S+))"
+)
 
 
 def _lock_distributions(path: Path) -> dict[str, str]:
@@ -215,8 +217,21 @@ def _lock_distributions(path: Path) -> dict[str, str]:
             continue
         match = _LOCK_NAME.match(line)
         if match:
-            dists[match.group(1).lower()] = match.group(2)
+            dists[match.group(1).lower()] = match.group(2) or match.group(3)
     return dists
+
+
+def test_lock_distributions_includes_pinned_source_archives(tmp_path):
+    lock = tmp_path / "requirements.lock"
+    lock.write_text(
+        "ordinary==1.2.3\n"
+        "cffi @ https://codeload.github.com/python-cffi/cffi/tar.gz/fixed-commit\n",
+        encoding="utf-8",
+    )
+    assert _lock_distributions(lock) == {
+        "ordinary": "1.2.3",
+        "cffi": "https://codeload.github.com/python-cffi/cffi/tar.gz/fixed-commit",
+    }
 
 
 def test_prod_lock_excludes_dev_only_distributions():

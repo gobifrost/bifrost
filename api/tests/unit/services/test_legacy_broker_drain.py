@@ -34,7 +34,7 @@ class _Redis:
 
 
 @pytest.fixture
-def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch):
+async def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: pytest.MonkeyPatch):
     import json
 
     @asynccontextmanager
@@ -61,6 +61,7 @@ def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: 
         sessions = async_session_factory
         wakes = wake
         queue_refresh = refresh_requested
+        organization_ids: set[UUID] = set()
 
         def put(self, key: str, value: dict[str, Any]) -> None:
             redis.values[key] = json.dumps(value)
@@ -74,7 +75,17 @@ def world(async_session_factory: async_sessionmaker[AsyncSession], monkeypatch: 
                     select(WorkDispatch).where(WorkDispatch.subject_id == subject)
                 )
 
-    yield World()
+    world = World()
+    yield world
+
+    # Committed synthetic users must not change later first-user bootstrap.
+    from src.models.orm.users import User
+
+    async with async_session_factory() as session:
+        await session.execute(
+            delete(User).where(User.organization_id.in_(world.organization_ids))
+        )
+        await session.commit()
 
 
 async def _forget_drain(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -110,6 +121,7 @@ async def _person(world) -> tuple[UUID, UUID]:  # type: ignore[no-untyped-def]
         user = User(email=f"drain-{uuid4().hex[:8]}@example.com", organization_id=org.id, name="Person")
         session.add(user)
         await session.commit()
+        world.organization_ids.add(org.id)
         return org.id, user.id
 
 
