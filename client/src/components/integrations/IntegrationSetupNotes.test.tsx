@@ -64,6 +64,26 @@ describe("IntegrationSetupNotes", () => {
 		expect(onSave).toHaveBeenCalledWith("Updated notes");
 	});
 
+	it.each(["  ## Keep indentation\n\nText  \n", "\n\n"])(
+		"preserves nonempty source and clears blank notes: %j",
+		async (notes) => {
+			const onSave = vi.fn().mockResolvedValue(undefined);
+			const { user } = renderWithProviders(
+				<IntegrationSetupNotesDialog
+					open
+					onOpenChange={vi.fn()}
+					notes={notes}
+					onSave={onSave}
+				/>,
+			);
+			await screen.findByRole("textbox", { name: "Setup instructions" });
+			await user.click(
+				screen.getByRole("button", { name: "Save Instructions" }),
+			);
+			expect(onSave).toHaveBeenCalledWith(notes.trim() ? notes : null);
+		},
+	);
+
 	it("discards a cancelled draft when the editor is reopened", async () => {
 		const onSave = vi.fn();
 		const onOpenChange = vi.fn();
