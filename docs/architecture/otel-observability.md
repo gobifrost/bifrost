@@ -156,12 +156,18 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
 - `stage_dispatch` injects `traceparent` into the dispatch message;
   `PoolWorker._run_claim` extracts it and emits the `run.<handler>` span
   with `started`/`duration`/`failed` metrics.
-- **Gap, deliberate:** the `run.<handler>` span lives in the executor
-  (launcher/pool) process. Spans for work *inside* the forked execution
-  child (its own SQL/HTTP calls) are not emitted yet: fork does not carry
-  the SDK's exporter thread, so the child needs an at-fork re-init. Until
-  that lands, child-internal calls are untraced; the run span still
-  correctly covers claim → routed/finished and links to its request.
+- Execution children re-initialize telemetry after `os.fork`:
+  `init_telemetry_in_child` discards the inherited providers and installs
+  fresh ones on a thread-free `SimpleSpanProcessor` (fork carries memory
+  but no exporter threads, so an inherited batch queue would never drain),
+  and the child flushes with a bounded wait before exiting. Spans for work
+  inside the child (its engine SDK HTTP calls) are therefore exported and
+  scrubbed like any other span. Covered by
+  `api/tests/unit/test_telemetry_fork.py`.
+- **Remaining gap:** the child's spans are roots. The work payload carries
+  no `traceparent`, so child-side extraction of the dispatch context (see
+  Process lifecycle above) would still be needed to make them children of
+  the executor's `run.<handler>` span.
 - `ScrubbingSpanExporter` enforces the export privacy boundary in-process
   before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
   returned document fields, HTTP query strings, exception events, and

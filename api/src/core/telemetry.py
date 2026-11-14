@@ -20,6 +20,7 @@ import contextlib
 import logging
 import os
 import re
+import threading
 import time
 from typing import Any, Iterator
 
@@ -252,6 +253,109 @@ def _instrument_libraries() -> None:
         SystemMetricsInstrumentor().instrument()
     except Exception as e:  # noqa: BLE001
         logger.warning("system metrics instrumentation unavailable: %s", e)
+
+
+_child_initialized = False
+
+
+def _discard_inherited_providers() -> None:
+    """Forget the providers inherited across ``os.fork``.
+
+    A process may set a provider only once, and that guard is ordinary
+    module state, so it has to be cleared before the child installs its
+    own. The SDK exposes no public reset; these private attributes are it.
+    """
+    import opentelemetry.metrics._internal as metrics_internal
+    from opentelemetry import trace as trace_api
+
+    trace_api._TRACER_PROVIDER_SET_ONCE._done = False
+    trace_api._TRACER_PROVIDER = None
+    metrics_internal._METER_PROVIDER_SET_ONCE._done = False
+    metrics_internal._METER_PROVIDER = None
+    # Instruments created before the fork are bound to the parent's
+    # provider; drop them so the child binds its own on next use.
+    global _meter, _run_started, _run_duration, _run_failed
+    _meter = None
+    _run_started = None
+    _run_duration = None
+    _run_failed = None
+
+
+def init_telemetry_in_child() -> bool:
+    """Install child-local providers in a process forked from the launcher.
+
+    ``os.fork`` copies memory but no threads, so an inherited
+    ``BatchSpanProcessor`` has no worker left to drain its queue: spans
+    the child creates would never leave the process. The child therefore
+    installs its own providers on a thread-free path —
+    ``SimpleSpanProcessor`` exports each span synchronously as it ends.
+    Libraries are instrumented here too: execution children are forked
+    from a template process that never ran :func:`init_telemetry`.
+
+    Idempotent, never raises, and a no-op when telemetry is disabled.
+    """
+    global _child_initialized, _initialized
+    if _child_initialized:
+        return True
+    if not is_enabled():
+        return False
+    try:
+        from opentelemetry.exporter.otlp.proto.http.metric_exporter import (
+            OTLPMetricExporter,
+        )
+        from opentelemetry.exporter.otlp.proto.http.trace_exporter import (
+            OTLPSpanExporter,
+        )
+        from opentelemetry.sdk.metrics import MeterProvider
+        from opentelemetry.sdk.metrics.export import PeriodicExportingMetricReader
+        from opentelemetry.sdk.resources import Resource
+        from opentelemetry.sdk.trace import TracerProvider
+        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+
+        _discard_inherited_providers()
+        resource = Resource.create(
+            {
+                "service.name": os.environ.get("OTEL_SERVICE_NAME", SERVICE_NAME_DEFAULT),
+                "service.version": os.environ.get("BIFROST_VERSION", "dev"),
+            }
+        )
+        trace.set_tracer_provider(TracerProvider(resource=resource))
+        trace.get_tracer_provider().add_span_processor(
+            SimpleSpanProcessor(ScrubbingSpanExporter(OTLPSpanExporter()))
+        )
+        metrics.set_meter_provider(
+            MeterProvider(
+                resource=resource,
+                metric_readers=[PeriodicExportingMetricReader(OTLPMetricExporter())],
+            )
+        )
+        _instrument_libraries()
+    except Exception as e:  # noqa: BLE001 — telemetry must never break a run
+        logger.warning("OpenTelemetry child setup failed, continuing untraced: %s", e)
+        _initialized = False
+        return False
+    _child_initialized = True
+    _initialized = True
+    logger.info("OpenTelemetry enabled in forked child (pid=%s)", os.getpid())
+    return True
+
+
+def flush_telemetry_in_child(timeout_s: float = 5.0) -> None:
+    """Flush a forked child's telemetry before it exits. Never raises.
+
+    Spans already exported synchronously as they ended; this drains the
+    metric reader and closes exporters. A slow or unreachable collector
+    must not delay the child's exit, so the flush runs in a daemon thread
+    that is abandoned if it outlives ``timeout_s``.
+    """
+    if not _initialized:
+        return
+    try:
+        flusher = threading.Thread(target=shutdown_telemetry, daemon=True)
+        flusher.start()
+        flusher.join(timeout_s)
+    except Exception as e:  # noqa: BLE001 — exit must not be blocked
+        logger.debug("OpenTelemetry child flush failed: %s", e)
 
 
 def shutdown_telemetry() -> None:

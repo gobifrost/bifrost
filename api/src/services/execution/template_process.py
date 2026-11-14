@@ -530,6 +530,7 @@ def _handle_fork_request(
         })
     else:
         # ----- Child -----
+        from src.core.telemetry import flush_telemetry_in_child, init_telemetry_in_child
         from src.services.execution.oom_priority import volunteer_for_oom_kill
 
         volunteer_for_oom_kill()
@@ -540,6 +541,10 @@ def _handle_fork_request(
             # Already closed in parent post-fork — ignore
             logger.debug(f"child: pipe.close ignored: {e}")
 
+        # Fork carries no exporter threads, so the child installs its own
+        # telemetry before any workflow code runs. No-op when disabled.
+        init_telemetry_in_child()
+
         # Run the worker function (this blocks until the child exits)
         if profile == "agent":
             # Never unwind into the template's fork loop or its exit handlers.
@@ -548,12 +553,14 @@ def _handle_fork_request(
                 _run_agent_child(work_recv, result_send, worker_id)
                 exit_code = 0
             finally:
+                flush_telemetry_in_child()
                 os._exit(exit_code)
         else:
             _run_forked_child(
                 work_recv, result_send, worker_id, persistent,
                 sdk_socket_path=sdk_socket_path,
             )
+            flush_telemetry_in_child()
         os._exit(0)
 
 
