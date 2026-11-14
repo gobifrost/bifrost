@@ -45,7 +45,7 @@ harness places both beneath its worktree-specific fixture mount.
   `_repo/`. Source freshness checks, conditional writes and refusal of unsaved
   local changes remain enforced. Do not treat refusal as successful publication.
 
-The standalone prerequisite uses the existing S3 transport and AWS CLI mirror.
+The standalone prerequisite uses the existing S3 transport and native S3 mirror.
 It introduces no optional storage provider or Azure dependency. Relevant tests
 cover independent executor handoffs, stale/warm checkouts, conflicts, uncertain
 pointer publication, checkpoint corruption, read-only preservation, repeated

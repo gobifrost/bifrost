@@ -346,6 +346,55 @@ async def test_provider_checkpoint_restores_git_identity_and_uncommitted_bytes(t
 
 
 @pytest.mark.e2e
+async def test_workspace_mirror_incremental_sync_skips_unchanged(tmp_path):
+    """Unchanged uploads must not rewrite remote versions; edits must.
+
+    Covers the native mirror paths the worker shell-outs used to own, against
+    the same storage the workers use — including a multipart upload.
+    """
+    from src.core.storage import object_pages, object_store, workspace_mirror
+    from src.services.git_repo_manager import GitRepoManager, WORKSPACE_CHECKPOINT_PREFIX
+
+    settings = get_settings()
+    source = tmp_path / "incremental-source"
+    (source / "docs").mkdir(parents=True)
+    (source / "note.txt").write_text("first")
+    (source / "docs" / "guide.txt").write_text("guide")
+    (source / "large.bin").write_bytes(b"x" * (9 * 1024 * 1024))
+    manager = GitRepoManager(settings)
+    checkpoint = await manager.checkpoint_workspace(source)
+    prefix = f"{WORKSPACE_CHECKPOINT_PREFIX}/{checkpoint}/"
+    try:
+        mirror = workspace_mirror(settings)
+
+        async def versions():
+            async with object_store(settings) as store:
+                return {
+                    item.key: item.version
+                    async for page in object_pages(store, prefix)
+                    for item in page.objects
+                }
+
+        first = await versions()
+        assert len(first) == 3
+        await mirror.upload(source, prefix)
+        assert await versions() == first
+        (source / "note.txt").write_text("second!")
+        await mirror.upload(source, prefix)
+        second = await versions()
+        assert second.keys() == first.keys()
+        assert second[prefix + "note.txt"] != first[prefix + "note.txt"]
+        assert second[prefix + "docs/guide.txt"] == first[prefix + "docs/guide.txt"]
+        assert second[prefix + "large.bin"] == first[prefix + "large.bin"]
+        restored = tmp_path / "incremental-restored"
+        await manager.restore_workspace_checkpoint(checkpoint, restored)
+        assert (restored / "note.txt").read_text() == "second!"
+        assert (restored / "large.bin").read_bytes() == b"x" * (9 * 1024 * 1024)
+    finally:
+        await manager.delete_workspace_checkpoint(checkpoint)
+
+
+@pytest.mark.e2e
 async def test_encoded_keys_and_compressed_representation_survive_all_read_paths():
     import asyncio
     import gzip
