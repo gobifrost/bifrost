@@ -131,8 +131,8 @@ dependencies = [
     # =========================================================================
     # Exact pins are intentional: the Harness API is still pre-1.0 and is the
     # execution boundary for every Bifrost agent surface.
-    "pydantic-ai-slim[openai,anthropic,google,retries]==2.66.0",
-    "pydantic-ai-harness==0.66.0",
+    "pydantic-ai-slim[openai,anthropic,google,retries]==2.67.0",
+    "pydantic-ai-harness==0.67.0",
     "pydantic-monty==1.5.0",  # Local language sandbox for Automatic CodeMode
 
     # =========================================================================
