@@ -20,6 +20,30 @@ const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0
 const json = (status, body) =>
     new Response(JSON.stringify(body), { status, headers: { "Content-Type": "application/json" } });
 
+// The environment a launched incarnation runs with. Pure, so the identity
+// contract is testable without deploying a container.
+export function containerStartEnv(base, row, workerId) {
+    return {
+        ...base,
+        BIFROST_WORKER_FORM: "external",
+        BIFROST_WORKER_INCARNATION_ID: row.worker_id,
+        BIFROST_WORKER_RESOURCE_UID: row.resource_uid,
+        BIFROST_POOL_WORKER_EXECUTION_LANE: "normal",
+        // Container runtimes are not required to export a hostname, and
+        // Cloudflare does not. The launcher identity refuses to start without
+        // one, and Docker and Kubernetes setting it is a convention rather than
+        // a guarantee, so the provider supplies it.
+        HOSTNAME: `cf-${workerId}`,
+    };
+}
+
+// Cloudflare stops a container shortly after the Durable Object that started it
+// goes idle unless an inactivity timeout holds it open. Cover the worker's
+// lifetime, capped at the platform's six-hour maximum.
+export function inactivityTimeoutMs(maxLifetimeSeconds) {
+    return Math.min(maxLifetimeSeconds + 600, 6 * 3600) * 1000;
+}
+
 function readSettings(env) {
     const text = (name, pattern) => {
         const value = env[name];
@@ -168,9 +192,7 @@ export class WorkerContainer {
     // six-hour maximum).
     async holdOpen() {
         const lifetime = readSettings(this.env).maxLifetimeSeconds;
-        await this.container.setInactivityTimeout(
-            Math.min(lifetime + 600, 6 * 3600) * 1000,
-        );
+        await this.container.setInactivityTimeout(inactivityTimeoutMs(lifetime));
     }
 
     async fetch(request) {
@@ -255,19 +277,7 @@ export class WorkerLedger {
                 const response = await stub().fetch("https://do/start", {
                     method: "POST",
                     body: JSON.stringify({
-                        env: {
-                            ...containerEnv,
-                            BIFROST_WORKER_FORM: "external",
-                            BIFROST_WORKER_INCARNATION_ID: row.worker_id,
-                            BIFROST_WORKER_RESOURCE_UID: row.resource_uid,
-                            BIFROST_POOL_WORKER_EXECUTION_LANE: "normal",
-                            // Container runtimes are not required to export a
-                            // hostname, and Cloudflare does not. The launcher
-                            // identity refuses to start without one, and Docker
-                            // and Kubernetes setting it is a convention, not a
-                            // guarantee, so the provider supplies it.
-                            HOSTNAME: `cf-${workerId}`,
-                        },
+                        env: containerStartEnv(containerEnv, row, workerId),
                         entrypoint,
                     }),
                 });

@@ -6,6 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createEngine, ProtocolError, STATE } from "./capacity-core.mjs";
+import { containerStartEnv, inactivityTimeoutMs } from "./capacity.mjs";
 
 const PROFILE = {
     scope: "test-scope",
@@ -214,4 +215,32 @@ test("foreign scope is invisible", async () => {
     const row = ctx.rows.get(WORKER);
     row.scope = "other-scope";
     assert.equal(await ctx.engine.get(WORKER), null);
+});
+
+// The container-facing seams below are not exercised by the engine tests: they
+// only matter once a real container is launched. Both defects they guard
+// against were found by live acceptance, not by the protocol suite.
+
+test("launched container env carries the launcher identity and a hostname", () => {
+    const env = containerStartEnv(
+        { BIFROST_API_URL: "https://api.example.invalid" },
+        { worker_id: WORKER, resource_uid: "uid-1" },
+        WORKER,
+    );
+    assert.equal(env.BIFROST_API_URL, "https://api.example.invalid");
+    assert.equal(env.BIFROST_WORKER_FORM, "external");
+    assert.equal(env.BIFROST_WORKER_INCARNATION_ID, WORKER);
+    assert.equal(env.BIFROST_WORKER_RESOURCE_UID, "uid-1");
+    assert.equal(env.BIFROST_POOL_WORKER_EXECUTION_LANE, "normal");
+    // An empty HOSTNAME makes the launcher identity refuse to start.
+    assert.equal(env.HOSTNAME, `cf-${WORKER}`);
+});
+
+test("inactivity timeout covers the worker lifetime within the platform cap", () => {
+    // A container is stopped when its Durable Object goes idle unless this
+    // timeout holds it open, so it must exceed the worker's own lifetime.
+    assert.equal(inactivityTimeoutMs(60), 660_000);
+    assert.equal(inactivityTimeoutMs(7200), 7_800_000);
+    assert.equal(inactivityTimeoutMs(6 * 3600), 21_600_000);
+    assert.equal(inactivityTimeoutMs(604800), 21_600_000);
 });
