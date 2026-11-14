@@ -31,6 +31,7 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 | `WORKER_VERSION` | Must equal the image's embedded build version. |
 | `WORKER_IMAGE` | Must equal the digest in the `[[containers]]` block. |
 | `MEMORY_LIMIT_BYTES` | Fixed worker memory; the API's scaling policy must match. |
+| `instance_type` (in `[[containers]]`) | Real memory and disk for each container; must be at least `MEMORY_LIMIT_BYTES` and large enough for the unpacked image. |
 | `MAX_WORKERS` | Ceiling this provider will run. |
 | `MAX_LIFETIME_SECONDS` | Upper bound the API may request. |
 | `API_ORIGIN` | Canonical API origin, HTTPS only. |
@@ -39,6 +40,24 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 `WORKER_VERSION` and `WORKER_IMAGE` disagreeing with the image is the most
 common misconfiguration; it produces enrollments that are accepted and then
 fenced out.
+
+The second most common is a container smaller than the workload. The Containers
+application's size comes from `instance_type` in the `[[containers]]` block, not
+from `MEMORY_LIMIT_BYTES`: omit it and Cloudflare creates the application as
+`lite` (256 MiB memory, 2 GB disk). A worker image is larger than that disk
+unpacked, so every instance fails immediately with `ImagePullError` and never
+reaches a location. Instances that never schedule, with `LOCATION` blank in
+`wrangler containers instances`, are the symptom. Check the application record
+before reading instance logs:
+
+```bash
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/containers/applications/$APP_ID" \
+  | jq '.result.configuration, .result.health'
+```
+
+`instance_type` is fixed when the application is created; changing it later
+requires replacing the application.
 
 ## Verify before deploying
 

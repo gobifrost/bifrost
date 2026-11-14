@@ -36,6 +36,12 @@ class_name = "WorkerContainer"
 # Pin by digest. The API fences any reservation whose reported build differs
 # from WORKER_VERSION, so a floating tag can strand enrollments.
 image = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
+# Omitting this selects the `lite` instance (256 MiB memory, 2 GB disk), which
+# cannot unpack a worker image and is 16x below the memory advertised in
+# MEMORY_LIMIT_BYTES. The app is therefore created with a size that cannot run
+# the workload, and every instance fails with ImagePullError. It must be at
+# least as large as MEMORY_LIMIT_BYTES, with disk space for the unpacked image.
+instance_type = "standard-1"
 max_instances = 4
 
 [[migrations]]
