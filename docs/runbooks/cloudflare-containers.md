@@ -35,11 +35,14 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 | `MAX_WORKERS` | Ceiling this provider will run. |
 | `MAX_LIFETIME_SECONDS` | Upper bound the API may request. |
 | `API_ORIGIN` | Canonical API origin, HTTPS only. |
-| `WORKER_CONTAINER_ENV` | JSON object of the worker container's environment. |
+| `WORKER_CONTAINER_ENV` | JSON object of the worker container's environment. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. |
 
 `WORKER_VERSION` and `WORKER_IMAGE` disagreeing with the image is the most
 common misconfiguration; it produces enrollments that are accepted and then
-fenced out.
+fenced out. A container that reaches the API and is closed with
+`1008 policy violation` during `hello` is this fence: check that
+`WORKER_CONTAINER_ENV` does not carry a stale `BIFROST_VERSION` shadowing the
+image's own build.
 
 The second most common is a container smaller than the workload. The Containers
 application's size comes from `instance_type` in the `[[containers]]` block, not
