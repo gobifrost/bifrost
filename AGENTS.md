@@ -17,6 +17,11 @@ This repository keeps repo-maintenance skills under `.claude/skills/`. Codex age
 
 Do not treat `.claude/skills/bifrost-build` or `.claude/skills/bifrost-setup` as repo-local Codex skills here. Those are package/plugin-managed global Bifrost skills.
 
+## Contribution Eligibility
+
+Before creating or proposing an issue, PR, or public reply, read CONTRIBUTING.md's Contribution Scope and, for security or hardening, SECURITY.md. Record the eligible basis and concrete evidence: actual use, an explicit maintainer request, or a verified security finding. Keep unsolicited non-security audit discoveries private even if reproducible or accompanied by a patch. Obtain deliberate human review before publication. Existing scoped instructions and grants still govern authorized work; eligibility is not implementation or merge authority.
+
+
 ## Worktree rule (CRITICAL)
 
 All changes — features, fixes, refactors, doc edits — must be made in a git worktree, never directly on `main` (or any shared branch) in the primary checkout. If a task is about to modify files and the current working directory is the primary `bifrost` checkout, stop and create or enter a worktree first. Use `EnterWorktree` (or `git worktree add .claude/worktrees/<name>`). The only edits permitted on `main` are ones the user explicitly requests be made there.

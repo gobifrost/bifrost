@@ -16,3 +16,8 @@ canonical entry or disposition.
 ## Summary
 
 <!-- Describe the behavior and validation evidence. -->
+
+## Contribution Basis And Tracking
+
+<!-- State the actual use, maintainer invitation, or verified security-hardening basis. A completed patch alone does not establish eligibility. See CONTRIBUTING.md. -->
+<!-- Link the issue this completes with Fixes #N. For partial work, use Part of #N and identify the completed scope. Record real prerequisites in native issue dependencies; only call PRs a stack when their branch/stack relationships actually exist. -->
