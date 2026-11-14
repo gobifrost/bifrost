@@ -1,16 +1,14 @@
 {
   "key": "pr:1390",
-  "classification": "highlight",
-  "entry_ids": [
-    "0550cb11-ee5a-4a0c-8f33-bba964c22ecc"
-  ],
-  "summary": "Edit Markdown directly in the shared text editor.",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Jack explicitly omitted this editor improvement from Product Updates because it is not significant enough for an announcement.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
-      "https://github.com/gobifrost/bifrost/issues/1344",
       "https://github.com/gobifrost/bifrost/pull/1390",
-      "Exact Product Update prose submitted to Jack for approval in the implementation thread; approval remains pending. Copy reviewed with General Writing and Humanizer: concrete capability, scoped preservation behavior, verified /integrations route. Reported by scubes13 on Discord."
+      "https://github.com/gobifrost/bifrost/issues/1344",
+      "Jack: \"No product update. Not important enough.\" Explicit instruction in the implementation thread on 2026-11-13."
     ]
   }
 }
