@@ -588,6 +588,9 @@ async def rerun_agent_run(
         sync=False,
         lineage=await principal_lineage(db, user),
         run_as_user_id=actor.run_as_user_id,
+        permission_workflow_id=(
+            None if user.runtime_authority is None else user.runtime_authority.workflow_id
+        ),
     )
 
     return AgentRunRerunResponse(run_id=UUID(new_run_id))
@@ -973,6 +976,9 @@ async def execute_agent_run(
         sync=True,
         lineage=await principal_lineage(db, user),
         run_as_user_id=actor.run_as_user_id,
+        permission_workflow_id=(
+            None if user.runtime_authority is None else user.runtime_authority.workflow_id
+        ),
     )
 
     # Wait for the result
