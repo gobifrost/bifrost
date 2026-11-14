@@ -436,6 +436,7 @@ async def test_launch_input_naming_another_user_records_no_run_as(db_session):
         sync=False,
         lineage=person_lineage(principal.user_id),
         run_as_user_id=None,
+        permission_workflow_id=None,
     )
     expected_response = AgentRunEnqueueResponse(run_id=run_id, run_as_user_id=None)
     assert result == expected_response

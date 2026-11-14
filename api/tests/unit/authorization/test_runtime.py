@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, event, inspect
+from sqlalchemy import delete, event, inspect, update
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -1085,9 +1085,11 @@ async def test_workflow_agent_refuses_deleted_permission_source(db_session, work
 
 @pytest.mark.asyncio
 async def test_workflow_agent_refuses_inactive_source_solution(db_session, workflow_agent):
+    from src.services.solutions.guard import install_solution_write_guard
+    install_solution_write_guard()
     org, _, workflow, _, _, run = workflow_agent
     solution = await _solution(db_session, org, "inactive")
-    workflow.solution_id = solution.id
-    await db_session.flush()
+    # Deployment uses Core writes; exercise the production guard as well.
+    await db_session.execute(update(Workflow).where(Workflow.id == workflow.id).values(solution_id=solution.id))
     with pytest.raises(RuntimeIdentityError, match="Solution is inactive"):
         await load_runtime_authority(db_session, "agent_run", run.id)

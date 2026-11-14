@@ -188,11 +188,21 @@ async def _agent_run(world: World) -> RuntimeSubject:
     return RuntimeSubject("agent_run", run.id)
 
 
+async def _workflow_agent_run(world: World) -> RuntimeSubject:
+    organization = await world.organization()
+    user = await world.person(organization)
+    workflow = await world.workflow(organization, permission_mode="restricted", grants=("agents.execute",))
+    run = await world.agent_run(run_user=user, actor=user, organization=organization,
+                                permission_workflow_id=workflow.id)
+    return RuntimeSubject("agent_run", run.id)
+
+
 _SCENARIOS: tuple[Callable[[World], Awaitable[RuntimeSubject]], ...] = (
     _full_workflow,
     _solution_workflow,
     _service,
     _agent_run,
+    _workflow_agent_run,
 )
 
 
