@@ -1,0 +1,12 @@
+{
+  "key": "pr:1402",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Browser-test runner image maintenance; no customer-facing behavior or upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1402"
+    ]
+  }
+}
