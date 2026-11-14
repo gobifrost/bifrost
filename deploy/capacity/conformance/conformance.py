@@ -51,6 +51,10 @@ DEFAULT_USER_AGENT = "bifrost-capacity-conformance/1.0"
 PASSED, FAILED, SKIPPED = "PASS", "FAIL", "SKIP"
 
 
+class HookUnsupported(RuntimeError):
+    """The hook cannot perform this operation for this provider."""
+
+
 class Hook:
     def __init__(self, command: str | None) -> None:
         self.command = command
@@ -60,7 +64,7 @@ class Hook:
 
     def call(self, op: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.command:
-            raise RuntimeError("no hook configured")
+            raise HookUnsupported("no hook configured")
         # A hook may be a bare executable or a command line (e.g. "python hook.py").
         if " " in self.command:
             proc = subprocess.run(
@@ -80,7 +84,13 @@ class Hook:
                 timeout=180,
             )
         if proc.returncode != 0:
-            raise RuntimeError(f"hook {op} failed: {proc.stderr.strip()[:200]}")
+            message = (proc.stderr or "").strip()[:200]
+            # Exit 3 is the hook's documented "cannot do this here" signal. A
+            # provider that cannot support an operation must SKIP the case, not
+            # fail it, and must never let it count as a pass.
+            if proc.returncode == 3:
+                raise HookUnsupported(message or f"hook does not support {op}")
+            raise RuntimeError(f"hook {op} failed: {message}")
         try:
             return json.loads(proc.stdout or "{}")
         except ValueError:
@@ -197,8 +207,18 @@ class Suite:
     def launches(self, worker_id: str, uid: str) -> list[str]:
         if not self.hook.available():
             raise SkipCase("no hook: physical launches cannot be observed")
-        obs = self.hook.call("observe", {"worker_id": worker_id, "resource_uid": uid})
+        try:
+            obs = self.hook.call("observe", {"worker_id": worker_id, "resource_uid": uid})
+        except HookUnsupported as exc:
+            raise SkipCase(str(exc)) from None
         return list(obs.get("launches") or [])
+
+    def hook_op(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run a hook operation, converting 'unsupported here' into a skip."""
+        try:
+            return self.hook.call(op, payload)
+        except HookUnsupported as exc:
+            raise SkipCase(str(exc)) from None
 
     def wait_for_state(self, worker_id: str, wanted: set[str], timeout: int = 120) -> str:
         deadline = time.time() + timeout
@@ -376,7 +396,7 @@ def main() -> int:
             status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
             assert status == 200, f"status {status}"
             uid = doc["resource_uid"]
-            suite.hook.call("restart-provider", {"scope": args.scope})
+            suite.hook_op("restart-provider", {"scope": args.scope})
             time.sleep(5)
             status, after = suite.c.get(restart_worker)
             assert status == 200, f"worker lost across restart ({status})"
@@ -389,7 +409,7 @@ def main() -> int:
             assert status == 200, f"status {status}"
             uid = doc["resource_uid"]
             assert suite.c.delete(restart_worker, uid)[0] == 200
-            suite.hook.call("restart-provider", {"scope": args.scope})
+            suite.hook_op("restart-provider", {"scope": args.scope})
             time.sleep(5)
             status, after = suite.c.get(restart_worker)
             assert status == 200, f"tombstone lost across restart ({status})"
@@ -406,7 +426,7 @@ def main() -> int:
             before = suite.launches(wid, uid)
             if not before:
                 raise SkipCase("hook reported no launch to stop")
-            suite.hook.call("stop-process", {"worker_id": wid, "resource_uid": uid})
+            suite.hook_op("stop-process", {"worker_id": wid, "resource_uid": uid})
             state = suite.wait_for_state(wid, {"stopped"}, timeout=180)
             assert state == "stopped", f"expected stopped, saw {state}"
             status, _doc = suite.c.start(wid, uid)
