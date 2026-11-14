@@ -1,0 +1,13 @@
+{
+  "key": "pr:1398",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Retain workflow print output in execution logs and stop publishing a stale failure when the terminal write is refused.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1398"
+    ]
+  }
+}
