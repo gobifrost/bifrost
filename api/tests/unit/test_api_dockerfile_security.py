@@ -75,7 +75,7 @@ def test_native_build_compiler_is_pinned_and_build_only(filename):
         re.MULTILINE,
     )
     assert compiler is not None
-    assert tuple(map(int, compiler.groups())) >= (1, 88, 0)
+    assert tuple(map(int, compiler.groups())) >= (1, 96, 0)
     runtime = "\n".join(_runtime_stage_lines(path))
     assert "rust-toolchain" not in runtime
     assert "CARGO_HOME" not in runtime

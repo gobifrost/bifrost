@@ -28,6 +28,8 @@ dependencies = [
     # =========================================================================
     # Web Framework
     # =========================================================================
+    # Upstream CPython 3.16 build fix: python-cffi/cffi#287 (not yet released).
+    "cffi @ https://codeload.github.com/python-cffi/cffi/tar.gz/1285f4647de0d96dba770725af033255760035b9",
     "fastapi",
     "uvicorn[standard]",
     "python-multipart>=0.0.26",  # Form data handling (CVE fixes through 0.0.26)

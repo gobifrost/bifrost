@@ -5,8 +5,8 @@
 # Use the same supported Node runtime for every App build surface.
 FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node-toolchain
 
-# Native Python dependencies require Rust >=1.88; keep it build-only and pinned.
-FROM rust:1.90.0-slim-bookworm@sha256:64232e656c058f4468e8d024e990acff04f0fd5a5c0a88a574dc37773d7325c9 AS rust-toolchain
+# Native Python dependencies require Rust >=1.96; keep it build-only and pinned.
+FROM rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950 AS rust-toolchain
 
 # =============================================================================
 # Stage 1: Builder
