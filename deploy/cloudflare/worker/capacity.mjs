@@ -144,6 +144,11 @@ export class WorkerContainer {
     constructor(ctx, env) {
         this.ctx = ctx;
         this.env = env;
+        // The inactivity timeout does not survive a DO restart, so re-apply it
+        // when this instance starts next to an already-running container.
+        if (ctx.container?.running) {
+            void ctx.blockConcurrencyWhile(() => this.holdOpen());
+        }
     }
 
     get container() {
@@ -156,6 +161,18 @@ export class WorkerContainer {
         return container;
     }
 
+    // Without an inactivity timeout Cloudflare stops the container shortly
+    // after the Durable Object goes idle, which is immediately after the start
+    // request returns. A worker incarnation is meant to serve work for its
+    // whole lifetime, so hold it open for that long (capped at the platform's
+    // six-hour maximum).
+    async holdOpen() {
+        const lifetime = readSettings(this.env).maxLifetimeSeconds;
+        await this.container.setInactivityTimeout(
+            Math.min(lifetime + 600, 6 * 3600) * 1000,
+        );
+    }
+
     async fetch(request) {
         const url = new URL(request.url);
         try {
@@ -166,6 +183,7 @@ export class WorkerContainer {
                     entrypoint: body.entrypoint ?? [],
                     enableInternet: true,
                 });
+                await this.holdOpen();
                 // Log the exit so a container that dies during startup is
                 // observable. Without this the DO only ever knows `running`,
                 // and a crash before enrollment is indistinguishable from a

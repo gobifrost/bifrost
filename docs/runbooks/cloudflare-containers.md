@@ -105,6 +105,10 @@ launch identities.
 
 - One Durable Object per incarnation holds that worker's record: reservation,
   resource UID, lifecycle, intent marker, and tombstone.
+- A worker incarnation outlives the request that starts it. The container
+  Durable Object sets an inactivity timeout covering the worker's lifetime,
+  because Cloudflare otherwise stops a container as soon as the Durable Object
+  that started it goes idle, which is immediately after `start()` returns.
 - One registry Durable Object per scope accounts capacity atomically, so two
   concurrent prepares cannot exceed `MAX_WORKERS`.
 - Records are durable. A Worker restart, eviction, or redeploy does not lose
