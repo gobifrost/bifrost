@@ -402,3 +402,77 @@ test("a restarted container DO re-applies the hold without a full env", async ()
     await new Promise((resolve) => setImmediate(resolve));
     assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
 });
+
+// --- worker entry: capacity accounting on rejected prepares ---------------
+
+function entryEnv({ putStatus, getStatus, getBody }) {
+    const releases = [];
+    const header = {
+        Authorization: `Bearer ${ENV.CAPACITY_TOKEN}`,
+        "X-Bifrost-Capacity-Scope": ENV.SCOPE,
+    };
+    const env = {
+        ...ENV,
+        SCOPE_REGISTRY: {
+            getByName: () => ({
+                fetch: async (target) => {
+                    if (String(target).endsWith("/release")) releases.push("release");
+                    return new Response("{}", { status: 200 });
+                },
+            }),
+        },
+        WORKER_LEDGER: {
+            getByName: () => ({
+                fetch: async (request) => {
+                    if (request.method === "GET") {
+                        return new Response(getBody ? JSON.stringify(getBody) : "{}", {
+                            status: getStatus,
+                        });
+                    }
+                    return new Response("{}", { status: putStatus });
+                },
+            }),
+        },
+    };
+    return { env, releases, header };
+}
+
+async function prepareThroughEntry(env, header) {
+    const { default: worker } = await import("./capacity.mjs");
+    return worker.fetch(
+        new Request(`https://worker/v1/workers/${WORKER}`, {
+            method: "PUT",
+            headers: header,
+            body: "{}",
+        }),
+        env,
+    );
+}
+
+test("a rejected prepare releases the slot it reserved", async () => {
+    const { env, releases, header } = entryEnv({ putStatus: 400, getStatus: 404 });
+    await prepareThroughEntry(env, header);
+    assert.deepEqual(releases, ["release"]);
+});
+
+test("a prepare replayed after deletion releases the slot it reserved", async () => {
+    // The ledger answers 200 for a terminated record, so a 404-only check would
+    // leak one slot on every replay and permanently shrink MAX_WORKERS.
+    const { env, releases, header } = entryEnv({
+        putStatus: 409,
+        getStatus: 200,
+        getBody: { state: STATE.DELETED },
+    });
+    await prepareThroughEntry(env, header);
+    assert.deepEqual(releases, ["release"]);
+});
+
+test("a rejected prepare for a live record keeps that record's slot", async () => {
+    const { env, releases, header } = entryEnv({
+        putStatus: 409,
+        getStatus: 200,
+        getBody: { state: STATE.RUNNING },
+    });
+    await prepareThroughEntry(env, header);
+    assert.deepEqual(releases, []);
+});

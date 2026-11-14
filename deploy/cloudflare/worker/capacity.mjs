@@ -444,11 +444,12 @@ export default {
 
         if (request.method === "PUT" && !response.ok) {
             // A rejected prepare must not keep the slot it reserved, or a
-            // version fence or validation failure permanently shrinks capacity.
-            // Release only when the ledger holds no record: a retry of an
-            // existing reservation is not a new allocation.
+            // version fence, validation failure, or replay after a delete
+            // permanently shrinks capacity. A live record still owns its slot;
+            // an absent or terminated one cannot.
             const existing = await ledger.fetch(new Request(url, { method: "GET" }));
-            if (existing.status === 404) {
+            const record = existing.ok ? await existing.json() : null;
+            if (existing.status === 404 || record?.state === STATE.DELETED) {
                 await registry.fetch("https://do/release", {
                     method: "POST",
                     body: JSON.stringify({ worker_id: workerId }),
