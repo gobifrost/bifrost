@@ -14,6 +14,7 @@ import {
 	PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY,
 } from "@/services/auth";
 import { supportsPasskeys } from "@/services/passkeys";
+import { toSameOriginPath } from "@/lib/same-origin-path";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -105,33 +106,14 @@ export function Login() {
 		searchParams.get("returnTo") || searchParams.get("return_to");
 	const from = returnTo || (location.state as { from?: string })?.from || "/";
 
-	// MCP OAuth returns an absolute URL in return_to; react-router's navigate()
-	// treats those as relative paths and produces nonsense like
-	// /login/https:/example.com/mcp/callback. For same-origin absolute URLs
-	// we route via SPA navigation so components like MCPCallback actually
-	// mount (and can issue the Accept: application/json XHR that keeps us on
-	// the success screen instead of following the server's 302).
-	//
-	// Cross-origin URLs are rejected and we fall back to "/" — never honor a
-	// foreign origin in `from`, since that's an open-redirect vector.
+	// `from` can be an absolute URL (MCP OAuth's return_to). react-router's
+	// navigate() treats those as relative paths and produces nonsense like
+	// /login/https:/example.com/mcp/callback, so normalize to a same-origin
+	// path first so the /connect-app SPA route can resume MCP consent.
+	// Cross-origin targets fall back to "/" — never
+	// honor a foreign origin, it's an open-redirect vector.
 	const redirectToFrom = useCallback(() => {
-		if (from.startsWith("http://") || from.startsWith("https://")) {
-			try {
-				const url = new URL(from);
-				if (url.origin === window.location.origin) {
-					navigate(url.pathname + url.search + url.hash, {
-						replace: true,
-					});
-					return;
-				}
-			} catch {
-				// Malformed URL — fall through to safe default.
-			}
-			// Cross-origin or unparseable absolute URL — refuse to redirect there.
-			navigate("/", { replace: true });
-		} else {
-			navigate(from, { replace: true });
-		}
+		navigate(toSameOriginPath(from), { replace: true });
 	}, [from, navigate]);
 
 	// Passkey login handler (defined early for use in auto-trigger effect)
@@ -172,7 +154,10 @@ export function Login() {
 			try {
 				// Store redirect info for callback
 				// Note: PKCE (code_verifier) is now handled server-side
-				sessionStorage.setItem("oauth_redirect_from", from);
+				sessionStorage.setItem(
+					"oauth_redirect_from",
+					toSameOriginPath(from),
+				);
 
 				// Build callback URL
 				const callbackUrl = `${window.location.origin}/auth/callback/${provider}`;

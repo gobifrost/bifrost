@@ -11,6 +11,7 @@ import { useEffect, useState, useRef } from "react";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { useAuth } from "@/contexts/AuthContext";
 import { hashOAuthState } from "@/services/auth";
+import { toSameOriginPath } from "@/lib/same-origin-path";
 import { AlertCircle } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -53,8 +54,11 @@ export function AuthCallback() {
 			// Get stored state digest
 			// Note: code_verifier is now handled server-side (stored in Redis when init is called)
 			const storedState = sessionStorage.getItem("oauth_state");
-			const redirectFrom =
-				sessionStorage.getItem("oauth_redirect_from") || "/";
+			// Normalize to a same-origin path: an absolute URL here would be
+			// resolved by navigate() relative to /auth/callback/<provider>.
+			const redirectFrom = toSameOriginPath(
+				sessionStorage.getItem("oauth_redirect_from"),
+			);
 
 			// Clear stored OAuth data
 			sessionStorage.removeItem("oauth_state");

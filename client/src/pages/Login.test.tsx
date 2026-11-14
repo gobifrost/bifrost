@@ -93,6 +93,35 @@ describe("Login preferred SSO redirect", () => {
 		expect(loginWithPasskey).not.toHaveBeenCalled();
 	});
 
+	it("stores a same-origin path for an absolute MCP return_to", async () => {
+		const returnTo = encodeURIComponent(
+			`${window.location.origin}/mcp/callback?internal_state=abc`,
+		);
+		renderWithProviders(<Login />, {
+			initialEntries: [`/login?return_to=${returnTo}`],
+		});
+
+		await waitFor(() => {
+			expect(initOAuth).toHaveBeenCalled();
+		});
+		expect(sessionStorage.getItem("oauth_redirect_from")).toBe(
+			"/mcp/callback?internal_state=abc",
+		);
+	});
+
+	it("stores / for a cross-origin return_to", async () => {
+		renderWithProviders(<Login />, {
+			initialEntries: [
+				"/login?return_to=https%3A%2F%2Fevil.example.com%2Fmcp%2Fcallback",
+			],
+		});
+
+		await waitFor(() => {
+			expect(initOAuth).toHaveBeenCalled();
+		});
+		expect(sessionStorage.getItem("oauth_redirect_from")).toBe("/");
+	});
+
 	it("shows the full login screen after the preferred attempt", async () => {
 		sessionStorage.setItem(PREFERRED_SSO_REDIRECT_ATTEMPTED_KEY, "true");
 
