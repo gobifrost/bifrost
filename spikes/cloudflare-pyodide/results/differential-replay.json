@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-11-14T01:18:26.477Z",
-  "run_id": "mwfpvovh",
+  "started_at": "2026-11-14T03:45:16.895Z",
+  "run_id": "mwfv4j1b",
   "cases": [
     {
       "name": "imports-helper",
@@ -120,7 +120,7 @@
         "error": null,
         "logs": [
           {
-            "timestamp": "2026-11-14T01:18:53.339000+00:00",
+            "timestamp": "2026-11-14T03:45:44.150000+00:00",
             "level": "info",
             "message": "differential-log-marker",
             "source": "workflow"
@@ -136,8 +136,8 @@
         "error": null,
         "logs": [
           {
-            "id": 155,
-            "timestamp": "2026-11-14T01:18:53.753469+00:00",
+            "id": 186,
+            "timestamp": "2026-11-14T03:45:44.500268+00:00",
             "level": "INFO",
             "message": "differential-log-marker",
             "data": {},
@@ -148,8 +148,50 @@
       "same_result": true,
       "same_status": true,
       "same_logs": true
+    },
+    {
+      "name": "print-marker",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "timestamp": "2026-11-14T03:45:50.361999+00:00",
+            "level": "info",
+            "message": "differential-print-marker",
+            "source": "workflow"
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "id": 187,
+            "timestamp": "2026-11-14T03:45:50.650929+00:00",
+            "level": "INFO",
+            "message": "differential-print-marker",
+            "data": {},
+            "sequence": 0
+          }
+        ]
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true
     }
   ],
-  "finished_at": "2026-11-14T01:18:55.817Z",
+  "finished_at": "2026-11-14T03:45:52.712Z",
   "failures": 0
 }

@@ -82,6 +82,20 @@ const CASES = [
     },
     required: ['workflows/case_logs.py'],
   },
+  {
+    // Print case: stream capture (PR-3) must retain unstructured stdout through
+    // the engine's log path. Fails on an engine without the capture context.
+    name: 'print-marker',
+    sdk: true,
+    logs: true,
+    logMarker: 'differential-print-marker',
+    entry: 'workflows/case_print.py',
+    function: 'main',
+    files: {
+      'workflows/case_print.py': 'from bifrost import workflow\n\n@workflow(name="__FN__")\nasync def __FN__():\n    print("differential-print-marker")\n    return {"ok": True}\n',
+    },
+    required: ['workflows/case_print.py'],
+  },
 ];
 
 // Key order is not meaningful across the two backends.
@@ -137,6 +151,7 @@ async function runCloudflareEngine(c, manifest, runId) {
     name: c.name.replaceAll('-', '_'),
     function_name: c.function,
     file_path: c.entry,
+    content_hash: manifest[c.entry],
     engine_token: token,
     transient: true,
   };
@@ -233,7 +248,7 @@ for (const rawCase of CASES) {
   const cloudFailed = c.sdk ? cloud.status !== 'Success' : (cloud.httpStatus >= 400 || cloud.phase !== null);
   const linuxFailed = linux.status !== 'Success';
   const sameStatus = cloudFailed === linuxFailed;
-  const marker = 'differential-log-marker';
+  const marker = c.logMarker ?? 'differential-log-marker';
   const sameLogs = !c.logs ||
     (JSON.stringify(cloud.logs ?? []).includes(marker) && JSON.stringify(linux.logs ?? []).includes(marker));
   const ok = c.expectFailure ? sameStatus : (sameResult && sameStatus && sameLogs);

@@ -180,13 +180,13 @@ export default {
         // the Durable Object and is deleted after the attempt.
         const handle = `run_${crypto.randomUUID()}`;
         const broker = env.TOKENS.get(env.TOKENS.idFromName(handle));
-        await broker.fetch(new Request('https://token.invalid/', {
-          method: 'PUT',
-          body: JSON.stringify({token: body.context.engine_token,
-            expires: Date.now() + 10 * 60 * 1000}),
-        }));
         let response;
         try {
+          await broker.fetch(new Request('https://token.invalid/', {
+            method: 'PUT',
+            body: JSON.stringify({token: body.context.engine_token,
+              expires: Date.now() + 10 * 60 * 1000}),
+          }));
           response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
             method: 'POST',
             body: JSON.stringify({execution_id: body.execution_id,
@@ -194,8 +194,10 @@ export default {
               api_url: 'https://test-api.invalid',
               public_url: body.public_url ?? 'https://staging.invalid'}),
           }));
+        } catch (error) {
+          throw error;
         } finally {
-          await broker.fetch(new Request('https://token.invalid/', {method: 'DELETE'}));
+          await broker.fetch(new Request('https://token.invalid/', {method: 'DELETE'})).catch(() => {});
         }
         const output = await readBudgetedJson(response);
         return {output: output.upstream_result, apiCalls};
