@@ -54,6 +54,17 @@ def _form_redirect_url(
     return f"{path}{query_suffix}#embed_token={access_token}"
 
 
+def _app_redirect_url(
+    path: str, query_params: dict[str, str], access_token: str
+) -> str:
+    """Return the app URL with untrusted ticket context outside verified context."""
+
+    ticket_id = query_params.get("ticket_id")
+    ticket_query = urlencode({"ticket_id": ticket_id}) if ticket_id else ""
+    query_suffix = f"?{ticket_query}" if ticket_query else ""
+    return f"{path}{query_suffix}#embed_token={access_token}"
+
+
 def _frame_policy_response(frame_ancestors: str) -> Response:
     """Return the policy consumed by the SPA server for the final document."""
 
@@ -171,7 +182,7 @@ async def embed_app(
     # keeping the token client-side only. This avoids cross-origin cookie
     # issues when third-party sites embed Bifrost apps in iframes.
     redirect = RedirectResponse(
-        url=f"/apps/{app.slug}#embed_token={access_token}",
+        url=_app_redirect_url(f"/apps/{app.slug}", query_params, access_token),
         status_code=302,
     )
 
