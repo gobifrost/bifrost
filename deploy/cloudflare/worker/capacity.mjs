@@ -91,7 +91,10 @@ function parseContainerEnv(env) {
     if (typeof raw !== "string" || raw.trim() === "") return {};
     try {
         const parsed = JSON.parse(raw);
-        return parsed && typeof parsed === "object" ? parsed : {};
+        if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+            throw new Error("WORKER_CONTAINER_ENV must be a JSON object");
+        }
+        return parsed;
     } catch {
         throw new Error("WORKER_CONTAINER_ENV must be a JSON object");
     }
@@ -354,7 +357,6 @@ export class WorkerLedger {
         const url = new URL(request.url);
         const step = url.pathname.split("/")[4] ?? "";
         try {
-            if (url.pathname === "/capabilities") return json(200, profileFor(this.settings));
             if (request.method === "GET") {
                 const doc = await engine.get(workerId);
                 return doc ? json(200, doc) : json(404, { error: "unknown worker" });
