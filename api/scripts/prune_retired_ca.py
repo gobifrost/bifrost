@@ -1,9 +1,10 @@
-"""Disable retired distro roots without replacing administrator trust stores."""
+"""Remove retired image-shipped roots without replacing administrator trust stores."""
 
 from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+import re
 import ssl
 import subprocess
 
@@ -28,6 +29,25 @@ def disable_retired_roots(config: Path, certificates: Path) -> None:
     config.write_text("".join(lines))
 
 
+def prune_retired_bundle(bundle: Path) -> None:
+    """Keep pip's bundled trust anchors aligned with the image trust policy."""
+    def keep_certificate(match: re.Match[str]) -> str:
+        certificate = match.group(0)
+        digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificate)).hexdigest()
+        return "" if digest in RETIRED_ANCHORS else certificate
+
+    bundle.write_text(re.sub(
+        r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+        keep_certificate,
+        bundle.read_text(),
+        flags=re.DOTALL,
+    ))
+
+
 if __name__ == "__main__":
     disable_retired_roots(Path("/etc/ca-certificates.conf"), Path("/usr/share/ca-certificates"))
     subprocess.run(["update-ca-certificates", "--fresh"], check=True)
+
+    from pip._vendor import certifi as pip_certifi
+
+    prune_retired_bundle(Path(pip_certifi.where()))

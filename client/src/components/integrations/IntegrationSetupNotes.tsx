@@ -203,7 +203,7 @@ function IntegrationSetupNotesEditor({
 					disabled={isSaving}
 					onClick={() => {
 						setSaveError(null);
-						void onSave(draft.trim() || null).catch(() => {
+						void onSave(draft.trim() ? draft : null).catch(() => {
 							setSaveError(
 								"Unable to save setup instructions. Your draft is retained; try again.",
 							);

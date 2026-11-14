@@ -1,2 +1,8 @@
 blank_issues_enabled: true
-contact_links: []
+contact_links:
+  - name: Ideas And Questions
+    url: https://github.com/gobifrost/bifrost/discussions
+    about: Gauge interest and discuss ideas before proposing implementation work.
+  - name: Private Security Report
+    url: https://github.com/gobifrost/bifrost/security/advisories/new
+    about: Report suspected vulnerabilities privately.

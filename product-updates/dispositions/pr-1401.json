@@ -1,0 +1,17 @@
+{
+  "key": "pr:1401",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1401",
+      "https://github.com/gobifrost/bifrost/blob/87f4869fd0d61bd95e56e638183bc4f846d8cabd/docs/product-updates-authoring.md",
+      "https://github.com/python-cffi/cffi/pull/287",
+      "https://github.com/pytest-dev/pytest-asyncio/pull/1593",
+      "https://github.com/gobifrost/bifrost/actions/runs/43566240307/job/132360608221",
+      "https://github.com/gobifrost/bifrost/blob/15775ece3f9707fe2ffd631a1be8418b44267b2b/api/tests/unit/core/test_python_trust_store.py"
+    ]
+  },
+  "reason": "Internal Python runtime compatibility maintenance, including retention of the existing certificate policy; no customer announcement."
+}

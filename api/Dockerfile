@@ -5,11 +5,14 @@
 # Use the same supported Node runtime for every App build surface.
 FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node-toolchain
 
+# Native Python dependencies require Rust >=1.96; keep it build-only and pinned.
+FROM rust:1.96.0-slim-bookworm@sha256:4732ca96fd086cb9be682050c3f0176288eebaac2b80aa2bcefccfaf198e1950 AS rust-toolchain
+
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
 # Python security patch: interpreter denylist and patched bundled pip.
-FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 AS builder
+FROM python:3.16.0a1-slim@sha256:df293ba3b89f458e1aad6051b62ff1c4fad7b3b52b8147ae9cc4b667f9cf2741 AS builder
 
 WORKDIR /app
 
@@ -17,7 +20,27 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    zlib1g-dev \
+    libjpeg-dev \
+    libtiff-dev \
+    libfreetype-dev \
+    liblcms2-dev \
+    libwebp-dev \
+    libopenjp2-7-dev \
+    libraqm-dev \
+    libavif-dev \
+    libxcb1-dev \
     && rm -rf /var/lib/apt/lists/*
+
+# Use the verified compiler instead of the older distro Rust packages.
+COPY --from=rust-toolchain /usr/local/cargo /opt/cargo
+COPY --from=rust-toolchain /usr/local/rustup /opt/rustup
+ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup
+ENV PATH="/opt/cargo/bin:${PATH}"
+RUN rustc --version && cargo --version
 
 # Copy dependency manifests and install.
 # We install from requirements.lock with --require-hashes so every transitive
@@ -31,8 +54,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (issue #1379).
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
-# flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# python:3.15.2-slim already supports --require-hashes (>= 8.0).
+# flags unpinned `pip install <pkg>` invocations. The bundled pip already
+# supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
@@ -40,7 +63,7 @@ RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 # Stage 2: Runtime
 # =============================================================================
 # Python security patch: interpreter denylist and patched bundled pip.
-FROM python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928
+FROM python:3.16.0a1-slim@sha256:df293ba3b89f458e1aad6051b62ff1c4fad7b3b52b8147ae9cc4b667f9cf2741
 
 WORKDIR /app
 ARG BIFROST_VERSION=unknown
@@ -48,6 +71,20 @@ ARG BIFROST_VERSION=unknown
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    libxml2 \
+    libxslt1.1 \
+    libffi8 \
+    libjpeg62-turbo \
+    libtiff6 \
+    libfreetype6 \
+    liblcms2-2 \
+    libwebp7 \
+    libwebpmux3 \
+    libwebpdemux2 \
+    libopenjp2-7 \
+    libraqm0 \
+    libavif16 \
+    libxcb1 \
     libcairo2 \
     curl \
     gosu \
@@ -68,7 +105,7 @@ COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
 RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.15/site-packages /usr/local/lib/python3.15/site-packages
+COPY --from=builder /usr/local/lib/python3.16/site-packages /usr/local/lib/python3.16/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
