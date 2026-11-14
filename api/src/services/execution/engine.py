@@ -458,6 +458,38 @@ def _scrub_outputs(
     )
 
 
+@contextmanager
+def _capture_execution_streams(
+    context: ExecutionContext, logs: list[dict[str, Any]], source: str,
+) -> Iterator[None]:
+    """Retain printed lines on success and failure through the existing log path.
+
+    Flush after restoring process streams, avoiding recursive capture of log
+    transport diagnostics. Credentials discovered during execution are scrubbed
+    before any printed message reaches the transport.
+    """
+    stdout, stderr = StringIO(), StringIO()
+    try:
+        with redirect_stdout(stdout), redirect_stderr(stderr):
+            yield
+    finally:
+        secrets = context._collect_secret_values()
+        for level, stream in (("info", stdout), ("error", stderr)):
+            for line in stream.getvalue().splitlines():
+                if not line:
+                    continue
+                message = _sanitize_runtime_log_message(line, secrets)
+                logs.append({'timestamp': datetime.now(timezone.utc).isoformat(),
+                             'level': level, 'message': message, 'source': source})
+                if context.execution_id:
+                    try:
+                        write_log(level=level.upper(), message=message)
+                    except Exception as error:
+                        # Telemetry failure must not change the workflow outcome
+                        # or expose transport exception text containing secrets.
+                        logger.warning("Failed to stream captured output (%s)", type(error).__name__)
+
+
 async def execute(request: ExecutionRequest) -> ExecutionResult:
     """
     Unified execution engine for all code execution.
@@ -557,10 +589,8 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     # while thread workers create new event loops via asyncio.run() per execution.
 
     # Set up stdout/stderr capture
-    # Python's logging writes to stderr by default, so we'll capture it naturally
+    # Python's logging writes to stderr by default, so it is captured naturally
     logger_output: list[dict[str, Any]] = []
-    stdout_capture = StringIO()
-    stderr_capture = StringIO()
     # For captured logging (scripts and workflows)
     captured_logs: list[str] = []
     captured_variables: dict[str, Any] = {}  # Initialize to empty dict
@@ -571,7 +601,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     # The SDK's get_client() finds these credentials automatically.
 
     try:
-        with redirect_stdout(stdout_capture), redirect_stderr(stderr_capture):
+        with _capture_execution_streams(context, logger_output, 'script' if is_script else 'workflow'):
             # The child has no Redis credentials. The authenticated worker SDK
             # transport derives this execution's workflow, current authority
             # partition, and TTL on the server.

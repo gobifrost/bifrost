@@ -1171,13 +1171,17 @@ class WorkflowExecutionConsumer:
             error_msg = str(e)
             error_type = type(e).__name__
 
-            await update_execution(
+            written = await update_execution(
                 execution_id=execution_id,
                 status=ExecutionStatus.FAILED,
                 error_message=error_msg,
                 error_type=error_type,
                 duration_ms=duration_ms,
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                self._drop_fenced_result(execution_id)
+                return
 
             await publish_execution_update(
                 execution_id,
