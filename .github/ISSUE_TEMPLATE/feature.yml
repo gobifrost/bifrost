@@ -3,6 +3,10 @@ description: A new capability or meaningful enhancement
 title: "[feature]: "
 labels: ["enhancement"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        Read our [Contribution Scope](https://github.com/gobifrost/bifrost/blob/main/CONTRIBUTING.md#contribution-scope) before filing. Describe actual use, a maintainer request, or a verified security-hardening basis. Use [private reporting](https://github.com/gobifrost/bifrost/security/advisories/new) for suspected vulnerabilities; keep interest checks in Discussions or Discord.
   - type: textarea
     id: problem
     attributes:
