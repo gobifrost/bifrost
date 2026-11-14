@@ -1,0 +1,13 @@
++test_cancelled_waiter_is_not_a_requested_execution_cancel (test_cooperative_execution.CooperativeTests.test_cancelled_waiter_is_not_a_requested_execution_cancel) ... ok
+test_cleanup_failure_is_preserved_after_requested_cancel (test_cooperative_execution.CooperativeTests.test_cleanup_failure_is_preserved_after_requested_cancel) ... ok
+test_main_task_cancellation_does_not_prove_spawned_task_stopped (test_cooperative_execution.CooperativeTests.test_main_task_cancellation_does_not_prove_spawned_task_stopped) ... ok
+test_matching_cancel_is_idempotent_and_awaits_coroutine_cleanup (test_cooperative_execution.CooperativeTests.test_matching_cancel_is_idempotent_and_awaits_coroutine_cleanup) ... ok
+test_normal_result_is_unchanged_and_late_cancel_refused (test_cooperative_execution.CooperativeTests.test_normal_result_is_unchanged_and_late_cancel_refused) ... ok
+test_second_execution_is_refused_before_calling_user_code (test_cooperative_execution.CooperativeTests.test_second_execution_is_refused_before_calling_user_code) ... ok
+test_suppressed_cancel_preserves_actual_success (test_cooperative_execution.CooperativeTests.test_suppressed_cancel_preserves_actual_success) ... ok
+test_user_raised_cancel_is_not_an_owner_cancellation_receipt (test_cooperative_execution.CooperativeTests.test_user_raised_cancel_is_not_an_owner_cancellation_receipt) ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 0.017s
+
+OK

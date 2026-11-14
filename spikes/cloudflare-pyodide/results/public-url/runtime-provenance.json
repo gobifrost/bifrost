@@ -1,0 +1,7 @@
+{
+  "base_runtime_sha256": "e1cca587e10cb755d49df0f2325c038a361a25f7031142a9e9e896a3c004bd39",
+  "runtime_sha256": "7576c38299adfb147952df5b44d6b3c32ee3b3519251f9a63b27bdc9fbe5c9d1",
+  "bootstrap_sha256": "341b2414a1167a2fb9850114619d5caf1882bc4a60ee73f699afb1d7c856c471",
+  "upstream_source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "note": "Only companion runtime_runner.py replaced; upstream engine, SDK and native packages retain the pinned base closure"
+}

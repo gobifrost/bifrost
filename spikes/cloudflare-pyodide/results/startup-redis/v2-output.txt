@@ -1,0 +1,2 @@
+Six real Redis startup cases passed; no signed/public startup claim
+Error unregistering worker: synthetic delete failure

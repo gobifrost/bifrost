@@ -1,0 +1,39 @@
+// Container-loopback observer. Synthetic only, bounded lifetime and request count.
+import {createServer} from 'node:http';
+const states=new Map();let requests=0;
+const server=createServer((request,response)=>{
+  const url=new URL(request.url,'http://127.0.0.1');const id=url.searchParams.get('id'),action=url.pathname.slice(1);
+  if(++requests>100||!id||!/^[a-f0-9-]{36}$/.test(id)||request.method!==(action==='snapshot'?'GET':'POST')) return response.writeHead(400).end();
+  if(action==='create') {
+    if(states.has(id)||states.size>=3) return response.writeHead(409).end();
+    states.set(id,{events:[],released:false,gates:[],waiting:[]});return response.end('ok');
+  }
+  const state=states.get(id);if(!state)return response.writeHead(404).end();
+  if(action==='snapshot')return response.end(JSON.stringify({events:state.events,released:state.released,pending_gates:state.gates.filter(gate=>!gate.destroyed).length}));
+  if(action==='wait-gate') {
+    if(state.events.includes('gate'))return response.end('ok');
+    state.waiting.push(response);return;
+  }
+  if(action==='release') {
+    if(!state.released)state.events.push('release');state.released=true;
+    for(const gate of state.gates.splice(0)) if(!gate.destroyed)gate.end('ok');
+    return response.end('ok');
+  }
+  if(!['started','gate','after','eof'].includes(action))return response.writeHead(404).end();
+  state.events.push(action);
+  if(action==='gate'&&!state.released) {
+    state.gates.push(response);
+    for(const waiter of state.waiting.splice(0))waiter.end('ok');
+    response.on('close',()=>{if(!state.released)state.events.push('gate_connection_closed');});
+    return;
+  }
+  response.end('ok');
+});
+await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(8820,'127.0.0.1',resolve);});
+try {
+  const response=await fetch('http://127.0.0.1:8799',{method:'POST',signal:AbortSignal.timeout(45000)});
+  const text=await response.text();if(text.length>1048576)throw new Error('Response bound');
+  console.log(JSON.stringify({status:response.status,body:JSON.parse(text)}));
+} finally {
+  server.closeAllConnections();await new Promise(resolve=>server.close(resolve));
+}

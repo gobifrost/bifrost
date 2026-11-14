@@ -1,0 +1,38 @@
+{
+  "delivery_request_id": "811c5b11-2e83-457a-9d42-aaf2557acbe5",
+  "acknowledged_native_run": 73,
+  "starting_head": "b4009a664f00ae3d40450960a70091ffdbf29622",
+  "publisher_repository": "cloudflare/workerd",
+  "publisher_tag": "v1.20261023.1",
+  "publisher_source_commit": "7caf6dee5bfe9af1b7710ddf66222900007af080",
+  "publisher_source_sha256": {
+    "build/python_metadata.bzl": "5e0467837a76e9c1cd2ddb63db4f4a00580132068cf3c2026965fd4825bed818",
+    "src/workerd/server/pyodide.c++": "3d0247df2d249678437cc8bfd47e71548434f484687c60d1b742f31448c39a93",
+    "src/pyodide/upload_bundles.py": "e95bf704c8071e4f4e3e338e15cb345b0ac0248450736998f7cefd1cf9519731"
+  },
+  "bundle_filename": "pyodide_314.0.6_2026-08-17_6.capnp.bin",
+  "bundle_sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+  "supported_consumer_paths": ["canonical anonymous GET", "integrity-verified local bundle cache"],
+  "publisher_release_assets": [
+    "workerd-linux-64.gz", "workerd-darwin-arm64.gz", "workerd-linux-arm64.gz",
+    "workerd-windows-64.gz", "workerd-darwin-64.gz"
+  ],
+  "matching_separate_release_asset_listed": false,
+  "matching_existing_task_cache_candidate_found": false,
+  "cache_search_exhaustive": false,
+  "artifact_acquired": false,
+  "previous_http_status": 403,
+  "denied_request_retried": false,
+  "alternate_download_identity_or_host_used": false,
+  "new_credentials_or_grants": false,
+  "cloud_invocations": 0,
+  "r2_requests": 0,
+  "new_guest_runtime_invocations": 0,
+  "laptop_containers_started": 0,
+  "guest": 128,
+  "guest_running_containers_observed": [],
+  "guest_abi_qualified": false,
+  "physical_termination_verified": false,
+  "execution_admission_qualified": false,
+  "next_requirement": "Publisher restores canonical anonymous access or an already lawful matching artifact is supplied through the existing single-file owner route."
+}

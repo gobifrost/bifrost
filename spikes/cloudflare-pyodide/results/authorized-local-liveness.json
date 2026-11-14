@@ -1,0 +1,137 @@
+{
+  "process_exit_code": 0,
+  "runtime": "local-workerd-real-upstream-worker",
+  "canonical_claim_verified": false,
+  "canonical_terminal_acceptance_verified": false,
+  "workspace_sha256": {
+    "workflows/pyodide_qualification_37ef3ff96f9f4fd9b07249610c442d50.py": "8625ff84142f8cbd5ea9b202dd68ea5f2aab1b245b147c989db61d89f4fe6e18",
+    "pyodide_helper_37ef3ff96f9f4fd9b07249610c442d50.py": "f5d401cdb5f25e5e1ec9aa049b18416e357b113cb5f2fd50010fa0e001f70af4"
+  },
+  "result": {
+    "result": {
+      "status": "Success",
+      "result": {
+        "value": 70,
+        "parent_secret_present": false,
+        "credential_redaction_probe": "[REDACTED]"
+      },
+      "duration_ms": 305,
+      "logs": [
+        {
+          "timestamp": "2026-10-31T18:01:54.480000+00:00",
+          "level": "warning",
+          "message": "authorized local Pyodide workflow",
+          "source": "workflow"
+        }
+      ],
+      "variables": {
+        "n": 7,
+        "value": 42,
+        "document": {
+          "id": "proof",
+          "table_id": "c2c6898d-7093-47e6-b889-d9e5d7faea76",
+          "data": {
+            "value": 70
+          },
+          "created_at": "2026-10-31T18:01:54.382133+00:00",
+          "updated_at": "2026-10-31T18:01:54.382133+00:00",
+          "created_by": "8515d7ca-dbc3-4483-ba0d-e3e2a14c187c",
+          "updated_by": "8515d7ca-dbc3-4483-ba0d-e3e2a14c187c"
+        }
+      },
+      "integration_calls": [],
+      "roi": {
+        "time_saved": 0,
+        "value": 0
+      },
+      "error_message": null,
+      "error_type": null,
+      "cached": false,
+      "cache_expires_at": null,
+      "execution_context": {
+        "user_id": "8515d7ca-dbc3-4483-ba0d-e3e2a14c187c",
+        "email": "token-e7dc5a07@example.test",
+        "name": "Person 3e23",
+        "scope": "763b99f4-43d8-47e0-9c7d-7b6b4c4c3970",
+        "organization": {
+          "id": "763b99f4-43d8-47e0-9c7d-7b6b4c4c3970",
+          "name": "Token World aae69952",
+          "is_active": true,
+          "is_provider": false
+        },
+        "is_platform_admin": false,
+        "is_function_key": false,
+        "execution_id": "553fd5cc-4f9e-4607-a0f2-545c6a292ea4",
+        "workflow_deadline": null,
+        "workflow_timeout_seconds": 30,
+        "workflow_name": "token_dc286601",
+        "is_agent": false,
+        "artifact_workspace_id": null,
+        "public_url": "https://test-api.invalid",
+        "parameters": {
+          "n": 7
+        },
+        "startup": null,
+        "form_inputs": {},
+        "embed": {},
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        }
+      },
+      "metrics": {
+        "peak_memory_bytes": null,
+        "peak_process_rss_bytes": null,
+        "cpu_user_seconds": null,
+        "cpu_system_seconds": null,
+        "cpu_total_seconds": null,
+        "code_hash": "8625ff84142f8cbd5ea9b202dd68ea5f2aab1b245b147c989db61d89f4fe6e18"
+      }
+    },
+    "api_calls": [
+      {
+        "method": "GET",
+        "path": "/api/sdk/modules/workflows/pyodide_qualification_37ef3ff96f9f4fd9b07249610c442d50.py",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/sdk/modules-resolve",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/sdk/config/get",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables/pyodide-qualification-37ef3ff96f9f4fd9b07249610c442d50/documents/upsert",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables",
+        "status": 201
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables/pyodide-qualification-37ef3ff96f9f4fd9b07249610c442d50/documents/upsert",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/sdk/runtime/logs",
+        "status": 200
+      }
+    ]
+  },
+  "independent_document_value": 70,
+  "cross_tenant_status": 403,
+  "credential_version": 2,
+  "live_then_fixture_terminal_status": [
+    200,
+    401
+  ],
+  "ended_run_status": 401
+}

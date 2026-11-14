@@ -1,0 +1,188 @@
+{
+  "scope": "credential-free approved HTTPS policy only",
+  "cloud_invocations": 0,
+  "engine_sdk_execution_verified": false,
+  "sdk_import_constructor_passed": false,
+  "packet_sha256": {
+    "ct128-sdk-probe.py": "543ec3254729e5b7b1419d236764f5c65f96c9c0911ae9f464c59e57b1aab53d",
+    "project/wrangler.config.ts": "f5b5a98a872023b96d441ecd24313bd0621a06fb128cefb35caf03db034b9845",
+    "project/package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "project/cloudflare.config.ts": "15c7a8c578210dfb556dc56a0febc27324160a57af50c8090c8aa737e7d32d1d",
+    "project/backend/approved-https-entry.mjs": "e5f7e83ca5156124115c3b83e8a1e2e26233660b5946a5d64afbcddbe688765f",
+    "project/backend/cooperative-code.mjs": "39e709f31efb4a5f978c187fd9762f079ef48210b668d0a88916e4ba10701d85",
+    "project/backend/approved-https-probe.mjs": "d394d8384cc3d634b38358232e367f23eebaacff3077c95259026b26e424eec4",
+    "project/backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "project/backend/approved-https-candidate.mjs": "4f543dc75ce55fe53f05f17245024060381f7c4bd172d49d0c2a3e74aabdd6d9"
+  },
+  "observation": {
+    "status": 200,
+    "body": {
+      "scope": "raw Pyodide cooperative HTTP cancellation",
+      "cases": [
+        {
+          "mode": "normal",
+          "entered": true,
+          "wrongRun": false,
+          "requested": false,
+          "lateCancel": false,
+          "status": 200,
+          "body": {
+            "outcome": {
+              "status": "Success",
+              "result": "normal",
+              "http_status": 200
+            },
+            "cleaned": [
+              true
+            ],
+            "active_slots": 0,
+            "python": "3.14.2 (main, Aug 25 2026, 05:50:55) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8",
+            "abi": "cpython-314-wasm32-emscripten"
+          },
+          "execution_id": "f256a6ed-a71d-4eed-95ea-de19c8dd96ec",
+          "held": {
+            "received": true,
+            "committed": false,
+            "effects": [],
+            "events": [
+              "hold_received"
+            ]
+          },
+          "before_release": {
+            "received": true,
+            "committed": true,
+            "effects": [],
+            "events": [
+              "hold_received",
+              "accepted_write_committed"
+            ]
+          },
+          "after_release": {
+            "received": true,
+            "committed": true,
+            "effects": [],
+            "events": [
+              "hold_received",
+              "accepted_write_committed"
+            ]
+          }
+        },
+        {
+          "mode": "cancel",
+          "entered": true,
+          "wrongRun": false,
+          "requested": true,
+          "lateCancel": false,
+          "status": 200,
+          "body": {
+            "outcome": {
+              "cooperative_task_cancelled": true,
+              "physical_stopped": false,
+              "execution_settled": false
+            },
+            "cleaned": [
+              true
+            ],
+            "active_slots": 0,
+            "python": "3.14.2 (main, Aug 25 2026, 05:50:55) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8",
+            "abi": "cpython-314-wasm32-emscripten"
+          },
+          "execution_id": "b80129ce-2c4d-4efe-828b-dca2648fe065",
+          "held": {
+            "received": true,
+            "committed": false,
+            "effects": [],
+            "events": [
+              "hold_received"
+            ]
+          },
+          "before_release": {
+            "received": true,
+            "committed": false,
+            "effects": [],
+            "events": [
+              "hold_received"
+            ]
+          },
+          "after_release": {
+            "received": true,
+            "committed": true,
+            "effects": [],
+            "events": [
+              "hold_received",
+              "connection_closed_before_commit",
+              "accepted_write_committed"
+            ]
+          }
+        },
+        {
+          "mode": "suppress",
+          "entered": true,
+          "wrongRun": false,
+          "requested": true,
+          "lateCancel": false,
+          "status": 200,
+          "body": {
+            "outcome": {
+              "status": "Success",
+              "result": "suppressed",
+              "after_status": 410
+            },
+            "cleaned": [
+              true
+            ],
+            "active_slots": 0,
+            "python": "3.14.2 (main, Aug 25 2026, 05:50:55) [Clang 23.0.0git (https:/github.com/llvm/llvm-project e5927fecf8a6ce89e1a4eac5b8",
+            "abi": "cpython-314-wasm32-emscripten"
+          },
+          "execution_id": "05da2506-0ebe-4d61-94b6-d9a1b09b56de",
+          "held": {
+            "received": true,
+            "committed": false,
+            "effects": [],
+            "events": [
+              "hold_received"
+            ]
+          },
+          "before_release": {
+            "received": true,
+            "committed": false,
+            "effects": [],
+            "events": [
+              "hold_received",
+              "connection_closed_before_commit"
+            ]
+          },
+          "after_release": {
+            "received": true,
+            "committed": true,
+            "effects": [],
+            "events": [
+              "hold_received",
+              "connection_closed_before_commit",
+              "accepted_write_committed"
+            ]
+          }
+        }
+      ],
+      "engine_sdk_execution_verified": false,
+      "physical_stop_verified": false
+    },
+    "cloud_invocations": 0
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 3154628,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T20:04:32.143225046Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": "false",
+  "elapsed_seconds": 14.374561301898211
+}

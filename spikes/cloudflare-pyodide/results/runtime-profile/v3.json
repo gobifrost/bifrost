@@ -1,0 +1,136 @@
+{
+  "api_source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "source_base": "f7a692552f71f5d9f89349fc07ba3933518bad60",
+  "cloud_invocations": 0,
+  "execution_admission_qualified": false,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/runtime-profile-v3:/qualification:ro",
+        "test-runner",
+        "python",
+        "/qualification/control-auth.py",
+        "--control-auth"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "src/worker/remote/protocol.py",
+        "src/worker/remote/host.py",
+        "tests/unit/worker/remote/test_runtime_profile.py"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-5dc8d94e",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "pyright",
+        "src/worker/remote/protocol.py",
+        "src/worker/remote/host.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "baseline_sha256": {
+    "api/src/worker/remote/protocol.py": "67615ad62ee4a8cef409e5e24b2c85f2c85497692715323938d08969df40fbb7",
+    "api/src/worker/remote/host.py": "6b98708e75488f166983c7f89615e0a5894e153fcd239b74193b0602053297d3"
+  },
+  "packet_sha256": {
+    "host.py": "6ce5e6be94f195d2690f4fbb929fc78d9d068be1f4f6e391a14a0c371b2e3078",
+    "test_runtime_profile.py": "873b1afbdeca9172af81fcebc2957f28b53d1f2de68f362ea0edb7bd74a29847",
+    "ct128-runtime-profile.py": "ada7f7410142ff9f6b9d1bcd532062a09bfecb1f5b9bc195d11d7ff63117ea7c",
+    "protocol.py": "f611752b4b3be85181f84a2a73f50c99702bae0ab434314dbbbe354b952858b5",
+    "control-auth.py": "ffc7292bec537be197342809380f0ec31264498debfe1992e14154b659f7c5fa"
+  },
+  "before": {
+    "cases": 1,
+    "failures": 1,
+    "errors": 0,
+    "skipped": 0
+  },
+  "after": {
+    "cases": 72,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "retained_native_tests_from": "runtime-profile-v1",
+  "live_control_source_changed": true,
+  "prior_receipt_sha256": "9abba8f585ca0e761f44590d1fec8fff9c092fdba9b5e9e17b409a970f4797ef",
+  "live_control": {
+    "runtime": "live-isolated-upstream-control-auth",
+    "control_auth_probe": true,
+    "cloud_invocations": 0,
+    "actual_worker_invocations": 0,
+    "physical_termination_verified": false,
+    "inventory_sent": false,
+    "execution_admission_qualified": false,
+    "unsupported_signed_profile_close": 1008,
+    "unsigned_profile_close": 1008,
+    "unsupported_profiles_preserved_owner_and_claims": true,
+    "invalid_signature_close": 1008,
+    "invalid_signature_did_not_acquire_owner": true,
+    "explicit_signed_linux_profile_accepted": true,
+    "signed_hello_generation": 1,
+    "nonce_replay_close": 1008,
+    "nonce_replay_did_not_advance_owner": true,
+    "signed_reconnect_generation": 2,
+    "superseded_socket_close": 1008,
+    "stale_generation_close": 1008,
+    "empty_handlers_preserved": true,
+    "remained_starting": true,
+    "claims_observed": 0,
+    "linux_templates_unstarted": true,
+    "signed_hello_material_retained": false,
+    "fixture_worker_cleanup_verified": true
+  },
+  "qualification_passed": true,
+  "running_after_cleanup": [],
+  "elapsed_seconds": 90.90736667439342
+}

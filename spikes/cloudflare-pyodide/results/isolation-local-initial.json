@@ -1,0 +1,128 @@
+{
+  "runtime": "local-workerd",
+  "results": [
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-A",
+            "own_canary": "synthetic-7492b4af-0004-4a03-a592-3ab1558f77b7"
+          }
+        },
+        "effects": []
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-B",
+            "own_canary": "synthetic-35c5de32-2a25-49db-bb95-f0aa1cac5662"
+          }
+        },
+        "effects": []
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-A",
+            "own_canary": "synthetic-1f644dd3-cc6c-4d0a-8063-09f9001174de"
+          }
+        },
+        "effects": []
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-B",
+            "own_canary": "synthetic-b55483af-f9d0-42ac-97cd-fe92fccf74b2"
+          }
+        },
+        "effects": []
+      }
+    },
+    {
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": []
+      }
+    },
+    {
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "error_type": "Error",
+          "error": "Error: diagnostic cancellation"
+        },
+        "effects": [
+          "before"
+        ]
+      }
+    },
+    {
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "outcome": {
+          "status": 200,
+          "body": {
+            "total": 1999999000000
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ]
+      }
+    }
+  ]
+}

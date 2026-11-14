@@ -1,0 +1,7 @@
+test_owner_change_during_callback_retains_unacknowledged_result (test_attempt_delivery.DeliveryTests.test_owner_change_during_callback_retains_unacknowledged_result) ... ok
+test_stalled_ack_does_not_block_other_dispatch_or_delivery (test_attempt_delivery.DeliveryTests.test_stalled_ack_does_not_block_other_dispatch_or_delivery) ... ok
+
+----------------------------------------------------------------------
+Ran 2 tests in 0.008s
+
+OK

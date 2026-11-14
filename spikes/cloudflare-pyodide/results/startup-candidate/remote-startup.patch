@@ -1,0 +1,125 @@
+diff --git a/api/src/worker/remote/remote_pool.py b/api/src/worker/remote/remote_pool.py
+index a1ec586ee..1c6f83146 100644
+--- a/api/src/worker/remote/remote_pool.py
++++ b/api/src/worker/remote/remote_pool.py
+@@ -102,6 +102,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
+             f"thin-remote:{os.environ.get('HOSTNAME', 'api')}"
+         )
+         super().__init__(worker_id=identity, **kwargs)
++        self._lifecycle_lock = asyncio.Lock()
+         self.transport = transport
+         self.runtime_profile = runtime_profile
+         self._routes: dict[str, ProcessHandle] = {}
+@@ -371,8 +372,14 @@ class ThinRemoteProcessPool(ProcessPoolManager):
+             )
+
+     async def start(self) -> None:
++        async with self._lifecycle_lock:
++            await self._start_once()
++
++    async def _start_once(self) -> None:
+         """Register the API owner and start the canonical Redis lifecycle."""
+         if self._started:
++            if self._shutdown:
++                raise RuntimeError("Remote startup rollback incomplete; stop must settle first")
+             return
+         if not self.transport.connected:
+             raise RuntimeError("Thin remote launcher is not connected")
+@@ -383,34 +390,44 @@ class ThinRemoteProcessPool(ProcessPoolManager):
+
+         self._started = True
+         self._shutdown = False
+-        self._started_at = datetime.now(timezone.utc)
+-        self._last_active_execution_refresh = time.monotonic()
+-        self._read_remote_memory()
+-        await self._register_worker()
+-        redis_client = await self._get_redis()
+-        await cast(
+-            Awaitable[int],
+-            redis_client.hset(
+-                f"bifrost:pool:{self.worker_id}",
+-                mapping={
+-                    "runtime": "thin_remote",
+-                    "execution_owner": "remote_launcher",
+-                    "api_owner": os.environ.get("HOSTNAME", "unknown"),
+-                },
+-            ),
+-        )
+-        self._heartbeat_task = asyncio.create_task(
+-            self._heartbeat_loop(), name="thin-remote-pool-heartbeat"
+-        )
+-        self._lease_refresh_task = asyncio.create_task(
+-            self._lease_refresh_loop(), name="thin-remote-pool-lease-refresh"
+-        )
+-        self._cancel_task = asyncio.create_task(
+-            self._cancel_listener_loop(), name="thin-remote-pool-cancel"
+-        )
+-        self._command_task = asyncio.create_task(
+-            self._command_listener_loop(), name="thin-remote-pool-command"
+-        )
++        try:
++            self._started_at = datetime.now(timezone.utc)
++            self._last_active_execution_refresh = time.monotonic()
++            self._read_remote_memory()
++            await self._register_worker()
++            redis_client = await self._get_redis()
++            await cast(
++                Awaitable[int],
++                redis_client.hset(
++                    f"bifrost:pool:{self.worker_id}",
++                    mapping={
++                        "runtime": "thin_remote",
++                        "execution_owner": "remote_launcher",
++                        "api_owner": os.environ.get("HOSTNAME", "unknown"),
++                    },
++                ),
++            )
++            self._heartbeat_task = asyncio.create_task(
++                self._heartbeat_loop(), name="thin-remote-pool-heartbeat"
++            )
++            self._lease_refresh_task = asyncio.create_task(
++                self._lease_refresh_loop(), name="thin-remote-pool-lease-refresh"
++            )
++            self._cancel_task = asyncio.create_task(
++                self._cancel_listener_loop(), name="thin-remote-pool-cancel"
++            )
++            self._command_task = asyncio.create_task(
++                self._command_listener_loop(), name="thin-remote-pool-command"
++            )
++        except BaseException as startup_error:
++            try:
++                await self._stop_once(require_registration_absent=True)
++            except BaseException as cleanup_error:
++                self._shutdown = True
++                raise BaseExceptionGroup(
++                    "Remote startup and rollback failed", [startup_error, cleanup_error]
++                ) from None
++            raise
+
+     async def _remote_packages(self) -> list[dict[str, Any]]:
+         response = await self.transport.request(
+@@ -459,6 +476,10 @@ class ThinRemoteProcessPool(ProcessPoolManager):
+             logger.exception("Could not update thin remote package inventory")
+
+     async def stop(self) -> None:
++        async with self._lifecycle_lock:
++            await self._stop_once(require_registration_absent=self._shutdown)
++
++    async def _stop_once(self, *, require_registration_absent: bool = False) -> None:
+         """Stop accepting work and ask the launcher to terminate owned routes."""
+         if not self._started:
+             return
+@@ -497,6 +518,13 @@ class ThinRemoteProcessPool(ProcessPoolManager):
+             )
+         if owns_session:
+             await self._unregister_worker()
++            if require_registration_absent and await self._owns_session():
++                redis_client = await self._get_redis()
++                remaining = await cast(
++                    Awaitable[int], redis_client.exists(f"bifrost:pool:{self.worker_id}")
++                )
++                if remaining:
++                    raise RuntimeError("Remote startup registration cleanup is unconfirmed")
+         if self._redis is not None:
+             await self._redis.aclose()
+             self._redis = None

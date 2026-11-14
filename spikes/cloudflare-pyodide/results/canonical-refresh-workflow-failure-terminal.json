@@ -1,0 +1,279 @@
+{
+  "container": "bifrost-pyodide-refresh-404aebb9-1c1b-47ce-b97a-24c77e06d0b6",
+  "scenario": "failure",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "workspace_sha256": {
+      "workflows/pyodide_qualification_cc1d8332630949b19e3d14fd6a99525d.py": "bd34367cb96f0ebcf53d1d610aca18c8619de13488f2936ad206c72f33bd8dac",
+      "pyodide_helper_cc1d8332630949b19e3d14fd6a99525d.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "physical_termination_verified": false,
+    "cloud_invocations": 0,
+    "workflow_failure_probe": true,
+    "worker_heartbeat_count": 4,
+    "owner_renewal_count": 1,
+    "stdout_capture_verified": false,
+    "structured_log_exception_redaction_verified": true,
+    "independent_document_absent": true,
+    "cross_tenant_status": 403,
+    "canonical_failure_error": "fixture failure credential=[REDACTED]",
+    "canonical_failure_status": "Failed",
+    "refresh_revoked_after_terminal_status": 401,
+    "canonical_claim_verified": true,
+    "canonical_terminal_consumption_verified": true,
+    "lost_ack_reconnect_verified": true,
+    "credential_revoked_after_terminal_status": 401,
+    "launches": 1,
+    "persisted_log_count": 10,
+    "result": {
+      "result": {
+        "execution_id": "2077aac0-0535-4e52-ad1c-7cdc35fc8efc",
+        "success": false,
+        "status": "Failed",
+        "result": null,
+        "error": "fixture failure credential=[REDACTED]",
+        "error_type": "ValueError",
+        "duration_ms": 348,
+        "logs": [
+          {
+            "timestamp": "2026-11-01T02:47:25.236000+00:00",
+            "level": "warning",
+            "message": "structured credential=[REDACTED]",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.236999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] Traceback (most recent call last):",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.238000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1642, in _execute_workflow_with_trace",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.239000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     result = await _run_workflow_async()",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.240000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.240999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"/session/metadata/src/services/execution/engine.py\", line 1633, in _run_workflow_async",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.241999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]     return await func(**accepted_params)",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.243000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.244000+00:00",
+            "level": "info",
+            "message": "[TRACEBACK]   File \"workflows/pyodide_qualification_cc1d8332630949b19e3d14fd6a99525d.py\", line 12, in qualified",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.244999+00:00",
+            "level": "info",
+            "message": "[TRACEBACK] ValueError: fixture failure credential=[REDACTED]",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.246000+00:00",
+            "level": "error",
+            "message": "Execution error: token_e609fda0",
+            "source": "workflow"
+          },
+          {
+            "timestamp": "2026-11-01T02:47:25.247000+00:00",
+            "level": "error",
+            "message": "ValueError: fixture failure credential=[REDACTED]",
+            "source": "workflow"
+          }
+        ],
+        "variables": {
+          "n": 7,
+          "forbidden_scope": null,
+          "forbidden_key": null,
+          "isolation": {},
+          "value": 42,
+          "refresh_evidence": {}
+        },
+        "integration_calls": [],
+        "roi": null,
+        "metrics": {
+          "peak_memory_bytes": null,
+          "peak_process_rss_bytes": null,
+          "cpu_user_seconds": null,
+          "cpu_system_seconds": null,
+          "cpu_total_seconds": null,
+          "code_hash": "bd34367cb96f0ebcf53d1d610aca18c8619de13488f2936ad206c72f33bd8dac"
+        },
+        "cached": false,
+        "cache_expires_at": null,
+        "execution_context": {
+          "user_id": "081a079a-9843-4bbf-854d-cb71fba7978b",
+          "email": "token-b45859cc@example.test",
+          "name": "Person a58d",
+          "scope": "10506e0f-e0d7-4241-badc-aee0f6ffca4c",
+          "organization": {
+            "id": "10506e0f-e0d7-4241-badc-aee0f6ffca4c",
+            "name": "Token World ba43a329",
+            "is_active": true,
+            "is_provider": false
+          },
+          "is_platform_admin": false,
+          "is_function_key": false,
+          "execution_id": "2077aac0-0535-4e52-ad1c-7cdc35fc8efc",
+          "workflow_deadline": null,
+          "workflow_timeout_seconds": 30,
+          "workflow_name": "token_e609fda0",
+          "is_agent": false,
+          "artifact_workspace_id": null,
+          "public_url": "https://test-api.invalid",
+          "parameters": {
+            "n": 7
+          },
+          "startup": null,
+          "form_inputs": {},
+          "embed": {},
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          }
+        },
+        "worker_id": "93d4916e-fa67-4a1a-ac69-da08dedb03e1"
+      },
+      "api_calls": [
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules/workflows/pyodide_qualification_cc1d8332630949b19e3d14fd6a99525d.py",
+          "status": 200
+        },
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules-resolve",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/config/get",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        },
+        {
+          "method": "POST",
+          "path": "/api/sdk/runtime/logs",
+          "status": 200
+        }
+      ]
+    },
+    "completed_claim_retained_as_upstream_specifies": true,
+    "fixture_worker_cascade_cleanup_verified": true
+  },
+  "qualification_error": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "error_type": "AssertionError",
+    "exception_chain": [
+      {
+        "error_type": "AssertionError",
+        "constraint": null,
+        "table": null,
+        "locations": [
+          "canonical-local.py:529",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:497"
+        ]
+      }
+    ],
+    "locations": [
+      "canonical-local.py:529",
+      "runners.py:205",
+      "runners.py:128",
+      "base_events.py:720",
+      "canonical-local.py:497"
+    ]
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "e6ebc16aad4bbb8c061083be7ca9c97b515edfa450bda76ca4a086492809a940",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "18462590647e6d2dfd19c57587b8e26b3832a71772e81436e28cf3eff4537ed1",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "53cd177ec818e1f5b89c72ec5e10030c87de0f24be3ef4335e36fbc21e9d90db",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "44427067c59a8e08b9811eb5f7d11a2d615a4a6a5ffe7b6976660a3b2965eac2",
+    "spikes/cloudflare-pyodide/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174",
+    "spikes/cloudflare-pyodide/backend/pyodide_refresh.py": "f18595a72127f71dde1ad45545cfc65f23e9acd842a9a677ccef5e2434f323af",
+    "spikes/cloudflare-pyodide/backend/pack-engine.py": "d376ed86e6f54a22f81cdd8097f20832a704eab3cc92fa16fb7aa604831f9754",
+    "spikes/cloudflare-pyodide/backend/refresh-gate.mjs": "afdfb6205f633beb8482ad48176fab677ed022baca27118b22037bc1dc69f928",
+    "spikes/cloudflare-pyodide/backend/fixture-admission.mjs": "709163d6084457b7a05341804d84a8b12c984a668112b437a5ac466333991d4c"
+  },
+  "runtime_manifest": "concurrent-runtime-manifest.json",
+  "payload_sha256": "21b82a201061b86a025265b371b057a3516bb8f549c5a701634390f0a8ca9dc9"
+}

@@ -1,0 +1,11 @@
+test_acknowledged_tombstone_still_rejects_other_owner (__main__.RouteOwnerTests.test_acknowledged_tombstone_still_rejects_other_owner) ... ok
+test_another_launcher_cannot_retrieve_route_result (__main__.RouteOwnerTests.test_another_launcher_cannot_retrieve_route_result) ... ok
+test_another_live_worker_cannot_retrieve_route_result (__main__.RouteOwnerTests.test_another_live_worker_cannot_retrieve_route_result) ... ok
+test_other_owner_cannot_consume_or_acknowledge_terminal (__main__.RouteOwnerTests.test_other_owner_cannot_consume_or_acknowledge_terminal) ... ok
+test_retained_result_cannot_be_consumed_by_other_worker (__main__.RouteOwnerTests.test_retained_result_cannot_be_consumed_by_other_worker) ... ok
+test_same_launcher_reconnect_can_retrieve_and_acknowledge_once (__main__.RouteOwnerTests.test_same_launcher_reconnect_can_retrieve_and_acknowledge_once) ... ok
+
+----------------------------------------------------------------------
+Ran 6 tests in 0.017s
+
+OK

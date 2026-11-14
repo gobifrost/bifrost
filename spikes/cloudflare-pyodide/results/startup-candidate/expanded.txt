@@ -1,0 +1,17 @@
+test_cancellation_during_registration_rolls_back (test_startup_candidate.StartupCandidateTests.test_cancellation_during_registration_rolls_back) ... ok
+test_concurrent_start_waits_for_initial_start (test_startup_candidate.StartupCandidateTests.test_concurrent_start_waits_for_initial_start) ... ok
+test_configure_failure_does_not_claim_started_or_clean_unowned_state (test_startup_candidate.StartupCandidateTests.test_configure_failure_does_not_claim_started_or_clean_unowned_state) ... ok
+test_failed_rollback_quarantines_start_and_retains_both_errors (test_startup_candidate.StartupCandidateTests.test_failed_rollback_quarantines_start_and_retains_both_errors) ... ok
+test_healthy_start_stop_and_repeat_start (test_startup_candidate.StartupCandidateTests.test_healthy_start_stop_and_repeat_start) ... ok
+test_memory_failure_rolls_back (test_startup_candidate.StartupCandidateTests.test_memory_failure_rolls_back) ... ok
+test_registration_failure_rolls_back_then_retry_starts_listeners (test_startup_candidate.StartupCandidateTests.test_registration_failure_rolls_back_then_retry_starts_listeners) ... ok
+test_second_cancellation_quarantines_interrupted_rollback (test_startup_candidate.StartupCandidateTests.test_second_cancellation_quarantines_interrupted_rollback) ... ok
+test_stop_waits_for_incomplete_start_then_settles_created_listeners (test_startup_candidate.StartupCandidateTests.test_stop_waits_for_incomplete_start_then_settles_created_listeners) ... ok
+test_superseded_owner_rollback_does_not_unregister_replacement (test_startup_candidate.StartupCandidateTests.test_superseded_owner_rollback_does_not_unregister_replacement) ... ok
+test_tagging_failure_closes_owned_client (test_startup_candidate.StartupCandidateTests.test_tagging_failure_closes_owned_client) ... ok
+
+----------------------------------------------------------------------
+Ran 11 tests in 0.099s
+
+OK
+exit_code=0

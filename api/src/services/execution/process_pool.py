@@ -329,8 +329,8 @@ class ExecutionInfo:
         return self.timeout_seconds > 0 and self.elapsed_seconds > self.timeout_seconds
 
     def attach_transport_metadata(self, result: dict[str, Any]) -> dict[str, Any]:
-        """Attach parent-owned metadata required after Redis loss."""
-        return {**result, "sync": self.active_execution["sync"]}
+        """Bind a physical result to its parent-owned execution and sync mode."""
+        return {**result, "execution_id": self.execution_id, "sync": self.active_execution["sync"]}
 
 
 @dataclass

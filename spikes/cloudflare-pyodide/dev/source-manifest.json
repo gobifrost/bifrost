@@ -1,0 +1,33 @@
+{
+  "base_commit": "2037ac0d9ec95e94a77ce440001ae016d4215407",
+  "files": {
+    "spikes/cloudflare-pyodide/dev/.gitignore": "2f760670758b859e91a376fb4eb7e097c814085bcaadd53fc5389324ad9817f4",
+    "spikes/cloudflare-pyodide/dev/EXPERIMENTS.md": "214cf746d51aa6d203822da4ccdc259a2ec2b8c1c02d19c6014b8c3bddd1e899",
+    "spikes/cloudflare-pyodide/dev/README.md": "475267cac9e0ea24a3a3f0d81fae100ca6c4e23562c272fec5c420899a81291e",
+    "spikes/cloudflare-pyodide/dev/cloud-sdk-success.json": "c71df657c38d0ebbd7dfcb04777be3c968a9db2c9bb3ff1303433d10f13d333f",
+    "spikes/cloudflare-pyodide/dev/cloud-session.json": "04081aac6e7ecbb9d29e383055b0fc84d62d6b8d6ca01224b6d29de610050c1c",
+    "spikes/cloudflare-pyodide/dev/edge-auth-readback.json": "9567c63b29af93f744f9c4a0f399c276e8971661efd5ff02bdbd02dfe43ef1dc",
+    "spikes/cloudflare-pyodide/dev/executor/cloudflare.config.ts": "d58efd67ceeb0cc76db368611dff3070c61252b85b30a646e162297d5048198b",
+    "spikes/cloudflare-pyodide/dev/executor/entry.mjs": "7a8ba1a514d6e75cc9d2f541f8a36280a3f75d2d6abfcfbcf82ace3cff97e5fd",
+    "spikes/cloudflare-pyodide/dev/executor/package-lock.json": "59d7d40f06197215c903a66de6246f009604defff0b80a5779db7d30c88b5be7",
+    "spikes/cloudflare-pyodide/dev/executor/package.json": "540bb053586853a22d39972dee9f2060e5b3391dc4e5146ff7be63ba959d0c4f",
+    "spikes/cloudflare-pyodide/dev/executor/policy.mjs": "895f271f1bd3e3d78498fe51b4a5c0bfd321bf366fe34a04e85eb5ed17b5096e",
+    "spikes/cloudflare-pyodide/dev/executor/policy.test.mjs": "53b272b4cc352d0508c5e825da9a85d5467f40c4a9f8946a723740ee11abbc40",
+    "spikes/cloudflare-pyodide/dev/executor/python-entry.mjs": "908fcac9ece975a9396aa8d06b0f6d25cc0f65513d2e7c2a6b76e4addb67fdd1",
+    "spikes/cloudflare-pyodide/dev/export_receipts.py": "a58ae4de350a2866ee623bb2e69d48a129107a273fdf9336043694ff677fb63d",
+    "spikes/cloudflare-pyodide/dev/frontend/cloudflare.config.ts": "78ecc6e2fe9c236d0a9302a60d7c2880e3d0fb54bb5cbc2d71113ee89f62874f",
+    "spikes/cloudflare-pyodide/dev/frontend/edge.mjs": "d62e0e926e8f3752f84ff168e36392e69cd76bb20eac6608aafe7832046966aa",
+    "spikes/cloudflare-pyodide/dev/frontend/edge.test.mjs": "00c45b861aa8d3ec3ce279b634853bf16206ee4c3b27b0372f38debd6bcebf48",
+    "spikes/cloudflare-pyodide/dev/frontend/package-lock.json": "40b55afe2c968edac18079f7859065832f20ef6f205823ae4a9b3066bd6dcb79",
+    "spikes/cloudflare-pyodide/dev/frontend/package.json": "462725c6a2c7e35bf8cb3c8141dd11027043f3ba1892295a4c735f6e9164d895",
+    "spikes/cloudflare-pyodide/dev/frontend/wrangler.config.ts": "3bff877ec2a75b9b479faebe4f01052dcf24e1c182acbe204848eeb07ef3ced1",
+    "spikes/cloudflare-pyodide/dev/prepare_stack.py": "5e0647c0bda835aec881b332e3f3ebd86146655ab9cfce2220b6c4107392646c",
+    "spikes/cloudflare-pyodide/dev/run_cloud_qualification.py": "1d32888e0ffd4b5815a40481d373e3ec2f300d765a18a6669d2679919474b339",
+    "spikes/cloudflare-pyodide/dev/serve_compiled.py": "8337d81e22a6466e66fcf562d2c03aa9b75b7d8816616062d5334819b0589526",
+    "spikes/cloudflare-pyodide/dev/stage_runtime.mjs": "ec37589ffa4479f75dc52004533d23a17f6ba1ff58ff2e5ecad2623605b6c647",
+    "spikes/cloudflare-pyodide/dev/verify_edge.py": "99c7194e3e59ab58ba9c28530f16be745244fa2009245f899a1a128e0f0c646d",
+    "spikes/cloudflare-pyodide/dev/verify_fixture_cleanup.py": "0d7b724835f109f0a1b4901c0eca6df9d90a390bb8d563a08c8f2abe08b1857b",
+    "spikes/cloudflare-pyodide/dev/verify_stack.py": "7ae89642cf182132f928c45f910013ffa7d61986209c8e2f3097e71dc641114e",
+    "spikes/cloudflare-pyodide/backend/authorized-local.py": "cd03f6c4404287ec9f104b96436e75a69848af7c8319cf432001d883bee5702f"
+  }
+}

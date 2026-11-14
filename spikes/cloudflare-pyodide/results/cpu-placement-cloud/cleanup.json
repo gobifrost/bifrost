@@ -1,0 +1,23 @@
+{
+    "open_version":  "cd139623-a0a5-4374-b70f-176058397f50",
+    "closed_deploy_version":  "b17e1a04-e02f-41e5-9448-8529abb2da8d",
+    "final_version":  "93fba79d-254a-4111-a8fb-f0e7cd921fbc",
+    "final_deployment":  "cdb1261c-65c8-490d-adca-4b92c92a00f2",
+    "secret_names":  [
+
+                     ],
+    "workers_dev_enabled":  false,
+    "expiry_ms":  0,
+    "retired_guard_public_status":  404,
+    "controller_running":  false,
+    "reservation_count":  5,
+    "fresh_children":  3,
+    "cleanup_get_requests":  1,
+    "incremental_cost_cap_usd":  0.1,
+    "billed_cost_usd":  null,
+    "expiry_original_ms":  1793670698143,
+    "runtime_security_settings_changed":  false,
+    "fixture_rows_removed":  true,
+    "dev_volumes_preserved":  true,
+    "execution_rows_remaining":  0
+}

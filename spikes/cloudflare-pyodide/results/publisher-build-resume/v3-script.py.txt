@@ -1,0 +1,110 @@
+"""Bounded publisher-source bundle build. Never uploads or changes runtime integrity."""
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess
+import tarfile
+import time
+import urllib.request
+
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
+RUN = ROOT / 'runs/publisher-bundle-build-v3'
+SOURCE = ROOT / 'sources/workerd-v1.20261023.1'
+COMMIT = '7caf6dee5bfe9af1b7710ddf66222900007af080'
+EXPECTED = '3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260'
+NAME = 'pyodide-ddf316c1-publisher-build-v2'
+
+
+def output(args):
+    return subprocess.check_output(args, text=True, timeout=60).strip()
+
+
+def main():
+    if output(['hostname']) != 'bifrost-pyodide-test-01' or output(['docker', 'ps', '-q']):
+        raise RuntimeError('Wrong guest or active containers require reconciliation')
+    if shutil.disk_usage(ROOT).free < 20 * 1024**3:
+        raise RuntimeError('Insufficient scratch')
+    if output(['git', '-C', str(SOURCE), 'rev-parse', 'HEAD']) != COMMIT:
+        raise RuntimeError('Publisher source mismatch')
+    RUN.mkdir()
+    report = {'publisher_source': COMMIT, 'expected_bundle_sha256': EXPECTED,
+              'cloud_invocations': 0, 'supervisor_requests_target_asset': False, 'bundle_verified': False,
+              'runtime_qualified': False, 'physical_termination_verified': False,
+              'started_at_epoch': time.time()}
+    started = time.monotonic()
+    try:
+        archive = RUN / 'publisher-source.tar'
+        subprocess.run(['git', '-C', str(SOURCE), 'archive', '--format=tar',
+                        '--output=' + str(archive), COMMIT], check=True, timeout=60)
+        checkout = RUN / 'source'
+        checkout.mkdir()
+        with tarfile.open(archive) as stream:
+            stream.extractall(checkout, filter='data')
+        if (checkout / '.bazelversion').read_text().strip() != '9.3.0':
+            raise RuntimeError('Unexpected publisher build tool version')
+        report['input_sha256'] = {p: hashlib.sha256((checkout / p).read_bytes()).hexdigest() for p in
+            ['src/pyodide/helpers.bzl', 'build/python_metadata.bzl', 'build/deps/dep_pyodide.bzl']}
+        # Reuse the task-owned tool already verified against the official release checksum.
+        checksum = 'd302d22ed77ee5658b87857249baa579db84300ecebe0a1e9a357b5b20f80eb8'
+        original = ROOT / 'runs/publisher-bundle-build-v1/bazel'
+        if hashlib.sha256(original.read_bytes()).hexdigest() != checksum:
+            raise RuntimeError('Previously verified build tool changed')
+        target = RUN / 'bazel'
+        shutil.copyfile(original, target)
+        target.chmod(0o755)
+        report['bazel_sha256'] = checksum
+        # Debian's existing package index pins this small build-only tool.
+        patch_sha = '80c46a0085b33acc74bf451fddb6a70cb43d4ebcc4a873aec04d8d0a63ffc630'
+        patch = RUN / 'patch_2.8-2_amd64.deb'
+        with urllib.request.urlopen('https://deb.debian.org/debian/pool/main/p/patch/patch_2.8-2_amd64.deb', timeout=30) as response:
+            data = response.read(134329)
+        if len(data) != 134328 or hashlib.sha256(data).hexdigest() != patch_sha:
+            raise RuntimeError('Build-only patch package mismatch')
+        patch.write_bytes(data)
+        subprocess.run(['dpkg-deb', '-x', str(patch), str(RUN / 'tools')], check=True, timeout=30)
+        report['patch_package_sha256'] = patch_sha
+        # No rewrites, credentials or alternate route to the denied artifact.
+        (RUN / 'downloader.conf').write_text('block pyodide-capnp-bin.edgeworker.net\nblock r2.dev\n')
+        bazel = ['/build/bazel', '--batch', '--host_jvm_args=-Xmx512m', '--host_jvm_args=-XX:ActiveProcessorCount=1', '--output_user_root=/build/bazel-state', '--output_base=/build/output',
+                 'build', '//src/pyodide:pyodide.capnp.bin@rule@314.0.6', '--jobs=1', '--loading_phase_threads=1',
+                 '--local_resources=memory=1024', '--repository_cache=/build/repository-cache',
+                 '--downloader_config=/build/downloader.conf', '--remote_cache=', '--remote_executor=']
+        args = ['docker', 'run', '--name', NAME, '--cpus=1', '--memory=2g', '--memory-swap=2g',
+                '--pids-limit=256', '--env', 'PATH=/build/tools/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', '--mount', f'type=bind,src={RUN},dst=/build',
+                '--workdir', '/build/source', '--entrypoint', '/build/bazel',
+                'bifrost-test-api-dev:bifrost-test-7ddfac36', *bazel[1:]]
+        report['command'] = args
+        with (RUN / 'build.log').open('x') as log:
+            process = subprocess.Popen(args, stdout=log, stderr=subprocess.STDOUT)
+            while process.poll() is None:
+                if time.monotonic() - started > 900 or shutil.disk_usage(ROOT).used > 24 * 1024**3:
+                    subprocess.run(['docker', 'stop', '-t', '10', NAME], check=False, capture_output=True)
+                    raise RuntimeError('Wall/disk guard reached')
+                time.sleep(2)
+            report['exit_code'] = process.returncode
+        report['candidates'] = []
+        for candidate in RUN.glob('output/execroot/*/bazel-out/*/bin/src/pyodide/314.0.6/generated/pyodide.capnp.bin'):
+            digest = hashlib.sha256(candidate.read_bytes()).hexdigest()
+            report['candidates'].append({'path': str(candidate), 'sha256': digest})
+            if digest == EXPECTED:
+                report['bundle_verified'] = True
+        if process.returncode or not report['bundle_verified']:
+            raise RuntimeError('Publisher build or exact integrity qualification failed')
+    except Exception as error:
+        report['error_type'] = type(error).__name__
+        raise
+    finally:
+        state = subprocess.run(['docker', 'inspect', NAME], capture_output=True, text=True)
+        if state.returncode == 0:
+            report['container_state'] = json.loads(state.stdout)[0]['State']
+            subprocess.run(['docker', 'stop', '-t', '10', NAME], check=True, capture_output=True)
+        report['running_after_cleanup'] = output(['docker', 'ps', '-q', '--filter', 'name=^/' + NAME + '$']).splitlines()
+        report['volumes_deleted'] = False
+        report['elapsed_seconds'] = time.monotonic() - started
+        (RUN / 'receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    main()

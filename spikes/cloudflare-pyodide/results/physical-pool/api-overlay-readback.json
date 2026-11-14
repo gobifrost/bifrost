@@ -1,0 +1,9 @@
+{
+    "source_sha256":  {
+                          "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api/src/worker/remote/protocol.py":  "91db42936f3235599243af681d24886fbb79180a7020633dfafe35887b3956d5",
+                          "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api/src/worker/remote/remote_pool.py":  "abb9a48eeaa2475f2cf42367073c64e8b50f24b2d1f7479493d5b0c433ba429a"
+                      },
+    "related_run":  "physical-pool-v1",
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "observed_at":  "2026-11-03T03:50:11.9564605Z"
+}

@@ -1,0 +1,12 @@
+{
+  "phase": "pre-runtime quality",
+  "unit_cases": 11,
+  "unit_exit_code": 0,
+  "ruff_exit_code": 0,
+  "pyright_exit_code": 1,
+  "pyright_errors": 1,
+  "diagnostic": "shared-native-pool.py:369:48 reportAssignmentType: dict | None assigned to canonical_result async callback name",
+  "fix": "Rename persisted row-result local to persisted_result; preserve callback identity.",
+  "actual_workflow_invocations": 0,
+  "cloud_invocations": 0
+}

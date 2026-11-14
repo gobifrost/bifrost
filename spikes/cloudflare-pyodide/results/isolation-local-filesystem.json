@@ -1,0 +1,173 @@
+{
+  "runtime": "local-workerd",
+  "results": [
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-A",
+            "own_canary": "synthetic-97595945-6f3e-4346-b35a-c29debb3bfdd",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_auth_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "tenant-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "tenant-B",
+            "own_canary": "synthetic-8857bf56-1de5-4e7c-942e-1fdaeb8ee5d5",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_auth_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-A"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-A",
+            "own_canary": "synthetic-87fb91a2-8091-4c57-9671-ad45e08d9cc4",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_auth_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "state",
+        "marker": "parallel-B"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "previous": null,
+            "current": "parallel-B",
+            "own_canary": "synthetic-8db76928-9054-4501-b22b-de4234bc059b",
+            "contamination": {
+              "env": null,
+              "module": false,
+              "filesystem": false
+            },
+            "parent_auth_visible": false
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "egress"
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "blocked": true,
+            "error_type": "AbortError"
+          }
+        },
+        "effects": [],
+        "abort_requested": false,
+        "cancel_input": false
+      }
+    },
+    {
+      "request": {
+        "action": "io",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "error_type": "Error",
+          "error": "Error: diagnostic cancellation"
+        },
+        "effects": [
+          "before"
+        ],
+        "abort_requested": true,
+        "cancel_input": true
+      }
+    },
+    {
+      "request": {
+        "action": "cpu",
+        "cancel": true
+      },
+      "status": 200,
+      "body": {
+        "revision": 4,
+        "outcome": {
+          "status": 200,
+          "body": {
+            "total": 199999990000000
+          }
+        },
+        "effects": [
+          "before",
+          "after"
+        ],
+        "abort_requested": false,
+        "cancel_input": true
+      }
+    }
+  ]
+}

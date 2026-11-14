@@ -1,0 +1,14 @@
+{
+  // Cloud acceptance config for the per-tenant persistent-worker prototype.
+  // Deploy with `cf deploy --secrets-file <path>` from this directory; the
+  // secret file supplies SPIKE_AUTH. LOCAL_PROBE is intentionally absent, so
+  // the entry requires X-Spike-Auth plus an unexpired SPIKE_EXPIRES_AT.
+  "name": "bifrost-pyodide-tenant-ddf316c1",
+  "main": "tenant-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "worker_loaders": [{"binding": "LOADER"}],
+  "vars": {"SPIKE_EXPIRES_AT": "1794563405678"},
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {"enabled": false}
+}

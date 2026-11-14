@@ -1,0 +1,43 @@
+{
+  "container": "bifrost-pyodide-refresh-e07036ac-7e77-4f70-8a6a-2794d9f72833",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "error_type": "AssertionError",
+    "exception_chain": [
+      {
+        "error_type": "AssertionError",
+        "constraint": null,
+        "table": null,
+        "locations": [
+          "canonical-local.py:385",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:307",
+          "attempt_journal.py:128",
+          "attempt_journal.py:89"
+        ]
+      }
+    ],
+    "locations": [
+      "canonical-local.py:385",
+      "runners.py:205",
+      "runners.py:128",
+      "base_events.py:720",
+      "canonical-local.py:307",
+      "attempt_journal.py:128",
+      "attempt_journal.py:89"
+    ]
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "91f060e2b1713d22a1e545ca635645b25b5e1207be7ab9589d9843eadb56cc96",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "265419617108e4ebdd00000fa1468270aaa3c1d860b00779615e20e55e49cc0a",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "18cdc399c85aa73d3b75e68643a1a0059c1dcd6c326bdb7f1a7131bc5a399c66",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23"
+  }
+}

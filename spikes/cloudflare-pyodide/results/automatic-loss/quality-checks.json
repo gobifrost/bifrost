@@ -1,0 +1,22 @@
+{
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/automatic-loss-v1",
+    "ruff":  {
+                 "command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py",
+                 "exit_code":  0,
+                 "memory_mib":  512,
+                 "cpus":  0.5,
+                 "network":  "none"
+             },
+    "pyright":  {
+                    "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/canonical-local.py /qualification/ct128-canonical-failure.py",
+                    "exit_code":  0,
+                    "errors":  0,
+                    "warnings":  0,
+                    "memory_mib":  1024,
+                    "node_max_old_space_size_mib":  768,
+                    "cpus":  0.5,
+                    "network":  "none"
+                },
+    "cloud_invocations":  0
+}

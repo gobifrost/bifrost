@@ -1,0 +1,92 @@
+{
+  "source": "1017cca1795540f75b9781d87137822a4a42d685",
+  "overlay_sha256": {
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "f8c05fc45b351e25d87f00f6a2a2cd536244400c92cd602c9f94f1bac3fbbf9c",
+    "api/tests/unit/dev/test_pyodide_attempt_journal.py": "99f2226dad7400cfdd6472bcd2f74c8e4298ac133342d4d36c009c02be71ba94"
+  },
+  "project": "bifrost-test-8e9f191a",
+  "commands": [
+    {
+      "argv": [
+        "timeout",
+        "60",
+        "docker",
+        "run",
+        "--rm",
+        "--name",
+        "pyodide-ddf316c1-route-owner-v1",
+        "--network",
+        "none",
+        "--cpus=1",
+        "--memory=512m",
+        "--memory-swap=512m",
+        "--pids-limit=64",
+        "--volumes-from",
+        "bifrost-debug-074217d4-api-1:ro",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/inbox/route-owner-v1,dst=/qualification,readonly",
+        "--workdir",
+        "/qualification",
+        "--env",
+        "PYTHONPATH=/app",
+        "--entrypoint",
+        "python",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "-m",
+        "unittest",
+        "-v",
+        "test_attempt_journal_owners"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/dev/test_pyodide_attempt_journal.py",
+        "-q"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-8e9f191a",
+        "-f",
+        "docker-compose.test.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "test-runner",
+        "ruff",
+        "check",
+        "/app/pyodide-prototype/attempt_journal.py",
+        "tests/unit/dev/test_pyodide_attempt_journal.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "cloud_invocations": 0,
+  "qualification_passed": true,
+  "unit_fixture_sha256": "6037eb088b5e82c642dbeb1b68df0f6ab0e4c566b5ba1b8ff0b3ed9df8faf871",
+  "image_id": "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+  "junit": {
+    "cases": 38,
+    "failures": 0,
+    "errors": 0,
+    "skipped": 0
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 115.24870709469542
+}

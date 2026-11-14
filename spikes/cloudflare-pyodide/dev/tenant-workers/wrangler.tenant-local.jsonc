@@ -1,0 +1,13 @@
+{
+  // Local workerd harness for the per-tenant persistent-worker prototype.
+  // No extra bindings: module source is PATH-keyed through the in-supervisor
+  // TenantGateway (GET /api/sdk/modules/<path>, GET /api/sdk/modules-resolve),
+  // so the LOADER binding below is the only worker-loader needed. The generic
+  // child script stays constant; attempt data travels in the request body.
+  "name": "bifrost-pyodide-spike-ddf316c1",
+  "main": "tenant-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "worker_loaders": [{"binding": "LOADER"}],
+  "vars": {"LOCAL_PROBE": "true"},
+  "observability": {"enabled": false}
+}

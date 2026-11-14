@@ -1,0 +1,66 @@
+{
+  "container": "bifrost-pyodide-refresh-74767f62-ddf0-4ab8-a5f4-3b8ebb09e97b",
+  "scenario": "challenge",
+  "phase": "observed",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "unknown_process_state": false,
+  "process_exit_code": 1,
+  "result": {
+    "runtime": "local-workerd-canonical-claim-consumer",
+    "workspace_sha256": {
+      "workflows/pyodide_qualification_048c43d4e01848b2a11e8298fea8cd4b.py": "dd76348094614ef9f7a709337c78488a8beced9d00df9b9d5578ab256fa50e20",
+      "pyodide_helper_048c43d4e01848b2a11e8298fea8cd4b.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+    },
+    "physical_termination_verified": false,
+    "cloud_invocations": 0,
+    "expired_access_probe": true,
+    "worker_heartbeat_count": 4,
+    "owner_renewal_count": 2,
+    "preflight_challenge_status": 401,
+    "preflight_challenge_header": "Bearer error=\"invalid_token\", error_description=\"refresh_required\"",
+    "provider_evidence": {
+      "result": {
+        "execution_id": "dc1b05fb-37f7-491a-bd98-86fa70246a03",
+        "success": false,
+        "status": "Failed",
+        "result": null,
+        "error": "Cache load failed: Engine-local module fetch failed for workflows/pyodide_qualification_048c43d4e01848b2a11e8298fea8cd4b.py: can't start new thread",
+        "error_type": "WorkflowLoadError",
+        "duration_ms": 38,
+        "logs": [],
+        "variables": null,
+        "integration_calls": [],
+        "roi": null,
+        "metrics": {
+          "peak_memory_bytes": null,
+          "peak_process_rss_bytes": null,
+          "cpu_user_seconds": null,
+          "cpu_system_seconds": null,
+          "cpu_total_seconds": null,
+          "code_hash": null
+        },
+        "cached": false,
+        "cache_expires_at": null,
+        "execution_context": null,
+        "worker_id": "f9c15504-183c-45d4-b887-1add6f39ed48"
+      },
+      "api_calls": [
+        {
+          "method": "GET",
+          "path": "/api/sdk/modules/workflows/pyodide_qualification_048c43d4e01848b2a11e8298fea8cd4b.py",
+          "status": 401
+        }
+      ]
+    },
+    "workflow_document_status": 404
+  },
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-refresh.mjs": "4dc3f6aec65e00cddc27808a1baa0f3ba2818a1df826a14db39aaf56e7aa6d4b",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "866b181c69ca5d00c1240570aee75ab9940637ae87a27ca532c85e4ac1398062",
+    "spikes/cloudflare-pyodide/backend/runtime-runner.py": "18cdc399c85aa73d3b75e68643a1a0059c1dcd6c326bdb7f1a7131bc5a399c66",
+    "spikes/cloudflare-pyodide/backend/runtime_guard.py": "3a6e8ecc8d3374bb46ef3e2bda554456b8b8155f35ff9c9a603b34851f578f23",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "4e6c30fa818620ce6c5922a2191dd42baa2660216d7d54ae0c6536be41323df1",
+    "spikes/cloudflare-pyodide/backend/test-api-route.mjs": "0c483602a17fd458a9b98a15ffe6359c2562f0f5d028ba52bcd5cc15f5f50174"
+  }
+}

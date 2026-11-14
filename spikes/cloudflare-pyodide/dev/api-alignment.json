@@ -1,0 +1,17 @@
+{
+  "scope": "read-only existing isolated dev API metadata and pinned source comparison",
+  "guest": "CT128 / bifrost-pyodide-test-01",
+  "dev_checkout": "/opt/bifrost-tests/pyodide-ddf316c1/dev-2037ac0",
+  "dev_source": "2037ac0d9ec95e94a77ce440001ae016d4215407",
+  "canonical_source": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "dev_api_container": "bifrost-debug-074217d4-api-1",
+  "actual_dev_schema_revision": "20261031_app_sdk_binding",
+  "canonical_source_migration_revision": "20261101_table_name_unique",
+  "missing_execution_worker_columns": ["active_handler_counts", "capacity_scope", "capacity_resource_uid", "capacity_resource_deleted_at"],
+  "unchanged_selected_sources": ["api/src/core/auth.py", "api/shared/runtime_io.py", "api/src/routers/sdk_runtime.py"],
+  "new_migration_files": ["20261031_worker_handler_counts.py", "20261031_worker_provider_binding.py", "20261101_capacity_cleanup.py", "20261101_restore_table_name_unique.py"],
+  "canonical_origin_alignment_verified": false,
+  "schema_or_source_changes_applied": false,
+  "credentials_exported": false,
+  "cloud_invocations": 0
+}

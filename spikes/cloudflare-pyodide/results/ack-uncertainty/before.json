@@ -1,0 +1,39 @@
+{
+  "source_base": "1d33150eb376b71f8a81b427920eda1b0447f829",
+  "project": "bifrost-test-5dc8d94e",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "phase": "before",
+  "tested_sha256": {
+    "api/src/worker/remote/remote_pool.py": "d3b9a0239357f63a3b48e7727e09aa28aa63987379a099f8374f2e9621d48fd0",
+    "api/tests/unit/dev/test_pyodide_remote_ack_boundary.py": "d6b9f3ca0fe41e43939c02cd77bf4524b9a5d2e5690d95c973fcdbe604f8267e",
+    "api/tests/unit/dev/test_pyodide_remote_boundary.py": "d8b36b00001627eaefbefd808288e47cba87cbcf9796855f5910125cd19a8821"
+  },
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/dev/test_pyodide_remote_ack_boundary.py",
+        "tests/unit/dev/test_pyodide_remote_boundary.py",
+        "-q"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "junit": {
+    "cases": 17,
+    "failures": 13,
+    "errors": 0,
+    "skipped": 0
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 97.4628403452225
+}

@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="4" skipped="0" tests="6" time="0.460" timestamp="2026-11-02T22:19:01.242998+00:00" hostname="895497139a7c"><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_transport_metadata_binds_execution_identity_without_mutating_result[another-execution]" time="0.008"><failure message="AssertionError: assert 'another-execution' == 'trusted-execution'&#10;  &#10;  - trusted-execution&#10;  + another-execution">tests/unit/execution/test_result_transport_identity.py:22: in test_transport_metadata_binds_execution_identity_without_mutating_result
+    assert attached['execution_id'] == 'trusted-execution'
+E   AssertionError: assert 'another-execution' == 'trusted-execution'
+E
+E     - trusted-execution
+E     + another-execution</failure></testcase><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_transport_metadata_binds_execution_identity_without_mutating_result[None]" time="0.002"><failure message="KeyError: 'execution_id'">tests/unit/execution/test_result_transport_identity.py:22: in test_transport_metadata_binds_execution_identity_without_mutating_result
+    assert attached['execution_id'] == 'trusted-execution'
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'execution_id'</failure></testcase><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_transport_metadata_binds_execution_identity_without_mutating_result[trusted-execution]" time="0.002" /><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_remote_result_is_bound_to_the_parent_route_before_canonical_callback[another-execution]" time="0.008"><failure message="AssertionError: assert 'another-execution' == 'trusted-execution'&#10;  &#10;  - trusted-execution&#10;  + another-execution">tests/unit/execution/test_result_transport_identity.py:47: in test_remote_result_is_bound_to_the_parent_route_before_canonical_callback
+    assert delivered['execution_id'] == 'trusted-execution'
+E   AssertionError: assert 'another-execution' == 'trusted-execution'
+E
+E     - trusted-execution
+E     + another-execution</failure></testcase><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_remote_result_is_bound_to_the_parent_route_before_canonical_callback[None]" time="0.003"><failure message="KeyError: 'execution_id'">tests/unit/execution/test_result_transport_identity.py:47: in test_remote_result_is_bound_to_the_parent_route_before_canonical_callback
+    assert delivered['execution_id'] == 'trusted-execution'
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+E   KeyError: 'execution_id'</failure></testcase><testcase classname="tests.unit.execution.test_result_transport_identity" name="test_remote_result_is_bound_to_the_parent_route_before_canonical_callback[trusted-execution]" time="0.002" /></testsuite></testsuites>

@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+const root = new URL('../results/stream-capture/', import.meta.url);
+const read = async name => JSON.parse(await readFile(new URL(name, root), 'utf8'));
+const before = await read('before-v2-receipt.json');
+const after = await read('after-v2-receipt.json');
+const pyodide = await read('pyodide-v1-receipt.json');
+assert.equal(before.expected_baseline_reproduced, true);
+assert.deepEqual(before.junit, {cases: 5, failures: 4, errors: 0, skipped: 0});
+assert.deepEqual(after.junit, {cases: 37, failures: 0, errors: 0, skipped: 0});
+assert.equal(after.qualification_passed, true);
+assert.ok(after.commands.every(command => command.exit_code === 0));
+assert.deepEqual(after.running_after_cleanup, []);
+assert.equal(after.cloud_invocations, 0);
+const xml = await readFile(new URL('after-v2-tests.xml', root), 'utf8');
+assert.equal((xml.match(/<testcase\b/g) ?? []).length, 37);
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+for (const [path, digest] of Object.entries(after.overlay_sha256)) {
+  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+}
+assert.equal(pyodide.engine_sha256, after.overlay_sha256['api/src/services/execution/engine.py']);
+assert.equal(pyodide.driver_sha256, hash(await readFile(new URL('stream-capture-pyodide.mjs', import.meta.url))));
+assert.equal(pyodide.exit_code, 0);
+assert.equal(pyodide.state_after_cleanup.Running, false);
+assert.equal(pyodide.state_after_cleanup.OOMKilled, false);
+assert.equal(pyodide.observed.sdk_calls, 0);
+assert.equal(pyodide.observed.cloud_runtime_qualified, false);
+assert.equal(pyodide.observed.physical_stop_qualified, false);
+assert.equal(pyodide.observed.abi.soabi, 'cpython-314-wasm32-emscripten');
+assert.deepEqual(pyodide.observed.records.map(row => row.result.status), ['Success', 'Failed']);
+assert.equal(pyodide.observed.records[1].result.error_type, 'ValueError');
+assert.ok(!JSON.stringify(pyodide.observed).includes('synthetic-stream-runtime-secret-0123456789'));
+console.log('Four baseline stream failures repaired; 37 native tests, Ruff/Pyright and actual guest Pyodide pass. No new cloud/credentialed-persistence/physical-stop claim.');

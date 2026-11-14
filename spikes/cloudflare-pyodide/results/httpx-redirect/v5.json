@@ -1,0 +1,38 @@
+{
+  "scope": "credential-free approved HTTPS policy only",
+  "cloud_invocations": 0,
+  "engine_sdk_execution_verified": false,
+  "sdk_import_constructor_passed": false,
+  "packet_sha256": {
+    "staged_runtime_input.py": "017b7844a7f5d4fb938db0eb03509a6f6da776bb28c9dc70618c887e21918971",
+    "ct128-sdk-probe.py": "543ec3254729e5b7b1419d236764f5c65f96c9c0911ae9f464c59e57b1aab53d",
+    "approved-httpx-entry.mjs": "afac9b5605a725ce9da4ee9e30e86b5fa3c2c0481daf9922f3425b748d14e8f7",
+    "approved-httpx-probe.mjs": "103cb4b41be4aa6950dc407d68601148ed6032f85586091be433d75cfb606870",
+    "project/wrangler.config.ts": "f5b5a98a872023b96d441ecd24313bd0621a06fb128cefb35caf03db034b9845",
+    "project/package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "project/cloudflare.config.ts": "15c7a8c578210dfb556dc56a0febc27324160a57af50c8090c8aa737e7d32d1d",
+    "project/backend/sdk-cleanup-code.mjs": "fb86cd80e5d06cd8b7dc3f83a6a70196b8ee5b65e30339fcce5539994ac4862f",
+    "project/backend/approved-https-entry.mjs": "afac9b5605a725ce9da4ee9e30e86b5fa3c2c0481daf9922f3425b748d14e8f7",
+    "project/backend/runtime-provenance.json": "1dffc37fe0984ed663dd4bdffb508426203f07b2055b674d0cf10aee60a0f01b",
+    "project/backend/approved-https-probe.mjs": "8feddb136feacf2ac5755ed16fa1228f704e4c33f16bb0bf63bbf9bb05f54616",
+    "project/backend/runtime-code.mjs": "8cffaf4f9f08b505554e124347ad4324df64d5ebce63aa7b2118f6a7f547a52f",
+    "project/backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "project/backend/approved-https-candidate.mjs": "4f543dc75ce55fe53f05f17245024060381f7c4bd172d49d0c2a3e74aabdd6d9",
+    "project/backend/generated-runtime.mjs": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731"
+  },
+  "provider_state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 2940742,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T18:10:54.065436513Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": "false",
+  "elapsed_seconds": 10.134652941022068
+}

@@ -1,0 +1,21 @@
+{
+  "batch": "10a3184e4dc64e828e09c3f143c7a925",
+  "actor_processes_terminal": true,
+  "barrier_keys_remaining": 0,
+  "postgres_constraint": "configs_organization_id_fkey",
+  "worker_states": [
+    "lost",
+    "lost"
+  ],
+  "worker_heartbeat_values": [
+    null,
+    null
+  ],
+  "execution_states": [
+    "Failed",
+    "Failed"
+  ],
+  "execution_error": "Fixture config cleanup status 401",
+  "local_workerd_error": "inserted row already exists in table",
+  "disposition": "Missing native worker heartbeat is a verified fixture lifecycle defect. Separate cold concurrent workerd error remains unqualified; no token-leak inference or passing concurrency claim."
+}

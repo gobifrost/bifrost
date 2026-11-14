@@ -1,0 +1,260 @@
+{
+  "started_at": "2026-11-14T05:02:59.804Z",
+  "run_id": "mwfxwgyk",
+  "cases": [
+    {
+      "name": "imports-helper",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "result": {
+          "ok": true,
+          "doubled": 42
+        },
+        "error": null
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true,
+          "doubled": 42
+        },
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "stdlib-only",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "result": {
+          "sum": 55,
+          "sorted": [
+            1,
+            2,
+            3
+          ]
+        },
+        "error": null
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "sum": 55,
+          "sorted": [
+            1,
+            2,
+            3
+          ]
+        },
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "raises",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 502,
+        "phase": "dynamic-runtime",
+        "result": null,
+        "error": "dynamic-runtime"
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Failed",
+        "result": null,
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "sdk-tables-list",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "count": 1,
+          "kind": "list"
+        },
+        "error": null,
+        "logs": [],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "kind": "list",
+          "count": 1
+        },
+        "error": null,
+        "logs": []
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "logs-marker",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "timestamp": "2026-11-14T05:03:29.448000+00:00",
+            "level": "info",
+            "message": "differential-log-marker",
+            "source": "workflow"
+          }
+        ],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "id": 218,
+            "timestamp": "2026-11-14T05:03:29.826117+00:00",
+            "level": "INFO",
+            "message": "differential-log-marker",
+            "data": {},
+            "sequence": 0
+          }
+        ]
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "print-marker",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "timestamp": "2026-11-14T05:03:37.920999+00:00",
+            "level": "info",
+            "message": "differential-print-marker",
+            "source": "workflow"
+          }
+        ],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "id": 219,
+            "timestamp": "2026-11-14T05:03:38.356394+00:00",
+            "level": "INFO",
+            "message": "differential-print-marker",
+            "data": {},
+            "sequence": 0
+          }
+        ]
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "sdk-reused-child",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "count": 1,
+          "kind": "list"
+        },
+        "error": null,
+        "logs": [],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          },
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "kind": "list",
+          "count": 1
+        },
+        "error": null,
+        "logs": []
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
+    }
+  ],
+  "finished_at": "2026-11-14T05:03:51.874Z",
+  "failures": 0
+}

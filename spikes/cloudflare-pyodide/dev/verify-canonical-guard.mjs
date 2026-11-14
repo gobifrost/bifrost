@@ -1,0 +1,23 @@
+import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
+const read = name => JSON.parse(readFileSync(new URL(name, import.meta.url), 'utf8'));
+const failed = read('canonical-guard-v1.json'), passed = read('canonical-guard-v2.json');
+assert.equal(failed.passed, false);
+assert.equal(failed.provider_state.ExitCode, 1);
+assert.equal(passed.passed, true);
+assert.deepEqual(passed.statuses, [403, 403, 403]);
+assert.equal(passed.provider_state.OOMKilled, false);
+assert.equal(passed.running_after_cleanup, 'false');
+assert.equal(passed.engine_sdk_execution_verified, false);
+assert.equal(passed.cloud_invocations, 0);
+const api = read('api-alignment.json');
+assert.equal(api.actual_dev_schema_revision, '20261031_app_sdk_binding');
+assert.deepEqual(api.missing_execution_worker_columns, [
+  'active_handler_counts', 'capacity_scope', 'capacity_resource_uid', 'capacity_resource_deleted_at']);
+assert.equal(api.canonical_origin_alignment_verified, false);
+assert.equal(api.schema_or_source_changes_applied, false);
+const archive = read('archived-build-artifacts.json');
+assert.equal(archive.archive_members_verified_before_loose_copy_removal, true);
+assert.equal(archive.volumes_deleted, false);
+assert.equal(archive.guard_threshold_changed, false);
+console.log('Closed local guard and explicit API/schema mismatch verified; cloud execution remains unqualified.');

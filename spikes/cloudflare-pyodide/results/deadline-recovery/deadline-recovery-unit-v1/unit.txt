@@ -1,0 +1,21 @@
+test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts (test_private_http_pool.PrivatePoolTests.test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts) ... FAIL
+
+======================================================================
+FAIL: test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts (test_private_http_pool.PrivatePoolTests.test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_private_http_pool.py", line 352, in test_explicit_deadline_recovery_allows_retained_ack_without_rewriting_failed_receipts
+    self.assertIsNone(error, 'recovered canonical deadline still blocks retained settlement')
+    ~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'ConnectionError' is not None : recovered canonical deadline still blocks retained settlement
+
+----------------------------------------------------------------------
+Ran 1 test in 1.066s
+
+FAILED (failures=1)

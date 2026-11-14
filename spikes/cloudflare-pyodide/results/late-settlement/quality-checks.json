@@ -1,0 +1,22 @@
+{
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/late-settlement-v1",
+    "ruff":  {
+                 "command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py",
+                 "exit_code":  0,
+                 "memory_mib":  512,
+                 "cpus":  0.5,
+                 "network":  "none"
+             },
+    "pyright":  {
+                    "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/canonical-local.py /qualification/ct128-canonical-failure.py",
+                    "exit_code":  0,
+                    "errors":  0,
+                    "memory_mib":  1024,
+                    "node_old_space_mib":  768,
+                    "cpus":  0.5,
+                    "network":  "none"
+                },
+    "retained_helper_tests":  "10 focused tests at exact unchanged helper source from 9e9f24885; not rerun",
+    "cloud_invocations":  0
+}

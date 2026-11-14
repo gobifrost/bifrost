@@ -1,0 +1,21 @@
+{
+    "scope":  "private no-send acknowledgement plus real canonical consumption",
+    "guest":  "CT128 bifrost-pyodide-test-01",
+    "base_source":  "1d33150eb376b71f8a81b427920eda1b0447f829",
+    "canonical_consumer_source":  "b992ba3640ae74113dc5e6c59829812a11c246c4",
+    "junit":  {
+                  "cases":  2,
+                  "failures":  0,
+                  "errors":  0,
+                  "skipped":  0
+              },
+    "unit_cases":  45,
+    "unit_scope":  "native adapter with mocked HTTP/authority callbacks",
+    "pg_scope":  "real persistence/session ownership, synthetic no-send launch and ACK loss",
+    "cloud_invocations":  0,
+    "physical_termination_verified":  false,
+    "volumes_preserved":  true,
+    "running_after_cleanup":  [
+
+                              ]
+}

@@ -1,0 +1,25 @@
+
+ ⛅️ wrangler 4.156.0
+────────────────────
+Your Worker has access to the following bindings:
+Binding                       Resource                  Mode
+env.LOCAL_PROBE ("true")      Environment Variable      local
+env.LOADER                    Worker Loader             local
+
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+⎔ Starting local server...
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[wrangler:info] Ready on http://127.0.0.1:8810
+[wrangler:error] Error: internal error; reference = vrrtohts4pja2fe53vn60vuu
+    at async jsonError (file:///spike/node_modules/wrangler/templates/middleware/middleware-miniflare3-json-error.ts:22:10)
+    at async drainBody (file:///spike/node_modules/wrangler/templates/middleware/middleware-ensure-req-body-drained.ts:5:10)
+[wrangler:info] POST / 500 Internal Server Error (867ms)
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1me = rust/cxx/kj-rs-io/ffi.rs:188: failed: getaddrinfo(): DNS lookup failed. host = pyodide-capnp-bin.edgeworker.net; service = (none); failed to lookup address information: Temporary failure in name resolution[0m
+
+  stack: /spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd@34dcea9 /spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd@26b6840 /spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd@3739630 /spike/node_modules/@cloudflare/workerd-linux-64/bin/workerd@3358d60; sentryErrorContext = jsgInternalError; wdErrId = vrrtohts4pja2fe53vn60vuu
+
+

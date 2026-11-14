@@ -1,0 +1,142 @@
+{
+  "process_exit_code": 0,
+  "runtime": "local-workerd-canonical-claim-consumer",
+  "workspace_sha256": {
+    "workflows/pyodide_qualification_886b969eb610402bbfc27366603fa51b.py": "4a79719a16d0d11ef8d234e9439c535936c2a42f7a7c269b96ca66c6aacea6fe",
+    "pyodide_helper_886b969eb610402bbfc27366603fa51b.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"
+  },
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "cross_tenant_status": 403,
+  "independent_document_value": 70,
+  "canonical_claim_verified": true,
+  "canonical_terminal_consumption_verified": true,
+  "lost_ack_reconnect_verified": true,
+  "credential_revoked_after_terminal_status": 401,
+  "launches": 1,
+  "persisted_log_count": 1,
+  "result": {
+    "result": {
+      "execution_id": "7791995a-4622-4263-bb57-3b5a89ea1bf8",
+      "success": true,
+      "status": "Success",
+      "result": {
+        "value": 70,
+        "parent_secret_present": false,
+        "credential_redaction_probe": "[REDACTED]"
+      },
+      "error": null,
+      "error_type": null,
+      "duration_ms": 579,
+      "logs": [
+        {
+          "timestamp": "2026-11-01T00:21:42.033999+00:00",
+          "level": "warning",
+          "message": "canonical local Pyodide proof",
+          "source": "workflow"
+        }
+      ],
+      "variables": {
+        "n": 7,
+        "value": 42,
+        "doc": {
+          "id": "proof",
+          "table_id": "de9d549a-9902-4d34-b892-e94295f47868",
+          "data": {
+            "value": 70
+          },
+          "created_at": "2026-11-01T00:21:41.887371+00:00",
+          "updated_at": "2026-11-01T00:21:41.887371+00:00",
+          "created_by": "908a32b3-b371-4dac-ac15-b34c9280acc4",
+          "updated_by": "908a32b3-b371-4dac-ac15-b34c9280acc4"
+        }
+      },
+      "integration_calls": [],
+      "roi": {
+        "time_saved": 0,
+        "value": 0
+      },
+      "metrics": {
+        "peak_memory_bytes": null,
+        "peak_process_rss_bytes": null,
+        "cpu_user_seconds": null,
+        "cpu_system_seconds": null,
+        "cpu_total_seconds": null,
+        "code_hash": "4a79719a16d0d11ef8d234e9439c535936c2a42f7a7c269b96ca66c6aacea6fe"
+      },
+      "cached": false,
+      "cache_expires_at": null,
+      "execution_context": {
+        "user_id": "908a32b3-b371-4dac-ac15-b34c9280acc4",
+        "email": "token-73f55bc7@example.test",
+        "name": "Person 79c6",
+        "scope": "35f6c78f-cbbd-4027-bfb9-53d7a083a6b0",
+        "organization": {
+          "id": "35f6c78f-cbbd-4027-bfb9-53d7a083a6b0",
+          "name": "Token World b828fbaa",
+          "is_active": true,
+          "is_provider": false
+        },
+        "is_platform_admin": false,
+        "is_function_key": false,
+        "execution_id": "7791995a-4622-4263-bb57-3b5a89ea1bf8",
+        "workflow_deadline": null,
+        "workflow_timeout_seconds": 30,
+        "workflow_name": "token_18158f6f",
+        "is_agent": false,
+        "artifact_workspace_id": null,
+        "public_url": "https://test-api.invalid",
+        "parameters": {
+          "n": 7
+        },
+        "startup": null,
+        "form_inputs": {},
+        "embed": {},
+        "roi": {
+          "time_saved": 0,
+          "value": 0
+        }
+      },
+      "worker_id": "f63bf169-cc08-47c5-bc13-9e333d00708e"
+    },
+    "api_calls": [
+      {
+        "method": "GET",
+        "path": "/api/sdk/modules/workflows/pyodide_qualification_886b969eb610402bbfc27366603fa51b.py",
+        "status": 200
+      },
+      {
+        "method": "GET",
+        "path": "/api/sdk/modules-resolve",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/sdk/config/get",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables/pyodide-table-886b969eb610402bbfc27366603fa51b/documents/upsert",
+        "status": 404
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables",
+        "status": 201
+      },
+      {
+        "method": "POST",
+        "path": "/api/tables/pyodide-table-886b969eb610402bbfc27366603fa51b/documents/upsert",
+        "status": 200
+      },
+      {
+        "method": "POST",
+        "path": "/api/sdk/runtime/logs",
+        "status": 200
+      }
+    ]
+  },
+  "completed_claim_retained_as_upstream_specifies": true,
+  "fixture_worker_cascade_cleanup_verified": true
+}

@@ -1,0 +1,165 @@
+{
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "guest": "CT128",
+  "source_base": "80cb0d6220bcc38d58699b305ac78530eacd2dca",
+  "bundle_sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+  "packet_sha256": {
+    "cpu-placement.mjs": "4d1437f8d018ec049c42dd7ce5341416c7663eeae86b5fced7f22b676aa2fb46",
+    "isolation-code.mjs": "c5f205405b5bc5a845724a88c7e2a83d345bf6e9c4a6ae83282760f21f0d0c43",
+    "wrangler.config.ts": "001110e8323190938d644ec635bb5a201c9f369e45d6e16558a6bca4e231bf32",
+    "package.json": "8aabb614a59d8268ba4ad669c708e54ad792ca87a9f347cbe28ea6bb45cbc22f",
+    "cpu-placement.test.mjs": "43a3ea34369b2d2fc74cf47bd42aebc90bb8ce3b3cd503016d67e1aaf90e1b19",
+    "cpu-placement-driver.mjs": "154010358f68ab325aa9e8b2effed13ff09615a0abbd97dec25a265218cb2e20",
+    "cloudflare.config.ts": "8bef2387845c8e56376cfc2b81f2903824e82cf676cf435dfb271af5dfed27a4",
+    "cpu-placement-entry.mjs": "4920fb789a147c086576c60cb3b51e4ea31fe21596ed6786f432705b02f6a639"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-cpu-placement-v1",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide/node_modules,dst=/qualification/packet/node_modules,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/cpu-placement-v1,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/cf/bin/cf",
+    "dev"
+  ],
+  "driver_exit_code": 0,
+  "observation": {
+    "runtime": "local-workerd",
+    "cloud_invocations": 0,
+    "outcomes": [
+      {
+        "case_id": "completion",
+        "http_status": 200,
+        "body": {
+          "case_id": "completion",
+          "status": 200,
+          "body": {
+            "completed": true
+          }
+        }
+      },
+      {
+        "case_id": "code_limit",
+        "http_status": 200,
+        "body": {
+          "case_id": "code_limit",
+          "status": 200,
+          "body": {
+            "total": 19999999900000000
+          }
+        }
+      },
+      {
+        "case_id": "entrypoint_limit",
+        "http_status": 200,
+        "body": {
+          "case_id": "entrypoint_limit",
+          "status": 200,
+          "body": {
+            "total": 19999999900000000
+          }
+        }
+      }
+    ],
+    "observations": {
+      "completion": [
+        {
+          "event": "before",
+          "elapsed_ms": 3769.837415
+        },
+        {
+          "event": "after",
+          "elapsed_ms": 4024.016137
+        }
+      ],
+      "code_limit": [
+        {
+          "event": "before",
+          "elapsed_ms": 6279.865436
+        }
+      ],
+      "entrypoint_limit": [
+        {
+          "event": "before",
+          "elapsed_ms": 25168.427786
+        }
+      ]
+    },
+    "classifications": [
+      {
+        "case_id": "completion",
+        "events": [
+          "before",
+          "after"
+        ],
+        "classification": "observer_control_passed",
+        "physical_termination_verified": false,
+        "execution_admission_enabled": false
+      },
+      {
+        "case_id": "code_limit",
+        "events": [
+          "before"
+        ],
+        "classification": "physical_stop_unproven",
+        "physical_termination_verified": false,
+        "execution_admission_enabled": false
+      },
+      {
+        "case_id": "entrypoint_limit",
+        "events": [
+          "before"
+        ],
+        "classification": "physical_stop_unproven",
+        "physical_termination_verified": false,
+        "execution_admission_enabled": false
+      }
+    ],
+    "physical_termination_verified": false,
+    "elapsed_ms": 41962.708877000005
+  },
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 961341,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-03T01:12:24.110274082Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 47.10160791128874
+}

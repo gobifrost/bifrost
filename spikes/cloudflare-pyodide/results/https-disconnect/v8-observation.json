@@ -1,0 +1,95 @@
+{
+  "status": 500,
+  "body": {
+    "observations": {
+      "control": {
+        "before": {
+          "destination_committed": false,
+          "parent": {
+            "closed": false,
+            "execute_returned": false
+          }
+        },
+        "at_release": {
+          "destination_committed": false,
+          "parent": {
+            "closed": false,
+            "execute_returned": false
+          }
+        },
+        "after": {
+          "closed": true,
+          "execute_returned": true
+        },
+        "events": [
+          "hold_received",
+          "parent_release",
+          "hold_committed"
+        ],
+        "effects": [
+          "/before",
+          "/after"
+        ],
+        "destination_committed": true,
+        "terminal": {
+          "type": "result",
+          "protocol": 1,
+          "runtime_handle": "disconnect:facd142a-27ef-4edf-b9a5-d395a71eeb8a",
+          "execution_id": "facd142a-27ef-4edf-b9a5-d395a71eeb8a",
+          "evidence": {
+            "result": {
+              "execution_id": "facd142a-27ef-4edf-b9a5-d395a71eeb8a",
+              "success": true,
+              "result": {
+                "statuses": [
+                  200,
+                  200,
+                  200
+                ]
+              }
+            }
+          }
+        },
+        "eof_observed": true,
+        "original_collection_uncertain": false
+      }
+    },
+    "at_failure": {
+      "mode": "disconnect",
+      "phase": "awaiting_gate_close",
+      "parent": {
+        "closed": false,
+        "execute_returned": false
+      },
+      "received": true,
+      "committed": false,
+      "effects": [
+        "/before"
+      ],
+      "events": [
+        "hold_received"
+      ]
+    },
+    "after_failure_release": {
+      "parent": {
+        "closed": true,
+        "execute_returned": true
+      },
+      "committed": true,
+      "effects": [
+        "/before",
+        "/after"
+      ],
+      "events": [
+        "hold_received",
+        "parent_release",
+        "hold_committed"
+      ]
+    },
+    "failure_type": "Error",
+    "observation_window_ms": 500,
+    "cloud_invocations": 0,
+    "physical_termination_verified": false,
+    "canonical_recovery_verified": false
+  }
+}

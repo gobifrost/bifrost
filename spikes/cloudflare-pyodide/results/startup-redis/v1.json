@@ -1,0 +1,34 @@
+{
+  "cloud_invocations": 0,
+  "images": [
+    "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "sha256:98c6ca8f397f86e469be752c3e7ed5eb8b17f2479840cb69a2e413037038e9f4"
+  ],
+  "packet_sha256": {
+    "remote_pool.py.txt": "90bf84fb5213856473d04a770bae6ac1d3dfd71eadd0a897b0ac291a6c3cddde",
+    "startup-redis-probe.py": "fd7801acab4f123f5139d12f5353b2fdd211278634523f0a8355ec597fdae16b",
+    "ct128-startup-redis.py": "aa0a8a9ac47948096b1d5a34c0024e18700b04ddfa7877d9e4d1c380418a9c69"
+  },
+  "cleanup": {
+    "pyodide-ddf316c1-startup-redis-v1-test": {
+      "running_after": "absent"
+    },
+    "pyodide-ddf316c1-startup-redis-v1": {
+      "before": {
+        "Status": "running",
+        "Running": true,
+        "Paused": false,
+        "Restarting": false,
+        "OOMKilled": false,
+        "Dead": false,
+        "Pid": 2792007,
+        "ExitCode": 0,
+        "Error": "",
+        "StartedAt": "2026-11-03T16:39:35.925388968Z",
+        "FinishedAt": "0001-01-01T00:00:00Z"
+      },
+      "running_after": "false"
+    }
+  },
+  "elapsed_seconds": 0.35592195577919483
+}

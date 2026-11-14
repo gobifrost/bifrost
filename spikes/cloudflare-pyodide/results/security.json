@@ -1,0 +1,510 @@
+{
+  "runtime": "local-workerd",
+  "observations": [
+    {
+      "test": "cross_execution_state",
+      "outcome": "incompatible",
+      "evidence": {
+        "http": 200,
+        "body": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Success",
+          "result": "synthetic-execution-A",
+          "duration_ms": 1,
+          "logs": [],
+          "variables": {},
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "state_read",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "http://localhost",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "probe_wall_ms": 0.9999275207519531
+        }
+      }
+    },
+    {
+      "test": "cooperative_io_cancellation",
+      "outcome": "observed",
+      "evidence": {
+        "http": 200,
+        "body": {
+          "status": "HarnessError",
+          "error_type": "TimeoutError",
+          "error_message": "",
+          "probe_wall_ms": 52.00004577636719
+        }
+      }
+    },
+    {
+      "test": "cpu_cancellation",
+      "outcome": "incompatible",
+      "evidence": {
+        "http": 200,
+        "body": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Success",
+          "result": "CPU completed before timeout callback could run",
+          "duration_ms": 152,
+          "logs": [],
+          "variables": {
+            "deadline": 1793416304.8920002
+          },
+          "integration_calls": [],
+          "roi": {
+            "time_saved": 0,
+            "value": 0
+          },
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "cpu_timeout",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "http://localhost",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "error_message": null,
+          "error_type": null,
+          "cached": false,
+          "cache_expires_at": null,
+          "probe_wall_ms": 151.99995040893555
+        }
+      }
+    },
+    {
+      "test": "registered_secret_result_redaction",
+      "outcome": "observed",
+      "evidence": {
+        "http": 200,
+        "body": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Failed",
+          "result": null,
+          "duration_ms": 20,
+          "logs": [
+            {
+              "timestamp": "2026-10-31T03:11:44.951000+00:00",
+              "level": "warning",
+              "message": "[REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.952000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] Traceback (most recent call last):",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.952999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.953999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     result = await _run_workflow_async()",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.951000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.952000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.952999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     return await func(**accepted_params)",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.953999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.955000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/fixtures.py\", line 95, in secret_probe",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.956000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     raise ValueError(\"[REDACTED]\")",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.956999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] ValueError: [REDACTED]",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.958000+00:00",
+              "level": "error",
+              "message": "Execution error: secret_probe",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:11:44.952999+00:00",
+              "level": "error",
+              "message": "ValueError: [REDACTED]",
+              "source": "workflow"
+            }
+          ],
+          "variables": {},
+          "integration_calls": [],
+          "roi": null,
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "secret_probe",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "http://localhost",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "error_message": "[REDACTED]",
+          "error_type": "ValueError",
+          "cached": false,
+          "cache_expires_at": null,
+          "probe_wall_ms": 23.999929428100586
+        }
+      }
+    },
+    {
+      "test": "duplicate_invocation",
+      "outcome": "no_deduplication",
+      "evidence": [
+        {
+          "http": 200,
+          "body": {
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "status": "Success",
+            "result": 3,
+            "duration_ms": 5,
+            "logs": [],
+            "variables": {},
+            "integration_calls": [],
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            },
+            "execution_context": {
+              "user_id": "00000000-0000-0000-0000-000000000002",
+              "email": "probe@example.invalid",
+              "name": "Probe",
+              "scope": "GLOBAL",
+              "organization": null,
+              "is_platform_admin": false,
+              "is_function_key": false,
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "workflow_deadline": null,
+              "workflow_timeout_seconds": 1800,
+              "workflow_name": "duplicate_probe",
+              "is_agent": false,
+              "artifact_workspace_id": null,
+              "public_url": "http://localhost",
+              "parameters": {},
+              "startup": null,
+              "form_inputs": {},
+              "embed": {},
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              }
+            },
+            "error_message": null,
+            "error_type": null,
+            "cached": false,
+            "cache_expires_at": null,
+            "probe_wall_ms": 5.99980354309082
+          }
+        },
+        {
+          "http": 200,
+          "body": {
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "status": "Success",
+            "result": 4,
+            "duration_ms": 3,
+            "logs": [],
+            "variables": {},
+            "integration_calls": [],
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            },
+            "execution_context": {
+              "user_id": "00000000-0000-0000-0000-000000000002",
+              "email": "probe@example.invalid",
+              "name": "Probe",
+              "scope": "GLOBAL",
+              "organization": null,
+              "is_platform_admin": false,
+              "is_function_key": false,
+              "execution_id": "00000000-0000-0000-0000-000000000001",
+              "workflow_deadline": null,
+              "workflow_timeout_seconds": 1800,
+              "workflow_name": "duplicate_probe",
+              "is_agent": false,
+              "artifact_workspace_id": null,
+              "public_url": "http://localhost",
+              "parameters": {},
+              "startup": null,
+              "form_inputs": {},
+              "embed": {},
+              "roi": {
+                "time_saved": 0,
+                "value": 0
+              }
+            },
+            "error_message": null,
+            "error_type": null,
+            "cached": false,
+            "cache_expires_at": null,
+            "probe_wall_ms": 3.999948501586914
+          }
+        }
+      ]
+    },
+    {
+      "test": "oversized_parameters",
+      "outcome": "rejected_after_json_parse",
+      "evidence": {
+        "http": 413,
+        "body": {
+          "error": "parameters too large"
+        }
+      }
+    },
+    {
+      "test": "invalid_credentials",
+      "outcome": "BifrostAuthenticationError",
+      "evidence": {
+        "http": 200,
+        "body": {
+          "execution_id": "00000000-0000-0000-0000-000000000001",
+          "status": "Failed",
+          "result": null,
+          "duration_ms": 18724,
+          "logs": [
+            {
+              "timestamp": "2026-10-31T03:12:03.985999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] Traceback (most recent call last):",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.987000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1635, in _execute_workflow_with_trace",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.988000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     result = await _run_workflow_async()",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.988999+00:00",
+              "level": "warning",
+              "message": "structured log probe",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.990000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]              ^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.991000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/src/services/execution/engine.py\", line 1626, in _run_workflow_async",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.992000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     return await func(**accepted_params)",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.992999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.993999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/fixtures.py\", line 35, in integration_read",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.995000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     data = await integrations.get(\"pyodide-spike\")",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.996000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.996999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/bifrost/integrations.py\", line 139, in get",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.998000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     raise_for_status_with_detail(response)",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.999000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:04+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]   File \"/session/metadata/vendor/bifrost/client.py\", line 213, in raise_for_status_with_detail",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.984000+00:00",
+              "level": "info",
+              "message": "[TRACEBACK]     raise error_type(message=message, request=response.request, response=response)",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.984999+00:00",
+              "level": "info",
+              "message": "[TRACEBACK] bifrost.client.BifrostAuthenticationError: 401 Unauthorized: Not authenticated",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.985999+00:00",
+              "level": "error",
+              "message": "Execution error: integration_read",
+              "source": "workflow"
+            },
+            {
+              "timestamp": "2026-10-31T03:12:03.987000+00:00",
+              "level": "error",
+              "message": "bifrost.client.BifrostAuthenticationError: 401 Unauthorized: Not authenticated",
+              "source": "workflow"
+            }
+          ],
+          "variables": {},
+          "integration_calls": [],
+          "roi": null,
+          "execution_context": {
+            "user_id": "00000000-0000-0000-0000-000000000002",
+            "email": "probe@example.invalid",
+            "name": "Probe",
+            "scope": "GLOBAL",
+            "organization": null,
+            "is_platform_admin": false,
+            "is_function_key": false,
+            "execution_id": "00000000-0000-0000-0000-000000000001",
+            "workflow_deadline": null,
+            "workflow_timeout_seconds": 1800,
+            "workflow_name": "integration_read",
+            "is_agent": false,
+            "artifact_workspace_id": null,
+            "public_url": "http://localhost",
+            "parameters": {},
+            "startup": null,
+            "form_inputs": {},
+            "embed": {},
+            "roi": {
+              "time_saved": 0,
+              "value": 0
+            }
+          },
+          "error_message": "401 Unauthorized: Not authenticated",
+          "error_type": "BifrostAuthenticationError",
+          "cached": false,
+          "cache_expires_at": null,
+          "probe_wall_ms": 18729.999780654907
+        }
+      }
+    }
+  ]
+}

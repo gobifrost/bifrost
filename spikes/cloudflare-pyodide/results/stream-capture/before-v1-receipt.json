@@ -1,0 +1,37 @@
+{
+  "source": "1017cca1795540f75b9781d87137822a4a42d685",
+  "overlay_sha256": {
+    "api/tests/unit/engine/test_stream_capture.py": "b5371c5d2fd4882d29c7c1fec739ccaf2eb0862b57a7f95ef5fb5bafd4e9c4b0",
+    "api/src/services/execution/engine.py": "b9bd1d04a17d9dfc6a9418550ffb361c734d99558bdd7c710f3c53b0fdbc06ab"
+  },
+  "project": "bifrost-test-8e9f191a",
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "./test.sh",
+        "tests/unit/engine/test_stream_capture.py",
+        "-q"
+      ],
+      "exit_code": 1
+    }
+  ],
+  "phase": "before",
+  "cloud_invocations": 0,
+  "qualification_passed": false,
+  "junit": {
+    "cases": 5,
+    "failures": 5,
+    "errors": 0,
+    "skipped": 0
+  },
+  "running_after_cleanup": [],
+  "elapsed_seconds": 119.16672650212422
+}

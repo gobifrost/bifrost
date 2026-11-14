@@ -1,0 +1,25 @@
+{
+    "total_worker_http_requests":  4,
+    "dev_api_source":  "2037ac0d9ec95e94a77ce440001ae016d4215407",
+    "base_commit":  "f49d4ba99cebd24aa497f1244833b940e640885f",
+    "command":  "python3 run_cloud_qualification.py --streams --private-directory cloud-private-stream-v1",
+    "fixture_requests_reserved":  3,
+    "guest":  "pve-t340 CT128",
+    "open_version":  "512022a3-6b85-4878-82f6-1fcb7848e97c",
+    "files":  {
+                  "spikes/cloudflare-pyodide/dev/executor/entry.mjs":  "8c269981ded77d20bc8c742bc7cc2d6f03dbecf2dc5f159e9521da8f0f22df92",
+                  "spikes/cloudflare-pyodide/dev/executor/cloudflare.config.ts":  "d58efd67ceeb0cc76db368611dff3070c61252b85b30a646e162297d5048198b",
+                  "api/src/services/execution/engine.py":  "6690efa6fc513a0f457c30cfed59da091bf3ae292d186bc72cd436c871759c21",
+                  "spikes/cloudflare-pyodide/dev/executor/python-entry.mjs":  "a0fc8853dc3a5cf224fae46af395a60188d4e35d8a1a0fc9397039d577d0ab43",
+                  "spikes/cloudflare-pyodide/dev/run_cloud_qualification.py":  "ac34499862c91f42f59c6877afc56bea03bd8ad1f1219735acd5fa48160a4b2b",
+                  "spikes/cloudflare-pyodide/backend/authorized-local.py":  "00c4b761b2f30241b8e356743ec8fd0b88082674424e7de83d107ac3cc8fb1ae",
+                  "spikes/cloudflare-pyodide/dev/executor/policy.mjs":  "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+                  "spikes/cloudflare-pyodide/backend/runtime-code.mjs":  "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+                  "spikes/cloudflare-pyodide/dev/stage_runtime.mjs":  "7c3bf08e22ba2f2b4da12ab99df6f230a99cf1ef7247a2e3392abf95615a2def",
+                  "spikes/cloudflare-pyodide/backend/runtime-runner.py":  "341b2414a1167a2fb9850114619d5caf1882bc4a60ee73f699afb1d7c856c471"
+              },
+    "control_limits":  "1CPU/768MiB/no swap/128PIDs/180s",
+    "runtime_sha256":  "bc4eae48a21ab788f99bf3a554ca16f676a93549ba96bcdb99f433ed46e6daf0",
+    "exit_code":  0,
+    "source_state":  "tracked fixture overlay; exact file hashes below"
+}

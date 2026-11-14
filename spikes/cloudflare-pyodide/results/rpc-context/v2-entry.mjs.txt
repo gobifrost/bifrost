@@ -1,0 +1,118 @@
+// Synthetic local context-lifetime experiment; never workflow admission.
+import {WorkerEntrypoint} from 'cloudflare:workers';
+import {summarizeTail} from './tail-observer.mjs';
+const observers = new Map();
+const targets = new Map();
+// Reloadable parent entrypoint: dynamic entrypoints themselves cannot cross Workers.
+export class ContextBridge extends WorkerEntrypoint {
+  async held() {
+    const target = targets.get(this.ctx.props.id);
+    if (!target) throw new Error('Synthetic target expired');
+    return data(target.held(), ['value']);
+  }
+  async status() {
+    const target = targets.get(this.ctx.props.id);
+    if (!target) throw new Error('Synthetic target expired');
+    return data(target.status(), statusKeys);
+  }
+}
+export class ContextTail extends WorkerEntrypoint {
+  async tail(events) {
+    const summary = summarizeTail(events);
+    const observer = observers.get(this.ctx.props.id);
+    if (observer) {
+      observer.summary = summary;
+      observer.resolve();
+    } else console.log('late_synthetic_context_tail', JSON.stringify(summary));
+  }
+}
+const python = `
+from workers import WorkerEntrypoint
+import asyncio
+import sys, sysconfig, pyodide
+state = {"started": 0, "after": 0, "interrupted": 0, "error_type": None}
+gate = asyncio.Event()
+class Default(WorkerEntrypoint):
+    async def abi(self):
+        return {"pyodide": pyodide.__version__, "python": list(sys.version_info[:3]),
+                "soabi": sysconfig.get_config_var("SOABI")}
+    async def held(self):
+        state["started"] += 1
+        try:
+            await gate.wait()
+        except BaseException as error:
+            state["interrupted"] += 1
+            state["error_type"] = type(error).__name__
+            raise
+        state["after"] += 1
+        return {"value": 7}
+    async def status(self):
+        return dict(state)
+    async def release(self):
+        gate.set()
+        return True
+`;
+const caller = `export default {async fetch(request, env) {
+  if(env.MODE==='control') return Response.json({control:true});
+  const pending=env.TARGET.held();
+  // Observe rejection, but do not await or extend the calling event with waitUntil.
+  pending.catch(()=>{});
+  const status=await env.TARGET.status();
+  const result={started:status.started,after:status.after};
+  status[Symbol.dispose]();
+  return Response.json(result);
+}};`;
+async function data(promise, keys) {
+  const value = await promise;
+  if (!(value instanceof Map)) throw new TypeError('Pinned Python RPC Map required');
+  const result = Object.fromEntries(keys.map(key => [key, value.get(key)]));
+  value[Symbol.dispose]();
+  return result;
+}
+const statusKeys = ['started', 'after', 'interrupted', 'error_type'];
+export default {
+  async fetch(request, env, ctx) {
+    if (env.ISOLATED_TEST_STACK !== 'true' || request.method !== 'POST') return new Response('Local POST only', {status: 403});
+    const routes = [];
+    async function runCaller(mode, target) {
+      const id = crypto.randomUUID();
+      let resolve;
+      const tailed = new Promise(done => {resolve = done;});
+      const observer = {resolve, summary: null};
+      observers.set(id, observer);
+      routes.push(id);
+      if (target) targets.set(id, target);
+      const worker = env.LOADER.load({compatibilityDate: '2026-10-30', mainModule: 'main.js',
+        modules: {'main.js': {js: caller}}, env: target ? {MODE: mode, TARGET: ctx.exports.ContextBridge({props: {id}})} : {MODE: mode},
+        globalOutbound: null, limits: {cpuMs: 1000, subRequests: 4},
+        tails: [ctx.exports.ContextTail({props: {id}})]});
+      const response = await worker.getEntrypoint().fetch('https://synthetic.invalid/');
+      const body = await response.json();
+      let timer;
+      const timeout = new Promise(done => {timer = setTimeout(() => done(false), 2500);});
+      const tailSeenBeforeRelease = await Promise.race([tailed.then(() => true), timeout]);
+      clearTimeout(timer);
+      return {body, tailSeenBeforeRelease, observer};
+    }
+    try {
+      const control = await runCaller('control');
+      const worker = env.LOADER.load({compatibilityDate: '2026-10-30', compatibilityFlags: ['python_workers'],
+        mainModule: 'main.py', modules: {'main.py': {py: python}}, env: {}, globalOutbound: null,
+        limits: {cpuMs: 1000, subRequests: 0}});
+      const target = worker.getEntrypoint();
+      const abi = await data(target.abi(), ['pyodide', 'python', 'soabi']);
+      const before = await data(target.status(), statusKeys);
+      const ended = await runCaller('context_end', target);
+      const beforeRelease = await data(target.status(), statusKeys);
+      const released = await target.release();
+      await new Promise(done => setTimeout(done, 200));
+      const after = await data(target.status(), statusKeys);
+      return Response.json({abi, before, control: {body: control.body,
+        tail_seen_before_release: control.tailSeenBeforeRelease, tail: control.observer.summary},
+      ended: {body: ended.body, tail_seen_before_release: ended.tailSeenBeforeRelease,
+        tail: ended.observer.summary}, before_release: beforeRelease, released, after,
+      physical_termination_verified: false, cloud_invocations: 0,
+      scope: 'Retained-parent local caller-context observation; no CPU or deployed cancellation proof'});
+    } finally { for (const id of routes) { observers.delete(id); targets.delete(id); } }
+  },
+};

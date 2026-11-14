@@ -1,0 +1,105 @@
+"""Bounded signed-runtime-profile source qualification in the owned test stack."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import time
+import xml.etree.ElementTree as ET
+
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
+CHECKOUT = ROOT / 'upstream-025f6c0'
+PACKET = ROOT / 'inbox/runtime-profile-v1'
+RUN = ROOT / 'runs/runtime-profile-v1'
+PROJECT = 'bifrost-test-5dc8d94e'
+SOURCE = '1d33150eb376b71f8a81b427920eda1b0447f829'
+
+
+def output(args):
+    return subprocess.check_output(args, cwd=CHECKOUT, text=True, timeout=30).strip()
+
+
+def main():
+    if (output(['hostname']) != 'bifrost-pyodide-test-01'
+        or output(['git', 'rev-parse', 'HEAD']) != SOURCE or shutil.disk_usage(ROOT).free < 8 * 1024**3
+        or output(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT])):
+        raise RuntimeError('Assigned guest/source/disk/stopped-project preflight failed')
+    shared = ['api/src/worker/remote/protocol.py', 'api/src/worker/remote/host.py']
+    baseline = {}
+    for path in shared:
+        data = subprocess.check_output(['git', 'show', 'HEAD:' + path], cwd=CHECKOUT)
+        if (CHECKOUT / path).read_bytes() != data:
+            raise RuntimeError('Unexpected shared source overlay: ' + path)
+        baseline[path] = hashlib.sha256(data).hexdigest()
+    if hashlib.sha256((CHECKOUT / 'docker-compose.test.yml').read_bytes()).hexdigest() != '33e78480090f97ea3f04be404c5a3d312ea8486ec6d55a60c67361a8ef0bdce9':
+        raise RuntimeError('Resource-bounded Compose changed')
+    if output(['docker', 'image', 'inspect', 'bifrost-test-api-dev:bifrost-test-7ddfac36', '--format', '{{.Id}}']) != 'sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b':
+        raise RuntimeError('Pinned dependency image changed')
+    test = CHECKOUT / 'api/tests/unit/worker/remote/test_runtime_profile.py'
+    if test.exists():
+        raise RuntimeError('Reconcile existing test before overlay')
+    RUN.mkdir()
+    (RUN / 'home').mkdir()
+    test.write_bytes((PACKET / 'test_runtime_profile.py').read_bytes())
+    env = {'PATH': os.environ['PATH'], 'HOME': str(RUN / 'home'), 'BIFROST_SKIP_BUILD': '1',
+           'BIFROST_TEST_IMAGE_TAG': 'bifrost-test-7ddfac36', 'BIFROST_TEST_UNIT_ONLY': '1', 'COMPOSE_PARALLEL_LIMIT': '1'}
+    compose = ['docker', 'compose', '-p', PROJECT, '-f', 'docker-compose.test.yml']
+    runner = [*compose, '--profile', 'test', 'run', '--rm', '--no-deps', 'test-runner']
+    report = {'api_source': SOURCE, 'source_base': 'f7a692552f71f5d9f89349fc07ba3933518bad60',
+              'cloud_invocations': 0, 'execution_admission_qualified': False, 'commands': [],
+              'baseline_sha256': baseline, 'packet_sha256': {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                  for p in PACKET.iterdir() if p.is_file() and p.suffix != '.tar'}}
+    started = time.monotonic()
+
+    def run(command, name, expected=0):
+        with (RUN / (name + '.private.log')).open('x') as log:
+            result = subprocess.run(command, cwd=CHECKOUT, env=env, stdout=log, stderr=subprocess.STDOUT,
+                                    timeout=max(1, 400 - (time.monotonic() - started)))
+        report['commands'].append({'argv': command, 'exit_code': result.returncode})
+        if result.returncode != expected:
+            raise RuntimeError('Qualification phase failed: ' + name)
+
+    def junit(name):
+        path = Path('/tmp') / ('bifrost-' + PROJECT) / 'test-results.xml'
+        (RUN / (name + '.xml')).write_bytes(path.read_bytes())
+        tree = ET.parse(path)
+        return {k: len(tree.findall('.//' + tag)) for k, tag in
+                [('cases', 'testcase'), ('failures', 'failure'), ('errors', 'error'), ('skipped', 'skipped')]}
+
+    try:
+        run(['./test.sh', 'stack', 'up'], 'boot')
+        run(['./test.sh', 'tests/unit/worker/remote/test_runtime_profile.py::test_unsigned_profile_is_not_silently_ignored', '-q'], 'before', 1)
+        report['before'] = junit('before')
+        if report['before'] != {'cases': 1, 'failures': 1, 'errors': 0, 'skipped': 0}:
+            raise RuntimeError('Expected unsigned-profile regression not reproduced')
+        for path in shared:
+            (CHECKOUT / path).write_bytes((PACKET / Path(path).name).read_bytes())
+        run(['./test.sh', 'tests/unit/worker/remote/test_runtime_profile.py',
+             'tests/unit/worker/remote/test_protocol.py', 'tests/unit/worker/remote/test_credential_protocol.py',
+             'tests/unit/worker/remote/test_host.py', '-q'], 'after')
+        report['after'] = junit('after')
+        if any(report['after'][key] for key in ('failures', 'errors', 'skipped')):
+            raise RuntimeError('Selected native contracts did not all pass')
+        run([*runner, '--volume', f'{PACKET}:/qualification:ro', 'python', '/qualification/control-auth.py', '--control-auth'], 'control')
+        rows = [json.loads(line) for line in (RUN / 'control.private.log').read_text().splitlines() if line.startswith('{')]
+        report['live_control'] = next(row for row in reversed(rows) if row.get('control_auth_probe'))
+        for field in ('explicit_signed_linux_profile_accepted', 'unsupported_profiles_preserved_owner_and_claims',
+                      'empty_handlers_preserved', 'fixture_worker_cleanup_verified'):
+            if not report['live_control'].get(field):
+                raise RuntimeError('Missing native control observation: ' + field)
+        run([*runner, 'ruff', 'check', *[p.removeprefix('api/') for p in shared],
+             'tests/unit/worker/remote/test_runtime_profile.py'], 'ruff')
+        run([*runner, 'pyright', *[p.removeprefix('api/') for p in shared]], 'pyright')
+        report['qualification_passed'] = True
+    finally:
+        subprocess.run([*compose, '--profile', 'test', '--profile', 'e2e', 'stop'],
+                       cwd=CHECKOUT, env=env, check=True, timeout=60)
+        report['running_after_cleanup'] = output(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + PROJECT]).splitlines()
+        report['elapsed_seconds'] = time.monotonic() - started
+        (RUN / 'receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+    print(json.dumps(report))
+
+
+if __name__ == '__main__':
+    main()

@@ -1,0 +1,15 @@
+{
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "sdk_operations_verified": false,
+  "source": "1796c6fcf68964aa2ff36421ccc7be697d6322f7",
+  "overlay_sha256": {
+    "src/services/execution/engine.py": "443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2",
+    "src/services/execution/worker.py": "4be5dda4b7089ff8e1668dd4f319083df46fe931d94adc6935d0aa6ca206c5cf",
+    "bifrost/_execution_context.py": "c8a5792bddcbbb3f2ffcfa7925d9124d034fdb8d368f515551e87c0da25809e0"
+  },
+  "cases": [],
+  "passed": false,
+  "owned_running_after_cleanup": "",
+  "elapsed_seconds": 45.821521158795804
+}

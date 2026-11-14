@@ -1,0 +1,39 @@
+# Copy this file to `.github/workflows/cloudflare-eligibility-census.yml` in
+# `bifrost-workspace-next`, and copy `census.mjs` + `eligibility.mjs` from
+# `spikes/cloudflare-pyodide/dev/routing/` into `tools/cloudflare-census/`.
+#
+# Generate the baseline once from a clean main:
+#   node tools/cloudflare-census/census.mjs --workspace . --allowance 50 \
+#     --out tools/cloudflare-census/baseline.json
+#
+# The gate fails when the eligible share falls below 95% or when a workflow that
+# was eligible in the baseline becomes ineligible. It needs no credentials: the
+# census is static analysis over the checked-out workspace.
+name: cloudflare-eligibility-census
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Census gate
+        run: |
+          node tools/cloudflare-census/census-gate.mjs \
+            --workspace . \
+            --allowance 50 \
+            --threshold 0.95 \
+            --baseline tools/cloudflare-census/baseline.json \
+            --out census.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: eligibility-census
+          path: census.json

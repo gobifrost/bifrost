@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="1" skipped="0" tests="1" time="0.845" timestamp="2026-11-03T03:42:48.954117+00:00" hostname="ec6713e40304"><testcase classname="tests.unit.dev.test_pyodide_physical_handle" name="test_opaque_ack_is_counted_without_inventing_a_pid_or_measurements" time="0.003"><failure message="TypeError: ProcessPoolManager.__init__() got an unexpected keyword argument 'runtime_profile'">tests/unit/dev/test_pyodide_physical_handle.py:34: in test_opaque_ack_is_counted_without_inventing_a_pid_or_measurements
+    pool, _, callback, route = await dispatch({'runtime_handle': 'invocation:opaque-1'})
+                               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+tests/unit/dev/test_pyodide_physical_handle.py:24: in dispatch
+    pool = ThinRemoteProcessPool(transport, runtime_profile=PROFILE, on_result=callback)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+src/worker/remote/remote_pool.py:98: in __init__
+    super().__init__(worker_id=identity, **kwargs)
+E   TypeError: ProcessPoolManager.__init__() got an unexpected keyword argument 'runtime_profile'</failure></testcase></testsuite></testsuites>

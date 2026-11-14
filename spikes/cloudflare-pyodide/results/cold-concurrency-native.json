@@ -1,0 +1,18 @@
+{
+  "runtime": "local-workerd",
+  "wrangler": "4.156.0",
+  "package": "@cloudflare/workerd-linux-64",
+  "version": "1.20261023.1",
+  "binary_sha256": "b6aff93fcc97091fa38b4ba78c172276349c4940000694c5baf382c218b8e6ee",
+  "observation_source": "Wrangler stdout from the same supervisor as cold-concurrency-minimal.json",
+  "native_error": "kj/table.c++:49: failed: inserted row already exists in table",
+  "sentryErrorContext": "jsgInternalError",
+  "wdErrId": "jt60v2c57mkbbu3pkff0jr60",
+  "stack_binary_offsets": ["34dcea9", "26b6840", "3739630", "3358d60"],
+  "initial_fixture_startup_error": "Exporting the Python source string as a named JS export caused an ExportedHandler type error. Removed that export before the one cold-pair invocation; no Python execution occurred on that failed startup.",
+  "cloud_invocations": 0,
+  "fresh_python_invocations_attempted": 2,
+  "successful_participants": 1,
+  "failed_participants": 1,
+  "physical_termination_verified": false
+}

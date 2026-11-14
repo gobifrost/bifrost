@@ -1,0 +1,37 @@
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+INFO:src.services.execution.simple_worker:[pool] No requirements.txt found
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+[template] INFO - Template process starting (PID=11, profile=workflow)
+[template] INFO - Template process starting (PID=12, profile=agent)
+[template] INFO - get_settings cache_info at scrub: currsize=0 (clean)
+[template] INFO - Scrubbed 8 env var(s) from template before fork: ['BIFROST_DATABASE_URL', 'BIFROST_DATABASE_URL_SYNC', 'BIFROST_REDIS_URL', 'BIFROST_S3_ACCESS_KEY', 'BIFROST_S3_SECRET_KEY', 'BIFROST_S3_ENDPOINT_URL', 'BIFROST_S3_BUCKET', 'BIFROST_S3_REGION']
+[template] INFO - settings cache primed with inert secret and Redis values, env vars removed
+[template] INFO - Virtual import hook installed
+[template] INFO - Template process ready — all dependencies loaded
+[template] INFO - Template process ready — all dependencies loaded
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Forked worker workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27 started (PID=21, persistent=False)
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Worker workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27 processing execution: 33b40d98...
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: GET http://api:8000/api/sdk/modules/workflows/linux_reference_6ae5dafbb8a14829b0f0a045e6bb4b00.py "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: GET http://api:8000/api/sdk/modules-resolve?name=linux_helper_6ae5dafbb8a14829b0f0a045e6bb4b00 "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Loaded workflow 'token_83ca56b7' from cache (path=workflows/linux_reference_6ae5dafbb8a14829b0f0a045e6bb4b00.py)
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/sdk/integrations/get "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] WARNING - integration secret=[REDACTED]
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/sdk/runtime/logs "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-6ae5dafbb8a14829b0f0a045e6bb4b00/documents/upsert?scope=722191d4-f6fd-47d2-8ce7-6e70530fcb1c "HTTP/1.1 404 Not Found"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/tables?scope=722191d4-f6fd-47d2-8ce7-6e70530fcb1c "HTTP/1.1 201 Created"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-6ae5dafbb8a14829b0f0a045e6bb4b00/documents/upsert?scope=722191d4-f6fd-47d2-8ce7-6e70530fcb1c "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] WARNING - Linux control reference
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - HTTP Request: POST http://api:8000/api/sdk/runtime/logs "HTTP/1.1 200 OK"
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Processing 2 captured logs for execution 33b40d98-50d1-4f17-871c-2738dbcbb131
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Worker workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27 completed execution: 33b40d98... success=True
+[workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27] INFO - Worker workflow:33b40d98-50d1-4f17-871c-2738dbcbb131:916fdce5-8e74-412d-a38c-29f3146a6c27 exiting
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+{"runtime": "actual-linux-signed-control-reference", "cloud_invocations": 0, "pyodide_physical_termination_verified": false, "qualification_passed": true, "workspace_sha256": {"workflows/linux_reference_6ae5dafbb8a14829b0f0a045e6bb4b00.py": "7d5e355f5df29b3ad5cda0984815e87becf01cbb318f198540363ae3b9bf5d40", "linux_helper_6ae5dafbb8a14829b0f0a045e6bb4b00.py": "1255c1c38cce3217290df32e6deda6c94f24719fbee62b020c83529b652f8071"}, "terminal_status": "Success", "independent_document_value": 70, "wire_events": {"workflow_commands": 1, "pid_acks": [21], "result_events": 1}, "signed_session_generation": 1, "runtime_access_after_terminal_status": 401, "retained_terminal_acknowledged": true, "real_linux_fork_verified": true, "native_templates_stopped": true, "fixture_worker_cleanup_verified": true}

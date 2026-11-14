@@ -1,0 +1,27 @@
+{
+    "guest":  "CT128/bifrost-pyodide-test-01",
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/stream-interruption-v2",
+    "image_id":  "sha256:33cd92be03ec518c7b10e6b6abe5fbe19cb46fbf548fb93bee80f17967f54a1b",
+    "ruff":  {
+                 "command":  "ruff check --no-cache canonical-local.py ct128-canonical-failure.py",
+                 "exit_code":  0,
+                 "memory_mib":  512,
+                 "cpus":  0.5,
+                 "network":  "none"
+             },
+    "pyright":  {
+                    "command":  "pyright --project /qualification/pyright-guest-fixtures.json /qualification/canonical-local.py /qualification/ct128-canonical-failure.py",
+                    "exit_code":  0,
+                    "errors":  0,
+                    "warnings":  0,
+                    "memory_mib":  1024,
+                    "node_max_old_space_size_mib":  768,
+                    "cpus":  0.5,
+                    "network":  "none",
+                    "pids":  64,
+                    "api_mount":  "/app read-only",
+                    "packet_mount":  "/qualification read-only"
+                },
+    "resource_change_scope":  "Checker-only disposable container within existing CT128 allocation; provider remains 1 CPU/2 GiB/128 PIDs",
+    "cloud_invocations":  0
+}

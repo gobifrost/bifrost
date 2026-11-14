@@ -1,0 +1,5431 @@
+{
+  "generated_at": "2026-11-13T07:05:13.064Z",
+  "allowance": 50,
+  "workspaces": [
+    {
+      "root": "solutions/bifrost-design-system",
+      "label": "solutions\\bifrost-design-system",
+      "files": 0,
+      "eligible": 0,
+      "ineligible": 0,
+      "eligible_pct": null,
+      "by_reason": {},
+      "traps": {},
+      "rows": []
+    },
+    {
+      "root": "solutions/bifrost-dmarc",
+      "label": "solutions\\bifrost-dmarc",
+      "files": 26,
+      "eligible": 26,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/dmarc_r2.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/dmarc_r2_intake.py",
+            "modules/dmarc_r2_transport.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "import_retained_reports"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "refresh_public_dns_domains"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "sync_cloudflare_domains"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "map_domain"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "map_cloudflare_account"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "ingest_resend_event"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "ingest_synthetic_report"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "get_dashboard"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "get_app_context"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "apply_retention"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "create_email_investigation"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "analyze_eml_upload"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "compare_dns_record"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "apply_dns_record"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "configure_resend_signing_secret"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "reconcile_cloudflare_integration_mappings"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "import_domain_source_inventory"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "create_manual_domain"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "set_domain_lifecycle"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "bulk_domain_lifecycle"
+        },
+        {
+          "path": "functions/dmarc.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/dmarc_core.py",
+            "modules/dmarc_retention.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 16,
+          "traps": [],
+          "workflow": "process_dmarc_migration"
+        },
+        {
+          "path": "functions/dmarc_agent.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/dmarc.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "review_domains"
+        },
+        {
+          "path": "functions/dmarc_agent.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/dmarc.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "investigate_failures"
+        },
+        {
+          "path": "functions/dmarc_agent.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/dmarc.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "manage_migration"
+        },
+        {
+          "path": "functions/dmarc_agent.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/dmarc.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "email_test"
+        },
+        {
+          "path": "functions/dmarc_r2.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/dmarc_r2_intake.py",
+            "modules/dmarc_r2_transport.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "ingest_r2_reports"
+        }
+      ]
+    },
+    {
+      "root": "solutions/bifrost-docs",
+      "label": "solutions\\bifrost-docs",
+      "files": 30,
+      "eligible": 30,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {
+        "resource is not available in Pyodide": 1
+      },
+      "rows": [
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "docs_migration_start"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "docs_migration_resume"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 13,
+          "traps": [],
+          "workflow": "docs_migration_status"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "docs_migration_retry_failures"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "docs_migration_cancel"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "docs_migration_run"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "docs_migration_resolve_restrictions"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "docs_migration_preflight"
+        },
+        {
+          "path": "functions/indexing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "docs_sync_knowledge_index"
+        },
+        {
+          "path": "functions/indexing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "docs_search_knowledge"
+        },
+        {
+          "path": "functions/catalog.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "docs_search_catalog"
+        },
+        {
+          "path": "functions/catalog.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "docs_list_organizations"
+        },
+        {
+          "path": "functions/authoring.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/indexing.py",
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "docs_create_draft"
+        },
+        {
+          "path": "functions/authoring.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/indexing.py",
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "docs_update_draft"
+        },
+        {
+          "path": "functions/authoring.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/indexing.py",
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "docs_publish_draft"
+        },
+        {
+          "path": "functions/authoring.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/indexing.py",
+            "modules/indexing_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "docs_archive_native"
+        },
+        {
+          "path": "functions/document_mutations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/attachments.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "docs_update_document"
+        },
+        {
+          "path": "functions/folders.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "docs_move_document_folder"
+        },
+        {
+          "path": "functions/document_mutations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/attachments.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "docs_delete_document"
+        },
+        {
+          "path": "functions/document_mutations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/attachments.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "docs_bulk_archive_documents"
+        },
+        {
+          "path": "functions/file_grants.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/migration_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "docs_ensure_file_grant"
+        },
+        {
+          "path": "functions/attachments.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/migration_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_register_attachment"
+        },
+        {
+          "path": "functions/attachments.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/migration_core.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_delete_attachment"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_export_recovery_start"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_export_recovery_status"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_export_recovery_resume"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "docs_export_recovery_cancel"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "docs_export_recovery_discard"
+        },
+        {
+          "path": "functions/export_recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "functions/migration.py",
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "modules/remote_zip.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "docs_export_recovery_step"
+        },
+        {
+          "path": "functions/migration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/itglue_api.py",
+            "modules/managed_files.py",
+            "modules/migration_core.py",
+            "functions/indexing.py",
+            "modules/reference_diagnostics.py",
+            "functions/indexing.py",
+            "functions/indexing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "docs_migration_diagnose_references"
+        }
+      ]
+    },
+    {
+      "root": "solutions/bifrost-grc",
+      "label": "solutions\\bifrost-grc",
+      "files": 89,
+      "eligible": 89,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {
+        "resource is not available in Pyodide": 35
+      },
+      "rows": [
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 14,
+          "traps": [],
+          "workflow": "bifrost_grc_seed_standard_fact_pack"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_get_open_items"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_count_open_items"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_resolve_open_item"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_get_fact_workspace"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 13,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_manage_fact"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_snapshot_policy_facts"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_policy_file"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_query_records"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 13,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_record"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "grc_v2_get_policy_upload_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_get_policy_download_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [],
+          "workflow": "bifrost_grc_normalize_tenant_ownership"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_policy"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_policy_template"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_get_effective_policies"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_apply_control_mapping"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_attach_evidence"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [],
+          "workflow": "bifrost_grc_attach_policy"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_create_assessment"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "bifrost_grc_create_exception"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_fill_assessment_from_mappings"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_list_frameworks"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 13,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_applied_control"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 16,
+          "traps": [],
+          "workflow": "bifrost_grc_manage_framework"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_process_questionnaire"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_review_org_posture"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_suggest_control_mappings"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "bifrost_grc_v2_create_questionnaire_from_document"
+        },
+        {
+          "path": "workflows/grc_v2/grc_agent_tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_directory.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_questionnaires.py",
+            "workflows/grc_v2/grc_questionnaires.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "bifrost_grc_v2_read_answer_context"
+        },
+        {
+          "path": "workflows/grc_v2/grc_assessment.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "update_assessment_control"
+        },
+        {
+          "path": "workflows/grc_v2/grc_directory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "grc_v2_list_users"
+        },
+        {
+          "path": "workflows/grc_v2/grc_directory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_organizations"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_get_download_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_get_upload_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_files.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "read_grc_workspace_text_file"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "classify_questionnaire_audience"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 21,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_apply_grc_questionnaire_answers"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 17,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_draft_grc_questionnaire_answers"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 17,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_draft_grc_questionnaire_answers_via_agent"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 19,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_extract_grc_questionnaire"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "validate_grc_questionnaire_apply_fixture"
+        },
+        {
+          "path": "workflows/grc_v2/grc_questionnaires.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "pypdf",
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py",
+            "workflows/grc_v2/grc_recommendations.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 13,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "validate_grc_questionnaire_extraction_fixture"
+        },
+        {
+          "path": "workflows/grc_v2/grc_recommendations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "classify_grc_questionnaire_gaps"
+        },
+        {
+          "path": "workflows/grc_v2/grc_recommendations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "list_grc_questionnaire_recommendations"
+        },
+        {
+          "path": "workflows/grc_v2/grc_recommendations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "openrouter"
+          ],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "mark_grc_recommendation_done"
+        },
+        {
+          "path": "workflows/grc_v2/grc_refactor.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "clear_grc_assessment_control_override"
+        },
+        {
+          "path": "workflows/grc_v2/grc_refactor.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "set_grc_assessment_control_override"
+        },
+        {
+          "path": "workflows/grc_v2/grc_settings.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "grc_get_questionnaire_settings"
+        },
+        {
+          "path": "workflows/grc_v2/grc_settings.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "grc_list_pdf_models"
+        },
+        {
+          "path": "workflows/grc_v2/grc_settings.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "grc_set_questionnaire_settings"
+        },
+        {
+          "path": "workflows/grc_v2/grc_source_documents.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "mammoth",
+            "bs4",
+            "reportlab"
+          ],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "convert_grc_source_to_pdf"
+        },
+        {
+          "path": "workflows/grc_v2/grc_source_documents.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "mammoth",
+            "bs4",
+            "reportlab"
+          ],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "finish_grc_source_upload"
+        },
+        {
+          "path": "workflows/grc_v2/grc_source_documents.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "mammoth",
+            "bs4",
+            "reportlab"
+          ],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "get_grc_source_pdf_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_source_documents.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "mammoth",
+            "bs4",
+            "reportlab"
+          ],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "workflows/grc_v2/grc_source_files.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "start_grc_source_upload"
+        },
+        {
+          "path": "workflows/grc_v2/grc_integration.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "grc_integration_gateway"
+        },
+        {
+          "path": "workflows/grc_v2/grc_record_mutations.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_attribution.py",
+            "workflows/grc_v2/grc_agent_tools.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_mutate_record"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_recipient.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_attribution.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_get_recipient_policies"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_recipient.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_attribution.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "grc_v2_record_policy_acceptance"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_recipient.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_attribution.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_get_recipient_policy_download_url"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_recipient.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_attribution.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_get_my_policy_assignments"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_list_policy_campaigns"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_get_policy_campaign"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "grc_v2_waive_policy_assignment"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_remind_policy_assignees"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_send_due_policy_reminders"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 12,
+          "traps": [],
+          "workflow": "grc_v2_export_policy_campaign_evidence"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_reissue_policy_campaign"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_caller_policy_signoff"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_caller_prepare_and_send"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_caller_list_policy_templates"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_caller_reissue"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_caller_default_recipients"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_caller_remind"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_caller_waive"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_campaign.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "grc_v2_seed_ai_acceptable_use_template"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_campaign.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_prepare_policy"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_campaign.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_default_policy_recipients"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_campaign.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_send_policy_campaign"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_notification.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "grc_v2_record_notification_result"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_campaign.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_attribution.py",
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "grc_v2_prepare_policy_addendum"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_caller_prepare_addendum"
+        },
+        {
+          "path": "workflows/grc_v2/grc_caller_api.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_scope.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_caller_preview_addendum"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_list_base_policy_organizations"
+        },
+        {
+          "path": "workflows/grc_v2/grc_policy_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "workflows/grc_v2/grc_integration.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py",
+            "workflows/grc_v2/grc_policy_campaign.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "grc_v2_reissue_for_base_policy"
+        },
+        {
+          "path": "workflows/grc_v2/grc_exports.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py",
+            "modules/grc_pdf.py",
+            "workflows/grc_v2/grc_agent_tools.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_recipient.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_export_policy_pdf"
+        },
+        {
+          "path": "workflows/grc_v2/grc_exports.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py",
+            "modules/grc_pdf.py",
+            "workflows/grc_v2/grc_agent_tools.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_recipient.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_export_assessment_pdf"
+        },
+        {
+          "path": "workflows/grc_v2/grc_exports.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py",
+            "modules/grc_pdf.py",
+            "workflows/grc_v2/grc_agent_tools.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_recipient.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [
+            {
+              "severity": "soft",
+              "why": "resource is not available in Pyodide"
+            }
+          ],
+          "workflow": "grc_v2_export_campaign_pdf"
+        },
+        {
+          "path": "workflows/grc_v2/grc_exports.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "functions/grc_auth.py",
+            "functions/grc_policy_acceptance.py",
+            "functions/grc_scope.py",
+            "modules/grc_pdf.py",
+            "workflows/grc_v2/grc_agent_tools.py",
+            "workflows/grc_v2/grc_policy_admin.py",
+            "workflows/grc_v2/grc_policy_recipient.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [],
+          "workflow": "grc_v2_export_my_policy_assignment_pdf"
+        }
+      ]
+    },
+    {
+      "root": "solutions/billing",
+      "label": "solutions\\billing",
+      "files": 16,
+      "eligible": 16,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/qbo_verify.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/quickbooks.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "verify_qbo_invoice"
+        },
+        {
+          "path": "functions/connectbooster.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "sync_connectbooster"
+        },
+        {
+          "path": "functions/connectbooster.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "verify_cb_invoice"
+        },
+        {
+          "path": "functions/connectbooster_send.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py",
+            "modules/connectbooster.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "send_cb_invoice"
+        },
+        {
+          "path": "functions/halo_invoice.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_billing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "create_halo_invoice"
+        },
+        {
+          "path": "functions/halo_invoice.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_billing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "sweep_halo_invoices"
+        },
+        {
+          "path": "functions/billing_chain.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/chain_state.py",
+            "modules/smtp_email.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "run_billing_chain"
+        },
+        {
+          "path": "functions/billing_chain.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/chain_state.py",
+            "modules/smtp_email.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "adopt_billing_invoice"
+        },
+        {
+          "path": "functions/billing_ops.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/connectbooster.py",
+            "modules/halo_billing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "billing_ops_snapshot"
+        },
+        {
+          "path": "functions/connectbooster_payments.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "reconcile_payments"
+        },
+        {
+          "path": "functions/connectbooster_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "resend_cb_email"
+        },
+        {
+          "path": "functions/connectbooster_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/cb_support.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "comment_on_cb_invoice"
+        },
+        {
+          "path": "functions/recurring_audit.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_billing.py",
+            "modules/recurring_audit.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "recurring_billing_audit"
+        },
+        {
+          "path": "functions/pax8_reconcile.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_billing.py",
+            "modules/pax8.py",
+            "modules/identity.py",
+            "modules/pax8_sync.py",
+            "modules/recurring_audit.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "pax8_licensing_reconciliation"
+        },
+        {
+          "path": "functions/pax8_sync.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_billing.py",
+            "modules/pax8.py",
+            "modules/identity.py",
+            "modules/pax8_sync.py",
+            "modules/recurring_audit.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "pax8_licensing_sync"
+        },
+        {
+          "path": "functions/pax8_company.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/pax8.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "pax8_company_update"
+        }
+      ]
+    },
+    {
+      "root": "solutions/cloudflare-zone-inventory",
+      "label": "solutions\\cloudflare-zone-inventory",
+      "files": 2,
+      "eligible": 2,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/cloudflare_inventory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "verify_cloudflare_connection"
+        },
+        {
+          "path": "functions/cloudflare_inventory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "inventory_cloudflare_zones"
+        }
+      ]
+    },
+    {
+      "root": "solutions/cove-test-restore-ticketing",
+      "label": "solutions\\cove-test-restore-ticketing",
+      "files": 2,
+      "eligible": 2,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "features/cove/workflows/backup_restore_verification.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/cove/backup_entitlement.py",
+            "features/cove/workflows/backup_entitlement_reconciliation.py",
+            "features/cove/workflows/backup_entitlement_reconciliation.py",
+            "helpers/warranty_lifecycle.py",
+            "modules/__init__.py",
+            "modules/__init__.py",
+            "modules/backup_restore_context.py",
+            "modules/extensions/__init__.py",
+            "features/cove/workflows/recovery_testing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [],
+          "workflow": "apply_halopsa_backup_restore_verification_tickets"
+        },
+        {
+          "path": "features/cove/workflows/backup_restore_verification.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/cove/backup_entitlement.py",
+            "features/cove/workflows/backup_entitlement_reconciliation.py",
+            "features/cove/workflows/backup_entitlement_reconciliation.py",
+            "helpers/warranty_lifecycle.py",
+            "modules/__init__.py",
+            "modules/__init__.py",
+            "modules/backup_restore_context.py",
+            "modules/extensions/__init__.py",
+            "features/cove/workflows/recovery_testing.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 11,
+          "traps": [],
+          "workflow": "preview_halopsa_cove_backup_restore_verification_candidates"
+        }
+      ]
+    },
+    {
+      "root": "solutions/csp-mail-forwarding",
+      "label": "solutions\\csp-mail-forwarding",
+      "files": 2,
+      "eligible": 2,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/inspect_mail_forwarding.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/pilot_access.py",
+            "modules/bounded_mailbox.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "inspect_mail_forwarding"
+        },
+        {
+          "path": "functions/ensure_conditional_mailbox_forwarding.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/microsoft/exchange.py",
+            "modules/pilot_access.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "ensure_conditional_mailbox_forwarding"
+        }
+      ]
+    },
+    {
+      "root": "solutions/customer-contract-lifecycle",
+      "label": "solutions\\customer-contract-lifecycle",
+      "files": 7,
+      "eligible": 7,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/lifecycle.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/customer_onboarding/workflows/contract_lifecycle.py",
+            "features/customer_onboarding/workflows/contract_lifecycle.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "reconcile_customer_contract"
+        },
+        {
+          "path": "functions/lifecycle.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/customer_onboarding/workflows/contract_lifecycle.py",
+            "features/customer_onboarding/workflows/contract_lifecycle.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "review_customer_contract_changes"
+        },
+        {
+          "path": "functions/app.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/customer_onboarding/app_snapshot.py",
+            "modules/customer_onboarding/app_snapshot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "customer_onboarding_app_customers"
+        },
+        {
+          "path": "functions/app.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/customer_onboarding/app_snapshot.py",
+            "modules/customer_onboarding/app_snapshot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "customer_onboarding_app_snapshot"
+        },
+        {
+          "path": "functions/automation.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/customer_onboarding/notifications.py",
+            "modules/customer_onboarding/__init__.py",
+            "modules/customer_onboarding/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "ensure_halo_customer"
+        },
+        {
+          "path": "functions/automation.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/customer_onboarding/notifications.py",
+            "modules/customer_onboarding/__init__.py",
+            "modules/customer_onboarding/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "daily_halo_org_drift"
+        },
+        {
+          "path": "functions/recovery.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/customer_onboarding/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "release_customer_contract_lock"
+        }
+      ]
+    },
+    {
+      "root": "solutions/employee-onboarding",
+      "label": "solutions\\employee-onboarding",
+      "files": 3,
+      "eligible": 3,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/onboarding.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/employee_onboarding.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "preview_employee_onboarding"
+        },
+        {
+          "path": "functions/onboarding.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/employee_onboarding.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "save_employee_onboarding_draft"
+        },
+        {
+          "path": "functions/onboarding.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/employee_onboarding.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "read_employee_onboarding_draft"
+        }
+      ]
+    },
+    {
+      "root": "solutions/estate-server-reboots",
+      "label": "solutions\\estate-server-reboots",
+      "files": 22,
+      "eligible": 22,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "schedule_estate_server_reboot"
+        },
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "advance_estate_server_reboot"
+        },
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "inspect_estate_server_reboot"
+        },
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "recover_cancelled_estate_server_reboot"
+        },
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "qualify_estate_recovery_escrow"
+        },
+        {
+          "path": "functions/reboots.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "rearm_reviewed_legacy_estate_reboot"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "fleet_page"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "server_detail"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "change_hold"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "enrollment_profile"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "enroll"
+        },
+        {
+          "path": "functions/operator.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "enrollment_candidates"
+        },
+        {
+          "path": "functions/compatibility.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "staging_compatibility_status"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "dispatch_tick"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "dispatch_page"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "admit_paused_device"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "enroll_paused_device"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "pause_device"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "resume_device"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "archive_device_history"
+        },
+        {
+          "path": "functions/qualification.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/native_file_qualification.py",
+            "modules/command_actor.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "qualify_reboot_revision_ledger"
+        },
+        {
+          "path": "functions/dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "paused_management_context"
+        }
+      ]
+    },
+    {
+      "root": "solutions/event-lead-capture",
+      "label": "solutions\\event-lead-capture",
+      "files": 5,
+      "eligible": 5,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/leads.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "submit_lead"
+        },
+        {
+          "path": "functions/leads.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_leads"
+        },
+        {
+          "path": "functions/leads.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "get_lead"
+        },
+        {
+          "path": "functions/leads.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "decide_lead"
+        },
+        {
+          "path": "functions/leads.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "configure_event"
+        }
+      ]
+    },
+    {
+      "root": "solutions/event-rules-smoke",
+      "label": "solutions\\event-rules-smoke",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/incident_router.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "record_incident"
+        }
+      ]
+    },
+    {
+      "root": "solutions/field-visit-briefing",
+      "label": "solutions\\field-visit-briefing",
+      "files": 4,
+      "eligible": 4,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/visits.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/briefing.py",
+            "modules/halo_api.py",
+            "modules/service.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "preview_field_visit_briefing"
+        },
+        {
+          "path": "functions/visits.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/briefing.py",
+            "modules/halo_api.py",
+            "modules/service.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "dispatch_field_visit_briefings"
+        },
+        {
+          "path": "functions/visits.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/briefing.py",
+            "modules/halo_api.py",
+            "modules/service.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "record_field_visit_feedback"
+        },
+        {
+          "path": "functions/visits.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/briefing.py",
+            "modules/halo_api.py",
+            "modules/service.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "send_field_visit_briefing"
+        }
+      ]
+    },
+    {
+      "root": "solutions/gdap-acceptance-tickets",
+      "label": "solutions\\gdap-acceptance-tickets",
+      "files": 2,
+      "eligible": 2,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/ticket_pending_gdap_relationships.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/psa_ticketing/halo_routing.py",
+            "modules/microsoft/__init__.py",
+            "modules/microsoft/auth.py",
+            "modules/microsoft/graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "ticket_pending_gdap_relationships"
+        },
+        {
+          "path": "functions/ticket_unauditable_tenants.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/psa_ticketing/halo_routing.py",
+            "modules/audit_readiness.py",
+            "modules/microsoft/__init__.py",
+            "modules/microsoft/auth.py",
+            "modules/microsoft/graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "ticket_unauditable_tenants"
+        }
+      ]
+    },
+    {
+      "root": "solutions/halo-dispatch-portal",
+      "label": "solutions\\halo-dispatch-portal",
+      "files": 10,
+      "eligible": 10,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "refresh_cache"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "environment"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_tickets"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_appointments"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "search_users"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "search_sites"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "search_companies"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "save_ticket"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "save_appointment"
+        },
+        {
+          "path": "functions/halo_dispatch.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "remove_appointment"
+        }
+      ]
+    },
+    {
+      "root": "solutions/halo-email-rule-proposals",
+      "label": "solutions\\halo-email-rule-proposals",
+      "files": 2,
+      "eligible": 2,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/proposals.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/proposal_api.py",
+            "modules/proposals.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "propose_email_rule"
+        },
+        {
+          "path": "functions/proposals.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/proposal_api.py",
+            "modules/proposals.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "review_email_rule_proposals"
+        }
+      ]
+    },
+    {
+      "root": "solutions/halo-kb-knowledge",
+      "label": "solutions\\halo-kb-knowledge",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/refresh.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/halo_kb_mirror.py",
+            "modules/halo_kb_source.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "refresh_staff_kb"
+        }
+      ]
+    },
+    {
+      "root": "solutions/halo-sql-studio",
+      "label": "solutions\\halo-sql-studio",
+      "files": 4,
+      "eligible": 4,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/halo_sql_studio.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/halopsa_reporting.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "refresh_cache"
+        },
+        {
+          "path": "functions/halo_sql_studio.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/halopsa_reporting.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "execute_query"
+        },
+        {
+          "path": "functions/halo_sql_studio.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/halopsa_reporting.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "list_reports"
+        },
+        {
+          "path": "functions/halo_sql_studio.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py",
+            "modules/halopsa_reporting.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "save_report"
+        }
+      ]
+    },
+    {
+      "root": "solutions/halo-voicemail-routing",
+      "label": "solutions\\halo-voicemail-routing",
+      "files": 3,
+      "eligible": 3,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/voicemail_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/voicemail_api.py",
+            "modules/voicemail_identity.py",
+            "modules/voicemail_router.py",
+            "modules/voicemail_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "inspect_voicemail_customer"
+        },
+        {
+          "path": "functions/voicemail_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/voicemail_api.py",
+            "modules/voicemail_identity.py",
+            "modules/voicemail_router.py",
+            "modules/voicemail_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "correct_voicemail_customer"
+        },
+        {
+          "path": "functions/voicemail_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/voicemail_api.py",
+            "modules/voicemail_identity.py",
+            "modules/voicemail_router.py",
+            "modules/voicemail_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "audit_voicemail_history"
+        }
+      ]
+    },
+    {
+      "root": "solutions/mail-security",
+      "label": "solutions\\mail-security",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/investigate.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/mail_security/investigation.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "inspect_mail_security_receipt"
+        }
+      ]
+    },
+    {
+      "root": "solutions/meraki-admin-governance",
+      "label": "solutions\\meraki-admin-governance",
+      "files": 8,
+      "eligible": 8,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/hardening_posture.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/hardening_controls.py",
+            "modules/hardening_policy_store.py",
+            "modules/meraki.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "audit_meraki_hardening_posture"
+        },
+        {
+          "path": "functions/hardening_policy.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/hardening_controls.py",
+            "modules/hardening_policy_store.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 4,
+          "traps": [],
+          "workflow": "get_meraki_hardening_policy"
+        },
+        {
+          "path": "functions/hardening_policy.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/hardening_controls.py",
+            "modules/hardening_policy_store.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "save_meraki_hardening_policy"
+        },
+        {
+          "path": "functions/admin_sync.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/admin_sync.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "sync_meraki_admins_across_mapped_organizations"
+        },
+        {
+          "path": "functions/admin_baseline.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/admin_sync.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "capture_meraki_admin_baseline_snapshot"
+        },
+        {
+          "path": "functions/admin_remove.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/admin_sync.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "remove_meraki_admin_across_mapped_organizations"
+        },
+        {
+          "path": "functions/admin_onboard.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/admin_config.py",
+            "modules/admin_sync.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "onboard_meraki_admin_across_mapped_organizations"
+        },
+        {
+          "path": "functions/admin_offboard.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/admin_config.py",
+            "modules/admin_sync.py",
+            "modules/meraki.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "offboard_meraki_admin_across_mapped_organizations"
+        }
+      ]
+    },
+    {
+      "root": "solutions/meraki-report-routing",
+      "label": "solutions\\meraki-report-routing",
+      "files": 3,
+      "eligible": 3,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/report_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/report_api.py",
+            "modules/report_identity.py",
+            "modules/report_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "inspect_report_routing"
+        },
+        {
+          "path": "functions/report_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/report_api.py",
+            "modules/report_identity.py",
+            "modules/report_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "inspect_report_organizations"
+        },
+        {
+          "path": "functions/report_routing.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/report_api.py",
+            "modules/report_identity.py",
+            "modules/report_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "correct_report_customer"
+        }
+      ]
+    },
+    {
+      "root": "solutions/microsoft-defender-posture",
+      "label": "solutions\\microsoft-defender-posture",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/audit_mma_agents.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/defender_mma_audit.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "audit_defender_mma_agents"
+        }
+      ]
+    },
+    {
+      "root": "solutions/microsoft-productivity",
+      "label": "solutions\\microsoft-productivity",
+      "files": 5,
+      "eligible": 5,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/productivity.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/productivity_graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_my_task_lists"
+        },
+        {
+          "path": "functions/productivity.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/productivity_graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_my_tasks"
+        },
+        {
+          "path": "functions/productivity.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/productivity_graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "read_my_calendar"
+        },
+        {
+          "path": "functions/productivity.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/productivity_graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "read_my_followup_mail"
+        },
+        {
+          "path": "functions/productivity.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/productivity_graph.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "create_my_focus_block"
+        }
+      ]
+    },
+    {
+      "root": "solutions/multica-signal-forwarding",
+      "label": "solutions\\multica-signal-forwarding",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/forward_workflow_retry_exhausted.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/multica_forwarding.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "forward_workflow_retry_exhausted"
+        }
+      ]
+    },
+    {
+      "root": "solutions/netbird-inventory",
+      "label": "solutions\\netbird-inventory",
+      "files": 6,
+      "eligible": 6,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "get_netbird_account_inventory"
+        },
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_netbird_peers"
+        },
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_netbird_groups"
+        },
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_netbird_setup_keys"
+        },
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_netbird_users"
+        },
+        {
+          "path": "functions/tools.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_netbird_audit_events"
+        }
+      ]
+    },
+    {
+      "root": "solutions/ninja-support-intake",
+      "label": "solutions\\ninja-support-intake",
+      "files": 1,
+      "eligible": 1,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/support_intake.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [
+            "httpx"
+          ],
+          "declared_modules": [
+            "modules/intake_api.py",
+            "modules/intake_identity.py",
+            "modules/intake_router.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "resolve_support_request"
+        }
+      ]
+    },
+    {
+      "root": "solutions/ninjaone-alert-operations",
+      "label": "solutions\\ninjaone-alert-operations",
+      "files": 6,
+      "eligible": 6,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "features/ninjaone/workflows/alert_maintenance.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "summarize_ninjaone_alert_intake_health"
+        },
+        {
+          "path": "features/ninjaone/workflows/alert_maintenance.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "reconcile_ninjaone_alert_tickets"
+        },
+        {
+          "path": "features/ninjaone/workflows/handle_alert.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "handle_ninjaone_alert"
+        },
+        {
+          "path": "features/ninjaone/workflows/handle_alert.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "repair_failed_ninjaone_alert_execution"
+        },
+        {
+          "path": "features/ninjaone/workflows/state_readiness.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/ninjaone_state_storage.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "inspect_ninjaone_state_readiness"
+        },
+        {
+          "path": "features/ninjaone/workflows/qualify_alert_transitions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "features/ninjaone/qualification_cases.py",
+            "features/ninjaone/qualification_native_state.py",
+            "features/psa_ticketing/__init__.py",
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "qualify_migrated_alert_transitions"
+        }
+      ]
+    },
+    {
+      "root": "solutions/quick-support",
+      "label": "solutions\\quick-support",
+      "files": 13,
+      "eligible": 13,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_customers"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_sessions"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "get_session"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "create_session"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "link_ticket"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "end_session"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "export_audit"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "get_readiness"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "issue_invitation"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "enroll_workstation"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "request_connection"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "request_elevation"
+        },
+        {
+          "path": "functions/sessions.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "prepare_transport"
+        }
+      ]
+    },
+    {
+      "root": "solutions/scan-findings",
+      "label": "solutions\\scan-findings",
+      "files": 3,
+      "eligible": 3,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/lifecycle.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scan_findings.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_scan_findings"
+        },
+        {
+          "path": "functions/lifecycle.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scan_findings.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "list_scan_runs"
+        },
+        {
+          "path": "functions/lifecycle.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scan_findings.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "update_finding_states"
+        }
+      ]
+    },
+    {
+      "root": "solutions/scim-lite",
+      "label": "solutions\\scim-lite",
+      "files": 4,
+      "eligible": 4,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/scim.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scim_provision.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "sync_user_event"
+        },
+        {
+          "path": "functions/sync_org_users.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/idp_client.py",
+            "modules/scim_provision.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "sync_org_users"
+        },
+        {
+          "path": "functions/scim_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scim_sync.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "get_onboarding_status"
+        },
+        {
+          "path": "functions/scim_admin.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/scim_sync.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 5,
+          "traps": [],
+          "workflow": "save_onboarding"
+        }
+      ]
+    },
+    {
+      "root": "solutions/synology",
+      "label": "solutions\\synology",
+      "files": 5,
+      "eligible": 5,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/synology_fleet_scan.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "probe_synology_device"
+        },
+        {
+          "path": "functions/synology_fleet_scan.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "scan_synology_fleet"
+        },
+        {
+          "path": "functions/synology_fleet_inventory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "import_synology_fleet"
+        },
+        {
+          "path": "functions/synology_fleet_inventory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "list_synology_fleet"
+        },
+        {
+          "path": "functions/synology_fleet_inventory.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [],
+          "unresolved_local": [],
+          "estimated_subrequests": 2,
+          "traps": [],
+          "workflow": "scan_synology_fleet_from_register"
+        }
+      ]
+    },
+    {
+      "root": "solutions/wondernote",
+      "label": "solutions\\wondernote",
+      "files": 22,
+      "eligible": 22,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/wondernote_teams.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "wondernote_send_teams_message"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_send_digest"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "wondernote_save"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 10,
+          "traps": [],
+          "workflow": "wondernote_update"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "wondernote_get"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_find"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_resolve"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "wondernote_schedule_reminder"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "wondernote_list_reminders"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "wondernote_cancel_reminder"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 14,
+          "traps": [],
+          "workflow": "wondernote_deliver_reminder"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_list_spaces"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 7,
+          "traps": [],
+          "workflow": "wondernote_create_space"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "wondernote_share"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "wondernote_unshare"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_move"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_migrate_spaces"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_get_digest_prefs"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 9,
+          "traps": [],
+          "workflow": "wondernote_set_digest_pref"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_preview_digest"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 6,
+          "traps": [],
+          "workflow": "wondernote_digest_tick"
+        },
+        {
+          "path": "functions/wondernote.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/wondernote_core.py",
+            "modules/wondernote_digest.py",
+            "modules/wondernote_spaces.py",
+            "modules/microsoft_teams_bot.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 8,
+          "traps": [],
+          "workflow": "wondernote_update_space"
+        }
+      ]
+    },
+    {
+      "root": "solutions/workstation-reboots",
+      "label": "solutions\\workstation-reboots",
+      "files": 7,
+      "eligible": 7,
+      "ineligible": 0,
+      "eligible_pct": 100,
+      "by_reason": {},
+      "traps": {},
+      "rows": [
+        {
+          "path": "functions/campaigns.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/planning_context.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "read_campaign"
+        },
+        {
+          "path": "functions/campaigns.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/planning_context.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "create_campaign"
+        },
+        {
+          "path": "functions/campaigns.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/planning_context.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "set_campaign_pause"
+        },
+        {
+          "path": "functions/campaigns.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/planning_context.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "set_campaign_hold"
+        },
+        {
+          "path": "functions/campaigns.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/planning_context.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "refresh_campaign_observations"
+        },
+        {
+          "path": "functions/qualification.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/__init__.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "qualify_reboot_revision_ledger"
+        },
+        {
+          "path": "functions/operational_readiness.py",
+          "backend": "cloudflare",
+          "reasons": [],
+          "packages": [],
+          "declared_modules": [
+            "modules/operational_readiness.py"
+          ],
+          "unresolved_local": [],
+          "estimated_subrequests": 3,
+          "traps": [],
+          "workflow": "read_workstation_operational_readiness"
+        }
+      ]
+    }
+  ],
+  "repo": null,
+  "workspaces_skipped": [
+    {
+      "root": "reference/community",
+      "reason": "reference manifest, files not present"
+    }
+  ],
+  "summary_text": "# Eligibility census\n\n- workspace `solutions/bifrost-design-system`: 0/0 eligible (null%)\n- workspace `solutions/bifrost-dmarc`: 26/26 eligible (100%)\n- workspace `solutions/bifrost-docs`: 30/30 eligible (100%)\n- workspace `solutions/bifrost-grc`: 89/89 eligible (100%)\n- workspace `solutions/billing`: 16/16 eligible (100%)\n- workspace `solutions/cloudflare-zone-inventory`: 2/2 eligible (100%)\n- workspace `solutions/cove-test-restore-ticketing`: 2/2 eligible (100%)\n- workspace `solutions/csp-mail-forwarding`: 2/2 eligible (100%)\n- workspace `solutions/customer-contract-lifecycle`: 7/7 eligible (100%)\n- workspace `solutions/employee-onboarding`: 3/3 eligible (100%)\n- workspace `solutions/estate-server-reboots`: 22/22 eligible (100%)\n- workspace `solutions/event-lead-capture`: 5/5 eligible (100%)\n- workspace `solutions/event-rules-smoke`: 1/1 eligible (100%)\n- workspace `solutions/field-visit-briefing`: 4/4 eligible (100%)\n- workspace `solutions/gdap-acceptance-tickets`: 2/2 eligible (100%)\n- workspace `solutions/halo-dispatch-portal`: 10/10 eligible (100%)\n- workspace `solutions/halo-email-rule-proposals`: 2/2 eligible (100%)\n- workspace `solutions/halo-kb-knowledge`: 1/1 eligible (100%)\n- workspace `solutions/halo-sql-studio`: 4/4 eligible (100%)\n- workspace `solutions/halo-voicemail-routing`: 3/3 eligible (100%)\n- workspace `solutions/mail-security`: 1/1 eligible (100%)\n- workspace `solutions/meraki-admin-governance`: 8/8 eligible (100%)\n- workspace `solutions/meraki-report-routing`: 3/3 eligible (100%)\n- workspace `solutions/microsoft-defender-posture`: 1/1 eligible (100%)\n- workspace `solutions/microsoft-productivity`: 5/5 eligible (100%)\n- workspace `solutions/multica-signal-forwarding`: 1/1 eligible (100%)\n- workspace `solutions/netbird-inventory`: 6/6 eligible (100%)\n- workspace `solutions/ninja-support-intake`: 1/1 eligible (100%)\n- workspace `solutions/ninjaone-alert-operations`: 6/6 eligible (100%)\n- workspace `solutions/quick-support`: 13/13 eligible (100%)\n- workspace `solutions/scan-findings`: 3/3 eligible (100%)\n- workspace `solutions/scim-lite`: 4/4 eligible (100%)\n- workspace `solutions/synology`: 5/5 eligible (100%)\n- workspace `solutions/wondernote`: 22/22 eligible (100%)\n- workspace `solutions/workstation-reboots`: 7/7 eligible (100%)\n\nSubrequest allowance: 50. Static analysis only."
+}

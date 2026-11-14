@@ -1,0 +1,8 @@
+<!doctype html><html><head><meta charset="utf-8"><style>
+:root{font-family:var(--font-sans,system-ui)}body{margin:0;color:var(--foreground,CanvasText)}
+.row{display:grid;grid-template-columns:150px 1fr 60px;gap:10px;align-items:center;margin:14px 0;font-size:13px}
+.track{height:22px;background:var(--secondary,Canvas);border-radius:var(--radius)}
+.bar{height:22px;background:var(--chart-1,Highlight);border-radius:var(--radius)}
+strong{text-align:right}p{font-size:13px;color:var(--muted-foreground,GrayText);line-height:1.5}
+@media(max-width:480px){.row{grid-template-columns:110px 1fr 50px;gap:6px;font-size:11px}}
+</style></head><body><p>Measured round trip from CT128 to the guarded Worker, one fresh Python child per workload.</p><div class="row"><span>JSON transformation</span><div class="track"><div class="bar" style="width:95.38492586209692%"></div></div><strong>10.49 s</strong></div><div class="row"><span>HTTP orchestration</span><div class="track"><div class="bar" style="width:54.054987426339224%"></div></div><strong>5.95 s</strong></div><div class="row"><span>Integration read</span><div class="track"><div class="bar" style="width:49.20941270803186%"></div></div><strong>5.41 s</strong></div><div class="row"><span>Table update</span><div class="track"><div class="bar" style="width:52.47520381923426%"></div></div><strong>5.77 s</strong></div><div class="row"><span>Multi-step workflow</span><div class="track"><div class="bar" style="width:47.28427642363716%"></div></div><strong>5.20 s</strong></div><p>All correctness checks passed. These totals include initialization, source/SDK/API work and transport. They do not isolate startup or CPU. Three inner samples per workload; no warm-isolate measurements.</p></body></html>

@@ -1,0 +1,97 @@
+{
+  "process_exit_code": 1,
+  "batch": "10a3184e4dc64e828e09c3f143c7a925",
+  "participants": [
+    {
+      "label": "tenant-a",
+      "container": "bifrost-pyodide-isolation-10a3184e4dc64e828e09c3f143c7a925-tenant-a",
+      "process_exit_code": 1,
+      "unknown_process_state": false,
+      "report": {
+        "runtime": "local-workerd-canonical-claim-consumer",
+        "error_type": "IntegrityError",
+        "locations": [
+          "canonical-local.py:317",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:119",
+          "contextlib.py:235",
+          "committed_runs.py:192",
+          "committed_runs.py:179",
+          "session.py:449",
+          "_concurrency_py3k.py:201",
+          "session.py:2351",
+          "session.py:2249",
+          "bulk_persistence.py:2033",
+          "context.py:306",
+          "base.py:1419",
+          "elements.py:527",
+          "base.py:1641",
+          "base.py:1846",
+          "base.py:1986",
+          "base.py:2363",
+          "base.py:1967",
+          "default.py:952",
+          "asyncpg.py:585",
+          "_concurrency_py3k.py:132",
+          "_concurrency_py3k.py:196",
+          "asyncpg.py:563",
+          "asyncpg.py:513",
+          "asyncpg.py:797"
+        ]
+      }
+    },
+    {
+      "label": "tenant-b",
+      "container": "bifrost-pyodide-isolation-10a3184e4dc64e828e09c3f143c7a925-tenant-b",
+      "process_exit_code": 1,
+      "unknown_process_state": false,
+      "report": {
+        "runtime": "local-workerd-canonical-claim-consumer",
+        "error_type": "IntegrityError",
+        "locations": [
+          "canonical-local.py:317",
+          "runners.py:205",
+          "runners.py:128",
+          "base_events.py:720",
+          "canonical-local.py:119",
+          "contextlib.py:235",
+          "committed_runs.py:192",
+          "committed_runs.py:179",
+          "session.py:449",
+          "_concurrency_py3k.py:201",
+          "session.py:2351",
+          "session.py:2249",
+          "bulk_persistence.py:2033",
+          "context.py:306",
+          "base.py:1419",
+          "elements.py:527",
+          "base.py:1641",
+          "base.py:1846",
+          "base.py:1986",
+          "base.py:2363",
+          "base.py:1967",
+          "default.py:952",
+          "asyncpg.py:585",
+          "_concurrency_py3k.py:132",
+          "_concurrency_py3k.py:196",
+          "asyncpg.py:563",
+          "asyncpg.py:513",
+          "asyncpg.py:797"
+        ]
+      }
+    }
+  ],
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "barrier_keys_remaining": 0,
+  "source_sha256": {
+    "spikes/cloudflare-pyodide/backend/canonical-isolation.mjs": "4358ed443e1b0967aab814f9fd70a4dc616d78ecef3858efc32825f7a147a057",
+    "spikes/cloudflare-pyodide/backend/canonical-local.py": "3c805853472ffeb5b131ce1f51d168ebbc9ca88ea4a00d97b1f0616ca80b604d",
+    "spikes/cloudflare-pyodide/backend/authorized-local-entry.mjs": "b810355e500c6f238db8f28db4df63345c255310dbc0cf87a53625c9d25b35c1",
+    "spikes/cloudflare-pyodide/backend/runtime-code.mjs": "188d89ac8180ad7c680aa17093433ed891ec558caf90f018e350b80df4f1733d",
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "5a2e1cec90b7a85df07e9e5e5b8691bfaae1dbab6fc2264fb89468c998d08c9d"
+  },
+  "verification_error_type": "AssertionError"
+}

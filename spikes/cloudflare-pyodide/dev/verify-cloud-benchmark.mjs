@@ -1,0 +1,50 @@
+import assert from 'node:assert/strict';
+import {readFile} from 'node:fs/promises';
+import {createHash} from 'node:crypto';
+const root = new URL('../results/cloud-benchmark/', import.meta.url);
+const read = async name => JSON.parse(await readFile(new URL(name, root), 'utf8'));
+const records = (await readFile(new URL('cloud-benchmark-raw.jsonl', root), 'utf8')).trim().split('\n').map(JSON.parse);
+const ledger = (await readFile(new URL('cloud-benchmark-invocations.jsonl', root), 'utf8')).trim().split('\n').map(JSON.parse);
+const summary = await read('summary.json'), cleanup = await read('cleanup.json'), source = await read('source.json');
+const expected = ['json_transform', 'http_orchestration', 'integration_read', 'table_update', 'multi_step'];
+assert.deepEqual(records.map(row => row.workload), expected);
+for (const {workload, control, receipt} of records) {
+  assert.equal(control.exit_code, 0);
+  assert.equal(receipt.result.result.status, 'Success');
+  assert.equal(receipt.canonical_claim_verified, false);
+  assert.equal(receipt.canonical_terminal_acceptance_verified, false);
+  assert.equal(receipt.ended_run_status, 401);
+  assert.equal(receipt.ended_refresh_status, 401);
+  assert.equal(receipt.cross_tenant_status, 403);
+  assert.equal(receipt.invalid_runtime_credential_module_status, 401);
+  assert.equal(receipt.unsupported_canonical_mode_status, 422);
+  assert.equal(receipt.benchmark.length, 1);
+  const measured = receipt.benchmark[0];
+  assert.equal(measured.workload, workload);
+  assert.equal(measured.correctness, true);
+  assert.equal(measured.samples_wall_ms.length, 3);
+  assert.ok(measured.samples_wall_ms.every(value => Number.isFinite(value) && value >= 0));
+  assert.ok(Number.isFinite(receipt.fresh_child_provider_roundtrip_ms) && receipt.fresh_child_provider_roundtrip_ms > 0);
+  assert.equal(receipt.result.result.result.benchmark_cpu_ms, null);
+  assert.equal(receipt.result.result.result.benchmark_peak_isolate_memory_bytes, null);
+  if (workload === 'table_update') assert.deepEqual(receipt.independent_document_values, [70, 70, 70]);
+}
+assert.deepEqual(summary.rows[0].raw_operation_clock_samples_ms, [0, 0, 0]);
+assert.equal(summary.rows[0].operation_io_clock_median_ms, null);
+assert.equal(summary.measured_cost_per_1000_usd, null);
+assert.equal(summary.estimates.creation_only_usd_per_1000_after_allowance, 1000 * 0.002);
+assert.equal((await read('analytics.json')).rows, 0);
+assert.equal(ledger.length, 15);
+assert.equal(new Set(ledger.map(row => row.execution_id)).size, 5);
+assert.deepEqual(ledger.map(row => row.reservation), Array.from({length: 15}, (_, i) => i + 1));
+assert.equal(cleanup.maximum_invocations, 20);
+assert.equal(cleanup.total_worker_http_requests, 16);
+assert.equal(cleanup.retired_guard_status, 404);
+assert.deepEqual(cleanup.secret_names, []);
+assert.equal(source.fresh_children, 5);
+assert.equal(source.automatic_retries, 0);
+const hash = bytes => createHash('sha256').update(bytes).digest('hex');
+for (const [path, digest] of Object.entries(source.files)) {
+  assert.equal(hash(await readFile(new URL('../../../' + path, import.meta.url))), digest, path);
+}
+console.log('Five real cloud engine/SDK workloads and 15 correctness samples verified. Fresh-child round trips measured; CPU-only timers and billed cost remain unknown; endpoint retired.');

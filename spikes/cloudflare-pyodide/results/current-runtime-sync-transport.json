@@ -1,0 +1,8 @@
+{
+  "runtime": "local-workerd",
+  "status": 200,
+  "body": {
+    "error_type": "ConnectError",
+    "error": "This worker is not permitted to access the internet via global functions like fetch(). It must use capabilities (such as bindings in 'env') to talk to the outside world."
+  }
+}

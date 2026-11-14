@@ -1,0 +1,151 @@
+{
+  "baseline_head": "a00ae73e98a65dfd1f1001bda595754ce51f2580",
+  "command": "./test.sh tests/unit/dev/test_pyodide_attempt_journal.py -q",
+  "environment": "isolated Docker PostgreSQL and Redis, actual upstream consumer and native log recovery",
+  "launch_kind": "deterministic fixture callbacks; physical_launches property does not count new Worker invocations",
+  "tests": 21,
+  "failures": 0,
+  "errors": 0,
+  "junit_duration_seconds": 9.094,
+  "fault_cases": [
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[success-after_callback]",
+      "observations": {
+        "fault_window": "after_callback",
+        "outcome": "Success",
+        "error_type": "None",
+        "canonical_status": "Success",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "1",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "False"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[success-before_notification]",
+      "observations": {
+        "fault_window": "before_notification",
+        "outcome": "Success",
+        "error_type": "None",
+        "canonical_status": "Success",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "2",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "True"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[engine_error-after_callback]",
+      "observations": {
+        "fault_window": "after_callback",
+        "outcome": "Failed",
+        "error_type": "RuntimeError",
+        "canonical_status": "Failed",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "1",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "False"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[engine_error-before_notification]",
+      "observations": {
+        "fault_window": "before_notification",
+        "outcome": "Failed",
+        "error_type": "RuntimeError",
+        "canonical_status": "Failed",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "2",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "True"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[timeout-after_callback]",
+      "observations": {
+        "fault_window": "after_callback",
+        "outcome": "Timeout",
+        "error_type": "TimeoutError",
+        "canonical_status": "Timeout",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "1",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "False"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[timeout-before_notification]",
+      "observations": {
+        "fault_window": "before_notification",
+        "outcome": "Timeout",
+        "error_type": "TimeoutError",
+        "canonical_status": "Timeout",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "2",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "True"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[logical_cancel-after_callback]",
+      "observations": {
+        "fault_window": "after_callback",
+        "outcome": "Cancelled",
+        "error_type": "CancelledError",
+        "canonical_status": "Cancelled",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "1",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "False"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[logical_cancel-before_notification]",
+      "observations": {
+        "fault_window": "before_notification",
+        "outcome": "Cancelled",
+        "error_type": "CancelledError",
+        "canonical_status": "Cancelled",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "2",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "True"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[cpu_limit-after_callback]",
+      "observations": {
+        "fault_window": "after_callback",
+        "outcome": "Failed",
+        "error_type": "CpuLimitExceeded",
+        "canonical_status": "Failed",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "1",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "False"
+      }
+    },
+    {
+      "test": "test_consumer_replay_preserves_result_across_completion_faults[cpu_limit-before_notification]",
+      "observations": {
+        "fault_window": "before_notification",
+        "outcome": "Failed",
+        "error_type": "CpuLimitExceeded",
+        "canonical_status": "Failed",
+        "physical_launches": "1",
+        "persisted_log_rows_after_recovery": "2",
+        "terminal_notifications_on_replay": "0",
+        "active_cache_remains_until_ttl_or_cleanup": "True"
+      }
+    }
+  ],
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "complete_postcommit_recovery_verified": false,
+  "source_sha256": {
+    "api/tests/unit/dev/test_pyodide_attempt_journal.py": "9754f28532dcf309556cdc3c39d939c4bb8c24bea66d603e76ec390a5b5dff75",
+    "api/src/jobs/consumers/workflow_execution.py": "25e9d69ce88694af97e88b3c89a0a28557bf36955f81a162cad953a36fbf9fd9",
+    "api/bifrost/_logging.py": "9c218f5d3f3c7a4ede228fd6aaf2e96341ff3cacef5642ecdcc4dc2c43ec50bd",
+    "spikes/cloudflare-pyodide/backend/attempt_journal.py": "5a2e1cec90b7a85df07e9e5e5b8691bfaae1dbab6fc2264fb89468c998d08c9d"
+  }
+}

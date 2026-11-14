@@ -1,0 +1,185 @@
+"""Stop one owned provider process after a real SDK effect; never isolate-stop proof."""
+import hashlib
+import json
+import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
+import time
+
+ROOT = Path('/opt/bifrost-tests/pyodide-ddf316c1')
+SOURCE = 'f417d03f5c8d5e3a182e68f69e2bf601a3b60125'
+CHECKOUT = ROOT / SOURCE
+RUN = ROOT / 'runs/workerd-provider-interruption-v2'
+PACKET = ROOT / 'inbox/workerd-provider-interruption-v2'
+SPIKE = ROOT / '785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide'
+NAME = 'pyodide-ddf316c1-workerd-provider-interruption-v2'
+
+
+def output(args, **kwargs):
+    return subprocess.check_output(args, text=True, timeout=60, **kwargs).strip()
+
+
+def main():
+    if output(['hostname']) != 'bifrost-pyodide-test-01' or output(['docker', 'ps', '-q']):
+        raise RuntimeError('Wrong guest or reconcile active containers first')
+    if shutil.disk_usage(ROOT).free < 8 * 1024**3:
+        raise RuntimeError('Insufficient scratch')
+    RUN.mkdir()
+    (RUN / 'home').mkdir()
+    (RUN / 'control').mkdir()
+    # Match the existing hardened test-runner uid for this new owned output only.
+    os.chown(RUN / 'control', 1000, 1000)
+    report = {'api_source': SOURCE, 'runtime_source': '785b560b9973020e1c13401383e1a73a87a54940',
+              'runtime': 'actual-local-workerd', 'cloudflare_runtime_qualified': False,
+              'physical_termination_verified': False, 'cloud_invocations': 0,
+              'started_at_epoch': time.time(), 'commands': [], 'qualification_passed': False}
+    project = None
+    started = time.monotonic()
+    try:
+        expected = {
+                    'canonical-local.py': 'bb1c2c380a495ccfa6e10f718e7d74b1f260354c00afa3f4aeb28081bf95042c'}
+        for name, digest in expected.items():
+            if hashlib.sha256((PACKET / name).read_bytes()).hexdigest() != digest:
+                raise RuntimeError('Source packet hash mismatch')
+        report['packet_sha256'] = expected
+        local = RUN / 'project'
+        (local / 'backend').mkdir(parents=True)
+        selected = ['backend/authorized-local-entry.mjs', 'backend/runtime-code.mjs', 'backend/generated-runtime.mjs',
+                    'backend/module-response.mjs', 'backend/resolution-response.mjs', 'backend/fixture-admission.mjs',
+                    'backend/test-api-route.mjs', 'backend/refresh-gate.mjs', 'backend/wrangler.authorized-local.jsonc', 'probe-io.mjs']
+        report['worker_source_sha256'] = {}
+        for path in selected:
+            data = (SPIKE / path).read_bytes()
+            (local / path).write_bytes(data)
+            report['worker_source_sha256'][path] = hashlib.sha256(data).hexdigest()
+        cache = ROOT / 'runs/runtime-source-bundle-v1/bundle-cache'
+        if hashlib.sha256((cache / 'pyodide_314.0.6_2026-08-17_6.capnp.bin').read_bytes()).hexdigest() != '3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260':
+            raise RuntimeError('Bundle cache changed')
+        wrapper = ROOT / 'runs/runtime-source-bundle-v1/workerd-with-cache.sh'
+        if hashlib.sha256(wrapper.read_bytes()).hexdigest() != '9f9ad4a47455ff2f29a5600471855260f88f0bc42a690917fa47a46ce34bffe7':
+            raise RuntimeError('Wrapper changed')
+        repo = ROOT / 'sources/bifrost-upstream.git'
+        output(['git', '--git-dir', str(repo), 'fetch', 'https://github.com/MTG-Thomas/bifrost-upstream.git', SOURCE])
+        if not CHECKOUT.exists():
+            output(['git', '--git-dir', str(repo), 'worktree', 'add', '--detach', str(CHECKOUT), SOURCE])
+        if output(['git', 'rev-parse', 'HEAD'], cwd=CHECKOUT) != SOURCE or output(['git', 'status', '--porcelain'], cwd=CHECKOUT):
+            raise RuntimeError('Existing source checkout identity or cleanliness mismatch')
+        changes = output(['git', '--git-dir', str(repo), 'diff', '--name-only',
+                          '0c3241789a15e418d02ca8eb6fbd8fac8016edef', SOURCE]).splitlines()
+        if not all(p.startswith(('spikes/cloudflare-pyodide/', 'api/tests/')) for p in changes):
+            raise RuntimeError('Existing image build inputs changed')
+        project = output(['bash', '-c', 'source scripts/lib/test_helpers.sh; compute_project_name .'], cwd=CHECKOUT)
+        report['project'] = project
+        env = {'PATH': os.environ['PATH'], 'HOME': str(RUN / 'home'),
+               'BIFROST_SKIP_BUILD': '1', 'BIFROST_TEST_IMAGE_TAG': 'bifrost-test-7ddfac36'}
+        compose = ['docker', 'compose', '-p', project, '-f', 'docker-compose.test.yml']
+        commands = [['./test.sh', 'stack', 'up'], [*compose, 'stop', 'worker', 'scheduler'],
+            ['docker', 'run', '-d', '--name', NAME, '--network', project + '_default',
+             '--network-alias', 'bifrost-pyodide-ddf316c1', '--cpus=1', '--memory=2g',
+             '--memory-swap=2g', '--pids-limit=128', '--label', 'com.docker.compose.project=' + project,
+             '--mount', f'type=bind,src={SPIKE},dst=/spike,readonly',
+             '--mount', f'type=bind,src={RUN},dst=/qualification',
+             '--mount', f'type=bind,src={cache},dst=/bundle-cache,readonly',
+             '--mount', f'type=bind,src={wrapper},dst=/cache-wrapper.sh,readonly',
+             '--env', 'MINIFLARE_WORKERD_PATH=/cache-wrapper.sh', '--env', 'HOME=/qualification/home',
+             '--env', 'CI=true', '--env', 'WRANGLER_SEND_METRICS=false', '--workdir', '/qualification/project',
+             '--entrypoint', 'node', 'bifrost-test-api-dev:bifrost-test-7ddfac36',
+             '/spike/node_modules/wrangler/bin/wrangler.js', 'dev', '--local', '--ip', '0.0.0.0', '--port', '8799',
+             '--config', 'backend/wrangler.authorized-local.jsonc'],
+            [*compose, '--profile', 'test', 'run', '--rm', '--no-deps', '--name', project + '-sdk-fixture',
+             '--volume', str(SPIKE) + ':/spike:ro', '--volume', str(PACKET) + ':/qualification:ro',
+             '--volume', str(RUN / 'control') + ':/interruption',
+             '--env', 'PROVIDER_INTERRUPTION_CONTROL=/interruption/ready.json',
+             'test-runner', 'python', '/qualification/canonical-local.py', '--integration-probe', '--integration-secret-probe', '--provider-interruption-probe']]
+        for index, args in enumerate(commands):
+            if index == 3:
+                # Readiness probes invoke no workflow and carry no credential.
+                for _ in range(30):
+                    state = json.loads(output(['docker', 'inspect', NAME]))[0]['State']
+                    if not state['Running']:
+                        raise RuntimeError('Provider startup failed')
+                    healthy = subprocess.run(['docker', 'exec', NAME, 'node', '-e',
+                        "fetch('http://127.0.0.1:8799/health',{signal:AbortSignal.timeout(1000)}).then(r=>process.exitCode=r.status===405?0:1).catch(()=>process.exitCode=1)"],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=3)
+                    if healthy.returncode == 0:
+                        break
+                    time.sleep(1)
+                else:
+                    raise RuntimeError('Provider readiness deadline')
+            entry = {'argv': args, 'started_at_epoch': time.time()}
+            report['commands'].append(entry)
+            with (RUN / f'phase-{index}.log').open('x') as log:
+                process = subprocess.Popen(args, cwd=CHECKOUT, env=env, stdout=log,
+                                           stderr=subprocess.STDOUT, start_new_session=True)
+                while process.poll() is None:
+                    if time.monotonic() - started > 900 or shutil.disk_usage(ROOT).used > 24 * 1024**3:
+                        os.killpg(process.pid, signal.SIGTERM)
+                        raise RuntimeError('Wall/disk guard reached')
+                    if index == 3 and not report.get('provider_process_stop_verified'):
+                        try:
+                            descriptor = os.open(RUN / 'control/ready.json', os.O_RDONLY | os.O_NOFOLLOW)
+                        except FileNotFoundError:
+                            pass
+                        else:
+                            with os.fdopen(descriptor) as marker:
+                                content = marker.read(257)
+                            if len(content) > 256 or json.loads(content) != {'sdk_write_observed': True, 'value': 70}:
+                                raise RuntimeError('Interruption positive-control marker invalid')
+                            report['sdk_write_observed_before_stop'] = True
+                            subprocess.run(['docker', 'stop', '-t', '1', NAME], check=True,
+                                           capture_output=True, timeout=15)
+                            stopped = json.loads(output(['docker', 'inspect', NAME]))[0]['State']
+                            if stopped['Running'] or stopped['OOMKilled']:
+                                raise RuntimeError('Owned provider stop readback failed')
+                            report['provider_process_stop_verified'] = True
+                            report['provider_state_after_interruption'] = stopped
+                    time.sleep(1)
+                entry['exit_code'] = process.returncode
+            entry['finished_at_epoch'] = time.time()
+            if process.returncode:
+                raise RuntimeError('Qualification command failed')
+        lines = (RUN / 'phase-3.log').read_text().splitlines()
+        reports = [json.loads(line) for line in lines if line.startswith('{"runtime":')]
+        result = reports[-1]
+        for key in ('canonical_claim_verified', 'provider_interruption_recovery_verified',
+                    'no_redispatch_verified', 'fixture_worker_cascade_cleanup_verified'):
+            if result.get(key) is not True:
+                raise RuntimeError('Canonical acceptance failed: ' + key)
+        if result['runtime'] != 'local-workerd-canonical-claim-consumer' or result['launches'] != 1:
+            raise RuntimeError('Wrong physical runtime or duplicate launch')
+        if result['canonical_terminal_consumption_verified'] is not False or result['canonical_recovery_status'] != 'Failed':
+            raise RuntimeError('Lost-worker failure was mistaken for provider success acceptance')
+        if not report.get('provider_process_stop_verified') or result['result_envelope_received'] is not False:
+            raise RuntimeError('Actual provider process interruption was not exercised')
+        report['canonical_result'] = result
+        report['qualification_passed'] = True
+    except Exception as error:
+        report['error_type'] = type(error).__name__
+        raise
+    finally:
+        state = subprocess.run(['docker','inspect',NAME],capture_output=True,text=True)
+        if state.returncode == 0:
+            report['provider_state_before_cleanup'] = json.loads(state.stdout)[0]['State']
+            memory_code = "const fs=require('node:fs');console.log(JSON.stringify(Object.fromEntries(['memory.peak','memory.max','memory.events'].map(p=>[p,fs.readFileSync('/sys/fs/cgroup/'+p,'utf8')]))))"
+            memory = subprocess.run(['docker','exec',NAME,'node','-e',memory_code],capture_output=True,text=True,timeout=10)
+            if memory.returncode == 0:
+                report['provider_cgroup'] = json.loads(memory.stdout)
+        provider = subprocess.run(['docker', 'logs', NAME], capture_output=True, text=True)
+        (RUN / 'provider.log').write_text(provider.stdout + provider.stderr)
+        if project:
+            ids = output(['docker', 'ps', '-aq', '--filter', 'label=com.docker.compose.project=' + project]).splitlines()
+            report['owned_container_ids'] = ids
+            if ids:
+                subprocess.run(['docker', 'stop', '-t', '10', *ids], stdout=subprocess.DEVNULL, check=True)
+            report['running_after_cleanup'] = output(['docker', 'ps', '-q', '--filter', 'label=com.docker.compose.project=' + project]).splitlines()
+            report['volumes_deleted'] = False
+        report['elapsed_seconds'] = time.monotonic() - started
+        report['finished_at_epoch'] = time.time()
+        (RUN / 'receipt.json').write_text(json.dumps(report, indent=2) + '\n')
+        print(json.dumps({k:v for k,v in report.items() if k!='canonical_result'}))
+
+
+if __name__ == '__main__':
+    main()

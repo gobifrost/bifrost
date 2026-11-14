@@ -1,0 +1,21 @@
+{
+  "open_version": "4a55fb13-eb84-49e1-b950-8aaf3fe4359d",
+  "provider_module_bytes": 15410508,
+  "provider_module_sha256": "32fcf77c6c89c9330670166bad1092fba6b2e560ac487f2eff874795e501a870",
+  "provider_matches_prebuilt": true,
+  "archive_sha256": "4a915966f3d05bac5d99ee15d8263af20e7f8f4971a4cd58aea87cb6727f35d5",
+  "executor_closed_active_version": "15873d67-b4ab-4be3-84c1-8e8a9118d3ad",
+  "executor_closed_deployment": "9892f341-6ce8-44ea-bba2-6823868f2c22",
+  "gateway_closed_latest_version": "219581e2-4c6a-4872-b8a7-5e2a67fc0675",
+  "workers_dev": false,
+  "previews": false,
+  "expiry": "0",
+  "executor_secret_names": [],
+  "gateway_secret_names": [],
+  "tunnel_stopped": true,
+  "forwarding_stopped": true,
+  "temporary_profiles_removed": true,
+  "cloud_child_requests": 3,
+  "qualification_exit_code": 0,
+  "physical_termination_verified": false
+}

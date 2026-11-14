@@ -1,0 +1,67 @@
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+INFO:src.services.execution.simple_worker:[pool] No requirements.txt found
+INFO:src.core.requirements_cache:[requirements] Redis cache empty, reading S3
+INFO:httpx:HTTP Request: GET http://seaweedfs:8333/bifrost-test/_repo/requirements.txt "HTTP/1.1 404 Not Found"
+INFO:src.core.requirements_cache:[requirements] No requirements.txt in S3
+[template] INFO - Template process starting (PID=12, profile=agent)
+[template] INFO - Template process starting (PID=11, profile=workflow)
+[template] INFO - get_settings cache_info at scrub: currsize=0 (clean)
+[template] INFO - Scrubbed 8 env var(s) from template before fork: ['BIFROST_DATABASE_URL', 'BIFROST_DATABASE_URL_SYNC', 'BIFROST_REDIS_URL', 'BIFROST_S3_ACCESS_KEY', 'BIFROST_S3_SECRET_KEY', 'BIFROST_S3_ENDPOINT_URL', 'BIFROST_S3_BUCKET', 'BIFROST_S3_REGION']
+[template] INFO - settings cache primed with inert secret and Redis values, env vars removed
+[template] INFO - Virtual import hook installed
+[template] INFO - Template process ready — all dependencies loaded
+[template] INFO - Template process ready — all dependencies loaded
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Forked worker workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f started (PID=21, persistent=False)
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Worker workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f processing execution: c98b10f1...
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: GET http://api:8000/api/sdk/modules/workflows/linux_reference_a468745bacd54834809101f47caa472d.py "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: GET http://api:8000/api/sdk/modules-resolve?name=linux_helper_a468745bacd54834809101f47caa472d "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Loaded workflow 'token_61a1b6cb' from cache (path=workflows/linux_reference_a468745bacd54834809101f47caa472d.py)
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/integrations/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] WARNING - integration secret=[REDACTED]
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/runtime/logs "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-a468745bacd54834809101f47caa472d/documents/upsert?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 404 Not Found"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 201 Created"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-a468745bacd54834809101f47caa472d/documents/upsert?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/integrations/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/integrations/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/integrations/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-a468745bacd54834809101f47caa472d/documents/upsert?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-a468745bacd54834809101f47caa472d/documents/upsert?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/tables/linux-table-a468745bacd54834809101f47caa472d/documents/upsert?scope=0a278e47-da33-4f19-b38e-898a594ada00 "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] WARNING - fixed handled benchmark exception
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] WARNING - fixed handled benchmark exception
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] WARNING - fixed handled benchmark exception
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/config/get "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] WARNING - Linux control reference
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - HTTP Request: POST http://api:8000/api/sdk/runtime/logs "HTTP/1.1 200 OK"
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Processing 2 captured logs for execution c98b10f1-38de-4702-b6be-b0b987b7bb45
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Worker workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f completed execution: c98b10f1... success=True
+[workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f] INFO - Worker workflow:c98b10f1-38de-4702-b6be-b0b987b7bb45:97bfd152-5b2b-4c95-91c1-43198b0cf99f exiting
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+[template] INFO - Template received shutdown command
+[template] INFO - Template process exiting
+Task exception was never retrieved
+future: <Task finished name='Task-77' coro=<main.<locals>.RecordingSocket.recv() done, defined at /qualification/linux-control-reference.py:126> exception=ConnectionClosedOK(Close(code=1000, reason=''), Close(code=<CloseCode.NORMAL_CLOSURE: 1000>, reason=''), False)>
+Traceback (most recent call last):
+  File "/qualification/linux-control-reference.py", line 127, in recv
+    raw = await self.actual.recv()
+          ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.14/site-packages/websockets/asyncio/connection.py", line 324, in recv
+    raise self.protocol.close_exc from self.recv_exc
+websockets.exceptions.ConnectionClosedOK: sent 1000 (OK); then received 1000 (OK)
+{"runtime": "actual-linux-signed-control-reference", "cloud_invocations": 0, "pyodide_physical_termination_verified": false, "qualification_passed": true, "workspace_sha256": {"workflows/linux_reference_a468745bacd54834809101f47caa472d.py": "3f287e6203a495dff644a7d983350290b3df602f81cf43d815f4f86992159650", "linux_helper_a468745bacd54834809101f47caa472d.py": "950a3629efc09cf1bf4227c9eb88340410907405e2852af03af40e1788cbc7be"}, "terminal_status": "Success", "independent_document_value": 70, "benchmark": [{"workload": "json_transform", "correctness": true, "median_wall_ms": 1.3330900110304356, "samples_wall_ms": [1.3330900110304356, 1.0032393038272858, 5.033792927861214]}, {"workload": "http_orchestration", "correctness": true, "median_wall_ms": 33.477566204965115, "samples_wall_ms": [20.998674910515547, 43.92080893740058, 33.477566204965115]}, {"workload": "integration_read", "correctness": true, "median_wall_ms": 31.705250963568687, "samples_wall_ms": [31.705250963568687, 38.22978399693966, 23.998660035431385]}, {"workload": "table_update", "correctness": true, "median_wall_ms": 26.37623529881239, "samples_wall_ms": [26.37623529881239, 54.47709001600742, 23.09053298085928]}, {"workload": "multi_step", "correctness": true, "median_wall_ms": 28.050257824361324, "samples_wall_ms": [21.90060680732131, 68.99648020043969, 28.050257824361324]}], "independent_benchmark_documents": 3, "retained_log_messages": ["integration secret=[REDACTED]", "Linux control reference"], "wire_events": {"workflow_commands": 1, "pid_acks": [21], "result_events": 1}, "signed_session_generation": 1, "runtime_access_after_terminal_status": 401, "retained_terminal_acknowledged": true, "real_linux_fork_verified": true, "native_templates_stopped": true, "fixture_worker_cleanup_verified": true}

@@ -1,0 +1,160 @@
+{
+  "runtime": "actual-local-workerd",
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "execution_admission_qualified": false,
+  "started_at_epoch": 1793553685.1139438,
+  "bundle_sha256": "3c3fd5a4179230e21e018e28b0e735e7c4abd8fe8e4ff39d2fd6bb2ea3a2e260",
+  "packet_sha256": {
+    "probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "backend/termination-observer.mjs": "6ae830175ab826b3d3d6006691ac61a346a9438dbf56a0563ba10435ff76ddb1",
+    "backend/isolation-code.mjs": "c5f205405b5bc5a845724a88c7e2a83d345bf6e9c4a6ae83282760f21f0d0c43",
+    "backend/wrangler.guest-termination.jsonc": "b2912bf2cb63decbcba9982d9f508204c2a1a93cfd6876c3d7c4d5d875ddbfe8",
+    "backend/termination-evidence.mjs": "840c2ea6b02fae2c424683fb5a67ea80f12325413380e89c314874fed089f478",
+    "backend/guest-termination-entry.mjs": "00505118633cacaa00627972dbc20427a7e6b4d54a51dd371ac0e967efbfbe11",
+    "backend/guest-termination-probe.mjs": "70b425910daca701b546e803b2588afd75f62111e4a306ca98b2c4d71370f552",
+    "backend/exclusive-receipt.mjs": "f13442caa92c166957d848fbfc55685b34752792706a768039015ba495b465f5"
+  },
+  "command": [
+    "docker",
+    "run",
+    "-d",
+    "--name",
+    "pyodide-ddf316c1-source-termination-v1",
+    "--network=none",
+    "--cpus=1",
+    "--memory=1g",
+    "--memory-swap=1g",
+    "--pids-limit=256",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/source-termination-v1,dst=/qualification",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/bundle-cache,dst=/bundle-cache,readonly",
+    "--mount",
+    "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/runtime-source-bundle-v1/workerd-with-cache.sh,dst=/cache-wrapper.sh,readonly",
+    "--env",
+    "MINIFLARE_WORKERD_PATH=/cache-wrapper.sh",
+    "--env",
+    "HOME=/qualification/home",
+    "--env",
+    "CI=true",
+    "--env",
+    "WRANGLER_SEND_METRICS=false",
+    "--workdir",
+    "/qualification/packet",
+    "--entrypoint",
+    "node",
+    "bifrost-test-api-dev:bifrost-test-7ddfac36",
+    "/spike/node_modules/wrangler/bin/wrangler.js",
+    "dev",
+    "--local",
+    "--ip",
+    "127.0.0.1",
+    "--port",
+    "8811",
+    "--config",
+    "backend/wrangler.guest-termination.jsonc"
+  ],
+  "probe_command": [
+    "docker",
+    "exec",
+    "pyodide-ddf316c1-source-termination-v1",
+    "node",
+    "backend/guest-termination-probe.mjs",
+    "--run"
+  ],
+  "observer_exit_code": 0,
+  "observations": {
+    "runtime": "local-workerd",
+    "records": [
+      {
+        "id": "7483f1e7-6378-4e9a-afb1-1cc599fc0aa4",
+        "mode": "control",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 3660.3848930000004
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 5344.2439429999995
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": "{\"total\": 199999990000000}"
+        },
+        "classification": "not_exercised",
+        "abort_request_observed": false,
+        "effect_after_abort_observed": false,
+        "physical_termination_verified": false,
+        "canonical_late_result_fencing_verified": false
+      },
+      {
+        "id": "9b6ac9cc-ba6c-42ec-9114-d58b47ac19a2",
+        "mode": "catch",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 2171.616184999999
+          }
+        ],
+        "outcome": {
+          "status": 200,
+          "body": "{\"total\": 19999999900000000}"
+        },
+        "classification": "not_exercised",
+        "abort_request_observed": false,
+        "effect_after_abort_observed": false,
+        "physical_termination_verified": false,
+        "canonical_late_result_fencing_verified": false
+      },
+      {
+        "id": "1f269c4f-b718-4830-b08d-b196da276a48",
+        "mode": "abort",
+        "events": [
+          {
+            "event": "before",
+            "elapsed_ms": 2156.225163999996
+          },
+          {
+            "event": "abort_requested",
+            "elapsed_ms": 2166.5823089999976
+          },
+          {
+            "event": "after",
+            "elapsed_ms": 3838.886004
+          }
+        ],
+        "outcome": {},
+        "classification": "late_effect_after_abort",
+        "abort_request_observed": true,
+        "effect_after_abort_observed": true,
+        "physical_termination_verified": false,
+        "canonical_late_result_fencing_verified": false
+      }
+    ],
+    "cloud_invocations": 0,
+    "physical_termination_verified": false,
+    "canonical_late_result_fencing_verified": false,
+    "execution_admission_qualified": false
+  },
+  "state_before_cleanup": {
+    "Status": "running",
+    "Running": true,
+    "Paused": false,
+    "Restarting": false,
+    "OOMKilled": false,
+    "Dead": false,
+    "Pid": 72570,
+    "ExitCode": 0,
+    "Error": "",
+    "StartedAt": "2026-11-01T17:21:25.2968996Z",
+    "FinishedAt": "0001-01-01T00:00:00Z"
+  },
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 43.59876584075391
+}

@@ -1,0 +1,23 @@
+{
+  "runtime": "deployed-cloudflare-dynamic-python-worker",
+  "started_at": "2026-10-31T15:45:36.511Z",
+  "versions": "82ede251-96a4-4b8d-81e7-7cd249d24698",
+  "results": [
+    {
+      "ordinal": 11,
+      "request": {
+        "fixture": "transform"
+      },
+      "status": 502,
+      "body": {
+        "phase": "dynamic-runtime",
+        "error_type": "PythonError",
+        "error": "PythonError: Traceback (most recent call last):\n  File \"/lib/python314.zip/_pyodide/_base.py\", line 666, in pyimport_impl\n    res = __import__(stem, fromlist=fromlist)\n  File \"/session/metadata/main.py\", line 7, in <module>\n    from workers import WorkerEntrypoint, Response\n  File \"/session/metadata/python_modules/workers/__init__.py\", line 1, in <module>\n    from .blob import Blob, BlobEnding, BlobValue, File\n  File \"/session/metadata/python_modules/workers/blob.py\", line 8, in <module>\n    from .utils import _is_iterable, _manage_pyproxies, _supports_buffer_protocol\n  File \"/session/metadata/python_modules/workers/utils.py\", line 6, in <module>\n    import _pyodide_entrypoint_helper\n  File \"<frozen importlib._bootstrap>\", line 1371, in _find_and_load\n  File \"<frozen importlib._bootstrap>\", line 1333, in _find_and_load_unlocked\n  File \"<frozen importlib._bootstrap>\", line 1267, in _find_spec\n  File \"/session/metadata/src/services/execution/virtual_import.py\", line 330, in find_spec\n    return self._find_spec_impl(fullname, path)\n           ~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^\n  File \"/session/metadata/src/services/execution/virtual_import.py\", line 350, in _find_spec_impl\n    resolution = resolve_module_sync(fullname)\n  File \"/session/metadata/src/core/module_cache_sync.py\", line 562, in resolve_module_sync\n    engine_client = _get_engine_client()\n  File \"/session/metadata/src/core/module_cache_sync.py\", line 242, in _get_engine_client\n    return get_client()\n  File \"/session/metadata/bifrost/client.py\", line 1256, in get_client\n    return BifrostClient.get_instance()\n           ~~~~~~~~~~~~~~~~~~~~~~~~~~^^\n  File \"/session/metadata/bifrost/client.py\", line 905, in get_instance\n    raise RuntimeError(\n        \"Not logged in. Run 'bifrost login' to authenticate.\"\n    )\nRuntimeError: Not logged in. Run 'bifrost login' to authenticate.\n"
+      },
+      "client_wall_ms": 6831.9743
+    }
+  ],
+  "unauthenticated_status": 403,
+  "finished_at": "2026-10-31T15:45:43.698Z",
+  "total_reserved_invocations": 11
+}

@@ -1,0 +1,1 @@
+{"status":200,"body":"{\"pyodide\": \"314.0.6\", \"python\": [3, 14, 2], \"cache_tag\": \"cpython-314\", \"soabi\": \"cpython-314-wasm32-emscripten\", \"platform\": \"emscripten-5.0.3-wasm32\", \"pydantic\": \"2.14.2\", \"pydantic_core\": \"2.50.2\", \"validated\": {\"values\": [1, 2]}, \"invalid_rejected\": true}"}

@@ -1,0 +1,7 @@
+{
+  "artifact": "identity-before.xml",
+  "normalization": "trailing horizontal whitespace removed from text copy; JUnit outcomes unchanged",
+  "original_sha256": "b7ad8bf95cdbd116e15dfd393857c5772c615a5921f7ac82b24ab5eaab6ef4b8",
+  "repository_sha256": "79b5a79c86db28710cb0ecb1ba9bdeae2be9d77796c8f2dc668f2111549ba9b6",
+  "original_guest_path": "/opt/bifrost-tests/pyodide-ddf316c1/runs/result-identity-v1/before.xml"
+}

@@ -1,0 +1,34 @@
+📝 Regenerated .cloudflare/types/index.d.ts from cloudflare.config.ts.
+Your Worker has access to the following bindings:
+Binding                               Resource                  Mode
+env.ISOLATED_TEST_STACK ("true")      Environment Variable      local
+env.LOADER                            Worker Loader             local
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Cannot perform I/O on behalf of a different request. I/O objects (such as streams, request/response bodies, and others) created in the context of one request handler cannot be accessed from a different request's handler. This is a limitation of Cloudflare Workers which allows us to improve overall performance. (I/O type: SubrequestChannel) Error[0m
+System.Management.Automation.RemoteException
+      at held (file:///qualification/project/backend/rpc-context-entry.mjs:11:24)
+System.Management.Automation.RemoteException
+System.Management.Automation.RemoteException
+[31m✘ [41;31m[[41;97mERROR[41;31m][0m [1mUncaught Error: Cannot perform I/O on behalf of a different request. I/O objects (such as streams, request/response bodies, and others) created in the context of one request handler cannot be accessed from a different request's handler. This is a limitation of Cloudflare Workers which allows us to improve overall performance. (I/O type: SubrequestChannel) Error[0m
+
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+⎔ Starting local server...
+[wrangler:warn] Unable to fetch the `Request.cf` object! Falling back to a default placeholder...
+Error: getaddrinfo EAI_AGAIN workers.cloudflare.com
+    at GetAddrInfoReqWrap.onlookupall [as oncomplete] (node:dns:122:26)
+[wrangler:info] Ready on http://0.0.0.0:8799
+[wrangler:info] - http://127.0.0.1:8799
+[wrangler:info] GET /health 403 Forbidden (499ms)
+late_synthetic_context_tail {"schema":1,"outcome":"exception","event_timestamp":1793721624843,"log_count":0,"exception_count":1,"raw_numeric_fields":{"cpuTime":0,"cpuTimeMs":null,"wallTime":0,"wallTimeMs":null}}
+[wrangler:error] Error: Cannot perform I/O on behalf of a different request. I/O objects (such as streams, request/response bodies, and others) created in the context of one request handler cannot be accessed from a different request's handler. This is a limitation of Cloudflare Workers which allows us to improve overall performance. (I/O type: SubrequestChannel)
+    at async runCaller (file:///qualification/project/backend/rpc-context-entry.mjs:89:24)
+    at async Object.fetch (file:///qualification/project/backend/rpc-context-entry.mjs:105:21)
+    at async jsonError (file:///qualification/project/node_modules/wrangler/templates/middleware/middleware-miniflare3-json-error.ts:22:10)
+    at async drainBody (file:///qualification/project/node_modules/wrangler/templates/middleware/middleware-ensure-req-body-drained.ts:5:10)
+[wrangler:info] POST / 500 Internal Server Error (4780ms)
+System.Management.Automation.RemoteException
+      at status (file:///qualification/project/backend/rpc-context-entry.mjs:16:24)
+System.Management.Automation.RemoteException
+System.Management.Automation.RemoteException
+🪵  Logs were written to "/qualification/home/.config/.wrangler/logs/wrangler-2026-11-03_16-00-16_688.log"

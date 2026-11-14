@@ -1,0 +1,21 @@
+test_stalled_ack_does_not_block_other_dispatch_or_delivery (test_attempt_delivery.DeliveryTests.test_stalled_ack_does_not_block_other_dispatch_or_delivery) ... FAIL
+
+======================================================================
+FAIL: test_stalled_ack_does_not_block_other_dispatch_or_delivery (test_attempt_delivery.DeliveryTests.test_stalled_ack_does_not_block_other_dispatch_or_delivery)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_attempt_delivery.py", line 37, in test_stalled_ack_does_not_block_other_dispatch_or_delivery
+    self.assertTrue(dispatch.done(), 'another route dispatch waits for stalled ACK')
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true : another route dispatch waits for stalled ACK
+
+----------------------------------------------------------------------
+Ran 1 test in 0.006s
+
+FAILED (failures=1)

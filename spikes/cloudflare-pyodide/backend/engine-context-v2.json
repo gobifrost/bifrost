@@ -1,0 +1,85 @@
+{
+  "cloud_invocations": 0,
+  "physical_termination_verified": false,
+  "sdk_operations_verified": false,
+  "source": "1796c6fcf68964aa2ff36421ccc7be697d6322f7",
+  "overlay_sha256": {
+    "src/services/execution/engine.py": "443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2",
+    "src/services/execution/worker.py": "4be5dda4b7089ff8e1668dd4f319083df46fe931d94adc6935d0aa6ca206c5cf",
+    "bifrost/_execution_context.py": "c8a5792bddcbbb3f2ffcfa7925d9124d034fdb8d368f515551e87c0da25809e0"
+  },
+  "cases": [
+    {
+      "mode": "baseline",
+      "status": 200,
+      "body": {
+        "runtime": {
+          "pyodide": "314.0.6",
+          "python": [
+            3,
+            14,
+            2
+          ],
+          "cache_tag": "cpython-314",
+          "soabi": "cpython-314-wasm32-emscripten",
+          "platform": "emscripten-5.0.3-wasm32"
+        },
+        "status": "Success",
+        "result": {
+          "value": 28,
+          "public_url": "https://isolated.example.invalid"
+        },
+        "error_type": null
+      }
+    },
+    {
+      "mode": "engine-only",
+      "status": 200,
+      "body": {
+        "runtime": {
+          "pyodide": "314.0.6",
+          "python": [
+            3,
+            14,
+            2
+          ],
+          "cache_tag": "cpython-314",
+          "soabi": "cpython-314-wasm32-emscripten",
+          "platform": "emscripten-5.0.3-wasm32"
+        },
+        "error_type": "TypeError"
+      }
+    },
+    {
+      "mode": "engine-context",
+      "status": 200,
+      "body": {
+        "runtime": {
+          "pyodide": "314.0.6",
+          "python": [
+            3,
+            14,
+            2
+          ],
+          "cache_tag": "cpython-314",
+          "soabi": "cpython-314-wasm32-emscripten",
+          "platform": "emscripten-5.0.3-wasm32"
+        },
+        "status": "Success",
+        "result": {
+          "value": 28,
+          "public_url": "https://isolated.example.invalid",
+          "is_agent": true,
+          "execution_origin": "agent",
+          "agent_id": "synthetic-agent",
+          "original_user_is_platform_admin": true,
+          "original_user_id": "synthetic-original-user"
+        },
+        "error_type": null
+      }
+    }
+  ],
+  "passed": true,
+  "owned_running_after_cleanup": "",
+  "elapsed_seconds": 21.76871618675068
+}

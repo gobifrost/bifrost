@@ -1,0 +1,85 @@
+{
+  "source": "f417d03f5c8d5e3a182e68f69e2bf601a3b60125",
+  "scope": "Linux signed control and native template startup only",
+  "cloud_invocations": 0,
+  "workflow_invocations": 0,
+  "qualification_passed": true,
+  "started_at_epoch": 1793556131.3119125,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "exit_code": 0
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "-f",
+        "/opt/bifrost-tests/pyodide-ddf316c1/runs/linux-control-bootstrap-v1/limits.yml",
+        "--profile",
+        "test",
+        "run",
+        "--rm",
+        "--no-deps",
+        "--name",
+        "bifrost-test-cc399929-linux-control-bootstrap",
+        "--volume",
+        "/opt/bifrost-tests/pyodide-ddf316c1/inbox/linux-control-bootstrap-v1:/qualification:ro",
+        "test-runner",
+        "python",
+        "/qualification/linux-control-bootstrap.py"
+      ],
+      "exit_code": 0
+    }
+  ],
+  "project": "bifrost-test-cc399929",
+  "fixture_sha256": "3336a35a8050a83d9da7dcb4b6e0e182603512bc7ad0c66136d5006c95aba9f5",
+  "observed": {
+    "runtime": "actual-linux-launcher-bootstrap",
+    "cloud_invocations": 0,
+    "workflow_invocations": 0,
+    "inventory_sent": false,
+    "execution_admission_qualified": false,
+    "pyodide_physical_termination_verified": false,
+    "qualification_passed": true,
+    "signed_session_generation": 1,
+    "native_template_pids": [
+      11,
+      12
+    ],
+    "baseline_bytes": 332619776,
+    "signed_owner_and_unadmitted_bootstrap_verified": true,
+    "native_templates_stopped": true,
+    "fixture_worker_cleanup_verified": true,
+    "cgroup": {
+      "memory.peak": "339484672\n",
+      "memory.max": "2147483648\n",
+      "memory.events": "low 0\nhigh 0\nmax 0\noom 0\noom_kill 0\noom_group_kill 0\nsock_throttled 0\n"
+    }
+  },
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 59.19484028220177
+}

@@ -1,0 +1,14 @@
+{
+    "phase":  "Post-run source and container-mount readback",
+    "source_commit":  "1d33150eb376b71f8a81b427920eda1b0447f829",
+    "api_source_mount":  "/opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0/api/src -\u003e /app/src",
+    "source_sha256":  {
+                          "api/src/scheduler/control.py":  "189045fe39b715e25e24b20551877b4f2917c0aef234b9347c11728fae6ad919",
+                          "api/src/scheduler/api_host.py":  "d80740b44bf45906d8f8f448b104dddaa945eaaadc715fbd975e4ea974b67ae6",
+                          "api/src/services/worker_pool/liveness.py":  "d485362ebbdd0fb23aab9fc370d9ebddaa45e6df5a062ebede9150774ee49a37",
+                          "api/src/services/worker_pool/recovery.py":  "6df2f127af7d4eb8cfb013b27aec40e88951841405dbd4a6c37de81bd9b35f08",
+                          "api/src/main.py":  "a9de725c275e41974f4aae74716badea84658a8c42b39cc04e3c27ae4034ab18"
+                      },
+    "baseline_git_object_comparison":  "All five guest file digests match exact source_commit Git objects",
+    "cloud_invocations":  0
+}

@@ -1,0 +1,15 @@
+{
+    "evidence_kind":  "transcribed_tool_results",
+    "guest":  128,
+    "packet":  "/opt/bifrost-tests/pyodide-ddf316c1/inbox/prelaunch-retention-v1",
+    "command":  "python -m unittest -v test_private_http_pool.PrivatePoolTests.test_prelaunch_refusal_keeps_failed_receipt_until_canonical_reconciliation",
+    "exit_code":  0,
+    "tests":  1,
+    "duration_seconds":  0.009,
+    "ruff_exit_code":  0,
+    "pyright_exit_code":  0,
+    "cloud_invocations":  0,
+    "canonical_no_launch_retirement_implemented":  false,
+    "test_sha256":  "77f9a363e39b2e1f531b159eaab84a054fd3af2523721cc6c552528aa0ee3bb9",
+    "implementation_sha256":  "7b8ada315eca574c23617b140fcd593ea5e868af4be97e30feca8da630d3ac0b"
+}

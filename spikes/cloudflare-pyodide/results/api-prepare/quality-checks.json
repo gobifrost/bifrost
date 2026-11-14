@@ -1,0 +1,6 @@
+{
+  "environment": "CT128 cached native Docker image; network none; 0.5 CPU/1 GiB/64 PIDs; PYTHONPATH=/app:/qualification; synthetic unit settings key; NODE_OPTIONS=--max-old-space-size=768",
+  "unit_tests": {"command": "python -m unittest -v test_workspace_prepare test_private_http_pool test_workflow_request_mux test_http_invocation", "count": 23, "exit_code": 0},
+  "ruff": {"command": "ruff check --no-cache workspace_prepare.py test_workspace_prepare.py shared-native-pool.py ct128-canonical-failure.py", "exit_code": 0},
+  "pyright": {"command": "pyright --project /qualification/pyright-guest-fixtures.json workspace_prepare.py test_workspace_prepare.py shared-native-pool.py ct128-canonical-failure.py", "exit_code": 0, "errors": 0, "warnings": 0}
+}

@@ -1,0 +1,19 @@
+{
+  "scope": "owned completed fixture/build duplicate copies only; exact contents retained",
+  "compiled_archive": "/opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-build-v1/compiled-bundle-v2.tar.gz",
+  "compiled_archive_bytes": 8867506,
+  "compiled_archive_sha256": "b0281ff61deec5417bd892077178354dc6d3912d16f32d7f50f6189026ef8f9e",
+  "members": {
+    "canonical-entry.js": "09d84c2b9db9578c11a053ab82b4ac9e49f62f92b57c8aefcc1e901894cd5859",
+    "canonical-entry.js.map": "a2558848990a896180dcc61893192e263b24ad91aa1391c41df43730718a9bd4"
+  },
+  "runtime_archive": "/opt/bifrost-tests/pyodide-ddf316c1/inbox/canonical-cancel-v3/project/backend/generated-runtime.mjs.gz",
+  "runtime_archive_bytes": 4417415,
+  "runtime_archive_sha256": "ad926d20c997c9efd8d113b12f1540966e025cf395208615f048af17d8c09b1e",
+  "runtime_decompressed_sha256": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+  "archive_members_verified_before_loose_copy_removal": true,
+  "old_fixture_container_stopped_before_archive": true,
+  "volumes_deleted": false,
+  "guard_threshold_changed": false,
+  "resources_expanded": false
+}

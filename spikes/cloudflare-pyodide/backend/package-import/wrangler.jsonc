@@ -1,0 +1,12 @@
+{
+  // Local Python Worker used only to qualify importable packages inside the real
+  // Pyodide runtime. `python_modules/` next to this entrypoint is bundled by
+  // Wrangler automatically; it is a build artifact and is not committed.
+  "name": "bifrost-package-import-test",
+  "main": "index.py",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["python_workers"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "observability": {"enabled": false}
+}

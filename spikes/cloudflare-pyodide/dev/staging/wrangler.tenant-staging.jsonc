@@ -1,0 +1,19 @@
+﻿{
+  // Local workerd staging harness: the same supervisor code and the same
+  // workerd runtime as the deployed Worker, but pointed at a real Bifrost API.
+  // Not a deployed-Cloudflare claim.
+  "name": "bifrost-tenant-staging-local",
+  "main": "../tenant-workers/tenant-entry.mjs",
+  "compatibility_date": "2026-10-30",
+  "compatibility_flags": ["python_workers"],
+  "worker_loaders": [{"binding": "LOADER"}],
+  "durable_objects": {
+    "bindings": [{"name": "TOKENS", "class_name": "RunTokenBroker"}]
+  },
+  "migrations": [{"tag": "v1", "new_sqlite_classes": ["RunTokenBroker"]}],
+  "vars": {
+    "LOCAL_PROBE": "true",
+    "API_ORIGIN": "https://bifrost-stage.midtowntg.com"
+  },
+  "observability": {"enabled": false}
+}

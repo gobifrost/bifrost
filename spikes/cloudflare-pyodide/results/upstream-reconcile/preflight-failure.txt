@@ -1,0 +1,5 @@
+Worktree: /opt/bifrost-tests/pyodide-ddf316c1/upstream-025f6c0
+Project:  bifrost-test-5dc8d94e
+Booting infrastructure...
+yaml: unmarshal errors:
+  line 361: mapping key "mem_limit" already defined at line 294

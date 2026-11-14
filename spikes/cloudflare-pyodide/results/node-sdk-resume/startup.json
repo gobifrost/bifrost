@@ -1,0 +1,92 @@
+{
+  "api_source": "f417d03f5c8d5e3a182e68f69e2bf601a3b60125",
+  "runtime_source": "785b560b9973020e1c13401383e1a73a87a54940",
+  "runtime": "official-pyodide-on-node",
+  "cloudflare_runtime_qualified": false,
+  "physical_termination_verified": false,
+  "cloud_invocations": 0,
+  "started_at_epoch": 1793550517.7360482,
+  "commands": [
+    {
+      "argv": [
+        "./test.sh",
+        "stack",
+        "up"
+      ],
+      "started_at_epoch": 1793550518.6222136,
+      "exit_code": 0,
+      "finished_at_epoch": 1793550556.6268613
+    },
+    {
+      "argv": [
+        "docker",
+        "compose",
+        "-p",
+        "bifrost-test-cc399929",
+        "-f",
+        "docker-compose.test.yml",
+        "stop",
+        "worker",
+        "scheduler"
+      ],
+      "started_at_epoch": 1793550556.626865,
+      "exit_code": 0,
+      "finished_at_epoch": 1793550567.6310475
+    },
+    {
+      "argv": [
+        "docker",
+        "run",
+        "-d",
+        "--name",
+        "pyodide-ddf316c1-node-sdk-v1",
+        "--network",
+        "bifrost-test-cc399929_default",
+        "--network-alias",
+        "bifrost-pyodide-ddf316c1",
+        "--cpus=1",
+        "--memory=1g",
+        "--memory-swap=1g",
+        "--pids-limit=128",
+        "--label",
+        "com.docker.compose.project=bifrost-test-cc399929",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/785b560b9973020e1c13401383e1a73a87a54940/spikes/cloudflare-pyodide,dst=/spike,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/runs/pyodide-package-qualification-resume/core/pyodide,dst=/core,readonly",
+        "--mount",
+        "type=bind,src=/opt/bifrost-tests/pyodide-ddf316c1/inbox/node-sdk-v1,dst=/qualification,readonly",
+        "--entrypoint",
+        "node",
+        "bifrost-test-api-dev:bifrost-test-7ddfac36",
+        "/qualification/node-sdk-provider.mjs"
+      ],
+      "started_at_epoch": 1793550567.6310494,
+      "exit_code": 0,
+      "finished_at_epoch": 1793550568.6314902
+    }
+  ],
+  "qualification_passed": false,
+  "packet_sha256": {
+    "node-sdk-provider.mjs": "a502ed122f7290ae09c6fa02b10f41d1fdce365bddd173ab983344f4ede27454",
+    "canonical-local.py": "8c8f90a4950764fd6d0afc64b8460c70708af5b795851c4b693b77ab28f0e009"
+  },
+  "project": "bifrost-test-cc399929",
+  "error_type": "RuntimeError",
+  "owned_container_ids": [
+    "930a1af7ec81",
+    "f21cd41b1323",
+    "d559e87bf352",
+    "670312cab754",
+    "9f2b6eabd806",
+    "cc992de45267",
+    "991f9bc27da7",
+    "6cee45634a91",
+    "5623224b7234",
+    "35122ea2d03c"
+  ],
+  "running_after_cleanup": [],
+  "volumes_deleted": false,
+  "elapsed_seconds": 63.91174548212439,
+  "finished_at_epoch": 1793550581.6477966
+}

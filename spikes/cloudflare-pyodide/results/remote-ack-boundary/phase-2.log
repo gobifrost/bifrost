@@ -1,0 +1,115 @@
+Resetting state...
+ Container bifrost-test-6ec9fba9-worker-1  Stopping
+ Container bifrost-test-6ec9fba9-scheduler-1  Stopping
+ Container bifrost-test-6ec9fba9-scheduler-1  Stopped
+ Container bifrost-test-6ec9fba9-worker-1  Stopped
+ Container bifrost-test-6ec9fba9-api-1  Stopping
+ Container bifrost-test-6ec9fba9-api-1  Stopped
+ Container bifrost-test-6ec9fba9-api-1  Removing
+ Container bifrost-test-6ec9fba9-scheduler-1  Removing
+ Container bifrost-test-6ec9fba9-worker-1  Removing
+ Container bifrost-test-6ec9fba9-worker-1  Removed
+ Container bifrost-test-6ec9fba9-scheduler-1  Removed
+ Container bifrost-test-6ec9fba9-api-1  Removed
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Stopping
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Stopped
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Removing
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Removed
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Creating
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Created
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Starting
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Started
+ Container bifrost-test-6ec9fba9-postgres-1  Waiting
+ Container bifrost-test-6ec9fba9-postgres-1  Healthy
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Starting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Started
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Starting
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Started
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Running
+ Container bifrost-test-6ec9fba9-redis-1  Running
+ Container bifrost-test-6ec9fba9-postgres-1  Running
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Running
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Running
+ Container bifrost-test-6ec9fba9-init-1  Created
+ Container bifrost-test-6ec9fba9-api-1  Creating
+ Container bifrost-test-6ec9fba9-api-1  Created
+ Container bifrost-test-6ec9fba9-scheduler-1  Creating
+ Container bifrost-test-6ec9fba9-worker-1  Creating
+ Container bifrost-test-6ec9fba9-scheduler-1  Created
+ Container bifrost-test-6ec9fba9-worker-1  Created
+ Container bifrost-test-6ec9fba9-postgres-1  Waiting
+ Container bifrost-test-6ec9fba9-postgres-1  Healthy
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Waiting
+ Container bifrost-test-6ec9fba9-redis-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Healthy
+ Container bifrost-test-6ec9fba9-redis-1  Healthy
+ Container bifrost-test-6ec9fba9-init-1  Starting
+ Container bifrost-test-6ec9fba9-init-1  Started
+ Container bifrost-test-6ec9fba9-init-1  Waiting
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Waiting
+ Container bifrost-test-6ec9fba9-redis-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Healthy
+ Container bifrost-test-6ec9fba9-redis-1  Healthy
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Healthy
+ Container bifrost-test-6ec9fba9-init-1  Exited
+ Container bifrost-test-6ec9fba9-api-1  Starting
+ Container bifrost-test-6ec9fba9-api-1  Started
+ Container bifrost-test-6ec9fba9-api-1  Waiting
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Waiting
+ Container bifrost-test-6ec9fba9-init-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Waiting
+ Container bifrost-test-6ec9fba9-redis-1  Waiting
+ Container bifrost-test-6ec9fba9-api-1  Waiting
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Waiting
+ Container bifrost-test-6ec9fba9-init-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Healthy
+ Container bifrost-test-6ec9fba9-init-1  Exited
+ Container bifrost-test-6ec9fba9-redis-1  Healthy
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Healthy
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Healthy
+ Container bifrost-test-6ec9fba9-scheduler-fixtures-1  Healthy
+ Container bifrost-test-6ec9fba9-init-1  Exited
+ Container bifrost-test-6ec9fba9-api-1  Healthy
+ Container bifrost-test-6ec9fba9-worker-1  Starting
+ Container bifrost-test-6ec9fba9-api-1  Healthy
+ Container bifrost-test-6ec9fba9-scheduler-1  Starting
+ Container bifrost-test-6ec9fba9-worker-1  Started
+ Container bifrost-test-6ec9fba9-scheduler-1  Started
+State reset complete.
+ Container bifrost-test-6ec9fba9-worker-1  Stopping
+ Container bifrost-test-6ec9fba9-scheduler-1  Stopping
+ Container bifrost-test-6ec9fba9-worker-1  Stopped
+ Container bifrost-test-6ec9fba9-scheduler-1  Stopped
+ Container bifrost-test-6ec9fba9-api-1  Stopping
+ Container bifrost-test-6ec9fba9-api-1  Stopped
+ Container bifrost-test-6ec9fba9-redis-1  Running
+ Container bifrost-test-6ec9fba9-seaweedfs-1  Running
+ Container bifrost-test-6ec9fba9-postgres-1  Running
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Running
+ Container bifrost-test-6ec9fba9-init-1  Created
+ Container bifrost-test-6ec9fba9-postgres-1  Waiting
+ Container bifrost-test-6ec9fba9-postgres-1  Healthy
+ Container bifrost-test-6ec9fba9-redis-1  Waiting
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Waiting
+ Container bifrost-test-6ec9fba9-redis-1  Healthy
+ Container bifrost-test-6ec9fba9-pgbouncer-1  Healthy
+ Container bifrost-test-6ec9fba9-init-1  Starting
+ Container bifrost-test-6ec9fba9-init-1  Started
+============================= test session starts ==============================
+platform linux -- Python 3.14.8, pytest-9.0.3, pluggy-1.6.0
+rootdir: /app
+configfile: pytest.ini (WARNING: ignoring pytest config in pyproject.toml!)
+plugins: anyio-4.13.0, env-1.6.0, asyncio-1.3.0, cov-7.1.0, timeout-2.4.0
+asyncio: mode=Mode.AUTO, debug=False, asyncio_default_fixture_loop_scope=function, asyncio_default_test_loop_scope=function
+timeout: 120.0s
+timeout method: thread
+timeout func_only: False
+collected 5 items
+
+tests/unit/dev/test_pyodide_remote_ack_boundary.py ....                  [ 80%]
+tests/unit/dev/test_thin_remote_pool.py .                                [100%]
+
+-------------- generated xml file: /tmp/bifrost/test-results.xml ---------------
+============================== 5 passed in 0.37s ===============================

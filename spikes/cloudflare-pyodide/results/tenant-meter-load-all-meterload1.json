@@ -1,0 +1,68 @@
+{
+  "mode": "load",
+  "only": "all",
+  "tag": "meterload1",
+  "count": 3,
+  "wait_seconds": 150,
+  "started_at": "2026-11-13T06:02:34.966Z",
+  "steps": [
+    {
+      "phase": "first-use",
+      "index": 0,
+      "tenant": "meterload1-0",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    },
+    {
+      "phase": "first-use",
+      "index": 1,
+      "tenant": "meterload1-1",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    },
+    {
+      "phase": "first-use",
+      "index": 2,
+      "tenant": "meterload1-2",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    },
+    {
+      "phase": "load-again",
+      "index": 0,
+      "tenant": "meterload1-0",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    },
+    {
+      "phase": "load-again",
+      "index": 1,
+      "tenant": "meterload1-1",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    },
+    {
+      "phase": "load-again",
+      "index": 2,
+      "tenant": "meterload1-2",
+      "tenant_worker_id": null,
+      "worker_reused": null
+    }
+  ],
+  "before": {
+    "workers": 25,
+    "requests": 51
+  },
+  "after_first_use": {
+    "workers": 28,
+    "requests": 54
+  },
+  "after_second_round": {
+    "workers": 31,
+    "requests": 57
+  },
+  "first_use_delta": 3,
+  "second_round_delta": 3,
+  "ok": true,
+  "finished_at": "2026-11-13T06:10:09.992Z"
+}

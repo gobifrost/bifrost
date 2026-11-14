@@ -1,0 +1,1949 @@
+{
+  "generated_at": "2026-11-13T06:38:51.294Z",
+  "allowance": 12,
+  "workspaces": [],
+  "repo": {
+    "label": "repo workflow-shaped Python",
+    "files": 115,
+    "eligible": 41,
+    "ineligible": 74,
+    "eligible_pct": 35.7,
+    "by_reason": {
+      "allowlist miss": 110,
+      "subrequest over budget": 11
+    },
+    "traps": {
+      "subprocess is unavailable in Pyodide": 15,
+      "resource is not available in Pyodide": 13,
+      "threads import but do not run in parallel": 10,
+      "multiprocessing is unavailable in Pyodide": 1,
+      "os.fork() is unavailable in Pyodide": 1,
+      "POSIX signal handling is unavailable": 1,
+      "fcntl is unavailable in Pyodide": 1
+    },
+    "rows": [
+      {
+        "path": "api/bifrost/ai.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 13 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "pydantic"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 13,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/api.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/cli.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'pathspec' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'packaging' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'websockets' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'watchdog' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "pathspec",
+          "httpx",
+          "packaging",
+          "websockets",
+          "watchdog"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 5,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/client.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 6,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/commands/admin.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/agents.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/app.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'aiohttp' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "aiohttp"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/apps.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/audit.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/base.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/claims.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/configs.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/events.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/files.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/forms.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/integrations.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/orgs.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/permissions.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/policy_rules.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/requirements.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/retention.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/roles.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/services.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/solution.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'tailwindcss' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'react' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'App' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'pathspec' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'aiohttp' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "httpx",
+          "yaml",
+          "tailwindcss",
+          "react",
+          "App",
+          "pathspec",
+          "aiohttp"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 6,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/tables.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/users.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/workflows.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'websockets' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "websockets"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/commands/workflow_conversion.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "cli"
+      },
+      {
+        "path": "api/bifrost/decorators.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/dto_flags.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/events.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 4,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/files.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 14 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 14,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/knowledge.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/solution_dev/function_host.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/solution_dev/proxy.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'aiohttp' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'yarl' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "aiohttp",
+          "click",
+          "httpx",
+          "yarl"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 3,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/solution_dev/session.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/tables.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 25 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 25,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/tui/file_select.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'textual' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'rich' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "textual",
+          "rich"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/tui/progress.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'textual' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "textual"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/tui/sync_app.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'rich' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'textual' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "rich",
+          "textual"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/tui/watch.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'textual' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "textual"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/webhooks.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/_context.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/_logging.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "redis"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "sdk"
+      },
+      {
+        "path": "api/bifrost/_service_runtime.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "sdk"
+      },
+      {
+        "path": "api/shared/runtime_io.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "fastapi",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/shared/sdk_execution_reads.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/jobs/consumers/workflow_execution.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/jobs/schedulers/execution_cleanup.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/routers/executions.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "fastapi",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/routers/files.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "fastapi",
+          "pydantic",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 11,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/routers/integrations.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "fastapi",
+          "pydantic",
+          "sqlalchemy",
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 10,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/routers/sdk_runtime.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "fastapi"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/routers/solutions.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'fastapi' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'starlette' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "subrequest over budget: estimated 17 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "fastapi",
+          "sqlalchemy",
+          "starlette"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 17,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/sdk/decorators.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/app_bundler/auto_migrate.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/app_bundler/__init__.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/execution/engine.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "pydantic"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          },
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/execution/template_process.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'asyncpg' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'pydantic_ai' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'genai_prices' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "httpx",
+          "pydantic",
+          "asyncpg",
+          "pydantic_ai",
+          "sqlalchemy",
+          "genai_prices"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "hard",
+            "why": "multiprocessing is unavailable in Pyodide"
+          },
+          {
+            "severity": "hard",
+            "why": "os.fork() is unavailable in Pyodide"
+          },
+          {
+            "severity": "hard",
+            "why": "POSIX signal handling is unavailable"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/execution/worker.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/file_storage/file_ops.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/github_sync.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'git' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "yaml",
+          "git",
+          "pydantic",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 9,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/manifest_generator.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/manifest_import.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'is' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "subrequest over budget: estimated 22 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "yaml",
+          "sqlalchemy",
+          "is"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 22,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/agents.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/apps.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'dayjs' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "dayjs",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 5,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/claims.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/configs.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/events.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/forms.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 4,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/integrations.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/organizations.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/roles.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/sdk.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 13 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 13,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/tables.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/workflow.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/mcp_server/tools/_http_bridge.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'mcp' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "httpx",
+          "mcp"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/repo_sync_writer.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 3,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/app_build.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/capture.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'pathspec' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "pathspec"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 3,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/deploy.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'packaging' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "pydantic",
+          "sqlalchemy",
+          "packaging"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 8,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/git_sync.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'git' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "git"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/update_check.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'packaging' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "packaging"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/workspace_bundle_plan.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'pathspec' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "pathspec"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/solutions/zip_install.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'cryptography' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "cryptography"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "api/src/services/workflow_validation.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "pydantic"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "platform"
+      },
+      {
+        "path": "docs/audits/fixtures/721-ninja-site-tracker.proposed.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 4,
+        "traps": [],
+        "role": "docs"
+      },
+      {
+        "path": "docs/design-modernization/fixtures/design_review_workflow.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "docs"
+      },
+      {
+        "path": "examples/rewst-migration/functions/migration.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 11,
+        "traps": [],
+        "role": "example workspace"
+      },
+      {
+        "path": "scripts/bench/incluster/driver.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "subrequest over budget: estimated 49 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "httpx",
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 49,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "other"
+      },
+      {
+        "path": "scripts/release/stable_2_upgrade_population.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "subrequest over budget: estimated 50 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 50,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "other"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/authorized-local.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'tests' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "httpx",
+          "sqlalchemy",
+          "tests"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 8,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "fcntl is unavailable in Pyodide"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/benchmark-workloads.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 8,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/canonical-local.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'task_cleanup' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'tests' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'pyodide_refresh' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'workflow_request_mux' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'http_invocation' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'attempt_deadline' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "httpx",
+          "sqlalchemy",
+          "task_cleanup",
+          "tests",
+          "pyodide_refresh",
+          "workflow_request_mux",
+          "http_invocation",
+          "attempt_deadline"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 11,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/ct128-engine-semantics.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'runtime_guard' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "runtime_guard"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/pyodide_refresh.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/ai.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 13 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [
+          "pydantic"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 13,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/api.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/cli.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'pathspec' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'packaging' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'websockets' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'watchdog' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "pathspec",
+          "httpx",
+          "packaging",
+          "websockets",
+          "watchdog"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 5,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/client.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 5,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/decorators.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/dto_flags.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'click' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "click",
+          "yaml"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/events.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 4,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/files.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 14 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 14,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/knowledge.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/tables.py",
+        "backend": "linux",
+        "reasons": [
+          "subrequest over budget: estimated 25 exceeds configured allowance 12; failing closed to linux"
+        ],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 25,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/webhooks.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/_context.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/_logging.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'sqlalchemy' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "sqlalchemy",
+          "redis"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/bifrost/_service_runtime.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/src/sdk/decorators.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/src/services/execution/engine.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [
+          "pydantic"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "hard",
+            "why": "subprocess is unavailable in Pyodide"
+          },
+          {
+            "severity": "soft",
+            "why": "threads import but do not run in parallel"
+          },
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/backend/runtime-source/src/services/execution/worker.py",
+        "backend": "cloudflare",
+        "reasons": [],
+        "packages": [],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [
+          {
+            "severity": "soft",
+            "why": "resource is not available in Pyodide"
+          }
+        ],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/src/fixtures.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'workspace_helper' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "workspace_helper",
+          "httpx"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 5,
+        "traps": [],
+        "role": "spike fixture"
+      },
+      {
+        "path": "spikes/cloudflare-pyodide/src/probe.py",
+        "backend": "linux",
+        "reasons": [
+          "allowlist miss: package 'settings_adapter' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux",
+          "allowlist miss: package 'fixtures' is not in the curated allowlist (backend/DEPENDENCY-CENSUS.md); failing closed to linux"
+        ],
+        "packages": [
+          "settings_adapter",
+          "fixtures"
+        ],
+        "declared_modules": [],
+        "unresolved_local": [],
+        "estimated_subrequests": 2,
+        "traps": [],
+        "role": "spike fixture"
+      }
+    ],
+    "by_role": {
+      "sdk": {
+        "files": 21,
+        "eligible": 10
+      },
+      "cli": {
+        "files": 24,
+        "eligible": 0
+      },
+      "platform": {
+        "files": 41,
+        "eligible": 15
+      },
+      "docs": {
+        "files": 2,
+        "eligible": 2
+      },
+      "example workspace": {
+        "files": 1,
+        "eligible": 1
+      },
+      "other": {
+        "files": 2,
+        "eligible": 0
+      },
+      "spike fixture": {
+        "files": 24,
+        "eligible": 13
+      }
+    },
+    "allowance_sensitivity": {
+      "12": 41,
+      "50": 48,
+      "200": 48
+    }
+  },
+  "summary_text": "# Eligibility census\n\n- repo workflow-shaped: 41/115 eligible (35.7%)\n\nSubrequest allowance: 12. Static analysis only."
+}

@@ -1,0 +1,27 @@
+test_swallowed_unregister_failure_cannot_advertise_clean_rollback (test_startup_candidate.StartupCandidateTests.test_swallowed_unregister_failure_cannot_advertise_clean_rollback) ... ERROR
+
+======================================================================
+ERROR: test_swallowed_unregister_failure_cannot_advertise_clean_rollback (test_startup_candidate.StartupCandidateTests.test_swallowed_unregister_failure_cannot_advertise_clean_rollback)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/usr/local/lib/python3.14/asyncio/runners.py", line 128, in run
+    return self._loop.run_until_complete(task)
+           ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^^^^^
+  File "/usr/local/lib/python3.14/asyncio/base_events.py", line 720, in run_until_complete
+    return future.result()
+           ~~~~~~~~~~~~~^^
+  File "/qualification/test_startup_candidate.py", line 200, in test_swallowed_unregister_failure_cannot_advertise_clean_rollback
+    await self.pool.start()
+  File "/app/src/worker/remote/remote_pool.py", line 376, in start
+    await self._start_once()
+  File "/app/src/worker/remote/remote_pool.py", line 397, in _start_once
+    await self._register_worker()
+  File "/usr/local/lib/python3.14/unittest/mock.py", line 2333, in _execute_mock_call
+    raise effect
+RuntimeError: register
+
+----------------------------------------------------------------------
+Ran 1 test in 0.036s
+
+FAILED (errors=1)
+exit_code=1

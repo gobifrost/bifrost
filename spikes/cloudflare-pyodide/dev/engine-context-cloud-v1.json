@@ -1,0 +1,195 @@
+{
+  "passed": true,
+  "raw_log_sha256": "71b33c88d516be73028d741043f11587a867950ad13cf8d684189d91a7a4fd50",
+  "cloud_child_requests": 3,
+  "physical_termination_verified": false,
+  "execution_overlay": {
+    "source": "1796c6fcf68964aa2ff36421ccc7be697d6322f7",
+    "files_sha256": {
+      "src/services/execution/engine.py": "443bf2b48e0f6ccc8eedf0160d6ac150466e110ba47de1321e31c0c2627709d2",
+      "src/services/execution/worker.py": "4be5dda4b7089ff8e1668dd4f319083df46fe931d94adc6935d0aa6ca206c5cf",
+      "bifrost/_execution_context.py": "c8a5792bddcbbb3f2ffcfa7925d9124d034fdb8d368f515551e87c0da25809e0"
+    },
+    "accepted_bundle_promoted": false
+  },
+  "candidate_files_sha256": {
+    "probe-io.mjs": "86e0eacd8aa1bd1019391558aa51b728ea50b57953ca64d05b6f53fcf8d28c1e",
+    "candidate-provenance.json": "6c62aa1bc8ce78080186895429aa8008c36f77bfb60c097195b2cc3505964a47",
+    "backend/resolution-response.mjs": "9d470cb5701c6678ae2f344e787f7a930c959da1702a797ae1c987ea56cc2e90",
+    "backend/cooperative-runtime.mjs": "711bb655fa320891faee297a6fe1326f8dbff545c75fa8ad68b11e202c82b5a6",
+    "backend/module-response.mjs": "668bddecd0c3995ac67965297881b4bdaed3770ffb58f3a44882d332600f8aad",
+    "backend/source-integrity-response.mjs": "6def44e662df9b3268171d5a3fae7835f064a28413186665291d2b8d517b4f73",
+    "backend/cooperative-rpc-result.mjs": "01297509fd999cc646b3e565afff6d5dd322dac0ab51d0aa32947b5d917223fd",
+    "backend/lossless-json.mjs": "043d0ab4aca0629558d6c7b03a6432f3b555de3bb9e4161f7182acaca6f58430",
+    "backend/terminal-response.mjs": "2cfcea15dd3091f44abdef532b66476e5abe5db6b7c488a3b43d7d2d61d3a8d0",
+    "backend/attempt-egress.mjs": "7300b30e2b2129cdfe930d5840807b9109225fc1cac369bafa599f8ecba644cb",
+    "backend/invocation-stream.mjs": "7f1b0297249aaa59e0db97b19ad2f9d144af8460890457caecc67ee066bf83ed",
+    "backend/log-delivery-evidence.mjs": "5ec87758f64315f3b52f547fb082570f8a65e0dd102715daa0116f16dd2b762e",
+    "backend/fixture-admission.mjs": "b18189c8f77f1c8764b03fa228ef038d2ce7736e27b956294984905813da6133",
+    "dev/runtime/sdk-cleanup-code.mjs": "fb86cd80e5d06cd8b7dc3f83a6a70196b8ee5b65e30339fcce5539994ac4862f",
+    "dev/runtime/runtime-provenance.json": "1dffc37fe0984ed663dd4bdffb508426203f07b2055b674d0cf10aee60a0f01b",
+    "dev/runtime/runtime-code.mjs": "8cffaf4f9f08b505554e124347ad4324df64d5ebce63aa7b2118f6a7f547a52f",
+    "dev/runtime/generated-runtime.mjs": "61d818aef7f66a129951c7eb0cc4dc638277da35e635e13965b90f8a23575731",
+    "dev/executor/canonical-api.mjs": "e7c2d51e45e0b616cab09d5784578e63221b2d8711eece233606dbea2e18d616",
+    "dev/executor/engine-context-cloud-entry.mjs": "8a4240af6675c1af6d37b8cfe6c98b723cb5d85f434912e1fe60aad83af9fe65",
+    "dev/executor/canonical-guard.mjs": "17b9e39bc55aa21b81b726b0a46ddd79864cd6d924900b5bc1af9b8744146a72",
+    "dev/executor/cooperative-code.mjs": "39e709f31efb4a5f978c187fd9762f079ef48210b668d0a88916e4ba10701d85",
+    "dev/executor/rpc-serialization-code.mjs": "bab004fae9e82a7f031186cda76d7fe4fbc6204db865251c2a025a474bda9b6c",
+    "dev/executor/engine-context-overlay.mjs": "07782681b063088463d75336fb99b6ced84ee86925af9121a5023b635ee45f84",
+    "dev/executor/package.json": "540bb053586853a22d39972dee9f2060e5b3391dc4e5146ff7be63ba959d0c4f",
+    "dev/executor/package-lock.json": "59d7d40f06197215c903a66de6246f009604defff0b80a5779db7d30c88b5be7",
+    "dev/executor/canonical-entry.mjs": "bef78cec5368fe4dd13e1acd4efe31e357090f28ed66c270ecb2a777c3e5c6bf",
+    "dev/executor/policy.mjs": "8c4227b92e2011857851a6299542ff8aec748477acf9d99e5ae2c9a5482e025c",
+    "dev/executor/canonical-admission.mjs": "e5f921570a6764bb2d5a64f3e0e014d153fb07b2bbcf0c0097a8fd57734f8211",
+    "dev/executor/deployment-options.mjs": "73788ca000085581fa2fbe19e4e5ca1a00fb47f07cc946c4f8bb9940e8f26c7e",
+    "dev/executor/cloudflare.config.ts": "5d9e7f8eefc7666cae98b4ce6095a40ae9f029503eb8f695ba80cc15e4298dd4"
+  },
+  "runtime_inventory": {
+    "runtime": {
+      "pyodide": "314.0.6",
+      "python": [
+        3,
+        14,
+        2
+      ],
+      "cache_tag": "cpython-314",
+      "soabi": "cpython-314-wasm32-emscripten",
+      "platform": "emscripten-5.0.3-wasm32"
+    },
+    "packages": [
+      {
+        "name": "annotated-types",
+        "version": "0.8.0"
+      },
+      {
+        "name": "certifi",
+        "version": "2026.4.22"
+      },
+      {
+        "name": "httpx",
+        "version": "0.28.1"
+      },
+      {
+        "name": "idna",
+        "version": "3.20"
+      },
+      {
+        "name": "pydantic",
+        "version": "2.14.2"
+      },
+      {
+        "name": "pydantic-core",
+        "version": "2.50.2"
+      },
+      {
+        "name": "python-dotenv",
+        "version": "1.2.4"
+      },
+      {
+        "name": "pyyaml",
+        "version": "6.0.3"
+      },
+      {
+        "name": "redis",
+        "version": "7.4.0"
+      },
+      {
+        "name": "typing-extensions",
+        "version": "4.16.0"
+      },
+      {
+        "name": "typing-inspection",
+        "version": "0.4.4"
+      },
+      {
+        "name": "workers-runtime-sdk",
+        "version": "1.9.5"
+      }
+    ],
+    "package_environment": "pyodide"
+  },
+  "contract_observations": {
+    "shared_native_pool_probe": true,
+    "physical_termination_verified": false,
+    "credential_free_prewarm": true,
+    "both_real_sdk_effects_held_concurrently": true,
+    "stale_terminal_owner_rejected": true,
+    "canonical_peer_accounting_verified": true,
+    "failed_replay_unchanged_verified": true,
+    "peer_live_after_failure_reconcile": true,
+    "duplicate_dispatch_reused_peer": true,
+    "lost_ack_reconnect_verified": true,
+    "automatic_terminal_delivery_verified": true,
+    "canonical_settled_accounting_verified": true,
+    "single_native_pool_verified": true,
+    "terminal_obligations_released": true,
+    "canonical_terminal_reconciliation_verified": true,
+    "mux_retired_after_canonical_ack": true,
+    "reusable_private_adapter_verified": true,
+    "api_preparation_verified": true,
+    "fixture_worker_cascade_cleanup_verified": true
+  },
+  "launch_counts": [
+    1,
+    1
+  ],
+  "native_busy_counts": [
+    2,
+    2,
+    1,
+    0
+  ],
+  "attempts": [
+    {
+      "label": "fails-first",
+      "canonical_status": "Failed",
+      "access_after_terminal_status": 401,
+      "persisted_log_count": 10,
+      "sdk_close_returned": true,
+      "runtime_identity_context": {
+        "is_agent": false,
+        "execution_origin": "unknown",
+        "agent_id": null,
+        "original_user_is_platform_admin": false,
+        "original_user_id": null
+      }
+    },
+    {
+      "label": "succeeds-second",
+      "canonical_status": "Success",
+      "access_after_terminal_status": 401,
+      "persisted_log_count": 1,
+      "sdk_close_returned": true,
+      "runtime_identity_context": {
+        "is_agent": false,
+        "execution_origin": "unknown",
+        "agent_id": null,
+        "original_user_is_platform_admin": false,
+        "original_user_id": null
+      }
+    }
+  ],
+  "fixture_counter_note": "Original fixture cloud_invocations=0 is local instrumentation; actual count comes from cloud relay.",
+  "responses": [
+    {
+      "status": 200,
+      "bytes": 902,
+      "path": "/__fixture_warmup",
+      "sha256": "fee091ee7851bb08989f42211ed543994f817b0cbf999f77e0bf9da0ca0a1cff"
+    },
+    {
+      "status": 200,
+      "bytes": 4621,
+      "path": "/",
+      "sha256": "d8ba7059e6e284b867d2513f19aa4f2e91a0dcd24d146eb8a2bc234a6dcc7858"
+    },
+    {
+      "status": 200,
+      "bytes": 2963,
+      "path": "/",
+      "sha256": "3127db25e169a8f1d3aa8d67a07171bb191c72a9cce4ad26ce116ae85f0802f3"
+    }
+  ],
+  "owned_test_running_after_cleanup": "",
+  "relay_running_after_cleanup": ""
+}

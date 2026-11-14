@@ -1,0 +1,10 @@
+{
+  "checked_at": "2026-10-31T15:57:36.532Z",
+  "http_status": 404,
+  "workers_dev": false,
+  "previews": false,
+  "observability": false,
+  "secret_bindings": [],
+  "final_config_expiry_ms": 0,
+  "local_secret_file_removal": "denied by automatic approval review; no bypass attempted"
+}

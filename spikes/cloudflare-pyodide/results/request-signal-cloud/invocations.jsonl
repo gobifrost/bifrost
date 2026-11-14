@@ -1,0 +1,6 @@
+{"case": "unsupported", "reservation": 1}
+{"case": "invalid_identity", "reservation": 2}
+{"case": "completion", "reservation": 3}
+{"case": "parent_abort", "reservation": 4}
+{"case": "io_abort", "reservation": 5}
+{"case": "cpu_abort", "reservation": 6}
