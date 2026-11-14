@@ -17,6 +17,8 @@ const API = flag('api', 'http://127.0.0.1:18000');
 const WORKER = flag('worker', null);
 const tokenFile = flag('token-file', join(tmpdir(), 'pve-token.txt'));
 const secretFile = flag('secret-file', join(tmpdir(), 'stage-secret.txt'));
+// Targeted rerun: `--only <case-name>` runs one case (comma-separated list allowed).
+const ONLY = (flag('only', '') ?? '').split(',').filter(Boolean);
 if (!WORKER) throw new Error('--worker is required');
 
 const token = (await readFile(tokenFile, 'utf8')).trim();
@@ -96,6 +98,21 @@ const CASES = [
     },
     required: ['workflows/case_print.py'],
   },
+  {
+    // Reused-child case: the per-tenant child is persistent, so a SECOND attempt
+    // must not inherit the first attempt's run handle. Before the attempt-boundary
+    // credential handoff, the cached SDK client kept the previous handle and this
+    // case failed with "module fetch returned 401".
+    name: 'sdk-reused-child',
+    sdk: true,
+    repeat: 2,
+    entry: 'workflows/case_sdk_reuse.py',
+    function: 'main',
+    files: {
+      'workflows/case_sdk_reuse.py': 'from bifrost import tables, workflow\n\n@workflow(name="__FN__")\nasync def __FN__():\n    rows = await tables.list()\n    return {"count": len(rows), "kind": type(rows).__name__}\n',
+    },
+    required: ['workflows/case_sdk_reuse.py'],
+  },
 ];
 
 // Key order is not meaningful across the two backends.
@@ -168,6 +185,18 @@ async function runCloudflareEngine(c, manifest, runId) {
     error: out?.error_type ?? null, logs: out?.logs ?? []};
 }
 
+// Repeat the same attempt on ONE tenant child. `repeat` > 1 is the reused-child
+// regression: every run must succeed, not just the first.
+async function runCloudflareEngineRepeated(c, manifest, runId) {
+  const runs = [];
+  let last;
+  for (let i = 0; i < (c.repeat ?? 1); i++) {
+    last = await runCloudflareEngine(c, manifest, runId);
+    runs.push({status: last.status, error: last.error});
+  }
+  return {...last, repeats: runs};
+}
+
 async function runLinuxRegistered(c) {
   const registered = await api('/api/workflows/register', {method: 'POST',
     headers: {'Content-Type': 'application/json'},
@@ -237,10 +266,11 @@ const evidence = {started_at: new Date().toISOString(), run_id: runId, cases: []
 let failures = 0;
 
 for (const rawCase of CASES) {
+  if (ONLY.length && !ONLY.includes(rawCase.name)) continue;
   const c = withRunId(rawCase, runId);
   const manifest = await writeCase(c);
   const cloud = c.sdk
-    ? await runCloudflareEngine(c, manifest, runId)
+    ? await runCloudflareEngineRepeated(c, manifest, runId)
     : await runCloudflare(c, manifest, runId);
   const linux = c.sdk ? await runLinuxRegistered(c) : await runLinux(c);
 
@@ -248,13 +278,17 @@ for (const rawCase of CASES) {
   const cloudFailed = c.sdk ? cloud.status !== 'Success' : (cloud.httpStatus >= 400 || cloud.phase !== null);
   const linuxFailed = linux.status !== 'Success';
   const sameStatus = cloudFailed === linuxFailed;
+  const repeatOk = !c.repeat || (cloud.repeats ?? []).every((r) => r.status === 'Success');
   const marker = c.logMarker ?? 'differential-log-marker';
   const sameLogs = !c.logs ||
     (JSON.stringify(cloud.logs ?? []).includes(marker) && JSON.stringify(linux.logs ?? []).includes(marker));
-  const ok = c.expectFailure ? sameStatus : (sameResult && sameStatus && sameLogs);
+  const ok = c.expectFailure ? sameStatus : (sameResult && sameStatus && sameLogs && repeatOk);
   if (!ok) failures++;
   evidence.cases.push({name: c.name, ok, cloud, linux, same_result: sameResult,
-    same_status: sameStatus, same_logs: sameLogs});
+    same_status: sameStatus, same_logs: sameLogs, repeat_ok: repeatOk});
+  console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name} cloud=${c.sdk ? cloud.status : `${cloud.httpStatus}/${cloud.phase ?? 'ok'}`} ` +
+    `linux=${linux.status} same_result=${sameResult} same_status=${sameStatus} same_logs=${sameLogs}` +
+    (c.repeat ? ` repeats=${JSON.stringify(cloud.repeats)}` : ''));
   console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name} — cloud=${c.sdk ? cloud.status : `${cloud.httpStatus}/${cloud.phase ?? 'ok'}`} ` +
     `linux=${linux.status} same_result=${sameResult} same_status=${sameStatus} same_logs=${sameLogs}`);
   if (!ok) console.log(`  cloud: ${JSON.stringify(cloud.result)} linux: ${JSON.stringify(linux.result)}`);

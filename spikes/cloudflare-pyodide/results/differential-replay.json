@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-11-14T03:45:16.895Z",
-  "run_id": "mwfv4j1b",
+  "started_at": "2026-11-14T05:02:59.804Z",
+  "run_id": "mwfxwgyk",
   "cases": [
     {
       "name": "imports-helper",
@@ -25,7 +25,8 @@
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
     },
     {
       "name": "stdlib-only",
@@ -58,7 +59,8 @@
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
     },
     {
       "name": "raises",
@@ -77,7 +79,8 @@
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
     },
     {
       "name": "sdk-tables-list",
@@ -87,25 +90,32 @@
         "phase": null,
         "status": "Success",
         "result": {
-          "count": 0,
+          "count": 1,
           "kind": "list"
         },
         "error": null,
-        "logs": []
+        "logs": [],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
       },
       "linux": {
         "httpStatus": 200,
         "status": "Success",
         "result": {
           "kind": "list",
-          "count": 0
+          "count": 1
         },
         "error": null,
         "logs": []
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
     },
     {
       "name": "logs-marker",
@@ -120,10 +130,16 @@
         "error": null,
         "logs": [
           {
-            "timestamp": "2026-11-14T03:45:44.150000+00:00",
+            "timestamp": "2026-11-14T05:03:29.448000+00:00",
             "level": "info",
             "message": "differential-log-marker",
             "source": "workflow"
+          }
+        ],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
           }
         ]
       },
@@ -136,8 +152,8 @@
         "error": null,
         "logs": [
           {
-            "id": 186,
-            "timestamp": "2026-11-14T03:45:44.500268+00:00",
+            "id": 218,
+            "timestamp": "2026-11-14T05:03:29.826117+00:00",
             "level": "INFO",
             "message": "differential-log-marker",
             "data": {},
@@ -147,7 +163,8 @@
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
     },
     {
       "name": "print-marker",
@@ -162,10 +179,16 @@
         "error": null,
         "logs": [
           {
-            "timestamp": "2026-11-14T03:45:50.361999+00:00",
+            "timestamp": "2026-11-14T05:03:37.920999+00:00",
             "level": "info",
             "message": "differential-print-marker",
             "source": "workflow"
+          }
+        ],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
           }
         ]
       },
@@ -178,8 +201,8 @@
         "error": null,
         "logs": [
           {
-            "id": 187,
-            "timestamp": "2026-11-14T03:45:50.650929+00:00",
+            "id": 219,
+            "timestamp": "2026-11-14T05:03:38.356394+00:00",
             "level": "INFO",
             "message": "differential-print-marker",
             "data": {},
@@ -189,9 +212,49 @@
       },
       "same_result": true,
       "same_status": true,
-      "same_logs": true
+      "same_logs": true,
+      "repeat_ok": true
+    },
+    {
+      "name": "sdk-reused-child",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "count": 1,
+          "kind": "list"
+        },
+        "error": null,
+        "logs": [],
+        "repeats": [
+          {
+            "status": "Success",
+            "error": null
+          },
+          {
+            "status": "Success",
+            "error": null
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "kind": "list",
+          "count": 1
+        },
+        "error": null,
+        "logs": []
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true,
+      "repeat_ok": true
     }
   ],
-  "finished_at": "2026-11-14T03:45:52.712Z",
+  "finished_at": "2026-11-14T05:03:51.874Z",
   "failures": 0
 }

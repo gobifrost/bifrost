@@ -1,10 +1,30 @@
+// SDK resource roots a workflow child may reach through the gateway. Dispatch
+// and execution-management routes stay out: the parent owns those. Authorization
+// is still the run token's; this is a capability boundary, not the auth gate.
+const CHILD_API_PREFIXES = [
+  '/api/sdk/',
+  '/api/organizations',
+  '/api/configs',
+  '/api/files',
+  '/api/integrations',
+  '/api/tables',
+  '/api/events',
+  '/api/forms',
+  '/api/agents',
+  '/api/agent-runs',
+];
+
+// Segment-exact prefix match: `/api/tables` admits `/api/tables` and
+// `/api/tables/...`, never `/api/tables-admin`.
+function isChildApiPath(pathname) {
+  return pathname === '/auth/refresh' ||
+    CHILD_API_PREFIXES.some((prefix) =>
+      pathname === prefix || pathname.startsWith(prefix.endsWith('/') ? prefix : `${prefix}/`));
+}
+
 export function apiTarget(url, origin) {
   const incoming = new URL(url);
-  if (incoming.origin !== 'https://test-api.invalid' ||
-      !(incoming.pathname.startsWith('/api/sdk/') || incoming.pathname === '/api/tables' ||
-        incoming.pathname.startsWith('/api/tables/') || incoming.pathname === '/auth/refresh' ||
-        incoming.pathname === '/api/agent-runs/enqueue' ||
-        incoming.pathname.startsWith('/api/agent-runs/'))) {
+  if (incoming.origin !== 'https://test-api.invalid' || !isChildApiPath(incoming.pathname)) {
     throw new TypeError('API capability denied');
   }
   const target = new URL(origin);

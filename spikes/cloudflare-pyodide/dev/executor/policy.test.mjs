@@ -25,9 +25,20 @@ test('agent run control plane rides the same authenticated bridge', () => {
   assert.equal(apiTarget('https://test-api.invalid/api/agent-runs/0192dead-beef', 'https://dev.invalid').href,
     'https://dev.invalid/api/agent-runs/0192dead-beef');
 });
+test('SDK resource roots used by real workspace workflows are reachable', () => {
+  for (const path of ['/api/organizations', '/api/organizations/0192dead-beef', '/api/configs/get',
+    '/api/files/write', '/api/integrations', '/api/tables', '/api/tables/docs-file-org-grants/documents/x',
+    '/api/events/emit', '/api/forms/submit', '/api/agents', '/api/agent-runs', '/api/sdk/modules/a.py',
+    '/auth/refresh']) {
+    assert.equal(apiTarget(`https://test-api.invalid${path}`, 'https://dev.invalid').href,
+      `https://dev.invalid${path}`);
+  }
+});
 test('external fetch, control endpoints and origin ambiguity are rejected before effects', () => {
   for (const url of ['https://other.invalid/api/sdk/config/get', 'https://test-api.invalid/auth/login',
-    'https://test-api.invalid/api/workflows', 'https://test-api.invalid/api/tables-admin', 'https://test-api.invalid/api/agent-runs-other']) {
+    'https://test-api.invalid/api/workflows', 'https://test-api.invalid/api/executions',
+    'https://test-api.invalid/api/tables-admin', 'https://test-api.invalid/api/organizations-admin',
+    'https://test-api.invalid/api/agent-runs-other', 'https://test-api.invalid/api']) {
     assert.throws(() => apiTarget(url, 'https://dev.invalid'));
   }
   for (const origin of ['http://dev.invalid', 'https://user:password@dev.invalid', 'https://dev.invalid/path', 'https://dev.invalid?x=1']) {

@@ -25,28 +25,9 @@ for (const key of REPLACE) {
   resolved.set(key, {py: text});
 }
 
-// Companion bootstrap: the server-only Redis log path must fail its guard
-// instead of importing src.config, which the isolated runtime does not ship.
-const runner = resolved.get('runtime_runner.py').py;
-if (process.env.NO_GUARD !== '1' && !runner.includes('_companion_require_server_process')) {
-  const marker = 'run_execution = execution_worker.run_execution';
-  if (!runner.includes(marker)) throw new Error('runtime_runner shape changed');
-  resolved.set('runtime_runner.py', {py: runner.replace(marker, `${marker}
-import bifrost._logging as _bifrost_logging
-
-
-def _companion_require_server_process():
-    try:
-        from src.core.module_cache_sync import _execution_child
-    except Exception:
-        _execution_child = False
-    from bifrost.client import get_engine_socket_path
-    if _execution_child or get_engine_socket_path() is not None:
-        raise RuntimeError("Direct log storage access is unavailable in execution children")
-
-
-_bifrost_logging._require_server_process = _companion_require_server_process`)});
-}
+// Companion bootstrap is the pinned runtime's own `runtime_runner.py`. Nothing
+// in this build patches upstream behavior: the seam is the replaced modules
+// above plus the child entry's per-attempt attempt-boundary work.
 
 const entries = [];
 for (const [key, value] of [...resolved].sort(([a], [b]) => a.localeCompare(b))) {

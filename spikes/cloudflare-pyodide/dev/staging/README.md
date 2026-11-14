@@ -98,6 +98,29 @@ Remaining difference from the data-only mode: engine mode does not re-verify
 module pins (the engine fetches modules through the stub); the stub constrains
 paths via `apiTarget` but is not a full egress allowlist.
 
+### Per-attempt state in a persistent child
+
+The child is persistent per tenant, but each attempt must observe the state a
+fresh one-shot child would have. Two pieces of process-scoped state need the
+attempt boundary respected:
+
+1. **The SDK client.** `bifrost.client` caches a client per thread and pins the
+   `Authorization` header into its transports. The engine's
+   `_set_process_engine_credentials` updates env only, so a reused child keeps
+   sending the **previous** attempt's run handle and the broker answers `401`.
+   The child entry therefore calls
+   `_install_cached_access_token(api_url, context["engine_token"])` before
+   `run_authorized_attempt` — the same helper `bifrost._service_runtime` uses to
+   hand a token to a live process. Covered by the `sdk-reused-child` differential
+   case (two attempts, one child, both must succeed).
+2. **Attempt-scoped audit state** (`backend/runtime-runner.py`'s
+   `recorded_workspace_paths`) is cleared at the start of each attempt, or the
+   import audit would report modules from every earlier attempt.
+
+Anything else that the upstream runtime treats as process-scoped and is not
+re-established here is a latent cross-attempt leak; see
+`backend/REAL-WORKFLOW-EVIDENCE.md` §3 for how this one was found.
+
 Consequences: use engine mode for trusted-operator workloads; keep the
 data-only mode where the credential-free/pinned posture matters. A Durable
 Object token broker (handle in child, token in DO) would restore the

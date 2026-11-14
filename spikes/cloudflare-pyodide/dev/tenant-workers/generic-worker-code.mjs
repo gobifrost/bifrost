@@ -190,8 +190,21 @@ from runtime_runner import run_authorized_attempt
 class Default(WorkerEntrypoint):
     async def fetch(self, request):
         body = json.loads(await request.text())
+        # One persistent child serves EVERY attempt for this tenant, so the
+        # process-scoped SDK state a one-shot child gets for free must be
+        # re-established at the attempt boundary. The SDK caches its client per
+        # thread; updating only BIFROST_ACCESS_TOKEN via env (which the engine
+        # does inside run_execution) leaves those transports on the PREVIOUS
+        # attempt's run handle, and the gateway refuses them. Hand the new
+        # credential to the already-cached client before the run starts.
+        from bifrost.client import _install_cached_access_token
+
+        context = body["context"]
+        token = context.get("engine_token")
+        if token:
+            _install_cached_access_token(body["api_url"], token)
         result = await run_authorized_attempt(
-            body["execution_id"], body["context"], body["api_url"],
+            body["execution_id"], context, body["api_url"],
             public_url=body.get("public_url", "https://staging.invalid"))
         return Response.json({"upstream_result": result})
 `;

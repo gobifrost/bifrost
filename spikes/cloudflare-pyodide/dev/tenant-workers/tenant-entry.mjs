@@ -182,11 +182,15 @@ export default {
         const broker = env.TOKENS.get(env.TOKENS.idFromName(handle));
         let response;
         try {
-          await broker.fetch(new Request('https://token.invalid/', {
+          const stored = await broker.fetch(new Request('https://token.invalid/', {
             method: 'PUT',
             body: JSON.stringify({token: body.context.engine_token,
               expires: Date.now() + 10 * 60 * 1000}),
           }));
+          if (stored.status !== 200) {
+            return {terminal: {phase: 'token-broker-unavailable', api_calls: [],
+              broker_status: stored.status}};
+          }
           response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
             method: 'POST',
             body: JSON.stringify({execution_id: body.execution_id,

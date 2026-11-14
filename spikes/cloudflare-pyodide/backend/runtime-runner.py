@@ -10,8 +10,8 @@ mark_execution_child = importlib.import_module("src.core.module_cache_sync").mar
 
 # Audit-only workspace import recording for the declared-capability contract.
 # Appends the loader-relative path of every module actually executed through
-# the virtual loader. Never blocks, never alters loading; the isolate runs a
-# single attempt, so a module-level list is attempt-scoped by construction.
+# the virtual loader. Never blocks, never alters loading. A persistent tenant
+# child serves many attempts, so this is cleared at each attempt boundary.
 recorded_workspace_paths: list[str] = []
 
 
@@ -54,5 +54,8 @@ async def run_authorized_attempt(execution_id, context, api_url, *, public_url=N
     # This module runs only in the fresh child, never in the trusted supervisor.
     # No SECRET_KEY, database or Cloudflare management credential is supplied.
     os.environ["BIFROST_API_URL"] = api_url
+    # Attempt-scoped audit state: a persistent tenant child would otherwise
+    # report every module loaded by every earlier attempt.
+    recorded_workspace_paths.clear()
     return await run_execution(execution_id, context,
         resource_observer=UnknownResources(), public_url=api_url if public_url is None else public_url)
