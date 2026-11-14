@@ -6,8 +6,9 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1404",
-      "https://github.com/gobifrost/bifrost/blob/87f4869fd0d61bd95e56e638183bc4f846d8cabd/docs/product-updates-authoring.md"
+      "https://github.com/gobifrost/bifrost/blob/87f4869fd0d61bd95e56e638183bc4f846d8cabd/docs/product-updates-authoring.md",
+      "https://github.com/pydantic/pydantic-ai/releases/tag/v2.67.0"
     ]
   },
-  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+  "reason": "Internal agent dependency maintenance with compatibility aliases preserving existing tool names; no customer configuration, workflow, custom-code, or integration changes required. No customer announcement warranted."
 }

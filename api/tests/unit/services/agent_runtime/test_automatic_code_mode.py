@@ -93,7 +93,7 @@ async def test_native_tool_search_reveals_ranked_tools_to_code_mode() -> None:
 async def test_code_mode_dispatches_every_colliding_and_reserved_tool_name() -> None:
     """Native renamed toolsets preserve every Bifrost source callable."""
     mcp_prefix = "mcp__00000000-0000-0000-0000-000000000007__" + "remote_" * 12
-    source_names = ("a-b", "a_b", "a_b_d44362d67d", "class", "run_code", mcp_prefix + "first", mcp_prefix + "second")
+    source_names = ("a-b", "a_b", "a_b_d44362d67d", "class", "run_code", "list", "open", "str", "bifrost_list", mcp_prefix + "first", mcp_prefix + "second")
     name_map = code_mode_safe_name_map(source_names)
     presented = {
         name: next((alias for alias, original in name_map.items() if original == name), name)
