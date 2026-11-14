@@ -8,9 +8,9 @@ you own collection, storage, retention, dashboards, and alerts.
 
 | Signal | Content | Notes |
 |---|---|---|
-| Traces | HTTP server spans (auto), DB/Redis/HTTP-client spans (auto), `run.<handler>` spans covering one dispatch (claim → routed or finished) | No log bodies, no SQL text, no Redis args, no raw URL paths or queries: `http.target`/`http.url`/`url.full`/`url.path` are dropped at export; `http.route` (the template) remains |
+| Traces | HTTP server spans (auto), DB/Redis/HTTP-client spans (auto), `run.<handler>` spans covering one dispatch (claim → routed or finished), plus a `bifrost.queue.wait_s` attribute | No log bodies, no SQL text, no Redis args, no raw URL paths or queries: `http.target`/`http.url`/`url.full`/`url.path` are dropped at export; `http.route` (the template) remains |
 | Error status | `ERROR` with the exception *type* only | Messages and stack traces never leave the process |
-| Span attributes | IDs only (`run.id`, `handler`, protocol/host/port/db metadata) | No user content, keys, tokens, or request/response bodies |
+| Span attributes | IDs only (`bifrost.execution.id`, `bifrost.workflow.id`, `bifrost.handler`, protocol/host/port/db metadata) | No user content, keys, tokens, or request/response bodies |
 | Logs | Unchanged plain text to your existing pipeline | Not exported, and no trace/span IDs are injected into records in v1: that needs a structured log format, which the design keeps out of scope |
 | Metrics | Request rate/duration (auto), runtime/system metrics, `bifrost.dispatch.started`, `bifrost.dispatch.duration`, `bifrost.dispatch.failed` | Dispatch metrics measure claim → hand-off, not workflow execution time (that lives in run records). No per-user/per-org cardinality beyond the handler name |
 

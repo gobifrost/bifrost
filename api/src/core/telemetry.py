@@ -503,7 +503,14 @@ def _instruments() -> tuple[Any, Any, Any]:
 
 
 @contextlib.contextmanager
-def run_span(*, handler: str, run_id: str, message: dict[str, Any] | None) -> Iterator[Any]:
+def run_span(
+    *,
+    handler: str,
+    run_id: str,
+    message: dict[str, Any] | None,
+    workflow_id: str | None = None,
+    queue_wait_s: float | None = None,
+) -> Iterator[Any]:
     """Span for one claimed dispatch, from claim to hand-off.
 
     For ``workflow.execute`` this covers claim → routed to a child, not
@@ -515,7 +522,16 @@ def run_span(*, handler: str, run_id: str, message: dict[str, Any] | None) -> It
     started_counter, duration_histogram, failed_counter = _instruments()
     parent = extract_context(message)
     tracer = trace.get_tracer(__name__)
-    attributes = {"bifrost.handler": handler, "bifrost.run.id": run_id}
+    # Names follow the infra observability contract so Tempo lookups by
+    # bifrost.execution.id work as documented.
+    attributes: dict[str, Any] = {
+        "bifrost.handler": handler,
+        "bifrost.execution.id": run_id,
+    }
+    if workflow_id:
+        attributes["bifrost.workflow.id"] = workflow_id
+    if queue_wait_s is not None:
+        attributes["bifrost.queue.wait_s"] = round(queue_wait_s, 3)
     started_counter.add(1, {"bifrost.handler": handler})
     start = time.monotonic()
     status = "ok"

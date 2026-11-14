@@ -44,7 +44,7 @@ env var is absent.
 4. **Two hand-written span kinds, both run boundaries**: workflow-run and
    agent-run server spans (`trace.get_tracer(__name__)` per module,
    `start_as_current_span`). Attributes are IDs only
-   (`run.id`, `org.id`, `handler`) — never user content, keys, or tokens,
+   (`bifrost.execution.id`, `bifrost.workflow.id`, `handler`) — never user content, keys, or tokens,
    with the export privacy boundary below. `log_safe` escapes control
    characters and truncates; it is not secret redaction.
 5. **Propagation rides the dispatch payload.** `stage_dispatch` stores a

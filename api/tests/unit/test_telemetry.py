@@ -104,7 +104,7 @@ def test_run_span_records_handler_and_links_parent():
     spans = {s.name: s for s in exporter.get_finished_spans()}
     child = spans["run.workflow.execute"]
     assert child.attributes["bifrost.handler"] == "workflow.execute"
-    assert child.attributes["bifrost.run.id"] == "run-1"
+    assert child.attributes["bifrost.execution.id"] == "run-1"
     assert child.parent is not None
     assert child.parent.is_remote
 
@@ -252,3 +252,21 @@ def test_baggage_never_crosses_the_queue():
     )
     assert ctx is not None
     assert baggage.get_baggage("tenant_secret", ctx) is None
+
+
+def test_run_span_carries_contract_attributes():
+    """Names match the infra observability contract (see bifrost-infra)."""
+    exporter = _capture()
+    with run_span(
+        handler="workflow.execute",
+        run_id="exec-1",
+        message={},
+        workflow_id="wf-1",
+        queue_wait_s=1.23456,
+    ):
+        pass
+    span = exporter.get_finished_spans()[-1]
+    assert span.attributes["bifrost.execution.id"] == "exec-1"
+    assert span.attributes["bifrost.workflow.id"] == "wf-1"
+    assert span.attributes["bifrost.queue.wait_s"] == 1.235
+    assert "bifrost.run.id" not in span.attributes

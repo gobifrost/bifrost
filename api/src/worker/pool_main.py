@@ -27,6 +27,7 @@ import os
 import socket
 import time
 from collections.abc import Callable
+from datetime import datetime, timezone
 from typing import Protocol
 from uuid import UUID
 
@@ -625,6 +626,12 @@ class PoolWorker:
             messaging = contextlib.nullcontext()
 
         handed_back = False
+        # Queue wait is a bounded, content-free number the infra contract
+        # expects on the consume path (claim time minus enqueue time).
+        queue_wait_s = max(
+            0.0, (datetime.now(timezone.utc) - claim.queued_at).total_seconds()
+        )
+        workflow_id = claim.message.get("workflow_id")
         # The log-and-swallow wrapper sits outside run_span, so a consumer
         # failure still marks the span ERROR and increments dispatch.failed
         # instead of ending the dispatch as a success.
@@ -635,6 +642,8 @@ class PoolWorker:
                 # The extracted context is this consumer span; the run span is
                 # its child, not a second child of the producer.
                 message=None,
+                workflow_id=str(workflow_id) if workflow_id else None,
+                queue_wait_s=queue_wait_s,
             ):
                 # Workflow runs return once routed to a child (then counted by
                 # the pool); agent runs return when finished.
