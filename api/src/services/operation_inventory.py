@@ -63,7 +63,7 @@ def _click_leaf_paths(
     return paths
 
 
-_DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
+_DOCUMENTATION_MCP_TOOL_IDS = frozenset({"bifrost_get_docs"})
 
 
 def _rest_disposition(method: str, path: str) -> dict[str, str]:

@@ -11643,6 +11643,12 @@
       },
       {
         "hidden": false,
+        "name": "bifrost_get_docs",
+        "reason": "Reads generated platform documentation; owns no entity or state.",
+        "status": "transport_only"
+      },
+      {
+        "hidden": false,
         "name": "delete_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
@@ -11652,12 +11658,6 @@
         "name": "get_content",
         "reason": "MCP tool has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
-      },
-      {
-        "hidden": false,
-        "name": "get_docs",
-        "reason": "Reads generated platform documentation; owns no entity or state.",
-        "status": "transport_only"
       },
       {
         "hidden": false,

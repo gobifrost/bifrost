@@ -73,7 +73,7 @@ async def test_native_agent_receives_execution_learning_and_module_tools_when_as
 
     from src.services.execution.agent_helpers import resolve_agent_tools
 
-    assigned = {"bifrost_execute_code", "get_docs", "bifrost_execution_get",
+    assigned = {"bifrost_execute_code", "bifrost_get_docs", "bifrost_execution_get",
                 "list_content", "bifrost_file_search", "read_content_lines"}
     agent = SimpleNamespace(
         system_tools=list(assigned), tools=[], knowledge_sources=[],
@@ -82,7 +82,7 @@ async def test_native_agent_receives_execution_learning_and_module_tools_when_as
     tools, _ = await resolve_agent_tools(agent, AsyncMock())
     assert {tool.name for tool in tools} == assigned
     execute = next(tool for tool in tools if tool.name == "bifrost_execute_code")
-    assert "get_docs" in execute.description
+    assert "bifrost_get_docs" in execute.description
     assert "bifrost_execution_get" in execute.description
     assert "repository.read" in execute.description
 

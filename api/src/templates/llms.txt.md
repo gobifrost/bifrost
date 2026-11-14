@@ -25,7 +25,7 @@ execution is appropriate; do not resubmit code to fetch its result.
 ### Discover and Reuse Workspace Modules
 
 Read the SDK signatures below before calling a method. For one complete Python
-SDK module, call `get_docs` with `sdk_module`, for example `"files"`, `"tables"`,
+SDK module, call `bifrost_get_docs` with `sdk_module`, for example `"files"`, `"tables"`,
 `"artifacts"`, or `"events"`. This keeps that reference small enough for native
 agent context; use it when the full platform docs are truncated. An unknown
 module name returns the supported module names.
@@ -54,12 +54,12 @@ source, so it need not be pasted into the script or registered as a workflow.
 SDK authorization still applies inside imported helpers.
 
 When configuring a native agent or agent-scoped MCP endpoint, explicitly assign
-`bifrost_execute_code`, `get_docs`, and `bifrost_execution_get`. For workspace
+`bifrost_execute_code`, `bifrost_get_docs`, and `bifrost_execution_get`. For workspace
 discovery also assign `list_content`, `bifrost_file_search`, and
 `read_content_lines`; these assignments do not grant repository permissions.
 An installed `bifrost-build` client skill provides broader authoring guidance
 in `references/python-sdk.md`, `references/repository.md`, and
-`references/workflows.md`. Native agents can learn directly from `get_docs`;
+`references/workflows.md`. Native agents can learn directly from `bifrost_get_docs`;
 installing a client skill does not inject it into a native agent's context.
 
 ## Workflows & Tools

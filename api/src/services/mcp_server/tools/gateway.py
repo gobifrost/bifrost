@@ -52,8 +52,8 @@ agent.
 When bifrost_execute_code is available, you may call it directly for one-off
 Python execution without selecting an agent or registering a workflow. It
 returns an execution_id; use bifrost_get_execution to retrieve its result.
-Call get_docs before writing SDK code: it provides live signatures and the
-inline Python and workspace import conventions. Use get_docs with sdk_module
+Call bifrost_get_docs before writing SDK code: it provides live signatures and the
+inline Python and workspace import conventions. Use bifrost_get_docs with sdk_module
 (e.g. files, tables, artifacts, events) for a complete, focused SDK reference
 when the full docs are too large. Reuse existing modules after
 inspecting their source. With existing repository.read permission, inline

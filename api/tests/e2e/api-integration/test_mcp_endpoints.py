@@ -205,7 +205,7 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
                     "bifrost_workflow_list",
                     "list_integrations",
                     "bifrost_form_list",
-                    "get_docs",
+                    "bifrost_get_docs",
                     "search_knowledge",
                 ],
             },
@@ -279,7 +279,7 @@ class TestMCPToolsEndpoint(_PersistedMCPCallers):
             "bifrost_workflow_list",
             "list_integrations",
             "bifrost_form_list",
-            "get_docs",
+            "bifrost_get_docs",
             "search_knowledge",
         ]
 

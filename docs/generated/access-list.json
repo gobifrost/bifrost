@@ -10981,6 +10981,20 @@
     "reason": "Thin MCP wrapper over PATCH /api/forms/{form_id}; inherits that route's entry."
   },
   {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": "bifrost_get_docs",
+    "method": null,
+    "operation_id": null,
+    "path": null,
+    "permission": null,
+    "reason": "Reads generated platform documentation; owns no entity or org state."
+  },
+  {
     "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",
@@ -11585,20 +11599,6 @@
     "path": null,
     "permission": "repository.read",
     "reason": "Reads `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
-  },
-  {
-    "access_class": "personal",
-    "boundary": null,
-    "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": "get_docs",
-    "method": null,
-    "operation_id": null,
-    "path": null,
-    "permission": null,
-    "reason": "Reads generated platform documentation; owns no entity or org state."
   },
   {
     "access_class": "permission",

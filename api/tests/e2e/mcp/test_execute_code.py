@@ -54,7 +54,7 @@ async def test_execute_code_mcp_permission_assignment_and_worker_boundary(
     module_package = f"execute_code_{uuid4().hex}"
     module_path = f"{module_package}/helper.py"
     helper_source = "def add(left, right):\n    return left + right\n"
-    companions = ["get_docs", "bifrost_execution_get", "list_content",
+    companions = ["bifrost_get_docs", "bifrost_execution_get", "list_content",
                   "bifrost_file_search", "read_content_lines"]
     execution_id = None
     human_minter(org1_user)
@@ -85,13 +85,13 @@ async def test_execute_code_mcp_permission_assignment_and_worker_boundary(
         assert tool in _tools(e2e_client, headers)
         assert {tool, *companions} <= _tools(e2e_client, headers, path=f"/mcp/{assigned_id}")
         assert tool not in _tools(e2e_client, headers, path=f"/mcp/{unassigned_id}")
-        docs = _call(e2e_client, headers, "get_docs", {})["schema"]
+        docs = _call(e2e_client, headers, "bifrost_get_docs", {})["schema"]
         assert "files.read(" in docs and "files.list(" in docs
         assert "modules.customer_helpers" in docs
         assert "bifrost_execution_get" in docs
-        files_reference = _call(e2e_client, headers, "get_docs", {"sdk_module": "files"})
+        files_reference = _call(e2e_client, headers, "bifrost_get_docs", {"sdk_module": "files"})
         assert "files.read(" in files_reference["schema"]
-        agent_reference = _call(e2e_client, headers, "get_docs", {
+        agent_reference = _call(e2e_client, headers, "bifrost_get_docs", {
             "sdk_module": "artifacts",
         }, path=f"/mcp/{assigned_id}")
         assert "artifacts.create_document(" in agent_reference["schema"]

@@ -46,13 +46,13 @@ TOOLS = [
         "bifrost_execute_code",
         "Execute Code",
         "Execute inline Python without registering a Workflow. Requires Execute Code; "
-        "SDK permissions and scoping are unchanged. Call get_docs before writing SDK code; "
+        "SDK permissions and scoping are unchanged. Call bifrost_get_docs before writing SDK code; "
         "use sdk_module for one complete module reference, e.g. files or tables. The docs "
         "also cover workspace module discovery/imports. Use top-level "
         "await for async calls, input_data keys as variables, and set result to the value "
         "to return. Returns an execution_id immediately; retrieve it with "
         "bifrost_get_execution on default MCP or bifrost_execution_get on an Agent. "
-        "When configuring an Agent, assign get_docs and bifrost_execution_get alongside "
+        "When configuring an Agent, assign bifrost_get_docs and bifrost_execution_get alongside "
         "this tool; for module discovery also assign list_content, bifrost_file_search, "
         "and read_content_lines. Repository reads still require repository.read.",
     ),
