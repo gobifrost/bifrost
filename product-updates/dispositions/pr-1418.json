@@ -1,0 +1,12 @@
+{
+  "key": "pr:1418",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Contributor eligibility, security reporting and maintainer work-tracking documentation; no application behavior change or customer announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1418"
+    ]
+  }
+}
