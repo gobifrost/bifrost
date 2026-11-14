@@ -182,3 +182,43 @@ def test_child_exporter_is_synchronous_and_scrubbing(monkeypatch):
     (recorded,) = sink.get_finished_spans()
     assert "db.statement" not in recorded.attributes
     assert recorded.attributes["db.system"] == "postgresql"
+
+
+@pytest.mark.skipif(not hasattr(__import__("os"), "fork"), reason="requires os.fork")
+@pytest.mark.filterwarnings("ignore:This process .* is multi-threaded")
+def test_real_fork_child_initialises_and_exports(monkeypatch):
+    """A genuine fork: the child resets inherited providers, records a span
+    through a synchronous processor, and flushes before ``os._exit``.
+
+    The other tests here simulate the child in-process; this one proves the
+    real boundary (inherited provider state, export timing) because that is
+    what production exercises.
+    """
+    import os
+
+    _fake_exporters(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
+    monkeypatch.setattr(telemetry, "_initialized", False)
+    monkeypatch.setattr(telemetry, "_child_initialized", False)
+
+    read_fd, write_fd = os.pipe()
+    pid = os.fork()
+    if pid == 0:
+        # ----- child -----
+        try:
+            started = telemetry.init_telemetry_in_child()
+            with telemetry.trace.get_tracer("t").start_as_current_span("child-work"):
+                pass
+            telemetry.flush_telemetry_in_child()
+            exporter = _FakeSpanExporter.created[-1]
+            names = ",".join(s.name for s in exporter.get_finished_spans())
+            os.write(write_fd, f"{started}|{names}".encode())
+        finally:
+            os._exit(0)
+
+    # ----- parent -----
+    os.close(write_fd)
+    with os.fdopen(read_fd, "rb") as reader:
+        payload = reader.read().decode()
+    os.waitpid(pid, 0)
+    assert payload == "True|child-work"

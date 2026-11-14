@@ -8,11 +8,11 @@ you own collection, storage, retention, dashboards, and alerts.
 
 | Signal | Content | Notes |
 |---|---|---|
-| Traces | HTTP server spans (auto), DB/Redis/HTTP-client spans (auto), `run.<handler>` server spans for workflow and agent runs | No log bodies, no SQL text, no Redis args, no URL query strings (stripped at export) |
+| Traces | HTTP server spans (auto), DB/Redis/HTTP-client spans (auto), `run.<handler>` spans covering one dispatch (claim → routed or finished) | No log bodies, no SQL text, no Redis args, no raw URL paths or queries: `http.target`/`http.url`/`url.full`/`url.path` are dropped at export; `http.route` (the template) remains |
 | Error status | `ERROR` with the exception *type* only | Messages and stack traces never leave the process |
 | Span attributes | IDs only (`run.id`, `handler`, protocol/host/port/db metadata) | No user content, keys, tokens, or request/response bodies |
-| Logs | Unchanged plain text to your existing pipeline, plus `trace_id` / `span_id` fields for correlation | No OTLP log export |
-| Metrics | Request rate/duration (auto), runtime/system metrics, `bifrost.run.started`, `bifrost.run.duration`, `bifrost.run.failed` | No per-user/per-org cardinality beyond the handler name |
+| Logs | Unchanged plain text to your existing pipeline | Not exported, and no trace/span IDs are injected into records in v1: that needs a structured log format, which the design keeps out of scope |
+| Metrics | Request rate/duration (auto), runtime/system metrics, `bifrost.dispatch.started`, `bifrost.dispatch.duration`, `bifrost.dispatch.failed` | Dispatch metrics measure claim → hand-off, not workflow execution time (that lives in run records). No per-user/per-org cardinality beyond the handler name |
 
 ## Enable it
 
@@ -31,7 +31,7 @@ OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.1              # default is always-on
 OTEL_METRIC_EXPORT_INTERVAL=60000        # ms between metric pushes
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,host.name=worker-1
-OTEL_PYTHON_FASTAPI_EXCLUDED_URLS=health,ready   # default; extend to silence noisy routes
+OTEL_PYTHON_FASTAPI_EXCLUDED_URLS='^/health(/|$),^/ready$,^/noisy'  # default shown first; regex, extend to silence routes
 ```
 
 Without `OTEL_EXPORTER_OTLP_ENDPOINT`, every OpenTelemetry call in the
@@ -97,8 +97,10 @@ never filters.
   (`redis.search.query`), returned document fields
   (`redis.search.xdoc_*`), and `FT.CREATE` schemas
   (`redis.create_index.fields`). Index/command names and counts remain.
-- URL query strings and fragments (`http.target`, `http.url`, `url.full`
-  are truncated at `?`; `url.query` is dropped).
+- Raw URLs entirely: `http.target`, `http.url`, `url.full`, `url.path`,
+  `url.query`. Route templates (`http.route`) remain for grouping.
+- Captured request/response headers, if an operator enables header
+  capture: those attribute families are dropped at export.
 - Log bodies. `log_safety` rules still apply to anything that reaches
   a log line; trace context is correlation metadata only.
 

@@ -76,14 +76,13 @@ dependencies = [
     # Default off: telemetry initializes only when OTEL_EXPORTER_OTLP_ENDPOINT
     # is set. See docs/architecture/otel-observability.md.
     # =========================================================================
-    "opentelemetry-distro",  # API + SDK + env-var configurator
+    "opentelemetry-sdk",  # TracerProvider/MeterProvider; env config is explicit in telemetry.py
     "opentelemetry-exporter-otlp-proto-http",  # OTLP/HTTP spans + metrics, no grpc dep
     "opentelemetry-instrumentation-fastapi",  # Request spans (health endpoints excluded)
     "opentelemetry-instrumentation-sqlalchemy",  # DB spans (statement capture audited, see telemetry.py)
     "opentelemetry-instrumentation-asyncpg",  # AsyncPG driver spans
     "opentelemetry-instrumentation-redis",  # Redis spans
     "opentelemetry-instrumentation-httpx",  # Outbound HTTP spans
-    "opentelemetry-instrumentation-logging",  # trace_id/span_id in log records for Loki correlation
     "opentelemetry-instrumentation-system-metrics",  # Runtime CPU/memory meters (pulls psutil)
 
     # =========================================================================

@@ -124,6 +124,9 @@ Operator resource attributes must also be documented as exported data.
 - FastAPI/httpx: suppress raw URL paths/query strings, credentials, request
   and response bodies and headers. Use route templates or reviewed fixed
   operation names, never user-supplied URLs as span names/attributes.
+  Implemented by dropping `http.target`, `http.url`, `url.full`, `url.path`,
+  `url.query` and any `http.*.header.*` attribute at export; `http.route`
+  (the template) is retained.
 - Exceptions: suppress messages, stack/source text and exception events that
   may carry user data; report fixed error categories and status only. Check
   automatic error status descriptions as well as attributes and events.
@@ -153,6 +156,14 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
 
 - `src/core/telemetry.py` initializes providers only when
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise every helper is a no-op.
+  The API and launcher get distinct service identities
+  (`bifrost-api`/`bifrost-worker`/`bifrost-run`) and
+  `bifrost.process.role`; `OTEL_TRACES_SAMPLER`/`_ARG` are honoured, and
+  `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` (anchored regexes) overrides the
+  health-probe defaults.
+- The FastAPI app is instrumented with `instrument_app` at construction:
+  the class-patching `.instrument()` form only covers apps created after
+  the call, which would leave the API with no request spans.
 - `stage_dispatch` wraps the publish in a `PRODUCER` span (`<family>
   publish`, `messaging.system=postgresql`, `messaging.operation=publish`,
   `messaging.destination.name=<family>`) and injects `traceparent` while
@@ -162,7 +173,9 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   and the `run.<handler>` span is its child. One trace therefore reads
   request → publish → process → run. Covered by
   `api/tests/unit/test_otel_messaging.py`.
-- Execution children re-initialize telemetry after `os.fork`:
+- Execution children re-initialize telemetry after `os.fork`, with an
+  HTTP-client instrumentor only and no metric reader (runtime metrics stay
+  with the owning process):
   `init_telemetry_in_child` discards the inherited providers and installs
   fresh ones on a thread-free `SimpleSpanProcessor` (fork carries memory
   but no exporter threads, so an inherited batch queue would never drain),

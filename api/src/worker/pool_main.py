@@ -624,17 +624,20 @@ class PoolWorker:
         else:
             messaging = contextlib.nullcontext()
 
-        with messaging, run_span(
-            handler=claim.handler,
-            run_id=str(claim.subject_id),
-            # The extracted context is this consumer span; the run span is
-            # its child, not a second child of the producer.
-            message=None,
-        ):
-            handed_back = False
-            try:
-                # Workflow runs return once routed to a child (then counted by the
-                # pool); agent runs return when finished.
+        handed_back = False
+        # The log-and-swallow wrapper sits outside run_span, so a consumer
+        # failure still marks the span ERROR and increments dispatch.failed
+        # instead of ending the dispatch as a success.
+        try:
+            with messaging, run_span(
+                handler=claim.handler,
+                run_id=str(claim.subject_id),
+                # The extracted context is this consumer span; the run span is
+                # its child, not a second child of the producer.
+                message=None,
+            ):
+                # Workflow runs return once routed to a child (then counted by
+                # the pool); agent runs return when finished.
                 if claim.handler == "workflow.execute":
                     assert self._workflow_consumer is not None
                     try:
@@ -669,22 +672,22 @@ class PoolWorker:
                     await self._agent_consumer.process_message(claim.message)
                 else:
                     await self._execute_summary(claim)
-            except AssertionError:
-                raise
-            except Exception:
-                logger.exception(
-                    "Pool run failed in its consumer",
-                    extra={"dispatch_id": str(claim.dispatch_id)},
-                )
-            finally:
-                if claim.handler == "workflow.execute":
-                    # A routed workflow run stays held until its child ends. A run
-                    # handed back may already be claimed again (its own hold).
-                    if not handed_back:
-                        self.admission.started(str(claim.subject_id))
-                else:
-                    self.admission.release(str(claim.dispatch_id))
-                self.runs_handled += 1
+        except AssertionError:
+            raise
+        except Exception:
+            logger.exception(
+                "Pool run failed in its consumer",
+                extra={"dispatch_id": str(claim.dispatch_id)},
+            )
+        finally:
+            if claim.handler == "workflow.execute":
+                # A routed workflow run stays held until its child ends. A run
+                # handed back may already be claimed again (its own hold).
+                if not handed_back:
+                    self.admission.started(str(claim.subject_id))
+            else:
+                self.admission.release(str(claim.dispatch_id))
+            self.runs_handled += 1
 
     async def _execute_summary(self, claim: PoolClaim) -> None:
         """Execute a summary on this executor's physical runtime."""

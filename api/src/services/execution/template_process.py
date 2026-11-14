@@ -556,11 +556,16 @@ def _handle_fork_request(
                 flush_telemetry_in_child()
                 os._exit(exit_code)
         else:
-            _run_forked_child(
-                work_recv, result_send, worker_id, persistent,
-                sdk_socket_path=sdk_socket_path,
-            )
-            flush_telemetry_in_child()
+            exit_code = 1
+            try:
+                _run_forked_child(
+                    work_recv, result_send, worker_id, persistent,
+                    sdk_socket_path=sdk_socket_path,
+                )
+                exit_code = 0
+            finally:
+                flush_telemetry_in_child()
+                os._exit(exit_code)
         os._exit(0)
 
 

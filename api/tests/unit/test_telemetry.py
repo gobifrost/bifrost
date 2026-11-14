@@ -151,6 +151,8 @@ def test_export_scrubs_statements_urls_and_exceptions():
         span.set_attribute("url.full", "https://host/api/files/read?token=secret")
         span.set_attribute("url.query", "token=secret")
         span.set_attribute("url.path", "/api/files/read")
+        span.set_attribute("http.route", "/api/files/{path:path}")
+        span.set_attribute("http.request.header.authorization", "Bearer secret")
         # Redis FT.SEARCH leaks the query and returned document contents.
         span.set_attribute("redis.search.query", "@email:{a@b.c}")
         span.set_attribute("redis.search.xdoc_1.email", "a@b.c")
@@ -170,12 +172,15 @@ def test_export_scrubs_statements_urls_and_exceptions():
     assert "db.statement" not in attrs
     assert "db.query.parameter.email" not in attrs
     assert "url.query" not in attrs
+    assert "url.full" not in attrs
+    assert "url.path" not in attrs
+    assert "http.target" not in attrs
+    assert "http.request.header.authorization" not in attrs
     assert "redis.search.query" not in attrs
     assert "redis.search.xdoc_1.email" not in attrs
+    # Useful, non-content attributes survive.
     assert attrs["db.system"] == "postgresql"
-    assert attrs["http.target"] == "/api/files/read"
-    assert attrs["url.full"] == "https://host/api/files/read"
-    assert attrs["url.path"] == "/api/files/read"
+    assert attrs["http.route"] == "/api/files/{path:path}"
     assert attrs["redis.search.total"] == 1
     assert len(exported.events) == 1
     assert exported.events[0].attributes == {"exception.type": "ValueError"}
@@ -201,3 +206,49 @@ def _capture_inner():
     )
 
     return InMemorySpanExporter()
+
+
+def test_sampler_env_is_honoured(monkeypatch):
+    """OTEL_TRACES_SAMPLER/ARG actually reach the provider (design decision 6)."""
+    pytest.importorskip("opentelemetry.sdk")
+    from opentelemetry.sdk.trace.sampling import (
+        ALWAYS_OFF,
+        ParentBased,
+        TraceIdRatioBased,
+    )
+
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
+    assert telemetry._sampler() is ALWAYS_OFF
+
+    monkeypatch.delenv("OTEL_TRACES_SAMPLER")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "parentbased_traceidratio")
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER_ARG", "0.25")
+    sampler = telemetry._sampler()
+    assert isinstance(sampler, ParentBased)
+    assert isinstance(sampler._root, TraceIdRatioBased)
+
+    # Unknown values fall back instead of failing.
+    monkeypatch.setenv("OTEL_TRACES_SAMPLER", "not-a-sampler")
+    assert isinstance(telemetry._sampler(), ParentBased)
+
+
+def test_baggage_never_crosses_the_queue():
+    """Only W3C trace context is propagated; baggage is not (design decision 5)."""
+    from opentelemetry import baggage, trace
+
+    message: dict = {}
+    with _tracer().start_as_current_span("parent"):
+        baggage.set_baggage("tenant_secret", "must-not-travel")
+        inject_traceparent(message)
+    assert "traceparent" in message
+    assert "baggage" not in message
+
+    # An incoming baggage header is ignored on extract.
+    ctx = extract_context(
+        {
+            "traceparent": "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01",
+            "baggage": "tenant_secret=must-not-travel",
+        }
+    )
+    assert ctx is not None
+    assert baggage.get_baggage("tenant_secret", ctx) is None
