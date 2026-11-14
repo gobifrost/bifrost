@@ -348,7 +348,7 @@ def flush_telemetry_in_child(timeout_s: float = 5.0) -> None:
     must not delay the child's exit, so the flush runs in a daemon thread
     that is abandoned if it outlives ``timeout_s``.
     """
-    if not _initialized:
+    if not _child_initialized or not _initialized:
         return
     try:
         flusher = threading.Thread(target=shutdown_telemetry, daemon=True)
