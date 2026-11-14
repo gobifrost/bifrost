@@ -7,7 +7,7 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1331",
-      "Contributor disposition for internal architecture boundary; no runtime behavior change. Follows closed #1313, kept with the working Cloudflare implementation per maintainer direction."
+      "Contributor disposition for internal architecture and provider recipe; no runtime behavior change. Follows closed #1313, reworked so the Hyperdrive helpers were dropped and the boundary folded into docs/architecture/external-worker-capacity.md. See the PR discussion for review state."
     ]
   }
 }
