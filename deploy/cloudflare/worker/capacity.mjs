@@ -426,6 +426,8 @@ export class WorkerLedger {
                         return doc ? json(200, doc) : json(404, { error: "unknown worker" });
                     }
                     if (request.method === "PUT") {
+                        // Parse first: a malformed body must not take a slot.
+                        const body = await request.json();
                         const reserved = await registry().fetch("https://do/reserve", {
                             method: "POST",
                             body: JSON.stringify({
@@ -436,7 +438,7 @@ export class WorkerLedger {
                         const reservation = await reserved.json();
                         if (!reservation.ok) return json(409, { error: "capacity ceiling reached" });
                         try {
-                            return json(200, await engine.prepare(workerId, await request.json()));
+                            return json(200, await engine.prepare(workerId, body));
                         } catch (error) {
                             // Release only when this worker holds no live record.
                             // A previous successful prepare owns its slot, and a
@@ -449,9 +451,20 @@ export class WorkerLedger {
                         }
                     }
                     if (request.method === "DELETE") {
-                        const result = await engine.remove(workerId, await request.json());
+                        let result;
+                        try {
+                            result = await engine.remove(workerId, await request.json());
+                        } catch (error) {
+                            // A retried delete whose first attempt released
+                            // nothing: the deletion is already durable, so finish
+                            // the cleanup instead of reporting a terminal record.
+                            const record = await engine.get(workerId);
+                            if (record?.state !== STATE.DELETED) throw error;
+                            result = record;
+                        }
                         // Release only after the deletion is durable: freeing the
                         // slot first would over-admit if the delete then failed.
+                        // A repeated release is harmless.
                         await release(undefined);
                         return json(200, result);
                     }

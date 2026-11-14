@@ -448,12 +448,13 @@ test("the ceiling admits only workers that hold a slot", async () => {
 
 // --- worker ledger: capacity accounting around the record ------------------
 
-function fakeLedger({ live = [], ceiling = 2 } = {}) {
+function fakeLedger({ live = [], ceiling = 2, failReleaseOnce = false } = {}) {
     const store = new Map();
     const slots = [...live];
     const releases = [];
     const reservations = [];
     const escapes = [];
+    let releaseFailuresLeft = failReleaseOnce ? 1 : 0;
     const ctx = {
         storage: {
             get: async (key) => store.get(key),
@@ -499,6 +500,10 @@ function fakeLedger({ live = [], ceiling = 2 } = {}) {
                         });
                     }
                     if (path.endsWith("/release")) {
+                        if (releaseFailuresLeft > 0) {
+                            releaseFailuresLeft -= 1;
+                            throw new Error("registry unavailable");
+                        }
                         releases.push(body);
                         const index = slots.indexOf(body.worker_id);
                         if (index >= 0) slots.splice(index, 1);
@@ -589,4 +594,33 @@ test("a worker refused by the ceiling does not disturb the admitted one", async 
     const response = await ledgerCall(ctx, env, "PUT", reservation());
     assert.equal(response.status, 409);
     assert.deepEqual(slots, ["other-worker"]);
+});
+
+test("a malformed prepare body does not take a slot", async () => {
+    const { ctx, env, slots, reservations } = fakeLedger();
+    const ledger = new WorkerLedger(ctx, env);
+    const response = await ledger.fetch(
+        new Request(`https://do/v1/workers/${WORKER}`, { method: "PUT", body: "{not json" }),
+    );
+    assert.equal(response.status, 500);
+    assert.deepEqual(reservations, []);
+    assert.deepEqual(slots, []);
+});
+
+test("a delete whose release failed is finished by the retry", async () => {
+    const { ctx, env, slots } = fakeLedger({ failReleaseOnce: true });
+    await ledgerCall(ctx, env, "PUT", reservation());
+    const doc = await (await ledgerCall(ctx, env, "GET")).json();
+
+    const first = await ledgerCall(ctx, env, "DELETE", { resource_uid: doc.resource_uid });
+    // The deletion is durable but cleanup failed: capacity is held
+    // conservatively, never over-admitted.
+    assert.equal(first.status, 500);
+    assert.deepEqual(slots, [WORKER]);
+
+    // A retried delete completes the cleanup rather than reporting a terminal
+    // record, so the slot cannot be stranded permanently.
+    const retry = await ledgerCall(ctx, env, "DELETE", { resource_uid: doc.resource_uid });
+    assert.equal(retry.status, 200);
+    assert.deepEqual(slots, []);
 });
