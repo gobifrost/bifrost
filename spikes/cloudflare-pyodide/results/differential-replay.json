@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-11-13T23:45:18.776Z",
-  "run_id": "mwfmjxdk",
+  "started_at": "2026-11-14T01:05:21.648Z",
+  "run_id": "mwfpevao",
   "cases": [
     {
       "name": "imports-helper",
@@ -75,8 +75,33 @@
       },
       "same_result": true,
       "same_status": true
+    },
+    {
+      "name": "sdk-tables-list",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "count": 0,
+          "kind": "list"
+        },
+        "error": null
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "kind": "list",
+          "count": 0
+        },
+        "error": null
+      },
+      "same_result": true,
+      "same_status": true
     }
   ],
-  "finished_at": "2026-11-13T23:45:29.450Z",
+  "finished_at": "2026-11-14T01:05:44.693Z",
   "failures": 0
 }

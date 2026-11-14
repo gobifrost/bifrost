@@ -33,21 +33,32 @@ Worker reached the API normally.
 ### Stage 2 result
 
 `differential.mjs` runs each case twice: Cloudflare per-tenant supervisor and the
-Linux worker (`/api/workflows/execute` with the same source), then compares the
-result and the failure class.
+Linux worker, then compares the result and the failure class. SDK cases use
+`action: "engine"` on Cloudflare and `/api/workflows/register` + execute on Linux.
 
 ```
-PASS imports-helper  — cloud=200/ok          linux=Success
-PASS stdlib-only     — cloud=200/ok          linux=Success
-PASS raises          — cloud=502/dynamic-runtime linux=Failed
+PASS imports-helper  — cloud=200/ok               linux=Success
+PASS stdlib-only     — cloud=200/ok               linux=Success
+PASS raises          — cloud=502/dynamic-runtime  linux=Failed
+PASS sdk-tables-list — cloud=Success              linux=Success
 DIFFERENTIAL: ALL CASES MATCH
 ```
 
 Receipt: [`../../results/differential-replay.json`](../../results/differential-replay.json).
 
-The error case is deliberately included: both backends fail, and the harness
-compares failure *class* rather than message. Log and effect comparison is the
-next increment (needs the execution-log endpoint, not just the result).
+The SDK case is `await tables.list()` through the real engine on both sides; results
+compare canonically (key order differs). The error case is deliberate: both fail, and
+the harness compares failure *class*.
+
+Two API contracts discovered by reading `api/src/routers/workflows.py`:
+
+- **Registration** is `POST /api/workflows/register` (`path`, `function_name`), not
+  `POST /api/workflows` (405).
+- **Uniqueness is `(organization, function_name)`** — a second decorated `main`
+  returns 409 even at a different path. The harness names each SDK case
+  `case_sdk_<run>`.
+- Workflows execute by **UUID**; a `path::function` reference does not resolve for
+  execution.
 
 ## Engine mode (real SDK workflows)
 
@@ -82,10 +93,10 @@ credential-free posture for engine mode and is the documented follow-up.
 
 ### Remaining
 
-- **Linux SDK oracle:** `/api/workflows` returns 405 for JSON creation on this
-  stack, so the same decorated workflow cannot yet be executed server-side for a
-  result comparison. The Cloudflare side is proven; the differential for SDK
-  cases needs the correct workflow-registration route (or a solution install).
+- **Durable Object token broker (next phase):** replaces the token-in-child with
+  an opaque handle resolved by a DO, restoring the credential-free posture for
+  engine mode.
+- **Logs and effects** in the differential (currently result + failure class).
 - Stage 3 remains behind the production gate.
 
 ## Stage 3 — prepared, not executed
