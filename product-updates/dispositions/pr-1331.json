@@ -2,7 +2,7 @@
   "key": "pr:1331",
   "classification": "omit",
   "entry_ids": [],
-  "reason": "Internal provider-agnostic Hyperdrive PostgreSQL boundary docs and validation helper constraining the already-merged external worker capacity implementation; no user-visible behavior, capability, or customer action.",
+  "reason": "Internal Cloudflare Containers capacity-provider recipe and reference runbook for the already-merged external worker capacity protocol; no user-visible behavior, capability, or customer action.",
   "review": {
     "status": "approved",
     "evidence": [

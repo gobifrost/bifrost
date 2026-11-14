@@ -39,7 +39,10 @@ npx wrangler deploy
 
 `CAPACITY_TOKEN` must be a dedicated random bearer (32-512 printable ASCII),
 never reused from another control. Selectors in `wrangler.toml` contain no
-database URL or password; Hyperdrive is deliberately absent here (see below).
+database URL or password; Hyperdrive is deliberately absent here — canonical
+coordination stays on direct PostgreSQL (see
+`docs/architecture/external-worker-capacity.md`, "Direct PostgreSQL
+Coordination; Hyperdrive Excluded").
 
 ## How burst and enroll work
 
@@ -81,11 +84,12 @@ verified before counting anything):
 ## Limits
 
 - **Canonical coordination stays on direct PostgreSQL.** Hyperdrive does not
-  support advisory locks or `LISTEN`/`NOTIFY`
-  (`docs/architecture/hyperdrive-postgres.md`); never point canonical pools
-  at it. Containers reach private origins through the authenticated TCP
-  transport with original DB hostnames preserved for TLS verification
-  (`docs/architecture/worker-private-transport.md`).
+  support advisory locks or `LISTEN`/`NOTIFY`, so it can never carry admission,
+  fencing, or leases; never point canonical pools at it (see
+  `docs/architecture/external-worker-capacity.md`, "Direct PostgreSQL
+  Coordination; Hyperdrive Excluded"). Containers reach private origins through
+  the authenticated TCP transport with original DB hostnames preserved for TLS
+  verification (`docs/architecture/worker-private-transport.md`).
 - **No filesystem.** Object storage stays S3-compatible; Workers/Containers
   have no shared disk.
 - **Reference store is in-memory.** The recipe's record map is a reference

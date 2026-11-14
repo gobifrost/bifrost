@@ -24,6 +24,9 @@ SCOPE = "CHANGEME"
 # Must equal the embedded version of the pinned worker image; the API fences
 # any reservation whose build differs.
 WORKER_VERSION = "CHANGEME"
+# Pinned worker image. Required by readSettings; must match the digest in the
+# [[containers]] binding above.
+WORKER_IMAGE = "ghcr.io/CHANGEME/bifrost-worker-dev@sha256:CHANGEME"
 MEMORY_LIMIT_BYTES = "2147483648"
 MAX_WORKERS = "4"
 MAX_LIFETIME_SECONDS = "21600"

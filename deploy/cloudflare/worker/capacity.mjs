@@ -247,6 +247,13 @@ function readSettings(env) {
     };
 }
 
+// Reference store. Module scope, so records survive across requests handled by
+// the same isolate — a per-request Map would drop a prepared reservation before
+// its start request arrives. A production provider MUST persist records (for
+// example in a Durable Object) so idempotency and tombstones survive restarts.
+// See the runbook's "Limits" section.
+const store = new Map();
+
 export default {
     async fetch(request, env) {
         let settings = null;
@@ -255,10 +262,6 @@ export default {
         } catch {
             return json(503, { error: "provider is not configured" });
         }
-        // Reference simplification: a per-isolate Map. A production provider
-        // MUST persist records (e.g. a Durable Object) so that idempotency
-        // and tombstones survive restarts. See the runbook.
-        const store = new Map();
         const runtime = {
             async launchWorker() {
                 throw new Error(
