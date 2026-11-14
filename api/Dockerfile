@@ -5,6 +5,9 @@
 # Use the same supported Node runtime for every App build surface.
 FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node-toolchain
 
+# Native Python dependencies require Rust >=1.88; keep it build-only and pinned.
+FROM rust:1.90.0-slim-bookworm@sha256:64232e656c058f4468e8d024e990acff04f0fd5a5c0a88a574dc37773d7325c9 AS rust-toolchain
+
 # =============================================================================
 # Stage 1: Builder
 # =============================================================================
@@ -22,9 +25,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     zlib1g-dev \
     libjpeg-dev \
-    cargo \
-    rustc \
     && rm -rf /var/lib/apt/lists/*
+
+# Use the verified compiler instead of the older distro Rust packages.
+COPY --from=rust-toolchain /usr/local/cargo /opt/cargo
+COPY --from=rust-toolchain /usr/local/rustup /opt/rustup
+ENV CARGO_HOME=/opt/cargo RUSTUP_HOME=/opt/rustup
+ENV PATH="/opt/cargo/bin:${PATH}"
+RUN rustc --version && cargo --version
 
 # Copy dependency manifests and install.
 # We install from requirements.lock with --require-hashes so every transitive
@@ -38,8 +46,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # (issue #1379).
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
-# flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# The bundled pip already supports --require-hashes (>= 8.0).
+# flags unpinned `pip install <pkg>` invocations. The bundled pip already
+# supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
