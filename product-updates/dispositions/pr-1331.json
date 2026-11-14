@@ -1,0 +1,13 @@
+{
+  "key": "pr:1331",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal provider implementation for Cloudflare Containers: capacity provider Worker, Durable Object state, and operator runbook. No customer-visible behavior, API, or configuration change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1331",
+      "No api/ or client/ source is modified. The provider is gated by contract tests (node --test) covering idempotent prepare, UID fencing, duplicate and lost-response starts, terminal fences, and tombstones."
+    ]
+  }
+}
