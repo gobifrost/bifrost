@@ -234,7 +234,7 @@ def test_sampler_env_is_honoured(monkeypatch):
 
 def test_baggage_never_crosses_the_queue():
     """Only W3C trace context is propagated; baggage is not (design decision 5)."""
-    from opentelemetry import baggage, trace
+    from opentelemetry import baggage
 
     message: dict = {}
     with _tracer().start_as_current_span("parent"):
