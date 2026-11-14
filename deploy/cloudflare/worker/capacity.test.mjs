@@ -446,84 +446,117 @@ test("the ceiling admits only workers that hold a slot", async () => {
     assert.equal((await registry.reserve("w2", 1)).ok, true);
 });
 
-// --- worker entry: capacity accounting on rejected prepares ---------------
+// --- worker ledger: capacity accounting around the record ------------------
 
-function entryEnv({ putStatus, getStatus, getBody }) {
+function fakeLedger({ live = [], ceiling = 2 } = {}) {
+    const store = new Map();
+    const slots = [...live];
     const releases = [];
-    const header = {
-        Authorization: `Bearer ${ENV.CAPACITY_TOKEN}`,
-        "X-Bifrost-Capacity-Scope": ENV.SCOPE,
+    const reservations = [];
+    const ctx = {
+        storage: {
+            get: async (key) => store.get(key),
+            put: async (key, value) => {
+                store.set(key, value);
+            },
+        },
+        blockConcurrencyWhile: (fn) => fn(),
     };
     const env = {
         ...ENV,
+        ...(ceiling === 2 ? {} : { MAX_WORKERS: String(ceiling) }),
         SCOPE_REGISTRY: {
             getByName: () => ({
                 fetch: async (target, init) => {
                     const path = String(target);
+                    const body = init?.body ? JSON.parse(init.body) : {};
+                    if (path.endsWith("/live")) {
+                        return new Response(JSON.stringify({ live: slots }), { status: 200 });
+                    }
                     if (path.endsWith("/reserve")) {
-                        return new Response(JSON.stringify({ ok: true, generation: 7 }), {
+                        reservations.push(body);
+                        if (slots.includes(body.worker_id)) {
+                            return new Response(JSON.stringify({ ok: true, generation: 99 }), {
+                                status: 200,
+                            });
+                        }
+                        if (slots.length >= (body.ceiling ?? ceiling)) {
+                            return new Response(JSON.stringify({ ok: false }), { status: 409 });
+                        }
+                        slots.push(body.worker_id);
+                        return new Response(JSON.stringify({ ok: true, generation: 1 }), {
                             status: 200,
                         });
                     }
                     if (path.endsWith("/release")) {
-                        releases.push(JSON.parse(init.body));
+                        releases.push(body);
+                        const index = slots.indexOf(body.worker_id);
+                        if (index >= 0) slots.splice(index, 1);
                     }
                     return new Response("{}", { status: 200 });
                 },
             }),
         },
-        WORKER_LEDGER: {
+        WORKER_CONTAINER: {
             getByName: () => ({
-                fetch: async (request) => {
-                    if (request.method === "GET") {
-                        return new Response(getBody ? JSON.stringify(getBody) : "{}", {
-                            status: getStatus,
-                        });
-                    }
-                    return new Response("{}", { status: putStatus });
-                },
+                fetch: async () =>
+                    new Response(JSON.stringify({ running: false }), { status: 200 }),
             }),
         },
     };
-    return { env, releases, header };
+    return { ctx, env, slots, releases, reservations };
 }
 
-async function prepareThroughEntry(env, header) {
-    const { default: worker } = await import("./capacity.mjs");
-    return worker.fetch(
-        new Request(`https://worker/v1/workers/${WORKER}`, {
-            method: "PUT",
-            headers: header,
-            body: "{}",
+function ledgerCall(ctx, env, method, body) {
+    const ledger = new WorkerLedger(ctx, env);
+    return ledger.fetch(
+        new Request(`https://do/v1/workers/${WORKER}`, {
+            method,
+            body: body === undefined ? undefined : JSON.stringify(body),
         }),
-        env,
     );
 }
 
-test("a rejected prepare releases the slot it reserved", async () => {
-    const { env, releases, header } = entryEnv({ putStatus: 400, getStatus: 404 });
-    await prepareThroughEntry(env, header);
-    assert.deepEqual(releases, [{ worker_id: WORKER, generation: 7 }]);
-});
-
-test("a prepare replayed after deletion releases the slot it reserved", async () => {
-    // The ledger answers 200 for a terminated record, so a 404-only check would
-    // leak one slot on every replay and permanently shrink MAX_WORKERS.
-    const { env, releases, header } = entryEnv({
-        putStatus: 409,
-        getStatus: 200,
-        getBody: { state: STATE.DELETED },
-    });
-    await prepareThroughEntry(env, header);
-    assert.deepEqual(releases, [{ worker_id: WORKER, generation: 7 }]);
-});
-
-test("a rejected prepare for a live record keeps that record's slot", async () => {
-    const { env, releases, header } = entryEnv({
-        putStatus: 409,
-        getStatus: 200,
-        getBody: { state: STATE.RUNNING },
-    });
-    await prepareThroughEntry(env, header);
+test("a prepared worker holds exactly one slot", async () => {
+    const { ctx, env, slots, releases } = fakeLedger();
+    const response = await ledgerCall(ctx, env, "PUT", reservation());
+    assert.equal(response.status, 200);
+    assert.deepEqual(slots, [WORKER]);
     assert.deepEqual(releases, []);
+});
+
+test("a rejected prepare releases the slot it reserved", async () => {
+    const { ctx, env, slots, releases } = fakeLedger();
+    const response = await ledgerCall(
+        ctx,
+        env,
+        "PUT",
+        reservation({ worker_version: "other-build" }),
+    );
+    assert.equal(response.status, 409);
+    // Nothing may keep capacity for a reservation that was never written.
+    assert.deepEqual(slots, []);
+    assert.equal(releases.length, 1);
+});
+
+test("a prepare replayed after deletion leaves no slot behind", async () => {
+    const { ctx, env, slots } = fakeLedger();
+    await ledgerCall(ctx, env, "PUT", reservation());
+    const doc = await (await ledgerCall(ctx, env, "GET")).json();
+    const deleted = await ledgerCall(ctx, env, "DELETE", { resource_uid: doc.resource_uid });
+    assert.equal(deleted.status, 200);
+    assert.deepEqual(slots, []);
+
+    // A replay reserves, is rejected as terminal, and must clean up after
+    // itself instead of permanently shrinking MAX_WORKERS.
+    const replay = await ledgerCall(ctx, env, "PUT", reservation());
+    assert.equal(replay.status, 409);
+    assert.deepEqual(slots, []);
+});
+
+test("a worker refused by the ceiling does not disturb the admitted one", async () => {
+    const { ctx, env, slots } = fakeLedger({ live: ["other-worker"], ceiling: 1 });
+    const response = await ledgerCall(ctx, env, "PUT", reservation());
+    assert.equal(response.status, 409);
+    assert.deepEqual(slots, ["other-worker"]);
 });

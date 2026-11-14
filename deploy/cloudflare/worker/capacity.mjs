@@ -398,21 +398,59 @@ export class WorkerLedger {
     }
 
     async fetch(request) {
-        const workerId = new URL(request.url).pathname.split("/")[3] ?? "";
-        const engine = this.engine(workerId);
         const url = new URL(request.url);
+        const workerId = url.pathname.split("/")[3] ?? "";
         const step = url.pathname.split("/")[4] ?? "";
+        const engine = this.engine(workerId);
+        const registry = () => this.env.SCOPE_REGISTRY.getByName(this.settings.scope);
+        // `undefined` releases unconditionally; a confirmed deletion is terminal.
+        const release = async (generation) => {
+            await registry().fetch("https://do/release", {
+                method: "POST",
+                body: JSON.stringify({ worker_id: workerId, generation }),
+            });
+        };
+
         try {
-            if (request.method === "GET") {
-                const doc = await engine.get(workerId);
-                return doc ? json(200, doc) : json(404, { error: "unknown worker" });
-            }
-            if (request.method === "PUT") return json(200, await engine.prepare(workerId, await request.json()));
-            if (request.method === "DELETE") return json(200, await engine.remove(workerId, await request.json()));
-            if (request.method === "POST" && step === "start") {
-                return json(200, await engine.start(workerId, await request.json()));
-            }
-            return json(404, { error: "not found" });
+            // Capacity accounting and the record it protects must not interleave
+            // with another operation on this worker. The reservation, the write,
+            // and any rollback are one serialized step, so a concurrent prepare
+            // can neither claim nor free this worker's slot mid-flight.
+            return await this.ctx.blockConcurrencyWhile(async () => {
+                if (request.method === "GET") {
+                    const doc = await engine.get(workerId);
+                    return doc ? json(200, doc) : json(404, { error: "unknown worker" });
+                }
+                if (request.method === "PUT") {
+                    const reserved = await registry().fetch("https://do/reserve", {
+                        method: "POST",
+                        body: JSON.stringify({
+                            worker_id: workerId,
+                            ceiling: this.settings.maxWorkers,
+                        }),
+                    });
+                    const reservation = await reserved.json();
+                    if (!reservation.ok) return json(409, { error: "capacity ceiling reached" });
+                    try {
+                        return json(200, await engine.prepare(workerId, await request.json()));
+                    } catch (error) {
+                        // A rejected prepare must not keep the slot it reserved.
+                        await release(reservation.generation);
+                        throw error;
+                    }
+                }
+                if (request.method === "DELETE") {
+                    const result = await engine.remove(workerId, await request.json());
+                    // Release only after the deletion is durable: freeing the
+                    // slot first would over-admit if the delete then failed.
+                    await release(undefined);
+                    return json(200, result);
+                }
+                if (request.method === "POST" && step === "start") {
+                    return json(200, await engine.start(workerId, await request.json()));
+                }
+                return json(404, { error: "not found" });
+            });
         } catch (error) {
             if (error instanceof ProtocolError) return json(error.status, { error: error.message });
             return json(500, { error: "provider error" });
@@ -454,48 +492,9 @@ export default {
         const workerId = url.pathname.slice("/v1/workers/".length).split("/")[0];
         if (!UUID_RE.test(workerId)) return json(404, { error: "not found" });
 
-        const registry = env.SCOPE_REGISTRY.getByName(settings.scope);
-        let reservation = null;
-        if (request.method === "PUT") {
-            const reserved = await registry.fetch("https://do/reserve", {
-                method: "POST",
-                body: JSON.stringify({ worker_id: workerId, ceiling: settings.maxWorkers }),
-            });
-            if (!reserved.ok) return json(409, { error: "capacity ceiling reached" });
-            // Keep this reservation's generation: only it may release this slot.
-            reservation = (await reserved.json()).generation;
-        }
-
+        // Capacity accounting lives with the record it protects: the ledger
+        // reserves, writes, and rolls back in one serialized step.
         const ledger = env.WORKER_LEDGER.getByName(`${settings.scope}:${workerId}`);
-        const response = await ledger.fetch(request);
-
-        if (request.method === "PUT" && !response.ok) {
-            // A rejected prepare must not keep the slot it reserved, or a
-            // version fence, validation failure, or replay after a delete
-            // permanently shrinks capacity. A live record still owns its slot;
-            // an absent or terminated one cannot.
-            const existing = await ledger.fetch(new Request(url, { method: "GET" }));
-            const record = existing.ok ? await existing.json() : null;
-            if (existing.status === 404 || record?.state === STATE.DELETED) {
-                // Scoped to this reservation: if a concurrent prepare re-reserved
-                // the id, its generation has moved on and this release is a
-                // no-op rather than a ceiling violation.
-                await registry.fetch("https://do/release", {
-                    method: "POST",
-                    body: JSON.stringify({ worker_id: workerId, generation: reservation }),
-                });
-            }
-        }
-
-        if (request.method === "DELETE" && response.ok) {
-            // Release only after the deletion is durable: freeing the slot
-            // first would over-admit if the delete then failed. A confirmed
-            // deletion is terminal, so it releases unconditionally.
-            await registry.fetch("https://do/release", {
-                method: "POST",
-                body: JSON.stringify({ worker_id: workerId }),
-            });
-        }
-        return response;
+        return ledger.fetch(request);
     },
 };
