@@ -83,6 +83,7 @@ async def stage_agent_run_request(
     run_id: str | None = None,
     lineage: RunLineage | None,
     run_as_user_id: UUID | None = None,
+    permission_workflow_id: UUID | None = None,
 ) -> StagedAgentRun:
     """Add an agent run and its dispatch to the caller's transaction.
 
@@ -148,6 +149,7 @@ async def stage_agent_run_request(
             run_user_id=lineage.run_user_id if lineage else None,
             run_as_user_id=run_as_user_id,
             acting_user_id=acting_user_id,
+            permission_workflow_id=permission_workflow_id,
             **impersonation.columns(),
         )
     )

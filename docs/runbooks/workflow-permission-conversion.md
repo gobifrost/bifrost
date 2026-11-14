@@ -105,3 +105,19 @@ guards to operate. Analysis and Apply have a one-hour timeout; cutover has a
 15-minute timeout. Only runner loss is automatically retried, once; validation
 failures require review. Inspect memory samples and queue waits in Scheduler
 Diagnostics when sizing the deployment.
+
+
+## Agents called by workflows
+
+An agent launched through `bifrost.agents.run` or `enqueue` retains the launching
+workflow's permission source. The worker reloads that workflow's effective mode
+and grants when establishing or refreshing agent authority. Delegated agents
+retain the same source. Organization reach, agent capability bindings, and acting
+identity checks still apply. Removing a grant affects subsequent permission
+checks; deleting or deactivating the source workflow, or deactivating its
+Solution, invalidates that authority. Workflow activation-state changes also
+invalidate existing tokens through the shared authorization epoch.
+
+These permissions belong to the workflow-launched run. They do not grant the
+user direct agent, Chat, or MCP access. Direct agent runs and existing runs
+without a recorded workflow source continue to use the run user's own authority.

@@ -308,6 +308,9 @@ async def enqueue_sdk_agent_run(
         sync=False,
         lineage=await principal_lineage(session, principal),
         run_as_user_id=actor.run_as_user_id,
+        permission_workflow_id=(
+            None if principal.runtime_authority is None else principal.runtime_authority.workflow_id
+        ),
     )
     return AgentRunEnqueueResponse(run_id=UUID(run_id), run_as_user_id=actor.run_as_user_id)
 
