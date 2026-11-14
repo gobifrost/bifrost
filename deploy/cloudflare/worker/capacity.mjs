@@ -86,11 +86,12 @@ export class ScopeRegistry {
 
     async reserve(workerId, ceiling) {
         const live = await this.live();
+        // Membership first: a repeated prepare for a worker that already holds a
+        // slot is idempotent and must not be rejected by the ceiling.
+        if (live.includes(workerId)) return true;
         if (live.length >= ceiling) return false;
-        if (!live.includes(workerId)) {
-            live.push(workerId);
-            await this.ctx.storage.put("live", live);
-        }
+        live.push(workerId);
+        await this.ctx.storage.put("live", live);
         return true;
     }
 
@@ -253,7 +254,10 @@ export class WorkerLedger {
         const step = url.pathname.split("/")[4] ?? "";
         try {
             if (url.pathname === "/capabilities") return json(200, profileFor(this.settings));
-            if (request.method === "GET") return json(200, await engine.get(workerId));
+            if (request.method === "GET") {
+                const doc = await engine.get(workerId);
+                return doc ? json(200, doc) : json(404, { error: "unknown worker" });
+            }
             if (request.method === "PUT") return json(200, await engine.prepare(workerId, await request.json()));
             if (request.method === "DELETE") return json(200, await engine.remove(workerId, await request.json()));
             if (request.method === "POST" && step === "start") {
@@ -309,14 +313,18 @@ export default {
             });
             if (!reserved.ok) return json(409, { error: "capacity ceiling reached" });
         }
-        if (request.method === "DELETE") {
+
+        const ledger = env.WORKER_LEDGER.getByName(`${settings.scope}:${workerId}`);
+        const response = await ledger.fetch(request);
+
+        if (request.method === "DELETE" && response.ok) {
+            // Release only after the deletion is durable: freeing the slot
+            // first would over-admit if the delete then failed.
             await registry.fetch("https://do/release", {
                 method: "POST",
                 body: JSON.stringify({ worker_id: workerId }),
             });
         }
-
-        const ledger = env.WORKER_LEDGER.getByName(`${settings.scope}:${workerId}`);
-        return ledger.fetch(request);
+        return response;
     },
 };
