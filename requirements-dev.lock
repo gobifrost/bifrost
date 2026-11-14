@@ -2746,9 +2746,8 @@ pytest==9.0.3 \
     #   pytest-cov
     #   pytest-env
     #   pytest-timeout
-pytest-asyncio==1.5.0 \
-    --hash=sha256:557f255ee03cc84f84a8d5f438bc9c6e0f714bf86970ae743c7ecb5a38d7e07d \
-    --hash=sha256:92c8fa83ca419fd0d4bd6a34df6520dae435841d3733c319343249492adf37f7
+pytest-asyncio @ https://codeload.github.com/pytest-dev/pytest-asyncio/tar.gz/47bbcba3cce21f2a77826d9ca56147b99004166b \
+    --hash=sha256:6b9d4c7e31e0eefb5efd3030f417d82fd3f7bdc67c61b0d016cc446ab3466ef4
     # via bifrost-api (pyproject.toml)
 pytest-cov==7.1.0 \
     --hash=sha256:30674f2b5f6351aa09702a9c8c364f6a01c27aae0c1366ae8016160d1efc56b2 \

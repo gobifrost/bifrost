@@ -54,6 +54,9 @@ RUN rustc --version && cargo --version
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations. The bundled pip already
 # supports --require-hashes (>= 8.0).
+# The pinned upstream test-plugin archive has no Git metadata. Give its
+# setuptools-scm build an immutable version tied to that exact commit.
+ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTEST_ASYNCIO=2.0.0.dev0+g47bbcba
 COPY pyproject.toml requirements-dev.lock requirements-pyright.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements-dev.lock \
     && pip install --no-cache-dir --require-hashes -r requirements-pyright.lock
