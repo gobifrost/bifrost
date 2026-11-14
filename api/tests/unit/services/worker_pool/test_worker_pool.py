@@ -60,6 +60,7 @@ SETTINGS = SimpleNamespace(
     kubernetes_job_service_account="runner",
     pool_max_lifetime_seconds=21600,
     pool_start_timeout_seconds=300,
+    pool_provisioning_grace_seconds=60,
     pool_worker_memory_request_mib=512,
     pool_worker_cpu_request="250m",
     pool_worker_cpu_limit="2",

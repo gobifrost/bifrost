@@ -1,0 +1,13 @@
+{
+  "key": "pr:1338",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "External-capacity reliability and operability plumbing (provisioning grace, container env contract, admin capacity-status endpoint with no UI consumer yet) plus reference recipe docs and tests; no customer-visible behavior, capability, or required action until the Settings capacity card consumes the endpoint.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1338",
+      "Contributor disposition for platform plumbing; user-visible entry deferred to the Settings capacity-card PR that consumes GET /api/admin/kubernetes/capacity."
+    ]
+  }
+}

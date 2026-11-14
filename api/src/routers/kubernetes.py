@@ -11,6 +11,7 @@ from src.models.contracts.kubernetes import (
     KubernetesExecutionUpdate,
     KubernetesPolicyUpdate,
     KubernetesStatus,
+    WorkerCapacityStatus,
 )
 from src.services.kubernetes_execution import KubernetesExecutionService
 from src.services.worker_pool.external_client import CapacityProviderUnavailable
@@ -18,6 +19,7 @@ from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
 
 KUBERNETES_STATUS_OPERATION = "GET /api/admin/kubernetes/status"
+KUBERNETES_CAPACITY_OPERATION = "GET /api/admin/kubernetes/capacity"
 KUBERNETES_EXECUTION_GET_OPERATION = "GET /api/admin/kubernetes/execution"
 KUBERNETES_EXECUTION_UPDATE_OPERATION = "PUT /api/admin/kubernetes/execution"
 KUBERNETES_POLICY_UPDATE_OPERATION = "PUT /api/admin/kubernetes/policy"
@@ -47,6 +49,14 @@ async def get_kubernetes_status(
 ) -> KubernetesStatus:
     await _authorize_platform_setting(db, user, KUBERNETES_STATUS_OPERATION)
     return await KubernetesExecutionService.status()
+
+
+@admin_router.get("/capacity", response_model=WorkerCapacityStatus)
+async def get_worker_capacity_status(
+    db: DbSession, user: CurrentActiveUser
+) -> WorkerCapacityStatus:
+    await _authorize_platform_setting(db, user, KUBERNETES_CAPACITY_OPERATION)
+    return await _service(db).capacity_status()
 
 
 @admin_router.get("/execution", response_model=KubernetesExecutionSettings)

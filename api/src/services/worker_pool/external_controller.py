@@ -156,6 +156,16 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             return
         reason = None
         if resource is None or resource.state in ("deleted", "stopped"):
+            if (
+                resource is None
+                and state == "starting"
+                and _now() - created_at < timedelta(seconds=self.settings.pool_provisioning_grace_seconds)
+            ):
+                # Provider reads are eventually consistent: a GET absence for
+                # a just-started incarnation is not proof it never
+                # provisioned. Explicit stopped/deleted reports still fence
+                # at once, and start_timeout remains the outer bound.
+                return
             reason = "provider_resource_stopped"
         elif state == "starting":
             if _now() - created_at >= timedelta(seconds=self.settings.pool_start_timeout_seconds):
