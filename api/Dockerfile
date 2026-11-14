@@ -25,6 +25,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # pyproject.toml is the human-edited source; regen instructions are in
 # the header of requirements.lock.
 #
+# requirements.lock is the runtime-only closure: test/debug packages live
+# in requirements-dev.lock (installed by dev/CI images) and never ship in this
+# production image. See [project.optional-dependencies] in pyproject.toml
+# (issue #1379).
+#
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
 # python:3.15.2-slim already supports --require-hashes (>= 8.0).

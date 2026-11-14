@@ -3,7 +3,7 @@ const LEDGER = "product-updates/dispositions.json";
 // One file per disposition key, so concurrent PRs never edit the same file.
 const ITEMS = "product-updates/dispositions";
 const DEPENDENCY_FILES = new Set([
-  "pyproject.toml", "requirements.lock", "requirements-piptools.lock",
+  "pyproject.toml", "requirements.lock", "requirements-dev.lock", "requirements-piptools.lock",
   "client/package.json", "client/package-lock.json",
   "scripts/docs/package.json", "scripts/docs/package-lock.json",
   "api/src/services/app_compiler/package.json",

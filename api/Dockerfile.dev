@@ -20,16 +20,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests and install.
-# We install from requirements.lock with --require-hashes so every transitive
-# dep is pinned by sha256, satisfying Scorecard's Pinned-Dependencies check.
-# pyproject.toml is the human-edited source; regen instructions are in
-# the header of requirements.lock.
+# Dev/CI images install requirements-dev.lock — the runtime closure PLUS the
+# dev-only group from pyproject.toml [project.optional-dependencies] — with
+# --require-hashes so every transitive dep is pinned by sha256, satisfying
+# Scorecard's Pinned-Dependencies check. The production image (api/Dockerfile)
+# installs requirements.lock (runtime closure) only. pyproject.toml is the
+# human-edited source; regen BOTH locks together (commands are in the header
+# of each lock file) so their shared pins agree.
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
 # python:3.15.2-slim already supports --require-hashes (>= 8.0).
-COPY pyproject.toml requirements.lock requirements-pyright.lock ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock \
+COPY pyproject.toml requirements-dev.lock requirements-pyright.lock ./
+RUN pip install --no-cache-dir --require-hashes -r requirements-dev.lock \
     && pip install --no-cache-dir --require-hashes -r requirements-pyright.lock
 
 # =============================================================================

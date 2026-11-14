@@ -371,8 +371,8 @@ export async function getDataProviders() {
 **Withdrawing a migration:** never turn an already-applied migration into a no-op without a forward migration that removes what it created. Databases that ran it keep that schema, fresh databases never get it, and later migrations collide with the difference. Fresh-database tests cannot see this, so add a rehearsal that applies the residue to a disposable database at the prior revision and upgrades to head (see `api/tests/e2e/platform/test_builder_residue_migration_rehearsal.py`), and register the tombstone in `api/tests/unit/test_migration_tombstones.py`.
 
 **After adding a Python dependency:**
-1. Add to `pyproject.toml` (root)
-2. Regenerate the lock: `docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "pip install --quiet --require-hashes -r requirements-piptools.lock && pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml"`
+1. Add to `pyproject.toml` (root) — runtime deps to `dependencies`, test/lint/debug-only deps to `[project.optional-dependencies] dev` (issue #1379: the prod image installs the runtime closure only)
+2. Regenerate BOTH locks together (same index snapshot, so shared pins agree): `docker run --rm -v "$PWD":/repo -w /repo python:3.14-slim sh -c "pip install --quiet --require-hashes -r requirements-piptools.lock && pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml && pip-compile --generate-hashes --extra dev --output-file=requirements-dev.lock pyproject.toml"`
 3. Rebuild and restart: `docker compose -f docker-compose.dev.yml up --build api`
 
 **Merging main into a long-lived branch:** Two specific gotchas:
