@@ -15,7 +15,7 @@ pytest.importorskip("opentelemetry")
 import opentelemetry.metrics._internal as metrics_internal
 from opentelemetry import trace as trace_api
 from opentelemetry.sdk.metrics.export import MetricExporter, MetricExportResult
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor
+from opentelemetry.sdk.trace.export import BatchSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
     InMemorySpanExporter,
 )
@@ -136,7 +136,8 @@ def test_child_spans_export_under_supplied_parent(monkeypatch):
     with tracer.start_as_current_span("child.http", context=_parent_context()) as span:
         span.set_attribute("bifrost.child", True)
 
-    # SimpleSpanProcessor exports on span end: no flush needed.
+    # The child batches, so flush explicitly before asserting.
+    trace_api.get_tracer_provider().force_flush()
     (recorded,) = sink.get_finished_spans()
     assert recorded.name == "child.http"
     assert recorded.attributes["bifrost.child"] is True
@@ -164,21 +165,23 @@ def test_never_raises_when_setup_fails(monkeypatch):
     assert result is False
 
 
-def test_child_exporter_is_synchronous_and_scrubbing(monkeypatch):
+def test_child_batches_and_scrubs(monkeypatch):
     _fake_exporters(monkeypatch)
     monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
     assert telemetry.init_telemetry_in_child() is True
 
+    # A batch processor keeps collector latency out of the child's execution;
+    # its thread is created after fork, so nothing inherited is reused.
     processors = trace_api.get_tracer_provider()._active_span_processor._span_processors
-    assert not any(isinstance(p, BatchSpanProcessor) for p in processors)
     (processor,) = processors
-    assert isinstance(processor, SimpleSpanProcessor)
+    assert isinstance(processor, BatchSpanProcessor)
     assert isinstance(processor.span_exporter, telemetry.ScrubbingSpanExporter)
 
     (sink,) = _FakeSpanExporter.created
     with trace_api.get_tracer(__name__).start_as_current_span("auto") as span:
         span.set_attribute("db.statement", "SELECT token FROM sessions")
         span.set_attribute("db.system", "postgresql")
+    trace_api.get_tracer_provider().force_flush()
     (recorded,) = sink.get_finished_spans()
     assert "db.statement" not in recorded.attributes
     assert recorded.attributes["db.system"] == "postgresql"

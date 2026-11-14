@@ -182,8 +182,8 @@ def test_export_scrubs_statements_urls_and_exceptions():
     assert attrs["db.system"] == "postgresql"
     assert attrs["http.route"] == "/api/files/{path:path}"
     assert attrs["redis.search.total"] == 1
-    assert len(exported.events) == 1
-    assert exported.events[0].attributes == {"exception.type": "ValueError"}
+    # No span events survive export, exception or otherwise.
+    assert list(exported.events) == []
     assert exported.status.status_code == StatusCode.ERROR
     assert not exported.status.description
 
@@ -226,6 +226,8 @@ def test_sampler_env_is_honoured(monkeypatch):
     sampler = telemetry._sampler()
     assert isinstance(sampler, ParentBased)
     assert isinstance(sampler._root, TraceIdRatioBased)
+    # The argument must actually reach the sampler, not just its type.
+    assert getattr(sampler._root, "_rate", None) == 0.25
 
     # Unknown values fall back instead of failing.
     monkeypatch.setenv("OTEL_TRACES_SAMPLER", "not-a-sampler")
@@ -236,10 +238,15 @@ def test_baggage_never_crosses_the_queue():
     """Only W3C trace context is propagated; baggage is not (design decision 5)."""
     from opentelemetry import baggage
 
+    from opentelemetry.context import attach, detach
+
     message: dict = {}
     with _tracer().start_as_current_span("parent"):
-        baggage.set_baggage("tenant_secret", "must-not-travel")
-        inject_traceparent(message)
+        token = attach(baggage.set_baggage("tenant_secret", "must-not-travel"))
+        try:
+            inject_traceparent(message)
+        finally:
+            detach(token)
     assert "traceparent" in message
     assert "baggage" not in message
 
@@ -270,3 +277,22 @@ def test_run_span_carries_contract_attributes():
     assert span.attributes["bifrost.workflow.id"] == "wf-1"
     assert span.attributes["bifrost.queue.wait_s"] == 1.235
     assert "bifrost.run.id" not in span.attributes
+
+
+def test_health_exclusions_match_the_url_the_instrumentor_builds():
+    """ASGI matches excluded_urls against scheme://host/path, not the path."""
+    import re
+
+    patterns = telemetry._DEFAULT_EXCLUDED_URLS.split(",")
+    compiled = [re.compile(p) for p in patterns]
+
+    def excluded(url: str) -> bool:
+        return any(p.search(url) for p in compiled)
+
+    base = "http://api:8000"
+    assert excluded(f"{base}/health")
+    assert excluded(f"{base}/health/ready")
+    assert excluded(f"{base}/ready")
+    # Must not over-match a real route that merely starts with the prefix.
+    assert not excluded(f"{base}/healthz-report")
+    assert not excluded(f"{base}/api/health")

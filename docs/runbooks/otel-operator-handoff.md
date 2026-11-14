@@ -79,8 +79,9 @@ never filters.
    `request → <family> publish → <handler> process → run.<handler>`,
    linked by the W3C `traceparent` the platform injects at dispatch.
    Note: spans emitted inside the forked execution child arrive as their
-   own traces (roots) until the work payload carries that context;
-   correlate them by execution id.
+   own traces (roots) until the work payload carries that context. They
+   currently carry **no** execution id, so they cannot be correlated to a
+   run yet — treat them as unattributed child traces.
 3. Trigger a failing run; confirm the span status is `ERROR` with a bare
    exception-type description and no message, stack, or events.
 4. Confirm DB spans carry operation/host but no statement text, HTTP spans

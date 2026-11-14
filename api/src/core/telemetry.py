@@ -29,7 +29,6 @@ import time
 from typing import Any, Iterator
 
 from opentelemetry import metrics, trace
-from opentelemetry.sdk.trace import Event as SdkEvent
 from opentelemetry.sdk.trace import ReadableSpan
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 from opentelemetry.trace import SpanKind, Status, StatusCode
@@ -93,7 +92,11 @@ _TYPE_ONLY_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 # Health probes are not interesting spans; anchored so a path like
 # "/healthz-report" is not excluded by accident, and overridable by the
 # standard env var.
-_DEFAULT_EXCLUDED_URLS = r"^/health(/|$),^/ready$"
+# The ASGI layer matches these against "scheme://host/path", so the
+# patterns must tolerate that prefix and cannot be anchored to "/".
+_DEFAULT_EXCLUDED_URLS = (
+    r"^https?://[^/]+/health(?:/|$),^https?://[^/]+/ready$"
+)
 
 _initialized = False
 _child_initialized = False
@@ -157,22 +160,6 @@ def _scrub_attributes(attributes: Any) -> dict[str, Any]:
     }
 
 
-def _scrub_event(event: Any) -> Any:
-    # Exception events carry message + stack trace. Keep the fact that an
-    # exception of a given type occurred; drop everything else.
-    if getattr(event, "name", None) == "exception":
-        attrs = getattr(event, "attributes", None) or {}
-        kept = (
-            {"exception.type": attrs["exception.type"]}
-            if "exception.type" in attrs
-            else {}
-        )
-        return SdkEvent(
-            name=event.name, attributes=kept, timestamp=event.timestamp
-        )
-    return event
-
-
 def _scrub_status(status: Any) -> Any:
     if (
         status is not None
@@ -207,7 +194,7 @@ class ScrubbingSpanExporter(SpanExporter):
                 parent=s.parent,
                 resource=s.resource,
                 attributes=_scrub_attributes(s.attributes),
-                events=[_scrub_event(e) for e in (s.events or [])],
+                events=[],
                 links=s.links,
                 kind=s.kind,
                 status=_scrub_status(s.status),
@@ -388,14 +375,22 @@ def init_telemetry_in_child() -> bool:
             OTLPSpanExporter,
         )
         from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+        from opentelemetry.sdk.trace.export import BatchSpanProcessor
 
         _discard_inherited_providers()
         trace.set_tracer_provider(
             TracerProvider(resource=_resource("run"), sampler=_sampler())
         )
+        # A batch processor is safe here because its thread is created in
+        # the child, after fork, and the caller flushes with a bounded wait
+        # before exit. It keeps collector latency out of workflow execution:
+        # a synchronous processor would make every SDK HTTP call wait.
         trace.get_tracer_provider().add_span_processor(
-            SimpleSpanProcessor(ScrubbingSpanExporter(OTLPSpanExporter()))
+            BatchSpanProcessor(
+                ScrubbingSpanExporter(OTLPSpanExporter()),
+                schedule_delay_millis=2000,
+                max_export_batch_size=256,
+            )
         )
         _instrument_http_client()
     except Exception as e:  # noqa: BLE001 — telemetry must never break a run

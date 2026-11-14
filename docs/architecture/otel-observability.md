@@ -188,11 +188,14 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   dispatch message does not reach the child and it cannot attach to the
   executor's `run.<handler>` span. Closing it means widening the work
   payload and its senders — a contained change, deliberately not bundled
-  with this one. Until then, correlate child spans by execution id.
+  with this one. Those child spans also carry no `bifrost.execution.id`,
+  so they cannot be attributed to a run yet; they are unattributed child
+  traces, not merely disconnected ones.
 - `ScrubbingSpanExporter` enforces the export privacy boundary in-process
   before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
-  returned document fields, HTTP query strings, exception events, and
-  SDK-generated error descriptions never leave the process. Covered by
+  returned document fields, HTTP query strings, **all span events**, and
+  SDK-generated error descriptions never leave the process. A failing span
+  keeps the ERROR status and the exception type; nothing else. Covered by
   `api/tests/unit/test_telemetry.py`.
 
 ## Test seams
