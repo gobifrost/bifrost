@@ -1,0 +1,14 @@
+{
+  "key": "pr:1341",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Settings Workers shows external container capacity bounds, worker states, last reconcile result and recent fencing, and validates scaling edits against the provider before saving.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1341",
+      "Contributor summary for the admin Settings capacity card and pre-save provider validation; no customer upgrade action or security disclosure is required."
+    ]
+  }
+}

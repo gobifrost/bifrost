@@ -23,6 +23,56 @@ class KubernetesStatus(BaseModel):
     configured: bool
 
 
+class WorkerCapacityBounds(BaseModel):
+    """Live bounds advertised by the configured external capacity provider."""
+
+    protocol_version: int
+    scope: str
+    worker_version: str
+    memory_limit_bytes: int
+    max_workers: int
+    max_lifetime_seconds: int
+
+
+class ExternalWorkerStateCounts(BaseModel):
+    """Managed external workers by canonical state."""
+
+    reserved: int = 0
+    starting: int = 0
+    ready: int = 0
+    draining: int = 0
+    lost: int = 0
+    retired: int = 0
+
+
+class WorkerCapacityLastPass(BaseModel):
+    """The last completed external reconcile pass known to this API."""
+
+    finished_at: datetime | None = None
+    ok: bool = False
+    error: str | None = None
+
+
+class WorkerCapacityRecentLoss(BaseModel):
+    """Terminal external workers fenced recently, grouped by end reason."""
+
+    reason: str
+    count: int = 0
+
+
+class WorkerCapacityStatus(BaseModel):
+    """Everything Settings needs for the external capacity card."""
+
+    configured: bool
+    endpoint: str | None = None
+    bounds: WorkerCapacityBounds | None = None
+    error: str | None = None
+    policy_mismatches: list[str] = Field(default_factory=list)
+    workers: ExternalWorkerStateCounts = Field(default_factory=ExternalWorkerStateCounts)
+    last_pass: WorkerCapacityLastPass = Field(default_factory=WorkerCapacityLastPass)
+    recent_losses: list[WorkerCapacityRecentLoss] = Field(default_factory=list)
+
+
 class KubernetesExecutionJobType(BaseModel):
     """One isolatable job type with its per-type state."""
 

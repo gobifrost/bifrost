@@ -1,0 +1,64 @@
+# Bifrost execution-capacity provider on Cloudflare Containers. Fill in
+# name, scope, worker image digest, and API origin, then:
+#   npm ci && npm test && npx wrangler deploy
+#
+# The API remains canonical owner of demand, admission, claims, progress,
+# cancellation, and recovery (PostgreSQL). This worker only prepares, starts,
+# and deletes container incarnations by exact resource UID. It never receives
+# job payloads and never chooses which jobs execute.
+name = "bifrost-worker-capacity"
+main = "./capacity.mjs"
+compatibility_date = "2026-11-10"
+
+[[containers]]
+binding = "WORKER_CONTAINER"
+# Pinned by digest before any deployment. Never deploy `:latest` or a bare
+# tag: the API fences enrollment to the exact reported worker build version.
+image = "ghcr.io/CHANGEME/bifrost-worker-dev@sha256:CHANGEME"
+instances = 2
+
+[vars]
+# Opaque provider scope. Must equal BIFROST_WORKER_CAPACITY_TOKEN's scope on
+# the API side (`BIFROST_WORKER_CAPACITY_URL` points at this worker).
+SCOPE = "CHANGEME"
+# Must equal the embedded version of the pinned worker image; the API fences
+# any reservation whose build differs.
+WORKER_VERSION = "CHANGEME"
+# Pinned worker image. Required by readSettings; must match the digest in the
+# [[containers]] binding above.
+WORKER_IMAGE = "ghcr.io/CHANGEME/bifrost-worker-dev@sha256:CHANGEME"
+MEMORY_LIMIT_BYTES = "2147483648"
+MAX_WORKERS = "4"
+MAX_LIFETIME_SECONDS = "21600"
+# Canonical API origin this capacity serves. HTTPS only, no path/query/fragment.
+API_ORIGIN = "https://api.example.invalid"
+# Runtime environment stamped into every container. Must be a valid API
+# environment: development, testing, or production.
+ENVIRONMENT = "production"
+# Control secret shared with the API (its BIFROST_SECRET_KEY). The API
+# verifies launcher hellos against its own key: a mismatch means no worker
+# ever enrolls. 32-512 printable ASCII; set via `wrangler secret put`.
+# WORKER_SECRET_KEY = (secret; never commit)
+# Private platform endpoints, reached through WORKER_NETWORK targets below.
+# Every hostname here (database, Redis, private S3) must be covered by a
+# target or the container fails closed at start instead of running degraded.
+DATABASE_URL = "postgresql+asyncpg://CHANGEME@db.internal:5432/bifrost"
+DATABASE_URL_SYNC = "postgresql://CHANGEME@db.internal:5432/bifrost"
+REDIS_URL = "redis://cache.internal:6379/0"
+S3_ENDPOINT_URL = "http://s3.internal:8333"
+S3_ACCESS_KEY = "CHANGEME"
+# S3_SECRET_KEY = (secret; never commit)
+S3_BUCKET = "bifrost"
+# S3_REGION = "us-east-1"  # optional; omit for private S3 without regions
+# Private TCP transport: JSON array of {hostname, address (127.x loopback),
+# port, url (wss://gateway/network/<id>)}. One entry per private hostname
+# above (database, Redis, private S3). No entry may carry credentials.
+WORKER_NETWORK = "CHANGEME"
+# Dedicated bearer for the network gateway (32-256 URL-safe characters).
+# WORKER_NETWORK_TOKEN = (secret; never commit)
+# Optional JSON object of edge-auth headers when the API origin sits behind
+# Cloudflare Access (e.g. {"CF-Access-Client-Id": "...", ...}).
+# WORKER_CONTROL_HEADERS = ""
+
+[observability]
+enabled = true

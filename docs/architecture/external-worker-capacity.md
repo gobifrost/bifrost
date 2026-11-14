@@ -170,3 +170,25 @@ cannot be replaced by another controller's older unlocked snapshot. Unmeasured
 startup failures remain visible in the existing lost-worker state; another
 attempt at that size is paced by the configured startup window, rather than
 being disabled permanently. Other resource sizes can still make progress.
+
+## Direct PostgreSQL Coordination; Hyperdrive Excluded
+
+Canonical coordination requires **direct** PostgreSQL connections. Cloudflare
+Hyperdrive — a Workers binding that fronts a PostgreSQL origin with pooling and
+caching — must never carry admission, fencing, dispatch, claims, progress,
+cancellation, or scheduler leases.
+
+The reason is a capability gap, not a preference: Hyperdrive does not support
+PostgreSQL advisory locks or `LISTEN`/`NOTIFY`, and every coordination path in
+this document depends on them. A provider wired through Hyperdrive therefore
+appears to work in development and fails at runtime, in the code path that
+decides which worker receives which job.
+
+Providers reach private origins through the authenticated TCP transport, which
+preserves original database hostnames for TLS verification; see
+`docs/architecture/worker-private-transport.md`. A Cloudflare Container or
+Worker consuming this protocol connects the same way.
+
+This boundary applies to every PostgreSQL origin provider, not only Cloudflare.
+A separately scoped, implemented read-only consumer does not change it: adding
+read-only queries alongside coordination still leaves coordination direct.

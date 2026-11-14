@@ -174,6 +174,14 @@ class Settings(BaseSettings):
         ge=10,
         description="Seconds a launched worker may take to become ready",
     )
+    pool_provisioning_grace_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "Seconds a starting external worker's provider absence (GET 404) "
+            "is tolerated before its reservation is fenced as lost"
+        ),
+    )
     pool_worker_memory_request_mib: int = Field(default=512, ge=1)
     pool_worker_cpu_request: str = Field(default="250m")
     pool_worker_cpu_limit: str = Field(default="2")

@@ -16,7 +16,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
@@ -24,6 +24,7 @@ import httpx
 from sqlalchemy import exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models import WorkerCapacityProfile
 from src.jobs.platform.catalog import (
     PlatformJobMetadata,
     get_platform_job_metadata,
@@ -32,13 +33,19 @@ from src.jobs.platform.catalog import (
 from src.jobs.platform.policy import PlatformJobPolicy
 from src.models.contracts.kubernetes import (
     POLICY_BOUNDS,
+    ExternalWorkerStateCounts,
     KubernetesExecutionJobType,
     KubernetesExecutionSettings,
     KubernetesPolicyProvenance,
     KubernetesPolicyValues,
     KubernetesStatus,
+    WorkerCapacityBounds,
+    WorkerCapacityLastPass,
+    WorkerCapacityRecentLoss,
+    WorkerCapacityStatus,
 )
 from src.models.orm.config import SystemConfig
+from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.deployment_environment import (
     KUBERNETES_POLICY_VARIABLES,
@@ -527,8 +534,6 @@ class KubernetesExecutionService:
                 key=lambda definition: definition.job_type,
             )
         ]
-        from src.models.orm.execution_workers import ExecutionWorker
-
         ready_fast = await self.session.scalar(select(func.count()).select_from(ExecutionWorker).where(
             ExecutionWorker.form == "job",
             ExecutionWorker.execution_lane == "fast_path",
@@ -553,6 +558,146 @@ class KubernetesExecutionService:
         from src.services.kubernetes_control import may_manage_jobs
 
         return KubernetesStatus(configured=await may_manage_jobs(get_settings()))
+
+    async def capacity_status(self) -> WorkerCapacityStatus:
+        """Live external-capacity card: provider bounds, policy fit, workers.
+
+        Read-only: it fetches the provider's current capabilities and counts
+        canonical external workers, but changes nothing. An unreachable or
+        nonconforming provider is reported in ``error``, never raised, so the
+        Settings page can show it next to the policy it would reject.
+        """
+        from src.config import get_settings
+
+        settings = get_settings()
+        url = settings.worker_capacity_url
+        token = settings.worker_capacity_token
+        if not url or not token:
+            states = await self.session.execute(
+                select(ExecutionWorker.state, func.count())
+                .where(ExecutionWorker.form == "external")
+                .group_by(ExecutionWorker.state)
+            )
+            return WorkerCapacityStatus(
+                configured=False,
+                workers=ExternalWorkerStateCounts(
+                    **{state: count for state, count in states.all()
+                       if state in ExternalWorkerStateCounts.model_fields}
+                ),
+                last_pass=await _external_reconcile_state(self.session),
+                recent_losses=await _external_recent_losses(self.session, None),
+            )
+        fetched: WorkerCapacityProfile | None = None
+        error: str | None = None
+        try:
+            async with httpx.AsyncClient() as http:
+                client = ExternalCapacityClient(url, token.get_secret_value(), http=http)
+                fetched = await client.profile()
+        except CapacityProtocolError:
+            error = "Capacity provider response is invalid"
+        except ValueError:
+            error = "Capacity provider endpoint is invalid"
+        except httpx.HTTPError:
+            error = "Capacity provider is unreachable"
+        profile = fetched
+        clauses = [ExecutionWorker.form == "external"]
+        if profile is not None:
+            clauses.append(ExecutionWorker.capacity_scope == profile.scope)
+        states = await self.session.execute(
+            select(ExecutionWorker.state, func.count())
+            .where(*clauses)
+            .group_by(ExecutionWorker.state)
+        )
+        counts = ExternalWorkerStateCounts(
+            **{state: count for state, count in states.all()
+               if state in ExternalWorkerStateCounts.model_fields}
+        )
+        if profile is None:
+            return WorkerCapacityStatus(
+                configured=True, endpoint=url, workers=counts, error=error,
+                last_pass=await _external_reconcile_state(self.session),
+                recent_losses=await _external_recent_losses(self.session, None),
+            )
+        policy = await load_kubernetes_policy(self.session)
+        mismatches: list[str] = []
+        try:
+            validate_external_policy(
+                policy, profile,
+                max_lifetime_seconds=settings.pool_max_lifetime_seconds,
+            )
+        except ValueError as exc:
+            mismatches.append(str(exc))
+        return WorkerCapacityStatus(
+            configured=True,
+            endpoint=url,
+            bounds=WorkerCapacityBounds(
+                protocol_version=profile.protocol_version,
+                scope=profile.scope,
+                worker_version=profile.worker_version,
+                memory_limit_bytes=profile.memory_limit_bytes,
+                max_workers=profile.max_workers,
+                max_lifetime_seconds=profile.max_lifetime_seconds,
+            ),
+            policy_mismatches=mismatches,
+            workers=counts,
+            last_pass=await _external_reconcile_state(self.session),
+            recent_losses=await _external_recent_losses(self.session, profile.scope),
+        )
+
+
+async def _external_reconcile_state(db: AsyncSession) -> WorkerCapacityLastPass:
+    """The last external reconcile pass outcome, if any controller wrote one."""
+    from src.services.worker_pool.external_controller import (
+        RECONCILE_STATE_CATEGORY,
+        RECONCILE_STATE_KEY,
+    )
+
+    row = await db.scalar(
+        select(SystemConfig.value_json).where(
+            SystemConfig.category == RECONCILE_STATE_CATEGORY,
+            SystemConfig.key == RECONCILE_STATE_KEY,
+            SystemConfig.organization_id.is_(None),
+        )
+    )
+    payload = row if isinstance(row, dict) else {}
+    finished = payload.get("finished_at")
+    try:
+        finished_at = (
+            datetime.fromisoformat(finished) if isinstance(finished, str) else None
+        )
+    except ValueError:
+        finished_at = None
+    error = payload.get("error")
+    return WorkerCapacityLastPass(
+        finished_at=finished_at,
+        ok=bool(payload.get("ok")) and finished_at is not None,
+        error=error if isinstance(error, str) else None,
+    )
+
+
+async def _external_recent_losses(
+    db: AsyncSession, scope: str | None,
+) -> list[WorkerCapacityRecentLoss]:
+    """Terminal external workers fenced in the last day, grouped by reason."""
+    clauses = [
+        ExecutionWorker.form == "external",
+        ExecutionWorker.state.in_(("lost", "retired")),
+        ExecutionWorker.ended_at.is_not(None),
+        ExecutionWorker.ended_at >= datetime.now(timezone.utc) - timedelta(hours=24),
+    ]
+    if scope is not None:
+        clauses.append(ExecutionWorker.capacity_scope == scope)
+    rows = (
+        await db.execute(
+            select(ExecutionWorker.end_reason, func.count())
+            .where(*clauses)
+            .group_by(ExecutionWorker.end_reason)
+        )
+    ).all()
+    return [
+        WorkerCapacityRecentLoss(reason=reason or "unknown", count=count)
+        for reason, count in sorted(rows, key=lambda row: (-row[1], row[0] or ""))
+    ]
 
 
 async def decide_execution_backend(

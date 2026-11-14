@@ -10691,7 +10691,7 @@
     "cli": 180,
     "manifest": 16,
     "mcp": 100,
-    "rest": 723,
+    "rest": 724,
     "sdk": 21
   },
   "schema_version": 1,
@@ -11876,6 +11876,13 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/admin/ai/profiles/{profile_id}/verify",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/admin/kubernetes/capacity",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
 	getKubernetesStatus: vi.fn(),
 	getKubernetesExecution: vi.fn(),
+	getWorkerCapacityStatus: vi.fn(),
 	updateKubernetesExecution: vi.fn(),
 	updateKubernetesPolicy: vi.fn(),
 }));
@@ -17,6 +18,8 @@ vi.mock("@/services/kubernetes", async (importOriginal) => ({
 		mocks.getKubernetesExecution(...args),
 	getKubernetesStatus: (...args: unknown[]) =>
 		mocks.getKubernetesStatus(...args),
+	getWorkerCapacityStatus: (...args: unknown[]) =>
+		mocks.getWorkerCapacityStatus(...args),
 	updateKubernetesExecution: (...args: unknown[]) =>
 		mocks.updateKubernetesExecution(...args),
 	updateKubernetesPolicy: (...args: unknown[]) =>
@@ -73,6 +76,10 @@ describe("KubernetesSettings", () => {
 		mocks.updateKubernetesExecution.mockReset();
 		mocks.updateKubernetesPolicy.mockReset();
 		mocks.getKubernetesExecution.mockResolvedValue(settings);
+		mocks.getWorkerCapacityStatus.mockReset();
+		mocks.getWorkerCapacityStatus.mockResolvedValue({
+			configured: false,
+		});
 	});
 
 	it("keeps scaling and concurrency editable without Kubernetes, while disabling pod controls", async () => {
@@ -511,5 +518,81 @@ describe("KubernetesSettings", () => {
 		expect(
 			await screen.findByText(/1 of 2 reserved workers ready/),
 		).toHaveTextContent("Reserved capacity is not fully available yet.");
+	});
+
+	it("shows the external capacity card with provider bounds", async () => {
+		mocks.getWorkerCapacityStatus.mockResolvedValue({
+			configured: true,
+			endpoint: "https://capacity.example.invalid",
+			bounds: {
+				protocol_version: 1,
+				scope: "test-scope",
+				worker_version: "test-build",
+				memory_limit_bytes: 4096 * 1024 * 1024,
+				max_workers: 2,
+				max_lifetime_seconds: 900,
+			},
+			policy_mismatches: [],
+			workers: { ready: 1 },
+		});
+		render(<KubernetesSettings />);
+		expect(
+			await screen.findByText("External Workers"),
+		).toBeInTheDocument();
+		expect(screen.getByText("test-scope")).toBeVisible();
+	});
+
+	it("blocks provider-mismatched scaling before saving", async () => {
+		const user = userEvent.setup();
+		mocks.getWorkerCapacityStatus.mockResolvedValue({
+			configured: true,
+			bounds: {
+				protocol_version: 1,
+				scope: "test-scope",
+				worker_version: "test-build",
+				memory_limit_bytes: 4096 * 1024 * 1024,
+				max_workers: 2,
+				max_lifetime_seconds: 900,
+			},
+			policy_mismatches: [],
+			workers: {},
+		});
+		render(<KubernetesSettings />);
+		const memory = await screen.findByLabelText("Worker Memory (MiB)");
+		await user.clear(memory);
+		await user.type(memory, "1024");
+		await user.click(screen.getByRole("button", { name: "Save Scaling" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Must be 4096 MiB to match the provider.",
+		);
+		expect(mocks.updateKubernetesPolicy).not.toHaveBeenCalled();
+	});
+
+	it("blocks a Fast Path reservation while external capacity is active", async () => {
+		const user = userEvent.setup();
+		mocks.getWorkerCapacityStatus.mockResolvedValue({
+			configured: true,
+			bounds: {
+				protocol_version: 1,
+				scope: "test-scope",
+				worker_version: "test-build",
+				memory_limit_bytes: 2048 * 1024 * 1024,
+				max_workers: 6,
+				max_lifetime_seconds: 900,
+			},
+			policy_mismatches: [],
+			workers: {},
+		});
+		render(<KubernetesSettings />);
+		const reservation = await screen.findByLabelText(
+			"Reserved Fast Path Workers",
+		);
+		await user.clear(reservation);
+		await user.type(reservation, "1");
+		await user.click(screen.getByRole("button", { name: "Save Scaling" }));
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"External capacity does not support Fast Path reservations.",
+		);
+		expect(mocks.updateKubernetesPolicy).not.toHaveBeenCalled();
 	});
 });

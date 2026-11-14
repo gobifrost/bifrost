@@ -5946,6 +5946,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/kubernetes/capacity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Worker Capacity Status */
+        get: operations["get_worker_capacity_status_api_admin_kubernetes_capacity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/kubernetes/execution": {
         parameters: {
             query?: never;
@@ -19002,6 +19019,42 @@ export interface components {
             [key: string]: unknown;
         };
         /**
+         * ExternalWorkerStateCounts
+         * @description Managed external workers by canonical state.
+         */
+        ExternalWorkerStateCounts: {
+            /**
+             * Reserved
+             * @default 0
+             */
+            reserved: number;
+            /**
+             * Starting
+             * @default 0
+             */
+            starting: number;
+            /**
+             * Ready
+             * @default 0
+             */
+            ready: number;
+            /**
+             * Draining
+             * @default 0
+             */
+            draining: number;
+            /**
+             * Lost
+             * @default 0
+             */
+            lost: number;
+            /**
+             * Retired
+             * @default 0
+             */
+            retired: number;
+        };
+        /**
          * FileChange
          * @description Represents a changed file in Git
          */
@@ -31475,6 +31528,71 @@ export interface components {
             rate_limited_count_24h: number;
         };
         /**
+         * WorkerCapacityBounds
+         * @description Live bounds advertised by the configured external capacity provider.
+         */
+        WorkerCapacityBounds: {
+            /** Protocol Version */
+            protocol_version: number;
+            /** Scope */
+            scope: string;
+            /** Worker Version */
+            worker_version: string;
+            /** Memory Limit Bytes */
+            memory_limit_bytes: number;
+            /** Max Workers */
+            max_workers: number;
+            /** Max Lifetime Seconds */
+            max_lifetime_seconds: number;
+        };
+        /**
+         * WorkerCapacityLastPass
+         * @description The last completed external reconcile pass known to this API.
+         */
+        WorkerCapacityLastPass: {
+            /** Finished At */
+            finished_at?: string | null;
+            /**
+             * Ok
+             * @default false
+             */
+            ok: boolean;
+            /** Error */
+            error?: string | null;
+        };
+        /**
+         * WorkerCapacityRecentLoss
+         * @description Terminal external workers fenced recently, grouped by end reason.
+         */
+        WorkerCapacityRecentLoss: {
+            /** Reason */
+            reason: string;
+            /**
+             * Count
+             * @default 0
+             */
+            count: number;
+        };
+        /**
+         * WorkerCapacityStatus
+         * @description Everything Settings needs for the external capacity card.
+         */
+        WorkerCapacityStatus: {
+            /** Configured */
+            configured: boolean;
+            /** Endpoint */
+            endpoint?: string | null;
+            bounds?: components["schemas"]["WorkerCapacityBounds"] | null;
+            /** Error */
+            error?: string | null;
+            /** Policy Mismatches */
+            policy_mismatches?: string[];
+            workers?: components["schemas"]["ExternalWorkerStateCounts"];
+            last_pass?: components["schemas"]["WorkerCapacityLastPass"];
+            /** Recent Losses */
+            recent_losses?: components["schemas"]["WorkerCapacityRecentLoss"][];
+        };
+        /**
          * WorkerMetricPoint
          * @description A single time-series data point for the memory chart.
          */
@@ -43281,6 +43399,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["KubernetesStatus"];
+                };
+            };
+        };
+    };
+    get_worker_capacity_status_api_admin_kubernetes_capacity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerCapacityStatus"];
                 };
             };
         };

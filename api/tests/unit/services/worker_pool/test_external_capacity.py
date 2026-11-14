@@ -468,3 +468,85 @@ async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db,
     async with db.context() as session:
         assert await work_dispatch.largest_budget(session) == 512 * MIB
     assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None
+
+
+async def test_starting_worker_tolerates_transient_provider_absence(db, capacity):
+    await _accept_pool_run()
+    [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+    assert capacity.provider.starts == [str(worker_id)]
+    # The provider read is eventually consistent: a GET absence for a
+    # just-started incarnation waits out the provisioning grace instead of
+    # fencing the reservation.
+    del capacity.provider.resources[str(worker_id)]
+
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.state == "starting"
+        assert worker.end_reason is None
+    # Once older than the grace, the same absence is fenced as before.
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        worker.created_at = controller._now() - timedelta(
+            seconds=SETTINGS.pool_provisioning_grace_seconds + 1
+        )
+        await session.commit()
+
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert (worker.state, worker.end_reason) == ("lost", "provider_resource_stopped")
+
+
+async def test_starting_worker_explicit_stopped_fences_at_once(db, capacity):
+    await _accept_pool_run()
+    [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+    capacity.provider.resources[str(worker_id)]["state"] = "stopped"
+
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert (worker.state, worker.end_reason) == ("lost", "provider_resource_stopped")
+
+
+async def test_reconcile_state_records_ok_then_error(db, capacity):
+    from sqlalchemy import delete
+
+    from src.models.orm.config import SystemConfig
+
+    async with db.context() as session:
+        await session.execute(delete(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))
+        await session.commit()
+
+    await external_controller.record_external_reconcile_state(
+        ok=True, error=None, scope="test-provider",
+    )
+    async with db.context() as session:
+        rows = (await session.scalars(select(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))).all()
+        assert len(rows) == 1
+        assert rows[0].value_json["ok"] is True
+        assert rows[0].value_json["scope"] == "test-provider"
+        assert rows[0].value_json["finished_at"]
+
+    await external_controller.record_external_reconcile_state(
+        ok=False, error="Capacity provider is unreachable", scope="test-provider",
+    )
+    async with db.context() as session:
+        rows = (await session.scalars(select(SystemConfig).where(
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "external_reconcile_state",
+        ))).all()
+        assert len(rows) == 1, "one global row is updated, never duplicated"
+        assert rows[0].value_json["ok"] is False
+        assert rows[0].value_json["error"] == "Capacity provider is unreachable"

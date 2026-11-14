@@ -1,0 +1,13 @@
+{
+  "key": "pr:1331",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal Cloudflare Containers capacity-provider recipe and reference runbook for the already-merged external worker capacity protocol; no user-visible behavior, capability, or customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1331",
+      "Contributor disposition for internal architecture and provider recipe; no runtime behavior change. Follows closed #1313, reworked so the Hyperdrive helpers were dropped and the boundary folded into docs/architecture/external-worker-capacity.md. See the PR discussion for review state."
+    ]
+  }
+}

@@ -10,6 +10,7 @@ import {
 	KubernetesRequestError,
 	getKubernetesExecution,
 	getKubernetesStatus,
+	getWorkerCapacityStatus,
 	updateKubernetesExecution,
 	updateKubernetesPolicy,
 } from "./kubernetes";
@@ -105,6 +106,37 @@ describe("kubernetes service", () => {
 		expect(url).toBe("/api/admin/kubernetes/policy");
 		expect(init.method).toBe("PUT");
 		expect(JSON.parse(init.body as string)).toEqual({ max_workers: 10 });
+	});
+
+	it("loads the external capacity status", async () => {
+		authFetchMock.mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					configured: true,
+					endpoint: "https://capacity.example.invalid",
+					bounds: {
+						protocol_version: 1,
+						scope: "test-scope",
+						worker_version: "test-build",
+						memory_limit_bytes: 4294967296,
+						max_workers: 2,
+						max_lifetime_seconds: 900,
+					},
+					policy_mismatches: [],
+					workers: { ready: 1 },
+				}),
+				{ status: 200 },
+			),
+		);
+
+		await expect(getWorkerCapacityStatus()).resolves.toMatchObject({
+			configured: true,
+			bounds: expect.objectContaining({ scope: "test-scope" }),
+		});
+		expect(authFetchMock).toHaveBeenCalledWith(
+			"/api/admin/kubernetes/capacity",
+			undefined,
+		);
 	});
 
 	it("reports which field a validation error is about", async () => {
