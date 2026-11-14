@@ -1,0 +1,13 @@
+{
+  "key": "pr:1406",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal provider implementation kit: a shared capacity-provider core, a black-box conformance suite, and migrated emulator adapters under deploy/capacity. No customer-visible behavior, API, or configuration change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1406",
+      "No api/ or client/ source is modified; only deploy/capacity is added. The conformance suite is exercised by its own selftest, which asserts it accepts a correct provider and rejects one that performs a duplicate physical launch."
+    ]
+  }
+}
