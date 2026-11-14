@@ -79,12 +79,14 @@ class Ecs:
         try:
             self.call("StopTask", {"cluster": cluster, "task": arn, "reason": "capacity release"})
         except RuntimeError:
+            # The task may already be gone; release is a best-effort stop.
             pass
 
     def deregister(self, arn: str) -> None:
         try:
             self.call("DeregisterTaskDefinition", {"taskDefinition": arn})
         except RuntimeError:
+            # Already deregistered: the desired end state holds.
             pass
 
 

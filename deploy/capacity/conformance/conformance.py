@@ -356,7 +356,6 @@ def main() -> int:
         assert status >= 400, f"deleted worker accepted a start ({status})"
 
     # ---- scope --------------------------------------------------------
-    other = str(uuid.uuid4())
     @suite.case("scope: foreign scope cannot see or act on a worker")
     def _() -> None:
         status, _doc = suite.c.request("GET", f"/v1/workers/{prepared}", scope="other-scope")
@@ -388,7 +387,8 @@ def main() -> int:
             status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
             assert status == 200, f"status {status}"
             uid = doc["resource_uid"]
-            assert suite.c.delete(restart_worker, uid)[0] == 200
+            status, _ = suite.c.delete(restart_worker, uid)
+            assert status == 200, f"delete status {status}"
             suite.hook.call("restart-provider", {"scope": args.scope})
             time.sleep(5)
             status, after = suite.c.get(restart_worker)

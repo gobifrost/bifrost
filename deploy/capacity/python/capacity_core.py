@@ -46,8 +46,6 @@ STATE_FAILED = "failed"
 
 LIVE_STATES = (STATE_PREPARED, STATE_STARTING, STATE_RUNNING)
 
-_UID_ALPHABET = "0123456789abcdef"
-
 
 def new_resource_uid() -> str:
     """Opaque, pattern-safe UID: `^[a-zA-Z0-9._:-]+$` excludes cloud paths.
@@ -73,13 +71,17 @@ class Observation:
 
 
 class CapacityAdapter(Protocol):
-    def prepare(self, ctx: "Context", spec: dict[str, Any]) -> dict[str, Any]: ...
+    def prepare(self, ctx: "Context", spec: dict[str, Any]) -> dict[str, Any]:
+        """Create the resource, or return a ledger-only handle when the cloud cannot create without starting."""
 
-    def start(self, ctx: "Context", handle: dict[str, Any]) -> Observation: ...
+    def start(self, ctx: "Context", handle: dict[str, Any]) -> Observation:
+        """Start the prepared resource and report what was observed."""
 
-    def observe(self, ctx: "Context", handle: dict[str, Any]) -> Observation: ...
+    def observe(self, ctx: "Context", handle: dict[str, Any]) -> Observation:
+        """Read the resource's current state without changing it."""
 
-    def release(self, ctx: "Context", handle: dict[str, Any]) -> Observation: ...
+    def release(self, ctx: "Context", handle: dict[str, Any]) -> Observation:
+        """Delete the resource and confirm it is gone."""
 
 
 @dataclass(frozen=True)
@@ -375,7 +377,7 @@ class CapacityEngine:
                 row = self._settle(worker_id, row, prior)
                 return resource_doc(self.cfg, worker_id, row, row["state"])
             if prior.state in (STATE_STOPPED, STATE_FAILED):
-                row = self._settle(worker_id, row, Observation(STATE_STOPPED, prior.handle, prior.out_of_memory))
+                self._settle(worker_id, row, Observation(STATE_STOPPED, prior.handle, prior.out_of_memory))
                 raise ProtocolError(409, "worker incarnation already stopped")
 
         row["intent"] = "start"
@@ -591,6 +593,9 @@ def build_server(cfg: ProviderConfig, engine: CapacityEngine) -> ThreadingHTTPSe
     server.engine = engine  # type: ignore[attr-defined]
     server.cfg = cfg  # type: ignore[attr-defined]
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    # The API dials HTTPS providers only; do not offer deprecated protocol
+    # versions such as TLS 1.0/1.1 to that client.
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
     ctx.load_cert_chain(cfg.tls_cert_file, cfg.tls_key_file)
     server.socket = ctx.wrap_socket(server.socket, server_side=True)
     return server
@@ -607,5 +612,6 @@ def serve(cfg: ProviderConfig, adapter: CapacityAdapter, store_path: str | None 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        # Ctrl-C is the documented way to stop a foreground provider.
         pass
     return 0
