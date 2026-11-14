@@ -134,6 +134,11 @@ dependencies = [
     # =========================================================================
     # Exact pins are intentional: the Harness API is still pre-1.0 and is the
     # execution boundary for every Bifrost agent surface.
+    #
+    # #1381 audit: tiktoken arrives only transitively through this pin (it has
+    # no direct import anywhere under api/src or api/shared). It can only be
+    # dropped by forking the dependency, so it stays; trimming it is an
+    # upstream concern, not an image-size lever we own.
     "pydantic-ai-slim[openai,anthropic,google,retries]==2.66.0",
     "pydantic-ai-harness==0.66.0",
     "pydantic-monty==1.5.0",  # Local language sandbox for Automatic CodeMode
@@ -153,6 +158,10 @@ dependencies = [
     # =========================================================================
     # CLI / TUI
     # =========================================================================
+    # KEEP (#1381 audit): imported only by api/bifrost/tui/*, always via lazy
+    # TTY-gated imports (cli.py, credentials.py) — workers/API never load it —
+    # but the image ships the `bifrost` CLI shim, so interactive verbs
+    # (watch/sync/progress/file-select/connection-select) need it at runtime.
     "textual",  # TUI framework used by bifrost CLI (file_select, progress, sync, watch)
 
     # =========================================================================
