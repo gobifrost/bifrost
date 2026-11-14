@@ -6,7 +6,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createEngine, ProtocolError, STATE } from "./capacity-core.mjs";
-import { containerStartEnv, inactivityTimeoutMs } from "./capacity.mjs";
+import {
+    containerStartEnv,
+    inactivityTimeoutMs,
+    readSettings,
+    WorkerContainer,
+} from "./capacity.mjs";
 
 const PROFILE = {
     scope: "test-scope",
@@ -243,4 +248,112 @@ test("inactivity timeout covers the worker lifetime within the platform cap", ()
     assert.equal(inactivityTimeoutMs(7200), 7_800_000);
     assert.equal(inactivityTimeoutMs(6 * 3600), 21_600_000);
     assert.equal(inactivityTimeoutMs(604800), 21_600_000);
+});
+
+// --- container Durable Object, auth, and template -------------------------
+
+const ENV = {
+    SCOPE: "test-scope",
+    WORKER_VERSION: "test-build-1",
+    MEMORY_LIMIT_BYTES: String(2 * 1024 ** 3),
+    MAX_WORKERS: "2",
+    MAX_LIFETIME_SECONDS: "3600",
+    STARTING_GRACE_MS: "0",
+    CAPACITY_TOKEN: "t".repeat(32),
+    WORKER_CONTAINER_ENV: "{}",
+};
+
+function fakeContainer({ running = false, destroyFails = false } = {}) {
+    const calls = { start: 0, holds: [], destroy: 0, monitors: 0 };
+    const container = {
+        running,
+        start(options) {
+            calls.start += 1;
+            calls.options = options;
+            this.running = true;
+        },
+        async setInactivityTimeout(ms) {
+            calls.holds.push(ms);
+        },
+        async destroy() {
+            calls.destroy += 1;
+            if (destroyFails) throw new Error("destroy failed");
+            this.running = false;
+        },
+        monitor() {
+            calls.monitors += 1;
+            return new Promise(() => {});
+        },
+    };
+    const ctx = {
+        container,
+        waitUntil: () => {},
+        blockConcurrencyWhile: (fn) => fn(),
+    };
+    return { ctx, calls };
+}
+
+const startRequest = () =>
+    new Request("https://do/start", {
+        method: "POST",
+        body: JSON.stringify({ env: { A: "1" }, entrypoint: ["python", "-m", "src.worker.main"] }),
+    });
+
+test("start launches once and holds the container open", async () => {
+    const { ctx, calls } = fakeContainer();
+    const worker = new WorkerContainer(ctx, ENV);
+    const response = await worker.fetch(startRequest());
+    assert.equal(response.status, 200);
+    assert.equal(calls.start, 1);
+    // Without this the container is stopped as soon as the DO goes idle.
+    assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
+    assert.equal(calls.monitors, 1);
+});
+
+test("a repeated start holds the container without launching a second one", async () => {
+    const { ctx, calls } = fakeContainer();
+    const worker = new WorkerContainer(ctx, ENV);
+    await worker.fetch(startRequest());
+    const response = await worker.fetch(startRequest());
+    assert.equal(response.status, 200);
+    assert.equal(calls.start, 1);
+    // The retry must re-apply the hold: a failed first attempt may have started
+    // the container and died before setting it.
+    assert.equal(calls.holds.length, 2);
+});
+
+test("destroy on a stopped container succeeds without signalling", async () => {
+    const { ctx, calls } = fakeContainer({ running: false });
+    const worker = new WorkerContainer(ctx, ENV);
+    const response = await worker.fetch(
+        new Request("https://do/destroy", { method: "POST" }),
+    );
+    assert.equal(response.status, 200);
+    assert.equal(calls.destroy, 0);
+});
+
+test("a failing destroy is reported instead of looking like a deletion", async () => {
+    const { ctx } = fakeContainer({ running: true, destroyFails: true });
+    const worker = new WorkerContainer(ctx, ENV);
+    const response = await worker.fetch(
+        new Request("https://do/destroy", { method: "POST" }),
+    );
+    // The ledger must not record `deleted` for a container that still runs.
+    assert.equal(response.status, 500);
+});
+
+test("settings refuse a deployment with no capacity token", () => {
+    // Without this the bearer comparison accepts the literal "Bearer undefined".
+    assert.throws(() => readSettings({ ...ENV, CAPACITY_TOKEN: undefined }));
+    assert.throws(() => readSettings({ ...ENV, CAPACITY_TOKEN: "short" }));
+    assert.doesNotThrow(() => readSettings(ENV));
+});
+
+test("the shipped template declares an instance type that can unpack the image", async () => {
+    const { readFile } = await import("node:fs/promises");
+    const toml = await readFile(new URL("./wrangler.toml", import.meta.url), "utf8");
+    // Omitting instance_type creates a 256 MiB / 2 GB app that fails to pull.
+    assert.match(toml, /instance_type\s*=\s*"standard-1"/);
+    assert.match(toml, /max_instances\s*=\s*[1-9]/);
+    assert.match(toml, /MAX_LIFETIME_SECONDS\s*=\s*"21600"/);
 });

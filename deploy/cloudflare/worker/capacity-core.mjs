@@ -1,8 +1,8 @@
 // Shared capacity protocol engine (JavaScript).
 //
 // One implementation of the contract in docs/architecture/external-worker-capacity.md,
-// so this provider shares semantics with the Python core under
-// deploy/capacity/python/ instead of drifting from it.
+// alongside the Python core shipped by the contract change, so the two providers
+// share semantics instead of drifting.
 //
 // Deliberately pure: no fetch, no Durable Objects, no Cloudflare APIs. The
 // transport (capacity.mjs) and the durable store are injected, which is what

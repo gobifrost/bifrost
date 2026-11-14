@@ -42,6 +42,8 @@ image = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
 # the workload, and every instance fails with ImagePullError. It must be at
 # least as large as MEMORY_LIMIT_BYTES, with disk space for the unpacked image.
 instance_type = "standard-1"
+# Must be at least MAX_WORKERS: a start beyond the application's instance count
+# is refused even when the scope registry would admit it.
 max_instances = 4
 
 [[migrations]]
@@ -55,18 +57,19 @@ new_sqlite_classes = ["WorkerLedger", "ScopeRegistry", "WorkerContainer"]
 SCOPE = "CHANGEME"
 # Must equal the embedded version of the pinned worker image.
 WORKER_VERSION = "CHANGEME"
-# Must equal the digest declared in the [[containers]] block above.
-WORKER_IMAGE = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
 MEMORY_LIMIT_BYTES = "2147483648"
 MAX_WORKERS = "4"
+# Cloudflare caps a container's inactivity timeout at six hours.
 MAX_LIFETIME_SECONDS = "21600"
 STARTING_GRACE_MS = "30000"
-# Canonical API origin this capacity serves. HTTPS only, no path or query.
-API_ORIGIN = "https://api.example.invalid"
 # The worker container's environment: API/DB/Redis/S3 selectors and the shared
-# secret, as a JSON object. Never commit real secrets here; use a secret or an
-# uncommitted .dev.vars override for local runs.
+# secret, as a JSON object. This is plaintext configuration: put real values in
+# a Worker secret or an uncommitted .dev.vars override, never in the committed
+# file.
 WORKER_CONTAINER_ENV = '{}'
+
+# CAPACITY_TOKEN is a Worker secret, not a var: `npx wrangler secret put CAPACITY_TOKEN`.
+# The provider refuses to serve when it is missing.
 
 [observability]
 enabled = true

@@ -29,20 +29,19 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 |---|---|
 | `SCOPE` | Opaque provider scope. Must match the API side exactly. |
 | `WORKER_VERSION` | Must equal the image's embedded build version. |
-| `WORKER_IMAGE` | Must equal the digest in the `[[containers]]` block. |
 | `MEMORY_LIMIT_BYTES` | Fixed worker memory; the API's scaling policy must match. |
 | `instance_type` (in `[[containers]]`) | Real memory and disk for each container; must be at least `MEMORY_LIMIT_BYTES` and large enough for the unpacked image. |
+| `max_instances` (in `[[containers]]`) | Must be at least `MAX_WORKERS`: a start beyond the application's instance count is refused even when the scope registry would admit it. |
 | `MAX_WORKERS` | Ceiling this provider will run. |
-| `MAX_LIFETIME_SECONDS` | Upper bound the API may request. |
-| `API_ORIGIN` | Canonical API origin, HTTPS only. |
-| `WORKER_CONTAINER_ENV` | JSON object of the worker container's environment. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. |
+| `MAX_LIFETIME_SECONDS` | Upper bound the API may request; cannot exceed six hours, which is the platform's inactivity-timeout maximum. |
+| `WORKER_CONTAINER_ENV` | JSON object of the worker container's environment. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. This is plaintext configuration, so put real values in a secret or an uncommitted `.dev.vars`. |
+| `CAPACITY_TOKEN` | **Secret**, not a var: `npx wrangler secret put CAPACITY_TOKEN`, 32–512 non-space characters. The provider answers `503` rather than serving unauthenticated when it is missing. |
 
-`WORKER_VERSION` and `WORKER_IMAGE` disagreeing with the image is the most
-common misconfiguration; it produces enrollments that are accepted and then
-fenced out. A container that reaches the API and is closed with
-`1008 policy violation` during `hello` is this fence: check that
-`WORKER_CONTAINER_ENV` does not carry a stale `BIFROST_VERSION` shadowing the
-image's own build.
+`WORKER_VERSION` disagreeing with the image is the most common misconfiguration;
+it produces enrollments that are accepted and then fenced out. A container that
+reaches the API and is closed with `1008 policy violation` during `hello` is this
+fence: check that `WORKER_CONTAINER_ENV` does not carry a stale `BIFROST_VERSION`
+shadowing the image's own build.
 
 The second most common is a container smaller than the workload. The Containers
 application's size comes from `instance_type` in the `[[containers]]` block, not
@@ -100,10 +99,13 @@ node --test capacity.test.mjs
 
 The contract tests cover prepare idempotency, conflicting reservations, UID
 fencing, duplicate starts, lost start responses, terminal fences, tombstones,
-and the capacity ceiling. They run without a deployment because the engine is
-pure.
+and the capacity ceiling. They also cover the container-facing seams: the
+launch environment (including the hostname the launcher identity requires) and
+the inactivity timeout. They run without a deployment.
 
-Then run the shared black-box conformance suite against the deployed endpoint:
+Then run the shared black-box conformance suite from the contract change that
+ships it (`deploy/capacity/conformance/conformance.py` in that change; it is not
+part of this provider) against the deployed endpoint:
 
 ```bash
 python deploy/capacity/conformance/conformance.py \
@@ -134,9 +136,11 @@ launch identities.
 
 ## Rotation
 
-**Token.** Deploy the new token alongside the old, update the API controllers,
-confirm workers still reconcile, then revoke the old token. Rotating by
-replacing the secret in place will fail enrollment until the API matches.
+**Token.** The provider accepts exactly one token, so rotation is a coordinated
+replacement and there is a short window where one side rejects the other. Set the
+new secret on the provider and update `BIFROST_WORKER_CAPACITY_TOKEN` on the API
+controllers in the same change, then confirm workers reconcile. Replacing only
+one side fails enrollment or returns `401` until both match.
 
 **Scope.** A scope change is a provider replacement, not an edit. Drain and
 confirm deletion of every worker on the old scope, then deploy under the new
@@ -146,7 +150,8 @@ workers that the new scope cannot address.
 ## Limits
 
 - Container cold start is not guaranteed to fit the API's start timeout for a
-  large image. Measure it; see the runbook's acceptance section.
+  large image. Measure it against the API's start timeout before relying on the
+  default.
 - This provider does not implement Fast Path isolation or isolated builds.
 - Cost tracks container lifetime; use `MAX_LIFETIME_SECONDS` and the API's idle
   drain to bound it.

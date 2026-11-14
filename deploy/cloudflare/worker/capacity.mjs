@@ -44,7 +44,7 @@ export function inactivityTimeoutMs(maxLifetimeSeconds) {
     return Math.min(maxLifetimeSeconds + 600, 6 * 3600) * 1000;
 }
 
-function readSettings(env) {
+export function readSettings(env) {
     const text = (name, pattern) => {
         const value = env[name];
         if (typeof value !== "string" || !pattern.test(value)) {
@@ -64,10 +64,13 @@ function readSettings(env) {
         workerVersion: text("WORKER_VERSION", /^.{1,100}$/),
         memoryLimitBytes: integer("MEMORY_LIMIT_BYTES", 64 * 1024 * 1024, 128 * 1024 ** 3),
         maxWorkers: integer("MAX_WORKERS", 1, 1000),
-        maxLifetimeSeconds: integer("MAX_LIFETIME_SECONDS", 60, 604800),
-        image: text("WORKER_IMAGE", /^\S+$/),
-        apiOrigin: text("API_ORIGIN", /^https:\/\/[^\s]+$/),
+        // Cloudflare caps a container's inactivity timeout at six hours, so a
+        // declared lifetime beyond that cannot be held open.
+        maxLifetimeSeconds: integer("MAX_LIFETIME_SECONDS", 60, 6 * 3600),
         startingGraceMs: integer("STARTING_GRACE_MS", 0, 600_000),
+        // Required. Without it the bearer comparison would accept the literal
+        // string "Bearer undefined".
+        token: text("CAPACITY_TOKEN", /^[^\s]{32,512}$/),
     };
 }
 
@@ -168,10 +171,18 @@ export class WorkerContainer {
     constructor(ctx, env) {
         this.ctx = ctx;
         this.env = env;
-        // The inactivity timeout does not survive a DO restart, so re-apply it
-        // when this instance starts next to an already-running container.
+        // Neither the inactivity timeout nor an exit observer survives a DO
+        // restart, so re-establish both when this instance starts next to an
+        // already-running container. A failure here must not reset the object.
         if (ctx.container?.running) {
-            void ctx.blockConcurrencyWhile(() => this.holdOpen());
+            void ctx.blockConcurrencyWhile(async () => {
+                try {
+                    await this.holdOpen();
+                } catch (error) {
+                    console.error("capacity container hold failed", String(error));
+                }
+                this.observeExit();
+            });
         }
     }
 
@@ -195,35 +206,52 @@ export class WorkerContainer {
         await this.container.setInactivityTimeout(inactivityTimeoutMs(lifetime));
     }
 
+    // Log the exit so a container that dies during startup is observable.
+    // Without this the DO only ever knows `running`, and a crash before
+    // enrollment is indistinguishable from a slow start.
+    observeExit() {
+        if (this._observing) return;
+        this._observing = true;
+        this.ctx.waitUntil(
+            this.container.monitor().then(
+                () => ({ code: 0, message: null }),
+                (error) => ({
+                    code: Number.isInteger(error?.exitCode) ? error.exitCode : null,
+                    message: String(error?.message ?? error).slice(0, 200),
+                }),
+            ).then((record) => {
+                this._observing = false;
+                console.log("capacity container exit", JSON.stringify(record));
+            }),
+        );
+    }
+
     async fetch(request) {
         const url = new URL(request.url);
         try {
             if (url.pathname === "/start") {
                 const body = await request.json();
+                if (this.container.running) {
+                    // A repeated start is a retry, not a second launch. Re-apply
+                    // the hold, since a previous attempt may have started the
+                    // container and failed before doing so.
+                    await this.holdOpen();
+                    this.observeExit();
+                    return json(200, { running: true });
+                }
                 this.container.start({
                     env: body.env ?? {},
                     entrypoint: body.entrypoint ?? [],
                     enableInternet: true,
                 });
                 await this.holdOpen();
-                // Log the exit so a container that dies during startup is
-                // observable. Without this the DO only ever knows `running`,
-                // and a crash before enrollment is indistinguishable from a
-                // slow start until the reservation is lost.
-                this.ctx.waitUntil(
-                    this.container.monitor().then(
-                        () => ({ code: 0, message: null }),
-                        (error) => ({
-                            code: Number.isInteger(error?.exitCode) ? error.exitCode : null,
-                            message: String(error?.message ?? error).slice(0, 200),
-                        }),
-                    ).then((record) => {
-                        console.log("capacity container exit", JSON.stringify(record));
-                    }),
-                );
+                this.observeExit();
                 return json(200, { running: this.container.running === true });
             }
             if (url.pathname === "/destroy") {
+                // An already-stopped container is a completed destroy: the
+                // caller asked for absence, not for a signal.
+                if (!this.container.running) return json(200, { running: false });
                 await this.container.destroy();
                 return json(200, { running: false });
             }
@@ -285,7 +313,11 @@ export class WorkerLedger {
                 return { state: STATE.STARTING, handle: { container: workerId } };
             },
             async destroy() {
-                await stub().fetch("https://do/destroy", { method: "POST" });
+                const response = await stub().fetch("https://do/destroy", { method: "POST" });
+                // A failed destroy must not be recorded as a deletion: the
+                // container would keep running, billed and untracked, above
+                // MAX_WORKERS.
+                if (!response.ok) throw new Error("container destroy failed");
                 return { state: STATE.DELETED };
             },
             async observe(row) {
@@ -357,7 +389,7 @@ export default {
         }
 
         const authorization = request.headers.get("Authorization") ?? "";
-        if (authorization !== `Bearer ${env.CAPACITY_TOKEN}`) {
+        if (authorization !== `Bearer ${settings.token}`) {
             return json(401, { error: "unauthorized" });
         }
 
@@ -385,6 +417,20 @@ export default {
 
         const ledger = env.WORKER_LEDGER.getByName(`${settings.scope}:${workerId}`);
         const response = await ledger.fetch(request);
+
+        if (request.method === "PUT" && !response.ok) {
+            // A rejected prepare must not keep the slot it reserved, or a
+            // version fence or validation failure permanently shrinks capacity.
+            // Release only when the ledger holds no record: a retry of an
+            // existing reservation is not a new allocation.
+            const existing = await ledger.fetch(new Request(url, { method: "GET" }));
+            if (existing.status === 404) {
+                await registry.fetch("https://do/release", {
+                    method: "POST",
+                    body: JSON.stringify({ worker_id: workerId }),
+                });
+            }
+        }
 
         if (request.method === "DELETE" && response.ok) {
             // Release only after the deletion is durable: freeing the slot
