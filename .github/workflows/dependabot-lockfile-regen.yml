@@ -1,15 +1,18 @@
-# Auto-regenerate requirements.lock on Dependabot PRs.
+# Auto-regenerate requirements locks on Dependabot PRs.
 #
 # Why: PR #112 pinned every pip dep by sha256 in `requirements.lock`, installed
-# with `pip install --require-hashes`. Dependabot only edits `pyproject.toml`
-# — it does not regenerate the lock — so every Dependabot Python bump leaves
-# the lock stale and CI fails until a maintainer regenerates it by hand.
+# with `pip install --require-hashes`. Issue #1379 split the dev-only closure
+# (test/lint/debug) into `requirements-dev.lock` (`--extra dev`); the
+# production image installs `requirements.lock` (runtime closure) while
+# dev/CI install the dev lock. Dependabot only edits `pyproject.toml`
+# — it regenerates neither lock — so every Dependabot Python bump leaves
+# the locks stale and CI fails until a maintainer regenerates them by hand.
 #
 # This workflow detects Dependabot PRs that touch `pyproject.toml`,
-# regenerates `requirements.lock` with the same `pip-compile --generate-hashes`
-# command documented at the top of the lock file, and pushes the regenerated
-# lock back onto the PR branch so the PR's CI re-runs against the updated
-# lock; `dependabot-auto-merge.yml` takes over from there.
+# regenerates both locks with the same `pip-compile --generate-hashes`
+# commands documented at the top of each lock file, and pushes the
+# regenerated locks back onto the PR branch so the PR's CI re-runs against
+# the updated locks; `dependabot-auto-merge.yml` takes over from there.
 #
 # Pushing as a GitHub App, not GITHUB_TOKEN: per GitHub's docs on triggering a
 # workflow from a workflow, "events triggered by the GITHUB_TOKEN will not
@@ -39,13 +42,13 @@
 #
 # Ordering / token exposure: the App token is minted (and even the secrets
 # are checked) only *after* the regen step has already run, and only when
-# `requirements.lock` actually changed. The checkout step uses the ambient
+# a lock file actually changed. The checkout step uses the ambient
 # read-only GITHUB_TOKEN with `persist-credentials: false`, and the regen
-# step's container sees only three copied files (never the checkout or
+# step's container sees only four copied files (never the checkout or
 # `.git`) because `pip-compile` can run arbitrary sdist build code from the
 # PR's own dependency set. The App token (scoped to this repository and
 # `contents: write`) only exists after that, in a second, separate checkout
-# (`push-tree/`) that never runs package code; it commits the copied lock
+# (`push-tree/`) that never runs package code; it commits the copied locks
 # and pushes with actions/checkout's standard persisted credentials.
 #
 # Known consequence (unavoidable, not new): once *any* non-Dependabot actor
@@ -61,7 +64,7 @@
 # needs read access to the base repo; the push authenticates separately with
 # the App installation token, not the job's own GITHUB_TOKEN.
 
-name: Regen requirements.lock for Dependabot
+name: Regen requirements locks for Dependabot
 
 on:
   pull_request:
@@ -92,11 +95,14 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name }}
           persist-credentials: false
 
-      - name: Regenerate requirements.lock
+      - name: Regenerate requirements locks
         # Use the same Python minor as api/Dockerfile's FROM line (3.15-slim).
         # Hash sets are tied to the Python version that resolved them, so
-        # regenerating with a different minor would produce a lock the
-        # production build can't install with --require-hashes.
+        # regenerating with a different minor would produce locks the
+        # production build can't install with --require-hashes. Both locks
+        # compile in ONE container run (same index snapshot) so their shared
+        # pins agree: requirements.lock is the base (runtime closure),
+        # requirements-dev.lock adds the dev-only `--extra dev` group.
         #
         # pip-tools itself is bootstrapped from `requirements-piptools.lock`
         # (a tiny hash-pinned lock that only contains pip-tools + transitive
@@ -107,22 +113,24 @@ jobs:
         # No credentials are present in this working tree at this point
         # (see the header comment) — pip-compile may execute PR-controlled
         # sdist build scripts, and there is nothing here worth exfiltrating.
-        # Only the three inputs/outputs are mounted — never the checkout or
+        # Only the four inputs/outputs are mounted — never the checkout or
         # .git — so build code can't plant git hooks or config that would run
         # in the push step, where the App token is in the environment.
         run: |
           work="$(mktemp -d)"
-          cp pyproject.toml requirements-piptools.lock requirements.lock "$work/"
+          cp pyproject.toml requirements-piptools.lock requirements.lock requirements-dev.lock "$work/"
           docker run --rm -v "$work":/work -w /work python:3.15.2-slim@sha256:65a65fc7b30b06cb6df4930fd4650697cb23f4c2698ab81fc87e4b031bc36928 sh -c "
             pip install --quiet --require-hashes -r requirements-piptools.lock
             pip-compile --generate-hashes --output-file=requirements.lock pyproject.toml
+            pip-compile --generate-hashes --extra dev --output-file=requirements-dev.lock pyproject.toml
           "
           cp "$work/requirements.lock" requirements.lock
+          cp "$work/requirements-dev.lock" requirements-dev.lock
 
-      - name: Check whether requirements.lock changed
+      - name: Check whether requirements locks changed
         id: diff
         run: |
-          if [[ -n "$(git status --porcelain requirements.lock)" ]]; then
+          if [[ -n "$(git status --porcelain requirements.lock requirements-dev.lock)" ]]; then
             echo "changed=true" >> "$GITHUB_OUTPUT"
           else
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -135,7 +143,7 @@ jobs:
           APP_PRIVATE_KEY: ${{ secrets.DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY }}
         run: |
           if [[ -z "$APP_ID" || -z "$APP_PRIVATE_KEY" ]]; then
-            echo "::error::requirements.lock changed but DEPENDABOT_LOCKFILE_APP_ID and/or DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY are not set as Dependabot secrets (Settings > Secrets and variables > Dependabot). This workflow needs a GitHub App installation token to push the regenerated lockfile — GITHUB_TOKEN pushes do not trigger the PR's CI. See the header comment in this file for setup steps." >&2
+            echo "::error::requirements locks changed but DEPENDABOT_LOCKFILE_APP_ID and/or DEPENDABOT_LOCKFILE_APP_PRIVATE_KEY are not set as Dependabot secrets (Settings > Secrets and variables > Dependabot). This workflow needs a GitHub App installation token to push the regenerated lockfiles — GITHUB_TOKEN pushes do not trigger the PR's CI. See the header comment in this file for setup steps." >&2
             exit 1
           fi
 
@@ -166,15 +174,16 @@ jobs:
           token: ${{ steps.app-token.outputs.token }}
           path: push-tree
 
-      - name: Commit and push the regenerated lock
+      - name: Commit and push the regenerated locks
         if: steps.diff.outputs.changed == 'true'
         env:
           HEAD_REF: ${{ github.head_ref }}
         run: |
           cp requirements.lock push-tree/requirements.lock
+          cp requirements-dev.lock push-tree/requirements-dev.lock
           cd push-tree
           git config user.name "bifrost-lockfile-bot[bot]"
           git config user.email "bifrost-lockfile-bot[bot]@users.noreply.github.com"
-          git add requirements.lock
-          git commit -m "chore(deps): regenerate requirements.lock for Dependabot bump"
+          git add requirements.lock requirements-dev.lock
+          git commit -m "chore(deps): regenerate requirements locks for Dependabot bump"
           git push origin "HEAD:$HEAD_REF"
