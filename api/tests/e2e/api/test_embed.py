@@ -3,6 +3,7 @@
 import base64
 import hashlib
 import hmac as hmac_module
+from urllib.parse import parse_qs, urlsplit
 from uuid import UUID, uuid4
 
 import jwt
@@ -53,7 +54,7 @@ class TestEmbedEntryPoint:
     def test_valid_hmac_returns_embed_token(self, e2e_client, test_app_with_secret):
         app = test_app_with_secret["app"]
         secret = test_app_with_secret["secret"]
-        params = {"agent_id": "42"}
+        params = {"agent_id": "42", "ticket_id": "T-1001"}
         hmac_val = _compute_hmac(params, secret)
 
         r = e2e_client.get(
@@ -61,10 +62,12 @@ class TestEmbedEntryPoint:
             params={**params, "hmac": hmac_val},
             follow_redirects=False,
         )
-        # Should redirect to /apps/{slug}#embed_token=<jwt>
+        # Should redirect to /apps/{slug}?ticket_id=...#embed_token=<jwt>
         assert r.status_code == 302, r.text
-        location = r.headers.get("location", "")
-        assert f"/apps/{app['slug']}#embed_token=" in location
+        redirect = urlsplit(r.headers["location"])
+        assert redirect.path == f"/apps/{app['slug']}"
+        assert parse_qs(redirect.query) == {"ticket_id": [params["ticket_id"]]}
+        assert redirect.fragment.startswith("embed_token=")
 
     def test_invalid_hmac_rejected(self, e2e_client, test_app_with_secret):
         app = test_app_with_secret["app"]
@@ -103,17 +106,22 @@ class TestEmbedEntryPoint:
         assert created.status_code == 201, created.text
 
         agent_id = "42"
+        ticket_id = "T-1001"
         r = e2e_client.get(
             f"/embed/apps/{app['slug']}",
             params={
                 "agent_id": agent_id,
+                "ticket_id": ticket_id,
                 "customer": "Fabrikam",
                 "hmac": _compute_halopsa_hmac(agent_id, secret),
             },
             follow_redirects=False,
         )
         assert r.status_code == 302, r.text
-        token = r.headers["location"].split("#embed_token=", 1)[1]
+        redirect = urlsplit(r.headers["location"])
+        assert redirect.path == f"/apps/{app['slug']}"
+        assert parse_qs(redirect.query) == {"ticket_id": [ticket_id]}
+        token = redirect.fragment.removeprefix("embed_token=")
         payload = jwt.decode(token, options={"verify_signature": False})
         assert payload["verified_context"] == {"agent_id": agent_id}
         assert payload["verified_params"] == {"agent_id": agent_id}
