@@ -10,7 +10,7 @@ Keep current owners and acceptance decisions. Read issue discussion and linked d
 
 Link implementation PRs to the issue they complete. Use Fixes #N only for that issue's full scope; use Part of #N for partial work. A tracking comment or checklist explains a relationship but is not a native dependency or a merge check.
 
-For dependent changes, use a native GitHub PR stack when all branches are in the same repository and their branch ancestry supports it. GitHub does not support cross-fork stacks. Do not retarget a contributor's PR or copy their branch just to make the display look stacked. Until a legitimate stack exists, record the prerequisite in the linked issues, preserve the review owner, and land changes in dependency order through existing protected checks. Independent PRs remain independent.
+For dependent changes, use a native GitHub PR stack when all branches are in the same repository and their branch ancestry supports it. GitHub does not support cross-fork stacks. Do not retarget a contributor's PR or copy their branch just to make the display look stacked. Until a legitimate stack exists, record the prerequisite in the linked issues, preserve the review owner, and land changes in dependency order through existing protected checks. Before queueing a dependent PR, verify its prerequisite outcomes and required code are delivered, or are included below it in a legitimate protected native stack. Issue links and closed checkboxes are not proof that the required code is present or verified. Independent PRs remain independent.
 
 ## Project And T3
 
