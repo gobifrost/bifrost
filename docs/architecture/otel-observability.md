@@ -153,9 +153,15 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
 
 - `src/core/telemetry.py` initializes providers only when
   `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise every helper is a no-op.
-- `stage_dispatch` injects `traceparent` into the dispatch message;
-  `PoolWorker._run_claim` extracts it and emits the `run.<handler>` span
-  with `started`/`duration`/`failed` metrics.
+- `stage_dispatch` wraps the publish in a `PRODUCER` span (`<family>
+  publish`, `messaging.system=postgresql`, `messaging.operation=publish`,
+  `messaging.destination.name=<family>`) and injects `traceparent` while
+  that span is current. `PoolWorker._run_claim` opens a `CONSUMER` span
+  (`<handler> process`, `messaging.operation=process`,
+  `messaging.message.id=<dispatch_id>`) parented to the extracted context,
+  and the `run.<handler>` span is its child. One trace therefore reads
+  request → publish → process → run. Covered by
+  `api/tests/unit/test_otel_messaging.py`.
 - Execution children re-initialize telemetry after `os.fork`:
   `init_telemetry_in_child` discards the inherited providers and installs
   fresh ones on a thread-free `SimpleSpanProcessor` (fork carries memory
@@ -164,10 +170,12 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   inside the child (its engine SDK HTTP calls) are therefore exported and
   scrubbed like any other span. Covered by
   `api/tests/unit/test_telemetry_fork.py`.
-- **Remaining gap:** the child's spans are roots. The work payload carries
-  no `traceparent`, so child-side extraction of the dispatch context (see
-  Process lifecycle above) would still be needed to make them children of
-  the executor's `run.<handler>` span.
+- **Remaining gap:** those child-side spans are roots. The work pipe
+  carries `(execution_id, context)` only, so the `traceparent` in the
+  dispatch message does not reach the child and it cannot attach to the
+  executor's `run.<handler>` span. Closing it means widening the work
+  payload and its senders — a contained change, deliberately not bundled
+  with this one. Until then, correlate child spans by execution id.
 - `ScrubbingSpanExporter` enforces the export privacy boundary in-process
   before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
   returned document fields, HTTP query strings, exception events, and
