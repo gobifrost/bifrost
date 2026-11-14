@@ -1,0 +1,19 @@
+{
+  "key": "pr:1422",
+  "classification": "highlight",
+  "entry_ids": [
+    "3e2e4a31-6793-404c-948e-0921d4c755bc"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1422"
+  },
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1422",
+      "Draft spike: exact Product Update copy and the permission transition require review before release."
+    ]
+  }
+}
