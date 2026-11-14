@@ -44,6 +44,17 @@ export function inactivityTimeoutMs(maxLifetimeSeconds) {
     return Math.min(maxLifetimeSeconds + 600, 6 * 3600) * 1000;
 }
 
+// The only setting container recovery needs. Kept separate from readSettings so
+// an unrelated misconfiguration cannot stop a restarted Durable Object from
+// re-applying the hold to a container that is already running.
+function lifetimeSeconds(env) {
+    const value = Number(env.MAX_LIFETIME_SECONDS);
+    if (!Number.isInteger(value) || value < 60 || value > 6 * 3600) {
+        throw new Error("invalid or missing MAX_LIFETIME_SECONDS");
+    }
+    return value;
+}
+
 export function readSettings(env) {
     const text = (name, pattern) => {
         const value = env[name];
@@ -66,7 +77,7 @@ export function readSettings(env) {
         maxWorkers: integer("MAX_WORKERS", 1, 1000),
         // Cloudflare caps a container's inactivity timeout at six hours, so a
         // declared lifetime beyond that cannot be held open.
-        maxLifetimeSeconds: integer("MAX_LIFETIME_SECONDS", 60, 6 * 3600),
+        maxLifetimeSeconds: lifetimeSeconds(env),
         startingGraceMs: integer("STARTING_GRACE_MS", 0, 600_000),
         // Required. Without it the bearer comparison would accept the literal
         // string "Bearer undefined".
@@ -205,8 +216,7 @@ export class WorkerContainer {
     // whole lifetime, so hold it open for that long (capped at the platform's
     // six-hour maximum).
     async holdOpen() {
-        const lifetime = readSettings(this.env).maxLifetimeSeconds;
-        await this.container.setInactivityTimeout(inactivityTimeoutMs(lifetime));
+        await this.container.setInactivityTimeout(inactivityTimeoutMs(lifetimeSeconds(this.env)));
     }
 
     // Log the exit so a container that dies during startup is observable.
@@ -325,6 +335,8 @@ export class WorkerLedger {
             },
             async observe(row) {
                 const response = await stub().fetch("https://do/status");
+                // A provider error is not evidence that the container stopped.
+                if (!response.ok) throw new Error("container status failed");
                 const { running } = await response.json();
                 if (running) return { state: STATE.RUNNING, handle: { container: workerId } };
                 // Not running. If a start was ever attempted this incarnation is
@@ -341,14 +353,24 @@ export class WorkerLedger {
 
     engine(workerId) {
         const settings = this.settings;
-        return createEngine({
-            profile: {
-                ...profileFor(settings),
-                starting_grace_ms: settings.startingGraceMs,
-            },
-            store: this.store(workerId),
-            runtime: this.runtime(workerId),
-        });
+        // One engine per worker per Durable Object instance. The engine
+        // serializes operations on an in-memory chain, so building a fresh one
+        // per request would let a concurrent delete and start interleave and
+        // resurrect a tombstone.
+        this._engines ??= new Map();
+        let engine = this._engines.get(workerId);
+        if (!engine) {
+            engine = createEngine({
+                profile: {
+                    ...profileFor(settings),
+                    starting_grace_ms: settings.startingGraceMs,
+                },
+                store: this.store(workerId),
+                runtime: this.runtime(workerId),
+            });
+            this._engines.set(workerId, engine);
+        }
+        return engine;
     }
 
     async fetch(request) {

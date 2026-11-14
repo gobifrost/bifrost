@@ -58,8 +58,13 @@ curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
   | jq '.result.configuration, .result.health'
 ```
 
-`instance_type` is fixed when the application is created; changing it later
-requires replacing the application.
+Cloudflare documents image and `instance_type` changes on the `default`
+scheduling policy as application rollouts, and the scheduling policy itself is
+immutable per application. With Wrangler 4.162.0 a redeploy did not apply either
+change to an existing application — the record kept the original size and image —
+while deleting and recreating the application did. So treat this as
+version-dependent: check `wrangler containers applications get` after a deploy,
+and if the configuration did not move, recreate the application.
 
 ## Diagnosing a container that never enrolls
 
@@ -75,9 +80,10 @@ When a container process exits, the provider logs one line:
 capacity container exit {"code":1,"message":"..."}
 ```
 
-Exit code `0` means the process ended on its own; a non-zero code is the
-container entrypoint failing. Watch for it with `npx wrangler tail` while a
-worker is being admitted.
+Exit code `0` means the main process ended without an error — including an
+intentional stop, so it is not proof that the process exited on its own. A
+non-zero code is the container entrypoint failing. Watch for it with
+`npx wrangler tail` while a worker is being admitted.
 
 One failure is specific to this platform. Docker and Kubernetes export
 `HOSTNAME`; Container runtimes generally do not, and Cloudflare does not. The

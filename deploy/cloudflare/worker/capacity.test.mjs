@@ -11,6 +11,7 @@ import {
     inactivityTimeoutMs,
     readSettings,
     WorkerContainer,
+    WorkerLedger,
 } from "./capacity.mjs";
 
 const PROFILE = {
@@ -356,4 +357,48 @@ test("the shipped template declares an instance type that can unpack the image",
     assert.match(toml, /instance_type\s*=\s*"standard-1"/);
     assert.match(toml, /max_instances\s*=\s*[1-9]/);
     assert.match(toml, /MAX_LIFETIME_SECONDS\s*=\s*"21600"/);
+});
+
+test("the ledger launches the container with the identity it needs", async () => {
+    let captured = null;
+    const env = {
+        ...ENV,
+        WORKER_ENTRYPOINT_JSON: '["python","-m","src.worker.main"]',
+        WORKER_CONTAINER: {
+            getByName: () => ({
+                fetch: async (_url, init) => {
+                    captured = JSON.parse(init.body);
+                    return new Response("{}", { status: 200 });
+                },
+            }),
+        },
+    };
+    const ledger = new WorkerLedger({}, env);
+    await ledger.runtime(WORKER).start({ worker_id: WORKER, resource_uid: "uid-1" });
+    // Guards the wiring: a launch without these never enrolls.
+    assert.equal(captured.env.BIFROST_WORKER_FORM, "external");
+    assert.equal(captured.env.BIFROST_WORKER_INCARNATION_ID, WORKER);
+    assert.equal(captured.env.BIFROST_WORKER_RESOURCE_UID, "uid-1");
+    assert.equal(captured.env.HOSTNAME, `cf-${WORKER}`);
+    assert.deepEqual(captured.entrypoint, ["python", "-m", "src.worker.main"]);
+});
+
+test("the ledger refuses to record a container destroy that failed", async () => {
+    const env = {
+        ...ENV,
+        WORKER_CONTAINER: {
+            getByName: () => ({ fetch: async () => new Response("{}", { status: 500 }) }),
+        },
+    };
+    const ledger = new WorkerLedger({}, env);
+    await assert.rejects(() => ledger.runtime(WORKER).destroy(), /destroy failed/);
+});
+
+test("a restarted container DO re-applies the hold without a full env", async () => {
+    const { ctx, calls } = fakeContainer({ running: true });
+    // Recovery must depend only on the timeout setting: an unrelated
+    // misconfiguration must not stop it from holding a running container.
+    new WorkerContainer(ctx, { MAX_LIFETIME_SECONDS: "3600" });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
 });
