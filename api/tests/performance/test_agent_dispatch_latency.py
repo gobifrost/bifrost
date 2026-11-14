@@ -7,7 +7,7 @@ provider. Run on the baseline and candidate stacks with the memory probe.
 import pytest
 
 from tests.e2e.platform.test_agent_runtime_boundary import (
-    test_api_agent_run_and_automatic_summary_use_real_dispatch_process as _run_agent,
+    test_workflow_authorized_agent_and_summary_use_real_dispatch_process as _run_agent,
 )
 
 pytestmark = pytest.mark.slow

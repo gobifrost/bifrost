@@ -1,0 +1,15 @@
+{
+  "key": "pr:1394",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Agents launched by workflows now retain the workflow’s declared permissions.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1394",
+      "https://github.com/gobifrost/bifrost/issues/1395",
+      "Native owner approved the exact proposed summary and protected merge: Proceed through merge."
+    ]
+  }
+}

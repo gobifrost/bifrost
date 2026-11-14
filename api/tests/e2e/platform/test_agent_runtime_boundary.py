@@ -22,6 +22,7 @@ from src.models.orm.ai_usage import AIUsage
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.models.orm.work_dispatches import WorkDispatch
 from tests.e2e.conftest import poll_until
+from tests.helpers.runtime_tokens import legacy_engine_token
 
 
 pytestmark = pytest.mark.e2e
@@ -133,7 +134,7 @@ async def _cleanup_fixture(
         await session.commit()
 
 
-def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
+def test_workflow_authorized_agent_and_summary_use_real_dispatch_process(
     e2e_client,
     platform_admin,
     async_session_factory,
@@ -143,6 +144,7 @@ def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
     profile_ids: list[UUID] = []
     agent_id: UUID | None = None
     run_id: UUID | None = None
+    permission_source: tuple | None = None
     original_summary_profile_id = asyncio.run(
         _summary_assignment_profile_id(async_session_factory)
     )
@@ -202,24 +204,28 @@ def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
                 "description": "Dispatch process fixture agent",
                 "system_prompt": "Reply with exactly ok.",
                 "access_level": "authenticated",
+                "organization_id": None,
                 "llm_profile_id": str(profile_ids[0]),
             },
         )
         assert agent.status_code == 201, agent.text
         agent_id = UUID(agent.json()["id"])
 
+        permission_source = asyncio.run(_workflow_agent_source(async_session_factory))
+        issued, _ = legacy_engine_token(execution_id=permission_source[0], timeout_seconds=300)
         submitted_at = time.perf_counter()
         enqueued = e2e_client.post(
             "/api/agent-runs/enqueue",
-            headers=platform_admin.headers,
+            headers={"Authorization": f"Bearer {issued}"},
             json={"agent_name": agent_name, "input": {"fixture": "dispatch"}},
         )
         assert enqueued.status_code == 202, enqueued.text
         run_id = UUID(enqueued.json()["run_id"])
+        asyncio.run(_assert_permission_source(async_session_factory, run_id, permission_source[1]))
 
         def completed_with_summary() -> dict | None:
             response = e2e_client.get(
-                f"/api/agent-runs/{run_id}", headers=platform_admin.headers
+                f"/api/agent-runs/{run_id}", headers={"Authorization": f"Bearer {issued}"}
             )
             if response.status_code != 200:
                 return None
@@ -268,6 +274,8 @@ def test_api_agent_run_and_automatic_summary_use_real_dispatch_process(
                 run_id=run_id,
             )
         )
+        if permission_source is not None:
+            asyncio.run(_cleanup_workflow_source(async_session_factory, permission_source))
 
 
 async def _agent_run_worker(async_session_factory, run_id: UUID, *, family: str = "agent_run") -> ExecutionWorker:
@@ -438,3 +446,52 @@ def test_agent_and_chat_runs_execute_on_a_remote_worker(
                 run_id=run_id,
             )
         )
+
+
+async def _workflow_agent_source(factory) -> tuple:
+    """Seed a live parent without dispatching a setup-only workflow job."""
+    from src.models.enums import ExecutionStatus
+    from src.models.orm.executions import Execution
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import Role, User
+    from src.models.orm.workflows import Workflow
+    from src.models.orm.workflow_permissions import WorkflowPermissionGrant
+    async with factory() as session:
+        org = Organization(name=f"Workflow source {uuid4().hex[:8]}", created_by="test")
+        role = Role(name=f"app-only-{uuid4().hex[:8]}", created_by="test")
+        session.add_all([org, role])
+        await session.flush()
+        user = User(email=f"app-only-{uuid4().hex}@example.test", name="App Only", organization_id=org.id, base_role_id=role.id)
+        workflow = Workflow(name=f"agent-source-{uuid4().hex[:8]}", function_name="run", path="workflows/agent_source.py", organization_id=org.id, permission_mode="restricted")
+        session.add_all([user, workflow])
+        await session.flush()
+        execution_id = uuid4()
+        execution = Execution(id=execution_id, workflow_name=workflow.name, workflow_id=workflow.id,
+                              status=ExecutionStatus.RUNNING, organization_id=org.id,
+                              run_user_id=user.id, executed_by=user.id, executed_by_name=user.name,
+                              started_by_user_id=user.id, root_execution_id=execution_id)
+        session.add_all([execution, *[WorkflowPermissionGrant(workflow_id=workflow.id, permission=p)
+                                      for p in ("agents.readbasic", "agents.execute")]])
+        await session.commit()
+        return execution.id, workflow.id, user.id, role.id, org.id
+
+
+async def _assert_permission_source(factory, run_id, workflow_id):
+    async with factory() as session:
+        run = await session.get(AgentRun, run_id)
+        assert run is not None and run.permission_workflow_id == workflow_id
+
+
+async def _cleanup_workflow_source(factory, source):
+    from src.models.orm.executions import Execution
+    from src.models.orm.organizations import Organization
+    from src.models.orm.users import Role, User
+    from src.models.orm.workflows import Workflow
+    from src.models.orm.workflow_permissions import WorkflowPermissionGrant
+    execution_id, workflow_id, user_id, role_id, org_id = source
+    async with factory() as session:
+        await session.execute(delete(Execution).where(Execution.id == execution_id))
+        await session.execute(delete(WorkflowPermissionGrant).where(WorkflowPermissionGrant.workflow_id == workflow_id))
+        for model, row_id in ((Workflow, workflow_id), (User, user_id), (Role, role_id), (Organization, org_id)):
+            await session.execute(delete(model).where(model.id == row_id))
+        await session.commit()

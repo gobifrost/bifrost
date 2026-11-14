@@ -115,7 +115,7 @@ def start_collecting(
         assert collector is not None
         collector.agent_run_id = runtime.credential_id if runtime.kind == "agent_run" else None
         collector.surface = "agent" if collector.agent_run_id else surface
-        # An agent adds no workflow power; it is judged on its original user.
+        # Workflow-launched agents retain their live workflow powers.
         collector.direct = runtime.powers is None
         # RuntimeAuthority names the verified run: legacy tokens are verified
         # before the collector begins, and claims are validated by the auth

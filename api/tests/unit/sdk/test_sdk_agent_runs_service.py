@@ -326,6 +326,7 @@ class TestEnqueueSdkAgentRun:
             sync=False,
             lineage=person_lineage(principal.user_id),
             run_as_user_id=None,
+            permission_workflow_id=None,
         )
         assert result.run_as_user_id is None
 
@@ -467,6 +468,7 @@ class TestEnqueueRunAs:
             sync=False,
             lineage=person_lineage(principal.user_id),
             run_as_user_id=target.id,
+            permission_workflow_id=None,
         )
 
     async def test_a_global_agent_runs_in_the_acting_users_organization(self, db_session):
@@ -674,6 +676,7 @@ class TestRerunKeepsRunAs:
             org_id=contoso.id,
             caller_user_id=str(principal.user_id),
             run_as_user_id=target.id,
+            permission_workflow_id=None,
         )
         authorize, calls = _patch_authorize_run_as(returns=_run_as_target(target))
 
@@ -748,6 +751,7 @@ class TestRerunKeepsRunAs:
             org_id=contoso.id,
             caller_user_id=str(principal.user_id),
             run_as_user_id=target.id,
+            permission_workflow_id=None,
         )
         authorize, _calls = _patch_authorize_run_as(
             raises=RunAsError(403, "You don't have permission to run as this user")
@@ -837,6 +841,7 @@ class TestExecuteAgentRun:
             "sync": True,
             "lineage": person_lineage(principal.user_id),
             "run_as_user_id": None,
+            "permission_workflow_id": None,
         }
         assert response == {"status": "completed", "output": {"answer": 42}}
         assert kwargs == expected_kwargs

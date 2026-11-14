@@ -470,6 +470,8 @@ services:
       - ./api/scripts/api-allocator.sh:/usr/local/bin/api-allocator.sh:ro
       - ./api/Dockerfile.dev:/app/api/Dockerfile.dev:ro
       - ./api/Dockerfile:/app/api/Dockerfile:ro
+      - ./requirements.lock:/app/requirements.lock:ro  # Prod lock contract (test_prod_import_hygiene).
+      - ./requirements-dev.lock:/app/requirements-dev.lock:ro  # Dev lock contract (test_prod_import_hygiene).
       - ./.github:/app/.github:ro  # CI workflow and composite action contract tests
       - ./test.sh:/app/test.sh:ro
       - ./k8s:/k8s:ro  # Kubernetes deployment contract tests

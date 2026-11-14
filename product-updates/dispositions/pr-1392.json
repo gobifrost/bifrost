@@ -1,0 +1,13 @@
+{
+  "key": "pr:1392",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal image-size reduction: remove test and debug dependencies from production while retaining Ruff for existing Git sync preflight lint warnings. Dev and CI retain the full dependency closure; customer behavior is unchanged.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1392",
+      "Production retains Ruff, invoked by Git sync preflight as an executable. The production lock has 142 pins versus 151 in the dev lock, with identical shared versions; the nine removed packages are test/debug dependencies and their transitives."
+    ]
+  }
+}
