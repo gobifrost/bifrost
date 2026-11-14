@@ -1,0 +1,14 @@
+{
+  "key": "pr:1419",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "MCP clients can now finish connecting after a Microsoft or Google sign-in; the post-sign-in redirect no longer lands on a 404.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1419",
+      "Native Jack response \u201cI agree. Go for it.\u201d on November 14, 2026 approved this exact Product Updates sentence and the scoped follow-up in thread 8603c7f8-b70e-53c6-b94c-e95100385636. Merge authority was explicitly excluded."
+    ]
+  }
+}

@@ -109,8 +109,8 @@ export function Login() {
 	// `from` can be an absolute URL (MCP OAuth's return_to). react-router's
 	// navigate() treats those as relative paths and produces nonsense like
 	// /login/https:/example.com/mcp/callback, so normalize to a same-origin
-	// path first. /mcp/callback then does a full page load so the API can
-	// render the consent page. Cross-origin targets fall back to "/" — never
+	// path first so the /connect-app SPA route can resume MCP consent.
+	// Cross-origin targets fall back to "/" — never
 	// honor a foreign origin, it's an open-redirect vector.
 	const redirectToFrom = useCallback(() => {
 		navigate(toSameOriginPath(from), { replace: true });
