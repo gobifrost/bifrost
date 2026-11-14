@@ -59,6 +59,24 @@ curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
 `instance_type` is fixed when the application is created; changing it later
 requires replacing the application.
 
+## Diagnosing a container that never enrolls
+
+Container stdout and stderr are collected only when observability is enabled.
+The `[observability]` block in the shipping `wrangler.toml` enables it for the
+Worker and, by default, for its containers. Without it a container that dies
+during startup leaves no trace: the API reservation goes `lost` and nothing
+records why.
+
+When a container process exits, the provider logs one line:
+
+```
+capacity container exit {"code":1,"message":"..."}
+```
+
+Exit code `0` means the process ended on its own; a non-zero code is the
+container entrypoint failing. Watch for it with `npx wrangler tail` while a
+worker is being admitted.
+
 ## Verify before deploying
 
 ```bash

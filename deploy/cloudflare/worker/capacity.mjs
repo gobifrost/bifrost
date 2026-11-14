@@ -166,6 +166,21 @@ export class WorkerContainer {
                     entrypoint: body.entrypoint ?? [],
                     enableInternet: true,
                 });
+                // Log the exit so a container that dies during startup is
+                // observable. Without this the DO only ever knows `running`,
+                // and a crash before enrollment is indistinguishable from a
+                // slow start until the reservation is lost.
+                this.ctx.waitUntil(
+                    this.container.monitor().then(
+                        () => ({ code: 0, message: null }),
+                        (error) => ({
+                            code: Number.isInteger(error?.exitCode) ? error.exitCode : null,
+                            message: String(error?.message ?? error).slice(0, 200),
+                        }),
+                    ).then((record) => {
+                        console.log("capacity container exit", JSON.stringify(record));
+                    }),
+                );
                 return json(200, { running: this.container.running === true });
             }
             if (url.pathname === "/destroy") {
