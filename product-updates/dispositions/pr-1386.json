@@ -1,0 +1,1 @@
+{"classification":"omit","entry_ids":[],"key":"pr:1386","reason":"Operator-facing opt-in observability plumbing; no bundled or in-app customer change, documented in the operator runbook.","review":{"evidence":["https://github.com/gobifrost/bifrost/pull/1386"],"status":"approved"}}

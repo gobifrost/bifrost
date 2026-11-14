@@ -797,12 +797,17 @@ async def run_launcher(
 ) -> int:
     """Keep optional private networking alive through physical worker drain."""
     from src.core.storage import close_shared_storage_clients
+    from src.core.telemetry import init_telemetry, shutdown_telemetry
     from src.worker.network import worker_network
 
+    # Operator telemetry for the launcher process (spans, run metrics).
+    # No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    init_telemetry(role="worker")
     try:
         async with worker_network():
             return await _run_launcher(on_ready=on_ready, on_stop=on_stop)
     finally:
+        shutdown_telemetry()
         await close_shared_storage_clients()
 
 

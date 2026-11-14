@@ -44,7 +44,7 @@ env var is absent.
 4. **Two hand-written span kinds, both run boundaries**: workflow-run and
    agent-run server spans (`trace.get_tracer(__name__)` per module,
    `start_as_current_span`). Attributes are IDs only
-   (`run.id`, `org.id`, `handler`) — never user content, keys, or tokens,
+   (`bifrost.execution.id`, `bifrost.workflow.id`, `handler`) — never user content, keys, or tokens,
    with the export privacy boundary below. `log_safe` escapes control
    characters and truncates; it is not secret redaction.
 5. **Propagation rides the dispatch payload.** `stage_dispatch` stores a
@@ -124,6 +124,9 @@ Operator resource attributes must also be documented as exported data.
 - FastAPI/httpx: suppress raw URL paths/query strings, credentials, request
   and response bodies and headers. Use route templates or reviewed fixed
   operation names, never user-supplied URLs as span names/attributes.
+  Implemented by dropping `http.target`, `http.url`, `url.full`, `url.path`,
+  `url.query` and any `http.*.header.*` attribute at export; `http.route`
+  (the template) is retained.
 - Exceptions: suppress messages, stack/source text and exception events that
   may carry user data; report fixed error categories and status only. Check
   automatic error status descriptions as well as attributes and events.
@@ -148,6 +151,52 @@ request (auto span) → enqueue: persist traceparent in WorkDispatch.message
   → spans + metrics → OTLP/HTTP → operator collector → Tempo/Mimir
 logs (unchanged path) → Loki, now carrying trace_id/span_id
 ```
+
+## Implementation status (v1)
+
+- `src/core/telemetry.py` initializes providers only when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise every helper is a no-op.
+  The API and launcher get distinct service identities
+  (`bifrost-api`/`bifrost-worker`/`bifrost-run`) and
+  `bifrost.process.role`; `OTEL_TRACES_SAMPLER`/`_ARG` are honoured, and
+  `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` (anchored regexes) overrides the
+  health-probe defaults.
+- The FastAPI app is instrumented with `instrument_app` at construction:
+  the class-patching `.instrument()` form only covers apps created after
+  the call, which would leave the API with no request spans.
+- `stage_dispatch` wraps the publish in a `PRODUCER` span (`<family>
+  publish`, `messaging.system=postgresql`, `messaging.operation=publish`,
+  `messaging.destination.name=<family>`) and injects `traceparent` while
+  that span is current. `PoolWorker._run_claim` opens a `CONSUMER` span
+  (`<handler> process`, `messaging.operation=process`,
+  `messaging.message.id=<dispatch_id>`) parented to the extracted context,
+  and the `run.<handler>` span is its child. One trace therefore reads
+  request → publish → process → run. Covered by
+  `api/tests/unit/test_otel_messaging.py`.
+- Execution children re-initialize telemetry after `os.fork`, with an
+  HTTP-client instrumentor only and no metric reader (runtime metrics stay
+  with the owning process):
+  `init_telemetry_in_child` discards the inherited providers and installs
+  fresh ones on a thread-free `SimpleSpanProcessor` (fork carries memory
+  but no exporter threads, so an inherited batch queue would never drain),
+  and the child flushes with a bounded wait before exiting. Spans for work
+  inside the child (its engine SDK HTTP calls) are therefore exported and
+  scrubbed like any other span. Covered by
+  `api/tests/unit/test_telemetry_fork.py`.
+- **Remaining gap:** those child-side spans are roots. The work pipe
+  carries `(execution_id, context)` only, so the `traceparent` in the
+  dispatch message does not reach the child and it cannot attach to the
+  executor's `run.<handler>` span. Closing it means widening the work
+  payload and its senders — a contained change, deliberately not bundled
+  with this one. Those child spans also carry no `bifrost.execution.id`,
+  so they cannot be attributed to a run yet; they are unattributed child
+  traces, not merely disconnected ones.
+- `ScrubbingSpanExporter` enforces the export privacy boundary in-process
+  before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
+  returned document fields, HTTP query strings, **all span events**, and
+  SDK-generated error descriptions never leave the process. A failing span
+  keeps the ERROR status and the exception type; nothing else. Covered by
+  `api/tests/unit/test_telemetry.py`.
 
 ## Test seams
 

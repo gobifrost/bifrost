@@ -146,6 +146,11 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     logger.info("Starting Bifrost API...")
     settings = get_settings()
 
+    # Observability providers are installed in create_app(), before the app
+    # and its middleware stack exist. No-op unless OTEL_EXPORTER_OTLP_ENDPOINT
+    # is set.
+    from src.core.telemetry import shutdown_telemetry
+
     # Initialize database
     logger.info("Initializing database connection...")
     await init_db()
@@ -253,6 +258,7 @@ async def app_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     await close_shared_redis()
     await close_health_check_clients()
     await close_db()
+    shutdown_telemetry()
     logger.info("Bifrost API shutdown complete")
 
 
@@ -374,6 +380,13 @@ def create_app() -> FastAPI:
     """
     from shared.version import get_version
 
+    from src.core.telemetry import init_telemetry, instrument_fastapi_app
+
+    # Providers must exist before the app is built, and the app must be
+    # instrumented before its middleware stack is built: the class-patching
+    # .instrument() form only covers apps constructed after the call.
+    init_telemetry(role="api")
+
     app = FastAPI(
         title="Bifrost API",
         description="MSP automation platform API",
@@ -383,6 +396,7 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
         lifespan=lifespan,
     )
+    instrument_fastapi_app(app)
 
     # Note: CORS middleware not needed - frontend proxies all /api requests
     # through Vite dev server (dev) or nginx (prod), making them same-origin.
