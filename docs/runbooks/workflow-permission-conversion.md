@@ -114,8 +114,9 @@ workflow's permission source. The worker reloads that workflow's effective mode
 and grants when establishing or refreshing agent authority. Delegated agents
 retain the same source. Organization reach, agent capability bindings, and acting
 identity checks still apply. Removing a grant affects subsequent permission
-checks; deleting the source workflow or deactivating its Solution invalidates
-that authority.
+checks; deleting or deactivating the source workflow, or deactivating its
+Solution, invalidates that authority. Workflow activation-state changes also
+invalidate existing tokens through the shared authorization epoch.
 
 These permissions belong to the workflow-launched run. They do not grant the
 user direct agent, Chat, or MCP access. Direct agent runs and existing runs

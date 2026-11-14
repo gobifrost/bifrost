@@ -1058,12 +1058,29 @@ async def test_workflow_agent_authority_survives_refresh_and_revokes(db_session,
 
 
 @pytest.mark.asyncio
-async def test_workflow_agent_refuses_deleted_permission_source(db_session, workflow_agent):
-    _, _, workflow, _, _, run = workflow_agent
-    await db_session.delete(workflow)
+@pytest.mark.parametrize("soft_delete", [False, True])
+async def test_workflow_agent_refuses_deleted_permission_source(db_session, workflow_agent, soft_delete):
+    from src.services.authorization.callers import CallerUnavailable, refresh_caller
+    from src.services.authorization.enforce import load_caller
+    _, _, workflow, _, grants, run = workflow_agent
+    payload = {"credential_kind": "agent_run", "sub": str(run.id)}
+    principal = await load_runtime_principal(db_session, payload)
+    assert principal is not None
+    caller = await load_caller(db_session, principal)
+    if soft_delete:
+        workflow.is_active = False
+    else:
+        await db_session.delete(workflow)
     await db_session.flush()
+    if soft_delete:
+        # Production deletion retains both the row and its grants.
+        assert await db_session.get(Workflow, workflow.id) is workflow
+        assert await db_session.get(WorkflowPermissionGrant, grants[1].id) is not None
     with pytest.raises(RuntimeIdentityError, match="missing workflow"):
         await load_runtime_authority(db_session, "agent_run", run.id)
+    assert await load_runtime_principal(db_session, payload) is None
+    with pytest.raises(CallerUnavailable):
+        await refresh_caller(db_session, caller)
 
 
 @pytest.mark.asyncio

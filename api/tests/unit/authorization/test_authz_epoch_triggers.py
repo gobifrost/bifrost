@@ -225,9 +225,10 @@ _CASES: list[tuple[str, str, int]] = [
     ("roles name", "UPDATE roles SET name = name || ' renamed' WHERE id = :role", 1),
     ("roles description", "UPDATE roles SET description = 'changed' WHERE id = :role", 0),
     ("roles delete", "DELETE FROM roles WHERE id = :role", 1),
-    # workflows: ownership and mode, DELETE.
+    # workflows: ownership, mode and activation, DELETE.
     ("workflows solution", "UPDATE workflows SET solution_id = :solution WHERE id = :other_workflow", 1),
     ("workflows mode", "UPDATE workflows SET permission_mode = 'restricted' WHERE id = :workflow", 1),
+    ("workflows deactivation", "UPDATE workflows SET is_active = false WHERE id = :workflow", 1),
     ("workflows description", "UPDATE workflows SET description = 'changed' WHERE id = :workflow", 0),
     ("workflows delete", "DELETE FROM workflows WHERE id = :other_workflow", 1),
     # workflow_permission_grants and solution_workflow_permission_requests: every event.

@@ -182,3 +182,22 @@ async def test_workflow_agent_token_preserves_live_grants_and_invalidates_on_rev
         reissued = await issue_access_token(subject)
         assert reissued.claims.run.powers is not None
         assert "agents.execute" not in reissued.claims.run.powers.grants
+
+
+async def test_soft_deleted_workflow_revokes_agent_tokens_and_refuses_reissue(
+    async_engine: AsyncEngine,
+) -> None:
+    async with committed_world(async_engine) as world:
+        org = await world.organization()
+        user = await world.person(org)
+        workflow = await world.workflow(org, permission_mode="restricted", grants=("agents.execute",))
+        run = await world.agent_run(run_user=user, actor=user, organization=org,
+                                    permission_workflow_id=workflow.id)
+        await world.session.commit()
+        subject = RuntimeSubject("agent_run", run.id)
+        issued = await issue_access_token(subject)
+        workflow.is_active = False
+        await world.session.commit()
+        assert not await token_accepted(async_engine, issued.claims)
+        with pytest.raises(tokens.TokenSubjectUnavailable):
+            await issue_access_token(subject)

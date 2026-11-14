@@ -348,7 +348,8 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
     if run.permission_workflow_id is not None:
         workflow = (
             await db.execute(select(*_WORKFLOW_AUTHORITY_COLUMNS).where(
-                Workflow.id == run.permission_workflow_id
+                Workflow.id == run.permission_workflow_id,
+                Workflow.is_active.is_(True),
             ))
         ).one_or_none()
         if workflow is None:
