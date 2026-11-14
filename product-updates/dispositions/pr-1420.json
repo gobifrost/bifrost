@@ -1,0 +1,14 @@
+{
+  "key": "pr:1420",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Embedded apps now retain ticket IDs passed from HaloPSA custom tabs.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1420",
+      "Exact summary text submitted to Jack for approval in the existing #1407 owner conversation; approval is pending."
+    ]
+  }
+}
