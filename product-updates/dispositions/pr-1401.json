@@ -6,8 +6,10 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1401",
-      "https://github.com/gobifrost/bifrost/blob/87f4869fd0d61bd95e56e638183bc4f846d8cabd/docs/product-updates-authoring.md"
+      "https://github.com/gobifrost/bifrost/blob/87f4869fd0d61bd95e56e638183bc4f846d8cabd/docs/product-updates-authoring.md",
+      "https://github.com/python-cffi/cffi/pull/287",
+      "https://github.com/pytest-dev/pytest-asyncio/pull/1593"
     ]
   },
-  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+  "reason": "Internal Python container and dependency compatibility maintenance; no customer announcement. Image, workflow, and dependency verification remains required."
 }
