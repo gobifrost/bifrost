@@ -9,8 +9,9 @@
   "worker_loaders": [{"binding": "LOADER"}],
   "vars": {
     "LOCAL_PROBE": "true",
-    "API_ORIGIN": "http://127.0.0.1:18000"
+    "API_ORIGIN": "https://bifrost-stage.midtowntg.com"
   },
   "observability": {"enabled": false}
 }
+
 

@@ -49,6 +49,45 @@ The error case is deliberately included: both backends fail, and the harness
 compares failure *class* rather than message. Log and effect comparison is the
 next increment (needs the execution-log endpoint, not just the result).
 
+## Engine mode (real SDK workflows)
+
+`action: "engine"` runs the **real Bifrost engine** in the constant per-tenant
+child (`tenantEngineCode` → `runtimeCode`), with outbound routed through the
+stateless `TenantApi` stub (virtual host rewrite + `apiTarget` path allowlist).
+
+Verified against the staging stack on 2026-11-13:
+
+```
+{"status":"Success","result":{"count":0,"kind":"list"},
+ "execution_context":{"user_id":"dbb5617a-…","email":"dev@gobifrost.com",
+                      "scope":"GLOBAL","workflow_name":"sdk_case"}}
+```
+
+That is `await tables.list()` executing through the real SDK, against the real
+API, from a cached per-tenant child.
+
+### Posture trade-off (explicit)
+
+Engine mode is **not** credential-free: the engine authenticates SDK calls
+itself, so the attempt-scoped run token travels in the child's context. The
+minimal data-only mode (`action: "run"`) keeps the original posture — dummy
+credential, parent-side gateway, pin verification. Engine mode also does not
+re-verify module pins (the engine fetches modules through the stub), and the
+stub constrains paths via `apiTarget` but is not a full egress allowlist.
+
+Consequences: use engine mode for trusted-operator workloads; keep the
+data-only mode where the credential-free/pinned posture matters. A Durable
+Object token broker (handle in child, token in DO) would restore the
+credential-free posture for engine mode and is the documented follow-up.
+
+### Remaining
+
+- **Linux SDK oracle:** `/api/workflows` returns 405 for JSON creation on this
+  stack, so the same decorated workflow cannot yet be executed server-side for a
+  result comparison. The Cloudflare side is proven; the differential for SDK
+  cases needs the correct workflow-registration route (or a solution install).
+- Stage 3 remains behind the production gate.
+
 ## Stage 3 — prepared, not executed
 
 A production canary needs, at minimum:

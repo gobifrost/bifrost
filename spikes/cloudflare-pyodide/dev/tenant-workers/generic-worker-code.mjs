@@ -16,6 +16,7 @@
 //
 // Any change to GENERIC_PYTHON below is a redeploy of the same constant
 // script, not a per-tenant bake: existing tenantWorkerIds keep working.
+import {runtimeCode} from '../runtime/runtime-code.mjs';
 
 export const GENERIC_PYTHON = `
 import asyncio
@@ -173,4 +174,29 @@ export function genericWorkerCode() {
 export async function genericCodeDigest() {
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(GENERIC_PYTHON));
   return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+// Engine mode: the constant child runs the real Bifrost engine instead of the
+// minimal path importer, so SDK workflows work. `api` is the supervisor's
+// outbound stub (ctx.exports.TenantApi), which rewrites the virtual API host and
+// constrains egress. Unlike the minimal child, this one holds the attempt-scoped
+// run token, because the engine authenticates SDK calls itself; see
+// dev/staging/README.md for the posture note.
+export const ENGINE_PYTHON = `
+import json
+from workers import WorkerEntrypoint, Response
+from runtime_runner import run_authorized_attempt
+
+class Default(WorkerEntrypoint):
+    async def fetch(self, request):
+        body = json.loads(await request.text())
+        result = await run_authorized_attempt(
+            body["execution_id"], body["context"], body["api_url"],
+            public_url=body.get("public_url", "https://staging.invalid"))
+        return Response.json({"upstream_result": result})
+`;
+
+export function tenantEngineCode(api) {
+  const code = runtimeCode(api, ENGINE_PYTHON);
+  return {...code, limits: {...code.limits, subRequests: 12}};
 }

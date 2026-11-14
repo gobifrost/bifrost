@@ -25,7 +25,7 @@
 // - output-budget.mjs: oversized child output dropped as infra failure.
 // - import-audit.mjs: recorded workspace paths reconciled post-hoc; undeclared
 //   imports map to a terminal (effects may already exist, same as executor).
-import {genericWorkerCode, genericCodeDigest} from './generic-worker-code.mjs';
+import {genericWorkerCode, genericCodeDigest, tenantEngineCode} from './generic-worker-code.mjs';
 import {tenantWorkerId} from './tenant-registry.mjs';
 import {createTenantGateway, createRemoteTenantGateway, isStoragePath} from './tenant-gateway.mjs';
 import {capabilityRejection} from '../executor/capability-requirements.mjs';
@@ -33,6 +33,16 @@ import {egressRejection, isUrlAllowed} from '../executor/egress-allowlist.mjs';
 import {reconcileImports, deniedTerminal} from '../executor/import-audit.mjs';
 import {readBudgetedJson} from '../executor/output-budget.mjs';
 import {DUMMY_CREDENTIAL} from '../executor/gateway-injection.mjs';
+
+// Node unit tests cannot resolve cloudflare:workers, so the export is loaded
+// only where the runtime provides it; ctx.exports cannot see it otherwise.
+let TenantApi;
+try {
+  ({TenantApi} = await import('./tenant-api.mjs'));
+} catch {
+  TenantApi = undefined;
+}
+export {TenantApi};
 
 // Per-tenant serialization chains + first-use tracking. Module-level: one
 // supervisor isolate holds one chain per tenant id.
@@ -153,6 +163,26 @@ export default {
       // manifest-pin verification (never the raw attempt store).
       const apiCalls = [];
       let childBody;
+      if (body.action === 'engine') {
+        // Real-engine mode: constant child per tenant, outbound through the
+        // stateless TenantApi stub. The engine authenticates SDK calls with the
+        // attempt-scoped token in context (posture note in dev/staging/README).
+        if (typeof TenantApi !== 'function') {
+          return {terminal: {phase: 'engine-unavailable', api_calls: []}};
+        }
+        const api = ctx.exports.TenantApi({});
+        const code = tenantEngineCode(api);
+        const engineId = `tenant-eng-${workerId}`;
+        const worker = env.LOADER.get(engineId, () => code);
+        const response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
+          method: 'POST',
+          body: JSON.stringify({execution_id: body.execution_id, context: body.context,
+            api_url: 'https://test-api.invalid',
+            public_url: body.public_url ?? 'https://staging.invalid'}),
+        }));
+        const output = await readBudgetedJson(response);
+        return {output: output.upstream_result, apiCalls};
+      }
       if (body.action === 'run') {
         // Staging mode: fetch through the real API with the run token held in
         // the parent. The attempt declares the module closure; anything outside
