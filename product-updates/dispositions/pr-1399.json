@@ -1,0 +1,12 @@
+{
+  "key": "pr:1399",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal pool protocol representation for a non-default physical runtime profile. Admits no capacity; the control host still rejects it. No user-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1399"
+    ]
+  }
+}

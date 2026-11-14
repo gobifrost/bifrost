@@ -286,6 +286,10 @@ class ExecutionRequest:
     workflow_deadline: datetime | None = None
     cache_ttl_seconds: int = 300         # For data providers
 
+    # Public execution URL when the parent supplies one (companion runtimes).
+    # Defaults to the server setting at the call site when None.
+    public_url: str | None = None
+
     # Parameters
     parameters: dict[str, Any] = field(default_factory=dict)
 
@@ -526,7 +530,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         agent_id=request.agent_id,
         original_user_is_platform_admin=request.original_user_is_platform_admin,
         original_user_id=request.original_user_id,
-        public_url=get_settings().public_url,
+        public_url=request.public_url or get_settings().public_url,
         startup=request.startup,  # Launch workflow results (from form execution)
         form_inputs=request.form_inputs,
         embed=request.embed,
@@ -950,7 +954,7 @@ async def execute_service(
         is_function_key=False,
         execution_id=cfg.attempt_id,
         workflow_name=request.name or "",
-        public_url=get_settings().public_url,
+        public_url=request.public_url or get_settings().public_url,
         startup=request.startup,
         form_inputs=request.form_inputs,
         embed=request.embed,

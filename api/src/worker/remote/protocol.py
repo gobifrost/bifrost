@@ -39,6 +39,14 @@ MAX_CLOCK_SKEW_SECONDS = 60
 # receives legacy runtime tokens.
 CREDENTIAL_PROTOCOL = 2
 
+# An omitted profile is the existing Linux protocol, with unchanged signed
+# bytes. Other physical runtimes require explicit authenticated negotiation.
+LINUX_RUNTIME_PROFILE = "linux-process-v1"
+# Experimental physical adapter identity. The control host does not admit it;
+# workload eligibility and deployed resource/cancellation qualification remain
+# separate from this pool-level representation.
+CLOUDFLARE_PYTHON_RUNTIME_PROFILE = "cloudflare-python-v1"
+
 # Exact handler versions a physical launcher can execute. Older launchers
 # advertised no list and implemented only workflow and agent-run commands.
 LEGACY_EXECUTION_HANDLERS = (("workflow.execute", 1), ("agent.run", 1))
@@ -127,9 +135,15 @@ class Hello:
     nonce: str
     hello_sequence: int
     resource_uid: str | None = field(default=None, kw_only=True)
+    runtime_profile: str | None = field(default=None, kw_only=True)
     execution_lane: str = field(default="normal", kw_only=True)
 
     def __post_init__(self) -> None:
+        if self.runtime_profile is not None and (
+            not isinstance(self.runtime_profile, str)
+            or re.fullmatch(r"[a-z][a-z0-9._-]{0,63}", self.runtime_profile) is None
+        ):
+            raise ProtocolError("invalid physical runtime profile")
         if not self.hostname or self.form not in {"job", "static", "external"}:
             raise ProtocolError("hello identity fields are required")
         if self.form == "job" and (not self.job_uid or not self.pod_uid):
@@ -166,6 +180,8 @@ class Hello:
             fields["execution_lane"] = self.execution_lane
         if self.form == "external":
             fields["resource_uid"] = self.resource_uid
+        if self.runtime_profile is not None:
+            fields["runtime_profile"] = self.runtime_profile
         return json.dumps(
             fields,
             separators=(",", ":"),
@@ -191,6 +207,7 @@ class SignedHello(Hello):
                 nonce=str(value["nonce"]),
                 hello_sequence=int(value["hello_sequence"]),
                 resource_uid=str(value["resource_uid"]) if value.get("resource_uid") is not None else None,
+                runtime_profile=value.get("runtime_profile"),
                 execution_lane=str(value.get("execution_lane", "normal")),
                 proof=str(value["proof"]),
             )
@@ -201,6 +218,8 @@ class SignedHello(Hello):
         fields = asdict(self)
         if self.form != "external":
             fields.pop("resource_uid")
+        if self.runtime_profile is None:
+            fields.pop("runtime_profile")
         return {key: str(value) if isinstance(value, UUID) else value for key, value in fields.items()}
 
 
@@ -383,6 +402,7 @@ def verify_hello(
         nonce=hello.nonce,
         hello_sequence=hello.hello_sequence,
         resource_uid=hello.resource_uid,
+        runtime_profile=hello.runtime_profile,
         execution_lane=hello.execution_lane,
     )
     expected = sign_hello(secret, unsigned).proof
