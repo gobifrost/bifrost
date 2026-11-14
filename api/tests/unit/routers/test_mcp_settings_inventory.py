@@ -70,7 +70,7 @@ async def test_mcp_status_matches_permission_enabled_default_tools(permitted):
     from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
     caller, session = _runtime_caller(), AsyncMock()
-    tools = [SimpleNamespace(id="bifrost_execute_code")] if permitted else []
+    tools = [SimpleNamespace(id=name) for name in ("bifrost_execute_code", "get_docs")] if permitted else []
     with (
         patch("src.routers.mcp.MCPConfigService") as config_cls,
         patch("src.services.mcp_server.tool_access.MCPToolAccessService") as tools_cls,
@@ -82,6 +82,6 @@ async def test_mcp_status_matches_permission_enabled_default_tools(permitted):
         gateway.return_value.accessible_agent_count = AsyncMock(return_value=0)
         result = await mcp_status(caller.principal, session)
 
-    expected = set(GATEWAY_TOOL_NAMES) | ({"bifrost_execute_code"} if permitted else set())
+    expected = set(GATEWAY_TOOL_NAMES) | ({"bifrost_execute_code", "get_docs"} if permitted else set())
     assert set(result["tools"]) == expected
     assert result["tools_count"] == len(expected)

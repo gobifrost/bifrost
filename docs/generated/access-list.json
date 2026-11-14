@@ -7501,7 +7501,7 @@
     "operation_id": null,
     "path": "/api/sdk/modules-resolve",
     "permission": "repository.read",
-    "reason": "Durable workflow source scope; human diagnostics require repository.read, and inline workspace access requires repository.readwrite."
+    "reason": "Durable workflow source scope; human diagnostics and inline workspace source reads require repository.read."
   },
   {
     "access_class": "permission",
@@ -7515,7 +7515,7 @@
     "operation_id": null,
     "path": "/api/sdk/modules/{path}",
     "permission": "repository.read",
-    "reason": "Durable workflow source scope; human diagnostics require repository.read, and inline workspace access requires repository.readwrite."
+    "reason": "Durable workflow source scope; human diagnostics and inline workspace source reads require repository.read."
   },
   {
     "access_class": "permission",

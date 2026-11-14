@@ -52,7 +52,17 @@ agent.
 When bifrost_execute_code is available, you may call it directly for one-off
 Python execution without selecting an agent or registering a workflow. It
 returns an execution_id; use bifrost_get_execution to retrieve its result.
-SDK calls retain the execution identity's existing permissions and scoping."""
+Call get_docs before writing SDK code: it provides live signatures and the
+inline Python and workspace import conventions. Use get_docs with sdk_module
+(e.g. files, tables, artifacts, events) for a complete, focused SDK reference
+when the full docs are too large. Reuse existing modules after
+inspecting their source. With existing repository.read permission, inline
+code can list/read workspace source through the files SDK. Alternatively,
+search capabilities for an agent with list_content, bifrost_file_search, and
+read_content_lines, then use its discovered tools. If bifrost-build is
+installed in your client, its python-sdk, repository, and workflows references
+provide the broader authoring guide. SDK calls retain the execution identity's
+existing permissions and scoping."""
 
 
 def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:

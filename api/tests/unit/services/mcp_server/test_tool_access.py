@@ -197,19 +197,21 @@ async def test_default_code_tool_needs_current_permission_and_no_agent(code_exec
     caller = _caller(code_execution=code_execution, actor_admin=True)
     session = _session([])
     tools = await MCPToolAccessService(session).get_default_tools(caller)
-    assert [tool.id for tool in tools] == (["bifrost_execute_code"] if code_execution else [])
+    assert {tool.id for tool in tools} == ({"bifrost_execute_code", "get_docs"} if code_execution else set())
     session.execute.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("config", [
-    MCPConfig(enabled=False),
-    MCPConfig(blocked_tool_ids=["bifrost_execute_code"]),
-    MCPConfig(allowed_tool_ids=["bifrost_execution_get"]),
+@pytest.mark.parametrize("config,expected", [
+    (MCPConfig(enabled=False), set()),
+    (MCPConfig(blocked_tool_ids=["bifrost_execute_code"]), {"get_docs"}),
+    (MCPConfig(blocked_tool_ids=["get_docs"]), {"bifrost_execute_code"}),
+    (MCPConfig(allowed_tool_ids=["bifrost_execution_get"]), set()),
 ])
-async def test_default_code_tool_honors_mcp_configuration(_config, config):
+async def test_default_code_tool_honors_mcp_configuration(_config, config, expected):
     _config.get_config.return_value = config
-    assert await MCPToolAccessService(_session([])).get_default_tools(_caller(code_execution=True)) == []
+    tools = await MCPToolAccessService(_session([])).get_default_tools(_caller(code_execution=True))
+    assert {tool.id for tool in tools} == expected
 
 
 @pytest.mark.asyncio
@@ -226,4 +228,18 @@ async def test_settings_inventory_includes_default_code_tool_without_an_agent():
     result = await MCPToolAccessService(_session([])).get_accessible_tools(
         _caller(configuration=True), for_configuration=True,
     )
-    assert [tool.id for tool in result.tools] == ["bifrost_execute_code"]
+    assert {tool.id for tool in result.tools} == {"bifrost_execute_code", "get_docs"}
+
+
+@pytest.mark.asyncio
+async def test_agent_learning_and_repository_tools_require_explicit_assignment():
+    caller = _caller(code_execution=True)
+    assigned = {"bifrost_execute_code", "get_docs", "bifrost_execution_get",
+                "list_content", "bifrost_file_search", "read_content_lines"}
+    agent = _agent(caller, tools=assigned)
+    service = MCPToolAccessService(_session([agent]))
+    result = await service.get_tools_for_agent(agent.id, caller)
+    assert {tool.id for tool in result.tools} == assigned
+    agent.system_tools = ["bifrost_execute_code"]
+    result = await service.get_tools_for_agent(agent.id, caller)
+    assert {tool.id for tool in result.tools} == {"bifrost_execute_code"}

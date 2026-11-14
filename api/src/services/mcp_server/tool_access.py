@@ -18,7 +18,8 @@ from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_SYSTEM_TOOL_IDS = frozenset({"bifrost_execute_code"})
+# Execute Code includes the existing SDK reference, not additional SDK powers.
+DEFAULT_SYSTEM_TOOL_IDS = frozenset({"bifrost_execute_code", "get_docs"})
 
 
 @dataclass

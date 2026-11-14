@@ -205,7 +205,7 @@ class TestMCPAgentGateway:
             "tools/list",
             {},
         )["result"]["tools"]
-        assert {tool["name"] for tool in default_tools} == GATEWAY_TOOLS | {"bifrost_execute_code"}
+        assert {tool["name"] for tool in default_tools} == GATEWAY_TOOLS | {"bifrost_execute_code", "get_docs"}
         execute_schema = next(
             tool["inputSchema"]
             for tool in default_tools

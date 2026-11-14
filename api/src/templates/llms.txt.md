@@ -2,6 +2,66 @@
 
 Bifrost is an automation platform for building workflows, forms, agents, and apps. Everything below is what you need to build on the platform.
 
+## Execute Code Without a Workflow
+
+`bifrost_execute_code` runs one-off Python through the existing execution worker.
+It requires Execute Code (`code.execute`); SDK operations retain the execution
+identity's existing permissions and organization access. It does not register a
+workflow or grant repository, integration, or secrets access.
+
+The script supports top-level `await`. Keys from `input_data` are available as
+variables. Assign the value to return to `result`; no decorator is needed:
+
+```python
+# code="result = left + right", input_data={"left": 19, "right": 23}
+result = left + right
+```
+
+Submission returns an `execution_id`, not the script's result. On default MCP,
+use `bifrost_get_execution` until the status is terminal. On an assigned agent,
+use `bifrost_execution_get`. Inspect errors before deciding whether another
+execution is appropriate; do not resubmit code to fetch its result.
+
+### Discover and Reuse Workspace Modules
+
+Read the SDK signatures below before calling a method. For one complete Python
+SDK module, call `get_docs` with `sdk_module`, for example `"files"`, `"tables"`,
+`"artifacts"`, or `"events"`. This keeps that reference small enough for native
+agent context; use it when the full platform docs are truncated. An unknown
+module name returns the supported module names.
+
+Search existing Python
+source before implementing integration or business logic again. With existing
+`repository.read` permission, default MCP clients can use the files SDK through
+Execute Code to inspect source without a configured coding agent:
+
+```python
+from bifrost import files
+result = await files.list("modules", location="workspace")
+```
+
+Then read a discovered path with `await files.read(path, location="workspace")`.
+Alternatively, use an accessible agent's `list_content`, `bifrost_file_search`,
+and `read_content_lines` tools. On default MCP, find that agent with
+`bifrost_search_capabilities`, load its instructions and exact tool schemas,
+then call the discovered tools through `bifrost_execute_tool`.
+
+Workspace Python files import by dotted path, without a `.py` suffix: a file
+`modules/customer_helpers.py` imports as `modules.customer_helpers`. Inspect
+the real path, function signature, and behavior first; do not assume this
+example module exists. The existing workspace import loader resolves the
+source, so it need not be pasted into the script or registered as a workflow.
+SDK authorization still applies inside imported helpers.
+
+When configuring a native agent or agent-scoped MCP endpoint, explicitly assign
+`bifrost_execute_code`, `get_docs`, and `bifrost_execution_get`. For workspace
+discovery also assign `list_content`, `bifrost_file_search`, and
+`read_content_lines`; these assignments do not grant repository permissions.
+An installed `bifrost-build` client skill provides broader authoring guidance
+in `references/python-sdk.md`, `references/repository.md`, and
+`references/workflows.md`. Native agents can learn directly from `get_docs`;
+installing a client skill does not inject it into a native agent's context.
+
 ## Workflows & Tools
 
 Workflows are async Python functions decorated with `@workflow`, `@tool`, or `@data_provider`. They run in a sandboxed execution engine with access to the Bifrost SDK.
