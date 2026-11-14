@@ -1,0 +1,12 @@
+{
+  "key": "pr:1396",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal execution seam: resource observer, explicit public_url, and transport identity binding. No user-facing behavior change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1396"
+    ]
+  }
+}
