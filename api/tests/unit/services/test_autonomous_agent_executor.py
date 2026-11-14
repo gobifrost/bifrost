@@ -424,8 +424,9 @@ class TestAutonomousAgentExecutor:
         )
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize("from_workflow", [False, True])
     async def test_run_delegation_persists_chat_child_and_caller(
-        self, mock_session, mock_agent, authorized_agent_runtime
+        self, mock_session, mock_agent, authorized_agent_runtime, from_workflow
     ):
         delegated = MagicMock()
         delegated.id = uuid4()
@@ -470,6 +471,10 @@ class TestAutonomousAgentExecutor:
             "email": "person@example.com",
             "name": "Person",
         }
+        canonical = _canonical_caller(caller)
+        source = uuid4() if from_workflow else None
+        if from_workflow:
+            canonical.principal.runtime_authority = MagicMock(workflow_id=source)
         tool_call = ToolCallRequest(
             id="tc1",
             name="delegate_to_chat_specialist",
@@ -503,7 +508,7 @@ class TestAutonomousAgentExecutor:
                 parent_agent=mock_agent,
                 tool_call=tool_call,
                 conversation_id=conversation_id,
-                caller=_canonical_caller(caller),
+                caller=canonical,
                 acting_user_id=UUID(caller["user_id"]),
                 _shared_usage=shared_usage,
                 _shared_budget=shared_budget,
@@ -515,6 +520,7 @@ class TestAutonomousAgentExecutor:
         assert outcome.output == "Investigation complete"
         assert len(created_runs) == 1
         child_run = created_runs[0]
+        assert child_run.permission_workflow_id == source
         assert child_run.trigger_type == "delegation"
         assert child_run.parent_run_id is None
         assert child_run.conversation_id == conversation_id

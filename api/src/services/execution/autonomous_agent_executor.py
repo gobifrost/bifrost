@@ -1372,6 +1372,10 @@ class AutonomousAgentExecutor:
                 run_user_id=run_user_id,
                 run_as_user_id=UUID(run_as.user_id) if run_as else None,
                 acting_user_id=acting_user_id,
+                permission_workflow_id=(
+                    None if caller.principal.runtime_authority is None
+                    else caller.principal.runtime_authority.workflow_id
+                ),
                 **principal_durable_impersonation(caller.principal).columns(),
                 parent_run_id=UUID(parent_run_id) if parent_run_id else None,
                 budget_max_iterations=target_agent.max_iterations,

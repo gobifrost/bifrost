@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import UUID, uuid4
 
 import pytest
-from sqlalchemy import delete, event, inspect
+from sqlalchemy import delete, event, inspect, update
 from sqlalchemy.exc import InvalidRequestError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -742,7 +742,7 @@ async def test_service_runtime_refuses_mismatched_service_and_expired_lease(db_s
 
 
 @pytest.mark.asyncio
-async def test_agent_runtime_uses_pinned_actor_and_never_workflow_powers(
+async def test_direct_agent_runtime_uses_pinned_actor_without_workflow_powers(
     db_session: AsyncSession,
 ) -> None:
     contoso = await _organization(db_session, "Contoso")
@@ -1006,3 +1006,90 @@ async def test_service_and_agent_authority_read_only_authority_columns(db_sessio
         "workflow_permission_grants.created_by",
     ):
         assert unread not in sql
+
+
+@pytest.fixture
+async def workflow_agent(db_session):
+    from src.models.orm.users import Role
+    org = await _organization(db_session, "Workflow agent")
+    role = Role(name=f"app-only-{uuid4().hex[:8]}", created_by="test")
+    db_session.add(role)
+    await db_session.flush()
+    user = await _person(db_session, org, "app-only")
+    user.base_role_id = role.id
+    workflow = await _workflow(db_session, org.id, permission_mode="restricted")
+    agent = Agent(name=f"worker-{uuid4().hex[:8]}", system_prompt="test", organization_id=org.id,
+                  access_level="authenticated", created_by="test")
+    db_session.add(agent)
+    await db_session.flush()
+    grants = [WorkflowPermissionGrant(workflow_id=workflow.id, permission=permission)
+              for permission in ("agents.readbasic", "agents.execute")]
+    run = AgentRun(agent_id=agent.id, trigger_type="api", status="running", org_id=org.id,
+                   run_user_id=user.id, acting_user_id=user.id, permission_workflow_id=workflow.id)
+    db_session.add_all([*grants, run])
+    await db_session.flush()
+    return org, user, workflow, agent, grants, run
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_authority_survives_refresh_and_revokes(db_session, workflow_agent):
+    from src.services.authorization.agent_runtime import authorize_agent_execution, AgentRuntimeAuthorizationError
+    from src.services.authorization.callers import load_human_caller
+    from src.services.authorization.enforce import load_caller
+    org, user, workflow, agent, grants, run = workflow_agent
+    direct = await load_human_caller(db_session, user.id)
+    with pytest.raises(AgentRuntimeAuthorizationError):
+        await authorize_agent_execution(db_session, direct, agent.id)
+    principal = await load_runtime_principal(db_session, {"credential_kind": "agent_run", "sub": str(run.id)})
+    assert principal is not None
+    caller = await load_caller(db_session, principal)
+    refreshed, _ = await authorize_agent_execution(db_session, caller, agent.id)
+    assert refreshed.principal.runtime_authority.workflow_id == workflow.id
+    foreign = await _organization(db_session, "Foreign")
+    agent.organization_id = foreign.id
+    await db_session.flush()
+    with pytest.raises(AgentRuntimeAuthorizationError, match="organization reach"):
+        await authorize_agent_execution(db_session, caller, agent.id)
+    agent.organization_id = org.id
+    await db_session.delete(grants[1])
+    await db_session.flush()
+    with pytest.raises(AgentRuntimeAuthorizationError):
+        await authorize_agent_execution(db_session, caller, agent.id)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("soft_delete", [False, True])
+async def test_workflow_agent_refuses_deleted_permission_source(db_session, workflow_agent, soft_delete):
+    from src.services.authorization.callers import CallerUnavailable, refresh_caller
+    from src.services.authorization.enforce import load_caller
+    _, _, workflow, _, grants, run = workflow_agent
+    payload = {"credential_kind": "agent_run", "sub": str(run.id)}
+    principal = await load_runtime_principal(db_session, payload)
+    assert principal is not None
+    caller = await load_caller(db_session, principal)
+    if soft_delete:
+        workflow.is_active = False
+    else:
+        await db_session.delete(workflow)
+    await db_session.flush()
+    if soft_delete:
+        # Production deletion retains both the row and its grants.
+        assert await db_session.get(Workflow, workflow.id) is workflow
+        assert await db_session.get(WorkflowPermissionGrant, grants[1].id) is not None
+    with pytest.raises(RuntimeIdentityError, match="missing workflow"):
+        await load_runtime_authority(db_session, "agent_run", run.id)
+    assert await load_runtime_principal(db_session, payload) is None
+    with pytest.raises(CallerUnavailable):
+        await refresh_caller(db_session, caller)
+
+
+@pytest.mark.asyncio
+async def test_workflow_agent_refuses_inactive_source_solution(db_session, workflow_agent):
+    from src.services.solutions.guard import install_solution_write_guard
+    install_solution_write_guard()
+    org, _, workflow, _, _, run = workflow_agent
+    solution = await _solution(db_session, org, "inactive")
+    # Deployment uses Core writes; exercise the production guard as well.
+    await db_session.execute(update(Workflow).where(Workflow.id == workflow.id).values(solution_id=solution.id))
+    with pytest.raises(RuntimeIdentityError, match="Solution is inactive"):
+        await load_runtime_authority(db_session, "agent_run", run.id)

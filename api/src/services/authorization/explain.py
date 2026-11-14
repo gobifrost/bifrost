@@ -3,8 +3,8 @@
 Every run keeps its original user. Reach includes that user's home, placed
 roles, and Global. A real Platform Admin reaches every organization. Full
 workflows add every named power, including Secrets; Restricted workflows add
-only their configured permission capabilities. Agents and inline executions
-add no workflow powers. Acting identity remains separate.
+only their configured permission capabilities. Workflow-launched agents retain
+the originating workflow powers; direct agents and inline executions add none. Acting identity remains separate.
 
 Each check returns a Trace with its outcome and decision steps. Enforcement
 and the Access Checks view share these rules and the native role evaluator.
