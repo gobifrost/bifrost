@@ -86,7 +86,7 @@ AUTHZ_FACTS: tuple[FactTable, ...] = (
     FactTable("user_role_boundaries", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("role_permissions", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("roles", insert=False, update=frozenset({"id", "name"}), delete=True),
-    FactTable("workflows", insert=False, update=frozenset({"id", "solution_id", "permission_mode"}), delete=True),
+    FactTable("workflows", insert=False, update=frozenset({"id", "solution_id", "permission_mode", "is_active"}), delete=True),
     FactTable("workflow_permission_grants", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("solution_workflow_permission_requests", insert=True, update=ANY_COLUMN, delete=True),
     FactTable("system_configs", insert=True, update=ANY_COLUMN, delete=True, row_filter=_DEFAULT_MODE_ROW),
@@ -121,7 +121,7 @@ AUTHZ_FACTS: tuple[FactTable, ...] = (
         "agent_runs",
         insert=False,
         update=frozenset(
-            {"id", "run_user_id", "acting_user_id", "org_id", "agent_id", "impersonated_by_user_id", "impersonation_session_id"}
+            {"id", "run_user_id", "acting_user_id", "org_id", "agent_id", "permission_workflow_id", "impersonated_by_user_id", "impersonation_session_id"}
         ),
         delete=False,
         live=frozenset({"status"}),

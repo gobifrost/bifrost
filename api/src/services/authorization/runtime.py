@@ -319,6 +319,7 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
                 AgentRun.acting_user_id,
                 AgentRun.org_id,
                 AgentRun.agent_id,
+                AgentRun.permission_workflow_id,
                 AgentRun.impersonated_by_user_id,
                 AgentRun.impersonation_session_id,
             ).where(AgentRun.id == run_id)
@@ -343,15 +344,28 @@ async def _load_agent_run(db: AsyncSession, run_id: UUID) -> RuntimeAuthority:
         if run.agent_id is None
         else (await db.execute(select(Agent.solution_id).where(Agent.id == run.agent_id))).scalar_one_or_none()
     )
+    powers = None
+    if run.permission_workflow_id is not None:
+        workflow = (
+            await db.execute(select(*_WORKFLOW_AUTHORITY_COLUMNS).where(
+                Workflow.id == run.permission_workflow_id,
+                Workflow.is_active.is_(True),
+            ))
+        ).one_or_none()
+        if workflow is None:
+            raise RuntimeIdentityError(_WORKFLOW_MISSING)
+        powers = await load_powers_for_workflow(db, workflow)
+        if await _solution_active(db, workflow.solution_id) is False:
+            raise RuntimeIdentityError("Agent permission workflow Solution is inactive.")
     return RuntimeAuthority(
         kind="agent_run",
         credential_id=run.id,
         run_user=run_user,
-        powers=None,
+        powers=powers,
         acting_user_id=run.acting_user_id,
         organization_id=run.org_id,
         solution_id=solution_id,
-        workflow_id=None,
+        workflow_id=run.permission_workflow_id,
         started_by_user_id=None,
         root_execution_id=None,
         impersonated_by_user_id=run.impersonated_by_user_id,

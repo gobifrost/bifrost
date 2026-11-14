@@ -153,3 +153,51 @@ async def test_equality_alone_decides_after_a_failover_restores_an_epoch(async_e
         async with async_engine.begin() as connection:
             await connection.execute(_SET_EPOCH, {"version": minted + 1 if minted < 2**63 - 1 else minted - 1})
         assert not await token_accepted(async_engine, claims)
+
+
+async def test_workflow_agent_token_preserves_live_grants_and_invalidates_on_revocation(
+    async_engine: AsyncEngine,
+) -> None:
+    from sqlalchemy import delete
+    from src.models.orm.workflow_permissions import WorkflowPermissionGrant
+    from src.services.authorization.enforce import allows_permission, load_caller
+    async with committed_world(async_engine) as world:
+        org = await world.organization()
+        user = await world.person(org)
+        workflow = await world.workflow(org, permission_mode="restricted")
+        grant = WorkflowPermissionGrant(workflow_id=workflow.id, permission="agents.execute")
+        world.session.add(grant)
+        run = await world.agent_run(run_user=user, actor=user, organization=org,
+                                    permission_workflow_id=workflow.id)
+        await world.session.commit()
+        subject = RuntimeSubject("agent_run", run.id)
+        issued = await issue_access_token(subject)
+        principal = tokens.principal_from_claims(issued.claims)
+        caller = await load_caller(world.session, principal)
+        assert allows_permission(caller, "agents.execute", org.id)
+        assert issued.claims.run.wf == workflow.id
+        await world.session.execute(delete(WorkflowPermissionGrant).where(WorkflowPermissionGrant.id == grant.id))
+        await world.session.commit()
+        assert not await token_accepted(async_engine, issued.claims)
+        reissued = await issue_access_token(subject)
+        assert reissued.claims.run.powers is not None
+        assert "agents.execute" not in reissued.claims.run.powers.grants
+
+
+async def test_soft_deleted_workflow_revokes_agent_tokens_and_refuses_reissue(
+    async_engine: AsyncEngine,
+) -> None:
+    async with committed_world(async_engine) as world:
+        org = await world.organization()
+        user = await world.person(org)
+        workflow = await world.workflow(org, permission_mode="restricted", grants=("agents.execute",))
+        run = await world.agent_run(run_user=user, actor=user, organization=org,
+                                    permission_workflow_id=workflow.id)
+        await world.session.commit()
+        subject = RuntimeSubject("agent_run", run.id)
+        issued = await issue_access_token(subject)
+        workflow.is_active = False
+        await world.session.commit()
+        assert not await token_accepted(async_engine, issued.claims)
+        with pytest.raises(tokens.TokenSubjectUnavailable):
+            await issue_access_token(subject)

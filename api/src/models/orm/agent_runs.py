@@ -40,6 +40,10 @@ class AgentRun(Base):
     run_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
     )
+    # Immutable grant source for workflow-launched runs. Keep the UUID after
+    # workflow deletion so authority reload fails closed instead of falling
+    # back to the user's permissions.
+    permission_workflow_id: Mapped[UUID | None] = mapped_column(PG_UUID(as_uuid=True), default=None)
     # Whose identity tools use when it isn't the caller's; see run_as.
     run_as_user_id: Mapped[UUID | None] = mapped_column(
         PG_UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"), default=None
