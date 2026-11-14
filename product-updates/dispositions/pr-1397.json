@@ -1,0 +1,12 @@
+{
+  "key": "pr:1397",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Behavior-neutral refactor extracting the shared result envelope. No user-facing change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1397"
+    ]
+  }
+}
