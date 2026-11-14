@@ -17,6 +17,13 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
+    libxml2-dev \
+    libxslt1-dev \
+    libffi-dev \
+    zlib1g-dev \
+    libjpeg-dev \
+    cargo \
+    rustc \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency manifests and install.
@@ -32,7 +39,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 #
 # We deliberately do NOT run `pip install --upgrade pip` first — Scorecard
 # flags unpinned `pip install <pkg>` invocations, and the pip shipped in
-# python:3.15.2-slim already supports --require-hashes (>= 8.0).
+# The bundled pip already supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
@@ -48,6 +55,10 @@ ARG BIFROST_VERSION=unknown
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libpq5 \
+    libxml2 \
+    libxslt1.1 \
+    libffi8 \
+    libjpeg62-turbo \
     libcairo2 \
     curl \
     gosu \
@@ -68,7 +79,7 @@ COPY api/scripts/install-npm.sh /usr/local/bin/install-npm.sh
 RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
-COPY --from=builder /usr/local/lib/python3.15/site-packages /usr/local/lib/python3.15/site-packages
+COPY --from=builder /usr/local/lib/python3.16/site-packages /usr/local/lib/python3.16/site-packages
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
