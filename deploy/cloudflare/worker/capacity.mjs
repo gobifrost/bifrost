@@ -261,6 +261,12 @@ export class WorkerLedger {
                             BIFROST_WORKER_INCARNATION_ID: row.worker_id,
                             BIFROST_WORKER_RESOURCE_UID: row.resource_uid,
                             BIFROST_POOL_WORKER_EXECUTION_LANE: "normal",
+                            // Container runtimes are not required to export a
+                            // hostname, and Cloudflare does not. The launcher
+                            // identity refuses to start without one, and Docker
+                            // and Kubernetes setting it is a convention, not a
+                            // guarantee, so the provider supplies it.
+                            HOSTNAME: `cf-${workerId}`,
                         },
                         entrypoint,
                     }),

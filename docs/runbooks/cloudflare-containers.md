@@ -77,6 +77,18 @@ Exit code `0` means the process ended on its own; a non-zero code is the
 container entrypoint failing. Watch for it with `npx wrangler tail` while a
 worker is being admitted.
 
+One failure is specific to this platform. Docker and Kubernetes export
+`HOSTNAME`; Container runtimes generally do not, and Cloudflare does not. The
+worker's launcher identity requires a hostname and refuses to start without
+one:
+
+```
+src.worker.remote.identity.IdentityError: remote hostname is required
+```
+
+The provider supplies it for the incarnations it starts, so a deployment that
+sees this line is running an older provider build.
+
 ## Verify before deploying
 
 ```bash
