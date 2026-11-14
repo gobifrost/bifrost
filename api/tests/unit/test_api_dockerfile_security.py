@@ -62,3 +62,23 @@ def test_package_copy_matches_python_image_minor(filename):
     )
     expected = f"/usr/local/lib/python{versions[0]}/site-packages"
     assert paths == [(expected, expected)]
+
+
+@pytest.mark.parametrize("filename", ["Dockerfile", "Dockerfile.dev"])
+def test_native_build_compiler_is_pinned_and_build_only(filename):
+    """Native wheels need a supported compiler without adding runtime tooling."""
+    path = _api_dir() / filename
+    text = path.read_text()
+    compiler = re.search(
+        r"^FROM rust:(\d+)\.(\d+)\.(\d+)-[^@\s]+@sha256:[0-9a-f]{64} AS rust-toolchain$",
+        text,
+        re.MULTILINE,
+    )
+    assert compiler is not None
+    assert tuple(map(int, compiler.groups())) >= (1, 96, 0)
+    runtime = "\n".join(_runtime_stage_lines(path))
+    assert "rust-toolchain" not in runtime
+    assert "CARGO_HOME" not in runtime
+    assert "RUSTUP_HOME" not in runtime
+    assert "/opt/cargo" not in runtime
+    assert "/opt/rustup" not in runtime

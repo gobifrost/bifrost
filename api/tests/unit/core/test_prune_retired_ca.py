@@ -2,6 +2,7 @@
 import hashlib
 import importlib.util
 from pathlib import Path
+import re
 import ssl
 import tempfile
 import unittest
@@ -19,6 +20,26 @@ _spec.loader.exec_module(pruner)
 
 
 class PruneRetiredCATests(unittest.TestCase):
+    def test_bundle_removes_only_retired_roots_and_preserves_metadata(self):
+        certificates = re.findall(
+            r"-----BEGIN CERTIFICATE-----.*?-----END CERTIFICATE-----",
+            Path(certifi.where()).read_text(),
+            flags=re.DOTALL,
+        )[:2]
+        digest = hashlib.sha256(ssl.PEM_cert_to_DER_cert(certificates[0])).hexdigest()
+        with tempfile.TemporaryDirectory() as directory:
+            bundle = Path(directory) / "cacert.pem"
+            bundle.write_text("# retained metadata\n" + "\n".join(certificates) + "\n")
+            expected = "# retained metadata\n\n" + certificates[1] + "\n"
+            with patch.object(pruner, "RETIRED_ANCHORS", {digest}):
+                pruner.prune_retired_bundle(bundle)
+                self.assertEqual(bundle.read_text(), expected)
+                pruner.prune_retired_bundle(bundle)
+                self.assertEqual(bundle.read_text(), expected)
+            anchors = ssl.create_default_context(cafile=str(bundle)).get_ca_certs(binary_form=True)
+            self.assertEqual(len(anchors), 1)
+            self.assertNotIn(digest, {hashlib.sha256(cert).hexdigest() for cert in anchors})
+
     def test_preserves_other_roots_and_existing_exclusions(self):
         bundle = Path(certifi.where()).read_text()
         certificates = []
