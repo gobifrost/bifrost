@@ -43,6 +43,11 @@ from typing import Any
 
 SCOPE_HEADER = "X-Bifrost-Capacity-Scope"
 
+# Some providers sit behind bot protection (Cloudflare answers 1010 to a bare
+# Python user agent). A provider endpoint should be reachable by the control
+# plane's own client, so the UA is explicit and overridable.
+DEFAULT_USER_AGENT = "bifrost-capacity-conformance/1.0"
+
 PASSED, FAILED, SKIPPED = "PASS", "FAIL", "SKIP"
 
 
@@ -83,10 +88,11 @@ class Hook:
 
 
 class Client:
-    def __init__(self, base_url: str, token: str, scope: str) -> None:
+    def __init__(self, base_url: str, token: str, scope: str, user_agent: str = DEFAULT_USER_AGENT) -> None:
         self.base = base_url.rstrip("/")
         self.token = token
         self.scope = scope
+        self.user_agent = user_agent
         self._ctx = ssl.create_default_context()
         self._ctx.check_hostname = False
         self._ctx.verify_mode = ssl.CERT_NONE
@@ -100,7 +106,7 @@ class Client:
         token: str | None = None,
         scope: str | None = "default",
     ) -> tuple[int, Any]:
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "User-Agent": self.user_agent}
         use_token = self.token if token is None else token
         if use_token:
             headers["Authorization"] = f"Bearer {use_token}"
@@ -218,6 +224,7 @@ def main() -> int:
     parser.add_argument("--token", default=None)
     parser.add_argument("--scope", required=True)
     parser.add_argument("--hook-command", default=None)
+    parser.add_argument("--user-agent", default=DEFAULT_USER_AGENT)
     parser.add_argument("--deadline", type=int, default=900)
     parser.add_argument("--json-out", default=None)
     args = parser.parse_args()
@@ -227,7 +234,11 @@ def main() -> int:
         print(f"missing token: set ${args.token_env} or pass --token", file=sys.stderr)
         return 2
 
-    suite = Suite(Client(args.base_url, token, args.scope), Hook(args.hook_command), args.deadline)
+    suite = Suite(
+        Client(args.base_url, token, args.scope, user_agent=args.user_agent),
+        Hook(args.hook_command),
+        args.deadline,
+    )
 
     # ---- capabilities -------------------------------------------------
     @suite.case("capabilities: contract")
