@@ -453,6 +453,7 @@ function fakeLedger({ live = [], ceiling = 2 } = {}) {
     const slots = [...live];
     const releases = [];
     const reservations = [];
+    const escapes = [];
     const ctx = {
         storage: {
             get: async (key) => store.get(key),
@@ -460,7 +461,16 @@ function fakeLedger({ live = [], ceiling = 2 } = {}) {
                 store.set(key, value);
             },
         },
-        blockConcurrencyWhile: (fn) => fn(),
+        // Mirrors the real primitive: a rejection here resets the object, so the
+        // tests can assert that ordinary rejections never reach it.
+        blockConcurrencyWhile: async (fn) => {
+            try {
+                return await fn();
+            } catch (error) {
+                escapes.push(error);
+                throw error;
+            }
+        },
     };
     const env = {
         ...ENV,
@@ -504,7 +514,7 @@ function fakeLedger({ live = [], ceiling = 2 } = {}) {
             }),
         },
     };
-    return { ctx, env, slots, releases, reservations };
+    return { ctx, env, slots, releases, reservations, escapes };
 }
 
 function ledgerCall(ctx, env, method, body) {
@@ -526,7 +536,7 @@ test("a prepared worker holds exactly one slot", async () => {
 });
 
 test("a rejected prepare releases the slot it reserved", async () => {
-    const { ctx, env, slots, releases } = fakeLedger();
+    const { ctx, env, slots, releases, escapes } = fakeLedger();
     const response = await ledgerCall(
         ctx,
         env,
@@ -537,6 +547,26 @@ test("a rejected prepare releases the slot it reserved", async () => {
     // Nothing may keep capacity for a reservation that was never written.
     assert.deepEqual(slots, []);
     assert.equal(releases.length, 1);
+    // An escaping rejection would reset the Durable Object.
+    assert.deepEqual(escapes, []);
+});
+
+test("a failed re-prepare keeps an admitted worker's slot", async () => {
+    const { ctx, env, slots } = fakeLedger();
+    const admitted = await ledgerCall(ctx, env, "PUT", reservation());
+    assert.equal(admitted.status, 200);
+    assert.deepEqual(slots, [WORKER]);
+
+    // A second prepare for the same worker with a different build is rejected,
+    // and must not evict the slot the admitted record still owns.
+    const rejected = await ledgerCall(
+        ctx,
+        env,
+        "PUT",
+        reservation({ worker_version: "other-build" }),
+    );
+    assert.equal(rejected.status, 409);
+    assert.deepEqual(slots, [WORKER]);
 });
 
 test("a prepare replayed after deletion leaves no slot behind", async () => {

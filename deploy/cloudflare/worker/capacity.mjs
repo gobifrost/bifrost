@@ -417,42 +417,56 @@ export class WorkerLedger {
             // and any rollback are one serialized step, so a concurrent prepare
             // can neither claim nor free this worker's slot mid-flight.
             return await this.ctx.blockConcurrencyWhile(async () => {
-                if (request.method === "GET") {
-                    const doc = await engine.get(workerId);
-                    return doc ? json(200, doc) : json(404, { error: "unknown worker" });
-                }
-                if (request.method === "PUT") {
-                    const reserved = await registry().fetch("https://do/reserve", {
-                        method: "POST",
-                        body: JSON.stringify({
-                            worker_id: workerId,
-                            ceiling: this.settings.maxWorkers,
-                        }),
-                    });
-                    const reservation = await reserved.json();
-                    if (!reservation.ok) return json(409, { error: "capacity ceiling reached" });
-                    try {
-                        return json(200, await engine.prepare(workerId, await request.json()));
-                    } catch (error) {
-                        // A rejected prepare must not keep the slot it reserved.
-                        await release(reservation.generation);
-                        throw error;
+                // Errors are converted here: an exception escaping this callback
+                // resets the Durable Object, and a validation rejection is not a
+                // reason to reset it.
+                try {
+                    if (request.method === "GET") {
+                        const doc = await engine.get(workerId);
+                        return doc ? json(200, doc) : json(404, { error: "unknown worker" });
                     }
+                    if (request.method === "PUT") {
+                        const reserved = await registry().fetch("https://do/reserve", {
+                            method: "POST",
+                            body: JSON.stringify({
+                                worker_id: workerId,
+                                ceiling: this.settings.maxWorkers,
+                            }),
+                        });
+                        const reservation = await reserved.json();
+                        if (!reservation.ok) return json(409, { error: "capacity ceiling reached" });
+                        try {
+                            return json(200, await engine.prepare(workerId, await request.json()));
+                        } catch (error) {
+                            // Release only when this worker holds no live record.
+                            // A previous successful prepare owns its slot, and a
+                            // failed re-prepare must not evict it.
+                            const record = await engine.get(workerId);
+                            if (!record || record.state === STATE.DELETED) {
+                                await release(reservation.generation);
+                            }
+                            throw error;
+                        }
+                    }
+                    if (request.method === "DELETE") {
+                        const result = await engine.remove(workerId, await request.json());
+                        // Release only after the deletion is durable: freeing the
+                        // slot first would over-admit if the delete then failed.
+                        await release(undefined);
+                        return json(200, result);
+                    }
+                    if (request.method === "POST" && step === "start") {
+                        return json(200, await engine.start(workerId, await request.json()));
+                    }
+                    return json(404, { error: "not found" });
+                } catch (error) {
+                    if (error instanceof ProtocolError) {
+                        return json(error.status, { error: error.message });
+                    }
+                    return json(500, { error: "provider error" });
                 }
-                if (request.method === "DELETE") {
-                    const result = await engine.remove(workerId, await request.json());
-                    // Release only after the deletion is durable: freeing the
-                    // slot first would over-admit if the delete then failed.
-                    await release(undefined);
-                    return json(200, result);
-                }
-                if (request.method === "POST" && step === "start") {
-                    return json(200, await engine.start(workerId, await request.json()));
-                }
-                return json(404, { error: "not found" });
             });
-        } catch (error) {
-            if (error instanceof ProtocolError) return json(error.status, { error: error.message });
+        } catch {
             return json(500, { error: "provider error" });
         }
     }
