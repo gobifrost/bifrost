@@ -1133,7 +1133,7 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
     ),
     OperationDefinition(
         operation_id="workflows.execute",
-        summary="Execute a Workflow",
+        summary="Execute a Workflow or inline Python",
         target_kind=OperationTargetKind.RESOURCE,
         rest=RestOperationBinding(
             method="POST",
@@ -1144,8 +1144,8 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         cli=CliOperationBinding(path=("workflows", "execute")),
         mcp=McpOperationBinding(name="bifrost_workflow_execute"),
         native_builder=True,
-        action_scopes=("workflows.execute",),
-        authorization_resolver="WorkflowRepository execution access and execution-context policy",
+        action_scopes=("workflows.execute", "code.execute"),
+        authorization_resolver="Workflow execution access, or Execute Code for inline Python; existing execution-context policy",
         side_effects=(
             "enqueue tracked execution work and publish shared execution progress",
         ),

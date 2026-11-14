@@ -19,11 +19,13 @@ from src.services.mcp_server.config_service import MCPConfig
 from src.services.mcp_server.tool_access import MCPToolAccessService
 
 
-def _caller(*, configuration=False, actor_admin=False):
+def _caller(*, configuration=False, actor_admin=False, code_execution=False):
     original_id, actor_id, home = uuid4(), uuid4(), uuid4()
     roles = () if not configuration else (
         RoleGrant(uuid4(), frozenset({"mcp.read"}), (Boundary(BoundaryKind.PLATFORM),)),
     )
+    if code_execution:
+        roles += (RoleGrant(uuid4(), frozenset({"code.execute"}), (Boundary(BoundaryKind.PLATFORM),)),)
     ctx = AuthorizationContext(
         user_id=original_id, home_organization_id=home, base_role_id=USER_ROLE_ID,
         is_external=False, base_permissions=USER_BASE_PERMISSIONS, role_grants=roles,
@@ -187,3 +189,41 @@ async def test_readable_agent_requires_named_execute_permission_to_call_tools():
     with pytest.raises(HTTPException) as error:
         await service.get_tools_for_agent(agent.id, caller, for_execution=True)
     assert error.value.status_code == 403
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code_execution", [False, True])
+async def test_default_code_tool_needs_current_permission_and_no_agent(code_execution):
+    caller = _caller(code_execution=code_execution, actor_admin=True)
+    session = _session([])
+    tools = await MCPToolAccessService(session).get_default_tools(caller)
+    assert [tool.id for tool in tools] == (["bifrost_execute_code"] if code_execution else [])
+    session.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("config", [
+    MCPConfig(enabled=False),
+    MCPConfig(blocked_tool_ids=["bifrost_execute_code"]),
+    MCPConfig(allowed_tool_ids=["bifrost_execution_get"]),
+])
+async def test_default_code_tool_honors_mcp_configuration(_config, config):
+    _config.get_config.return_value = config
+    assert await MCPToolAccessService(_session([])).get_default_tools(_caller(code_execution=True)) == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("assigned,permitted", [(False, True), (True, False), (True, True)])
+async def test_agent_code_tool_needs_assignment_and_original_user_permission(assigned, permitted):
+    caller = _caller(code_execution=permitted, actor_admin=True)
+    agent = _agent(caller, tools=["bifrost_execute_code"] if assigned else [])
+    result = await MCPToolAccessService(_session([agent])).get_tools_for_agent(agent.id, caller)
+    assert [tool.id for tool in result.tools] == (["bifrost_execute_code"] if assigned and permitted else [])
+
+
+@pytest.mark.asyncio
+async def test_settings_inventory_includes_default_code_tool_without_an_agent():
+    result = await MCPToolAccessService(_session([])).get_accessible_tools(
+        _caller(configuration=True), for_configuration=True,
+    )
+    assert [tool.id for tool in result.tools] == ["bifrost_execute_code"]

@@ -46,6 +46,7 @@ from src.services.mcp_server.tools import (  # noqa: E402
     agents as agents_mod,
     base_role_defaults as base_role_defaults_mod,
     code_editor as code_editor_mod,
+    code_execution as code_execution_mod,
     claims as claims_mod,
     configs as configs_mod,
     events as events_mod,
@@ -74,6 +75,7 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_workflow_permission_default_update",
     },
     "code_editor": {"bifrost_file_search"},
+    "code_execution": {"bifrost_execute_code"},
     "agents": {
         "bifrost_agent_list",
         "bifrost_agent_get",
@@ -194,6 +196,7 @@ MODULES = {
     "workflow_conversion": workflow_conversion_mod,
     "agents": agents_mod,
     "code_editor": code_editor_mod,
+    "code_execution": code_execution_mod,
     "roles": roles_mod,
     "claims": claims_mod,
     "configs": configs_mod,

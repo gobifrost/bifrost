@@ -16,7 +16,8 @@ each bucket's ``description`` for exactly what it covers.
 The actions are ``read`` and ``readwrite`` on every resource, plus
 ``readbasic`` (the everyday view of items shared with the holder) on a
 resource whose ``basic`` is set, plus each verb the resource declares in
-``verbs`` (``workflows.execute``, ``apps.publish``, ``solutions.deploy``).
+``verbs`` (``workflows.execute``, ``code.execute``, ``apps.publish``,
+``solutions.deploy``).
 
 The optional ``.all`` suffix follows ``read`` or ``readwrite`` on a resource
 whose ``private`` is set, and means other people's private items of that
@@ -165,6 +166,21 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         ),
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Run Workflows: members, and the Platform Operator role at Managed organizations.",
         verbs={"execute": "Run Workflows"},
+    ),
+    "code": PermissionDomain(
+        title="Code",
+        area="Automation",
+        description=(
+            "Submitting arbitrary inline CPython to the workflow execution "
+            "endpoint. Execute Code admits that capability at the Platform "
+            "boundary; it does not change the execution's SDK context or "
+            "organization scope."
+        ),
+        who_should_hold=(
+            "Platform admins, or an admin-assigned role at the Platform "
+            "boundary; never the User or Platform Operator built-in role."
+        ),
+        verbs={"execute": "Execute Code"},
     ),
     "policyrules": PermissionDomain(
         title="Policy Rules",
@@ -494,6 +510,7 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
         "platform.readwrite",
         "repository.read",
         "repository.readwrite",
+        "code.execute",
         "claims.readwrite",
         "filepolicies.readwrite",
         "tables.readwrite",
@@ -535,5 +552,5 @@ class PermissionCatalogEntry(BaseModel):
     # per_organization: only checked at an organization; platform_wide: only
     # at Global; varies: both, or no route checks it yet.
     scope: Literal["per_organization", "platform_wide", "varies"]
-    # True once any route of the domain is decided by the evaluator.
+    # True when an operation enforces a named permission through the evaluator.
     enforced: bool

@@ -13,10 +13,12 @@ from src.models.orm.agents import Agent
 from src.routers.tools import get_system_tools
 from src.services.agent_write_policy import agent_query_in_reach, can_read_agent
 from shared.scope_resolver import shared_read_organization
-from src.services.authorization.enforce import Caller, require_permission, user_reach
+from src.services.authorization.enforce import Caller, allows_permission, require_permission, user_reach
 from src.services.mcp_server.config_service import MCPConfig, MCPConfigService
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_SYSTEM_TOOL_IDS = frozenset({"bifrost_execute_code"})
 
 
 @dataclass
@@ -53,10 +55,10 @@ class MCPToolAccessService:
         if for_configuration:
             require_permission(caller, "mcp.read", None)
         agents = await self._get_accessible_agents(caller)
-        tools: list[ToolInfo] = []
-        seen: set[str] = set()
+        tools = self._default_system_tools(caller, for_configuration=for_configuration)
+        seen = {tool.id for tool in tools}
         for agent in agents:
-            for tool in self._system_tools(agent):
+            for tool in self._system_tools(agent, caller):
                 if tool.id not in seen:
                     seen.add(tool.id)
                     tools.append(tool)
@@ -65,6 +67,20 @@ class MCPToolAccessService:
             config = await MCPConfigService(self.session).get_config()
             tools = self._apply_config_filters(tools, config)
         return MCPToolAccessResult(tools=tools)
+
+    async def get_default_tools(self, caller: Caller) -> list[ToolInfo]:
+        """Permission-enabled native tools on default MCP, independent of Agents."""
+        config = await MCPConfigService(self.session).get_config()
+        if not config.enabled:
+            return []
+        return self._apply_config_filters(self._default_system_tools(caller), config)
+
+    def _default_system_tools(
+        self, caller: Caller, *, for_configuration: bool = False
+    ) -> list[ToolInfo]:
+        if for_configuration or allows_permission(caller, "code.execute", None):
+            return [self._SYSTEM_TOOL_MAP[tool_id] for tool_id in DEFAULT_SYSTEM_TOOL_IDS]
+        return []
 
     async def get_tools_for_agent(
         self, agent_id: UUID | str, caller: Caller, *, for_execution: bool = False
@@ -82,7 +98,7 @@ class MCPToolAccessService:
                 caller, "agents.execute",
                 shared_read_organization(caller, agent.organization_id),
             )
-        tools = self._system_tools(agent)
+        tools = self._system_tools(agent, caller)
         tools.extend(
             self._visible_workflows_for_agent(
                 agent, caller, {tool.id for tool in tools}
@@ -132,9 +148,11 @@ class MCPToolAccessService:
             ))
         return infos
 
-    def _system_tools(self, agent: Agent) -> list[ToolInfo]:
+    def _system_tools(self, agent: Agent, caller: Caller) -> list[ToolInfo]:
         tools: list[ToolInfo] = []
         for tool_id in self._effective_system_tool_ids(agent):
+            if tool_id == "bifrost_execute_code" and not allows_permission(caller, "code.execute", None):
+                continue
             if tool_id in self._SYSTEM_TOOL_MAP:
                 tools.append(self._SYSTEM_TOOL_MAP[tool_id])
             else:

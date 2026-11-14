@@ -47,7 +47,12 @@ not authorize execution, offer the action instead of executing it.
 
 If validation fails, correct the arguments using the returned live schema and
 repair guidance. Do not call a tool that was not returned for the selected
-agent."""
+agent.
+
+When bifrost_execute_code is available, you may call it directly for one-off
+Python execution without selecting an agent or registering a workflow. It
+returns an execution_id; use bifrost_get_execution to retrieve its result.
+SDK calls retain the execution identity's existing permissions and scoping."""
 
 
 def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:

@@ -8,7 +8,7 @@ the catalog cannot drift from it.
 
 from __future__ import annotations
 
-from src.models.contracts.access_list import AccessEntry, CurrentGate
+from src.models.contracts.access_list import AccessEntry, CurrentGate, InlineEffect
 from src.models.contracts.permissions import (
     PERMISSION_DOMAINS,
     PRIVILEGED_PERMISSIONS,
@@ -64,7 +64,11 @@ def build_catalog(access_list: list[AccessEntry] = ACCESS_LIST) -> list[Permissi
                 names=domain_display_names(domain),
                 privileged=privileged,
                 scope=scope,
-                enforced=any(e.current_gate == CurrentGate.EVALUATOR for e in entries),
+                enforced=any(
+                    e.current_gate == CurrentGate.EVALUATOR
+                    or e.inline_effect == InlineEffect.DENY_UNLESS_PERMISSION
+                    for e in entries
+                ),
             )
         )
     return sorted(catalog, key=lambda c: (c.area, c.title))

@@ -2995,11 +2995,12 @@
       },
       "operation": {
         "action_scopes": [
-          "workflows.execute"
+          "workflows.execute",
+          "code.execute"
         ],
         "async_policy": "execution_worker",
         "audit_event": null,
-        "authorization_resolver": "WorkflowRepository execution access and execution-context policy",
+        "authorization_resolver": "Workflow execution access, or Execute Code for inline Python; existing execution-context policy",
         "cli": {
           "path": [
             "workflows",
@@ -3024,7 +3025,7 @@
         "side_effects": [
           "enqueue tracked execution work and publish shared execution progress"
         ],
-        "summary": "Execute a Workflow",
+        "summary": "Execute a Workflow or inline Python",
         "target_kind": "resource"
       }
     },
@@ -10690,7 +10691,7 @@
   "counts": {
     "cli": 180,
     "manifest": 16,
-    "mcp": 100,
+    "mcp": 101,
     "rest": 723,
     "sdk": 21
   },
@@ -11634,6 +11635,12 @@
       }
     ],
     "mcp": [
+      {
+        "hidden": false,
+        "name": "bifrost_execute_code",
+        "reason": "MCP tool has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
       {
         "hidden": false,
         "name": "delete_content",

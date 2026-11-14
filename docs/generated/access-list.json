@@ -10798,6 +10798,20 @@
   },
   {
     "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": "deny_unless_permission",
+    "intended_change": null,
+    "mcp_tool": "bifrost_execute_code",
+    "method": null,
+    "operation_id": null,
+    "path": null,
+    "permission": "code.execute",
+    "reason": "Thin MCP wrapper over the inline-code branch of POST /api/workflows/execute. Execute Code is enforced in shared.sdk_workflow_execution beyond the one-hop adapter scan; existing SDK permissions and reach govern effects."
+  },
+  {
+    "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
