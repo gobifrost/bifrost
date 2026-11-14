@@ -69,6 +69,19 @@ const CASES = [
     },
     required: ['workflows/case_sdk.py'],
   },
+  {
+    // Log case: the engine captures workflow logs on both backends. The marker
+    // must appear in both, which proves the log path, not just the result.
+    name: 'logs-marker',
+    sdk: true,
+    logs: true,
+    entry: 'workflows/case_logs.py',
+    function: 'main',
+    files: {
+      'workflows/case_logs.py': 'import logging\nfrom bifrost import workflow\n\n@workflow(name="__FN__")\nasync def __FN__():\n    logging.getLogger("workflow").info("differential-log-marker")\n    return {"ok": True}\n',
+    },
+    required: ['workflows/case_logs.py'],
+  },
 ];
 
 // Key order is not meaningful across the two backends.
@@ -137,7 +150,7 @@ async function runCloudflareEngine(c, manifest, runId) {
   const out = json.output ?? null;
   return {httpStatus: response.status, phase: json.phase ?? null,
     status: out?.status ?? null, result: out?.result ?? null,
-    error: out?.error_type ?? null};
+    error: out?.error_type ?? null, logs: out?.logs ?? []};
 }
 
 async function runLinuxRegistered(c) {
@@ -166,8 +179,9 @@ async function runLinuxRegistered(c) {
     await new Promise((resolve) => setTimeout(resolve, 2000));
     const r = await api(`/api/executions/${run.body.execution_id}`);
     if (r.body.status && !['Pending', 'Running'].includes(r.body.status)) {
+      const logs = await api(`/api/executions/${run.body.execution_id}/logs`);
       return {httpStatus: r.status, status: r.body.status, result: r.body.result ?? null,
-        error: r.body.error ?? null};
+        error: r.body.error ?? null, logs: logs.body ?? null};
     }
   }
   return {httpStatus: 200, status: 'Timeout', result: null};
@@ -197,7 +211,7 @@ async function runLinux(c) {
 function withRunId(c, runId) {
   if (!c.sdk) return c;
   const remap = (p) => p.replace(/\.py$/, `_${runId}.py`);
-  const fn = `case_sdk_${runId}`;
+  const fn = `case_${c.name.replaceAll('-', '_')}_${runId}`;
   return {...c, entry: remap(c.entry), function: c.sdk ? fn : c.function,
     files: Object.fromEntries(Object.entries(c.files).map(([p, s]) => [remap(p), s.replaceAll('__RUN_ID__', runId).replaceAll('__FN__', fn)])),
     required: c.required.map(remap)};
@@ -219,11 +233,15 @@ for (const rawCase of CASES) {
   const cloudFailed = c.sdk ? cloud.status !== 'Success' : (cloud.httpStatus >= 400 || cloud.phase !== null);
   const linuxFailed = linux.status !== 'Success';
   const sameStatus = cloudFailed === linuxFailed;
-  const ok = c.expectFailure ? sameStatus : (sameResult && sameStatus);
+  const marker = 'differential-log-marker';
+  const sameLogs = !c.logs ||
+    (JSON.stringify(cloud.logs ?? []).includes(marker) && JSON.stringify(linux.logs ?? []).includes(marker));
+  const ok = c.expectFailure ? sameStatus : (sameResult && sameStatus && sameLogs);
   if (!ok) failures++;
-  evidence.cases.push({name: c.name, ok, cloud, linux, same_result: sameResult, same_status: sameStatus});
+  evidence.cases.push({name: c.name, ok, cloud, linux, same_result: sameResult,
+    same_status: sameStatus, same_logs: sameLogs});
   console.log(`${ok ? 'PASS' : 'FAIL'} ${c.name} — cloud=${c.sdk ? cloud.status : `${cloud.httpStatus}/${cloud.phase ?? 'ok'}`} ` +
-    `linux=${linux.status} same_result=${sameResult} same_status=${sameStatus}`);
+    `linux=${linux.status} same_result=${sameResult} same_status=${sameStatus} same_logs=${sameLogs}`);
   if (!ok) console.log(`  cloud: ${JSON.stringify(cloud.result)} linux: ${JSON.stringify(linux.result)}`);
 }
 

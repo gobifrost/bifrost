@@ -1,6 +1,6 @@
 {
-  "started_at": "2026-11-14T01:05:21.648Z",
-  "run_id": "mwfpevao",
+  "started_at": "2026-11-14T01:18:26.477Z",
+  "run_id": "mwfpvovh",
   "cases": [
     {
       "name": "imports-helper",
@@ -24,7 +24,8 @@
         "error": null
       },
       "same_result": true,
-      "same_status": true
+      "same_status": true,
+      "same_logs": true
     },
     {
       "name": "stdlib-only",
@@ -56,7 +57,8 @@
         "error": null
       },
       "same_result": true,
-      "same_status": true
+      "same_status": true,
+      "same_logs": true
     },
     {
       "name": "raises",
@@ -74,7 +76,8 @@
         "error": null
       },
       "same_result": true,
-      "same_status": true
+      "same_status": true,
+      "same_logs": true
     },
     {
       "name": "sdk-tables-list",
@@ -87,7 +90,8 @@
           "count": 0,
           "kind": "list"
         },
-        "error": null
+        "error": null,
+        "logs": []
       },
       "linux": {
         "httpStatus": 200,
@@ -96,12 +100,56 @@
           "kind": "list",
           "count": 0
         },
-        "error": null
+        "error": null,
+        "logs": []
       },
       "same_result": true,
-      "same_status": true
+      "same_status": true,
+      "same_logs": true
+    },
+    {
+      "name": "logs-marker",
+      "ok": true,
+      "cloud": {
+        "httpStatus": 200,
+        "phase": null,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "timestamp": "2026-11-14T01:18:53.339000+00:00",
+            "level": "info",
+            "message": "differential-log-marker",
+            "source": "workflow"
+          }
+        ]
+      },
+      "linux": {
+        "httpStatus": 200,
+        "status": "Success",
+        "result": {
+          "ok": true
+        },
+        "error": null,
+        "logs": [
+          {
+            "id": 155,
+            "timestamp": "2026-11-14T01:18:53.753469+00:00",
+            "level": "INFO",
+            "message": "differential-log-marker",
+            "data": {},
+            "sequence": 0
+          }
+        ]
+      },
+      "same_result": true,
+      "same_status": true,
+      "same_logs": true
     }
   ],
-  "finished_at": "2026-11-14T01:05:44.693Z",
+  "finished_at": "2026-11-14T01:18:55.817Z",
   "failures": 0
 }

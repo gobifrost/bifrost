@@ -5,7 +5,7 @@
 | Stage | State |
 |---|---|
 | 1 — real API integration | **Proven**, deployed Worker through a named tunnel |
-| 2 — differential replay | **3/3 cases match** (result + failure class) |
+| 2 — differential replay | **5/5 cases match** (result, failure class, SDK, logs) |
 | 3 — production canary | **Prepared, not executed** (needs production authorization) |
 
 ## Infrastructure
@@ -41,10 +41,13 @@ PASS imports-helper  — cloud=200/ok               linux=Success
 PASS stdlib-only     — cloud=200/ok               linux=Success
 PASS raises          — cloud=502/dynamic-runtime  linux=Failed
 PASS sdk-tables-list — cloud=Success              linux=Success
+PASS logs-marker     — cloud=Success              linux=Success
 DIFFERENTIAL: ALL CASES MATCH
 ```
 
-Receipt: [`../../results/differential-replay.json`](../../results/differential-replay.json).
+Run against the **deployed** worker with the DO broker. The `logs-marker` case
+asserts the workflow log line appears on both backends, so the log path is
+compared, not just the return value.
 
 The SDK case is `await tables.list()` through the real engine on both sides; results
 compare canonically (key order differs). The error case is deliberate: both fail, and
@@ -77,14 +80,23 @@ Verified against the staging stack on 2026-11-13:
 That is `await tables.list()` executing through the real SDK, against the real
 API, from a cached per-tenant child.
 
-### Posture trade-off (explicit)
+### Credential posture (DO broker)
 
-Engine mode is **not** credential-free: the engine authenticates SDK calls
-itself, so the attempt-scoped run token travels in the child's context. The
-minimal data-only mode (`action: "run"`) keeps the original posture — dummy
-credential, parent-side gateway, pin verification. Engine mode also does not
-re-verify module pins (the engine fetches modules through the stub), and the
-stub constrains paths via `apiTarget` but is not a full egress allowlist.
+Engine mode is now **credential-free inside the child**:
+
+1. The supervisor mints an opaque handle (`run_<uuid>`) and stores the
+   attempt-scoped token in a Durable Object (`RunTokenBroker`) keyed by handle,
+   with a 10-minute expiry.
+2. The child's `context.engine_token` is the handle, not the token.
+3. `TenantApi` resolves the handle through the DO and swaps in the real token on
+   the way out. The handle is deleted in a `finally` after the attempt.
+
+Verified: `GET /auth/me` with `Bearer run_1111…` → **401**, with the real token →
+**200**. The child's credential is not usable anywhere else.
+
+Remaining difference from the data-only mode: engine mode does not re-verify
+module pins (the engine fetches modules through the stub); the stub constrains
+paths via `apiTarget` but is not a full egress allowlist.
 
 Consequences: use engine mode for trusted-operator workloads; keep the
 data-only mode where the credential-free/pinned posture matters. A Durable
@@ -93,10 +105,8 @@ credential-free posture for engine mode and is the documented follow-up.
 
 ### Remaining
 
-- **Durable Object token broker (next phase):** replaces the token-in-child with
-  an opaque handle resolved by a DO, restoring the credential-free posture for
-  engine mode.
-- **Logs and effects** in the differential (currently result + failure class).
+- **Effect comparison** in the differential (row/file hashes, not just results).
+- **Pin verification in engine mode** (the data-only mode already does it).
 - Stage 3 remains behind the production gate.
 
 ## Stage 3 — prepared, not executed

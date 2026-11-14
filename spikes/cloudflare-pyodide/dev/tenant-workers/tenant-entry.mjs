@@ -37,12 +37,14 @@ import {DUMMY_CREDENTIAL} from '../executor/gateway-injection.mjs';
 // Node unit tests cannot resolve cloudflare:workers, so the export is loaded
 // only where the runtime provides it; ctx.exports cannot see it otherwise.
 let TenantApi;
+let RunTokenBroker;
 try {
-  ({TenantApi} = await import('./tenant-api.mjs'));
+  ({TenantApi, RunTokenBroker} = await import('./tenant-api.mjs'));
 } catch {
   TenantApi = undefined;
+  RunTokenBroker = undefined;
 }
-export {TenantApi};
+export {TenantApi, RunTokenBroker};
 
 // Per-tenant serialization chains + first-use tracking. Module-level: one
 // supervisor isolate holds one chain per tenant id.
@@ -174,12 +176,27 @@ export default {
         const code = tenantEngineCode(api);
         const engineId = `tenant-eng-${workerId}`;
         const worker = env.LOADER.get(engineId, () => code);
-        const response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
-          method: 'POST',
-          body: JSON.stringify({execution_id: body.execution_id, context: body.context,
-            api_url: 'https://test-api.invalid',
-            public_url: body.public_url ?? 'https://staging.invalid'}),
+        // The child carries only an opaque handle; the attempt token lives in
+        // the Durable Object and is deleted after the attempt.
+        const handle = `run_${crypto.randomUUID()}`;
+        const broker = env.TOKENS.get(env.TOKENS.idFromName(handle));
+        await broker.fetch(new Request('https://token.invalid/', {
+          method: 'PUT',
+          body: JSON.stringify({token: body.context.engine_token,
+            expires: Date.now() + 10 * 60 * 1000}),
         }));
+        let response;
+        try {
+          response = await worker.getEntrypoint().fetch(new Request('https://attempt.invalid/', {
+            method: 'POST',
+            body: JSON.stringify({execution_id: body.execution_id,
+              context: {...body.context, engine_token: handle},
+              api_url: 'https://test-api.invalid',
+              public_url: body.public_url ?? 'https://staging.invalid'}),
+          }));
+        } finally {
+          await broker.fetch(new Request('https://token.invalid/', {method: 'DELETE'}));
+        }
         const output = await readBudgetedJson(response);
         return {output: output.upstream_result, apiCalls};
       }
