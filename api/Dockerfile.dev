@@ -25,6 +25,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libffi-dev \
     zlib1g-dev \
     libjpeg-dev \
+    libtiff-dev \
+    libfreetype-dev \
+    liblcms2-dev \
+    libwebp-dev \
+    libopenjp2-7-dev \
+    libraqm-dev \
+    libavif-dev \
+    libxcb1-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # Use the verified compiler instead of the older distro Rust packages.
@@ -66,6 +74,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxslt1.1 \
     libffi8 \
     libjpeg62-turbo \
+    libtiff6 \
+    libfreetype6 \
+    liblcms2-2 \
+    libwebp7 \
+    libwebpmux3 \
+    libwebpdemux2 \
+    libopenjp2-7 \
+    libraqm0 \
+    libavif16 \
+    libxcb1 \
     libcairo2 \
     curl \
     gosu \

@@ -45,7 +45,7 @@ dependencies = [
     # =========================================================================
     # Message Queue (RabbitMQ)
     # =========================================================================
-    "aio-pika>=9.6,<11",  # Recovers work an earlier release left in RabbitMQ (src/services/legacy_broker_drain.py)
+    "aio-pika==9.6.2",  # Legacy broker recovery; aiormq 7 uses asyncio APIs removed in Python 3.16.
 
     # =========================================================================
     # Cache & Sessions (Redis)
@@ -188,7 +188,7 @@ dev = [
     # Testing (test-runner image + CI lint; pytest-env is currently
     # declared-but-unconfigured, kept for the suite that expects it)
     "pytest",
-    "pytest-asyncio",
+    "pytest-asyncio>=1.5.0",  # Avoid asyncio event-loop policies removed in Python 3.16.
     "pytest-cov",
     "pytest-env",
     "pytest-timeout",  # Per-test timeout protection (catches infinite hangs)
