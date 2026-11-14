@@ -4,7 +4,7 @@
 # requirements.lock with --generate-hashes, and the Docker image installs from
 # the lock with --require-hashes (Scorecard Pinned-Dependencies).
 #
-# Dev-only packages (test/lint/debug) live in [project.optional-dependencies]
+# Dev-only packages (test/debug) live in [project.optional-dependencies]
 # "dev" and resolve into requirements-dev.lock (`pip-compile --extra dev`).
 # The production image installs requirements.lock only; dev/CI images install
 # the dev lock instead (it contains the full closure). Regen BOTH locks
@@ -153,11 +153,12 @@ dependencies = [
     "textual",  # TUI framework used by bifrost CLI (file_select, progress, sync, watch)
 
     # =========================================================================
-    # File matching (runtime — NOT dev-only)
+    # Workspace validation and file matching (runtime — NOT dev-only)
     # =========================================================================
     # pathspec is imported by the API (solutions capture/workspace ignore
     # specs) and by the shipped bifrost CLI (file filters), so it stays in
     # the runtime closure. Kept here pending the textual/rich audit in #1381.
+    "ruff",  # Git sync preflight invokes the executable for Python lint warnings
     "pathspec",
 
     # =========================================================================
@@ -173,7 +174,7 @@ dependencies = [
 ]
 
 
-# Dev-only dependencies: test/lint/debug loop. Pinned in
+# Dev-only dependencies: test/debug loop. Pinned in
 # requirements-dev.lock (compiled with `pip-compile --extra dev`, which
 # resolves the runtime closure PLUS this group so shared pins agree).
 # Dev/CI images install requirements-dev.lock; the production image installs
@@ -189,14 +190,13 @@ dev = [
     "pytest-cov",
     "pytest-env",
     "pytest-timeout",  # Per-test timeout protection (catches infinite hangs)
-    # Lint / debug / file-watching (dev-loop only: ruff via quality_api.sh,
+    # Debug / file-watching (dev-loop only:
     # debugpy via `python -m debugpy` in debug compose, watchdog via
     # `bifrost watch` / `solution dev` local commands and watchmedo in
     # dev/debug compose). All shipped-image imports of watchdog are lazy, so
     # the API/worker runtime and worker `bifrost <verb>` shell-outs work
     # without it. The standalone CLI distribution (api/bifrost/pyproject.toml)
     # still declares watchdog for laptop installs.
-    "ruff",
     "debugpy",  # Remote debugging (VS Code attach)
     "watchdog",  # File watching for hot reload (watchmedo command)
 ]

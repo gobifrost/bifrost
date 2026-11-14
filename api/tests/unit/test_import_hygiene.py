@@ -53,7 +53,7 @@ def test_scheduler_closure_has_no_heavyweights():
     assert closure_roots("src.scheduler.main") & HEAVY == set()
 
 
-# Issue #1379: dev-only packages (test/lint/debug) ship in
+# Issue #1379: dev-only packages (test/debug) ship in
 # requirements-dev.lock, never in the production image's requirements.lock.
 # Block every dev-only module in a fresh interpreter: entry closures must
 # import cleanly, proving the imports are unreachable and not merely
@@ -67,7 +67,6 @@ DEV_ONLY = {
     "pytest_env",
     "pytest_timeout",
     "coverage",  # via pytest-cov
-    "ruff",
     "debugpy",
     "watchdog",  # dev-loop only in-image: `bifrost watch` / `solution dev`
     "pluggy",  # transitive-only (via pytest), never imported directly

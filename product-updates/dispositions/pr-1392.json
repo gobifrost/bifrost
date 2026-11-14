@@ -2,12 +2,12 @@
   "key": "pr:1392",
   "classification": "omit",
   "entry_ids": [],
-  "reason": "Internal image-size reduction: the production image stops shipping test, lint and debug packages that nothing in api/src imports. No customer-visible behavior changes; dev and CI images keep the full dependency closure so the development experience is unchanged.",
+  "reason": "Internal image-size reduction: remove test and debug dependencies from production while retaining Ruff for existing Git sync preflight lint warnings. Dev and CI retain the full dependency closure; customer behavior is unchanged.",
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1392",
-      "Verified the production lock is a strict subset of the dev lock with no version churn for retained pins (141 prod pins vs 151 dev pins; the 10 removed are the dev group plus its test-only transitives), and that ruff, debugpy, pytest and watchdog have no importer anywhere under api/src."
+      "Production retains Ruff, invoked by Git sync preflight as an executable. The production lock has 142 pins versus 151 in the dev lock, with identical shared versions; the nine removed packages are test/debug dependencies and their transitives."
     ]
   }
 }

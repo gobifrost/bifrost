@@ -1,8 +1,8 @@
 """Prod-image import hygiene: dev-only packages must stay out of the runtime closure.
 
-Issue #1379 split the test/lint/debug packages out of the production install.
+Issue #1379 split the test/debug packages out of the production install.
 ``requirements.lock`` is the runtime closure; the dev-only group (pytest*,
-ruff, debugpy, watchdog) lives in ``requirements-dev.lock`` (compiled with
+debugpy, watchdog) lives in ``requirements-dev.lock`` (compiled with
 ``pip-compile --extra dev``) and installs in dev/CI images only. These static
 cases fail loudly if shipped runtime code reintroduces a dev-only import, or
 if the two locks drift apart. They are intentionally fast (AST + text scans,
@@ -26,7 +26,6 @@ DEV_ONLY_MODULES = frozenset(
         "pytest_env",
         "pytest_timeout",
         "coverage",  # via pytest-cov
-        "ruff",
         "debugpy",
         "watchdog",  # dev-loop only in-image: `bifrost watch` / `solution dev`
         "pluggy",  # transitive-only (via pytest), never imported directly
@@ -43,7 +42,6 @@ DEV_ONLY_DISTRIBUTIONS = frozenset(
         "pytest-env",
         "pytest-timeout",
         "coverage",
-        "ruff",
         "debugpy",
         "watchdog",
         "pluggy",
@@ -265,3 +263,12 @@ def test_pip_installs_stay_hash_pinned():
             if "pip install" in line and "--require-hashes" not in line:
                 unpinned.append(f"{path}:{lineno}: {stripped}")
     assert unpinned == [], f"unpinned pip installs: {unpinned}"
+
+
+def test_prod_lock_retains_ruff_for_git_sync_preflight():
+    # Git sync executes Ruff rather than importing it. Import scans alone
+    # cannot protect this production validation capability.
+    prod = _lock_distributions(_repo_file("requirements.lock"))
+    dev = _lock_distributions(_repo_file("requirements-dev.lock"))
+    assert "ruff" in prod, "Git sync preflight requires the Ruff executable in production"
+    assert prod["ruff"] == dev["ruff"]

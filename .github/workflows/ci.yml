@@ -136,7 +136,7 @@ jobs:
       # `venvPath: ..` + `venv: .venv` resolves the same way locally and in CI.
       # Install the dev closure from its hash-pinned lock file (Scorecard
       # Pinned-Dependencies): requirements-dev.lock pins the runtime closure
-      # plus the dev-only group (ruff, pytest, ...) from pyproject.toml's
+      # plus the dev-only group (pytest, debugpy, ...) from pyproject.toml's
       # [project.optional-dependencies]. The production image installs
       # requirements.lock (runtime closure) only (issue #1379). Pyright is
       # installed from its own hash-pinned lock because --require-hashes
