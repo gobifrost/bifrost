@@ -599,14 +599,37 @@ class PoolWorker:
 
     async def _run_claim(self, claim: PoolClaim) -> None:
         assert self.admission is not None
-        from src.core.telemetry import run_span
+        from src.core.telemetry import extract_context, is_enabled, run_span
 
-        # Server span for the claimed run, linked to the dispatching trace.
-        # No-op (and no metrics) unless the operator enabled OTel.
-        with run_span(
+        # Consumer span for the queue hop: the run span below is its child,
+        # so one trace shows request -> publish -> process -> run. Nothing
+        # when telemetry is off. Attributes are IDs and fixed names only.
+        if is_enabled():
+            from opentelemetry import trace
+            from opentelemetry.trace import SpanKind
+
+            messaging = trace.get_tracer(__name__).start_as_current_span(
+                f"{claim.handler} process",
+                context=extract_context(claim.message),
+                kind=SpanKind.CONSUMER,
+                attributes={
+                    "messaging.system": "postgresql",
+                    "messaging.operation": "process",
+                    "messaging.destination.name": claim.handler,
+                    "messaging.message.id": str(claim.dispatch_id),
+                },
+                record_exception=False,
+                set_status_on_exception=False,
+            )
+        else:
+            messaging = contextlib.nullcontext()
+
+        with messaging, run_span(
             handler=claim.handler,
             run_id=str(claim.subject_id),
-            message=claim.message,
+            # The extracted context is this consumer span; the run span is
+            # its child, not a second child of the producer.
+            message=None,
         ):
             handed_back = False
             try:
