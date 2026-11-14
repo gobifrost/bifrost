@@ -1,14 +1,13 @@
 {
   "key": "pr:1420",
-  "classification": "other",
+  "classification": "omit",
   "entry_ids": [],
-  "category": "fix",
-  "summary": "Embedded apps now retain ticket IDs passed from HaloPSA custom tabs.",
+  "reason": "Narrow compatibility bugfix preserving an optional ticket selector in the App embed redirect. No standalone announcement value or customer upgrade action; setup and input-validation guidance are documented in the App embeds runbook.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1420",
-      "Exact summary text submitted to Jack for approval in the existing #1407 owner conversation; approval is pending."
+      "Maintainer questioned announcement value for this bugfix in the existing #1407 owner conversation; reviewed as routine compatibility maintenance and omitted from Product Updates. Implementation and protected merge remain authorized."
     ]
   }
 }
