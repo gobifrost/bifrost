@@ -1,0 +1,65 @@
+# Bifrost execution-capacity provider on Cloudflare Containers.
+#
+# Fill in name, scope, worker image digest, and API origin, then:
+#   node --test capacity.test.mjs
+#   npx wrangler deploy
+#
+# The API remains the canonical owner of demand, admission, claims, progress,
+# cancellation, and recovery (PostgreSQL). This Worker only prepares, starts,
+# and deletes container incarnations by exact resource UID. It never receives
+# job payloads and never chooses which jobs execute.
+#
+# NOTE: Cloudflare's container-enabled Durable Object configuration is still
+# moving. Validate this file against the pinned Wrangler version before
+# deploying; the class names and bindings below are the contract this code
+# depends on.
+name = "bifrost-worker-capacity"
+main = "./capacity.mjs"
+compatibility_date = "2026-11-10"
+
+[[durable_objects.bindings]]
+name = "WORKER_LEDGER"
+class_name = "WorkerLedger"
+
+[[durable_objects.bindings]]
+name = "SCOPE_REGISTRY"
+class_name = "ScopeRegistry"
+
+[[durable_objects.bindings]]
+name = "WORKER_CONTAINER"
+class_name = "WorkerContainer"
+
+# One container class backs every incarnation; each worker is addressed by its
+# own Durable Object id, so one binding serves N workers.
+[[containers]]
+class_name = "WorkerContainer"
+# Pin by digest. The API fences any reservation whose reported build differs
+# from WORKER_VERSION, so a floating tag can strand enrollments.
+image = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
+max_instances = 4
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["WorkerLedger", "ScopeRegistry"]
+new_classes = ["WorkerContainer"]
+
+[vars]
+# Opaque provider scope. Must equal the scope configured on the API side.
+SCOPE = "CHANGEME"
+# Must equal the embedded version of the pinned worker image.
+WORKER_VERSION = "CHANGEME"
+# Must equal the digest declared in the [[containers]] block above.
+WORKER_IMAGE = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
+MEMORY_LIMIT_BYTES = "2147483648"
+MAX_WORKERS = "4"
+MAX_LIFETIME_SECONDS = "21600"
+STARTING_GRACE_MS = "30000"
+# Canonical API origin this capacity serves. HTTPS only, no path or query.
+API_ORIGIN = "https://api.example.invalid"
+# The worker container's environment: API/DB/Redis/S3 selectors and the shared
+# secret, as a JSON object. Never commit real secrets here; use a secret or an
+# uncommitted .dev.vars override for local runs.
+WORKER_CONTAINER_ENV = '{}'
+
+[observability]
+enabled = true
