@@ -40,8 +40,9 @@ max_instances = 4
 
 [[migrations]]
 tag = "v1"
-new_sqlite_classes = ["WorkerLedger", "ScopeRegistry"]
-new_classes = ["WorkerContainer"]
+# Every Durable Object class must be SQLite-backed: Cloudflare no longer creates
+# key-value backed namespaces for new classes (API error 10099).
+new_sqlite_classes = ["WorkerLedger", "ScopeRegistry", "WorkerContainer"]
 
 [vars]
 # Opaque provider scope. Must equal the scope configured on the API side.

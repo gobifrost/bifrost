@@ -70,6 +70,25 @@ function parseContainerEnv(env) {
     }
 }
 
+// The launcher command. Defaults to the Bifrost worker entrypoint; a JSON array
+// override exists so a deployment can point at a differently packaged image
+// without editing code.
+function parseEntrypoint(env) {
+    const raw = env.WORKER_ENTRYPOINT_JSON;
+    if (typeof raw !== "string" || raw.trim() === "") {
+        return ["python", "-m", "src.worker.main"];
+    }
+    try {
+        const parsed = JSON.parse(raw);
+        if (!Array.isArray(parsed) || parsed.length === 0 || !parsed.every((v) => typeof v === "string")) {
+            throw new Error("bad shape");
+        }
+        return parsed;
+    } catch {
+        throw new Error("WORKER_ENTRYPOINT_JSON must be a non-empty JSON array of strings");
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Scope registry: atomic capacity accounting across incarnations
 // ---------------------------------------------------------------------------
@@ -196,6 +215,7 @@ export class WorkerLedger {
     runtime(workerId) {
         const containers = this.env.WORKER_CONTAINER;
         const containerEnv = parseContainerEnv(this.env);
+        const entrypoint = parseEntrypoint(this.env);
         const stub = () => containers.getByName(workerId);
         return {
             async start(row) {
@@ -209,7 +229,7 @@ export class WorkerLedger {
                             BIFROST_WORKER_RESOURCE_UID: row.resource_uid,
                             BIFROST_POOL_WORKER_EXECUTION_LANE: "normal",
                         },
-                        entrypoint: ["python", "-m", "src.worker.main"],
+                        entrypoint,
                     }),
                 });
                 if (!response.ok) throw new Error("container start failed");
