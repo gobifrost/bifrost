@@ -101,6 +101,13 @@ test("integration setup instructions work across detail, defaults, and phone lay
 				}),
 			).toBeInViewport();
 		};
+		await editorDialog
+			.getByRole("radio", { name: "Markdown", exact: true })
+			.click();
+		await expect(editor).toHaveValue(notes);
+		await editorDialog
+			.getByRole("radio", { name: "Visual", exact: true })
+			.click();
 		await scrollToEnd();
 		await editor.getByText("Last setup step", { exact: true }).click();
 		await page.keyboard.press("End");
@@ -155,6 +162,16 @@ test("integration setup instructions work across detail, defaults, and phone lay
 			.click();
 		await expect(editor).toBeVisible();
 		await scrollToEnd();
+		await editorDialog
+			.getByRole("radio", { name: "Markdown", exact: true })
+			.click();
+		await expect(editor).toHaveValue(stored);
+		await expect(
+			editorDialog.getByRole("radiogroup", { name: "Editor mode" }),
+		).toBeInViewport();
+		await editorDialog
+			.getByRole("radio", { name: "Visual", exact: true })
+			.click();
 		const unchangedSave = page.waitForResponse(
 			(response) =>
 				response.request().method() === "PUT" &&
@@ -168,6 +185,70 @@ test("integration setup instructions work across detail, defaults, and phone lay
 		await expect(editorDialog).toBeHidden();
 		const unchanged = await api.get(`/api/integrations/${integrationId}`);
 		expect((await unchanged.json()).notes).toBe(stored);
+
+		// Source saves preserve unsupported Markdown exactly on a narrow screen.
+		await page
+			.getByRole("button", { name: "Edit setup instructions" })
+			.click();
+		await editorDialog
+			.getByRole("radio", { name: "Markdown", exact: true })
+			.click();
+		const source = `${stored}\n\n<!-- Retain setup metadata -->\n\n| Key | Value |\n| --- | --- |\n| endpoint | /execute/form |\n`;
+		await editor.fill(source);
+		await editor.press("ControlOrMeta+End");
+		await expect(
+			editorDialog.getByRole("radio", { name: "Visual", exact: true }),
+		).toBeInViewport();
+		await editorDialog
+			.getByRole("radio", { name: "Visual", exact: true })
+			.click();
+		await expect(editorDialog.getByRole("status")).toContainText(
+			"Edit in Markdown mode",
+		);
+		await expect(editor).toHaveAttribute("contenteditable", "false");
+		await editorDialog
+			.getByRole("radio", { name: "Markdown", exact: true })
+			.click();
+		await expect(editor).toHaveValue(source);
+		const sourceScrolls = await editor.evaluate((element) => {
+			const scroller = element.parentElement!;
+			scroller.scrollTop = scroller.scrollHeight;
+			return scroller.scrollTop > 0;
+		});
+		expect(sourceScrolls).toBe(true);
+		await expect(
+			editorDialog.getByRole("radio", { name: "Markdown", exact: true }),
+		).toBeInViewport();
+		await page.screenshot({
+			path: "playwright-results/integration-notes-markdown-phone.png",
+			fullPage: true,
+			animations: "disabled",
+		});
+		const sourceSave = page.waitForResponse(
+			(response) =>
+				response.request().method() === "PUT" &&
+				new URL(response.url()).pathname ===
+					`/api/integrations/${integrationId}`,
+		);
+		await editorDialog
+			.getByRole("button", { name: "Save Instructions" })
+			.click();
+		expect((await sourceSave).ok()).toBe(true);
+		await expect(editorDialog).toBeHidden();
+		const sourceReadback = await api.get(
+			`/api/integrations/${integrationId}`,
+		);
+		expect((await sourceReadback.json()).notes).toBe(source);
+		await page.reload();
+		await page
+			.getByRole("button", { name: "Edit setup instructions" })
+			.click();
+		await expect(editorDialog.getByRole("status")).toBeVisible();
+		await editorDialog
+			.getByRole("radio", { name: "Markdown", exact: true })
+			.click();
+		await expect(editor).toHaveValue(source);
+		await editorDialog.getByRole("button", { name: "Cancel" }).click();
 	} finally {
 		if (integrationId) {
 			expect([200, 204, 404]).toContain(

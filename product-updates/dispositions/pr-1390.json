@@ -1,0 +1,14 @@
+{
+  "key": "pr:1390",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Jack explicitly omitted this editor improvement from Product Updates because it is not significant enough for an announcement.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1390",
+      "https://github.com/gobifrost/bifrost/issues/1344",
+      "Jack: \"No product update. Not important enough.\" Explicit instruction in the implementation thread on 2026-11-13."
+    ]
+  }
+}

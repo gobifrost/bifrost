@@ -8,8 +8,8 @@
 # same Node runtime required by package.json and used by CI/client builds.
 FROM node:26-slim@sha256:14bf3eac4bf209d906d3c41256597d3ab1f926b2e93a79e9bdfe1efd32454239 AS node-runtime
 
-# mcr.microsoft.com/playwright:v1.65.0-jammy
-FROM mcr.microsoft.com/playwright:v1.65.0-jammy@sha256:5a8620d70618963ec6628dd77cc25ec6a4b232e26c4a41241a8c1def04e2dc04
+# mcr.microsoft.com/playwright:v1.65.1-jammy
+FROM mcr.microsoft.com/playwright:v1.65.1-jammy@sha256:b0ee5ce5e14ac42c394c0564a0a30adbda052153c611561bb2d31263593d6dd8
 
 COPY --from=node-runtime /usr/local/ /usr/local/
 

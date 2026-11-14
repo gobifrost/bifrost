@@ -75,6 +75,16 @@ class TestEnqueueAgentRun:
         assert row.impersonation_session_id == session_id
 
     @pytest.mark.asyncio
+    async def test_keeps_permission_source_on_durable_run_outside_dispatch_context(self, env):
+        source = uuid4()
+        await enqueue_agent_run(agent_id=str(uuid4()), trigger_type="api", lineage=None,
+                                permission_workflow_id=source)
+        [run] = env.runs()
+        [dispatch] = env.dispatches()
+        assert run.permission_workflow_id == source
+        assert "permission_workflow_id" not in dispatch.payload
+
+    @pytest.mark.asyncio
     async def test_commits_run_and_dispatch_together_before_waking_executors(self, env):
         run_id = await enqueue_agent_run(
             agent_id=str(uuid4()),

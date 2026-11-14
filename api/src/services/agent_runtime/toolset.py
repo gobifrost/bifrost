@@ -1,5 +1,6 @@
 """Adapter from Bifrost's stored JSON tool contracts to Pydantic AI toolsets."""
 
+import builtins
 import json
 import keyword
 import re
@@ -46,7 +47,7 @@ MAX_MODEL_TOOL_RESULT_CHARS = 32_000
 _TOOL_RESULT_HEAD_CHARS = 16_000
 _TOOL_RESULT_TAIL_CHARS = 8_000
 _INVALID_PYTHON_IDENTIFIER = re.compile(r"[^0-9A-Za-z_]")
-_RESERVED_CODE_MODE_NAMES = frozenset({"run_code", "search_tools"})
+_RESERVED_CODE_MODE_NAMES = frozenset({"run_code", "search_tools", *dir(builtins)})
 _MAX_CODE_MODE_NAME_LENGTH = 64
 _CODE_MODE_DIRECT_RETURN_TYPES = frozenset(
     {"object", "array", "number", "integer", "boolean", "null"}
