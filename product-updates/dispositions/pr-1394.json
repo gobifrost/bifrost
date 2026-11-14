@@ -1,0 +1,11 @@
+{
+  "key": "pr:1394",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Agents launched by workflows now retain the workflow's declared permissions.",
+  "review": {
+    "status": "draft",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1394", "Exact update prose awaits the owner's approval."]
+  }
+}
