@@ -140,24 +140,48 @@ export class ScopeRegistry {
         this.env = env;
     }
 
+    async slots() {
+        return (await this.ctx.storage.get("slots")) ?? [];
+    }
+
     async live() {
-        return (await this.ctx.storage.get("live")) ?? [];
+        return (await this.slots()).map((slot) => slot.id);
     }
 
+    // Each reservation carries a generation. Re-reserving an id claims the slot
+    // with a new generation, which invalidates an older request's cleanup: a
+    // rejected prepare can only release the reservation it actually took, never
+    // the one a concurrent valid prepare is now using.
     async reserve(workerId, ceiling) {
-        const live = await this.live();
-        // Membership first: a repeated prepare for a worker that already holds a
-        // slot is idempotent and must not be rejected by the ceiling.
-        if (live.includes(workerId)) return true;
-        if (live.length >= ceiling) return false;
-        live.push(workerId);
-        await this.ctx.storage.put("live", live);
-        return true;
+        const slots = await this.slots();
+        const generation = ((await this.ctx.storage.get("generation")) ?? 0) + 1;
+        await this.ctx.storage.put("generation", generation);
+
+        const existing = slots.find((slot) => slot.id === workerId);
+        if (existing) {
+            // Membership first: a repeated prepare for a worker that already
+            // holds a slot is idempotent and must not be rejected by the ceiling.
+            existing.generation = generation;
+            await this.ctx.storage.put("slots", slots);
+            return { ok: true, generation, created: false };
+        }
+        if (slots.length >= ceiling) return { ok: false, generation: null, created: false };
+        slots.push({ id: workerId, generation });
+        await this.ctx.storage.put("slots", slots);
+        return { ok: true, generation, created: true };
     }
 
-    async release(workerId) {
-        const live = (await this.live()).filter((id) => id !== workerId);
-        await this.ctx.storage.put("live", live);
+    // `generation` undefined releases unconditionally (a confirmed deletion).
+    async release(workerId, generation) {
+        if (generation === undefined) {
+            const remaining = (await this.slots()).filter((slot) => slot.id !== workerId);
+            await this.ctx.storage.put("slots", remaining);
+            return;
+        }
+        const kept = (await this.slots()).filter(
+            (slot) => slot.id !== workerId || slot.generation !== generation,
+        );
+        await this.ctx.storage.put("slots", kept);
     }
 
     async fetch(request) {
@@ -165,12 +189,12 @@ export class ScopeRegistry {
         if (url.pathname === "/live") return json(200, { live: await this.live() });
         if (url.pathname === "/reserve") {
             const body = await request.json();
-            const ok = await this.reserve(body.worker_id, body.ceiling);
-            return json(ok ? 200 : 409, { ok });
+            const reservation = await this.reserve(body.worker_id, body.ceiling);
+            return json(reservation.ok ? 200 : 409, reservation);
         }
         if (url.pathname === "/release") {
             const body = await request.json();
-            await this.release(body.worker_id);
+            await this.release(body.worker_id, body.generation);
             return json(200, { ok: true });
         }
         return json(404, { error: "not found" });
@@ -431,12 +455,15 @@ export default {
         if (!UUID_RE.test(workerId)) return json(404, { error: "not found" });
 
         const registry = env.SCOPE_REGISTRY.getByName(settings.scope);
+        let reservation = null;
         if (request.method === "PUT") {
             const reserved = await registry.fetch("https://do/reserve", {
                 method: "POST",
                 body: JSON.stringify({ worker_id: workerId, ceiling: settings.maxWorkers }),
             });
             if (!reserved.ok) return json(409, { error: "capacity ceiling reached" });
+            // Keep this reservation's generation: only it may release this slot.
+            reservation = (await reserved.json()).generation;
         }
 
         const ledger = env.WORKER_LEDGER.getByName(`${settings.scope}:${workerId}`);
@@ -450,16 +477,20 @@ export default {
             const existing = await ledger.fetch(new Request(url, { method: "GET" }));
             const record = existing.ok ? await existing.json() : null;
             if (existing.status === 404 || record?.state === STATE.DELETED) {
+                // Scoped to this reservation: if a concurrent prepare re-reserved
+                // the id, its generation has moved on and this release is a
+                // no-op rather than a ceiling violation.
                 await registry.fetch("https://do/release", {
                     method: "POST",
-                    body: JSON.stringify({ worker_id: workerId }),
+                    body: JSON.stringify({ worker_id: workerId, generation: reservation }),
                 });
             }
         }
 
         if (request.method === "DELETE" && response.ok) {
             // Release only after the deletion is durable: freeing the slot
-            // first would over-admit if the delete then failed.
+            // first would over-admit if the delete then failed. A confirmed
+            // deletion is terminal, so it releases unconditionally.
             await registry.fetch("https://do/release", {
                 method: "POST",
                 body: JSON.stringify({ worker_id: workerId }),

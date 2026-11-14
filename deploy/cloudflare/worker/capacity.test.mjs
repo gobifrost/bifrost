@@ -10,6 +10,7 @@ import {
     containerStartEnv,
     inactivityTimeoutMs,
     readSettings,
+    ScopeRegistry,
     WorkerContainer,
     WorkerLedger,
 } from "./capacity.mjs";
@@ -403,6 +404,48 @@ test("a restarted container DO re-applies the hold without a full env", async ()
     assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
 });
 
+// --- scope registry: reservation generations -----------------------------
+
+function fakeRegistry() {
+    const store = new Map();
+    const ctx = {
+        storage: {
+            get: async (key) => store.get(key),
+            put: async (key, value) => {
+                store.set(key, value);
+            },
+        },
+    };
+    return new ScopeRegistry(ctx, {});
+}
+
+test("a stale reservation cleanup cannot free a re-reserved slot", async () => {
+    const registry = fakeRegistry();
+    // A rejected prepare takes a reservation...
+    const rejected = await registry.reserve("w1", 1);
+    // ...a concurrent valid prepare for the same id claims the slot...
+    const accepted = await registry.reserve("w1", 1);
+    assert.equal(rejected.created, true);
+    assert.equal(accepted.created, false);
+    assert.notEqual(rejected.generation, accepted.generation);
+
+    // ...so the rejected request's cleanup is a no-op instead of freeing a slot
+    // the accepted worker is using.
+    await registry.release("w1", rejected.generation);
+    assert.deepEqual(await registry.live(), ["w1"]);
+
+    await registry.release("w1", accepted.generation);
+    assert.deepEqual(await registry.live(), []);
+});
+
+test("the ceiling admits only workers that hold a slot", async () => {
+    const registry = fakeRegistry();
+    assert.equal((await registry.reserve("w1", 1)).ok, true);
+    assert.equal((await registry.reserve("w2", 1)).ok, false);
+    await registry.release("w1");
+    assert.equal((await registry.reserve("w2", 1)).ok, true);
+});
+
 // --- worker entry: capacity accounting on rejected prepares ---------------
 
 function entryEnv({ putStatus, getStatus, getBody }) {
@@ -415,8 +458,16 @@ function entryEnv({ putStatus, getStatus, getBody }) {
         ...ENV,
         SCOPE_REGISTRY: {
             getByName: () => ({
-                fetch: async (target) => {
-                    if (String(target).endsWith("/release")) releases.push("release");
+                fetch: async (target, init) => {
+                    const path = String(target);
+                    if (path.endsWith("/reserve")) {
+                        return new Response(JSON.stringify({ ok: true, generation: 7 }), {
+                            status: 200,
+                        });
+                    }
+                    if (path.endsWith("/release")) {
+                        releases.push(JSON.parse(init.body));
+                    }
                     return new Response("{}", { status: 200 });
                 },
             }),
@@ -452,7 +503,7 @@ async function prepareThroughEntry(env, header) {
 test("a rejected prepare releases the slot it reserved", async () => {
     const { env, releases, header } = entryEnv({ putStatus: 400, getStatus: 404 });
     await prepareThroughEntry(env, header);
-    assert.deepEqual(releases, ["release"]);
+    assert.deepEqual(releases, [{ worker_id: WORKER, generation: 7 }]);
 });
 
 test("a prepare replayed after deletion releases the slot it reserved", async () => {
@@ -464,7 +515,7 @@ test("a prepare replayed after deletion releases the slot it reserved", async ()
         getBody: { state: STATE.DELETED },
     });
     await prepareThroughEntry(env, header);
-    assert.deepEqual(releases, ["release"]);
+    assert.deepEqual(releases, [{ worker_id: WORKER, generation: 7 }]);
 });
 
 test("a rejected prepare for a live record keeps that record's slot", async () => {
