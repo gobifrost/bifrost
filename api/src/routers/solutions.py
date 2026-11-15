@@ -36,6 +36,7 @@ from bifrost.solution_jobs import (
     DEPLOY_JOB_TIMEOUT_ERROR,
     DEPLOY_JOB_TIMEOUT_SECONDS,
 )
+from src.jobs.platform.base import PlatformJobContext, PlatformJobCancelled, PlatformJobFailure
 from shared.app_build_errors import AppBuildMemoryError
 from shared.logo_processing import is_logo_thumbnail_version
 from shared.solution_git_sources import clone_solution_repository, list_sources, resolve_credentials
@@ -2490,6 +2491,7 @@ async def _run_deploy_job(
     solution_id: UUID,
     zip_path: Path,
     *,
+    context: PlatformJobContext,
     force: bool,
     allow_connected_install: bool = False,
     delete_install_on_failure: bool = False,
@@ -2521,11 +2523,10 @@ async def _run_deploy_job(
     from src.core.database import get_db_context
     from src.services.solutions.zip_install import (
         UnmetDependency,
-        deploy_zip_to_solution_path,
+        _deploy_workspace_to_solution,
     )
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
-        solution_write_lock,
     )
 
     async def _set_status(
@@ -2534,6 +2535,8 @@ async def _run_deploy_job(
         result: dict | None = None,
     ) -> bool:
         async with get_db_context() as db:
+            if not await context.authorize_effect(db):
+                raise PlatformJobCancelled
             job = await db.get(SolutionDeployJob, job_id)
             if job is None:
                 return False
@@ -2550,9 +2553,6 @@ async def _run_deploy_job(
                     await db.delete(orphan)
             return True
 
-    async def _set_phase(phase: str) -> None:
-        await _set_status("running", result={"phase": phase})
-
     async def _report(phase: str, percent: float) -> None:
         if progress_callback is not None:
             await progress_callback(phase, percent)
@@ -2564,34 +2564,40 @@ async def _run_deploy_job(
 
     async def _execute() -> None:
         nonlocal deploy_result
-        async with get_db_context() as db:
-            async with solution_write_lock(solution_id):
+        from src.services.solutions.compute_pipeline import (
+            DeferredSolutionDeployObservations, prepare_solution_deployment,
+        )
+        observations = DeferredSolutionDeployObservations()
+        await _report("Validating Solution bundle", 12)
+        async with prepare_solution_deployment(
+            context, zip_path, solution_id=solution_id,
+            allow_connected_install=allow_connected_install,
+        ) as prepared:
+            async with get_db_context() as db:
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
                 solution = await db.get(SolutionORM, solution_id)
                 if solution is None:
                     raise SolutionDeployConflict("Solution not found")
                 if solution.git_connected and not allow_connected_install:
-                    raise SolutionDeployConflict(
-                        "This install became git-connected before deploy started; "
-                        "deploy is disabled (auto-pull is the only writer)."
-                    )
-                await _set_phase("validating bundle and applying resources")
-                await _report("Validating Solution bundle", 12)
+                    raise SolutionDeployConflict("This install became git-connected; only auto-pull may deploy it.")
                 instrumentation = SolutionDeployInstrumentation(
-                    progress_callback=progress_callback,
-                    timing_callback=timing_callback,
+                    progress_callback=observations.record_progress,
+                    timing_callback=observations.record_timing,
                 )
                 with solution_deploy_instrumentation(instrumentation):
-                    result = await deploy_zip_to_solution_path(
-                        db, solution, zip_path, force=force
+                    result = await _deploy_workspace_to_solution(
+                        db, solution, prepared.archive.workspace, force=force,
+                        prepared_preview=prepared.archive.preview,
+                        prepared_bundle=prepared.bundle,
+                        prepared_app_builds=prepared.app_builds,
+                        source_artifact=prepared.source_artifact, context=context,
                     )
-                await _report("Committing Solution resources", 65)
                 await db.commit()
-                # S3 only after the DB is durable — a failed commit changes no running
-                # code (P1-c). Still inside the lock so finalize can't race another deploy.
-                await _set_phase("storing source artifact and runtime files")
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
                 await result.finalize_s3()
-                await _report("Persisting Solution source index", 98)
-                await db.commit()  # source search index rows written by finalize
+                await db.commit()
                 deploy_result = {
                     "solution_id": str(solution_id),
                     "workflows_upserted": result.workflows_upserted,
@@ -2609,11 +2615,16 @@ async def _run_deploy_job(
                     "integrations_shell_created": result.integrations_shell_created,
                     "roles_created": list(result.roles_created),
                 }
+            await observations.flush(progress_callback, timing_callback)
+            await _report("Persisted Solution source and runtime files", 98)
+
     try:
         await asyncio.wait_for(
             _execute(),
             timeout=DEPLOY_JOB_TIMEOUT_SECONDS,
         )
+    except (PlatformJobCancelled, PlatformJobFailure):
+        raise
     except TimeoutError:
         await _set_status("failed", DEPLOY_JOB_TIMEOUT_ERROR)
     except SolutionWriteLockHeld:
@@ -2653,6 +2664,7 @@ async def _run_install_job(
     job_id: UUID,
     zip_path: Path,
     *,
+    context: PlatformJobContext,
     organization_id: UUID | None,
     config_values: dict,
     deployer_email: str,
@@ -2688,7 +2700,7 @@ async def _run_install_job(
         GitConnectedInstallError,
         InactiveInstallExists,
         UnmetDependency,
-        install_zip_path,
+        _install_workspace,
     )
 
     async def _set_status(
@@ -2697,6 +2709,8 @@ async def _run_install_job(
         result: dict | None = None,
     ) -> bool:
         async with get_db_context() as db:
+            if not await context.authorize_effect(db):
+                raise PlatformJobCancelled
             job = await db.get(SolutionDeployJob, job_id)
             if job is None:
                 return False
@@ -2720,32 +2734,49 @@ async def _run_install_job(
 
     async def _execute() -> None:
         nonlocal install_result
-        async with get_db_context() as db:
-            await _report("Validating Solution install bundle", 12)
-            instrumentation = SolutionDeployInstrumentation(
-                progress_callback=progress_callback,
-                timing_callback=timing_callback,
-            )
-            with solution_deploy_instrumentation(instrumentation):
-                solution = await install_zip_path(
-                    db,
-                    zip_path,
-                    organization_id=organization_id,
-                    config_values=config_values,
-                    deployer_email=deployer_email,
-                    force=force,
-                    password=password,
-                    replace_secrets=replace_secrets,
-                    replace_data=replace_data,
-                    reactivate=reactivate,
-                )
+        from src.services.solutions.compute_pipeline import (
+            DeferredSolutionDeployObservations, prepare_solution_deployment,
+        )
+        from shared.solution_archive import validate_payload_integrity
+        observations = DeferredSolutionDeployObservations()
+        await _report("Validating Solution install bundle", 12)
+        async with prepare_solution_deployment(
+            context, zip_path, solution_id=None,
+            organization_id=organization_id, reactivate=reactivate,
+        ) as prepared:
+            with zipfile.ZipFile(zip_path) as payload_archive:
+                await validate_payload_integrity(payload_archive)
+                async with get_db_context() as db:
+                    instrumentation = SolutionDeployInstrumentation(
+                        progress_callback=observations.record_progress,
+                        timing_callback=observations.record_timing,
+                    )
+                    with solution_deploy_instrumentation(instrumentation):
+                        solution = await _install_workspace(
+                            db, prepared.archive.workspace,
+                            organization_id=organization_id,
+                            config_values=config_values, deployer_email=deployer_email,
+                            force=force, password=password,
+                            replace_secrets=replace_secrets, replace_data=replace_data,
+                            reactivate=reactivate, payload_archive=payload_archive,
+                            expected_solution_id=prepared.bundle.solution.id,
+                            prepared_preview=prepared.archive.preview,
+                            prepared_bundle=prepared.bundle,
+                            prepared_app_builds=prepared.app_builds,
+                            source_artifact=prepared.source_artifact,
+                            lock_already_held=True, context=context,
+                        )
+                    install_result = {"solution_id": str(solution.id), "slug": solution.slug}
+            await observations.flush(progress_callback, timing_callback)
             await _report("Finalizing Solution installation", 98)
-            install_result = {"solution_id": str(solution.id), "slug": solution.slug}
+
     try:
         await asyncio.wait_for(
             _execute(),
             timeout=DEPLOY_JOB_TIMEOUT_SECONDS,
         )
+    except (PlatformJobCancelled, PlatformJobFailure):
+        raise
     except TimeoutError:
         await _set_status("failed", DEPLOY_JOB_TIMEOUT_ERROR)
     except InactiveInstallExists as exc:

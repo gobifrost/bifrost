@@ -17,6 +17,7 @@ from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployConflict,
     SolutionDeployer,
+    compile_solution_app_builds,
     solution_entity_id,
 )
 
@@ -635,7 +636,7 @@ class TestSolutionRoleBindingsDeploy:
         role = await self._role(db, f"Ops-{uuid.uuid4().hex[:6]}")
 
         aid, app_id, wf_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        bundle = SolutionBundle(
             solution=sol,
             agents=[{
                 "id": aid, "name": "a", "system_prompt": "hi",
@@ -653,7 +654,15 @@ class TestSolutionRoleBindingsDeploy:
                 "path": "workflows/w.py", "type": "workflow",
                 "access_level": "role_based", "role_names": [role.name],
             }],
-        ))
+        )
+        deployer = SolutionDeployer(db)
+        plan = await deployer.prepare_app_builds(bundle)
+
+        async def _unexpected_compute(_inputs):
+            raise AssertionError("prebuilt Solution app must not request compilation")
+
+        prepared = await compile_solution_app_builds(plan, _unexpected_compute)
+        await deployer.deploy(bundle, prepared_app_builds=prepared)
         await db.flush()
 
         agent_roles = (await db.execute(

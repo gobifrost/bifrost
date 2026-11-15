@@ -8,16 +8,20 @@ THIS install only; an id collision with a ``_repo/`` or other-install app raises
 no real Node toolchain runs in unit tests.
 """
 from contextlib import asynccontextmanager
+from io import BytesIO
+import tarfile
 import uuid
 
 import pytest
 
 from src.models.orm.applications import Application
 from src.models.orm.solutions import Solution
+from src.services.solutions import app_build
 from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployConflict,
     SolutionDeployer,
+    compile_solution_app_builds,
     solution_entity_id,
 )
 
@@ -35,17 +39,10 @@ def _reset_redis_singleton():
 
 @pytest.fixture(autouse=True)
 def _stub_app_build(monkeypatch):
-    """No real vite — compile to a stub dist (sync) + capture uploads.
-
-    The deployer compiles dists pre-commit (compile_dist, sync) and uploads them
-    post-commit (upload_deployment), so both seams are stubbed."""
-    from src.services.solutions import app_build
+    """Capture publication without compiling on the API process."""
+    from bifrost.app_build_identity import sdk_identity
 
     uploaded: dict[str, dict] = {}
-
-    def _fake_compile(self, app_id, src_files, dependencies, prebuilt_dist=None):
-        self.last_build_identity = self.source_identity(app_id, src_files, dependencies) if not prebuilt_dist else None
-        return prebuilt_dist or {"index.html": b"<html></html>"}
 
     async def _fake_upload(self, app_id, dist):
         raise AssertionError("solution deploy must not upload legacy dist")
@@ -65,10 +62,24 @@ def _stub_app_build(monkeypatch):
     async def _fake_delete_all_app_artifacts(self, app_id):
         uploaded.pop(str(app_id), None)
 
-    from bifrost.app_build_identity import digest_json, file_identity
+    def _sdk_tarball(_self):
+        payload = BytesIO()
+        member = tarfile.TarInfo("package/package.json")
+        content = b'{"name":"bifrost"}'
+        member.size = len(content)
+        member.mtime = 0
+        with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+            archive.addfile(member, BytesIO(content))
+        return payload.getvalue()
 
-    def _identity(self, app_id, files, deps):
-        return digest_json([str(app_id), file_identity(files), deps])
+    def _recipe(sdk, *, variant, environment):  # noqa: ANN001
+        return {
+            "schema": 1,
+            "variant": variant,
+            "sdk": sdk_identity(sdk),
+            "toolchain": "a" * 64,
+            "environment": "b" * 64,
+        }
 
     async def _write_identity(self, app_id, deployment_id, identity, dist):
         if str(app_id) in uploaded:
@@ -78,10 +89,10 @@ def _stub_app_build(monkeypatch):
         record = uploaded.get(str(app_id), {})
         return deployment_id is not None and record.get("deployment_id") == deployment_id and record.get("identity") == identity
 
-    monkeypatch.setattr(app_build.SolutionAppBuilder, "source_identity", _identity)
+    monkeypatch.setattr(app_build.SolutionAppBuilder, "_sdk_tarball", _sdk_tarball)
+    monkeypatch.setattr(app_build, "build_recipe", _recipe)
     monkeypatch.setattr(app_build.SolutionAppBuilder, "write_build_identity", _write_identity)
     monkeypatch.setattr(app_build.SolutionAppBuilder, "can_reuse", _can_reuse)
-    monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _fake_compile)
     monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _fake_upload, raising=False)
     monkeypatch.setattr(
         app_build.SolutionAppBuilder,
@@ -132,6 +143,29 @@ def _app_entry(app_id: str, slug: str) -> dict:
     }
 
 
+async def _physical_app_compile(inputs):
+    """Test physical stage: compilation stays outside the deploy DB phase."""
+    from shared.solution_app_compiler import AppBuildResult, source_build_identity
+
+    return AppBuildResult(
+        {"index.html": b"<html>built</html>"}, source_build_identity(inputs)
+    )
+
+
+async def _deploy(db, bundle: SolutionBundle, *, compute=None, **kwargs):
+    """Prepare immutable receipts before invoking the DB-only deploy path."""
+    deployer = SolutionDeployer(db)
+    prepared = None
+    if bundle.apps:
+        plan = await deployer.prepare_app_builds(bundle)
+        prepared = await compile_solution_app_builds(
+            plan, compute or _physical_app_compile
+        )
+    return await deployer.deploy(
+        bundle, prepared_app_builds=prepared, **kwargs
+    )
+
+
 @pytest.mark.e2e
 class TestSolutionAppDeploy:
     async def _install(self, db, org_id=None) -> Solution:
@@ -152,7 +186,7 @@ class TestSolutionAppDeploy:
         sol = await self._install(db)
         app_id = str(uuid.uuid4())
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(solution=sol, apps=[_app_entry(app_id, "dash")])
         )
         await db.flush()
@@ -176,7 +210,6 @@ class TestSolutionAppDeploy:
         self, db_session, monkeypatch
     ):
         from src.services.application_sdk_status import CurrentApplicationSdkMetadata
-        from src.services.solutions import app_build
 
         db = db_session
         sol = await self._install(db)
@@ -215,13 +248,7 @@ class TestSolutionAppDeploy:
         monkeypatch.setattr(
             app_build.SolutionAppBuilder, "upload_dist", _legacy_upload, raising=False
         )
-        monkeypatch.setattr(
-            app_build.SolutionAppBuilder,
-            "compile_dist",
-            lambda self, *args, **kwargs: {"index.html": b"<html>built</html>"},
-        )
-
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[
@@ -253,7 +280,7 @@ class TestSolutionAppDeploy:
         manifest_id = uuid.uuid4()
         app_id = solution_entity_id(sol.id, manifest_id)
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(solution=sol, apps=[_app_entry(str(manifest_id), "prebuilt")])
         )
         await db.flush()
@@ -276,7 +303,7 @@ class TestSolutionAppDeploy:
         manifest_id = uuid.uuid4()
         app_id = solution_entity_id(sol.id, manifest_id)
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[
@@ -318,7 +345,7 @@ class TestSolutionAppDeploy:
             _boom,
         )
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[_app_entry(str(manifest_id), "prebuilt-lazy")],
@@ -335,7 +362,6 @@ class TestSolutionAppDeploy:
         self, db_session, monkeypatch
     ):
         from src.services.application_sdk_status import CurrentApplicationSdkMetadata
-        from src.services.solutions import app_build
 
         db = db_session
         sol = await self._install(db)
@@ -354,13 +380,7 @@ class TestSolutionAppDeploy:
             "src.services.application_sdk_status.current_sdk_metadata",
             _metadata,
         )
-        monkeypatch.setattr(
-            app_build.SolutionAppBuilder,
-            "compile_dist",
-            lambda self, *args, **kwargs: {"index.html": b"<html>built</html>"},
-        )
-
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[
@@ -388,7 +408,6 @@ class TestSolutionAppDeploy:
     async def test_upload_failure_preserves_old_pointer_and_provenance(
         self, db_session, monkeypatch
     ):
-        from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
         db = db_session
@@ -420,14 +439,9 @@ class TestSolutionAppDeploy:
             _dead_upload,
             raising=False,
         )
-        monkeypatch.setattr(
-            app_build.SolutionAppBuilder,
-            "compile_dist",
-            lambda self, *args, **kwargs: {"index.html": b"new"},
-        )
         monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0)
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[{**_app_entry(str(manifest_id), app.slug), "dist_files": None}],
@@ -446,7 +460,6 @@ class TestSolutionAppDeploy:
     async def test_multi_app_upload_failure_activates_no_subset(
         self, db_session, monkeypatch
     ):
-        from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
         db = db_session
@@ -491,7 +504,7 @@ class TestSolutionAppDeploy:
         monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_RETRIES", 1)
         monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0)
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[
@@ -512,7 +525,6 @@ class TestSolutionAppDeploy:
         assert len(deleted) == 2
 
     async def test_stale_active_pointer_blocks_activation(self, db_session, monkeypatch):
-        from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
         db = db_session
@@ -537,7 +549,7 @@ class TestSolutionAppDeploy:
         )
         monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0)
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(solution=sol, apps=[_app_entry(str(manifest_id), "race")])
         )
         await db.flush()
@@ -550,7 +562,6 @@ class TestSolutionAppDeploy:
     async def test_successful_activation_deletes_superseded_versioned_dist(
         self, db_session, monkeypatch
     ):
-        from src.services.solutions import app_build
 
         db = db_session
         sol = await self._install(db)
@@ -581,7 +592,7 @@ class TestSolutionAppDeploy:
             raising=False,
         )
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[{**_app_entry(str(manifest_id), f"old-{uuid.uuid4().hex[:8]}")}],
@@ -595,7 +606,6 @@ class TestSolutionAppDeploy:
     async def test_activation_failure_deletes_new_uploads_and_preserves_old_pointers(
         self, db_session, monkeypatch
     ):
-        from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
         db = db_session
@@ -665,7 +675,7 @@ class TestSolutionAppDeploy:
             _activation_context,
         )
 
-        result = await SolutionDeployer(db).deploy(
+        result = await _deploy(db,
             SolutionBundle(
                 solution=sol,
                 apps=[
@@ -700,7 +710,7 @@ class TestSolutionAppDeploy:
         }
 
         with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
-            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[inline]))
+            await _deploy(db, SolutionBundle(solution=sol, apps=[inline]))
 
         # Nothing was persisted for the rejected app.
         expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
@@ -717,12 +727,11 @@ class TestSolutionAppDeploy:
         bare = {"id": app_id, "slug": "bare", "name": "Bare"}  # no app_model
 
         with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
-            await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[bare]))
+            await _deploy(db, SolutionBundle(solution=sol, apps=[bare]))
 
     async def test_redeploy_without_app_removes_for_this_install(
         self, db_session, _stub_app_build, monkeypatch
     ):
-        from src.services.solutions import app_build
 
         db = db_session
         sol = await self._install(db)
@@ -748,14 +757,14 @@ class TestSolutionAppDeploy:
             raising=False,
         )
 
-        await SolutionDeployer(db).deploy(
+        await _deploy(db,
             SolutionBundle(solution=sol, apps=[_app_entry(app_id, "dash")])
         )
         await db.flush()
         expected_id = solution_entity_id(sol.id, uuid.UUID(app_id))
         assert await db.get(Application, expected_id) is not None
 
-        result = await SolutionDeployer(db).deploy(SolutionBundle(solution=sol, apps=[]))
+        result = await _deploy(db, SolutionBundle(solution=sol, apps=[]))
         await db.flush()
 
         assert await db.get(Application, expected_id) is None
@@ -779,7 +788,7 @@ class TestSolutionAppDeploy:
         await db.flush()
 
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(
+            await _deploy(db,
                 SolutionBundle(solution=sol, apps=[_app_entry(str(manifest_id), "dash")])
             )
 
@@ -814,12 +823,12 @@ class TestMultiInstallAppIdentity:
         shared_slug = f"dash-{uuid.uuid4().hex[:8]}"
         app_a, app_b = str(uuid.uuid4()), str(uuid.uuid4())
 
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol_a, apps=[{**_app_entry(app_a, shared_slug), "repo_path": f"apps/{shared_slug}"}],
         ))
         await db.flush()
         # Second install, SAME slug + repo_path — must not raise unique violation.
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol_b, apps=[{**_app_entry(app_b, shared_slug), "repo_path": f"apps/{shared_slug}"}],
         ))
         await db.flush()
@@ -860,7 +869,7 @@ class TestAppSlugRouteCollision:
         await db.flush()
 
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
             ))
 
@@ -870,13 +879,13 @@ class TestAppSlugRouteCollision:
         sol_b = await self._install(db)
         slug = f"dash-{uuid.uuid4().hex[:8]}"
 
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol_a, apps=[_app_entry(str(uuid.uuid4()), slug)],
         ))
         await db.flush()
         # Different install, but both global (org=None) → same /apps/{slug} route.
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol_b, apps=[_app_entry(str(uuid.uuid4()), slug)],
             ))
 
@@ -894,12 +903,12 @@ class TestAppSlugRouteCollision:
         sol_b = await self._install(db, org_id=org_b.id)
         slug = f"dash-{uuid.uuid4().hex[:8]}"
 
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol_a, apps=[_app_entry(str(uuid.uuid4()), slug)],
         ))
         await db.flush()
         # Different org → no route collision → allowed.
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol_b, apps=[_app_entry(str(uuid.uuid4()), slug)],
         ))
         await db.flush()
@@ -922,7 +931,7 @@ class TestAppSlugRouteCollision:
             return await orig_execute(stmt, params, *a, **k)
 
         monkeypatch.setattr(db, "execute", _spy_execute)
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
         ))
         await db.flush()
@@ -946,37 +955,29 @@ class TestAppSlugRouteCollision:
         await db.flush()
         sol = await self._install(db, org_id=org.id)  # org-scoped install
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
             ))
 
-    async def test_binary_assets_reach_the_builder_decoded(self, db_session, monkeypatch):
+    async def test_binary_assets_reach_physical_build_decoded(self, db_session):
         """bin_files (base64) in the bundle are decoded to bytes and merged into
         the builder's src_files, so a v2 app's PNG/fonts actually build (P2-j/R4)."""
         import base64
 
-        from src.services.solutions import app_build
+        from shared.solution_app_compiler import AppBuildResult, source_build_identity
 
         captured: dict = {}
 
-        def _capture_compile(self, app_id, src_files, dependencies, prebuilt_dist=None):
-            captured["src_files"] = src_files
-            return {"index.html": b"<html></html>"}
-
-        async def _noop_upload(self, app_id, dist):
-            return None
-
-        async def _noop_delete(self, app_id):
-            return None
-
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _capture_compile)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _noop_upload, raising=False)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "delete_dist", _noop_delete, raising=False)
+        async def _capture_compute(inputs):
+            captured["src_files"] = inputs.source_files
+            return AppBuildResult(
+                {"index.html": b"<html>built</html>"}, source_build_identity(inputs)
+            )
 
         db = db_session
         sol = await self._install(db)
         png = b"\x89PNG\x00data"
-        result = await SolutionDeployer(db).deploy(SolutionBundle(
+        result = await _deploy(db, SolutionBundle(
             solution=sol,
             apps=[{
                 "id": str(uuid.uuid4()), "slug": f"dash-{uuid.uuid4().hex[:6]}",
@@ -985,10 +986,10 @@ class TestAppSlugRouteCollision:
                 "bin_files": {"logo.png": base64.b64encode(png).decode()},
                 # no dist_files → goes through the real build path (stubbed)
             }],
-        ))
+        ), compute=_capture_compute)
         await db.flush()
         await result.finalize_s3()
-        # The decoded PNG bytes reached the builder (at compile time, pre-commit).
+        # The decoded PNG bytes reached the physical compiler input.
         assert captured["src_files"]["logo.png"] == png
         assert captured["src_files"]["src/main.tsx"] == b"import './logo.png'"
 
@@ -1010,7 +1011,7 @@ class TestAppSlugRouteCollision:
         await db.flush()
         sol = await self._install(db, org_id=None)  # global install
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol, apps=[_app_entry(str(uuid.uuid4()), slug)],
             ))
 
@@ -1030,7 +1031,7 @@ class TestAppPublishAndBuildModel:
         db = db_session
         sol = await self._install(db)
         app_id = str(uuid.uuid4())
-        await SolutionDeployer(db).deploy(SolutionBundle(
+        await _deploy(db, SolutionBundle(
             solution=sol, apps=[_app_entry(app_id, "dash")],
         ))
         await db.flush()
@@ -1047,14 +1048,8 @@ class TestAppPublishAndBuildModel:
         sol = await self._install(db)
         app_id = str(uuid.uuid4())
         # If build() is even attempted for an inline_v1 app, fail loudly.
-        from src.services.solutions import app_build
-
-        def _boom(self, *a, **k):
-            raise AssertionError("inline_v1 app must not be vite-built")
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _boom)
-
         with pytest.raises(SolutionDeployConflict, match="standalone_v2"):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol,
                 apps=[{
                     "id": app_id, "slug": "legacy", "name": "Legacy",
@@ -1088,19 +1083,13 @@ class TestDeployTransactionalS3:
         ))
         await db.flush()
 
-        # Spy on the build seams — none should run when the deploy fails in the
-        # DB phase (the conflict raises BEFORE compile, which is before upload).
-        from src.services.solutions import app_build
-        calls = {"compile": 0, "upload": 0}
-
-        def _count_compile(self, *a, **k):
-            calls["compile"] += 1
-            return {"index.html": b""}
-
+        calls = {"upload": 0}
         async def _count_upload(self, *a, **k):
             calls["upload"] += 1
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _count_compile)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _count_upload, raising=False)
+        monkeypatch.setattr(
+            "src.services.solutions.app_build.SolutionAppBuilder.upload_deployment",
+            _count_upload,
+        )
 
         wrote_python = {"n": 0}
         orig = SolutionDeployer._write_python
@@ -1112,7 +1101,7 @@ class TestDeployTransactionalS3:
 
         app_id = str(uuid.uuid4())
         with pytest.raises(SolutionDeployConflict):
-            await SolutionDeployer(db).deploy(SolutionBundle(
+            await _deploy(db, SolutionBundle(
                 solution=sol,
                 python_files={"workflows/x.py": "x=1"},
                 # The conflicting workflow makes _upsert_workflows raise BEFORE
@@ -1122,63 +1111,20 @@ class TestDeployTransactionalS3:
                 apps=[_app_entry(app_id, "dash")],
             ))
 
-        # No build/upload/python-write happened (conflict raised in the DB phase,
-        # before compile and before the post-commit finalize).
-        assert calls["compile"] == 0, "app dist was compiled despite a failed deploy"
+        # Receipt preparation is external to this DB phase; no publication or
+        # runtime-source write can occur when reconciliation rejects the bundle.
         assert calls["upload"] == 0, "app dist was uploaded despite a failed deploy"
         assert wrote_python["n"] == 0, "python source was written despite a failed deploy"
-
-    async def test_build_failure_rolls_back_and_uploads_nothing(self, db_session, monkeypatch):
-        """A vite/npm BUILD error must raise from deploy() (pre-commit), so the
-        caller never commits and uploads nothing — DB never ends up ahead of S3
-        (Codex R4 atomicity). The compile runs before commit; if it throws, the
-        deploy is abandoned with no upload and no DeployResult to finalize."""
-        from src.services.solutions import app_build
-
-        uploaded = {"n": 0}
-
-        def _compile_boom(self, *a, **k):
-            raise RuntimeError("vite build failed: missing import './nope.png'")
-
-        async def _count_upload(self, *a, **k):
-            uploaded["n"] += 1
-
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _compile_boom)
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "upload_dist", _count_upload, raising=False)
-
-        db = db_session
-        sol = Solution(id=uuid.uuid4(), slug=f"bf-{uuid.uuid4().hex[:8]}", name="BF", organization_id=None)
-        db.add(sol)
-        await db.flush()
-        app_id = str(uuid.uuid4())
-
-        with pytest.raises(RuntimeError, match="vite build failed"):
-            await SolutionDeployer(db).deploy(SolutionBundle(
-                solution=sol,
-                apps=[{
-                    "id": app_id, "slug": f"dash-{uuid.uuid4().hex[:6]}", "name": "D",
-                    "app_model": "standalone_v2", "dependencies": {},
-                    "src_files": {"src/main.tsx": "import './nope.png'"},
-                }],
-            ))
-
-        # The build error happened BEFORE any upload, and the caller would not
-        # commit — so nothing was uploaded.
-        assert uploaded["n"] == 0, "dist uploaded despite a failed build"
 
     async def test_finalize_retries_a_transient_upload_failure(self, db_session, monkeypatch):
         """A transient storage blip during post-commit finalize is absorbed by
         retrying the idempotent step — the deploy completes, no error (Codex R5)."""
-        from src.services.solutions import app_build
 
         monkeypatch.setattr(
             "src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0
         )  # fast test
 
         attempts = {"n": 0}
-
-        def _compile(self, *a, **k):
-            return {"index.html": b"<html></html>"}
 
         async def _flaky_upload(self, *a, **k):
             attempts["n"] += 1
@@ -1189,7 +1135,6 @@ class TestDeployTransactionalS3:
         async def _noop_delete(self, *a, **k):
             return None
 
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _compile)
         monkeypatch.setattr(
             app_build.SolutionAppBuilder,
             "upload_deployment",
@@ -1202,7 +1147,7 @@ class TestDeployTransactionalS3:
         sol = Solution(id=uuid.uuid4(), slug=f"fz-{uuid.uuid4().hex[:8]}", name="FZ", organization_id=None)
         db.add(sol)
         await db.flush()
-        result = await SolutionDeployer(db).deploy(SolutionBundle(
+        result = await _deploy(db, SolutionBundle(
             solution=sol, apps=[_app_entry(str(uuid.uuid4()), f"d-{uuid.uuid4().hex[:6]}")],
         ))
         await db.flush()
@@ -1212,13 +1157,9 @@ class TestDeployTransactionalS3:
     async def test_finalize_raises_when_storage_stays_down(self, db_session, monkeypatch):
         """If a finalize step fails every retry (a real outage), finalize raises
         SolutionFinalizeIncomplete so the caller can surface a retry (Codex R5)."""
-        from src.services.solutions import app_build
         from src.services.solutions.deploy import SolutionFinalizeIncomplete
 
         monkeypatch.setattr("src.services.solutions.deploy._FINALIZE_BACKOFF_S", 0)
-
-        def _compile(self, *a, **k):
-            return {"index.html": b"<html></html>"}
 
         async def _dead_upload(self, *a, **k):
             raise RuntimeError("S3 unavailable")
@@ -1226,7 +1167,6 @@ class TestDeployTransactionalS3:
         async def _noop_delete(self, *a, **k):
             return None
 
-        monkeypatch.setattr(app_build.SolutionAppBuilder, "compile_dist", _compile)
         monkeypatch.setattr(
             app_build.SolutionAppBuilder,
             "upload_deployment",
@@ -1239,7 +1179,7 @@ class TestDeployTransactionalS3:
         sol = Solution(id=uuid.uuid4(), slug=f"fz-{uuid.uuid4().hex[:8]}", name="FZ", organization_id=None)
         db.add(sol)
         await db.flush()
-        result = await SolutionDeployer(db).deploy(SolutionBundle(
+        result = await _deploy(db, SolutionBundle(
             solution=sol, apps=[_app_entry(str(uuid.uuid4()), f"d-{uuid.uuid4().hex[:6]}")],
         ))
         await db.flush()
@@ -1260,7 +1200,7 @@ async def test_source_redeploy_reuses_only_unchanged_app_and_preserves_metadata(
     one, two = str(uuid.uuid4()), str(uuid.uuid4())
     apps = [dict(_app_entry(one, "one"), dist_files=None, src_files={"index.html": "one"}),
             dict(_app_entry(two, "two"), dist_files=None, src_files={"index.html": "two"})]
-    result = await SolutionDeployer(db_session).deploy(SolutionBundle(solution=sol, apps=apps))
+    result = await _deploy(db_session, SolutionBundle(solution=sol, apps=apps))
     await result.finalize_s3()
     first = await db_session.get(Application, solution_entity_id(sol.id, uuid.UUID(one)))
     second = await db_session.get(Application, solution_entity_id(sol.id, uuid.UUID(two)))
@@ -1270,7 +1210,7 @@ async def test_source_redeploy_reuses_only_unchanged_app_and_preserves_metadata(
     first_stamp = (first.deployed_at, first.sdk_built_at, first.sdk_fingerprint)
     apps[0]["name"] = "Updated Metadata"
     apps[1]["src_files"]["index.html"] = "changed"
-    result = await SolutionDeployer(db_session).deploy(SolutionBundle(solution=sol, apps=apps))
+    result = await _deploy(db_session, SolutionBundle(solution=sol, apps=apps))
     await result.finalize_s3()
     await db_session.refresh(first)
     await db_session.refresh(second)
@@ -1306,20 +1246,49 @@ async def test_reused_app_remains_in_activation_fence_and_is_never_deleted(db_se
 
 
 @pytest.mark.parametrize("moved,missing", [(True, False), (False, True)])
-async def test_cli_reuse_hint_conflicts_if_pointer_or_artifacts_change(monkeypatch, moved, missing):
+async def test_cli_reuse_hint_conflicts_if_pointer_or_artifacts_change(
+    db_session, monkeypatch, moved, missing
+):
     from unittest.mock import AsyncMock
     from src.services.solutions.app_build import SolutionAppBuilder
 
     old, hinted = uuid.uuid4(), uuid.uuid4()
     if not moved:
         hinted = old
+    solution = Solution(id=uuid.uuid4(), slug="hint", name="Hint")
+    db_session.add(solution)
+    await db_session.flush()
+    manifest_app_id = uuid.uuid4()
+    app_id = solution_entity_id(solution.id, manifest_app_id)
+    db_session.add(Application(
+        id=app_id,
+        name="Hint",
+        slug=f"hint-{app_id.hex[:8]}",
+        repo_path="apps/hint",
+        app_model="standalone_v2",
+        solution_id=solution.id,
+        active_deployment_id=old,
+    ))
+    await db_session.flush()
     monkeypatch.setattr(SolutionAppBuilder, "attested_identity", lambda *a, **k: "inputs")
     can_reuse = AsyncMock(return_value=not missing)
     monkeypatch.setattr(SolutionAppBuilder, "can_reuse", can_reuse)
-    spec = {"app_id": uuid.uuid4(), "solution_id": uuid.uuid4(), "expected_old_deployment_id": old,
-            "reuse_deployment_id": str(hinted), "build_recipe": {"schema": 1}, "src": {"index.html": "source"},
-            "dist": None, "dependencies": {}}
+    bundle = SolutionBundle(
+        solution=solution,
+        apps=[{
+            "id": str(manifest_app_id),
+            "slug": "hint",
+            "name": "Hint",
+            "app_model": "standalone_v2",
+            "src_files": {"index.html": "source"},
+            "dist_files": None,
+            "dependencies": {},
+            "build_recipe": {"schema": 1},
+            "reuse_deployment_id": str(hinted),
+        }],
+    )
+    plan = await SolutionDeployer(db_session).prepare_app_builds(bundle)
     with pytest.raises(SolutionDeployConflict, match="re-run the deploy"):
-        await SolutionDeployer(AsyncMock())._compile_app_dists([spec])
+        await compile_solution_app_builds(plan, AsyncMock())
     if moved:
         can_reuse.assert_not_called()

@@ -66,6 +66,7 @@ async def encode_file_transfer(
 async def decode_file_result(
     outcome: FileComputeResult,
     decoder: Callable[..., T],
+    cleanup_cancelled_result: Callable[[T], None] | None = None,
     **kwargs: Any,
 ) -> T:
     """Decode a result while retaining its received file until thread completion."""
@@ -79,11 +80,14 @@ async def decode_file_result(
     except asyncio.CancelledError:
         def consume_late_decode(done: asyncio.Task[T]) -> None:
             try:
-                done.result()
+                result = done.result()
             except (Exception, asyncio.CancelledError):
                 # Cleanup happened in ``decode_and_close``; avoid surfacing a
                 # late decoder failure into an already-cancelled request.
                 pass
+            else:
+                if cleanup_cancelled_result is not None:
+                    cleanup_cancelled_result(result)
 
         task.add_done_callback(consume_late_decode)
         raise

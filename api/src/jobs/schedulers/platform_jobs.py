@@ -411,10 +411,7 @@ async def claim_platform_job(
                 worker = await db.scalar(worker_query.with_for_update(read=True))
                 if worker is None:
                     continue
-                if external_isolated and (
-                    metadata.compute_capability is None
-                    or metadata.compute_capability not in worker.supported_compute
-                ):
+                if not metadata.required_compute_capabilities.issubset(worker.supported_compute):
                     continue
             job.status = "running"
             job.phase = (

@@ -1,5 +1,6 @@
 import asyncio
 import threading
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -112,12 +113,11 @@ async def test_result_limit_is_selected_by_the_api_operation_registry(
         chunk_count=1,
         max_total_size=1,
     )
-    compute = RemoteFileCompute.__new__(RemoteFileCompute)
-    compute.operation_name = "app.bundle.v1"
-    compute.invoked = False
-    compute.result_metadata_validator = None
-    compute.binding = {"stage_id": "stage", "job_id": "job", "lease_token": "lease"}
-    compute.bridge = SimpleNamespace(compute_changed=asyncio.Event())
+    compute = RemoteFileCompute(
+        SimpleNamespace(compute_changed=asyncio.Event(), file_computes={}),
+        ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.publish"),
+        "app.bundle.v1",
+    )
     compute._checkpoint = AsyncMock()
     compute._mutate = AsyncMock(return_value=True)
     limit = APP_BUNDLE_RESULT_LIMIT + 1 if inflated else APP_BUNDLE_RESULT_LIMIT
@@ -152,11 +152,11 @@ async def test_non_app_memory_failure_uses_canonical_platform_code(tmp_path: Pat
         sha256="2d711642b726b04401627ca9fbac32f5c8530fb1903cc4db02258717921a4881",
         chunk_size=1, chunk_count=1, max_total_size=1,
     )
-    compute = RemoteFileCompute.__new__(RemoteFileCompute)
-    compute.operation_name = "audit.archive.v1"
-    compute.invoked = False
-    compute.binding = {"stage_id": "stage", "job_id": "job", "lease_token": "lease"}
-    compute.bridge = SimpleNamespace(compute_changed=asyncio.Event())
+    compute = RemoteFileCompute(
+        SimpleNamespace(compute_changed=asyncio.Event(), file_computes={}),
+        ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "audit.archive"),
+        "audit.archive.v1",
+    )
     compute._checkpoint = AsyncMock()
     compute._mutate = AsyncMock(return_value=True)
     compute._read = AsyncMock(side_effect=[
@@ -288,7 +288,17 @@ async def test_running_handler_tracks_same_owner_reconnect_generation(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_sequential_batches_release_predecessor_before_next_stage(tmp_path: Path) -> None:
+@pytest.mark.parametrize("next_operation", ["app.bundle.v1", "audit.archive.v1"])
+async def test_sequential_batches_release_predecessor_before_next_stage(tmp_path: Path, monkeypatch, next_operation) -> None:
+    from src.jobs.platform import catalog
+    from src.worker.remote import file_compute_host
+
+    metadata = catalog.get_platform_job_metadata("application.publish")
+    assert metadata is not None
+    monkeypatch.setattr(catalog, "_METADATA", {
+        **catalog._METADATA,
+        metadata.job_type: replace(metadata, additional_compute_capabilities=("audit.archive.v1",)),
+    })
     payload = tmp_path / "payload"
     payload.write_bytes(b"x")
     manifest = FileTransferManifest(
@@ -329,7 +339,7 @@ async def test_sequential_batches_release_predecessor_before_next_stage(tmp_path
         if state["value"] == "succeeded":
             response.update(
                 result_manifest=manifest.to_dict(),
-                result_max_total_size=APP_BUNDLE_RESULT_LIMIT,
+                result_max_total_size=file_compute_host._OPERATION_RESULT_LIMITS[compute.operation_name],
             )
         return response
 
@@ -348,9 +358,10 @@ async def test_sequential_batches_release_predecessor_before_next_stage(tmp_path
         with await compute("app.bundle.v1", FileTransfer(manifest, payload)):
             pass
         first_stage = compute.stage_id
-        with await compute("app.bundle.v1", FileTransfer(manifest, payload)):
+        with await compute(next_operation, FileTransfer(manifest, payload)):
             pass
         second_stage = compute.stage_id
+        assert compute.operation_name == next_operation
     finally:
         payload.unlink(missing_ok=True)
 
@@ -360,3 +371,23 @@ async def test_sequential_batches_release_predecessor_before_next_stage(tmp_path
         ("released", first_stage, None),
         ("checkpoint", second_stage, str(UUID(first_stage))),
     ]
+
+
+@pytest.mark.asyncio
+async def test_job_cannot_select_an_operation_outside_its_declared_pipeline(tmp_path):
+    payload = tmp_path / "input"
+    payload.write_bytes(b"x")
+    compute = RemoteFileCompute(
+        SimpleNamespace(file_computes={}),
+        ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.publish"),
+        "app.bundle.v1",
+    )
+    checkpoint = AsyncMock()
+    compute._checkpoint = checkpoint
+    try:
+        with FileTransfer(_single_byte_manifest(), payload) as transfer:
+            with pytest.raises(PlatformJobFailure, match="undeclared"):
+                await compute("audit.export.v1", transfer)
+        checkpoint.assert_not_awaited()
+    finally:
+        await compute.release()

@@ -48,7 +48,6 @@ from src.worker.remote.file_compute_host import (
     FILE_COMPUTE_JOB_TYPES, ApiFileComputeBackend, operation_for_job_type, control_authorization,
     reconcile_file_computes,
 )
-from src.worker.remote.app_compile_host import ApiAppBuildBackend
 from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
@@ -116,7 +115,7 @@ async def _external_reserved_capabilities(
             or worker.isolated_platform_job_attempt is None
             or worker.isolated_platform_job_attempt < 1
             or worker.supported_handlers
-            or len(worker.supported_compute) != 1
+            or not worker.supported_compute
         ):
             raise AuthenticationError("external isolated reservation is invalid")
         isolated = IsolatedPlatformJobReservation(
@@ -699,15 +698,18 @@ class ApiExecutor(PoolWorker):
         operation = operation_for_job_type(claim.job_type)
         metadata = get_platform_job_metadata(claim.job_type)
         supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
-        if self.bridge.isolated_job is not None and (
-            operation is None or metadata is None or metadata.compute_capability not in supported
+        if (self.bridge.isolated_job is not None or (
+            metadata is not None and metadata.required_compute_capabilities
+        )) and (
+            operation is None or metadata is None
+            or not metadata.required_compute_capabilities.issubset(supported)
         ):
             raise RuntimeError("An isolated worker requires registered API-owned file computation")
         backend = (
-            (ApiAppBuildBackend(self.bridge) if operation == "app.compile.v2" else ApiFileComputeBackend(self.bridge))
+            ApiFileComputeBackend(self.bridge)
             if operation is not None
             and metadata is not None
-            and metadata.compute_capability in supported
+            and metadata.required_compute_capabilities.issubset(supported)
             else self.bridge
         )
         return await run_claimed_platform_job(claim, backend=backend)
@@ -728,22 +730,25 @@ class ApiExecutor(PoolWorker):
             self.bridge.supports_platform_jobs
             or any(
                 (metadata := get_platform_job_metadata(job_type)) is not None
-                and metadata.compute_capability in {
+                and metadata.required_compute_capabilities.issubset({
                     f"{name}.v{version}" for name, version in self.bridge.compute_capabilities
-                }
+                })
                 for job_type in FILE_COMPUTE_JOB_TYPES
             )
         )
 
     async def _claim_platform_job(self, fits_bytes: int) -> Any:
         job_types = executor_platform_job_types()
-        if not self.bridge.supports_platform_jobs:
-            supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
-            job_types = frozenset(
-                job_type for job_type in job_types.intersection(FILE_COMPUTE_JOB_TYPES)
-                if (metadata := get_platform_job_metadata(job_type)) is not None
-                and metadata.compute_capability in supported
+        supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
+        job_types = frozenset(
+            job_type for job_type in job_types
+            if (metadata := get_platform_job_metadata(job_type)) is not None
+            and (
+                (job_type in FILE_COMPUTE_JOB_TYPES
+                 and metadata.required_compute_capabilities.issubset(supported))
+                or (not metadata.required_compute_capabilities and self.bridge.supports_platform_jobs)
             )
+        )
         if self.bridge.isolated_job is not None:
             return await claim_platform_job(
                 backend=EXTERNAL_ISOLATED_BACKEND, fits_bytes=fits_bytes,

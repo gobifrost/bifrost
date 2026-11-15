@@ -105,7 +105,8 @@ async def record_platform_job_executor_attribution(
     API task additionally proves that it still owns the launcher's lease
     before locking the exact PlatformJob attempt and loading the worker row.
     A sequential file operation may advance only from its just-released,
-    currently attributed stage on the same worker and capability.
+    currently attributed stage on the same worker. Every stage capability
+    must belong to the code-owned handler's declared compute sequence.
     """
     if (stage_id is None) != (input_sha256 is None):
         raise ValueError("executor stage identity and input digest must be recorded together")
@@ -139,6 +140,12 @@ async def record_platform_job_executor_attribution(
         ).scalar_one_or_none()
         if job is None:
             return False
+        if compute_capability is not None:
+            from src.jobs.platform.catalog import get_platform_job_metadata
+
+            metadata = get_platform_job_metadata(job.job_type)
+            if metadata is None or compute_capability not in metadata.required_compute_capabilities:
+                return False
         worker = await db.scalar(
             select(ExecutionWorker)
             .where(ExecutionWorker.id == worker_id)
@@ -162,7 +169,7 @@ async def record_platform_job_executor_attribution(
                 predecessor_stage_id == job.executor_stage_id
                 and job.executor_attempt == job.attempt
                 and job.executor_worker_id == worker_id
-                and job.executor_compute_capability == compute_capability
+                and stage_id is not None and compute_capability is not None
             ):
                 set_platform_job_executor_attribution(
                     job,

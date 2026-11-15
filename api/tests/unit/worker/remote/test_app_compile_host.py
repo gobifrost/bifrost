@@ -131,7 +131,7 @@ async def test_app_adapter_resolves_lost_replies_without_duplicate_mutations(mon
 async def test_app_adapter_rejects_wrong_sdk_recipe_before_artifact_read(monkeypatch):
     source, bridge = inputs(), Control(inputs(), wrong_recipe=True)
     bridge.source = source
-    compute, adapter = remote_app_compute(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1))
+    compute, adapter = remote_app_compute(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.deploy"))
     monkeypatch.setattr(compute, "_checkpoint", AsyncMock())
     try:
         with pytest.raises(PlatformJobFailure, match="provenance"):
@@ -152,7 +152,7 @@ async def test_generic_control_send_guard_refuses_stale_owner_or_job(monkeypatch
     monkeypatch.setattr(generic, "get_db_context", database)
     monkeypatch.setattr(generic, "fence_remote_owner", AsyncMock(return_value=owner_current))
     with pytest.raises(PlatformJobCancelled):
-        async with generic.control_authorization(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1)):
+        async with generic.control_authorization(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.deploy")):
             pytest.fail("stale authority reached the command send")
     assert db.scalar.await_count == (2 if owner_current else 0)
 
@@ -166,7 +166,7 @@ async def test_generic_transport_rejects_a_reply_bound_to_another_claim(monkeypa
         reply = await original(action, payload, **kwargs)
         return {**reply, "lease_token": str(uuid4())}
     bridge.request = mismatched
-    compute, _adapter = remote_app_compute(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1))
+    compute, _adapter = remote_app_compute(bridge, ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.deploy"))
     monkeypatch.setattr(compute, "_checkpoint", AsyncMock())
     with encode_app_build_inputs(source) as transfer:
         with pytest.raises(PlatformJobFailure) as error:

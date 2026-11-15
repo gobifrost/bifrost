@@ -34,6 +34,8 @@ from uuid import UUID
 
 if TYPE_CHECKING:
     from src.services.solutions.secrets_blob import SolutionContent
+    from src.jobs.platform.base import PlatformJobContext
+    from src.services.solutions.deploy import PreparedSolutionAppBuilds
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -320,6 +322,7 @@ async def _resolve_or_create_solution(
     name: str,
     organization_id: UUID | None,
     reactivate: bool = False,
+    expected_solution_id: UUID | None = None,
 ) -> Solution:
     """Find the install for ``(slug, organization_id)`` or create a fresh one.
 
@@ -336,6 +339,8 @@ async def _resolve_or_create_solution(
     """
     existing = await find_install(db, slug=slug, organization_id=organization_id)
     if existing is not None:
+        if expected_solution_id is not None and existing.id != expected_solution_id:
+            raise ValueError("Solution install target changed while the archive was prepared")
         if existing.status == "inactive":
             if not reactivate:
                 raise InactiveInstallExists(existing.id, existing.slug)
@@ -344,7 +349,7 @@ async def _resolve_or_create_solution(
             await db.flush()
         return existing
 
-    row = Solution(slug=slug, name=name, organization_id=organization_id)
+    row = Solution(id=expected_solution_id, slug=slug, name=name, organization_id=organization_id)
     db.add(row)
     await db.flush()
     return row
@@ -502,22 +507,38 @@ async def _install_workspace(
     replace_data: bool,
     reactivate: bool,
     payload_archive: zipfile.ZipFile | None = None,
+    prepared_preview: PreviewResult | None = None,
+    expected_solution_id: UUID | None = None,
+    prepared_app_builds: PreparedSolutionAppBuilds | None = None,
+    prepared_bundle: SolutionBundle | None = None,
+    source_artifact: bytes | None = None,
+    lock_already_held: bool = False,
+    context: PlatformJobContext | None = None,
 ) -> Solution:
     from src.services.solutions.write_lock import solution_write_lock
 
-    preview = _parse_workspace(workspace)
+    preview = prepared_preview or _parse_workspace(workspace)
     if not preview.slug or not preview.name:
         raise ValueError(
             "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
         )
 
+    async def authorize() -> None:
+        if context is not None and not await context.authorize_effect(db):
+            from src.jobs.platform.base import PlatformJobCancelled
+            raise PlatformJobCancelled()
+
+    await authorize()
     solution = await _resolve_or_create_solution(
         db,
         slug=preview.slug,
         name=preview.name,
         organization_id=organization_id,
         reactivate=reactivate,
+        expected_solution_id=expected_solution_id,
     )
+    if expected_solution_id is not None and solution.id != expected_solution_id:
+        raise ValueError("Solution install target changed while the archive was prepared")
 
     # One-writer invariant: a git-connected install is written ONLY by
     # auto-pull (sync). Refuse a zip install into it, exactly as
@@ -531,7 +552,10 @@ async def _install_workspace(
 
     # Build the bundle while the temp dir still exists (it reads Python +
     # app source fully into memory, so finalize_s3 is safe after teardown).
-    bundle = _build_bundle(solution, preview, workspace)
+    bundle = prepared_bundle or _build_bundle(solution, preview, workspace)
+    if bundle.solution.id != solution.id or bundle.solution.organization_id != solution.organization_id:
+        raise ValueError("Prepared Solution bundle target changed")
+    bundle.solution = solution
 
     # Module-closure gate: every ``modules.X`` import in the bundle must
     # resolve to a file in the bundle. Run BEFORE the write lock / any DB or
@@ -550,7 +574,7 @@ async def _install_workspace(
         )
         raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
-    async with solution_write_lock(solution.id):
+    async def apply() -> None:
         # Decrypt + collision-check BEFORE deploy so a bad password or
         # collision refuses the entire import atomically — nothing lands.
         content = None
@@ -586,11 +610,16 @@ async def _install_workspace(
                 replace_data=replace_data,
             )
 
-        deployer = SolutionDeployer(db)
-        result = await deployer.deploy(bundle, force=force)
+        deployer = SolutionDeployer(db, publication_authorization=context.authorize_effect if context else None)
+        await authorize()
+        result = await deployer.deploy(
+            bundle, force=force, prepared_app_builds=prepared_app_builds,
+            source_artifact=source_artifact,
+        )
         await db.commit()
         # S3 only after the DB is durable; still inside the lock so finalize
         # can't race another writer.
+        await authorize()
         await result.finalize_s3()
         await db.commit()  # source search index rows written by finalize
 
@@ -598,6 +627,7 @@ async def _install_workspace(
         # values atomically with the deploy. A missing required value does
         # NOT block (warn-not-block) — we only set what was provided.
         if config_values:
+            await authorize()
             await _apply_config_values(
                 db,
                 solution=solution,
@@ -609,6 +639,7 @@ async def _install_workspace(
         # Apply the decrypted content from the secrets blob (config values
         # only — table data apply is Phase 4).
         if content is not None:
+            await authorize()
             await _apply_content(
                 db,
                 solution=solution,
@@ -634,6 +665,7 @@ async def _install_workspace(
             content is not None and bool(content.config_values)
         )
         if applied_config:
+            await authorize()
             from src.core.cache import invalidate_all_config
 
             await invalidate_all_config(
@@ -648,10 +680,16 @@ async def _install_workspace(
         # with required declarations must be marked incomplete).
         from src.services.solutions.setup_status import compute_setup_status
 
+        await authorize()
         status_now = await compute_setup_status(db, solution)
         solution.setup_complete = status_now.setup_complete
         await db.commit()
 
+    if lock_already_held:
+        await apply()
+    else:
+        async with solution_write_lock(solution.id):
+            await apply()
     await db.refresh(solution)
     return solution
 
@@ -703,13 +741,21 @@ async def _deploy_workspace_to_solution(
     workspace: Path,
     *,
     force: bool,
+    prepared_preview: PreviewResult | None = None,
+    prepared_app_builds: PreparedSolutionAppBuilds | None = None,
+    prepared_bundle: SolutionBundle | None = None,
+    source_artifact: bytes | None = None,
+    context: PlatformJobContext | None = None,
 ) -> DeployResult:
-    preview = _parse_workspace(workspace)
+    preview = prepared_preview or _parse_workspace(workspace)
     if not preview.slug or not preview.name:
         raise ValueError(
             "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
         )
-    bundle = _build_bundle(solution, preview, workspace)
+    bundle = prepared_bundle or _build_bundle(solution, preview, workspace)
+    if bundle.solution.id != solution.id or bundle.solution.organization_id != solution.organization_id:
+        raise ValueError("Prepared Solution bundle target changed")
+    bundle.solution = solution
 
     from src.services.solutions.dependency_walker import check_install_needs
 
@@ -723,7 +769,10 @@ async def _deploy_workspace_to_solution(
         )
         raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
-    return await SolutionDeployer(db).deploy(bundle, force=force)
+    return await SolutionDeployer(db, publication_authorization=context.authorize_effect if context else None).deploy(
+        bundle, force=force, prepared_app_builds=prepared_app_builds,
+        source_artifact=source_artifact,
+    )
 
 
 async def _assert_no_unforced_collisions(

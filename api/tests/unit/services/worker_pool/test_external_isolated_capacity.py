@@ -220,3 +220,19 @@ async def test_isolated_capacity_drains_one_idle_external_worker_until_deleted(d
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.isolated_platform_job_id == job_id
+
+
+async def test_solution_reservation_grants_complete_code_owned_compute_set(db, capacity):
+    job_id = await _queued_job(db)
+    async with db.context() as session:
+        job = await session.get(PlatformJob, job_id)
+        job.job_type = "solution.deploy"
+    policy = replace(_policy(capacity), enabled_job_types=frozenset({"solution.deploy"}))
+    [worker_id] = (await plan_capacity_launches(policy, (capacity.pool,)))[capacity.pool]
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.isolated_platform_job_id == job_id
+        assert worker.supported_handlers == []
+        assert worker.supported_compute == ["app.compile.v2", "solution.archive.inspect.v1"]
+        job = await session.get(PlatformJob, job_id)
+        assert job.attempt == 0 and job.status == "queued"

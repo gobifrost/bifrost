@@ -4,19 +4,22 @@ Zero queued jobs and one real Vite build: the second deploy proves reuse.
 Real DB, S3 and HTTP lookup also prove the separate API-process artifact check.
 """
 
-from uuid import uuid4
-from time import perf_counter
+import asyncio
 import base64
+from time import perf_counter
+from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete
 
+from shared.solution_app_compiler import compile_app
 from src.models.orm.applications import Application
 from src.models.orm.solutions import Solution
 from src.services.solutions.app_build import SolutionAppBuilder
 from src.services.solutions.deploy import (
     SolutionBundle,
     SolutionDeployer,
+    compile_solution_app_builds,
     solution_entity_id,
 )
 
@@ -28,7 +31,6 @@ async def test_redeploy_preserves_build_and_preflight_verifies_all_artifacts(
     e2e_client,
     platform_admin,
     non_admin_user,
-    monkeypatch,
     record_property,
 ):
     sol = Solution(
@@ -41,13 +43,10 @@ async def test_redeploy_preserves_build_and_preflight_verifies_all_artifacts(
     await db_session.commit()
     builds = []
 
-    original_compile = SolutionAppBuilder.compile_dist
+    async def physical_compile(inputs):
+        builds.append(inputs.app_id)
+        return await asyncio.to_thread(compile_app, inputs)
 
-    def compile_dist(self, app_id, files, deps, prebuilt=None):
-        builds.append(app_id)
-        return original_compile(self, app_id, files, deps, prebuilt)
-
-    monkeypatch.setattr(SolutionAppBuilder, "compile_dist", compile_dist)
     app = {
         "id": str(manifest_id),
         "slug": "dashboard",
@@ -60,9 +59,11 @@ async def test_redeploy_preserves_build_and_preflight_verifies_all_artifacts(
     builder = SolutionAppBuilder()
     try:
         started = perf_counter()
-        result = await SolutionDeployer(db_session).deploy(
-            SolutionBundle(solution=sol, apps=[app])
-        )
+        bundle = SolutionBundle(solution=sol, apps=[app])
+        deployer = SolutionDeployer(db_session)
+        plan = await deployer.prepare_app_builds(bundle)
+        prepared = await compile_solution_app_builds(plan, physical_compile)
+        result = await deployer.deploy(bundle, prepared_app_builds=prepared)
         await db_session.commit()
         await result.finalize_s3()
         record_property("initial_deploy_seconds", perf_counter() - started)
@@ -89,9 +90,11 @@ async def test_redeploy_preserves_build_and_preflight_verifies_all_artifacts(
 
         app["name"] = "Updated Metadata"
         started = perf_counter()
-        result = await SolutionDeployer(db_session).deploy(
-            SolutionBundle(solution=sol, apps=[app])
-        )
+        bundle = SolutionBundle(solution=sol, apps=[app])
+        deployer = SolutionDeployer(db_session)
+        plan = await deployer.prepare_app_builds(bundle)
+        prepared = await compile_solution_app_builds(plan, physical_compile)
+        result = await deployer.deploy(bundle, prepared_app_builds=prepared)
         await db_session.commit()
         await result.finalize_s3()
         await db_session.refresh(row)

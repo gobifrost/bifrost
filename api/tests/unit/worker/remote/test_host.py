@@ -1100,7 +1100,7 @@ async def test_an_adopted_agent_precondition_failure_releases_its_memory() -> No
 async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_form(
     supports_platform_jobs, job_type,
 ):
-    from src.worker.remote.app_compile_host import ApiAppBuildBackend
+    from src.worker.remote.file_compute_host import ApiFileComputeBackend
 
     executor = object.__new__(ApiExecutor)
     executor.bridge = SimpleNamespace(
@@ -1115,6 +1115,6 @@ async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_for
         assert await executor._execute_platform_job(claim)
     assert run.await_args.args == (claim,)
     backend = run.await_args.kwargs["backend"]
-    assert isinstance(backend, ApiAppBuildBackend)
+    assert isinstance(backend, ApiFileComputeBackend)
     assert backend.memory() == (12, 100)
     executor.bridge.memory.assert_called_once_with()

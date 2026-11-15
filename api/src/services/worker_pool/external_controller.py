@@ -82,9 +82,6 @@ class ExternalWorkerPoolController(WorkerCapacityController):
     def _planner_execution_handlers(self) -> tuple[str, ...]:
         return WORKER_IMAGE_HANDLER_NAMES
 
-    def _planner_compute_capabilities(self) -> tuple[str, ...]:
-        return WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
-
     def _planner_platform_job_types(self) -> frozenset[str]:
         return EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
 

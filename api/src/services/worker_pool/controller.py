@@ -38,6 +38,7 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, literal, select, text, update
 
 from shared.version import get_version
+from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.catalog import executor_platform_job_types, get_platform_job_metadata
@@ -186,15 +187,11 @@ class WorkerCapacityController(ABC):
 
     def _planner_compute_capabilities(self) -> tuple[str, ...]:
         """Semantic compute grants a newly reserved worker can truthfully offer."""
-        return ()
+        return WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 
     def _planner_platform_job_types(self) -> frozenset[str]:
         """Local platform types this provider may provision."""
         return executor_platform_job_types()
-
-    def _platform_request_capability(self) -> str | None:
-        """The semantic compute capability for this provider's eligible jobs."""
-        return None
 
     def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
         """Keep privileged worker behavior unchanged for existing consumers."""
@@ -457,7 +454,7 @@ class WorkerCapacityController(ABC):
         reserved_for_dispatch_id: UUID | None = None,
         isolated_job_id: UUID | None = None,
         isolated_job_attempt: int | None = None,
-        isolated_compute: str | None = None,
+        isolated_compute: tuple[str, ...] | None = None,
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -472,7 +469,7 @@ class WorkerCapacityController(ABC):
                 memory_calibration={"environment": environment},
                 supported_handlers=([] if isolated_job_id is not None else list(self._planner_execution_handlers())),
                 supported_compute=(
-                    [isolated_compute]
+                    list(isolated_compute)
                     if isolated_compute is not None
                     else list(self._planner_compute_capabilities())
                 ),
@@ -620,6 +617,11 @@ async def plan_capacity_launches(
                         else None
                     ),
                     row.attempt + 1 if row.backend == EXTERNAL_ISOLATED_BACKEND else None,
+                    frozenset(
+                        get_platform_job_metadata(row.job_type).additional_compute_capabilities
+                        if row.job_type is not None and get_platform_job_metadata(row.job_type) is not None
+                        else ()
+                    ),
                 ),
                 row.job_type,
                 row.id if row.source == "dispatch" and row.handler == "workflow.execute" else None,
@@ -636,9 +638,7 @@ async def plan_capacity_launches(
             if request.handler is not None:
                 return request.handler in provider._planner_execution_handlers()
             return job_type in provider._planner_platform_job_types() and (
-                request.compute_capability is None
-                or request.compute_capability in provider._planner_compute_capabilities()
-                or provider._platform_request_capability() is None
+                request.required_compute_capabilities.issubset(provider._planner_compute_capabilities())
             )
 
         kubernetes = next((provider for provider in ordered if provider.worker_form == "job"), None)
@@ -956,7 +956,7 @@ async def plan_capacity_launches(
                     environment=provider._memory_environment(generation),
                     isolated_job_id=job.id,
                     isolated_job_attempt=request.isolated_attempt,
-                    isolated_compute=metadata.compute_capability,
+                    isolated_compute=tuple(sorted(metadata.required_compute_capabilities)),
                 )
                 launched[provider].append(worker_id)
                 provider_count[provider] += 1
@@ -986,15 +986,7 @@ async def plan_capacity_launches(
                 owner = bin_owners[index]
                 if job_type is not None and owner is not None and job_type not in owner._planner_platform_job_types():
                     continue
-                # Generic workers claim all executor-owned platform jobs. A
-                # compute capability is a requirement only for a provider
-                # that explicitly declares a specialized compute protocol.
-                bin_request = request
-                if job_type is not None and (
-                    owner is None or owner._platform_request_capability() is None
-                ):
-                    bin_request = replace(request, compute_capability=None)
-                if (rooms[index] >= request.bytes and bin.takes(bin_request)
+                if (rooms[index] >= request.bytes and bin.takes(request)
                         and (request.handler not in limited or slots[index].get(request.handler, 0) > 0)):
                     rooms[index] -= request.bytes
                     if request.handler in limited:
@@ -1280,6 +1272,13 @@ class Request:
     # The exact next PlatformJob attempt an exclusive external worker may
     # claim. ``None`` means reusable dispatch/service/local-job capacity.
     isolated_attempt: int | None = None
+    additional_compute_capabilities: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def required_compute_capabilities(self) -> frozenset[str]:
+        return self.additional_compute_capabilities.union(
+            () if self.compute_capability is None else (self.compute_capability,),
+        )
 
 
 @dataclass(frozen=True)
@@ -1294,10 +1293,7 @@ class FreeBudget:
     def takes(self, request: Request) -> bool:
         return (
             (request.handler is None or request.handler in self.handlers)
-            and (
-                request.compute_capability is None
-                or request.compute_capability in self.compute_capabilities
-            )
+            and request.required_compute_capabilities.issubset(self.compute_capabilities)
         )
 
 

@@ -17,18 +17,16 @@ bundles exactly what ``bifrost deploy`` would.
 
 from __future__ import annotations
 
-import logging
 import asyncio
+import logging
 import os
 import tempfile
+from dataclasses import dataclass
 from pathlib import Path
-from sqlalchemy.ext.asyncio import AsyncSession
+from uuid import UUID
 
 from src.models.orm.solutions import Solution
-from src.services.solutions.deploy import (
-    DeployResult,
-    SolutionBundle,
-)
+from src.services.solutions.deploy import SolutionBundle, SolutionDeployConflict
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +37,49 @@ _DESCRIPTOR_FILENAME = "bifrost.solution.yaml"
 
 class NotASolutionWorkspace(Exception):
     """The checkout has no bifrost.solution.yaml — refuse the full-replace sync."""
+
+
+@dataclass(frozen=True)
+class GitSyncSnapshot:
+    """The Git connection that supplied the prepared portable archive."""
+
+    solution_id: UUID
+    slug: str
+    organization_id: UUID | None
+    repo_url: str
+    source_id: UUID | None
+    ref: str | None
+    repo_subpath: str | None
+
+    @classmethod
+    def from_solution(cls, solution: Solution) -> "GitSyncSnapshot":
+        if not solution.git_connected or not solution.git_repo_url:
+            raise ValueError("sync() requires a git-connected solution with a repo url")
+        return cls(
+            solution_id=solution.id,
+            slug=solution.slug,
+            organization_id=solution.organization_id,
+            repo_url=solution.git_repo_url,
+            source_id=solution.git_source_id,
+            ref=solution.git_ref,
+            repo_subpath=solution.repo_subpath,
+        )
+
+
+def assert_current_git_settings(solution: Solution, snapshot: GitSyncSnapshot) -> None:
+    """Refuse publication when the prepared archive's Git connection changed."""
+    if (
+        solution.id != snapshot.solution_id
+        or not solution.git_connected
+        or solution.organization_id != snapshot.organization_id
+        or solution.git_repo_url != snapshot.repo_url
+        or solution.git_source_id != snapshot.source_id
+        or solution.git_ref != snapshot.ref
+        or solution.repo_subpath != snapshot.repo_subpath
+    ):
+        raise SolutionDeployConflict(
+            "Git connection changed while the Solution update was being prepared."
+        )
 
 
 def resolve_repo_subpath(checkout_root: Path, repo_subpath: str | None) -> Path:
@@ -136,41 +177,7 @@ def _read_readme(workspace: Path) -> str | None:
     return path.read_text(encoding="utf-8")
 
 
-async def deploy_from_workspace(
-    db: AsyncSession, solution: Solution, workspace: Path
-) -> DeployResult:
-    """Deploy a connected install from an already-checked-out workspace dir.
-
-    This is the testable core of auto-pull (no git): read the workspace, run the
-    full-replace deploy's DB phase. ``sync`` wraps this with the clone and runs
-    the returned ``finalize_s3`` after committing. The bundle (Python source, app
-    inputs) is read fully into memory here, so ``finalize_s3`` is safe to run
-    after the checkout dir is gone.
-
-    REFUSES if the checkout is not a Solution workspace (no bifrost.solution.yaml)
-    — otherwise an empty/ wrong checkout would full-replace the install down to
-    nothing. The descriptor is the workspace marker (§3.8).
-    """
-    _root = os.path.realpath(workspace)
-    _desc = os.path.realpath(os.path.join(_root, _DESCRIPTOR_FILENAME))
-    if not _desc.startswith(_root + os.sep) or not Path(_desc).is_file():
-        raise NotASolutionWorkspace(
-            f"checkout at {workspace} has no {_DESCRIPTOR_FILENAME}; "
-            f"refusing to full-replace install {solution.id} from a non-Solution repo"
-        )
-    # force=True: for a connected install the repo's main IS the single writer
-    # (one-writer invariant) and auto-pull has no operator in the loop to pass
-    # --force — a revert on main (older descriptor version) must still apply,
-    # not strand the install behind the downgrade gate. Versions are recorded
-    # either way.
-    from bifrost.commands.solution import _build_deploy_zip
-    from src.services.solutions.zip_install import deploy_zip_to_solution
-
-    data = _build_deploy_zip(workspace, extra_text_files={})
-    return await deploy_zip_to_solution(db, solution, data, force=True)
-
-
-async def sync(db: AsyncSession, solution: Solution) -> bool:
+async def sync(context, solution_id: UUID) -> bool:
     """Clone the connected install's repo at its configured ref and deploy.
 
     Called by the auto-pull trigger (webhook/poll) on a new commit. The clone
@@ -183,17 +190,24 @@ async def sync(db: AsyncSession, solution: Solution) -> bool:
     deploy back to a stale state. If the lock is held, this sync is skipped (the
     in-flight one will pick up the latest, and a follow-up trigger can re-run).
     """
-    if not solution.git_connected or not solution.git_repo_url:
-        raise ValueError("sync() requires a git-connected solution with a repo url")
-
+    from src.core.database import get_db_context
     from src.core.redis_client import get_redis_client
+    from src.jobs.platform.base import PlatformJobCancelled
     from src.services.solutions.write_lock import (
         SolutionWriteLockHeld,
         solution_write_lock,
     )
 
+    async with get_db_context() as db:
+        if not await context.authorize_effect(db):
+            raise PlatformJobCancelled
+        solution = await db.get(Solution, solution_id)
+        if solution is None:
+            raise SolutionDeployConflict("Solution not found")
+        snapshot = GitSyncSnapshot.from_solution(solution)
+
     redis = await get_redis_client()._get_redis()
-    pending_key = f"bifrost:solution:sync-pending:{solution.id}"
+    pending_key = f"bifrost:solution:sync-pending:{solution_id}"
 
     # Per-install write lock, SHARED with manual deploy (same key namespace) so a
     # sync and a manual deploy can't race either. The lock's TTL is RENEWED while
@@ -207,17 +221,17 @@ async def sync(db: AsyncSession, solution: Solution) -> bool:
     # after finalizing and re-syncs, so main's latest is always deployed.
     while True:
         try:
-            async with solution_write_lock(solution.id):
+            async with solution_write_lock(solution_id):
                 # We hold the lock now: clear any pending marker — we're about to
                 # clone the CURRENT main, which subsumes earlier skipped triggers.
                 await redis.delete(pending_key)
-                await _run_sync_once(db, solution)
+                await _run_sync_once(context, snapshot)
         except SolutionWriteLockHeld:
             # Another writer holds it; record that a rerun is owed so the holder
             # picks up this (newer) commit after it finishes.
             await redis.set(pending_key, "1", ex=3600)
             logger.info(
-                "Sync already in progress for solution %s; queued a rerun", solution.id
+                "Sync already in progress for solution %s; queued a rerun", solution_id
             )
             return False
 
@@ -225,7 +239,14 @@ async def sync(db: AsyncSession, solution: Solution) -> bool:
         # the newest commit lands (bounded: each pass clears the flag under lock,
         # so it only loops while NEW triggers keep arriving).
         if await redis.delete(pending_key):
-            logger.info("Rerunning sync for solution %s (newer commit queued)", solution.id)
+            logger.info("Rerunning sync for solution %s (newer commit queued)", solution_id)
+            async with get_db_context() as db:
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                solution = await db.get(Solution, solution_id)
+                if solution is None:
+                    raise SolutionDeployConflict("Solution not found")
+                snapshot = GitSyncSnapshot.from_solution(solution)
             continue
         return True
 
@@ -244,30 +265,82 @@ async def clone_repo_to_dir(repo_url: str, dest: Path, ref: str | None = None) -
         await asyncio.to_thread(GitRepo.clone_from, repo_url, str(dest), depth=1)
 
 
-async def _run_sync_once(db: AsyncSession, solution: Solution) -> None:
-    """One clone + deploy + commit + finalize, under the caller's held lock."""
-    repo_url = solution.git_repo_url
-    assert repo_url is not None  # sync() validated git_connected + git_repo_url
-    with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{solution.slug}-") as tmp:
+async def _run_sync_once(
+    context,
+    snapshot: GitSyncSnapshot,
+) -> None:
+    """Prepare a portable Git archive, then publish it through the shared path."""
+    from src.core.database import get_db_context
+    from src.jobs.platform.base import PlatformJobCancelled
+    from src.services.solutions.compute_pipeline import prepare_solution_deployment
+    from src.services.solutions.zip_install import _deploy_workspace_to_solution
+
+    with tempfile.TemporaryDirectory(prefix=f"bifrost-solution-{snapshot.slug}-") as tmp:
         work_dir = Path(tmp)
         # clone_from is synchronous/network-bound; run it OFF the event loop so the
         # write-lock's renewal watchdog (and everything else) keeps running during
         # a slow clone — otherwise a long clone would block the loop, starve the
         # watchdog, and let the lock TTL expire mid-deploy.
         from shared.solution_git_sources import clone_solution_repository
-        await clone_solution_repository(db, solution.git_source_id, solution.organization_id, repo_url, work_dir, solution.git_ref)
-        logger.info("Cloned connected solution %s from %s", solution.id, solution.git_repo_url)
-        deploy_root = resolve_repo_subpath(work_dir, solution.repo_subpath)
+        async with get_db_context() as db:
+            if not await context.authorize_effect(db):
+                raise PlatformJobCancelled
+            solution = await db.get(Solution, snapshot.solution_id)
+            if solution is None:
+                raise SolutionDeployConflict("Solution not found")
+            assert_current_git_settings(solution, snapshot)
+            # authorize_effect holds the owner/job fence row lock. Credentials
+            # may be read from this session for the clone, but network I/O must
+            # not retain the fence transaction; publication re-authorizes later.
+            await db.commit()
+            await clone_solution_repository(
+                db,
+                snapshot.source_id,
+                snapshot.organization_id,
+                snapshot.repo_url,
+                work_dir,
+                snapshot.ref,
+            )
+        logger.info("Cloned connected solution %s from %s", snapshot.solution_id, snapshot.repo_url)
+        deploy_root = resolve_repo_subpath(work_dir, snapshot.repo_subpath)
         if not (deploy_root / _DESCRIPTOR_FILENAME).is_file():
             raise NotASolutionWorkspace(
                 f"No {_DESCRIPTOR_FILENAME} at "
-                f"{solution.repo_subpath or '<repo root>'} in {repo_url}"
+                f"{snapshot.repo_subpath or '<repo root>'} in {snapshot.repo_url}"
             )
-        result = await deploy_from_workspace(db, solution, deploy_root)
-    # Commit the DB phase, THEN run S3 — a failed commit changes no running code
-    # (Codex P1-c). Both happen while the per-install lock is held so a racing sync
-    # can't interleave. The bundle is in-memory, so finalizing after the checkout
-    # temp dir is gone is fine.
-    await db.commit()
-    await result.finalize_s3()
-    await db.commit()  # source search index rows written by finalize
+        from bifrost.commands.solution import _build_deploy_zip
+
+        archive = await asyncio.to_thread(_build_deploy_zip, deploy_root, extra_text_files={})
+        zip_path = work_dir / "solution.zip"
+        await asyncio.to_thread(zip_path.write_bytes, archive)
+
+        async with prepare_solution_deployment(
+            context,
+            zip_path,
+            solution_id=snapshot.solution_id,
+            allow_connected_install=True,
+            lock_already_held=True,
+        ) as prepared:
+            async with get_db_context() as db:
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                solution = await db.get(Solution, snapshot.solution_id)
+                if solution is None:
+                    raise SolutionDeployConflict("Solution not found")
+                assert_current_git_settings(solution, snapshot)
+                result = await _deploy_workspace_to_solution(
+                    db,
+                    solution,
+                    prepared.archive.workspace,
+                    force=True,
+                    prepared_preview=prepared.archive.preview,
+                    prepared_bundle=prepared.bundle,
+                    prepared_app_builds=prepared.app_builds,
+                    source_artifact=prepared.source_artifact,
+                    context=context,
+                )
+                await db.commit()
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                await result.finalize_s3()
+                await db.commit()

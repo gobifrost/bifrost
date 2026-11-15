@@ -13,10 +13,12 @@ from shared.app_build_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUILD_RESU
 from shared.app_bundle_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUNDLE_RESULT_LIMIT
 from shared.audit_archive_compute import MAX_RESULT_TRANSFER_BYTES as AUDIT_ARCHIVE_RESULT_LIMIT
 from shared.audit_export_compute import MAX_RESULT_TRANSFER_BYTES as AUDIT_EXPORT_RESULT_LIMIT
+from shared.solution_archive_compute import MAX_RESULT_TRANSFER_BYTES as SOLUTION_INSPECT_RESULT_LIMIT
 from shared.file_compute import FileComputeResult
 from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME, AUDIT_ARCHIVE_CAPABILITY_NAME
 from shared.worker_compute import APP_BUNDLE_CAPABILITY_NAME
 from shared.worker_compute import AUDIT_EXPORT_CAPABILITY_NAME
+from shared.worker_compute import SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME
 from shared.worker_transfer import FileTransfer, FileTransferChunk, FileTransferManifest, FileTransferReceiver
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
@@ -33,12 +35,14 @@ _OPERATION_CAPABILITIES = {
     "app.bundle.v1": APP_BUNDLE_CAPABILITY_NAME,
     "audit.archive.v1": AUDIT_ARCHIVE_CAPABILITY_NAME,
     "audit.export.v1": AUDIT_EXPORT_CAPABILITY_NAME,
+    "solution.archive.inspect.v1": SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
 }
 _OPERATION_RESULT_LIMITS = {
     "app.compile.v2": APP_BUILD_RESULT_LIMIT,
     "app.bundle.v1": APP_BUNDLE_RESULT_LIMIT,
     "audit.archive.v1": AUDIT_ARCHIVE_RESULT_LIMIT,
     "audit.export.v1": AUDIT_EXPORT_RESULT_LIMIT,
+    "solution.archive.inspect.v1": SOLUTION_INSPECT_RESULT_LIMIT,
 }
 FILE_COMPUTE_JOB_TYPES = frozenset().union(*(
     platform_job_types_for_compute(capability)
@@ -93,11 +97,18 @@ class RemoteFileCompute:
         capability = _OPERATION_CAPABILITIES.get(operation_name)
         if capability is None:
             raise ValueError("File compute operation is not code-registered")
+        metadata = get_platform_job_metadata(claim.job_type)
+        if metadata is None or capability not in metadata.required_compute_capabilities:
+            raise ValueError("File compute operation is not declared by this job handler")
+        self.allowed_operations = frozenset(
+            name for name, required in _OPERATION_CAPABILITIES.items()
+            if required in metadata.required_compute_capabilities
+        )
         self.bridge, self.claim = bridge, claim
         self.operation_name, self.capability = operation_name, capability
         self.invoked = self.release_requested = False
         self.predecessor_stage_id: UUID | None = None
-        self.result_metadata_validator: Callable[[Mapping[str, Any]], None] | None = None
+        self._invoke_lock = asyncio.Lock()
         self._new_stage()
 
     def _new_stage(self) -> None:
@@ -168,11 +179,24 @@ class RemoteFileCompute:
             raise PlatformJobCancelled
         self.input_sha256 = manifest.sha256
 
-    async def __call__(self, operation_name: str, transfer: FileTransfer) -> FileComputeResult:
-        if operation_name != self.operation_name:
-            raise PlatformJobFailure("file_compute_operation_mismatch", "This job cannot request a different file compute operation.")
+    async def __call__(
+        self, operation_name: str, transfer: FileTransfer, *,
+        result_metadata_validator: Callable[[Mapping[str, Any]], None] | None = None,
+    ) -> FileComputeResult:
+        if operation_name not in self.allowed_operations:
+            raise PlatformJobFailure("file_compute_operation_mismatch", "This job cannot request an undeclared file compute operation.")
+        async with self._invoke_lock:
+            return await self._run_operation(operation_name, transfer, result_metadata_validator)
+
+    async def _run_operation(
+        self, operation_name: str, transfer: FileTransfer,
+        result_metadata_validator: Callable[[Mapping[str, Any]], None] | None,
+    ) -> FileComputeResult:
         if self.invoked:
             await self._release_current()
+        self.operation_name = operation_name
+        self.capability = _OPERATION_CAPABILITIES[operation_name]
+        if self.invoked:
             self._new_stage()
         self.invoked = True
         await self._checkpoint(transfer.manifest)
@@ -217,8 +241,8 @@ class RemoteFileCompute:
         ):
             raise PlatformJobFailure("file_compute_transfer_invalid", "The physical worker returned an invalid result manifest.")
         manifest = FileTransferManifest.from_dict(raw_manifest, max_total_size=expected_limit)
-        if self.result_metadata_validator is not None:
-            self.result_metadata_validator(status)
+        if result_metadata_validator is not None:
+            result_metadata_validator(status)
         with FileTransferReceiver(manifest) as receiver:
             for index in range(manifest.chunk_count):
                 reply = await self._read("result_chunk", index=index)
@@ -372,17 +396,22 @@ class ApiFileComputeProcess:
 
 
 class ApiFileComputeBackend:
-    def __init__(self, bridge: Any, app_build_compute: Any = None):
+    def __init__(self, bridge: Any):
         self.bridge = bridge
-        self.app_build_compute = app_build_compute
 
     async def spawn(self, claim: ClaimedPlatformJob) -> ApiFileComputeProcess:
         operation = operation_for_job_type(claim.job_type)
         if operation is None:
             raise PlatformJobFailure("unsupported_compute_job", "This worker does not support the requested platform job.")
+        metadata = get_platform_job_metadata(claim.job_type)
+        assert metadata is not None
+        app_build_compute = None
+        if APP_COMPILE_CAPABILITY_NAME in metadata.required_compute_capabilities:
+            from src.worker.remote.app_compile_host import AppBuildFileCompute
+
+            app_build_compute = AppBuildFileCompute
         return ApiFileComputeProcess(
-            self.bridge, claim, operation,
-            self.app_build_compute if operation == "app.compile.v2" else None,
+            self.bridge, claim, operation, app_build_compute,
         )
 
     def memory(self) -> tuple[int, int]:

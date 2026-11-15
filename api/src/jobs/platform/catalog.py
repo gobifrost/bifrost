@@ -16,6 +16,7 @@ from shared.worker_compute import (
     APP_COMPILE_CAPABILITY_NAME,
     AUDIT_ARCHIVE_CAPABILITY_NAME,
     AUDIT_EXPORT_CAPABILITY_NAME,
+    SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
 )
 
 
@@ -30,8 +31,17 @@ class PlatformJobMetadata:
     display_name: str | None = None
     description: str | None = None
     compute_capability: str | None = None
+    additional_compute_capabilities: tuple[str, ...] = ()
     execution_owner: Literal["api", "executor"] = "executor"
     api_control: bool = False
+
+    @property
+    def required_compute_capabilities(self) -> frozenset[str]:
+        """Every physical stage used by this code-owned job handler."""
+        return frozenset(
+            (() if self.compute_capability is None else (self.compute_capability,))
+            + self.additional_compute_capabilities
+        )
 
 
 def _metadata(
@@ -45,6 +55,7 @@ def _metadata(
     display_name: str | None = None,
     description: str | None = None,
     compute_capability: str | None = None,
+    additional_compute_capabilities: tuple[str, ...] = (),
     execution_owner: Literal["api", "executor"] = "executor",
     api_control: bool = False,
 ) -> PlatformJobMetadata:
@@ -58,6 +69,7 @@ def _metadata(
         display_name=display_name,
         description=description,
         compute_capability=compute_capability,
+        additional_compute_capabilities=additional_compute_capabilities,
         execution_owner=execution_owner,
         api_control=api_control,
     )
@@ -249,6 +261,8 @@ _METADATA = MappingProxyType(
                 ),
                 encrypt_payload=True,
                 display_name="Solution Deploys",
+                compute_capability=SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
+                additional_compute_capabilities=(APP_COMPILE_CAPABILITY_NAME,),
                 description="Compiles Solution apps in an isolated pod.",
             ),
             _metadata(
@@ -265,6 +279,8 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="Solution Git Syncs",
+                compute_capability=SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
+                additional_compute_capabilities=(APP_COMPILE_CAPABILITY_NAME,),
                 payload_version=2,
                 description="Pulls and compiles connected Solution apps in an isolated pod.",
             ),

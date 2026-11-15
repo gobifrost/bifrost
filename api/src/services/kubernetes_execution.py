@@ -583,7 +583,8 @@ async def decide_execution_backend(
         connection = await load_capacity_provider_connection(db, settings)
         metadata = get_platform_job_metadata(definition.job_type)
         if (connection is not None and metadata is not None
-                and metadata.compute_capability in WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES):
+                and metadata.compute_capability is not None
+                and metadata.required_compute_capabilities.issubset(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)):
             local_path = await may_manage_jobs(settings) or bool(await db.scalar(
                 select(ExecutionWorker.id).where(
                     ExecutionWorker.form == "static", ExecutionWorker.state.in_(LIVE_STATES),

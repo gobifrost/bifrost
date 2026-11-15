@@ -186,7 +186,7 @@ def safe_extract_path(
         extract_workspace(archive, destination, limits=limits)
 
 
-def parse_workspace(workspace: Path) -> PreviewResult:
+def parse_workspace(workspace: Path, *, include_source: bool = True) -> PreviewResult:
     """Reuse CLI collectors to parse an extracted, already-safe workspace."""
     from bifrost.commands.solution import (
         _collect_agents,
@@ -205,7 +205,8 @@ def parse_workspace(workspace: Path) -> PreviewResult:
     from bifrost.solution_definition import read_solution_definition
 
     definition = read_solution_definition(workspace)
-    _collect_python_files(workspace, definition=definition)
+    if include_source:
+        _collect_python_files(workspace, definition=definition)
     slug = name = version = logo = None
     if definition.descriptor is not None:
         descriptor = definition.descriptor
@@ -219,9 +220,11 @@ def parse_workspace(workspace: Path) -> PreviewResult:
         scope=None,
         version=version,
         logo=logo,
-        workflows=_collect_workflows(workspace, definition=definition),
+        workflows=_collect_workflows(
+            workspace, definition=definition, include_source=include_source
+        ),
         tables=_collect_tables(workspace, definition=definition),
-        apps=_collect_apps(workspace, definition=definition),
+        apps=_collect_apps(workspace, definition=definition, include_source=include_source),
         forms=_collect_forms(workspace, definition=definition),
         agents=_collect_agents(workspace, definition=definition),
         claims=_collect_claims(workspace, definition=definition),
@@ -230,7 +233,7 @@ def parse_workspace(workspace: Path) -> PreviewResult:
         file_policies=_collect_file_policies(workspace, definition=definition),
         connection_schemas=_collect_connection_schemas(workspace, definition=definition),
         events=_collect_events(workspace, definition=definition),
-        readme=read_readme(workspace),
+        readme=read_readme(workspace) if include_source else None,
         requires_password=secrets.startswith(root + os.sep) and os.path.exists(secrets),
     )
 

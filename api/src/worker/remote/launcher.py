@@ -323,6 +323,7 @@ class Launcher:
         # supply a subprocess command.
         from src.worker.remote.audit_archive_compute import audit_archive_operation
         from src.worker.remote.audit_export_compute import audit_export_operation
+        from src.worker.remote.solution_archive_inspect import solution_archive_inspect_operation
         from src.worker.remote.app_bundle_compute import (
             APP_BUNDLE_OPERATION,
             app_bundle_operation,
@@ -334,6 +335,7 @@ class Launcher:
                 APP_BUNDLE_OPERATION: app_bundle_operation(),
                 "audit.archive.v1": audit_archive_operation(),
                 "audit.export.v1": audit_export_operation(),
+                "solution.archive.inspect.v1": solution_archive_inspect_operation(),
             },
             terminal_notification=self.send_file_compute_state,
         )

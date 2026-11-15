@@ -11,16 +11,10 @@ from shared.app_build_compute import decode_app_build_result, encode_app_build_i
 from shared.file_compute import decode_file_result, encode_file_transfer
 from shared.worker_transfer import FileTransfer
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult, source_build_identity
-from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
 from src.jobs.platform.base import PlatformJobFailure
-from src.jobs.platform.catalog import platform_job_types_for_compute
 from src.worker.remote.file_compute_host import (
-    ApiFileComputeBackend,
     RemoteFileCompute,
 )
-
-
-APP_COMPILE_JOB_TYPES = platform_job_types_for_compute(APP_COMPILE_CAPABILITY_NAME)
 
 
 class AppBuildFileCompute:
@@ -31,7 +25,6 @@ class AppBuildFileCompute:
 
     async def __call__(self, inputs: AppBuildInputs) -> AppBuildResult:
         transfer: FileTransfer | None = None
-        previous_validator = self.compute.result_metadata_validator
 
         def validate_result_metadata(status: Mapping[str, Any]) -> None:
             recipe = status.get("build_recipe")
@@ -51,11 +44,12 @@ class AppBuildFileCompute:
                     "The physical compiler returned the wrong transfer kind.",
                 )
 
-        self.compute.result_metadata_validator = validate_result_metadata
         try:
             transfer = await encode_file_transfer(encode_app_build_inputs, inputs)
             try:
-                outcome = await self.compute("app.compile.v2", transfer)
+                outcome = await self.compute(
+                    "app.compile.v2", transfer, result_metadata_validator=validate_result_metadata,
+                )
             except PlatformJobFailure as exc:
                 if exc.code in {"memory_pressure", "timeout"}:
                     raise
@@ -75,22 +69,5 @@ class AppBuildFileCompute:
                 )
             return result
         finally:
-            self.compute.result_metadata_validator = previous_validator
             if transfer is not None:
                 transfer.close()
-
-
-class ApiAppBuildBackend:
-    def __init__(self, bridge: Any):
-        self._backend = ApiFileComputeBackend(bridge, app_build_compute=AppBuildFileCompute)
-
-    async def spawn(self, claim: Any) -> Any:
-        if claim.job_type not in APP_COMPILE_JOB_TYPES:
-            raise PlatformJobFailure(
-                "unsupported_compute_job",
-                "This worker does not support the requested platform job.",
-            )
-        return await self._backend.spawn(claim)
-
-    def memory(self) -> tuple[int, int]:
-        return self._backend.memory()
