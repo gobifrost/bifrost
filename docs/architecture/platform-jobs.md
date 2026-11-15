@@ -243,6 +243,24 @@ manual retry. Compilation, memory protection, placement, progress, cancellation,
 and notifications all use the ordinary PlatformJob paths. The default remains
 off during initial testing; see [Application SDK updates](../runbooks/application-sdk-update.md).
 
+### Reviewed workspace bundle imports
+
+`workspace.bundle_import` uses the shared `solution.archive.inspect.v1` worker
+operation. The API restores the digest-pinned preview archive and verifies the
+returned source and metadata; requester, organization and durable job binding
+remain API checks. Entered config values, credential access, entity changes,
+file promotion, manifest regeneration and staging cleanup stay in the API.
+No database scope spans physical inspection.
+
+The canonical job checkpoint commits in the same transaction as entity changes.
+Resolver progress is buffered during that transaction and published afterwards,
+so it cannot deadlock on its own job-row fence. File finalization has a separate
+owner/job fence and records a completion receipt before staging is deleted.
+A retry can return that receipt without reloading a deleted preview. Partial
+file promotion accepts only the reviewed destination hash or bytes already
+matching the approved incoming source, preserving idempotent index/cache repair.
+No legacy privileged-runner path is used when archive compute is unavailable.
+
 ### Isolated build execution (Kubernetes)
 
 Platform jobs execute on an admitted physical launcher by default. When a

@@ -139,6 +139,9 @@ async def test_retry_claim_clears_old_stage_and_rebinds_worker(
     old_worker = _worker(capability="app.bundle.v1")
     new_worker = _worker(capability="app.bundle.v1")
     job = _job(job_type="application.publish")
+    # Keep this direct claim test out of the live worker's local queue when
+    # it runs alongside cross-process tests. Only the caller below owns it.
+    job.execution_backend = "fixture-attribution"
     job.attempt = 1
     job.executor_attempt = 1
     job.executor_worker_id = old_worker.id
@@ -149,6 +152,7 @@ async def test_retry_claim_clears_old_stage_and_rebinds_worker(
     await db_session.commit()
 
     claim = await scheduler.claim_platform_job(
+        backend="fixture-attribution",
         fits_bytes=2**40,
         job_types=frozenset((job.job_type,)),
         executor_worker_id=new_worker.id,

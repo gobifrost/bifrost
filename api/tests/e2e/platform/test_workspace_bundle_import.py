@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 import json
 import time
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select
@@ -117,6 +117,12 @@ async def test_workspace_bundle_job_imports_entities_files_indexes_cache_and_dir
             break
         time.sleep(0.25)
     assert job["status"] == "succeeded", job
+
+    from src.models.orm.platform_jobs import PlatformJob
+    canonical = await db_session.get(PlatformJob, UUID(job_id))
+    assert canonical is not None
+    assert canonical.executor_compute_capability == "solution.archive.inspect.v1"
+    assert canonical.executor_worker_id is not None and canonical.executor_attempt == 1
 
     from src.core.cache.redis_client import get_redis
     from src.core.module_cache_contract import MODULE_KEY_PREFIX

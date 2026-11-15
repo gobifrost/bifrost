@@ -12,6 +12,7 @@ from sqlalchemy import select
 from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobFailure,
+    PlatformJobCancelled,
     define_platform_job,
 )
 from src.models.contracts.solutions import WorkspaceBundleDecision, WorkspaceBundlePreview
@@ -29,6 +30,7 @@ from src.services.solutions.workspace_bundle_plan import (
     WorkspaceBundlePlanner,
 )
 from src.services.solutions.workspace_bundle_storage import WorkspaceBundleStorage
+from src.services.solutions.archive_compute import inspect_solution_archive
 
 
 class WorkspaceBundleImportPayload(BaseModel):
@@ -43,6 +45,12 @@ def _require_requester(metadata: dict, context: PlatformJobContext, payload: Wor
         raise PlatformJobFailure("preview_not_authorized", "Workspace import preview belongs to another user.")
     if metadata.get("package_sha256") != payload.package_sha256:
         raise PlatformJobFailure("preview_archive_changed", "The staged workspace archive no longer matches the reviewed preview.")
+    target_scope = str(context.organization_id) if context.organization_id else None
+    if metadata.get("organization_id") != target_scope:
+        raise PlatformJobFailure("preview_not_authorized", "Workspace import preview scope changed.")
+    bound_job = metadata.get("platform_job_id")
+    if bound_job is not None and bound_job != str(context.job_id):
+        raise PlatformJobFailure("preview_not_authorized", "Workspace import preview belongs to another job.")
     expires_at = datetime.fromisoformat(metadata["expires_at"])
     # Expiry controls accepting a new import request.  Once the queueing
     # request has bound this immutable preview to this particular durable job,
@@ -177,148 +185,154 @@ def _journal_for_db_apply(
     }
 
 
+async def _require_attempt(db, context: PlatformJobContext) -> None:
+    if not await context.authorize_effect(db):
+        raise PlatformJobCancelled
+
+
+def _import_result(imported_item_ids, promoted_files) -> dict:
+    return {
+        "imported_entity_ids": sorted(imported_item_ids), "promoted_files": list(promoted_files),
+        "warning": "Workspace files and manifests are uncommitted; review references and run compatibility checks before committing.",
+    }
+
+
 async def run_workspace_bundle_import(
     context: PlatformJobContext, payload: WorkspaceBundleImportPayload
 ) -> dict:
+    if context.file_compute is None:
+        raise PlatformJobFailure("file_compute_required", "Workspace import requires API-owned archive compute.")
     storage = WorkspaceBundleStorage(payload.preview_id)
+    completed = context.checkpoint
+    if completed is not None and completed.get("files_finalized") is True:
+        if (completed.get("preview_id") != str(payload.preview_id)
+                or completed.get("package_sha256") != payload.package_sha256
+                or completed.get("requested_by") != context.requested_by_user_id
+                or completed.get("organization_id") != (str(context.organization_id) if context.organization_id else None)):
+            raise PlatformJobFailure("workspace_checkpoint_mismatch", "Workspace completion checkpoint no longer matches its request.")
+        async with get_db_context() as db:
+            await _require_attempt(db, context)
+            await mark_repo_dirty()
+            await storage.delete()
+        return _import_result(completed["imported_entity_ids"], completed["promoted_files"])
     metadata = await storage.load_metadata()
     _require_requester(metadata, context, payload)
+    async with get_db_context() as db:
+        await _require_attempt(db, context)
     await context.report("Restoring reviewed workspace archive", percent=5)
     with tempfile.TemporaryDirectory(prefix="bifrost-workspace-bundle-") as tmp:
-            archive = Path(tmp) / "package.zip"
-            await storage.copy_package_to(archive, expected_sha256=payload.package_sha256)
-            from src.services.solutions.zip_install import _parse_workspace, _safe_extract_path
-
-            workspace = Path(tmp) / "workspace"
-            workspace.mkdir()
-            _safe_extract_path(archive, str(workspace))
+        archive = Path(tmp) / "package.zip"
+        await storage.copy_package_to(archive, expected_sha256=payload.package_sha256)
+        # Capture and entered values stay in the API. No DB scope spans the
+        # physical source-only inspector or its cancellation-safe verification.
+        async with inspect_solution_archive(archive, context.file_compute) as inspected:
+            _require_requester(await storage.load_metadata(), context, payload)
             reviewed_preview = WorkspaceBundlePreview.model_validate(metadata["preview"])
             reviewed_file_hashes = metadata["file_hashes"]
             expected_destination_hashes = metadata["destination_file_hashes"]
+            await context.report("Applying reviewed workspace entities", percent=30)
             async with get_db_context() as db:
-                importer = WorkspaceBundleImporter(
-                    db,
-                    progress_fn=lambda phase, current, total: context.report(
-                        phase, current=current, total=total
-                    ),
-                )
+                await _require_attempt(db, context)
+                # Resolver progress cannot open another job-row transaction
+                # while this atomic entity/checkpoint transaction holds it.
+                buffered_progress: list[tuple[str, int, int]] = []
+
+                async def buffer_progress(phase: str, current: int, total: int):
+                    buffered_progress[:] = [(phase, current, total)]
+
+                importer = WorkspaceBundleImporter(db, progress_fn=buffer_progress)
                 journal = context.checkpoint
                 resuming = (
-                    journal is not None
-                    and journal.get("db_applied") is True
+                    journal is not None and journal.get("db_applied") is True
                     and journal.get("preview_id") == str(payload.preview_id)
                     and journal.get("package_sha256") == payload.package_sha256
                 )
                 projection = SolutionPackageWorkspaceProjection.from_preview(
-                    _parse_workspace(workspace), preview_id=payload.preview_id, work_dir=workspace,
-                    organization_id=(
-                        UUID(metadata["organization_id"])
-                        if metadata.get("organization_id") else None
-                    ),
+                    inspected.preview, preview_id=payload.preview_id, work_dir=inspected.workspace,
+                    organization_id=context.organization_id,
                 )
                 plan = await WorkspaceBundlePlanner(
-                    db, preview_id=payload.preview_id,
-                    organization_id=(
-                        UUID(metadata["organization_id"])
-                        if metadata.get("organization_id") else None
-                    ),
+                    db, preview_id=payload.preview_id, organization_id=context.organization_id,
                 ).plan(projection)
                 if resuming:
                     result = WorkspaceBundleImportResult(
                         imported_item_ids=frozenset(journal["imported_entity_ids"]),
-                        selected_item_ids=frozenset(journal["selected_item_ids"]),
-                        operations=(),
+                        selected_item_ids=frozenset(journal["selected_item_ids"]), operations=(),
                     )
                 elif (
-                    journal is not None
-                    and journal.get("db_apply_started") is True
+                    journal is not None and journal.get("db_apply_started") is True
                     and journal.get("preview_id") == str(payload.preview_id)
                     and journal.get("package_sha256") == payload.package_sha256
                     and _checkpoint_matches_replanned_bundle(
                         reviewed_preview, plan.preview, set(journal["selected_item_ids"]),
-                        {
-                            key for key, value in payload.config_values.items()
-                            if value.strip() and key in plan.manifest.configs and not any(
-                                decision.item_id == f"entity:config:{plan.manifest.configs[key].id}"
-                                and decision.action == "keep"
-                                for decision in payload.decisions
-                            )
-                        },
+                        {key for key, value in payload.config_values.items()
+                         if value.strip() and key in plan.manifest.configs and not any(
+                             decision.item_id == f"entity:config:{plan.manifest.configs[key].id}"
+                             and decision.action == "keep" for decision in payload.decisions)},
                     )
                     and reviewed_file_hashes == (plan.file_hashes or {})
                     and await _entered_configs_match(db, plan, payload)
                 ):
-                    # A runner may have been lost between db.commit() and the
-                    # following checkpoint.  The pre-apply checkpoint plus the
-                    # exact expected plan transition proves the entity changes
-                    # committed, so resume only the idempotent file phase.
+                    # Retain the exact legacy precommit-journal recovery contract.
                     result = WorkspaceBundleImportResult(
                         imported_item_ids=frozenset(journal["imported_entity_ids"]),
-                        selected_item_ids=frozenset(journal["selected_item_ids"]),
-                        operations=(),
+                        selected_item_ids=frozenset(journal["selected_item_ids"]), operations=(),
                     )
                 else:
-                    _require_preview_is_current(
-                        reviewed_preview, reviewed_file_hashes, plan.preview, plan.file_hashes or {},
-                    )
-                    result = await importer.apply(
-                        plan, payload.decisions, config_values=payload.config_values,
-                        updated_by=context.requested_by_email,
-                    )
-                    await context.save_checkpoint(
-                        _journal_for_db_apply(payload, result),
-                        phase="Applying workspace entity changes",
-                    )
-                # Make entity upserts durable before the idempotent S3 phase.
-                await context.report("Committing workspace entity changes", percent=60)
-                await db.commit()
-                from src.core.cache import invalidate_config
-
-                selected_config_keys = {
-                    item.name for item in plan.preview.items
-                    if item.kind == "config" and (
-                        item.id in result.selected_item_ids
-                        or (item.name in payload.config_values and not any(
-                            decision.item_id == item.id and decision.action == "keep"
-                            for decision in payload.decisions
-                        ))
-                    )
-                }
-                for key in selected_config_keys:
-                    await invalidate_config(
-                        str(plan.organization_id) if plan.organization_id else None, key
-                    )
+                    _require_preview_is_current(reviewed_preview, reviewed_file_hashes,
+                                                plan.preview, plan.file_hashes or {})
+                    result = await importer.apply(plan, payload.decisions,
+                        config_values=payload.config_values, updated_by=context.requested_by_email)
                 journal = _journal_for_db_apply(payload, result) | {"db_applied": True}
-                await context.save_checkpoint(journal, phase="Database import committed; finalizing files")
-                await context.report("Promoting selected workspace files", percent=70)
+                await context.checkpoint_in_transaction(db, journal,
+                    phase="Database import committed; finalizing files")
+                await db.commit()
+            if buffered_progress:
+                phase, current, total = buffered_progress[0]
+                await context.report(phase, current=current, total=total)
+            await context.report("Database import committed; finalizing files", percent=65)
+            from src.core.cache import invalidate_config
+
+            for key in {
+                item.name for item in plan.preview.items
+                if item.kind == "config" and (item.id in result.selected_item_ids
+                    or (item.name in payload.config_values and not any(
+                        decision.item_id == item.id and decision.action == "keep" for decision in payload.decisions)))
+            }:
+                await invalidate_config(str(context.organization_id) if context.organization_id else None, key)
+            await context.report("Promoting selected workspace files", percent=70)
+            async with get_db_context() as db:
+                await _require_attempt(db, context)
                 try:
-                    promoted = await importer.promote_selected_files(
-                        plan,
-                        result.selected_item_ids,
-                        file_index=FileIndexService(db),
+                    promoted = await WorkspaceBundleImporter(db).promote_selected_files(
+                        plan, result.selected_item_ids, file_index=FileIndexService(db),
                         expected_destination_hashes=expected_destination_hashes,
                     )
+                    await _require_attempt(db, context)
                     await RepoSyncWriter(db).regenerate_manifest()
-                    await db.commit()
+                    await _require_attempt(db, context)
                     await mark_repo_dirty()
+                    completed = journal | {
+                        "files_finalized": True, "promoted_files": promoted,
+                        "requested_by": context.requested_by_user_id,
+                        "organization_id": str(context.organization_id) if context.organization_id else None,
+                    }
+                    await context.checkpoint_in_transaction(db, completed, phase="Workspace files finalized")
+                    await db.commit()
+                except PlatformJobCancelled:
+                    raise
                 except WorkspaceBundleDecisionError as exc:
-                    raise PlatformJobFailure(
-                        "workspace_bundle_file_precondition_failed",
-                        "A workspace file changed after preview; create a new preview before importing.",
-                        result=journal,
-                    ) from exc
+                    raise PlatformJobFailure("workspace_bundle_file_precondition_failed",
+                        "A workspace file changed after preview; create a new preview before importing.", result=journal) from exc
                 except Exception as exc:
-                    raise PlatformJobFailure("workspace_bundle_finalize_failed", "Workspace import database changes were committed but file finalization failed; retrying the durable job.", retryable=True, result=journal) from exc
+                    raise PlatformJobFailure("workspace_bundle_finalize_failed",
+                        "Workspace import database changes were committed but file finalization failed; retrying the durable job.",
+                        retryable=True, result=journal) from exc
     await context.report("Workspace import complete", percent=100)
-    result_body = {
-        "imported_entity_ids": sorted(result.imported_item_ids),
-        "promoted_files": promoted,
-        "warning": "Workspace files and manifests are uncommitted; review references and run compatibility checks before committing.",
-    }
-    # Do this only on success; ordinary failure and runner loss retain the
-    # immutable archive for the shared job retry policy / TTL cleanup.
-    await storage.delete()
-    return result_body
+    async with get_db_context() as db:
+        await _require_attempt(db, context)
+        await storage.delete()
+    return _import_result(result.imported_item_ids, promoted)
 
 
 WORKSPACE_BUNDLE_IMPORT_DEFINITION = define_platform_job(

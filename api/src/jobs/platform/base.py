@@ -134,6 +134,25 @@ class PlatformJobContext:
             platform_job_id=self.job_id,
         )
 
+    async def checkpoint_in_transaction(
+        self, db: "AsyncSession", result: dict[str, Any], *, phase: str,
+    ) -> None:
+        """Save a checkpoint atomically with the caller's database effects.
+
+        The caller commits this transaction and publishes progress afterwards;
+        no nested job-row transaction may run while its fence is held.
+        """
+        from src.models.orm.platform_jobs import PlatformJob
+
+        if not await self.authorize_effect(db):
+            raise PlatformJobCancelled
+        job = await db.get(PlatformJob, self.job_id)
+        if job is None:
+            raise PlatformJobCancelled
+        job.result = result
+        job.phase = phase[:200]
+        job.revision += 1
+
     async def save_checkpoint(
         self,
         result: dict[str, Any],

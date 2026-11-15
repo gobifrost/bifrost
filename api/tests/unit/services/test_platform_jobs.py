@@ -47,6 +47,27 @@ from src.services.audit_context import ActorContext, clear_actor, set_actor
 from src.services import platform_jobs as service
 
 
+@pytest.fixture(autouse=True)
+async def clean_owned_job_rows(db_session: AsyncSession):
+    """A rollback cannot remove fixture rows committed by service methods."""
+    from sqlalchemy import delete, event
+
+    owned_ids = set()
+
+    def remember_jobs(session, _flush_context):
+        owned_ids.update(row.id for row in session.new if isinstance(row, PlatformJob))
+
+    event.listen(db_session.sync_session, "after_flush", remember_jobs)
+    try:
+        yield
+    finally:
+        event.remove(db_session.sync_session, "after_flush", remember_jobs)
+        await db_session.rollback()
+        if owned_ids:
+            await db_session.execute(delete(PlatformJob).where(PlatformJob.id.in_(owned_ids)))
+            await db_session.commit()
+
+
 async def _isolate_jobs(db_session: AsyncSession) -> None:
     """Turn isolated jobs on in Settings -> Kubernetes (rolled back with the session)."""
     from src.services.kubernetes_execution import KubernetesExecutionService

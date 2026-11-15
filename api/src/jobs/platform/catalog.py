@@ -333,6 +333,7 @@ _METADATA = MappingProxyType(
                     allow_running_cancellation=True,
                 ),
                 encrypt_payload=True,
+                compute_capability=SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
             ),
             _metadata(
                 "agent.summary_backfill",

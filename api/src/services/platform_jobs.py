@@ -30,6 +30,7 @@ from src.models.contracts.platform_jobs import (
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.worker.remote.fencing import fence_remote_owner
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.platform_job_memory_profiles import (
     resolve_platform_job_memory_required_bytes,
@@ -536,6 +537,8 @@ async def update_platform_job_progress(
 ) -> bool:
     """Persist progress only for the current fenced runner attempt."""
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)
@@ -574,6 +577,8 @@ async def finish_platform_job(
     if status not in TERMINAL_PLATFORM_JOB_STATUSES:
         raise ValueError(f"Invalid terminal platform-job status: {status}")
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)
@@ -627,6 +632,8 @@ async def checkpoint_platform_job(
     checkpoints per unit of work does not need a second progress write.
     """
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (await db.execute(
             select(PlatformJob).where(
                 PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
@@ -654,6 +661,8 @@ async def retry_platform_job_failure(
     if not enabled or not failure.retryable:
         return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable)
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (await db.execute(
             select(PlatformJob).where(
                 PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
@@ -699,6 +708,8 @@ async def defer_platform_job(
 ) -> bool:
     """Release a runner after durable child work has been dispatched."""
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)
