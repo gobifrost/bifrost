@@ -449,7 +449,7 @@ def _load_agent_compute_runtime(pipe: Connection) -> dict[str, Any] | None:
         import shared.agent_model_compute  # noqa: F401
         import src.services.agent_runtime.compute  # noqa: F401
         import src.services.agent_runtime.composition_view  # noqa: F401
-        import src.worker.remote.agent_compute  # noqa: F401
+        from src.worker.remote.agent_compute import run_agent_compute_child  # noqa: F401
     except Exception as exc:
         logger.exception(f"Agent compute template failed to load dependencies: {exc}")
         pipe.send({"status": "error", "error": str(exc)})

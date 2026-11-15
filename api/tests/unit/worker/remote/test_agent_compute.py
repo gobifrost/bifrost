@@ -9,9 +9,15 @@ from uuid import uuid4
 import pytest
 from pydantic_ai.messages import ModelResponse, TextPart
 from pydantic_ai.models.function import FunctionModel
+from pydantic_ai.usage import RunUsage
 
-from shared.agent_model_compute import serialize_model_profile, serve_model_request
+from shared.agent_model_compute import (
+    serialize_model_profile,
+    serialize_run_usage,
+    serve_model_request,
+)
 from src.services.execution.template_process import TemplateProcess
+from src.worker.remote import agent_compute
 from src.worker.remote.agent_compute import (
     AgentComputeChannel,
     AgentComputeError,
@@ -33,6 +39,83 @@ def _channel():
 
 def _reply(request: dict, **fields: object) -> dict:
     return {"kind": "rpc_reply", "request_id": request["request_id"], **fields}
+
+
+class _ChildConnection:
+    def __init__(self, frame: dict[str, object] | None = None) -> None:
+        self._frame = frame
+        self.sent: list[dict[str, object]] = []
+
+    def recv(self) -> dict[str, object]:
+        assert self._frame is not None
+        return self._frame
+
+    def send(self, value: dict[str, object]) -> None:
+        self.sent.append(value)
+
+
+class _ChildChannel:
+    async def start(self) -> None:
+        return None
+
+    async def close(self) -> None:
+        return None
+
+
+@pytest.mark.parametrize("error", [RuntimeError("failed"), asyncio.CancelledError()])
+def test_child_reports_expected_failures_with_preserved_usage(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    frame = _init_frame("agent-compute-fixture")
+    work = _ChildConnection(frame)
+    result = _ChildConnection()
+    usage = RunUsage(requests=1, input_tokens=2)
+
+    async def fail(_frame, _channel, state) -> None:
+        state.usage = usage
+        raise error
+
+    monkeypatch.setattr(
+        agent_compute, "AgentComputeChannel", lambda *_args, **_kwargs: _ChildChannel()
+    )
+    monkeypatch.setattr(agent_compute, "_run", fail)
+
+    agent_compute.run_agent_compute_child(work, result, "agent-compute-fixture")
+
+    assert result.sent == [{
+        "kind": "terminal",
+        "stage_id": frame["stage_id"],
+        "ok": False,
+        "error_type": type(error).__name__,
+        "error": str(error),
+        "result": {
+            "output": "",
+            "usage": serialize_run_usage(usage),
+            "empty_output_guard": None,
+        },
+    }]
+
+
+@pytest.mark.parametrize("error", [SystemExit("stop"), KeyboardInterrupt()])
+def test_child_propagates_process_control_exceptions_without_terminal(
+    monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    frame = _init_frame("agent-compute-fixture")
+    work = _ChildConnection(frame)
+    result = _ChildConnection()
+
+    async def fail(*_args) -> None:
+        raise error
+
+    monkeypatch.setattr(
+        agent_compute, "AgentComputeChannel", lambda *_args, **_kwargs: _ChildChannel()
+    )
+    monkeypatch.setattr(agent_compute, "_run", fail)
+
+    with pytest.raises(type(error)):
+        agent_compute.run_agent_compute_child(work, result, "agent-compute-fixture")
+
+    assert result.sent == []
 
 
 @pytest.mark.asyncio
