@@ -436,7 +436,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Optional PlatformJob executor attribution is additive and sanitizes
     # provider resource identifiers from the CLI-visible response; existing
     # clients ignore it, so MIN_CLI_VERSION remains unchanged.
-    "909db7d28612fc486fbcf6486b4574f74a45457bff56cda8d735d0d5aa05b398"
+    "cef7ecd929d0248a8ee6c2243ef452b3f7817038bc2e64a2c292cbedb74e8f9d"
 )
 
 
