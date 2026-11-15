@@ -403,7 +403,9 @@ export class WorkerContainer {
                         enableInternet: true,
                     });
                 }
-                if (this.container.running) await this.holdOpen();
+                // Set the timeout after accepting startup, including its cold
+                // pending window; a running sample is not a readiness gate.
+                await this.holdOpen();
                 this.observeExit(binding);
                 return json(200, { running: this.container.running === true, lifecycle: "accepted" });
             }
