@@ -141,6 +141,20 @@ test.describe("Integration mapping acceptance", () => {
 			page.getByRole("list", { name: "Organization mappings" }),
 		).toBeVisible({ timeout: 10_000 });
 
+		await page.getByRole("searchbox").fill(`Mapping `);
+		await page
+			.getByRole("combobox", { name: "Mapping Status" })
+			.selectOption("unmapped");
+		await expect(mappingRow(page, SECOND_ORG_NAME)).toBeVisible();
+		await expect(mappingRow(page, FIRST_ORG_NAME)).toBeHidden();
+		await page
+			.getByRole("combobox", { name: "Mapping Status" })
+			.selectOption("mapped");
+		await expect(mappingRow(page, FIRST_ORG_NAME)).toBeVisible();
+		await page
+			.getByRole("combobox", { name: "Mapping Status" })
+			.selectOption("all");
+
 		await setManualEntityId(
 			page,
 			mappingRow(page, FIRST_ORG_NAME),
