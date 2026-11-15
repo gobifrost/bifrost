@@ -13,11 +13,6 @@ from src.models.orm.workflows import Workflow
 from src.services import service_lifecycle as lifecycle
 
 
-START = datetime(2026, 10, 28, tzinfo=timezone.utc)
-EXPIRES = START + timedelta(seconds=60)
-LATE = EXPIRES + timedelta(seconds=1)
-
-
 @pytest_asyncio.fixture
 async def timing_attempt(async_session_factory):
     """Commit only the rows needed for independent lock holders."""
@@ -36,15 +31,19 @@ async def timing_attempt(async_session_factory):
         )
         definition.restart_policy = "never"
         await db.flush()
+        # Keep the committed baseline live for the real supervisor sweeper.
+        # Only this test process advances the application clock past expiry.
+        start = datetime.now(timezone.utc)
+        expires = start + timedelta(seconds=60)
         attempt = ServiceAttempt(
             id=uuid4(), service_id=definition.id, lease_token=uuid4().hex,
-            lease_expires_at=EXPIRES, state="starting", started_at=START,
-            heartbeat_at=START,
+            lease_expires_at=expires, state="starting", started_at=start,
+            heartbeat_at=start,
         )
         db.add(attempt)
         await db.commit()
         try:
-            yield attempt.id, attempt.lease_token
+            yield attempt.id, attempt.lease_token, start
         finally:
             await db.execute(delete(ServiceDefinition).where(ServiceDefinition.id == definition.id))
             await db.execute(delete(Workflow).where(Workflow.id == workflow.id))
@@ -59,9 +58,11 @@ async def timing_attempt(async_session_factory):
 async def test_service_owner_clock_after_attempt_lock(
     async_session_factory, timing_attempt, monkeypatch, operation, clock_case,
 ):
-    attempt_id, token = timing_attempt
-    clock = {"expired": LATE, "boundary": EXPIRES}.get(
-        clock_case, START + timedelta(seconds=1),
+    attempt_id, token, start = timing_attempt
+    expires = start + timedelta(seconds=60)
+    late = expires + timedelta(seconds=1)
+    clock = {"expired": late, "boundary": expires}.get(
+        clock_case, start + timedelta(seconds=1),
     )
     monkeypatch.setattr(lifecycle, "_now", lambda: clock)
     kwargs = {"attempt_id": attempt_id, "lease_token": token}
@@ -108,7 +109,7 @@ async def test_service_owner_clock_after_attempt_lock(
                     """), {"owner": owner_pid, "blocker": blocker_pid}):
                         assert not task.done(), "Owner did not wait on the held attempt lock"
                     assert not task.done()
-                    clock = START + timedelta(seconds=2) if clock_case == "wait_valid" else LATE
+                    clock = start + timedelta(seconds=2) if clock_case == "wait_valid" else late
                     if clock_case == "wait_valid":
                         expected_time = clock
                     await blocker.rollback()
@@ -119,7 +120,7 @@ async def test_service_owner_clock_after_attempt_lock(
                 assert row is not None
                 if rejected:
                     assert (row.state, row.heartbeat_at, row.lease_expires_at) == (
-                        "starting", START, EXPIRES,
+                        "starting", start, expires,
                     )
                     assert row.ready_at is None and row.stopped_at is None
                 elif operation == "complete_attempt":
@@ -136,3 +137,15 @@ async def test_service_owner_clock_after_attempt_lock(
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
             await owner.rollback()
+
+
+@pytest.mark.asyncio
+async def test_timing_fixture_survives_live_sweeper(async_session_factory, timing_attempt):
+    """The real supervisor must not expire the synthetic clock's baseline."""
+    attempt_id, _, _ = timing_attempt
+    async with async_session_factory() as db:
+        await lifecycle.expire_leases(db, now=datetime.now(timezone.utc))
+        await db.commit()
+        attempt = await db.get(ServiceAttempt, attempt_id)
+        assert attempt is not None
+        assert attempt.state == "starting"
