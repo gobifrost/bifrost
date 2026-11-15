@@ -11,10 +11,11 @@ import pytest
 
 from shared import app_build_compute as codec
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
+from shared.worker_transfer import FileTransfer
 from src.worker.remote import app_compile
 
 
-def _payload(transfer: codec.AppBuildTransfer) -> dict[str, object]:
+def _payload(transfer: FileTransfer) -> dict[str, object]:
     return {
         "stage_id": str(uuid4()),
         "job_id": str(uuid4()),

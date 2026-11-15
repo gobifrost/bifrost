@@ -12,8 +12,9 @@ from uuid import UUID, uuid4
 import pytest
 
 from bifrost.app_build_identity import sdk_identity
-from shared.app_build_compute import AppBuildTransferReceiver, encode_app_build_result
+from shared.app_build_compute import MAX_INPUT_TRANSFER_BYTES, encode_app_build_result
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult, source_build_identity
+from shared.worker_transfer import FileTransferManifest, FileTransferReceiver
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
 from src.worker.remote import app_compile_host as host
@@ -56,8 +57,11 @@ class Control:
         async with authorization:
             self.calls[action] += 1
             if action == "app_compile_prepare":
-                from shared.app_build_compute import AppBuildTransferManifest
-                self.receiver = AppBuildTransferReceiver(AppBuildTransferManifest.from_dict(payload["input"]["manifest"]))
+                self.receiver = FileTransferReceiver(
+                    FileTransferManifest.from_dict(
+                        payload["input"]["manifest"], max_total_size=MAX_INPUT_TRANSFER_BYTES
+                    )
+                )
                 self.state = "prepared"
             elif action == "app_compile_chunk":
                 self.receiver.add_chunk(payload["chunk"])

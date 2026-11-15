@@ -9,7 +9,8 @@ from uuid import uuid4
 
 import pytest
 
-from shared.app_build_compute import AppBuildTransferManifest
+from shared.app_build_compute import MAX_INPUT_TRANSFER_BYTES
+from shared.worker_transfer import FileTransferManifest
 from src.worker.remote.identity import LauncherIdentity
 from src.worker.remote.app_compile import AppCompileStages
 from src.worker.remote.launcher import Launcher
@@ -153,13 +154,14 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         ).to_json(),
     ]
     launcher = Launcher(socket, identity=identity, secret="secret")
-    manifest = AppBuildTransferManifest(
+    manifest = FileTransferManifest(
         version=1,
         kind="app_build_inputs",
         total_size=1,
         sha256="a" * 64,
         chunk_size=1,
         chunk_count=1,
+        max_total_size=MAX_INPUT_TRANSFER_BYTES,
     )
     payload = {
         "stage_id": str(uuid4()),
@@ -218,13 +220,14 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
     launcher.app_compiles = AppCompileStages(
         temp_dir=tmp_path, max_active=2, max_records=2
     )
-    manifest = AppBuildTransferManifest(
+    manifest = FileTransferManifest(
         version=1,
         kind="app_build_inputs",
         total_size=1,
         sha256="a" * 64,
         chunk_size=1,
         chunk_count=1,
+        max_total_size=MAX_INPUT_TRANSFER_BYTES,
     )
 
     def payload() -> dict[str, object]:

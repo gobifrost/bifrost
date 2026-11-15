@@ -26,17 +26,21 @@ from uuid import UUID
 from bifrost.app_build_identity import build_recipe, valid_recipe
 from bifrost.app_lockfile import ReproducibleDependencyBuildError
 from shared.app_build_compute import (
-    AppBuildTransferChunk,
-    AppBuildTransferError,
-    AppBuildTransferManifest,
-    AppBuildTransferReceiver,
-    ReceivedAppBuildTransfer,
+    MAX_INPUT_TRANSFER_BYTES,
+    MAX_RESULT_TRANSFER_BYTES,
     decode_app_build_inputs,
     encode_app_build_result,
 )
 from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.solution_app_compiler import AppBuildInputs, compile_app, output_tail
 from shared.subprocess_env import package_tool_env
+from shared.worker_transfer import (
+    FileTransferChunk,
+    FileTransferError,
+    FileTransferManifest,
+    FileTransferReceiver,
+    ReceivedFileTransfer,
+)
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 
 
@@ -91,14 +95,14 @@ class _Binding:
 @dataclass
 class _Stage:
     binding: _Binding
-    manifest: AppBuildTransferManifest
+    manifest: FileTransferManifest
     directory: Path
-    receiver: AppBuildTransferReceiver
+    receiver: FileTransferReceiver
     state: str = "prepared"
-    input_transfer: ReceivedAppBuildTransfer | None = None
+    input_transfer: ReceivedFileTransfer | None = None
     process: _Process | None = None
     task: asyncio.Task[None] | None = None
-    result_manifest: AppBuildTransferManifest | None = None
+    result_manifest: FileTransferManifest | None = None
     build_recipe: dict[str, Any] | None = None
     error: dict[str, str] | None = None
     sampler: CPUSampler | None = None
@@ -128,10 +132,10 @@ def _binding(payload: Mapping[str, Any]) -> _Binding:
     )
 
 
-def _manifest(value: object) -> AppBuildTransferManifest:
+def _manifest(value: object, *, max_total_size: int) -> FileTransferManifest:
     if not isinstance(value, Mapping):
         raise ValueError("App compile input manifest is required")
-    return AppBuildTransferManifest.from_dict(value)
+    return FileTransferManifest.from_dict(value, max_total_size=max_total_size)
 
 
 async def _spawn_child(*args: Any, **kwargs: Any) -> _Process:
@@ -188,7 +192,7 @@ class AppCompileStages:
         input_value = payload.get("input")
         if not isinstance(input_value, Mapping):
             raise ValueError("App compile input is required")
-        manifest = _manifest(input_value.get("manifest"))
+        manifest = _manifest(input_value.get("manifest"), max_total_size=MAX_INPUT_TRANSFER_BYTES)
         if manifest.kind != "app_build_inputs":
             raise ValueError("App compile input must be an input transfer")
         tombstone = self._tombstones.get(binding.stage_id)
@@ -217,7 +221,7 @@ class AppCompileStages:
             )
         )
         try:
-            receiver = AppBuildTransferReceiver(manifest, temp_dir=directory)
+            receiver = FileTransferReceiver(manifest, temp_dir=directory)
             stage = _Stage(
                 binding=binding,
                 manifest=manifest,
@@ -239,7 +243,7 @@ class AppCompileStages:
             raise ValueError("App compile input chunk is required")
         try:
             stage.receiver.add_chunk(chunk)
-        except AppBuildTransferError as exc:
+        except FileTransferError as exc:
             raise ValueError(str(exc)) from exc
         return {
             **_binding_dict(stage.binding),
@@ -253,7 +257,7 @@ class AppCompileStages:
             return self._status(stage)
         try:
             stage.input_transfer = stage.receiver.finish()
-        except AppBuildTransferError as exc:
+        except FileTransferError as exc:
             self._fail(stage, "buildfailure", str(exc))
             await self._notify_terminal(stage)
             return self._status(stage)
@@ -299,7 +303,9 @@ class AppCompileStages:
             if not isinstance(receipt, dict):
                 raise ValueError("App compile child returned an invalid receipt")
             if receipt.get("state") == "succeeded" and stage.process.returncode == 0:
-                manifest = _manifest(receipt.get("result_manifest"))
+                manifest = _manifest(
+                    receipt.get("result_manifest"), max_total_size=MAX_RESULT_TRANSFER_BYTES
+                )
                 if (
                     manifest.kind != "app_build_result"
                     or not stage.output_path.is_file()
@@ -399,7 +405,7 @@ class AppCompileStages:
             data = archive.read(stage.result_manifest.chunk_size)
         return {
             **_binding_dict(stage.binding),
-            "chunk": AppBuildTransferChunk(
+            "chunk": FileTransferChunk(
                 index=index, data_b64=base64.b64encode(data).decode("ascii")
             ).to_dict(),
         }
@@ -537,11 +543,11 @@ def _compile_instruction(instruction: Mapping[str, object]) -> dict[str, object]
             Path(str(instruction["input_path"])),
             Path(str(instruction["output_path"])),
         )
-        manifest = _manifest(instruction["input_manifest"])
+        manifest = _manifest(instruction["input_manifest"], max_total_size=MAX_INPUT_TRANSFER_BYTES)
         if manifest.kind != "app_build_inputs":
             raise ValueError("App compile input must be an input transfer")
         environment = package_tool_env()
-        transfer = ReceivedAppBuildTransfer(manifest=manifest, path=input_path)
+        transfer = ReceivedFileTransfer(manifest=manifest, path=input_path)
         inputs = decode_app_build_inputs(transfer, environment=environment)
         if not valid_recipe(inputs.recipe):
             raise ValueError("App compile input has an invalid requested recipe")

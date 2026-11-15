@@ -12,14 +12,13 @@ from sqlalchemy import func, select
 
 from bifrost.app_build_identity import sdk_identity, valid_recipe
 from shared.app_build_compute import (
-    AppBuildTransferChunk,
-    AppBuildTransferManifest,
-    AppBuildTransferReceiver,
+    MAX_RESULT_TRANSFER_BYTES,
     decode_app_build_result,
     encode_app_build_inputs,
 )
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult, source_build_identity
 from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
+from shared.worker_transfer import FileTransferChunk, FileTransferManifest, FileTransferReceiver
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.jobs.platform.catalog import platform_job_types_for_compute
@@ -187,7 +186,7 @@ class RemoteAppCompiler:
         except (ConnectionError, TimeoutError):
             return False
 
-    async def _checkpoint(self, manifest: AppBuildTransferManifest) -> None:
+    async def _checkpoint(self, manifest: FileTransferManifest) -> None:
         from src.services.platform_jobs import (
             PlatformJobExecutorAttributionConflict,
             record_platform_job_executor_attribution,
@@ -256,13 +255,15 @@ class RemoteAppCompiler:
             if (not valid_recipe(recipe) or recipe["sdk"] != sdk_identity(inputs.sdk_tarball)
                     or recipe["variant"] != inputs.recipe["variant"]):
                 raise PlatformJobFailure("compile_provenance_invalid", "The physical compiler returned incompatible build provenance.")
-            manifest = AppBuildTransferManifest.from_dict(status["result_manifest"])
+            manifest = FileTransferManifest.from_dict(
+                status["result_manifest"], max_total_size=MAX_RESULT_TRANSFER_BYTES
+            )
             if manifest.kind != "app_build_result":
                 raise PlatformJobFailure("compile_transfer_invalid", "The physical compiler returned the wrong transfer kind.")
-            with AppBuildTransferReceiver(manifest) as receiver:
+            with FileTransferReceiver(manifest) as receiver:
                 for index in range(manifest.chunk_count):
                     reply = await self._read("app_compile_result_chunk", index=index)
-                    receiver.add_chunk(AppBuildTransferChunk.from_dict(reply["chunk"]))
+                    receiver.add_chunk(FileTransferChunk.from_dict(reply["chunk"]))
                 with receiver.finish() as received:
                     result = await asyncio.to_thread(decode_app_build_result, received)
             expected = source_build_identity(replace(inputs, recipe=recipe))
