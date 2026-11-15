@@ -19,6 +19,8 @@ import asyncio
 import json
 import logging
 from collections.abc import Awaitable, Callable, Iterable
+from contextlib import AbstractAsyncContextManager, nullcontext
+from shared.file_compute import FileCompute
 from typing import Any, Literal
 
 from src.config import Settings, get_settings
@@ -117,7 +119,9 @@ class AppStorageService:
         return synced
 
     async def sync_preview_compiled(
-        self, app_id: str, source_dir_in_repo: str
+        self, app_id: str, source_dir_in_repo: str, *,
+        file_compute: FileCompute | None = None,
+        publish_authorization: Callable[[], AbstractAsyncContextManager] | None = None,
     ) -> tuple[int, list[str]]:
         """Compile source files and write compiled JS to preview.
 
@@ -187,12 +191,16 @@ class AppStorageService:
             compile_errors: list[str] = []
 
             if ts_files:
-                compiler = AppCompilerService()
                 batch_input = [
                     {"path": rel, "source": content.decode("utf-8")}
                     for rel, content in ts_files
                 ]
-                results = await compiler.compile_batch(batch_input)
+                if file_compute is None:
+                    results = await AppCompilerService().compile_batch(batch_input)
+                else:
+                    from shared.app_preview_compute import compile_preview_using
+
+                    results = await compile_preview_using(batch_input, file_compute)
                 expected_paths = {path for path, _ in ts_files}
                 result_paths = [result.path for result in results]
                 if len(result_paths) != len(expected_paths) or set(result_paths) != expected_paths:
@@ -215,36 +223,37 @@ class AppStorageService:
                     + "; ".join(compile_errors[:5])
                 )
 
-            # Write to preview (compiled JS for TS/TSX, raw for others)
-            synced = 0
-            new_relative: set[str] = set()
+            async with publish_authorization() if publish_authorization else nullcontext():
+                # Write to preview (compiled JS for TS/TSX, raw for others)
+                synced = 0
+                new_relative: set[str] = set()
 
-            for rel_path, content in source_files:
-                new_relative.add(rel_path)
-                dest_key = f"{preview_prefix}{rel_path}"
+                for rel_path, content in source_files:
+                    new_relative.add(rel_path)
+                    dest_key = f"{preview_prefix}{rel_path}"
 
-                if rel_path in compiled_map:
-                    write_content = compiled_map[rel_path].encode("utf-8")
-                else:
-                    write_content = content
+                    if rel_path in compiled_map:
+                        write_content = compiled_map[rel_path].encode("utf-8")
+                    else:
+                        write_content = content
 
-                await client.write(dest_key, write_content)
-                synced += 1
+                    await client.write(dest_key, write_content)
+                    synced += 1
 
-            # Remove stale preview files
-            stale = existing_relative - new_relative
-            for rel_path in stale:
-                await client.delete(f"{preview_prefix}{rel_path}")
+                # Remove stale preview files
+                stale = existing_relative - new_relative
+                for rel_path in stale:
+                    await client.delete(f"{preview_prefix}{rel_path}")
 
-            if stale:
-                logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
+                if stale:
+                    logger.info(f"Removed {len(stale)} stale preview files for app {app_id}")
 
-            logger.info(
-                f"Synced {synced} compiled files to preview for app {app_id}"
-                f" ({len(compile_errors)} compile errors)"
-            )
+                logger.info(
+                    f"Synced {synced} compiled files to preview for app {app_id}"
+                    f" ({len(compile_errors)} compile errors)"
+                )
 
-        await self.invalidate_render_cache(app_id)
+                await self.invalidate_render_cache(app_id)
         return synced, compile_errors
 
     # -----------------------------------------------------------------

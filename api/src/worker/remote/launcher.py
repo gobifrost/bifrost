@@ -330,8 +330,11 @@ class Launcher:
             app_bundle_operation,
         )
 
+        from src.worker.remote.app_preview_compile import app_preview_operation
+
         self.file_operations = NamedFileOperationStages(
             operations={
+                "app.preview.compile.v1": app_preview_operation(),
                 APP_COMPILE_OPERATION: app_compile_operation(),
                 APP_BUNDLE_OPERATION: app_bundle_operation(),
                 "audit.archive.v1": audit_archive_operation(),

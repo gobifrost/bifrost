@@ -564,3 +564,16 @@ application environment is production.
 | Diagnostics API | `api/src/routers/scheduler_diagnostics.py` |
 | Diagnostics UI | `client/src/pages/diagnostics/components/SchedulerTab.tsx` |
 | Browser WebSocket transport | `client/src/services/websocket.ts` |
+
+### Workspace reimport compute
+
+`workspace.reimport` retains the existing isolated workspace checkout and
+non-destructive manifest import in the API. Database effects, workflow indexing,
+preview object/cache changes and the checkout’s final workspace upload use the
+current owner/job fence. The database transaction closes before preview compute.
+The existing per-file TypeScript compiler runs as `app.preview.compile.v1` on the
+normal launcher with a bounded source-only transfer and no platform credentials.
+The API checks the input digest, exact result paths and artifact limits before
+publishing previews. App stages run sequentially under the same canonical job
+claim; other Git preview consumers retain their existing request-scoped path.
+No new capacity-provider declarations or operator settings are required.

@@ -11,12 +11,13 @@ from sqlalchemy import func, select
 
 from shared.app_build_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUILD_RESULT_LIMIT
 from shared.app_bundle_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUNDLE_RESULT_LIMIT
+from shared.app_preview_compute import MAX_RESULT_BYTES as APP_PREVIEW_RESULT_LIMIT
 from shared.audit_archive_compute import MAX_RESULT_TRANSFER_BYTES as AUDIT_ARCHIVE_RESULT_LIMIT
 from shared.audit_export_compute import MAX_RESULT_TRANSFER_BYTES as AUDIT_EXPORT_RESULT_LIMIT
 from shared.solution_archive_compute import MAX_RESULT_TRANSFER_BYTES as SOLUTION_INSPECT_RESULT_LIMIT
 from shared.file_compute import FileComputeResult
 from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME, AUDIT_ARCHIVE_CAPABILITY_NAME
-from shared.worker_compute import APP_BUNDLE_CAPABILITY_NAME
+from shared.worker_compute import APP_BUNDLE_CAPABILITY_NAME, APP_PREVIEW_CAPABILITY_NAME
 from shared.worker_compute import AUDIT_EXPORT_CAPABILITY_NAME
 from shared.worker_compute import SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME
 from shared.worker_transfer import FileTransfer, FileTransferChunk, FileTransferManifest, FileTransferReceiver
@@ -31,6 +32,7 @@ from src.worker.remote.ownership import DEFAULT_OWNER_LEASE_SECONDS
 
 
 _OPERATION_CAPABILITIES = {
+    "app.preview.compile.v1": APP_PREVIEW_CAPABILITY_NAME,
     "app.compile.v2": APP_COMPILE_CAPABILITY_NAME,
     "app.bundle.v1": APP_BUNDLE_CAPABILITY_NAME,
     "audit.archive.v1": AUDIT_ARCHIVE_CAPABILITY_NAME,
@@ -38,6 +40,7 @@ _OPERATION_CAPABILITIES = {
     "solution.archive.inspect.v1": SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
 }
 _OPERATION_RESULT_LIMITS = {
+    "app.preview.compile.v1": APP_PREVIEW_RESULT_LIMIT,
     "app.compile.v2": APP_BUILD_RESULT_LIMIT,
     "app.bundle.v1": APP_BUNDLE_RESULT_LIMIT,
     "audit.archive.v1": AUDIT_ARCHIVE_RESULT_LIMIT,

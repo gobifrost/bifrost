@@ -63,6 +63,7 @@ if TYPE_CHECKING:
         WorkingTreeStatus,
     )
     from src.services.sync_ops import SyncOp
+    from src.jobs.platform.base import PlatformJobContext
 
 from bifrost.definition_validation import DefinitionIssue, DefinitionValidationError
 from bifrost.decorator_validation import validate_python_decorators
@@ -1914,7 +1915,7 @@ class GitHubSyncService:
     # App preview sync
     # -----------------------------------------------------------------
 
-    async def _sync_app_previews(self, work_dir: Path) -> None:
+    async def _sync_app_previews(self, work_dir: Path, *, context: "PlatformJobContext | None" = None) -> None:
         """Sync app preview files from repo working tree to _apps/{id}/preview/ in S3.
 
         Reads the manifest to find app entries, derives the source directory
@@ -1936,10 +1937,25 @@ class GitHubSyncService:
 
         semaphore = asyncio.Semaphore(2)
 
+        from contextlib import asynccontextmanager
+
+        @asynccontextmanager
+        async def authorize_preview():
+            from src.core.database import get_db_context
+            from src.jobs.platform.base import PlatformJobCancelled
+
+            assert context is not None
+            async with get_db_context() as db:
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                yield
+
         async def _sync_one_app(mapp_id: str, source_dir: str) -> None:
             async with semaphore:
+                kwargs = ({"file_compute": context.file_compute, "publish_authorization": authorize_preview}
+                          if context is not None else {})
                 synced, compile_errors = await app_storage.sync_preview_compiled(
-                    mapp_id, source_dir
+                    mapp_id, source_dir, **kwargs
                 )
             logger.info(f"Synced {synced} compiled preview files for app {mapp_id}")
             if compile_errors:
@@ -1947,6 +1963,11 @@ class GitHubSyncService:
                     f"App {mapp_id} returned compilation errors: {compile_errors[:5]}"
                 )
 
+        if context is not None:
+            # One canonical compute stage at a time under this existing claim.
+            for mapp in manifest.apps.values():
+                await _sync_one_app(mapp.id, mapp.path)
+            return
         results = await asyncio.gather(*(
             _sync_one_app(mapp.id, mapp.path)
             for mapp in manifest.apps.values()
@@ -1966,7 +1987,7 @@ class GitHubSyncService:
     # Reimport from repo (no git operations)
     # -----------------------------------------------------------------
 
-    async def reimport_from_repo(self) -> ReimportResult:
+    async def reimport_from_repo(self, *, context: "PlatformJobContext | None" = None) -> ReimportResult:
         """Re-import all entities from S3 _repo/ without git operations.
 
         Downloads the working tree from S3, imports entities into DB,
@@ -1976,6 +1997,18 @@ class GitHubSyncService:
         are returned as ``pending_deletes``; removing them goes through a git
         sync, which asks for confirmation.
         """
+        from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
+
+        if context is not None and context.file_compute is None:
+            raise PlatformJobFailure("file_compute_required", "Workspace reimport requires API-owned preview compute.")
+
+        async def authorize_effect():
+            if context is not None and not await context.authorize_effect(self.db):
+                raise PlatformJobCancelled
+
+        if context is not None:
+            await authorize_effect()
+            await self.db.commit()
         async with self.repo_manager.checkout(isolated=True) as work_dir:
             storage_is_empty = not _has_workspace_files(work_dir)
 
@@ -2005,24 +2038,34 @@ class GitHubSyncService:
                     "with a git sync), then reimport again."
                 )
 
-            # Import entities atomically with savepoint
+            # Import entities atomically with savepoint. Recheck after source
+            # capture and hold the canonical owner/job fence until commit.
+            await authorize_effect()
             async with self.db.begin_nested():
                 count, _changes = await self._import_all_entities(work_dir)
                 await self._update_file_index(work_dir)
             await self.db.commit()
 
             # Re-run indexers on all registered workflow files
+            await authorize_effect()
             await self._reindex_registered_workflows(work_dir)
             await self.db.commit()
 
             # Sync app preview files
-            await self._sync_app_previews(work_dir)
+            if context is None:
+                await self._sync_app_previews(work_dir)
+            else:
+                await self._sync_app_previews(work_dir, context=context)
+            # checkout publishes the isolated snapshot on exit. Keep the
+            # owner/job fence through that existing storage publication.
+            await authorize_effect()
 
             logger.info(
                 f"Reimport complete: {count} entities, "
                 f"{len(pending_deletes)} pending deletions kept"
             )
-            return ReimportResult(entities_imported=count, pending_deletes=pending_deletes)
+        await self.db.commit()
+        return ReimportResult(entities_imported=count, pending_deletes=pending_deletes)
 
     # -----------------------------------------------------------------
     # Internal: git operations

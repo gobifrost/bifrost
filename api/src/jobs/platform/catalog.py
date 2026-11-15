@@ -13,6 +13,7 @@ from typing import Literal
 from src.jobs.platform.policy import PlatformJobPolicy
 from shared.worker_compute import (
     APP_BUNDLE_CAPABILITY_NAME,
+    APP_PREVIEW_CAPABILITY_NAME,
     APP_COMPILE_CAPABILITY_NAME,
     AUDIT_ARCHIVE_CAPABILITY_NAME,
     AUDIT_EXPORT_CAPABILITY_NAME,
@@ -307,6 +308,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=512,
                 ),
+                compute_capability=APP_PREVIEW_CAPABILITY_NAME,
             ),
             _metadata(
                 "workspace.git",
