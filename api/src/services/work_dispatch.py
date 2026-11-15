@@ -192,6 +192,7 @@ async def wait_for_next_pass(
     finally:
         stopped.cancel()
         woken.cancel()
+        await asyncio.gather(stopped, woken, return_exceptions=True)
         wake.clear()
 
 

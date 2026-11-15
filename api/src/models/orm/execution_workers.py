@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, Integer, SmallInteger, String, text
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, DateTime, ForeignKey, Index, Integer, SmallInteger, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -45,6 +45,11 @@ class ExecutionWorker(Base):
     capacity_resource_uid: Mapped[str | None] = mapped_column(String(255), nullable=True)
     # Durable provider cleanup receipt; loss/retirement and immutable UID remain intact.
     capacity_resource_deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # An external isolated resource reserves one queued PlatformJob's next
+    # attempt. These are snapshots, deliberately not foreign keys: deleting a
+    # job must not discard the physical-resource cleanup fence.
+    isolated_platform_job_id: Mapped[UUID | None] = mapped_column(nullable=True)
+    isolated_platform_job_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
     # The physical launcher and the API replica controlling it are distinct
     # identities.  A websocket is only a transport for this persisted fence.
     remote_launcher_id: Mapped[UUID | None] = mapped_column(unique=True, nullable=True)
@@ -131,6 +136,11 @@ class ExecutionWorker(Base):
     )
 
     __table_args__ = (
+        CheckConstraint(
+            "(isolated_platform_job_id IS NULL) = (isolated_platform_job_attempt IS NULL) "
+            "AND (isolated_platform_job_attempt IS NULL OR isolated_platform_job_attempt > 0)",
+            name="ck_execution_workers_isolated_platform_job_pair",
+        ),
         Index("ix_execution_workers_state", "state"),
         Index(
             "ix_execution_workers_calibration", "form",
@@ -141,6 +151,18 @@ class ExecutionWorker(Base):
             "ix_execution_workers_external_cleanup", "capacity_scope",
             postgresql_where=text(
                 "form = 'external' AND state IN ('lost', 'retired') "
+                "AND capacity_resource_deleted_at IS NULL"
+            ),
+        ),
+        # A physical provider resource remains reserved through loss and
+        # retirement until deletion is durably confirmed. The next retry may
+        # not prepare a duplicate resource for this job meanwhile.
+        Index(
+            "uq_execution_workers_external_isolated_platform_job",
+            "isolated_platform_job_id",
+            unique=True,
+            postgresql_where=text(
+                "form = 'external' AND isolated_platform_job_id IS NOT NULL "
                 "AND capacity_resource_deleted_at IS NULL"
             ),
         ),

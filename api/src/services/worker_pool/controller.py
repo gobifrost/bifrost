@@ -41,6 +41,7 @@ from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.catalog import executor_platform_job_types, get_platform_job_metadata
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
@@ -63,7 +64,7 @@ from src.services.work_dispatch import (
     wait_for_next_pass,
 )
 from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
-from src.services.worker_pool.demand import pending_local_platform_job_ids
+from src.services.worker_pool.demand import pending_capacity_platform_job_ids
 from src.services.worker_pool.manifest import (
     SAFE_TO_EVICT,
     WorkerJobSpec,
@@ -348,6 +349,7 @@ class WorkerCapacityController(ABC):
                     select(ExecutionWorker).where(
                         self._managed_scope(),
                         ExecutionWorker.state.in_(LIVE_STATES),
+                        ExecutionWorker.isolated_platform_job_id.is_(None),
                     )
                 )
             ).scalars().all()
@@ -356,6 +358,7 @@ class WorkerCapacityController(ABC):
                     select(func.count()).select_from(ExecutionWorker).where(
                         ExecutionWorker.form.in_(MANAGED_WORKER_FORMS),
                         ExecutionWorker.state.in_(LIVE_STATES),
+                        ExecutionWorker.isolated_platform_job_id.is_(None),
                     )
                 )
                 or 0
@@ -452,6 +455,9 @@ class WorkerCapacityController(ABC):
         environment: dict[str, Any],
         execution_lane: str = "normal",
         reserved_for_dispatch_id: UUID | None = None,
+        isolated_job_id: UUID | None = None,
+        isolated_job_attempt: int | None = None,
+        isolated_compute: str | None = None,
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -464,10 +470,16 @@ class WorkerCapacityController(ABC):
                 resource_class=resource_class,
                 memory_limit_bytes=memory_limit_bytes,
                 memory_calibration={"environment": environment},
-                supported_handlers=list(self._planner_execution_handlers()),
-                supported_compute=list(self._planner_compute_capabilities()),
+                supported_handlers=([] if isolated_job_id is not None else list(self._planner_execution_handlers())),
+                supported_compute=(
+                    [isolated_compute]
+                    if isolated_compute is not None
+                    else list(self._planner_compute_capabilities())
+                ),
                 execution_lane=execution_lane,
                 reserved_for_dispatch_id=reserved_for_dispatch_id,
+                isolated_platform_job_id=isolated_job_id,
+                isolated_platform_job_attempt=isolated_job_attempt,
                 **self._binding_fields(worker_id),
             )
         )
@@ -505,14 +517,16 @@ async def plan_capacity_launches(
         now = _now()
         handlers = frozenset().union(*(provider._planner_execution_handlers() for provider in ordered))
         platform_types = frozenset().union(*(provider._planner_platform_job_types() for provider in ordered))
-        platform_job_ids = await pending_local_platform_job_ids(
+        platform_job_ids = await pending_capacity_platform_job_ids(
             db, policy, now, eligible_job_types=platform_types,
+            backends=("local", EXTERNAL_ISOLATED_BACKEND),
         )
         sources = [
             select(
                 WorkDispatch.id.label("id"), WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                 WorkDispatch.created_at.label("created_at"), WorkDispatch.handler.label("handler"),
                 literal(None).label("compute_capability"), literal(None).label("job_type"),
+                literal("local").label("backend"), literal(None).label("attempt"),
                 literal("dispatch").label("source"),
             ).where(
                 WorkDispatch.assigned_worker_id.is_(None), WorkDispatch.execution_lane == "normal",
@@ -522,15 +536,18 @@ async def plan_capacity_launches(
         if platform_job_ids:
             sources.append(select(
                 PlatformJob.id, PlatformJob.memory_required_bytes, PlatformJob.created_at,
-                literal(None), literal(None), PlatformJob.job_type, literal("platform"),
+                literal(None), literal(None), PlatformJob.job_type,
+                PlatformJob.execution_backend, PlatformJob.attempt, literal("platform"),
             ).where(
                 PlatformJob.id.in_(platform_job_ids), PlatformJob.status == "queued",
-                PlatformJob.execution_backend == "local", PlatformJob.available_at <= now,
+                PlatformJob.execution_backend.in_(("local", EXTERNAL_ISOLATED_BACKEND)),
+                PlatformJob.available_at <= now,
             ))
         if any("workflow.execute" in provider._planner_execution_handlers() for provider in ordered):
             sources.append(pending_service_statement(now).with_only_columns(
                 ServiceDefinition.id, workflow_request_sql(Workflow), ServiceDefinition.updated_at,
-                literal("workflow.execute"), literal(None), literal(None), literal("service"),
+                literal("workflow.execute"), literal(None), literal(None),
+                literal("local"), literal(None), literal("service"),
             ))
         waiting = (await db.execute(sources[0].union_all(*sources[1:]).order_by(text("created_at")))).all()
         workers = (await db.execute(
@@ -602,6 +619,7 @@ async def plan_capacity_launches(
                         if get_platform_job_metadata(row.job_type) is not None
                         else None
                     ),
+                    row.attempt + 1 if row.backend == EXTERNAL_ISOLATED_BACKEND else None,
                 ),
                 row.job_type,
                 row.id if row.source == "dispatch" and row.handler == "workflow.execute" else None,
@@ -674,9 +692,12 @@ async def plan_capacity_launches(
         # than being attributed to whichever provider happens to plan next.
         bins: list[FreeBudget] = []
         bin_owners: list[WorkerCapacityController | None] = []
+        bin_workers: list[ExecutionWorker | None] = []
         covered: set[UUID] = set()
         for worker in workers:
             if (
+                worker.isolated_platform_job_id is not None
+                or
                 worker.execution_lane != "normal"
                 or worker.state == "draining"
                 or worker.memory_pressured
@@ -726,15 +747,27 @@ async def plan_capacity_launches(
             bins.append(FreeBudget(max(0, budget - held), frozenset(worker.supported_handlers),
                                    frozenset(worker.supported_compute), handler_slots))
             bin_owners.append(owner)
+            bin_workers.append(worker)
 
         rooms = [bin.bytes for bin in bins]
         slots = [dict(bin.handler_slots) for bin in bins]
+        consumed_bins: set[int] = set()
         limited = dict(HANDLER_CONCURRENCY_LIMITS)
-        managed_total = sum(worker.form in MANAGED_WORKER_FORMS for worker in workers)
+        managed_total = sum(
+            worker.form in MANAGED_WORKER_FORMS and worker.isolated_platform_job_id is None
+            for worker in workers
+        )
         provider_count = {
             provider: sum(provider._owns_managed_worker(worker) for worker in workers)
             for provider in ordered
         }
+        for provider in ordered:
+            if provider.worker_form == "external":
+                provider_count[provider] = int(await db.scalar(
+                    select(func.count()).select_from(ExecutionWorker).where(
+                        provider._managed_scope(), ExecutionWorker.capacity_resource_deleted_at.is_(None),
+                    )
+                ) or 0)
         unknown = {provider for provider in ordered if largest[provider] is None}
 
         async def publish_launchability() -> None:
@@ -801,9 +834,152 @@ async def plan_capacity_launches(
                 managed_total += 1
                 fast_path_launches += 1
 
+        # An external isolated resource remains bound through loss and
+        # retirement until the provider deletion receipt lands. A later retry
+        # must not prepare another physical resource for that same job first.
+        from src.services.platform_jobs import publish_platform_job_update
+        from src.services.worker_pool.unfit import fail_unfit_platform_job
+
+        changed_isolated: list[PlatformJob] = []
+        bound_isolated = set((await db.scalars(select(
+            ExecutionWorker.isolated_platform_job_id,
+        ).where(
+            ExecutionWorker.isolated_platform_job_id.is_not(None),
+            ExecutionWorker.capacity_resource_deleted_at.is_(None),
+        ))).all())
+
+        async def drain_idle_external_for_isolated(
+            provider: WorkerCapacityController,
+        ) -> bool:
+            """Drain one unused standard external worker to free its profile.
+
+            A preceding drain remains a physical reservation until the
+            provider confirms deletion, so never start a second drain while it
+            is unresolved. ``consumed_bins`` prevents stealing capacity that
+            an older request already planned to use this pass.
+            """
+            prior_drain = await db.scalar(select(ExecutionWorker.id).where(
+                provider._managed_scope(),
+                ExecutionWorker.end_reason == "isolated_capacity",
+                ExecutionWorker.capacity_resource_deleted_at.is_(None),
+            ))
+            if prior_drain is not None:
+                return False
+            for index, worker in enumerate(bin_workers):
+                if (
+                    worker is None
+                    or bin_owners[index] is not provider
+                    or index in consumed_bins
+                    or rooms[index] != bins[index].bytes
+                    or worker.form != "external"
+                    or worker.state != "ready"
+                    or worker.resource_class != "standard"
+                    or worker.active_runs != 0
+                    or worker.memory_reserved_bytes != 0
+                    or worker.active_handler_counts is None
+                    or any(worker.active_handler_counts.values())
+                    or worker.reserved_for_dispatch_id is not None
+                    or worker.isolated_platform_job_id is not None
+                    or worker.memory_budget_bytes is None
+                    or worker.memory_budget_bytes <= 0
+                ):
+                    continue
+                drained = await db.scalar(update(ExecutionWorker).where(
+                    ExecutionWorker.id == worker.id,
+                    ExecutionWorker.state == "ready",
+                    ExecutionWorker.active_runs == 0,
+                    ExecutionWorker.memory_reserved_bytes == 0,
+                    ExecutionWorker.reserved_for_dispatch_id.is_(None),
+                    ExecutionWorker.isolated_platform_job_id.is_(None),
+                ).values(state="draining", end_reason="isolated_capacity").returning(ExecutionWorker.id))
+                return drained is not None
+            return False
+
+        async def reserve_isolated(
+            request: Request,
+            job_type: str | None,
+        ) -> bool:
+            """Reserve or route one ordered external-isolated request.
+
+            True means the pass drained a reusable external resource and must
+            wait for its confirmed deletion before planning more capacity.
+            """
+            if job_type is None or request.isolated_attempt is None or request.id in bound_isolated:
+                return False
+            job = await db.scalar(select(PlatformJob).where(
+                PlatformJob.id == request.id,
+                PlatformJob.status == "queued",
+                PlatformJob.execution_backend == EXTERNAL_ISOLATED_BACKEND,
+                PlatformJob.attempt == request.isolated_attempt - 1,
+                PlatformJob.available_at <= now,
+            ).with_for_update(skip_locked=True))
+            if job is None:
+                return False
+            metadata = get_platform_job_metadata(job.job_type)
+            if metadata is None or metadata.compute_capability is None:
+                return False
+            if not policy.isolated_jobs_enabled or job.job_type not in policy.enabled_job_types:
+                job.execution_backend, job.phase = "local", "Queued"
+                job.revision += 1
+                changed_isolated.append(job)
+                return False
+            known_unfit: list[int] = []
+            external_candidates = 0
+            for provider in reservation_providers(request, job_type):
+                if provider.worker_form == "job":
+                    # Kubernetes retains its existing queued-job lifecycle;
+                    # it will mint the attempt lease when its pod claims it.
+                    job.execution_backend, job.phase = "kubernetes", "Queued"
+                    job.revision += 1
+                    changed_isolated.append(job)
+                    return False
+                # Exclusive resources exist only on the external adapter.
+                # A future provider must opt into this lifecycle explicitly;
+                # it cannot accidentally receive an isolated reservation.
+                if provider.worker_form != "external":
+                    continue
+                external_candidates += 1
+                if largest[provider] is not None and request.bytes > largest[provider]:
+                    known_unfit.append(largest[provider])
+                    continue
+                if provider_count[provider] >= provider._max_managed_workers(policy):
+                    if await drain_idle_external_for_isolated(provider):
+                        return True
+                    continue
+                limit = sizing[provider].standard_limit_bytes
+                if limit in blocked_limits[provider] or cold_busy[provider]:
+                    continue
+                worker_id = provider._reserve(
+                    db,
+                    resource_class="isolated",
+                    memory_limit_bytes=limit,
+                    environment=provider._memory_environment(generation),
+                    isolated_job_id=job.id,
+                    isolated_job_attempt=request.isolated_attempt,
+                    isolated_compute=metadata.compute_capability,
+                )
+                launched[provider].append(worker_id)
+                provider_count[provider] += 1
+                bound_isolated.add(job.id)
+                if limit not in known_limits[provider]:
+                    blocked_limits[provider].add(limit)
+                if not known_limits[provider]:
+                    cold_busy[provider] = True
+                return False
+            if known_unfit and len(known_unfit) == external_candidates:
+                await fail_unfit_platform_job(db, job, max(known_unfit))
+                changed_isolated.append(job)
+            return False
+
         unplaced: list[tuple[Request, str | None, UUID | None]] = []
+        drained_for_isolated = False
         for request, job_type, dispatch_id in request_rows:
             if request.id in covered:
+                continue
+            if request.isolated_attempt is not None:
+                drained_for_isolated = await reserve_isolated(request, job_type)
+                if drained_for_isolated:
+                    break
                 continue
             placed = False
             for index, bin in enumerate(bins):
@@ -823,6 +999,7 @@ async def plan_capacity_launches(
                     rooms[index] -= request.bytes
                     if request.handler in limited:
                         slots[index][request.handler] -= 1
+                    consumed_bins.add(index)
                     placed = True
                     break
             if placed:
@@ -869,6 +1046,7 @@ async def plan_capacity_launches(
                     frozenset(provider._planner_compute_capabilities()),
                 ))
                 bin_owners.append(provider)
+                bin_workers.append(None)
                 rooms.append(max(0, bins[-1].bytes - request.bytes))
                 new_slots = dict(limited)
                 if request.handler in limited:
@@ -878,7 +1056,7 @@ async def plan_capacity_launches(
             else:
                 unplaced.append((request, job_type, dispatch_id))
 
-        if managed_total >= policy.max_workers and unplaced:
+        if not drained_for_isolated and managed_total >= policy.max_workers and unplaced:
             ready = [
                 worker
                 for worker in workers
@@ -889,6 +1067,7 @@ async def plan_capacity_launches(
                 and worker.active_handler_counts is not None
                 and not any(worker.active_handler_counts.values())
                 and worker.reserved_for_dispatch_id is None
+                and worker.isolated_platform_job_id is None
                 and worker.memory_budget_bytes is not None
             ]
             for worker in ready:
@@ -909,12 +1088,14 @@ async def plan_capacity_launches(
                 ).values(state="draining", end_reason="capacity_replacement"))
                 await publish_launchability()
                 await db.commit()
+                for job in changed_isolated:
+                    await publish_platform_job_update(job)
                 return launched
 
         # Only Kubernetes may supply the fixed Fast Path reservation.  Warm
         # normal capacity likewise stays primary so Cloud is true overflow.
         primary = kubernetes or ordered[0]
-        if managed_total < policy.max_workers:
+        if not drained_for_isolated and managed_total < policy.max_workers:
             normal = sum(
                 primary._owns_managed_worker(worker) and worker.execution_lane == "normal"
                 and worker.resource_class == "standard" and worker.state != "draining"
@@ -928,15 +1109,19 @@ async def plan_capacity_launches(
             if sizing[primary].standard_limit_bytes in blocked_limits[primary]:
                 warm_launches = 0
             for _ in range(warm_launches):
-                if managed_total >= policy.max_workers:
+                if (managed_total >= policy.max_workers
+                        or provider_count[primary] >= primary._max_managed_workers(policy)):
                     break
                 launched[primary].append(primary._reserve(
                     db, resource_class="standard", memory_limit_bytes=sizing[primary].standard_limit_bytes,
                     environment=primary._memory_environment(generation),
                 ))
                 managed_total += 1
+                provider_count[primary] += 1
         await publish_launchability()
         await db.commit()
+    for job in changed_isolated:
+        await publish_platform_job_update(job)
     return launched
 
 
@@ -1092,6 +1277,9 @@ class Request:
     bytes: int
     handler: str | None = None
     compute_capability: str | None = None
+    # The exact next PlatformJob attempt an exclusive external worker may
+    # claim. ``None`` means reusable dispatch/service/local-job capacity.
+    isolated_attempt: int | None = None
 
 
 @dataclass(frozen=True)

@@ -286,3 +286,42 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
             launcher.app_compiles.prepare(payload())
     finally:
         await launcher.file_operations.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_version", [None, "older-api"])
+async def test_external_launcher_rejects_an_api_without_its_build_before_bootstrap(api_version):
+    identity = LauncherIdentity(
+        launcher_id=uuid4(), incarnation_id=uuid4(), job_uid=None, pod_uid=None,
+        hostname="external", form="external", resource_uid="resource-1",
+    )
+    socket = AsyncMock()
+    socket.recv.return_value = json.dumps({
+        "event": "welcome", "session_generation": 1, "api_version": api_version,
+    })
+    launcher = Launcher(socket, identity=identity, secret="resource-control-key")
+    with pytest.raises(RuntimeError, match="build must match"):
+        await launcher.hello({})
+    assert socket.recv.await_count == 1
+    assert launcher.session_generation == 0
+
+
+@pytest.mark.asyncio
+async def test_external_launcher_accepts_matching_api_build():
+    from shared.version import get_version
+
+    identity = LauncherIdentity(
+        launcher_id=uuid4(), incarnation_id=uuid4(), job_uid=None, pod_uid=None,
+        hostname="external", form="external", resource_uid="resource-1",
+    )
+    socket = AsyncMock()
+    socket.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 1, "api_version": get_version()}),
+        ControlEnvelope(
+            session_generation=1, sequence=1, kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
+    launcher = Launcher(socket, identity=identity, secret="resource-control-key")
+    await launcher.hello({})
+    assert launcher.session_generation == 1

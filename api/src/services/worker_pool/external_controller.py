@@ -19,6 +19,8 @@ from shared.worker_compute import (
 from src.config import Settings
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.platform_jobs import PlatformJob
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
     RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
@@ -123,6 +125,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])
+        if await self._settle_isolated_reservation(worker_id):
+            return
         # Provider I/O never holds a DB connection or worker row lock. UUID
         # addressing and conditional commits make concurrent reconcilers safe.
         async with get_db_context() as db:
@@ -147,20 +151,30 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             raise CapacityProtocolError("Provider resource UID changed for an existing incarnation")
         if state in self.cleanup_states:
             if resource is None and uid is None:
-                # Another controller may still prepare this unbound incarnation.
-                # Absence does not fence that delayed mutation; retain cleanup.
-                return
+                # Seal an unbound incarnation with a prepared tombstone. A
+                # bare 404 cannot fence an earlier delayed PUT. Prepare never
+                # starts a process; the exact-UID delete below prevents that
+                # delayed mutation from ever resurrecting this worker.
+                resource = await self.client.prepare(WorkerCapacityReservation(
+                    worker_id=worker_id, worker_version=self.profile.worker_version,
+                    memory_limit_bytes=self.profile.memory_limit_bytes,
+                    max_lifetime_seconds=self.settings.pool_max_lifetime_seconds,
+                    drain_grace_seconds=WORKER_DRAIN_GRACE_SECONDS,
+                ), self.profile.scope)
             if resource is not None and resource.state != "deleted":
                 await self.client.remove(worker_id, self.profile.scope, resource.resource_uid)
             # GET absence/a deleted tombstone or a validated DELETE response confirms
             # cleanup. Persist only for this still-terminal, unchanged incarnation.
             async with get_db_context() as db:
+                receipt: dict[str, Any] = {"capacity_resource_deleted_at": _now()}
+                if uid is None and resource is not None:
+                    receipt["capacity_resource_uid"] = resource.resource_uid
                 await db.execute(update(ExecutionWorker).where(
                     ExecutionWorker.id == worker_id, self._managed_scope(),
                     ExecutionWorker.state.in_(self.cleanup_states),
                     ExecutionWorker.capacity_resource_uid == uid,
                     ExecutionWorker.capacity_resource_deleted_at.is_(None),
-                ).values(capacity_resource_deleted_at=_now()))
+                ).values(**receipt))
                 await db.commit()
             return
         if resource is not None and resource.worker_version != version:
@@ -228,7 +242,45 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         if reason is not None:
             await self._record_loss(worker_id, uid, reason, resource is not None and resource.out_of_memory)
 
+    async def _settle_isolated_reservation(self, worker_id: UUID) -> bool:
+        """Retire an orphan/finished one-job resource through this lifecycle."""
+        async with get_db_context() as db:
+            worker = await db.scalar(select(ExecutionWorker).where(
+                ExecutionWorker.id == worker_id, self._managed_scope(),
+                ExecutionWorker.isolated_platform_job_id.is_not(None),
+                ExecutionWorker.state.in_(("reserved", "starting", "ready")),
+            ).with_for_update())
+            if worker is None:
+                return False
+            job = await db.get(PlatformJob, worker.isolated_platform_job_id)
+            queued = bool(
+                job is not None and job.execution_backend == EXTERNAL_ISOLATED_BACKEND
+                and job.status == "queued"
+                and job.attempt + 1 == worker.isolated_platform_job_attempt
+            )
+            running = bool(
+                job is not None and job.execution_backend == EXTERNAL_ISOLATED_BACKEND
+                and job.status in ("running", "cancel_requested")
+                and job.attempt == worker.isolated_platform_job_attempt
+                and job.executor_worker_id == worker.id
+            )
+            if queued and (
+                worker.memory_budget_bytes is None
+                or worker.memory_budget_bytes >= job.memory_required_bytes
+            ):
+                return False
+            if running:
+                return False
+            worker.end_reason = "isolated_capacity_unfit" if queued else "isolated_job_finished"
+            if worker.remote_launcher_id is None:
+                worker.state, worker.ended_at = "retired", _now()
+            else:
+                worker.state = "draining"
+            await db.commit()
+            return True
+
     async def _record_loss(self, worker_id: UUID, uid: str | None, reason: str, out_of_memory: bool) -> None:
+        isolated_claim: tuple[UUID, UUID] | None = None
         async with get_db_context() as db:
             worker = await db.scalar(select(ExecutionWorker).where(
                 ExecutionWorker.id == worker_id, self._managed_scope(),
@@ -244,9 +296,24 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             if reason == "start_timeout" and worker.state != "starting":
                 return
             self._lose(worker, "out_of_memory" if out_of_memory else reason, _now())
+            if worker.isolated_platform_job_id is not None:
+                job = await db.get(PlatformJob, worker.isolated_platform_job_id)
+                if (job is not None and job.status in ("running", "cancel_requested")
+                        and job.attempt == worker.isolated_platform_job_attempt
+                        and job.executor_worker_id == worker.id and job.lease_token is not None):
+                    isolated_claim = job.id, job.lease_token
             ended = await end_runs_of_lost_worker(db, worker.id, out_of_memory=out_of_memory)
             await db.commit()
         await announce_lost_runs(ended)
+        if isolated_claim is not None:
+            from src.jobs.schedulers.platform_jobs import _handle_runner_loss
+
+            await _handle_runner_loss(
+                *isolated_claim,
+                error_code="memory_pressure" if out_of_memory else "runner_lost",
+                error_message=("The isolated worker exceeded its memory limit." if out_of_memory
+                               else "The isolated physical worker stopped before the job completed."),
+            )
 
 
 async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Settings) -> None:

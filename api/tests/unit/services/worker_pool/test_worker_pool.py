@@ -1691,27 +1691,28 @@ def test_agent_work_fits_only_free_budgets_of_workers_that_claim_agent_runs() ->
 
 
 async def test_a_sized_worker_is_launched_once_for_its_dispatch(db) -> None:
-    from src.services.memory_requests import sized_job_limit_bytes
+    from src.services.memory_requests import JOB_BASELINE_ESTIMATE_BYTES, sized_job_limit_bytes
 
     execution_id = await _accept_pool_run()
     await _set_request(db.sessions, execution_id, 3 * GIB)
     cluster = FakeCluster()
     pool = controller.WorkerPoolController(cluster, SETTINGS, SPEC)  # type: ignore[arg-type]
 
-    [bootstrap_id] = await pool.launch_for_demand(POLICY)
-    await pool.reconcile_worker(bootstrap_id, POLICY)
-    await _admit(db.sessions, bootstrap_id)
     [worker_id] = await pool.launch_for_demand(POLICY)
     assert await pool.launch_for_demand(POLICY) == [], "its dispatch is already covered"
 
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
-        bootstrap = await session.get(ExecutionWorker, bootstrap_id)
-    baseline = int(bootstrap.memory_limit_bytes * SETTINGS.memory_pressure_threshold) - GIB
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
+        )
     assert worker.resource_class == "sized"
-    assert worker.reserved_for_dispatch_id is None, "an unmeasured size must not bypass fit"
-    assert worker.memory_limit_bytes == sized_job_limit_bytes(3 * GIB, 0.85, baseline, 8192 * MIB)
-    # A projection from a smaller worker cannot reject oversized demand.
+    assert worker.reserved_for_dispatch_id == dispatch_id
+    assert worker.memory_limit_bytes == sized_job_limit_bytes(
+        3 * GIB, 0.85, JOB_BASELINE_ESTIMATE_BYTES, 8192 * MIB
+    )
+    # The pre-launch baseline is code-owned, so the exact dispatch can reserve
+    # a sized worker before its first telemetry sample exists.
     await pool.reconcile()
     async with get_redis() as redis:
         assert await redis.get(LAUNCHABLE_KEY) == ""
@@ -1883,7 +1884,7 @@ async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:
 
     def job(required: int) -> PlatformJob:
         return PlatformJob(
-            job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
+            job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
             requested_by_email="person@contoso.example", requested_by_name="Contoso User",
             title="Contoso Reindex", memory_required_bytes=required,
         )
@@ -2093,7 +2094,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_s
     from src.services.platform_jobs import WAITING_FOR_MEMORY
 
     startup = PlatformJob(
-        job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Startup Reindex", status=startup_state,
     )
@@ -2105,7 +2106,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_s
     await _clear_pool_state(db.sessions)
 
     waiting = PlatformJob(
-        job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
     )
@@ -2573,7 +2574,12 @@ async def test_kubernetes_warm_pool_does_not_count_external_capacity(db) -> None
 async def test_a_job_launched_for_a_dispatch_drains_only_after_claiming_it(db) -> None:
     pool = _controller(FakeCluster(), "2.0")
     current = await _admitted_job(db.sessions, version="2.0", launched_by=pool.id)
-    holding = await _admitted_job(db.sessions, version="1.0", launched_by=None, reserved_for=uuid4())
+    execution_id = await _accept_pool_run()
+    async with db.sessions() as session:
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
+        )
+    holding = await _admitted_job(db.sessions, version="1.0", launched_by=None, reserved_for=dispatch_id)
 
     assert await _pass(pool) == []
     assert await _state(db.sessions, holding) == ("ready", None)

@@ -70,18 +70,30 @@ async def fence_remote_owner(db: AsyncSession, *, for_update: bool = False) -> b
     if ref is None:
         return True
     lease = ref.lease
-    worker_id = await db.scalar(
-        select(ExecutionWorker.id)
+    # Lock the owner row first. Do not put the expiry predicate in this
+    # statement: PostgreSQL may evaluate ``now()`` before it waits on another
+    # transaction's row lock, then return an already-expired lease.
+    locked_owner = (
+        select(ExecutionWorker.id, ExecutionWorker.remote_owner_lease_expires_at)
         .where(
             ExecutionWorker.id == lease.worker_id,
             ExecutionWorker.remote_owner_id == lease.owner_id,
             ExecutionWorker.remote_launcher_id == lease.launcher_id,
             ExecutionWorker.remote_session_generation == lease.session_generation,
-            ExecutionWorker.remote_owner_lease_expires_at > func.now(),
+            ExecutionWorker.state.in_(("starting", "ready", "draining")),
         )
         .with_for_update(read=not for_update)
+        .cte("locked_remote_owner")
+        .prefix_with("MATERIALIZED")
     )
-    return worker_id is not None
+    # Materialization obtains the row lock before the outer clock check.
+    # Keep this in one database round trip: every protected SDK mutation uses
+    # this fence, including local physical workers controlled through the API.
+    return await db.scalar(
+        select(locked_owner.c.id).where(
+            locked_owner.c.remote_owner_lease_expires_at > func.clock_timestamp(),
+        )
+    ) is not None
 
 
 async def require_remote_owner(db: AsyncSession) -> None:

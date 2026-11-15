@@ -19,6 +19,7 @@ from sqlalchemy import func, or_, select, text
 from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.core.database import get_db_context
 from src.jobs.platform.catalog import get_platform_job_metadata
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.memory_monitor import get_cgroup_memory
@@ -76,7 +77,7 @@ async def recover_expired_platform_jobs() -> tuple[int, int]:
                 await db.execute(
                     select(PlatformJob)
                     .where(
-                        PlatformJob.execution_backend == "local",
+                        PlatformJob.execution_backend.in_(("local", EXTERNAL_ISOLATED_BACKEND)),
                         PlatformJob.status.in_(("running", "cancel_requested")),
                         or_(
                             PlatformJob.lease_expires_at.is_(None),
@@ -203,6 +204,8 @@ async def claim_platform_job(
     memory_sample: tuple[int, int] | None = None,
     job_types: frozenset[str] | None = None,
     executor_worker_id: UUID | None = None,
+    job_id: UUID | None = None,
+    expected_attempt: int | None = None,
 ) -> ClaimedPlatformJob | None:
     """Claim one admissible queued job using row locking and a fenced lease.
 
@@ -214,34 +217,63 @@ async def claim_platform_job(
     ``isolated`` namespace while fewer than its maximum run, and records the
     pod's memory request and limit. One no pod can hold is left queued for
     the unfit sweep to fail visibly.
+
+    An external isolated worker claims only the exact queued job and next
+    attempt it was reserved to serve. The caller must hold that worker's
+    current remote-owner lease; the existing owner fence locks the worker
+    before this function locks the job and rechecks its reservation.
     """
+    external_isolated = backend == EXTERNAL_ISOLATED_BACKEND
     if backend == "local" and fits_bytes is None:
         raise ValueError("A local platform-job claim needs the executor's free budget")
     if (backend == "kubernetes") != (isolated is not None):
         raise ValueError("An isolated platform-job claim, and only one, needs its pods")
+    if external_isolated:
+        if job_id is None or expected_attempt is None or expected_attempt < 1 or executor_worker_id is None:
+            raise ValueError(
+                "An external isolated platform-job claim needs its exact job, next attempt, and executor"
+            )
+        if fits_bytes is None:
+            raise ValueError("An external isolated platform-job claim needs the executor's free budget")
+    elif job_id is not None or expected_attempt is not None:
+        raise ValueError("Only an external isolated platform-job claim may select an exact job")
     updated: list[PlatformJob] = []
     async with get_db_context() as db:
-        from src.worker.remote.fencing import fence_remote_owner
+        from src.worker.remote.fencing import current_remote_lease_ref, fence_remote_owner
 
+        lease_ref = current_remote_lease_ref()
+        if external_isolated and (
+            lease_ref is None or lease_ref.lease.worker_id != executor_worker_id
+        ):
+            return None
         if not await fence_remote_owner(db):
             return None
-        candidate_ids = (
-            (
-                await db.execute(
-                    select(PlatformJob.id)
-                    .where(
-                        PlatformJob.execution_backend == backend,
-                        PlatformJob.status == "queued",
-                        PlatformJob.available_at <= _now(),
-                        *([] if job_types is None else [PlatformJob.job_type.in_(job_types)]),
+        if external_isolated:
+            assert job_id is not None and expected_attempt is not None
+            candidate_ids = [job_id]
+        else:
+            candidate_ids = (
+                (
+                    await db.execute(
+                        select(PlatformJob.id)
+                        .where(
+                            PlatformJob.execution_backend == backend,
+                            PlatformJob.status == "queued",
+                            PlatformJob.available_at <= _now(),
+                            *([] if job_types is None else [PlatformJob.job_type.in_(job_types)]),
+                        )
+                        .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
                     )
-                    .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
                 )
+                .scalars()
+                .all()
             )
-            .scalars()
-            .all()
-        )
         for candidate_id in candidate_ids:
+            exact_attempt = (
+                [PlatformJob.attempt == expected_attempt - 1]
+                if external_isolated and expected_attempt is not None
+                else []
+            )
             job = (
                 await db.execute(
                     select(PlatformJob)
@@ -251,6 +283,7 @@ async def claim_platform_job(
                         PlatformJob.status == "queued",
                         PlatformJob.available_at <= _now(),
                         *([] if job_types is None else [PlatformJob.job_type.in_(job_types)]),
+                        *exact_attempt,
                     )
                     .with_for_update(skip_locked=True)
                 )
@@ -356,12 +389,32 @@ async def claim_platform_job(
             token = uuid4()
             worker: ExecutionWorker | None = None
             if executor_worker_id is not None:
-                worker = await db.scalar(
-                    select(ExecutionWorker)
-                    .where(ExecutionWorker.id == executor_worker_id)
-                    .with_for_update(read=True)
+                worker_query = select(ExecutionWorker).where(
+                    ExecutionWorker.id == executor_worker_id,
+                    ExecutionWorker.state == "ready",
                 )
+                if external_isolated:
+                    assert expected_attempt is not None
+                    worker_query = worker_query.where(
+                        ExecutionWorker.form == "external",
+                        ExecutionWorker.state == "ready",
+                        ExecutionWorker.resource_class == "isolated",
+                        ExecutionWorker.execution_lane == "normal",
+                        ExecutionWorker.capacity_resource_uid.is_not(None),
+                        ExecutionWorker.capacity_resource_deleted_at.is_(None),
+                        ExecutionWorker.memory_budget_bytes.is_not(None),
+                        ExecutionWorker.memory_budget_bytes > 0,
+                        ExecutionWorker.supported_handlers == [],
+                        ExecutionWorker.isolated_platform_job_id == job.id,
+                        ExecutionWorker.isolated_platform_job_attempt == expected_attempt,
+                    )
+                worker = await db.scalar(worker_query.with_for_update(read=True))
                 if worker is None:
+                    continue
+                if external_isolated and (
+                    metadata.compute_capability is None
+                    or metadata.compute_capability not in worker.supported_compute
+                ):
                     continue
             job.status = "running"
             job.phase = (
@@ -379,7 +432,11 @@ async def claim_platform_job(
             job.error_message = None
             job.error_retryable = None
             if worker is not None:
-                set_platform_job_executor_attribution(job, worker)
+                set_platform_job_executor_attribution(
+                    job,
+                    worker,
+                    compute_capability=(metadata.compute_capability if external_isolated else None),
+                )
             else:
                 clear_platform_job_executor_attribution(job)
             if isolated is not None and pod_memory is not None:

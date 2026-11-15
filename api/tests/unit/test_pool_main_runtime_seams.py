@@ -122,3 +122,48 @@ async def test_pool_wake_listener_routes_each_family_to_its_claim_loop(monkeypat
     assert received[work_dispatch.WAKE_PLATFORM_JOB] is worker._platform_wake
     assert received[work_dispatch.WAKE_SERVICE] is worker._service_wake
     assert received[work_dispatch.WAKE_PACKAGE] is worker._package_wake
+
+
+@pytest.mark.parametrize("loop", ["_claim_loop", "_platform_job_loop"])
+async def test_cancelling_a_claim_loop_settles_its_stop_and_wake_waiters(monkeypatch, loop):
+    from src.worker.admission import Admission
+
+    class TrackedEvent(asyncio.Event):
+        def __init__(self):
+            super().__init__()
+            self.entered = asyncio.Event()
+            self.exited = asyncio.Event()
+
+        async def wait(self):
+            self.entered.set()
+            try:
+                return await super().wait()
+            finally:
+                self.exited.set()
+
+    stop, wake = TrackedEvent(), TrackedEvent()
+    worker = PoolWorker()
+    worker.admission = Admission(
+        budget_bytes=100, under_pressure=lambda: False,
+        running_workflow_ids=set, workflow_growth=dict,
+    )
+    if loop == "_claim_loop":
+        worker._stop, worker._wake = stop, wake
+        monkeypatch.setattr(worker, "_claim_and_start", AsyncMock(return_value=None))
+    else:
+        worker._platform_stop, worker._platform_wake = stop, wake
+        monkeypatch.setattr(pool_main, "recover_expired_platform_jobs", AsyncMock())
+        monkeypatch.setattr(worker, "_claim_platform_job", AsyncMock(return_value=None))
+
+    task = asyncio.create_task(getattr(worker, loop)())
+    try:
+        await asyncio.gather(stop.entered.wait(), wake.entered.wait())
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        assert stop.exited.is_set()
+        assert wake.exited.is_set()
+    finally:
+        stop.set()
+        wake.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

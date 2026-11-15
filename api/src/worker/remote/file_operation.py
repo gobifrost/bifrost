@@ -14,6 +14,7 @@ import contextlib
 import json
 import os
 import signal
+import shutil
 import tempfile
 import time
 from collections.abc import Awaitable, Callable, Mapping
@@ -35,6 +36,7 @@ from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 MAX_ACTIVE_STAGES = 4
 MAX_STAGE_RECORDS = 4096
 MAX_RECEIPT_BYTES = 64 * 1024
+DISK_HEADROOM_BYTES = 16 * 1024 * 1024
 
 
 class _InputStream(Protocol):
@@ -102,6 +104,7 @@ class FileOperationDefinition:
     child: Callable[[], FileOperationChild]
     output_name: str
     temp_prefix: str
+    workspace_max_bytes: int = 0
 
 
 @dataclass
@@ -191,6 +194,11 @@ class NamedFileOperationStages:
         self._operations = dict(operations)
         if any(name != operation.name for name, operation in self._operations.items()):
             raise ValueError("File operation registry key does not match operation name")
+        if any(
+            type(operation.workspace_max_bytes) is not int or operation.workspace_max_bytes < 0
+            for operation in self._operations.values()
+        ):
+            raise ValueError("File operation workspace bound must be a nonnegative integer")
         self._temp_dir = temp_dir
         self._spawn, self._kill = spawn, kill
         self._terminal_notification = terminal_notification
@@ -256,6 +264,24 @@ class NamedFileOperationStages:
             raise RuntimeError(f"{operation.label} stage limit is reached")
         if len(self._stages) + len(self._tombstones) >= self._max_records:
             raise RuntimeError(f"{operation.label} stage record limit is reached")
+        # Reserve staging space before accepting payload bytes. Prepared
+        # transfers share this registry, so several large snapshots cannot
+        # each spend the same still-free space. Terminal files are already
+        # accounted by disk_usage and require no further growth reservation.
+        pending_bytes = sum(
+            max(0, stage.manifest.total_size - min(
+                stage.manifest.total_size,
+                stage.receiver._next_index * stage.manifest.chunk_size,
+            )) + stage.operation.workspace_max_bytes
+            for stage in self._stages.values()
+            if stage.state in ("prepared", "running")
+        )
+        required_bytes = manifest.total_size + operation.workspace_max_bytes
+        free_bytes = shutil.disk_usage(self._temp_dir or tempfile.gettempdir()).free
+        if free_bytes - pending_bytes - DISK_HEADROOM_BYTES < required_bytes:
+            raise FileTransferError(
+                f"{operation.label} needs {required_bytes} bytes of unreserved staging space."
+            )
         directory = Path(
             tempfile.mkdtemp(
                 prefix=f"{operation.temp_prefix}{binding.stage_id}-", dir=self._temp_dir

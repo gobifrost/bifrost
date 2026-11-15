@@ -494,6 +494,8 @@ class Launcher:
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):
             raise RuntimeError("remote host refused launcher session")
+        if self.identity.form == "external" and welcome.get("api_version") != get_version():
+            raise RuntimeError("External worker build must match the connected API build")
         self.session_generation = welcome["session_generation"]
         self._sequence = 0
         self._last_command_sequence = 0

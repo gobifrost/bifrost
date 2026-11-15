@@ -130,7 +130,7 @@ async def test_physical_demand_ignores_api_owned_maintenance(monkeypatch) -> Non
     db.execute.side_effect = [active, queued]
     monkeypatch.setattr(demand, "effective_job_max_concurrency", lambda *_args: None)
 
-    assert await demand.pending_local_platform_job_ids(
+    assert await demand.pending_capacity_platform_job_ids(
         db,
         policy=SimpleNamespace(),
         now=datetime.now(timezone.utc),

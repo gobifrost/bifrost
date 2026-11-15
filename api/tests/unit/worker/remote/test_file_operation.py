@@ -175,3 +175,70 @@ async def test_instruction_failure_becomes_a_terminal_failed_stage(tmp_path) -> 
         assert notifications == [binding]
     finally:
         await engine.shutdown()
+
+
+@pytest.mark.parametrize("bound", [-1, True, 1.5])
+def test_workspace_bound_is_validated_when_registering_an_operation(bound):
+    definition = replace(_definition(), workspace_max_bytes=bound)
+    with pytest.raises(ValueError, match="nonnegative integer"):
+        NamedFileOperationStages(operations={definition.name: definition})
+
+
+@pytest.mark.asyncio
+async def test_prepared_stages_reserve_disk_before_accepting_more_input(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from shared.worker_transfer import FileTransferError
+    from src.worker.remote.file_operation import DISK_HEADROOM_BYTES
+
+    definition = replace(_definition(), workspace_max_bytes=100)
+    monkeypatch.setattr(
+        "src.worker.remote.file_operation.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=DISK_HEADROOM_BYTES + 150),
+    )
+    engine = NamedFileOperationStages(operations={definition.name: definition}, temp_dir=tmp_path)
+    payload = {
+        "stage_id": str(uuid4()), "job_id": str(uuid4()), "lease_token": str(uuid4()),
+        "input": {"manifest": _manifest().to_dict()},
+    }
+    try:
+        engine.prepare(definition.name, payload)
+        initial_files = set(tmp_path.iterdir())
+        second = {**payload, "stage_id": str(uuid4())}
+        with pytest.raises(FileTransferError, match="unreserved staging space"):
+            engine.prepare(definition.name, second)
+        assert set(tmp_path.iterdir()) == initial_files
+        assert len(engine._stages) == 1
+        # Idempotent prepare spends no additional reservation.
+        assert engine.prepare(definition.name, payload)["state"] == "prepared"
+        await engine.operation(definition.name).release(payload)
+        assert engine.prepare(definition.name, second)["state"] == "prepared"
+    finally:
+        await engine.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_disk_admission_failure_creates_no_stage_or_files(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from shared.worker_transfer import FileTransferError
+    from src.worker.remote.file_operation import DISK_HEADROOM_BYTES
+
+    definition = _definition()
+    monkeypatch.setattr(
+        "src.worker.remote.file_operation.shutil.disk_usage",
+        lambda _path: SimpleNamespace(free=DISK_HEADROOM_BYTES + 4),
+    )
+    engine = NamedFileOperationStages(operations={definition.name: definition}, temp_dir=tmp_path)
+    try:
+        with pytest.raises(FileTransferError, match="unreserved staging space"):
+            engine.prepare(definition.name, {
+                "stage_id": str(uuid4()), "job_id": str(uuid4()), "lease_token": str(uuid4()),
+                "input": {"manifest": _manifest().to_dict()},
+            })
+        assert not engine._stages
+        assert not list(tmp_path.iterdir())
+    finally:
+        await engine.shutdown()

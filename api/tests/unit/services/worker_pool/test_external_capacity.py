@@ -637,28 +637,45 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
     await _accept_pool_run()
     [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
     preparing, release = asyncio.Event(), asyncio.Event()
+    sealing, release_seal = asyncio.Event(), asyncio.Event()
     prepare = capacity.client.prepare
+    calls = 0
 
     async def delayed_prepare(reservation, scope):
-        preparing.set()
-        await release.wait()
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            preparing.set()
+            await release.wait()
+        else:
+            sealing.set()
+            await release_seal.wait()
         return await prepare(reservation, scope)
 
     monkeypatch.setattr(capacity.client, "prepare", delayed_prepare)
     pending = asyncio.create_task(capacity.pool.reconcile_worker(worker_id, capacity.policy))
+    cleanup = None
     try:
         await preparing.wait()
         await capacity.pool._record_loss(worker_id, None, "provider_version_changed", False)
         restarted = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
-        await restarted.reconcile_worker(worker_id, capacity.policy)
+        cleanup = asyncio.create_task(restarted.reconcile_worker(worker_id, capacity.policy))
+        await sealing.wait()
         async with db.context() as session:
             worker = await session.get(ExecutionWorker, worker_id)
             assert worker.capacity_resource_deleted_at is None, "absence cannot fence a delayed prepare"
+        release.set()
+        await pending
+        assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
+        assert capacity.provider.starts == []
+        release_seal.set()
+        await cleanup
     finally:
         release.set()
-        await asyncio.gather(pending)
+        release_seal.set()
+        await asyncio.gather(pending, *([] if cleanup is None else [cleanup]), return_exceptions=True)
 
-    assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
+    assert capacity.provider.resources[str(worker_id)]["state"] == "deleted"
     assert capacity.provider.starts == []
     monkeypatch.setattr(restarted, "launch_for_demand", AsyncMock(return_value=[]))
     monkeypatch.setattr(restarted, "replace_outdated", AsyncMock())

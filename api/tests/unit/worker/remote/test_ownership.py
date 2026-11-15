@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete
+from sqlalchemy import delete, event, func, select, text, update
 
 from src.models.orm.execution_workers import ExecutionWorker
 from src.worker.remote import ownership
@@ -51,6 +53,92 @@ async def test_active_owner_blocks_replacement_and_stale_generation_cannot_renew
         assert not await ownership.owns_remote_session(first)
         assert await ownership.owns_remote_session(current)
     finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ("lost", "retired"))
+async def test_terminal_worker_cannot_renew_or_own_remote_session(
+    async_session_factory,
+    monkeypatch: pytest.MonkeyPatch,
+    state: str,
+) -> None:
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr(ownership, "get_liveness_db_context", context)
+    worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
+    lease = ownership.RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(
+            id=worker_id, form="external", state=state, resource_class="isolated",
+            remote_owner_id=owner_id, remote_launcher_id=launcher_id,
+            remote_session_generation=1,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        await session.commit()
+    try:
+        assert not await ownership.renew_remote_owner(lease)
+        assert not await ownership.owns_remote_session(lease)
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_renew_rechecks_the_database_clock_after_waiting_on_owner_row(
+    async_session_factory,
+    async_engine,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    @asynccontextmanager
+    async def context():
+        async with async_session_factory() as session:
+            yield session
+            await session.commit()
+
+    monkeypatch.setattr(ownership, "get_liveness_db_context", context)
+    worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
+    lease = ownership.RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(
+            id=worker_id, form="static", state="ready", resource_class="standard",
+            remote_owner_id=owner_id, remote_launcher_id=launcher_id,
+            remote_session_generation=1,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        await session.commit()
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(
+            remote_owner_lease_expires_at=func.clock_timestamp() + text("INTERVAL '1 second'"),
+        ))
+        await session.commit()
+
+    issued = asyncio.Event()
+
+    def observe(_conn, _cursor, statement, *_args) -> None:
+        if "execution_workers" in statement:
+            issued.set()
+
+    try:
+        async with async_session_factory() as holder:
+            assert await holder.scalar(select(ExecutionWorker.id).where(
+                ExecutionWorker.id == worker_id
+            ).with_for_update()) == worker_id
+            event.listen(async_engine.sync_engine, "before_cursor_execute", observe)
+            contender = asyncio.create_task(ownership.renew_remote_owner(lease))
+            await issued.wait()
+            async with async_session_factory() as clock:
+                await clock.execute(text("SELECT pg_sleep(1.1)"))
+            await holder.commit()
+            assert not await contender
+    finally:
+        event.remove(async_engine.sync_engine, "before_cursor_execute", observe)
         async with async_session_factory() as session:
             await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
             await session.commit()

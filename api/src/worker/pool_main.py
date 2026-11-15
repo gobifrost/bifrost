@@ -75,6 +75,7 @@ from src.services.worker_pool.claims import (
     retire_worker,
 )
 from src.services.worker_pool.recovery import UNSTARTED_CLAIM_WINDOW, release_unstarted_claims
+from src.services.work_dispatch import wait_for_next_pass
 from src.worker.remote.protocol import (
     HANDLER_CONCURRENCY_LIMITS,
     WORKER_DRAIN_GRACE_SECONDS as DRAIN_GRACE_SECONDS,
@@ -509,15 +510,10 @@ class PoolWorker:
                     await asyncio.wait_for(self._stop.wait(), timeout=HEARTBEAT_SECONDS)
                 await self._release_unstarted_claims()
                 continue
-            stop = asyncio.ensure_future(self._stop.wait())
-            wake = asyncio.ensure_future(self._wake.wait())
-            await asyncio.wait(
-                {stop, wake},
-                timeout=POLL_SECONDS if self.busy() or self._admission_blocked else SWEEP_SECONDS,
-                return_when=asyncio.FIRST_COMPLETED,
+            await wait_for_next_pass(
+                self._stop, self._wake, since=time.monotonic(), spacing=0,
+                sweep=POLL_SECONDS if self.busy() or self._admission_blocked else SWEEP_SECONDS,
             )
-            stop.cancel()
-            wake.cancel()
         if self._lost:
             # Lost or released ownership: the durable row belongs to whoever
             # holds it next (a reconnecting launcher's new owner, or the
@@ -705,15 +701,10 @@ class PoolWorker:
             except Exception:
                 logger.exception("Platform-job claim failed")
             if not claimed:
-                stop = asyncio.ensure_future(self._platform_stop.wait())
-                wake = asyncio.ensure_future(self._platform_wake.wait())
-                await asyncio.wait(
-                    {stop, wake},
-                    timeout=PLATFORM_JOB_POLL_SECONDS if blocked or running else SWEEP_SECONDS,
-                    return_when=asyncio.FIRST_COMPLETED,
+                await wait_for_next_pass(
+                    self._platform_stop, self._platform_wake, since=time.monotonic(), spacing=0,
+                    sweep=PLATFORM_JOB_POLL_SECONDS if blocked or running else SWEEP_SECONDS,
                 )
-                stop.cancel()
-                wake.cancel()
 
     async def _run_platform_job(self, claim) -> None:  # type: ignore[no-untyped-def]
         try:
