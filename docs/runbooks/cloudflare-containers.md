@@ -46,13 +46,13 @@ workers, and fences enrollment. This Worker never sees job payloads.
 
 ## Pinned deployment order
 
-Run these commands from `deploy/cloudflare/worker`. This runbook qualifies only
+Run these commands from `deploy/cloudflare/worker`. This runbook pins
 Wrangler `4.162.0`; do not substitute a floating Wrangler release.
 
 1. Set `wrangler.toml` values first: a digest-pinned image, the image's exact
    embedded `WORKER_VERSION`, an opaque `SCOPE`, and bounds that the API will
-   also enforce. The image must contain only the handlers and capabilities you
-   advertise. `MEMORY_LIMIT_BYTES` must equal the API policy's standard and
+   also enforce. Advertise only handlers and capabilities implemented by the
+   image. `MEMORY_LIMIT_BYTES` must equal the API policy's standard and
    largest worker memory; `MAX_WORKERS` and `MAX_LIFETIME_SECONDS` must cover
    the API policy's worker-count, warm-minimum, and lifetime bounds; and
    `max_instances` must be at least `MAX_WORKERS`. Set
@@ -157,13 +157,16 @@ url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/containers/ap
 request = Request(url, headers={"Authorization": f"Bearer {token}"})
 with urlopen(request, timeout=10) as response:
     result = json.load(response)["result"]
-print(json.dumps({"configuration": result.get("configuration"), "health": result.get("health")}, sort_keys=True))
+configuration = result.get("configuration") or {}
+print(json.dumps({"image": configuration.get("image"),
+                  "instance_type": configuration.get("instance_type"),
+                  "health": result.get("health")}, sort_keys=True))
 PY
 ```
 
 The token is read from the child process environment and exists only in memory;
 it is never placed in a command argument or printed. The command intentionally
-prints only the whitelisted configuration and health fields. Do not redirect
+prints only the image reference, instance type and health fields. Do not redirect
 provider request or response bodies to a log.
 
 Cloudflare documents image and `instance_type` changes on the `default`
