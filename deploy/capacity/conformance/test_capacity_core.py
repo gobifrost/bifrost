@@ -52,6 +52,7 @@ class BarrierPreparedReadLedger(Ledger):
             try:
                 self.barrier.wait(timeout=0.2)
             except threading.BrokenBarrierError:
+                # Serialized reads cannot rendezvous; only the broken implementation has two readers.
                 pass
         return row
 
