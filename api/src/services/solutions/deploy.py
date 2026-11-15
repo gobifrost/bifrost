@@ -228,6 +228,28 @@ def _is_downgrade(new: str | None, current: str | None) -> bool:
         return False
 
 
+def validate_solution_bundle(bundle: "SolutionBundle", *, force: bool) -> None:
+    """Reject known-invalid source before compilation and again before apply."""
+    from src.services.solutions.dependency_walker import check_install_needs
+
+    _validate_bundle_python_files(bundle.python_files)
+    needs = check_install_needs(
+        bundle.python_files,
+        allow_outbound_access=bool(bundle.solution.allow_outbound_access),
+    )
+    if needs:
+        items = ", ".join(f"{need.ref} ({need.detail})" if need.detail else need.ref for need in needs)
+        raise SolutionDeployConflict(f"Solution has unmet dependencies: {items}")
+    if not force and _is_downgrade(bundle.version, bundle.solution.version):
+        raise SolutionDowngradeBlocked(
+            f"bundle version {bundle.version} is older than installed "
+            f"{bundle.solution.version}; re-run with force to downgrade"
+        )
+    name_errors = preflight_workflows(bundle.workflows)
+    if name_errors:
+        raise SolutionWorkflowNameMismatch("\n".join(name_errors))
+
+
 class SolutionFinalizeIncomplete(Exception):
     """Deploy committed but a post-commit S3 finalize step failed even after
     retries (a real storage outage). The deploy is full-replace + idempotent, so
@@ -650,7 +672,7 @@ class SolutionDeployer:
 
         if bundle.apps and prepared_app_builds is None:
             raise SolutionDeployConflict("Solution app builds must be prepared before applying resources.")
-        await asyncio.to_thread(_validate_bundle_python_files, bundle.python_files)
+        await asyncio.to_thread(validate_solution_bundle, bundle, force=force)
 
         solution = bundle.solution
         sid = solution.id
@@ -664,35 +686,6 @@ class SolutionDeployer:
         if source_artifact is None:
             source_artifact = await asyncio.to_thread(build_workspace_zip, bundle)
 
-        # ── Module-closure backstop — before ANY writes ──────────────────────
-        # Primary gate is in zip_install (returns a clean 422). This backstop
-        # covers the OTHER deploy callers (the direct /deploy endpoint and
-        # git-sync auto-pull): a bundle whose ``modules.X`` import isn't shipped
-        # would otherwise install and fail at runtime with ModuleNotFoundError.
-        # Raised as SolutionDeployConflict so it rolls back with no side effects.
-        from src.services.solutions.dependency_walker import check_install_needs
-
-        needs = check_install_needs(
-            bundle.python_files,
-            allow_outbound_access=bool(bundle.solution.allow_outbound_access),
-        )
-        if needs:
-            items = ", ".join(
-                f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
-            )
-            raise SolutionDeployConflict(
-                f"Solution has unmet dependencies: {items}"
-            )
-
-        # ── Downgrade gate (Task 20) — before ANY writes ─────────────────────
-        # An older bundle (both versions PEP 440-ordered) is refused unless
-        # forced. Unparseable/absent versions are unordered and never block.
-        if not force and _is_downgrade(bundle.version, solution.version):
-            raise SolutionDowngradeBlocked(
-                f"bundle version {bundle.version} is older than installed "
-                f"{solution.version}; re-run with force to downgrade"
-            )
-
         # ── Per-install identity remap (criteria 9/10) ───────────────────────
         # Rewrite every entity id to uuid5(install, manifest_id) and translate
         # in-bundle cross-refs through the same map, BEFORE any upsert/reconcile.
@@ -704,14 +697,6 @@ class SolutionDeployer:
         # a byte-identical bundle installs independently into N scopes (and a
         # redeploy is stable).
         rb = await self._remapped_bundle(bundle)
-
-        # ── Workflow-name preflight (before ANY writes) ─────────────────────
-        # A bundle whose manifest entry name diverges from its decorated
-        # @workflow(name=...) would deploy a Workflow.name the execution engine
-        # can't resolve. Catch it up front with actionable guidance.
-        name_errors = preflight_workflows(rb.workflows)
-        if name_errors:
-            raise SolutionWorkflowNameMismatch("\n".join(name_errors))
 
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows, rb.python_files)

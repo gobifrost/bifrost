@@ -18,6 +18,7 @@ from src.services.solutions.deploy import (
     SolutionDeployer,
     SolutionDeployConflict,
     compile_solution_app_builds,
+    validate_solution_bundle,
 )
 from src.services.solutions.export import build_workspace_zip
 from src.services.solutions.write_lock import solution_write_lock
@@ -46,6 +47,7 @@ async def prepare_solution_deployment(
     reactivate: bool = False,
     allow_connected_install: bool = False,
     lock_already_held: bool = False,
+    force: bool = False,
 ):
     """Keep one writer across a short snapshot, physical compute and fresh apply.
 
@@ -88,6 +90,7 @@ async def prepare_solution_deployment(
             # Bundle hydration and source packing can be large; neither owns a DB
             # connection, and all source came from the API-verified snapshot.
             bundle = await asyncio.to_thread(_build_bundle, solution, preview, archive.workspace)
+            await asyncio.to_thread(validate_solution_bundle, bundle, force=force)
             async with get_db_context() as db:
                 plan = await SolutionDeployer(db).prepare_app_builds(bundle)
             await context.report("Compiling Solution applications", percent=15)

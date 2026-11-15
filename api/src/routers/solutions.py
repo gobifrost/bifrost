@@ -2571,7 +2571,7 @@ async def _run_deploy_job(
         await _report("Validating Solution bundle", 12)
         async with prepare_solution_deployment(
             context, zip_path, solution_id=solution_id,
-            allow_connected_install=allow_connected_install,
+            allow_connected_install=allow_connected_install, force=force,
         ) as prepared:
             async with get_db_context() as db:
                 if not await context.authorize_effect(db):
@@ -2742,7 +2742,7 @@ async def _run_install_job(
         await _report("Validating Solution install bundle", 12)
         async with prepare_solution_deployment(
             context, zip_path, solution_id=None,
-            organization_id=organization_id, reactivate=reactivate,
+            organization_id=organization_id, reactivate=reactivate, force=force,
         ) as prepared:
             with zipfile.ZipFile(zip_path) as payload_archive:
                 await validate_payload_integrity(payload_archive)

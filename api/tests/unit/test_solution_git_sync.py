@@ -88,6 +88,7 @@ async def test_git_sync_propagates_incomplete_storage_finalization(
             "solution_id": solution.id,
             "allow_connected_install": True,
             "lock_already_held": True,
+            "force": True,
         }
         yield prepared
 

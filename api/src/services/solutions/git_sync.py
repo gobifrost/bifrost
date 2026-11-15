@@ -319,7 +319,7 @@ async def _run_sync_once(
             zip_path,
             solution_id=snapshot.solution_id,
             allow_connected_install=True,
-            lock_already_held=True,
+            lock_already_held=True, force=True,
         ) as prepared:
             async with get_db_context() as db:
                 if not await context.authorize_effect(db):

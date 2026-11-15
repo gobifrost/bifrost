@@ -58,7 +58,7 @@ def preparation(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "get_db_context", database)
     monkeypatch.setattr(pipeline, "solution_write_lock", lock)
     monkeypatch.setattr(pipeline, "find_install", AsyncMock(return_value=None))
-    monkeypatch.setattr(pipeline, "_build_bundle", lambda solution, *_args: SimpleNamespace(solution=solution))
+    monkeypatch.setattr(pipeline, "_build_bundle", lambda solution, *_args: SimpleNamespace(solution=solution, python_files={}, workflows=[], version=None))
     monkeypatch.setattr(pipeline.SolutionDeployer, "prepare_app_builds", plan)
     monkeypatch.setattr(pipeline, "compile_solution_app_builds", compile_apps)
     monkeypatch.setattr(pipeline, "build_workspace_zip", lambda _bundle: b"source")
@@ -102,3 +102,17 @@ async def test_publication_observations_do_not_open_progress_transactions():
     await observations.flush(progress, timing)
     progress.assert_awaited_once_with("Applying", 30)
     timing.assert_awaited_once_with("database", 12)
+
+
+@pytest.mark.asyncio
+async def test_invalid_module_closure_is_rejected_before_app_compute(preparation, monkeypatch, tmp_path):
+    state, context = preparation
+    monkeypatch.setattr(pipeline, "_build_bundle", lambda solution, *_args: SimpleNamespace(
+        solution=solution, version=None, workflows=[],
+        python_files={"workflows/main.py": "from modules.missing import helper\n"},
+    ))
+    with pytest.raises(SolutionDeployConflict, match="unmet dependencies"):
+        async with pipeline.prepare_solution_deployment(context, tmp_path / "input.zip", solution_id=None):
+            pytest.fail("invalid source cannot reach publication")
+    assert state.planned_id is None
+    assert state.db_count == 0 and not state.locked
