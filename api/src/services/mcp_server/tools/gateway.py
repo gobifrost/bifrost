@@ -61,9 +61,11 @@ when the full docs are too large. Reuse existing modules after
 inspecting their source. With existing repository.read permission, inline
 code can list/read workspace source through the files SDK. Alternatively,
 search capabilities for an agent with list_content, bifrost_file_search, and
-read_content_lines, then use its discovered tools. If bifrost-build is
+read_content_lines, then use its discovered tools. If the Bifrost Build skill is
 installed in your client, its python-sdk, repository, and workflows references
-provide the broader authoring guide. SDK requests retain the execution identity's
+provide the broader authoring guide. Get the optional full Bifrost plugin from
+https://github.com/gobifrost/bifrost/tree/main/plugins/bifrost; bifrost_get_docs
+includes marketplace and Setup/Build guidance. SDK requests retain the execution identity's
 existing permissions and scoping; those checks do not contain arbitrary Python."""
 
 

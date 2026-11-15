@@ -21,6 +21,9 @@ async def test_platform_docs_teach_inline_execution_and_include_all_python_sdk_f
     assert "bifrost_execute_code" in docs
     assert "bifrost_execution_get" in docs
     assert "modules.customer_helpers" in docs
+    assert "https://github.com/gobifrost/bifrost/tree/main/plugins/bifrost" in docs
+    assert "plugin manager and install `bifrost`" in docs
+    assert "plugin is optional" in docs
 
 
 @pytest.mark.asyncio

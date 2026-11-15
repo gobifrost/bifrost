@@ -62,10 +62,14 @@ When configuring a native agent or agent-scoped MCP endpoint, explicitly assign
 `bifrost_execute_code`, `bifrost_get_docs`, and `bifrost_execution_get`. For workspace
 discovery also assign `list_content`, `bifrost_file_search`, and
 `read_content_lines`; these assignments do not grant repository permissions.
-An installed `bifrost-build` client skill provides broader authoring guidance
-in `references/python-sdk.md`, `references/repository.md`, and
-`references/workflows.md`. Native agents can learn directly from `bifrost_get_docs`;
-installing a client skill does not inject it into a native agent's context.
+For the full authoring guide, get the [Bifrost plugin](https://github.com/gobifrost/bifrost/tree/main/plugins/bifrost).
+Add [gobifrost/bifrost](https://github.com/gobifrost/bifrost) as a marketplace in
+your client's plugin manager and install `bifrost`. Its Setup skill connects your
+client to your instance; its Build skill covers SDK usage, integration discovery,
+workspace search, and reuse. The Build references include `references/python-sdk.md`,
+`references/repository.md`, and `references/workflows.md`. The plugin is optional
+for Execute Code. Native agents can learn directly from `bifrost_get_docs`;
+installing a client plugin does not inject its skills into a native agent's context.
 
 ## Workflows & Tools
 
