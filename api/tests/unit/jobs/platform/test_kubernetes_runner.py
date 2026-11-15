@@ -7,6 +7,9 @@ from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
+import pytest_asyncio
+from sqlalchemy import delete
+from src.models.orm.platform_jobs import PlatformJob
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.jobs.platform import kubernetes_runner
@@ -18,11 +21,11 @@ from src.jobs.platform.application_deploy import (
 from src.services.platform_jobs import enqueue_platform_job
 
 
-@pytest.fixture(autouse=True)
-def patch_context(
+@pytest_asyncio.fixture(autouse=True)
+async def patch_context(
     monkeypatch: pytest.MonkeyPatch,
     db_session: AsyncSession,
-) -> None:
+) -> AsyncGenerator[None, None]:
     @asynccontextmanager
     async def test_context() -> AsyncGenerator[AsyncSession, None]:
         yield db_session
@@ -35,9 +38,25 @@ def patch_context(
     )
     monkeypatch.setattr(kubernetes_runner, "get_cgroup_memory", lambda: (128, 1024))
 
+    # These admission tests commit. Rollback cannot remove committed jobs;
+    # retain the exact IDs so they cannot consume a later test's pod ceiling.
+    owned_jobs = []
+    original_enqueue = enqueue_platform_job
+
+    async def tracked_enqueue(*args, **kwargs):
+        result = await original_enqueue(*args, **kwargs)
+        owned_jobs.append(result[0].id)
+        return result
+
+    monkeypatch.setattr(__name__ + ".enqueue_platform_job", tracked_enqueue)
+    yield
+    await db_session.rollback()
+    await db_session.execute(delete(PlatformJob).where(PlatformJob.id.in_(owned_jobs)))
+    await db_session.commit()
+
 
 @pytest.mark.asyncio
-async def test_admit_kubernetes_platform_job_binds_first_pod(
+async def test_legacy_runner_refuses_jobs_with_an_api_compute_boundary(
     db_session: AsyncSession,
 ) -> None:
     app_id = uuid4()
@@ -79,19 +98,9 @@ async def test_admit_kubernetes_platform_job_binds_first_pod(
         kubernetes_pod_uid="pod-uid",
     )
 
-    assert claim is not None
-    assert claim.id == job.id
-    assert claim.lease_token == token
-    assert claim.job_type == "application.deploy"
-    assert claim.hard_memory_ratio == APPLICATION_DEPLOY_DEFINITION.policy.hard_memory_ratio
+    assert claim is None
     await db_session.refresh(job)
-    assert job.kubernetes_pod_uid == "pod-uid"
-    assert job.lease_owner == "kubernetes-pod:pod-uid"
-    assert job.runner_started_at is not None
-    assert job.phase == "Starting"
-    assert job.memory_start_bytes == 128
-    assert job.memory_peak_bytes == 128
-    assert job.memory_limit_bytes == 1024
+    assert job.kubernetes_pod_uid is None and job.runner_started_at is None
 
 
 @pytest.mark.asyncio

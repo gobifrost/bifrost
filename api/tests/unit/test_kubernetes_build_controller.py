@@ -26,6 +26,7 @@ SPEC = WorkerJobSpec(
     service_account="runner",
 )
 SETTINGS = SimpleNamespace(
+    secret_key="fixture-root-key",
     pool_worker_memory_request_mib=512,
     kubernetes_job_cpu_request="250m",
     kubernetes_job_cpu_limit="1",
@@ -33,6 +34,14 @@ SETTINGS = SimpleNamespace(
     memory_pressure_threshold=0.85,
     redis_url="redis://localhost:1/0",
 )
+
+
+@pytest.fixture(autouse=True)
+def isolate_compute_registry(monkeypatch):
+    # These controller unit tests own a mocked job row. Real owner/UID admission
+    # is exercised by test_kubernetes_compute_admission and the live launcher.
+    monkeypatch.setattr("src.jobs.platform.kubernetes_compute.sync_compute_worker", AsyncMock())
+    monkeypatch.setattr("src.jobs.platform.kubernetes_compute.cleanup_compute_workers", AsyncMock())
 
 
 @pytest.fixture
@@ -67,7 +76,7 @@ def fixture(monkeypatch):
     client.namespace = "test"
     client.get_job.return_value = None
     client.list_pods.return_value = []
-    claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95, row.memory_required_bytes)
+    claim = ClaimedPlatformJob(row.id, row.lease_token, 120, 0.95, row.memory_required_bytes, row.job_type)
     manifest = build_job_manifest(
         claim, SETTINGS, SPEC,
         memory_request_bytes=row.memory_request_bytes,

@@ -88,3 +88,19 @@ async def test_exclusive_worker_never_starts_a_privileged_runner() -> None:
         await worker._execute_platform_job(SimpleNamespace(job_type="solution.export"))
 
     raw_runner.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_kubernetes_isolated_worker_adopts_preclaim_without_claiming_a_second_job(monkeypatch) -> None:
+    worker = _executor()
+    reservation = worker.bridge.isolated_job
+    assert reservation is not None
+    worker.bridge.isolated_job = IsolatedPlatformJobReservation(reservation.job_id, 3, "kubernetes")
+    adopt = AsyncMock(return_value=None)
+    claim = AsyncMock()
+    monkeypatch.setattr("src.jobs.platform.kubernetes_compute.adopt_compute_claim", adopt)
+    monkeypatch.setattr("src.worker.remote.host.claim_platform_job", claim)
+    await worker._claim_platform_job(512)
+    assert adopt.await_args.args == (worker.incarnation_id, reservation.job_id, 3)
+    assert adopt.await_args.kwargs["fits_bytes"] == 512
+    claim.assert_not_awaited()

@@ -325,3 +325,32 @@ async def test_external_launcher_accepts_matching_api_build():
     launcher = Launcher(socket, identity=identity, secret="resource-control-key")
     await launcher.hello({})
     assert launcher.session_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_compute_only_launcher_never_boots_or_accepts_privileged_runners(monkeypatch) -> None:
+    monkeypatch.setenv("BIFROST_WORKER_COMPUTE_ONLY", "1")
+    identity = LauncherIdentity(uuid4(), uuid4(), "job", "pod", "compute-pod", "job")
+    launcher = Launcher(AsyncMock(), identity=identity, secret="attempt-key")
+    launcher.template.start = Mock(side_effect=AssertionError("privileged template"))
+    launcher.helper = AsyncMock(side_effect=AssertionError("requirements helper"))
+    launcher.task = Mock()
+    real_monitor = launcher.monitor
+    launcher.monitor = Mock(return_value=None)
+    launcher.send = AsyncMock()
+    await launcher.start()
+    assert launcher.handlers == () and launcher.agent_template is None
+    from src.services.execution.requirements_setup_result import RequirementsInstallResult
+    assert RequirementsInstallResult.from_json_dict(launcher.requirements).ok
+    # Exercise one real telemetry tick: it must not revive a legacy template.
+    async def end_tick(_seconds):
+        raise asyncio.CancelledError
+    monkeypatch.setattr("src.worker.remote.launcher.asyncio.sleep", end_tick)
+    with pytest.raises(asyncio.CancelledError):
+        await real_monitor()
+    launcher.template.start.assert_not_called()
+    launcher.session_generation = 1
+    for action in ("platform_job", "workflow", "package_tool"):
+        await launcher.command({"id": action, "action": action, "payload": {}}, generation=1)
+        assert "error" in launcher.send.await_args.args[0]
+    launcher.helper.assert_not_awaited()

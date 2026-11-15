@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 import pytest
@@ -605,3 +605,30 @@ def test_client_creation_brackets_ipv6_service_host_and_uses_ca_context(
     assert captured["verify"] == "ssl-context"
     assert captured["timeout"] == 5.0
     assert captured["cafile"] == str(ca_path)
+
+
+def test_compute_manifest_uses_scoped_launcher_without_inherited_credentials(monkeypatch) -> None:
+    from types import SimpleNamespace
+    from shared.worker_control_auth import kubernetes_compute_control_key
+    from src.jobs.platform.kubernetes_compute import compute_worker_id
+
+    claim = replace(_claim(), job_type="solution.export")
+    settings = SimpleNamespace(**vars(KubernetesSettings()), secret_key="fixture-root-key")
+    monkeypatch.setenv("BIFROST_API_URL", "http://api:8000")
+    manifest = build_job_manifest(claim, settings, SPEC,
+                                  memory_request_bytes=512 * 2**20, memory_limit_bytes=LIMIT)
+    pod = manifest["spec"]["template"]["spec"]
+    container = pod["containers"][0]
+    assert container["command"] == ["python", "-m", "src.worker.main"]
+    assert "envFrom" not in container
+    environment = {item["name"]: item.get("value") for item in container["env"]}
+    worker_id = compute_worker_id(claim.lease_token)
+    assert environment["BIFROST_WORKER_CONTROL_SECRET"] == kubernetes_compute_control_key(
+        settings.secret_key, worker_id, claim.lease_token,
+    )
+    assert environment["BIFROST_WORKER_COMPUTE_ONLY"] == "1"
+    assert environment["BIFROST_WORKER_INCARNATION_ID"] == str(worker_id)
+    assert not {"BIFROST_SECRET_KEY", "BIFROST_DATABASE_URL", "BIFROST_REDIS_URL"} & environment.keys()
+    assert settings.secret_key not in repr(manifest) and str(claim.lease_token) not in repr(manifest)
+    assert not pod["automountServiceAccountToken"]
+    assert kubernetes_compute_control_key(settings.secret_key, worker_id, uuid4()) != environment["BIFROST_WORKER_CONTROL_SECRET"]

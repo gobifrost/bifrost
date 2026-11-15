@@ -1118,3 +1118,8 @@ async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_for
     assert isinstance(backend, ApiFileComputeBackend)
     assert backend.memory() == (12, 100)
     executor.bridge.memory.assert_called_once_with()
+
+
+@pytest.fixture(autouse=True)
+def isolate_kubernetes_compute_key_lookup(monkeypatch):
+    monkeypatch.setattr("src.jobs.platform.kubernetes_compute.compute_control_key", AsyncMock(return_value=None))

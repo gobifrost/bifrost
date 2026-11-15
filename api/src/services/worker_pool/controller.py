@@ -1134,13 +1134,15 @@ class WorkerPoolController(WorkerCapacityController):
         return and_(
             ExecutionWorker.form == "job",
             ExecutionWorker.kubernetes_namespace == self.client.namespace,
+            ExecutionWorker.isolated_platform_job_id.is_(None),
         )
 
     def _live_scope(self) -> str:
         return f"job:{self.client.namespace}"
 
     def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
-        return worker.form == "job" and worker.kubernetes_namespace == self.client.namespace
+        return (worker.form == "job" and worker.kubernetes_namespace == self.client.namespace
+                and worker.isolated_platform_job_id is None)
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         return {

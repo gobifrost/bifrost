@@ -351,3 +351,11 @@ async def test_callback_failure_retains_route_until_durable_result_replay() -> N
     assert pool._routes == {}
     assert callback.await_count == 2
     assert callback.await_args.args[0]["sync"] is True
+
+
+@pytest.mark.asyncio
+async def test_isolated_compute_has_no_workflow_package_inventory_command() -> None:
+    transport = _Transport()
+    pool = ThinRemoteProcessPool(transport, workflow_packages=False)
+    assert await pool._remote_packages() == []
+    assert transport.requests == []

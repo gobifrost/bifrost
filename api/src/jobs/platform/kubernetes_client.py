@@ -148,7 +148,7 @@ def build_job_manifest(
         ),
     }
 
-    return {
+    manifest = {
         "apiVersion": "batch/v1",
         "kind": "Job",
         "metadata": {
@@ -226,6 +226,39 @@ def build_job_manifest(
             },
         },
     }
+
+    from src.jobs.platform.catalog import get_platform_job_metadata
+
+    metadata = get_platform_job_metadata(claim.job_type)
+    if metadata is not None and metadata.required_compute_capabilities:
+        from shared.worker_control_auth import kubernetes_compute_control_key
+        from src.jobs.platform.kubernetes_compute import compute_worker_id
+
+        worker_id = compute_worker_id(claim.lease_token)
+        labels["bifrost.gobifrost.com/compute-mode"] = "api-owned-v1"
+        labels["bifrost.gobifrost.com/worker-incarnation"] = str(worker_id)
+        pod = manifest["spec"]["template"]["spec"]
+        container = pod["containers"][0]
+        container["command"] = ["python", "-m", "src.worker.main"]
+        del container["envFrom"]
+        container["env"] += [
+            {"name": "BIFROST_API_URL", "value": os.environ.get("BIFROST_API_URL", "http://api:8000")},
+            {"name": "BIFROST_WORKER_INCARNATION_ID", "value": str(worker_id)},
+            {"name": "BIFROST_WORKER_COMPUTE_ONLY", "value": "1"},
+            {"name": "BIFROST_WORKER_CONTROL_SECRET", "value": kubernetes_compute_control_key(
+                settings.secret_key, worker_id, claim.lease_token,
+            )},
+            {"name": "BIFROST_POOL_WORKER_EXECUTION_LANE", "value": "normal"},
+            {"name": "HOME", "value": "/home/bifrost"},
+            {"name": "PIP_NO_CACHE_DIR", "value": "1"},
+        ]
+        pod["volumes"] = [{"name": name, "emptyDir": {}} for name in ("home", "tmp", "workspace")]
+        container["volumeMounts"] = [
+            {"name": "home", "mountPath": "/home/bifrost"},
+            {"name": "tmp", "mountPath": "/tmp"},
+            {"name": "workspace", "mountPath": "/workspace"},
+        ]
+    return manifest
 
 
 class KubernetesJobClient:

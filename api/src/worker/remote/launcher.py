@@ -292,7 +292,8 @@ class Launcher:
         self.requirements_content: str | None = None
         # External launchers begin with scoped workflows. Agent runs become
         # eligible only after their credential-free compute template is warm.
-        self.handlers = tuple(
+        self.compute_only = os.environ.get("BIFROST_WORKER_COMPUTE_ONLY") == "1"
+        self.handlers = () if self.compute_only else tuple(
             pair for pair in EXECUTION_HANDLERS
             if identity.form != "external" or pair[0] == "workflow.execute"
         )
@@ -417,6 +418,14 @@ class Launcher:
             asyncio.create_task(self.socket.close(code=1011, reason="Launcher supervision failed"))
 
     async def start(self) -> None:
+        if self.compute_only:
+            from src.services.execution.requirements_setup_result import RequirementsInstallResult
+
+            self.requirements = RequirementsInstallResult().to_json_dict()
+            current, _limit = effective_memory_sample()
+            self.baseline_bytes = current
+            self._monitor_task = self.task(self.monitor())
+            return
         # This existing helper owns requirements IO and exits before ready.
         result = await self.helper(
             "src.services.execution.requirements_setup_helper",
@@ -484,7 +493,7 @@ class Launcher:
             "version": get_version(),
             "credential_protocol": CREDENTIAL_PROTOCOL,
             "handlers": self.handlers,
-            "supports_platform_jobs": self.identity.form != "external",
+            "supports_platform_jobs": self.identity.form != "external" and not self.compute_only,
             "compute_capabilities": [
                 list(capability)
                 for capability in COMPUTE_CAPABILITIES
@@ -496,7 +505,7 @@ class Launcher:
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):
             raise RuntimeError("remote host refused launcher session")
-        if self.identity.form == "external" and welcome.get("api_version") != get_version():
+        if (self.identity.form == "external" or self.compute_only) and welcome.get("api_version") != get_version():
             raise RuntimeError("External worker build must match the connected API build")
         self.session_generation = welcome["session_generation"]
         self._sequence = 0
@@ -770,6 +779,12 @@ class Launcher:
         action, payload = request["action"], request["payload"]
         try:
             response: dict[str, Any] = {}
+            if self.compute_only and action in (
+                "workflow", "service", "agent_run", "agent_summary", "platform_job", "helper",
+                "agent_compute_start", "agent_compute_status", "agent_compute_reply",
+                "agent_compute_release", "package_tool", "recycle",
+            ):
+                raise ValueError("Compute-only workers cannot start privileged execution")
             if action in ("workflow", "service"):
                 self.check_fork_pressure()
                 route_id = payload["route_id"]
@@ -1331,7 +1346,7 @@ class Launcher:
             # A package recycle intentionally stops the template while holding
             # this lock. Observe liveness only outside that replacement window.
             async with self._template_lock:
-                if not self.template.is_alive():
+                if not self.compute_only and not self.template.is_alive():
                     # Preserve the canonical pool's template-crash recovery;
                     # live children retain their existing pipes and identities.
                     logger.warning("Execution template died; replacing it")
@@ -1502,7 +1517,9 @@ async def _run_launcher(
     control_headers = load_control_headers(control_url)
     identity = load_launcher_identity()
     secret = os.environ[
-        "BIFROST_WORKER_CONTROL_SECRET" if identity.form == "external" else "BIFROST_SECRET_KEY"
+        "BIFROST_WORKER_CONTROL_SECRET"
+        if identity.form == "external" or os.environ.get("BIFROST_WORKER_COMPUTE_ONLY") == "1"
+        else "BIFROST_SECRET_KEY"
     ]
     launcher: Launcher | None = None
     candidate: Launcher | None = None
@@ -1528,7 +1545,8 @@ async def _run_launcher(
                             candidate.socket = socket
                         # ``agent.loop.v1`` is advertised only after the
                         # physical pure-compute template is genuinely ready.
-                        await candidate.start_agent_compute_template()
+                        if not candidate.compute_only:
+                            await candidate.start_agent_compute_template()
                         # Enroll before the potentially minute-long requirements
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the

@@ -264,14 +264,33 @@ so isolated builds do not occupy physical-launcher capacity; launchers keep
 serving maintenance jobs and non-build PlatformJobs while the build pod runs in
 its own cgroup.
 
-An isolated pod runs the same launcher entrypoint. It copies the API pod's
-namespace, image, and `envFrom` (or the optional `BIFROST_KUBERNETES_JOB_*`
-identity) and mounts no service-account token. Its Kubernetes Job and Pod UID
-are supplied automatically to the launcher enrollment. It is sized by the
-worker rule (`api/src/services/worker_pool/sizing.py`): a standard pod requests
-the worker memory request with a limit of Worker Memory; a job whose learned
-requirement exceeds that pod's budget gets a sized pod (request = limit, up to
-Largest Worker); a larger requirement fails visibly.
+For jobs with registered file-compute capabilities, an isolated pod runs the
+normal worker launcher (`src.worker.main`) in compute-only mode. It uses the
+configured worker image, namespace and tokenless service account, but receives
+no inherited `envFrom`, API signing key, database, Redis or storage credentials.
+Its control key is derived in the API for that exact worker incarnation and
+PlatformJob attempt. The API restricts enrollment to the matching build, Job
+UID and first Pod UID, intersects the image's compute capabilities with the
+code-owned reservation, and grants no workflow or legacy PlatformJob handlers.
+The pod starts no workflow/package/agent templates or package-management helper.
+
+The controller still preclaims and sizes the job using the existing worker
+rule (`api/src/services/worker_pool/sizing.py`). Once the launcher is ready,
+the remote API owner adopts that exact preclaim once, without incrementing its
+attempt or claiming other work. It runs the canonical handler with the shared
+`ApiFileComputeBackend`; capture, credentials, encryption, authorization and
+durable publication stay in the API. The one-job worker drains after stage
+cleanup. The build controller owns UID-bound physical deletion, including
+attempts cancelled before enrollment or left behind by an API owner outage.
+The reusable-worker controller does not adopt these isolated resources.
+
+A standard pod requests the worker memory request with a limit of Worker
+Memory; a job whose learned requirement exceeds that pod's budget gets a sized
+pod (request = limit, up to Largest Worker); a larger requirement fails visibly.
+Unconverted job types retain their existing runner requirements. Converted
+handlers are refused by the legacy Kubernetes runner; it is not an alternate
+execution path for them. This shared prerequisite is not qualification of every
+job type, an actual Kubernetes cluster, Cloudflare, or performance.
 
 Remote launch is fenced by durable Kubernetes identity:
 
@@ -515,7 +534,8 @@ application environment is production.
 | Retained worker/scheduler launcher entrypoints | `api/src/worker/main.py`, `api/src/scheduler/main.py` |
 | Token-gated legacy Kubernetes controller host | `api/src/scheduler/kubernetes_host.py` |
 | Isolated child runner | `api/src/jobs/platform/runner.py` |
-| Kubernetes build runner | `api/src/jobs/platform/kubernetes_runner.py` |
+| Legacy Kubernetes build runner (unconverted jobs) | `api/src/jobs/platform/kubernetes_runner.py` |
+| Kubernetes API-owned compute admission | `api/src/jobs/platform/kubernetes_compute.py` |
 | Kubernetes Job client and manifest builder | `api/src/jobs/platform/kubernetes_client.py` |
 | Kubernetes build controller | `api/src/jobs/schedulers/kubernetes_jobs.py` |
 | Lease recovery, claiming, and resource enforcement | `api/src/jobs/schedulers/platform_jobs.py` |

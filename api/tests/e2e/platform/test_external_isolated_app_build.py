@@ -23,6 +23,8 @@ import ssl
 import subprocess
 import sys
 import uuid
+from unittest.mock import AsyncMock
+from typing import Any
 
 import httpx
 import pytest
@@ -100,9 +102,12 @@ async def _absent_config(async_session_factory, category: str, key: str) -> None
         pytest.fail(f"external isolated E2E requires an empty {category}/{key} config")
 
 
-@pytest.mark.parametrize("job_type", ["application.deploy", "solution.deploy", "solution.export"])
+@pytest.mark.parametrize("job_type,backend", [
+    ("application.deploy", "external"), ("solution.deploy", "external"),
+    ("solution.export", "external"), ("solution.export", "kubernetes"),
+])
 async def test_external_isolated_launcher_promotes_one_app_deployment(
-    e2e_client, e2e_api_url, platform_admin, async_session_factory, job_type
+    e2e_client, e2e_api_url, platform_admin, async_session_factory, job_type, backend, monkeypatch
 ) -> None:
     await _absent_config(async_session_factory, CATEGORY, KEY)
     await _absent_config(
@@ -114,6 +119,7 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
     provider_token = f"fixture-capacity-token-{uuid.uuid4().hex}"
     generation = uuid.uuid4()
     worker_id = uuid.uuid4()
+    capacity_fixture_worker_id = worker_id
     _, launcher_memory_limit = effective_memory_sample()
     # The provider contract uses whole MiB. An unbounded local container can
     # report the host's non-aligned MemTotal; advertise its conservative whole
@@ -286,29 +292,32 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
             job = await db.get(PlatformJob, job_id)
             assert job is not None
             assert job.execution_backend == "external_isolated"
-            db.add(
-                ExecutionWorker(
-                    id=worker_id,
-                    form="external",
-                    state="starting",
-                    resource_class="isolated",
-                    execution_lane="normal",
-                    capacity_scope=scope,
-                    capacity_resource_uid=resource_uid,
-                    version=get_version(),
-                    supported_handlers=[],
-                    supported_compute=(["app.compile.v2", "solution.archive.inspect.v1"]
-                                       if job_type == "solution.deploy" else
-                                       ["solution.archive.inspect.v1"] if job_type == "solution.export" else
-                                       ["app.compile.v2"]),
-                    # This exact process will be the launcher below, so reserve
-                    # its measured effective limit rather than fabricating a
-                    # provider resource shape.
-                    memory_limit_bytes=launcher_memory_limit,
-                    isolated_platform_job_id=job_id,
-                    isolated_platform_job_attempt=job.attempt + 1,
+            if backend == "kubernetes":
+                job.execution_backend = "kubernetes"
+            else:
+                db.add(
+                    ExecutionWorker(
+                        id=worker_id,
+                        form="external",
+                        state="starting",
+                        resource_class="isolated",
+                        execution_lane="normal",
+                        capacity_scope=scope,
+                        capacity_resource_uid=resource_uid,
+                        version=get_version(),
+                        supported_handlers=[],
+                        supported_compute=(["app.compile.v2", "solution.archive.inspect.v1"]
+                                           if job_type == "solution.deploy" else
+                                           ["solution.archive.inspect.v1"] if job_type == "solution.export" else
+                                           ["app.compile.v2"]),
+                        # This exact process will be the launcher below, so reserve
+                        # its measured effective limit rather than fabricating a
+                        # provider resource shape.
+                        memory_limit_bytes=launcher_memory_limit,
+                        isolated_platform_job_id=job_id,
+                        isolated_platform_job_attempt=job.attempt + 1,
+                    )
                 )
-            )
             await db.commit()
 
         environment = {
@@ -324,8 +333,56 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
             ),
             "HOSTNAME": f"e2e-external-{suffix}",
         }
+        if backend == "kubernetes":
+            # One additional job proves controller→manifest→normal launcher→API
+            # compute. This fake cluster is local contract evidence, not Kind.
+            from src.config import get_settings
+            from src.jobs.schedulers.platform_jobs import claim_platform_job, IsolatedPods
+            from src.jobs.schedulers.kubernetes_jobs import KubernetesBuildController
+            from src.services.worker_pool.sizing import JobSizing
+            from src.services.worker_pool.manifest import WorkerJobSpec
+            from src.jobs.platform.kubernetes_compute import compute_worker_id
+
+            claim = await claim_platform_job(backend="kubernetes", isolated=IsolatedPods(
+                namespace="fixture", max_pods=1,
+                sizing=JobSizing(launcher_memory_limit, launcher_memory_limit, .85, 64 * 2**20),
+                standard_request_bytes=512 * 2**20,
+            ), job_types=frozenset({job_type}))
+            assert claim is not None and claim.id == job_id
+            worker_id = compute_worker_id(claim.lease_token)
+            cluster = AsyncMock()
+            cluster.namespace = "fixture"
+            cluster.get_job.return_value = None
+            cluster.list_pods.return_value = []
+            created_manifests: list[dict[str, Any]] = []
+
+            async def create(manifest: dict[str, Any]) -> dict[str, Any]:
+                rendered = {**manifest, "metadata": {**manifest["metadata"], "uid": "fixture-job-uid"}}
+                created_manifests.append(rendered)
+                return rendered
+
+            cluster.create_job.side_effect = create
+            monkeypatch.setenv("BIFROST_API_URL", e2e_api_url)
+            controller = KubernetesBuildController(cluster, get_settings(), WorkerJobSpec(
+                "fixture", "normal-worker-image", ({"secretRef": {"name": "must-not-inherit"}},), "default",
+            ))
+            await controller.reconcile_job(job_id)
+            assert len(created_manifests) == 1
+            rendered = created_manifests[0]
+            cluster.get_job.return_value = rendered
+            await controller.reconcile_job(job_id)
+            cluster.start_job.assert_awaited_once()
+            container = rendered["spec"]["template"]["spec"]["containers"][0]
+            assert "envFrom" not in container
+            environment = {
+                "PATH": os.environ["PATH"], "PYTHONPATH": os.environ.get("PYTHONPATH", "/app"),
+                "HOSTNAME": "fixture-compute-pod",
+                **{item["name"]: item["value"] for item in container["env"] if "value" in item},
+                "BIFROST_KUBERNETES_JOB_UID": "fixture-job-uid", "BIFROST_KUBERNETES_POD_UID": "fixture-pod-uid",
+            }
+            assert not {"BIFROST_SECRET_KEY", "BIFROST_DATABASE_URL", "BIFROST_REDIS_URL"} & environment.keys()
         process = subprocess.Popen(
-            [sys.executable, "-m", "src.worker.remote.launcher"],
+            [sys.executable, "-m", "src.worker.main" if backend == "kubernetes" else "src.worker.remote.launcher"],
             env=environment,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -339,6 +396,7 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
                 exported = await db.get(SolutionExportJob, export_job_id)
                 assert persisted is not None and exported is not None
                 assert persisted.executor_worker_id == worker_id and persisted.executor_attempt == 1
+                assert persisted.executor_worker_form == ("job" if backend == "kubernetes" else "external")
                 assert persisted.executor_compute_capability == "solution.archive.inspect.v1"
                 assert exported.status == "completed" and exported.encrypted_options is None
                 assert exported.artifact_storage_key.startswith(f"solution-exports/{solution_id}/{export_job_id}/")
@@ -443,7 +501,7 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
         if fixture_configured:
             fixture = _capacity_fixture_request(
                 "DELETE",
-                f"/fixture/capacity/{scope}/{worker_id}",
+                f"/fixture/capacity/{scope}/{capacity_fixture_worker_id}",
                 token=provider_token,
             )
             assert fixture.status_code == 204, fixture.text

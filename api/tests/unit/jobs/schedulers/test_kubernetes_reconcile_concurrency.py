@@ -31,6 +31,7 @@ from src.jobs.platform.application_deploy import (
 from src.jobs.schedulers import kubernetes_jobs, platform_jobs
 from src.models.orm.config import SystemConfig
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import (
     KUBERNETES_CONFIG_CATEGORY,
     KUBERNETES_CONFIG_KEY,
@@ -44,6 +45,7 @@ MAX_JOBS = 2
 QUEUED = 5
 
 SETTINGS = SimpleNamespace(
+    secret_key="fixture-root-key",
     pool_worker_memory_request_mib=512,
     kubernetes_job_cpu_request="250m",
     kubernetes_job_cpu_limit="1",
@@ -155,6 +157,7 @@ async def isolation_on(
     await _isolated_jobs(real_sessions, True)
     yield
     async with real_sessions() as session:
+        await session.execute(delete(ExecutionWorker).where(ExecutionWorker.isolated_platform_job_id.is_not(None)))
         await session.execute(delete(PlatformJob))
         await session.execute(
             delete(SystemConfig).where(
@@ -167,6 +170,7 @@ async def isolation_on(
 
 async def _queue_remote_builds(sessions: async_sessionmaker[AsyncSession]) -> None:
     async with sessions() as session:
+        await session.execute(delete(ExecutionWorker).where(ExecutionWorker.isolated_platform_job_id.is_not(None)))
         await session.execute(delete(PlatformJob))
         for index in range(QUEUED):
             app_id = uuid4()

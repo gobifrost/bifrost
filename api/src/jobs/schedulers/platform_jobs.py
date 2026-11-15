@@ -446,6 +446,19 @@ async def claim_platform_job(
                 job.memory_start_bytes = None
                 job.memory_peak_bytes = None
                 job.memory_request_bytes, job.memory_limit_bytes = pod_memory
+                if metadata.required_compute_capabilities:
+                    from src.jobs.platform.kubernetes_compute import compute_worker_id
+
+                    db.add(ExecutionWorker(
+                        id=compute_worker_id(token), form="job", state="reserved",
+                        resource_class="isolated", execution_lane="normal",
+                        kubernetes_namespace=isolated.namespace,
+                        kubernetes_job_name=job.kubernetes_job_name,
+                        memory_limit_bytes=job.memory_limit_bytes,
+                        supported_handlers=[],
+                        supported_compute=sorted(metadata.required_compute_capabilities),
+                        isolated_platform_job_id=job.id, isolated_platform_job_attempt=job.attempt,
+                    ))
             else:
                 current_memory, memory_limit = memory_sample or get_cgroup_memory()
                 job.memory_start_bytes = current_memory if current_memory >= 0 else None

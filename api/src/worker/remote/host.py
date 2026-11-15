@@ -97,16 +97,17 @@ def _reply_timeout(action: str) -> float:
 class IsolatedPlatformJobReservation:
     job_id: UUID
     attempt: int
+    backend: str = EXTERNAL_ISOLATED_BACKEND
 
 
 async def _external_reserved_capabilities(
-    incarnation_id: UUID,
+    incarnation_id: UUID, *, form: str = "external",
 ) -> tuple[frozenset[str], frozenset[str], IsolatedPlatformJobReservation | None]:
-    """Load the immutable capability declaration for an external worker."""
+    """Load immutable compute grants for a managed capacity reservation."""
 
     async with get_liveness_db_context() as db:
         worker = await db.get(ExecutionWorker, incarnation_id)
-    if worker is None or worker.form != "external":
+    if worker is None or worker.form != form:
         raise AuthenticationError("external launcher has no reserved worker profile")
     isolated = None
     if worker.isolated_platform_job_id is not None:
@@ -120,6 +121,7 @@ async def _external_reserved_capabilities(
             raise AuthenticationError("external isolated reservation is invalid")
         isolated = IsolatedPlatformJobReservation(
             worker.isolated_platform_job_id, worker.isolated_platform_job_attempt,
+            "kubernetes" if form == "job" else EXTERNAL_ISOLATED_BACKEND,
         )
     return frozenset(worker.supported_handlers), frozenset(worker.supported_compute), isolated
 
@@ -640,7 +642,10 @@ class ApiExecutor(PoolWorker):
         from src.worker.remote.remote_pool import ThinRemoteProcessPool
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
-        self.bridge.pool = ThinRemoteProcessPool(self.bridge, worker_id=str(self.incarnation_id))
+        self.bridge.pool = ThinRemoteProcessPool(
+            self.bridge, worker_id=str(self.incarnation_id),
+            workflow_packages=self.bridge.isolated_job is None,
+        )
         from src.services.execution.requirements_setup_result import RequirementsInstallResult
         self.bridge.pool._apply_requirements_status(
             RequirementsInstallResult.from_json_dict(self.bridge.requirements)
@@ -750,6 +755,14 @@ class ApiExecutor(PoolWorker):
             )
         )
         if self.bridge.isolated_job is not None:
+            if self.bridge.isolated_job.backend == "kubernetes":
+                from src.jobs.platform.kubernetes_compute import adopt_compute_claim
+
+                return await adopt_compute_claim(
+                    self.incarnation_id, self.bridge.isolated_job.job_id,
+                    self.bridge.isolated_job.attempt, fits_bytes=fits_bytes,
+                    memory_sample=self.bridge.memory(), job_types=job_types,
+                )
             return await claim_platform_job(
                 backend=EXTERNAL_ISOLATED_BACKEND, fits_bytes=fits_bytes,
                 memory_sample=self.bridge.memory(), job_types=job_types,
@@ -1210,6 +1223,14 @@ class RemoteControlHost:
             signed = SignedHello.from_dict(initial.get("hello", {}))
             settings = get_settings()
             control_key = settings.secret_key
+            kubernetes_compute = False
+            if signed.form == "job":
+                from src.jobs.platform.kubernetes_compute import compute_control_key
+
+                scoped_key = await compute_control_key(signed.incarnation_id, settings.secret_key)
+                if scoped_key is not None:
+                    control_key = scoped_key
+                    kubernetes_compute = True
             if signed.form == "external":
                 if signed.resource_uid is None:
                     raise AuthenticationError("External worker control is not configured")
@@ -1225,7 +1246,7 @@ class RemoteControlHost:
             hello = verify_hello(control_key, signed)
             if hello.form == "external" and hello.execution_lane != "normal":
                 raise AuthenticationError("External capacity workers only support the Normal lane")
-            if hello.form == "external" and initial.get("version") != get_version():
+            if (hello.form == "external" or kubernetes_compute) and initial.get("version") != get_version():
                 raise AuthenticationError("External worker build must match the connected API build")
             sample = initial.get("sample")
             if not isinstance(sample, dict):
@@ -1253,9 +1274,9 @@ class RemoteControlHost:
             raise
 
         isolated_job = None
-        if hello.form == "external":
+        if hello.form == "external" or kubernetes_compute:
             reserved_handlers, reserved_compute, isolated_job = await _external_reserved_capabilities(
-                hello.incarnation_id
+                hello.incarnation_id, form=hello.form,
             )
             bootstrap["handlers"] = [
                 handler
@@ -1267,6 +1288,13 @@ class RemoteControlHost:
                 for capability in bootstrap["compute_capabilities"]
                 if f"{capability[0]}.v{capability[1]}" in reserved_compute
             ]
+            if isolated_job is not None:
+                bootstrap["supports_platform_jobs"] = False
+                if not reserved_compute.issubset({
+                    f"{name}.v{version}" for name, version in bootstrap["compute_capabilities"]
+                }):
+                    raise AuthenticationError("Isolated worker lacks required image computation")
+
 
         # Authentication precedes canonical admission. Reconnects naturally
         # get None here because their pod was already admitted.
