@@ -13,6 +13,7 @@ import json
 from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from datetime import date, datetime, timezone
+from io import BytesIO
 from typing import Any
 from uuid import UUID
 
@@ -161,9 +162,9 @@ def verify_checksum(blob: bytes, sha256: str) -> None:
         raise ArchiveVerifyError("stored object checksum does not match")
 
 
-def decode_segment(blob: bytes) -> list[ArchiveRow]:
+def _decode_expanded_segment(expanded: bytes) -> list[ArchiveRow]:
     try:
-        text = gzip.decompress(blob).decode()
+        text = expanded.decode()
         # Split on "\n" only: str.splitlines() also splits on U+2028/U+2029/U+0085,
         # which ensure_ascii=False leaves unescaped inside JSON strings.
         lines = text.split("\n")
@@ -174,9 +175,30 @@ def decode_segment(blob: bytes) -> list[ArchiveRow]:
         raise ArchiveVerifyError(f"stored object is unreadable: {exc}") from exc
 
 
-def verify_segment(blob: bytes, *, sha256: str, ids: Sequence[UUID]) -> list[ArchiveRow]:
+def decode_segment(blob: bytes) -> list[ArchiveRow]:
+    try:
+        expanded = gzip.decompress(blob)
+    except (OSError, EOFError, ValueError, TypeError, AttributeError) as exc:
+        raise ArchiveVerifyError(f"stored object is unreadable: {exc}") from exc
+    return _decode_expanded_segment(expanded)
+
+
+def verify_segment(
+    blob: bytes,
+    *,
+    sha256: str,
+    expected_rows: Sequence[ArchiveRow],
+) -> list[ArchiveRow]:
     verify_checksum(blob, sha256)
-    rows = decode_segment(blob)
-    if [r.id for r in rows] != list(ids):
-        raise ArchiveVerifyError(f"stored object holds {len(rows)} rows that do not match the {len(ids)} expected ids")
+    max_expanded_bytes = sum(line_size(row) for row in expected_rows)
+    try:
+        with gzip.GzipFile(fileobj=BytesIO(blob), mode="rb") as compressed:
+            expanded = compressed.read(max_expanded_bytes + 1)
+    except (OSError, EOFError, ValueError, TypeError, AttributeError) as exc:
+        raise ArchiveVerifyError(f"stored object is unreadable: {exc}") from exc
+    if len(expanded) > max_expanded_bytes:
+        raise ArchiveVerifyError("stored object exceeds the expected expanded size")
+    rows = _decode_expanded_segment(expanded)
+    if [row.to_line() for row in rows] != [row.to_line() for row in expected_rows]:
+        raise ArchiveVerifyError("stored object rows do not match the expected canonical rows")
     return rows

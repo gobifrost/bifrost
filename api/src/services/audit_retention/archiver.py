@@ -157,7 +157,7 @@ async def archive_segment(
 ) -> None:
     """Upload, read back and verify a segment, then commit it in its own transaction."""
     await store.put(segment.key, segment.body)
-    verify_segment(await store.get(segment.key), sha256=segment.sha256, ids=segment.ids)
+    verify_segment(await store.get(segment.key), sha256=segment.sha256, expected_rows=segment.rows)
     async with get_db_context() as db:
         await commit_segment(db, segment, job_id=job_id, lease_token=lease_token)
 
