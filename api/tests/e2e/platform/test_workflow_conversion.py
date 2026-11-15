@@ -268,6 +268,13 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         )
         assert apply_response.status_code == 202, apply_response.text
         _wait_for_job(e2e_client, platform_admin.headers, UUID(apply_response.json()["job_id"]))
+        async with db_session.bind.connect() as connection:
+            apply_row = (await connection.execute(select(
+                PlatformJob.executor_worker_id, PlatformJob.executor_compute_capability, PlatformJob.result,
+            ).where(PlatformJob.id == UUID(apply_response.json()["job_id"])))).one()
+        assert apply_row.executor_worker_id is not None
+        assert apply_row.executor_compute_capability == "workflow.graph.analyze.v1"
+        assert set(apply_row.result["completed"]) == {str(workflow.id), str(solution_workflow.id)}
 
         reopened = e2e_client.get(
             f"/api/workflow-conversions/{analysis_job_id}/report",

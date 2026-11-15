@@ -796,11 +796,11 @@ def _conversion_actor(
     )
 
 
-async def _prepare_source_graph(context, workflow, source, module_inventory):
+async def _prepare_source_graph(context, workflow, source, module_inventory, *, operation="workflows.conversions.create"):
     from src.services.workflow_graph_compute import prepare_workflow_graph
 
     async with get_db_context() as db:
-        await _require_current_conversion_admin(db, context, "workflows.conversions.create")
+        await _require_current_conversion_admin(db, context, operation)
         allowed = workflow.solution_id is None or bool(await db.scalar(
             select(Solution.allow_outbound_access).where(Solution.id == workflow.solution_id)))
     prepared = await prepare_workflow_graph(source, workflow.function_name, module_inventory.roots,
@@ -931,232 +931,239 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
     }
 
 
+async def _apply_selection_rows(db, analysis_id, workflow_id, *, lock=False):
+    workflow_query = select(Workflow).where(Workflow.id == workflow_id)
+    report_query = select(ReportRow).where(ReportRow.job_id == analysis_id, ReportRow.workflow_id == workflow_id)
+    if lock:
+        workflow_query, report_query = workflow_query.with_for_update(), report_query.with_for_update()
+    workflow = (await db.execute(workflow_query)).scalar_one_or_none()
+    report = (await db.execute(report_query)).scalar_one_or_none()
+    return workflow, report
+
+
+def _validate_apply_review(workflow, report, selection, payload, completed):
+    if workflow is None or report is None:
+        raise PlatformJobFailure("report_missing", "A selected workflow no longer has an analysis report", result={"completed": completed})
+    if report.status == "blocked":
+        raise PlatformJobFailure("blocked_report", "The selected workflow source could not be analyzed; resolve it and analyze again", result={"completed": completed})
+    if (report.review or {}).get("applied_selection_fingerprint") == selection.source_fingerprint:
+        return True
+    if report.status == "stale" or report.source_fingerprint != selection.source_fingerprint:
+        raise PlatformJobFailure("stale_report", "The selected workflow report is stale; analyze it again", result={"completed": completed})
+    if workflow.solution_id is not None and not payload.acknowledged_solution_requests:
+        raise PlatformJobFailure("solution_consent_required", "Applying a Solution workflow requires acknowledgement of its reviewed permission declaration", result={"completed": completed})
+    return False
+
+
+async def _verify_prepared_source_graph(workflow, source, prepared):
+    """Recheck source and resolver answers in the API before durable effects."""
+    def identity(sf):
+        return (sf.key, sf.path, sf.content_hash, sf.kind) if sf is not None else None
+    try:
+        if identity(await _source_for_workflow(workflow)) != identity(source):
+            return False
+        for key, module, level, target in prepared.resolutions:
+            current = await _resolve_import(prepared.sources[key], module, level,
+                workflow=workflow, allow_outbound_access=prepared.allow_outbound_access)
+            expected = prepared.sources[target] if target is not None else None
+            if identity(current) != identity(expected):
+                return False
+    except UnicodeDecodeError:
+        return False
+    except (FileNotFoundError, StorageError) as exc:
+        if not _is_missing_source_error(exc):
+            raise
+        return False
+    return True
+
+
 async def run_apply(context: PlatformJobContext, payload) -> dict:
+    if context.file_compute is None:
+        raise PlatformJobFailure("file_compute_required", "Workflow apply requires its source graph compute stage.")
     module_inventory = await read_runtime_modules()
     try:
         requester = UUID(context.requested_by_user_id)
     except ValueError as exc:
-        raise PlatformJobFailure(
-            "requester_invalid", "The requesting administrator is no longer available"
-        ) from exc
+        raise PlatformJobFailure("requester_invalid", "The requesting administrator is no longer available") from exc
     completed: list[str] = list((context.checkpoint or {}).get("completed", []))
     for selection in payload.selections:
         if str(selection.workflow_id) in completed:
             continue
-        async with get_db_context() as db, AsyncExitStack() as solution_writes:
-            try:
-                caller = await _require_current_conversion_admin(
-                    db, context, "workflows.conversions.update"
-                )
-            except PlatformJobFailure as exc:
-                if exc.result is None:
-                    exc.result = {"completed": completed}
-                raise
-            workflow = (
-                await db.execute(
-                    select(Workflow)
-                    .where(Workflow.id == selection.workflow_id)
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            report_row = (
-                await db.execute(
-                    select(ReportRow)
-                    .where(
-                        ReportRow.job_id == payload.analysis_job_id,
-                        ReportRow.workflow_id == selection.workflow_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one_or_none()
-            if workflow is None or report_row is None:
-                raise PlatformJobFailure(
-                    "report_missing",
-                    "A selected workflow no longer has an analysis report",
-                    result={"completed": completed},
-                )
-            if report_row.status == "blocked":
-                raise PlatformJobFailure(
-                    "blocked_report",
-                    "The selected workflow source could not be analyzed; resolve it and analyze again",
-                    result={"completed": completed},
-                )
-            if (report_row.review or {}).get(
-                "applied_selection_fingerprint"
-            ) == selection.source_fingerprint:
-                completed.append(str(selection.workflow_id))
-                continue
-            if (
-                report_row.status == "stale"
-                or report_row.source_fingerprint != selection.source_fingerprint
-            ):
-                raise PlatformJobFailure(
-                    "stale_report",
-                    "The selected workflow report is stale; analyze it again",
-                    result={"completed": completed},
-                )
-            if workflow.solution_id is not None:
+        try:
+            async with AsyncExitStack() as solution_writes:
+                # Rejections and legacy applied-selection receipts need no
+                # physical stage. The snapshot scope holds no mutation locks.
+                async with get_db_context() as db:
+                    await _require_current_conversion_admin(db, context, "workflows.conversions.update")
+                    workflow, report_row = await _apply_selection_rows(db, payload.analysis_job_id, selection.workflow_id)
+                    if _validate_apply_review(workflow, report_row, selection, payload, completed):
+                        completed.append(str(selection.workflow_id))
+                        continue
+                    reviewed_state = _workflow_review_state(workflow)
+                if workflow.solution_id is not None:
+                    try:
+                        await solution_writes.enter_async_context(solution_write_lock(workflow.solution_id))
+                    except SolutionWriteLockHeld as exc:
+                        raise PlatformJobFailure("solution_busy", "A Solution deployment is in progress; wait for it to finish and review the proposal again") from exc
+                # API capture and worker graph computation never hold a DB
+                # scope. The Solution writer lock spans capture through apply.
+                source = prepared = None
                 try:
-                    await solution_writes.enter_async_context(
-                        solution_write_lock(workflow.solution_id)
-                    )
-                except SolutionWriteLockHeld as exc:
-                    raise PlatformJobFailure(
-                        "solution_busy",
-                        "A Solution deployment is in progress; wait for it to finish and review the proposal again",
-                        result={"completed": completed},
-                    ) from exc
-            current = await _report_for_workflow(db, workflow, module_inventory=module_inventory)
-            if current["source_fingerprint"] != selection.source_fingerprint:
-                await _mark_stale(db, context, report_row)
-                raise PlatformJobFailure(
-                    "stale_report",
-                    "Workflow source, dependencies, identity, grants, or Solution consent changed; analyze it again",
-                    result={"completed": completed},
-                )
-            if current["unknowns"] and not selection.acknowledged_unknowns:
-                raise PlatformJobFailure(
-                    "unresolved_code",
-                    "Unresolved source analysis must be explicitly acknowledged",
-                    result={"completed": completed},
-                )
-            solution_request = None
-            if workflow.solution_id is not None:
-                solution_request = (
-                    await db.execute(
-                        select(SolutionWorkflowPermissionRequest)
-                        .where(
-                            SolutionWorkflowPermissionRequest.solution_id
-                            == workflow.solution_id,
-                            SolutionWorkflowPermissionRequest.workflow_id
-                            == workflow.id,
+                    source = await _source_for_workflow(workflow)
+                except UnicodeDecodeError:
+                    pass
+                except (FileNotFoundError, StorageError) as exc:
+                    if not _is_missing_source_error(exc):
+                        raise
+                if source is not None:
+                    prepared = await _prepare_source_graph(context, workflow, source, module_inventory,
+                        operation="workflows.conversions.update")
+                async with get_db_context() as db:
+                    # Canonical lock order: Solution writer -> owner/job ->
+                    # workflow/report -> consent. Progress is emitted after commit.
+                    await _fenced_job(db, context)
+                    caller = await _require_current_conversion_admin(db, context, "workflows.conversions.update")
+                    workflow, report_row = await _apply_selection_rows(db, payload.analysis_job_id, selection.workflow_id, lock=True)
+                    if _validate_apply_review(workflow, report_row, selection, payload, completed):
+                        completed.append(str(selection.workflow_id))
+                        await context.checkpoint_in_transaction(db, {"completed": completed}, phase="Applying reviewed workflows")
+                        await db.commit()
+                        continue
+                    allowed = workflow.solution_id is None or bool(await db.scalar(
+                        select(Solution.allow_outbound_access).where(Solution.id == workflow.solution_id).with_for_update(read=True)))
+                    if (prepared is None or _workflow_review_state(workflow) != reviewed_state or allowed != prepared.allow_outbound_access
+                            or not await _verify_prepared_source_graph(workflow, source, prepared)):
+                        await _mark_stale(db, context, report_row)
+                        raise PlatformJobFailure("stale_report", "Workflow source, dependencies, identity, grants, or Solution consent changed; analyze it again")
+                    solution_request = None
+                    if workflow.solution_id is not None:
+                        solution_request = (await db.execute(select(SolutionWorkflowPermissionRequest).where(
+                            SolutionWorkflowPermissionRequest.solution_id == workflow.solution_id,
+                            SolutionWorkflowPermissionRequest.workflow_id == workflow.id,
+                        ).with_for_update())).scalar_one_or_none()
+                    for key in prepared.analysis["dependencies"]:
+                        await _summary(db, prepared.sources[key], precomputed=prepared.summaries[key])
+                    current = await _report_for_workflow(db, workflow, source=source,
+                        module_inventory=module_inventory, prepared_analysis=prepared.analysis)
+                    if current["source_fingerprint"] != selection.source_fingerprint:
+                        await _mark_stale(db, context, report_row)
+                        raise PlatformJobFailure("stale_report", "Workflow source, dependencies, identity, grants, or Solution consent changed; analyze it again")
+                    if current["unknowns"] and not selection.acknowledged_unknowns:
+                        raise PlatformJobFailure("unresolved_code", "Unresolved source analysis must be explicitly acknowledged")
+                    if workflow.solution_id is None:
+                        workflow.permission_mode = "restricted"
+                        await db.execute(
+                            WorkflowPermissionGrant.__table__.delete().where(
+                                WorkflowPermissionGrant.workflow_id == workflow.id
+                            )
                         )
-                        .with_for_update()
-                    )
-                ).scalar_one_or_none()
-                if not payload.acknowledged_solution_requests:
-                    raise PlatformJobFailure(
-                        "solution_consent_required",
-                        "Applying a Solution workflow requires acknowledgement of its reviewed permission declaration",
-                        result={"completed": completed},
-                    )
-            await _fenced_job(db, context)
-            if workflow.solution_id is None:
-                workflow.permission_mode = "restricted"
-                await db.execute(
-                    WorkflowPermissionGrant.__table__.delete().where(
-                        WorkflowPermissionGrant.workflow_id == workflow.id
-                    )
-                )
-                for permission in current["proposed_permissions"]:
-                    db.add(
-                        WorkflowPermissionGrant(
-                            workflow_id=workflow.id,
-                            permission=permission,
-                            created_by=context.requested_by_email,
+                        for permission in current["proposed_permissions"]:
+                            db.add(
+                                WorkflowPermissionGrant(
+                                    workflow_id=workflow.id,
+                                    permission=permission,
+                                    created_by=context.requested_by_email,
+                                )
+                            )
+                    else:
+                        # Only this reauthorized, fenced administrator decision owns
+                        # these instance settings. Keep the ordinary Solution ORM
+                        # write guard intact for every other mutation surface.
+                        await db.execute(
+                            update(Workflow)
+                            .where(
+                                Workflow.id == workflow.id,
+                                Workflow.solution_id == workflow.solution_id,
+                            )
+                            .values(
+                                permission_mode="restricted",
+                            )
                         )
+                        await db.refresh(workflow)
+                        # The fresh request and approval are one transaction under the
+                        # job lease. This is an explicit administrator decision over
+                        # the exact reviewed proposal, never a reuse of stale consent.
+                        requested = RequestedWorkflowPermissions(
+                            mode=WorkflowPermissionMode.RESTRICTED,
+                            grants=[
+                                WorkflowPermissionGrantSpec(permission=value)
+                                for value in current["proposed_permissions"]
+                            ],
+                        )
+                        digest = request_digest(requested)
+                        grants_json = [
+                            {"permission": grant.permission} for grant in requested.grants
+                        ]
+                        if solution_request is None:
+                            solution_request = SolutionWorkflowPermissionRequest(
+                                solution_id=workflow.solution_id,
+                                workflow_id=workflow.id,
+                                requested_mode=requested.mode.value,
+                                requested_grants=grants_json,
+                                request_digest=digest,
+                                status=RequestStatus.APPROVED.value,
+                                approved_digest=digest,
+                                decided_by=context.requested_by_email,
+                                decided_at=datetime.now(timezone.utc),
+                            )
+                            db.add(solution_request)
+                        else:
+                            solution_request.requested_mode = requested.mode.value
+                            solution_request.requested_grants = grants_json
+                            solution_request.request_digest = digest
+                            solution_request.status = RequestStatus.APPROVED.value
+                            solution_request.approved_digest = digest
+                            solution_request.decided_by = context.requested_by_email
+                            solution_request.decided_at = datetime.now(timezone.utc)
+                        await emit_audit(
+                            db,
+                            "workflow.permission_conversion.solution_approved",
+                            resource_type="workflow",
+                            resource_id=workflow.id,
+                            details={
+                                "solution_id": str(workflow.solution_id),
+                                "request_digest": digest,
+                                "permissions": current["proposed_permissions"],
+                            },
+                            actor_override=_conversion_actor(context, caller, requester),
+                        )
+                    await emit_audit(
+                        db,
+                        "workflow.permission_conversion.apply",
+                        resource_type="workflow",
+                        resource_id=workflow.id,
+                        details={
+                            "analysis_job_id": str(payload.analysis_job_id),
+                            "selection_fingerprint": selection.source_fingerprint,
+                            "proposed_permission_count": len(current["proposed_permissions"]),
+                            "acknowledged_unknowns": selection.acknowledged_unknowns,
+                        },
+                        actor_override=_conversion_actor(context, caller, requester),
                     )
-            else:
-                # Only this reauthorized, fenced administrator decision owns
-                # these instance settings. Keep the ordinary Solution ORM
-                # write guard intact for every other mutation surface.
-                await db.execute(
-                    update(Workflow)
-                    .where(
-                        Workflow.id == workflow.id,
-                        Workflow.solution_id == workflow.solution_id,
+                    # Queries in the authority refresh must observe the identity,
+                    # grants, and consent just staged in this transaction.
+                    await db.flush()
+                    updated = await _refresh_applied_report(
+                        db, report_row, workflow, solution_request
                     )
-                    .values(
-                        permission_mode="restricted",
-                    )
-                )
-                await db.refresh(workflow)
-                # The fresh request and approval are one transaction under the
-                # job lease. This is an explicit administrator decision over
-                # the exact reviewed proposal, never a reuse of stale consent.
-                requested = RequestedWorkflowPermissions(
-                    mode=WorkflowPermissionMode.RESTRICTED,
-                    grants=[
-                        WorkflowPermissionGrantSpec(permission=value)
-                        for value in current["proposed_permissions"]
-                    ],
-                )
-                digest = request_digest(requested)
-                grants_json = [
-                    {"permission": grant.permission} for grant in requested.grants
-                ]
-                if solution_request is None:
-                    solution_request = SolutionWorkflowPermissionRequest(
-                        solution_id=workflow.solution_id,
-                        workflow_id=workflow.id,
-                        requested_mode=requested.mode.value,
-                        requested_grants=grants_json,
-                        request_digest=digest,
-                        status=RequestStatus.APPROVED.value,
-                        approved_digest=digest,
-                        decided_by=context.requested_by_email,
-                        decided_at=datetime.now(timezone.utc),
-                    )
-                    db.add(solution_request)
-                else:
-                    solution_request.requested_mode = requested.mode.value
-                    solution_request.requested_grants = grants_json
-                    solution_request.request_digest = digest
-                    solution_request.status = RequestStatus.APPROVED.value
-                    solution_request.approved_digest = digest
-                    solution_request.decided_by = context.requested_by_email
-                    solution_request.decided_at = datetime.now(timezone.utc)
-                await emit_audit(
-                    db,
-                    "workflow.permission_conversion.solution_approved",
-                    resource_type="workflow",
-                    resource_id=workflow.id,
-                    details={
-                        "solution_id": str(workflow.solution_id),
-                        "request_digest": digest,
-                        "permissions": current["proposed_permissions"],
-                    },
-                    actor_override=_conversion_actor(context, caller, requester),
-                )
-            await emit_audit(
-                db,
-                "workflow.permission_conversion.apply",
-                resource_type="workflow",
-                resource_id=workflow.id,
-                details={
-                    "analysis_job_id": str(payload.analysis_job_id),
-                    "selection_fingerprint": selection.source_fingerprint,
-                    "proposed_permission_count": len(current["proposed_permissions"]),
-                    "acknowledged_unknowns": selection.acknowledged_unknowns,
-                },
-                actor_override=_conversion_actor(context, caller, requester),
-            )
-            # Queries in the authority refresh must observe the identity,
-            # grants, and consent just staged in this transaction.
-            await db.flush()
-            updated = await _refresh_applied_report(
-                db, report_row, workflow, solution_request
-            )
-            updated["status"] = "already_declared"
-            report_row.source_fingerprint = updated["source_fingerprint"]
-            report_row.status = "already_declared"
-            report_row.report = updated
-            report_row.review = {
-                "applied": True,
-                "applied_selection_fingerprint": selection.source_fingerprint,
-                "acknowledged_unknowns": selection.acknowledged_unknowns,
-            }
-            await db.commit()
-        completed.append(str(selection.workflow_id))
-        await context.save_checkpoint(
-            {"completed": completed}, phase="Applying reviewed workflows"
-        )
-        await context.report(
-            "Applying reviewed workflows",
-            len(completed),
-            len(payload.selections),
-            100 * len(completed) / len(payload.selections),
-        )
+                    updated["status"] = "already_declared"
+                    report_row.source_fingerprint = updated["source_fingerprint"]
+                    report_row.status = "already_declared"
+                    report_row.report = updated
+                    report_row.review = {
+                        "applied": True,
+                        "applied_selection_fingerprint": selection.source_fingerprint,
+                        "acknowledged_unknowns": selection.acknowledged_unknowns,
+                    }
+                    completed.append(str(selection.workflow_id))
+                    await context.checkpoint_in_transaction(db, {"completed": completed}, phase="Applying reviewed workflows")
+                    await db.commit()
+        except PlatformJobFailure as exc:
+            if exc.result is None:
+                exc.result = {"completed": completed}
+            raise
+        await context.report("Applying reviewed workflows", len(completed), len(payload.selections),
+            100 * len(completed) / len(payload.selections))
     return {"completed": completed}
 
 

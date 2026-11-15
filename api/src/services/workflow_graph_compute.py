@@ -12,6 +12,7 @@ class PreparedWorkflowGraph:
     sources: dict[str, SourceFile]
     summaries: dict[str, dict]
     allow_outbound_access: bool = False
+    resolutions: tuple = ()
 
 
 async def prepare_workflow_graph(entry: SourceFile, function: str, roots: frozenset[str],
@@ -37,7 +38,8 @@ async def prepare_workflow_graph(entry: SourceFile, function: str, roots: frozen
         for key in state['summaries']:
             sources[key] = replace(sources[key], source='')
         if not result['requests']:
-            return PreparedWorkflowGraph(result['analysis'], sources, result['summaries'])
+            return PreparedWorkflowGraph(result['analysis'], sources, result['summaries'],
+                resolutions=tuple(tuple(item) for item in state['resolutions']))
         raw_bytes = 0
         for key, module, level in result['requests']:
             resolved = await resolve(sources[key], module, level)

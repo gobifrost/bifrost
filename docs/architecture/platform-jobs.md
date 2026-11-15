@@ -587,7 +587,7 @@ The final transaction takes the canonical owner/job fence before the workflow
 registry lock, reauthorizes the administrator after source review, then commits
 the inherited default and audit record together. Large source summaries run off
 the API event loop. Cutover is a non-control API task, so its potentially long
-review does not occupy the reserved maintenance control slot. Apply retains its current placement pending its separate compute migration.
+review does not occupy the reserved maintenance control slot. Apply also consumes prepared source graphs through the shared compute path below.
 
 ### Workflow permission source graph compute
 
@@ -608,6 +608,24 @@ analyzer's dependency/graph limits remain conservative findings. Results bind to
 the exact input digest and captured dependency hashes, with evidence constrained
 to captured source. Source summaries are cached only for actual dependencies.
 All permission proposals still require the established explicit review/apply
-path. Cutover and the not-yet-migrated apply path retain their current source
-review behavior; the shared graph prerequisite is available for apply's next
-migration. Analyzer loading remains lazy outside actual analysis work.
+path. Apply revalidates prepared graphs before its API-owned mutation
+transaction as described below; API cutover retains its current source review
+behavior. Analyzer loading remains lazy outside actual analysis work.
+
+### Reviewed permission apply
+
+`workflow.permissions.apply` uses the same source-graph operation as analysis.
+The API rejects blocked, stale or unacknowledged selections before computation,
+retains a Solution writer lock across preparation/apply, and holds no DB scope
+during physical graph stages. The final transaction acquires owner/job fencing
+before workflow/report locks, reloads administrator authority and the reviewed
+selection, and locks Solution scope/consent before deriving permission changes.
+It rechecks source hashes and every captured resolver answer, including negative
+answers, so a newly appeared dependency cannot silently alter a reviewed graph.
+Missing source marks the report stale without changing grants.
+
+SDK/usage/authority/consent mapping, restricted-mode updates, grants, Solution
+approval, audit records and report refresh remain API-owned. Their completion
+cursor commits in the same transaction. Progress runs only after commit and
+lock release. Persisted applied-selection receipts continue to prevent replay
+of older completed selections when a runner lost its checkpoint.

@@ -184,6 +184,8 @@ def _context():
         requested_by_name="Admin",
         checkpoint=None,
         save_checkpoint=AsyncMock(),
+        file_compute=AsyncMock(),
+        checkpoint_in_transaction=AsyncMock(),
         report=AsyncMock(),
     )
 
