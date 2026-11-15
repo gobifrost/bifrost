@@ -24,7 +24,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
     assert inventory["counts"] == {
         "cli": 180,  # Includes solution git sources.
         "manifest": 16,
-        "mcp": 100,
+        "mcp": 101,  # Includes inline Execute Code.
         "rest": 723,  # Includes App setup and four Solution-source routes.
         "sdk": 21,
     }
@@ -127,7 +127,7 @@ def test_documentation_mcp_tool_is_dispositioned_not_pending() -> None:
         if row["status"] == "transport_only"
     }
 
-    assert set(dispositioned) == {"get_docs"}
+    assert set(dispositioned) == {"bifrost_get_docs"}
     for row in dispositioned.values():
         assert "has not entered" not in row["reason"], row
 

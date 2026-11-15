@@ -7501,7 +7501,7 @@
     "operation_id": null,
     "path": "/api/sdk/modules-resolve",
     "permission": "repository.read",
-    "reason": "Durable workflow source scope; human diagnostics require repository.read, and inline workspace access requires repository.readwrite."
+    "reason": "Durable workflow source scope; human diagnostics and inline workspace source reads require repository.read."
   },
   {
     "access_class": "permission",
@@ -7515,7 +7515,7 @@
     "operation_id": null,
     "path": "/api/sdk/modules/{path}",
     "permission": "repository.read",
-    "reason": "Durable workflow source scope; human diagnostics require repository.read, and inline workspace access requires repository.readwrite."
+    "reason": "Durable workflow source scope; human diagnostics and inline workspace source reads require repository.read."
   },
   {
     "access_class": "permission",
@@ -10798,6 +10798,20 @@
   },
   {
     "access_class": "permission",
+    "boundary": "platform",
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": "deny_unless_permission",
+    "intended_change": null,
+    "mcp_tool": "bifrost_execute_code",
+    "method": null,
+    "operation_id": null,
+    "path": null,
+    "permission": "code.execute",
+    "reason": "Thin MCP wrapper over the inline-code branch of POST /api/workflows/execute. Execute Code is enforced in shared.sdk_workflow_execution beyond the one-hop adapter scan; existing SDK permissions and reach govern effects."
+  },
+  {
+    "access_class": "permission",
     "boundary": "organization",
     "current_gate": "authenticated",
     "inline_checks": [],
@@ -10965,6 +10979,20 @@
     "path": null,
     "permission": "forms.readwrite",
     "reason": "Thin MCP wrapper over PATCH /api/forms/{form_id}; inherits that route's entry."
+  },
+  {
+    "access_class": "personal",
+    "boundary": null,
+    "current_gate": "authenticated",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": "bifrost_get_docs",
+    "method": null,
+    "operation_id": null,
+    "path": null,
+    "permission": null,
+    "reason": "Reads generated platform documentation; owns no entity or org state."
   },
   {
     "access_class": "permission",
@@ -11571,20 +11599,6 @@
     "path": null,
     "permission": "repository.read",
     "reason": "Reads `_repo/` workspace content; scope-bypass admin only, matching REST files.py editor routes."
-  },
-  {
-    "access_class": "personal",
-    "boundary": null,
-    "current_gate": "authenticated",
-    "inline_checks": [],
-    "inline_effect": null,
-    "intended_change": null,
-    "mcp_tool": "get_docs",
-    "method": null,
-    "operation_id": null,
-    "path": null,
-    "permission": null,
-    "reason": "Reads generated platform documentation; owns no entity or org state."
   },
   {
     "access_class": "permission",

@@ -2282,7 +2282,7 @@ export interface paths {
         put?: never;
         /**
          * Execute a workflow, data provider, or script
-         * @description Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.
+         * @description Execute a workflow or data provider by ID. For data providers, returns options list in result field. Inline code requires the Platform-wide Execute Code permission.
          */
         post: operations["workflows.execute"];
         delete?: never;
@@ -8685,8 +8685,8 @@ export interface paths {
          * @description Get MCP server status and available tools for the current user.
          *
          *     This is a REST endpoint (not MCP protocol) for debugging and discovery.
-         *     Returns the stable gateway tools plus the number of agents the caller
-         *     can discover through them.
+         *     Returns the gateway and permission-enabled tools plus the number of
+         *     agents the caller can discover through them.
          */
         get: operations["mcp_status_api_mcp_status_get"];
         put?: never;
@@ -31886,7 +31886,7 @@ export interface components {
             script_name?: string | null;
             /**
              * Org Id
-             * @description Override execution org context within the caller's reach; use global for Global scope. Requires workflows.execute in the target organization.
+             * @description Override execution org context within the caller's reach; use global for Global scope. Workflow runs require workflows.execute there; inline code requires Execute Code separately.
              */
             org_id?: string | null;
             /**

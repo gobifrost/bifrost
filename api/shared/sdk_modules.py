@@ -83,7 +83,7 @@ async def module_scope_for_principal(db, user, *, solution_id=None, global_repo_
         if runtime.kind == "agent_run":
             raise ModuleSourceError(403, "A workflow source scope is required")
         if runtime.workflow_id is None:
-            if not allows_permission(caller, "repository.readwrite", None):
+            if not allows_permission(caller, "repository.read", None):
                 raise ModuleSourceError(403, "Workspace source access is required")
             return ModuleSourceScope(solution_id=None, global_repo_access=True)
         workflow = await db.get(Workflow, runtime.workflow_id)

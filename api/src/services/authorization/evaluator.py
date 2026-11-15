@@ -92,6 +92,7 @@ _CROSS_ORG_EFFECTS = frozenset(
     {
         InlineEffect.DENY_UNLESS_SUPERUSER,
         InlineEffect.DENY_UNLESS_BYPASS,
+        InlineEffect.DENY_UNLESS_PERMISSION,
         InlineEffect.WIDENS_FOR_SUPERUSER,
         InlineEffect.WIDENS_FOR_BYPASS,
         InlineEffect.WIDENS_FOR_PERMISSION,

@@ -2,7 +2,7 @@
 Unit tests for MCP Tools.
 
 Tests the MCP tools for the Bifrost platform:
-- get_docs: Returns unified platform documentation
+- bifrost_get_docs: Returns unified platform documentation
 - bifrost_form_list: Lists Forms visible to the caller
 - search_knowledge: Searches the knowledge base
 
@@ -437,7 +437,7 @@ class TestGetSystemToolIds:
             "bifrost_workflow_list",
             "bifrost_integration_list",
             "bifrost_form_list",
-            "get_docs",
+            "bifrost_get_docs",
             "search_knowledge",
         ]
 

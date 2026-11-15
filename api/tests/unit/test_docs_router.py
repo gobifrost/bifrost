@@ -9,9 +9,9 @@ import pytest
 
 @pytest.mark.asyncio
 async def test_get_docs_returns_markdown():
-    from src.services.mcp_server.tools.docs import get_docs
+    from src.services.mcp_server.tools.docs import bifrost_get_docs
 
-    result = await get_docs(context=None)
+    result = await bifrost_get_docs(context=None)
     schema = result.structured_content["schema"]
     assert isinstance(schema, str)
     assert len(schema) > 100
@@ -20,9 +20,9 @@ async def test_get_docs_returns_markdown():
 
 @pytest.mark.asyncio
 async def test_get_docs_contains_all_sections():
-    from src.services.mcp_server.tools.docs import get_docs
+    from src.services.mcp_server.tools.docs import bifrost_get_docs
 
-    result = await get_docs(context=None)
+    result = await bifrost_get_docs(context=None)
     schema = result.structured_content["schema"]
 
     # Verify all major sections are present

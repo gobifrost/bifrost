@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from fastapi import HTTPException
 
-from src.routers.mcp import list_mcp_tools
+from src.routers.mcp import list_mcp_tools, mcp_status
 from src.core.principal import UserPrincipal
 from src.services.authorization.context import AuthorizationContext, Boundary, BoundaryKind, RoleGrant
 from src.services.authorization.enforce import Caller
@@ -62,3 +62,26 @@ async def test_settings_inventory_respects_admin_and_runtime_boundaries(is_admin
             result = await list_mcp_tools(caller.principal, session)
             assert result.tools == []
             assert inventory.await_args.kwargs["for_configuration"] is is_admin
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("permitted", [False, True])
+async def test_mcp_status_matches_permission_enabled_default_tools(permitted):
+    from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
+
+    caller, session = _runtime_caller(), AsyncMock()
+    tools = [SimpleNamespace(id=name) for name in ("bifrost_execute_code", "bifrost_get_docs")] if permitted else []
+    with (
+        patch("src.routers.mcp.MCPConfigService") as config_cls,
+        patch("src.services.mcp_server.tool_access.MCPToolAccessService") as tools_cls,
+        patch("src.routers.mcp.load_caller", new=AsyncMock(return_value=caller)),
+        patch("src.routers.mcp._gateway_service") as gateway,
+    ):
+        config_cls.return_value.get_config = AsyncMock(return_value=SimpleNamespace(enabled=True))
+        tools_cls.return_value.get_default_tools = AsyncMock(return_value=tools)
+        gateway.return_value.accessible_agent_count = AsyncMock(return_value=0)
+        result = await mcp_status(caller.principal, session)
+
+    expected = set(GATEWAY_TOOL_NAMES) | ({"bifrost_execute_code", "bifrost_get_docs"} if permitted else set())
+    assert set(result["tools"]) == expected
+    assert result["tools_count"] == len(expected)

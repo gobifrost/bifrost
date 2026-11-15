@@ -2,6 +2,75 @@
 
 Bifrost is an automation platform for building workflows, forms, agents, and apps. Everything below is what you need to build on the platform.
 
+## Execute Code Without a Workflow
+
+`bifrost_execute_code` runs trusted, one-off Python through the existing execution
+worker without registering a workflow. Execute Code (`code.execute`) is a
+privileged capability: grant it only to platform administrators or code authors
+trusted with platform-administrator-level access. The worker does not provide a
+security sandbox for untrusted Python.
+
+SDK requests retain the execution identity's existing permissions and organization
+checks. Those checks govern SDK requests; they do not contain arbitrary Python
+or prevent harmful actions that the execution identity is authorized to perform.
+
+The script supports top-level `await`. Keys from `input_data` are available as
+variables. Assign the value to return to `result`; no decorator is needed:
+
+```python
+# code="result = left + right", input_data={"left": 19, "right": 23}
+result = left + right
+```
+
+Submission returns an `execution_id`, not the script's result. On default MCP,
+use `bifrost_get_execution` until the status is terminal. On an assigned agent,
+use `bifrost_execution_get`. Inspect errors before deciding whether another
+execution is appropriate; do not resubmit code to fetch its result.
+
+### Discover and Reuse Workspace Modules
+
+Read the SDK signatures below before calling a method. For one complete Python
+SDK module, call `bifrost_get_docs` with `sdk_module`, for example `"files"`, `"tables"`,
+`"artifacts"`, or `"events"`. This keeps that reference small enough for native
+agent context; use it when the full platform docs are truncated. An unknown
+module name returns the supported module names.
+
+Search existing Python
+source before implementing integration or business logic again. With existing
+`repository.read` permission, default MCP clients can use the files SDK through
+Execute Code to inspect source without a configured coding agent:
+
+```python
+from bifrost import files
+result = await files.list("modules", location="workspace")
+```
+
+Then read a discovered path with `await files.read(path, location="workspace")`.
+Alternatively, use an accessible agent's `list_content`, `bifrost_file_search`,
+and `read_content_lines` tools. On default MCP, find that agent with
+`bifrost_search_capabilities`, load its instructions and exact tool schemas,
+then call the discovered tools through `bifrost_execute_tool`.
+
+Workspace Python files import by dotted path, without a `.py` suffix: a file
+`modules/customer_helpers.py` imports as `modules.customer_helpers`. Inspect
+the real path, function signature, and behavior first; do not assume this
+example module exists. The existing workspace import loader resolves the
+source, so it need not be pasted into the script or registered as a workflow.
+SDK authorization still applies inside imported helpers.
+
+When configuring a native agent or agent-scoped MCP endpoint, explicitly assign
+`bifrost_execute_code`, `bifrost_get_docs`, and `bifrost_execution_get`. For workspace
+discovery also assign `list_content`, `bifrost_file_search`, and
+`read_content_lines`; these assignments do not grant repository permissions.
+For the full authoring guide, get the [Bifrost plugin](https://github.com/gobifrost/bifrost/tree/main/plugins/bifrost).
+Add [gobifrost/bifrost](https://github.com/gobifrost/bifrost) as a marketplace in
+your client's plugin manager and install `bifrost`. Its Setup skill connects your
+client to your instance; its Build skill covers SDK usage, integration discovery,
+workspace search, and reuse. The Build references include `references/python-sdk.md`,
+`references/repository.md`, and `references/workflows.md`. The plugin is optional
+for Execute Code. Native agents can learn directly from `bifrost_get_docs`;
+installing a client plugin does not inject its skills into a native agent's context.
+
 ## Workflows & Tools
 
 Workflows are async Python functions decorated with `@workflow`, `@tool`, or `@data_provider`. They run in a sandboxed execution engine with access to the Bifrost SDK.

@@ -2399,8 +2399,8 @@ _LAUNCH_ENTRIES: dict[tuple[str, str] | str, frozenset[str]] = {
     ("POST", "/api/sdk/ai/complete"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/ai/stream"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/artifacts/image"): frozenset({"ai.execute"}),
-    ("POST", "/api/workflows/execute"): frozenset({"workflows.execute"}),
-    "bifrost_workflow_execute": frozenset({"workflows.execute"}),
+    ("POST", "/api/workflows/execute"): frozenset({"workflows.execute", "code.execute"}),
+    "bifrost_workflow_execute": frozenset({"workflows.execute", "code.execute"}),
 }
 
 
