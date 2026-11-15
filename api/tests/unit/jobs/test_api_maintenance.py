@@ -35,6 +35,7 @@ async def test_api_maintenance_claims_only_its_catalogued_jobs(monkeypatch) -> N
         fits_bytes=750,
         job_types=frozenset(
             {
+                "agent.summary_backfill",
                 "model_catalog.refresh",
                 "oauth.refresh",
                 "solution.update_check",
@@ -76,6 +77,7 @@ def test_api_owned_maintenance_is_excluded_from_executor_types() -> None:
 
     assert api_platform_job_types() == frozenset(
         {
+            "agent.summary_backfill",
             "model_catalog.refresh",
             "oauth.refresh",
             "solution.update_check",

@@ -292,6 +292,7 @@ _METADATA = MappingProxyType(
                 "SUMMARY_BACKFILL_DEFINITION",
                 PlatformJobPolicy(15 * 60, max_attempts=2, min_memory_headroom_mb=128),
                 encrypt_payload=True,
+                execution_owner="api",
             ),
             _metadata(
                 "chat.video_generation",
