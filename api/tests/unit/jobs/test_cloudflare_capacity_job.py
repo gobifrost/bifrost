@@ -197,10 +197,9 @@ async def test_apply_rejects_profile_mismatch_without_activating_connection(
 
         async def profile(self) -> WorkerCapacityProfile:
             return WorkerCapacityProfile(
-                protocol_version=2, scope=connection.scope, worker_version="test-version",
+                protocol_version=1, scope=connection.scope, worker_version="test-version",
                 memory_limit_bytes=job.MEMORY_LIMIT_BYTES, max_workers=1,
-                max_lifetime_seconds=900, execution_handlers=list(job.EXECUTION_HANDLERS),
-                compute_capabilities=list(job.COMPUTE_CAPABILITIES),
+                max_lifetime_seconds=900,
             )
 
     copier = SimpleNamespace(copy=lambda **_kwargs: CopiedWorkerImage(
@@ -230,6 +229,4 @@ async def test_apply_rejects_profile_mismatch_without_activating_connection(
     assert len(deployments) == 1
     assert deployments[0].limits.memory_limit_bytes == 4 * 1024**3
     assert deployments[0].limits.max_workers == 2
-    assert deployments[0].limits.execution_handlers == job.EXECUTION_HANDLERS
-    assert deployments[0].limits.compute_capabilities == job.COMPUTE_CAPABILITIES
     activate.assert_not_awaited()

@@ -44,8 +44,6 @@ def deployment():
             max_workers=2,
             max_lifetime_seconds=900,
             starting_grace_ms=30_000,
-            execution_handlers=("workflow.execute",),
-            compute_capabilities=("app.compile.v2",),
         ),
     )
 
@@ -89,6 +87,8 @@ def _response_for_complete_reconcile(
         assert '"keep_bindings":["secret_text"]' in body
         assert '"type":"plain_text"' in body
         assert '"name":"SCOPE"' in body
+        assert '"name":"EXECUTION_HANDLERS"' not in body
+        assert '"name":"COMPUTE_CAPABILITIES"' not in body
         assert '"text":"capacity-scope"' in body
         assert '"name":"MAX_WORKERS"' in body
         assert f'"text":"{max_workers}"' in body

@@ -10,7 +10,6 @@ import httpx
 
 from shared.models import CloudflareCapacityAccount, CloudflareCapacityApplyPayload
 from shared.version import get_version
-from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
 from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
@@ -30,8 +29,6 @@ from src.services.worker_pool.connection import (
 from src.services.worker_pool.external_client import ExternalCapacityClient
 
 MEMORY_LIMIT_BYTES = 4 * 1024**3
-EXECUTION_HANDLERS = ("workflow.execute", "agent.run", "agent.summarize", "agent.summarize_backfill")
-COMPUTE_CAPABILITIES = (APP_COMPILE_CAPABILITY_NAME, "agent.loop.v1", "summary.compute.v1")
 
 
 async def run_cloudflare_capacity_apply(
@@ -100,7 +97,6 @@ async def run_cloudflare_capacity_apply(
                 limits=CloudflareDeploymentLimits(
                     memory_limit_bytes=MEMORY_LIMIT_BYTES, max_workers=maximum,
                     max_lifetime_seconds=settings.pool_max_lifetime_seconds, starting_grace_ms=30_000,
-                    execution_handlers=EXECUTION_HANDLERS, compute_capabilities=COMPUTE_CAPABILITIES,
                 ),
             )
             await context.report("Provisioning Cloudflare workers", percent=40)
@@ -111,9 +107,7 @@ async def run_cloudflare_capacity_apply(
             await context.report("Verifying the worker provider", percent=90)
             profile = await ExternalCapacityClient(deployed.worker_url, connection.capacity_token, http=http).profile()
             if (profile.scope != connection.scope or profile.worker_version != image.worker_version
-                    or profile.memory_limit_bytes != MEMORY_LIMIT_BYTES or profile.max_workers != maximum
-                    or set(profile.execution_handlers) != set(EXECUTION_HANDLERS)
-                    or set(profile.compute_capabilities) != set(COMPUTE_CAPABILITIES)):
+                    or profile.memory_limit_bytes != MEMORY_LIMIT_BYTES or profile.max_workers != maximum):
                 raise CapacityConnectionError("The provisioned worker provider does not match this installation")
         public_deployment = {
             **asdict(deployed), "image_digest": image.digest, "registry_image": image.reference,

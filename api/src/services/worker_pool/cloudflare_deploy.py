@@ -50,8 +50,6 @@ class CloudflareDeploymentLimits:
     max_workers: int
     max_lifetime_seconds: int
     starting_grace_ms: int
-    execution_handlers: tuple[str, ...]
-    compute_capabilities: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -387,8 +385,6 @@ class CloudflareDeploymentAdapter:
             "MAX_WORKERS": str(limits.max_workers),
             "MAX_LIFETIME_SECONDS": str(limits.max_lifetime_seconds),
             "STARTING_GRACE_MS": str(limits.starting_grace_ms),
-            "EXECUTION_HANDLERS": json.dumps(limits.execution_handlers, separators=(",", ":")),
-            "COMPUTE_CAPABILITIES": json.dumps(limits.compute_capabilities, separators=(",", ":")),
             "WORKER_CONTAINER_ENV": json.dumps({
                 "BIFROST_API_URL": deployment.bifrost_api_origin,
                 "HOME": "/tmp/bifrost",
