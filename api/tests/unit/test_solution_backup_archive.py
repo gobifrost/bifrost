@@ -13,6 +13,7 @@ from uuid import uuid4
 
 import pytest
 
+from shared import solution_archive
 from src.services.solutions import file_payloads, zip_install
 from src.services.solutions.secrets_blob import SolutionContent, encode_secrets_blob
 
@@ -83,7 +84,7 @@ def write_metadata(zf, *, payload=MEMBER, size=1, digest=None):
     )
 
 
-def test_larger_compressed_budget_applies_only_to_encrypted_backups(tmp_path, monkeypatch):
+def test_larger_compressed_budget_applies_only_to_encrypted_backups(tmp_path):
     source = tmp_path / "source.zip"
     backup = tmp_path / "backup.zip"
     with zipfile.ZipFile(source, "w") as zf:
@@ -91,12 +92,13 @@ def test_larger_compressed_budget_applies_only_to_encrypted_backups(tmp_path, mo
         zf.writestr("README.md", "documentation\n" * 100)
     with zipfile.ZipFile(backup, "w") as zf:
         write_metadata(zf)
-    monkeypatch.setattr(zip_install, "MAX_SOLUTION_ARCHIVE_BYTES", 128)
-    monkeypatch.setattr(zip_install, "MAX_SOLUTION_BACKUP_ARCHIVE_BYTES", 8 * MIB)
+    limits = solution_archive.SolutionArchiveLimits(
+        archive_bytes=128, backup_archive_bytes=8 * MIB
+    )
 
     with pytest.raises(ValueError, match="compressed upload limit"):
-        zip_install.preview_zip_path(source)
-    assert zip_install.preview_zip_path(backup).requires_password is True
+        solution_archive.preview_zip_path(source, limits=limits)
+    assert solution_archive.preview_zip_path(backup, limits=limits).requires_password is True
 
 
 @pytest.mark.slow
@@ -259,7 +261,7 @@ def test_source_and_metadata_entry_limits_remain_enforced(member, size):
         infolist=lambda: infos, namelist=lambda: [i.filename for i in infos]
     )
     with pytest.raises(ValueError, match="entry is too large"):
-        zip_install._validate_zip_members(archive)
+        solution_archive.validate_zip_members(archive)
 
 
 def test_backup_payload_totals_can_exceed_source_workspace_budget():
@@ -279,7 +281,7 @@ def test_backup_payload_totals_can_exceed_source_workspace_budget():
     archive = SimpleNamespace(
         infolist=lambda: infos, namelist=lambda: [i.filename for i in infos]
     )
-    zip_install._validate_zip_members(archive)
+    solution_archive.validate_zip_members(archive)
 
 
 async def test_payload_header_cannot_request_unbounded_scrypt_memory(monkeypatch):
