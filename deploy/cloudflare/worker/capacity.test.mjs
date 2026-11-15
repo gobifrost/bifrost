@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { createEngine, ProtocolError, STATE } from "./capacity-core.mjs";
-import {
+import cloudflareProvider, {
     containerStartEnv,
     workerControlKey,
     inactivityTimeoutMs,
@@ -22,8 +22,6 @@ const PROFILE = {
     memory_limit_bytes: 2 * 1024 ** 3,
     max_workers: 2,
     max_lifetime_seconds: 3600,
-    execution_handlers: ["workflow.execute"],
-    compute_capabilities: ["app.compile.v2"],
     starting_grace_ms: 0,
 };
 
@@ -120,9 +118,24 @@ async function prepared(ctx) {
     return doc.resource_uid;
 }
 
-test("capabilities profile is stable", () => {
+test("capabilities profile is hardware and build only", async () => {
     const { engine } = setup();
     assert.equal(typeof engine.get, "function");
+    const response = await cloudflareProvider.fetch(
+        new Request("https://provider/v1/capabilities", {
+            headers: { Authorization: `Bearer ${ENV.CAPACITY_TOKEN}` },
+        }),
+        ENV,
+    );
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), {
+        protocol_version: 1,
+        scope: "test-scope",
+        worker_version: "test-build-1",
+        memory_limit_bytes: 2 * 1024 ** 3,
+        max_workers: 2,
+        max_lifetime_seconds: 3600,
+    });
 });
 
 test("unknown worker reads null", async () => {
@@ -354,8 +367,6 @@ const ENV = {
     MAX_WORKERS: "2",
     MAX_LIFETIME_SECONDS: "3600",
     STARTING_GRACE_MS: "0",
-    EXECUTION_HANDLERS: '["workflow.execute"]',
-    COMPUTE_CAPABILITIES: '["app.compile.v2"]',
     CAPACITY_TOKEN: "t".repeat(32),
     WORKER_CONTAINER_ENV: "{}",
 };
@@ -561,7 +572,6 @@ test("settings refuse a deployment with no capacity token", () => {
     // Without this the bearer comparison accepts the literal "Bearer undefined".
     assert.throws(() => readSettings({ ...ENV, CAPACITY_TOKEN: undefined }));
     assert.throws(() => readSettings({ ...ENV, CAPACITY_TOKEN: "short" }));
-    assert.throws(() => readSettings({ ...ENV, EXECUTION_HANDLERS: '["workflow.execute", "workflow.execute"]' }));
     assert.doesNotThrow(() => readSettings(ENV));
 });
 

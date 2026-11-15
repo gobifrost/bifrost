@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from shared.models import WorkerCapacityProfile
+from shared.version import get_version
 
 if TYPE_CHECKING:
     from src.services.kubernetes_execution import KubernetesPolicy
@@ -13,11 +14,8 @@ def validate_external_policy(
     hybrid: bool = False,
 ) -> None:
     """Reject an incompatible policy without changing it or provisioning work."""
-    if "agent.run" in profile.execution_handlers and "agent.loop.v1" not in profile.compute_capabilities:
-        raise ValueError("agent.run requires the API-only agent.loop.v1 compute capability")
-    if (any(handler in profile.execution_handlers for handler in ("agent.summarize", "agent.summarize_backfill"))
-            and "summary.compute.v1" not in profile.compute_capabilities):
-        raise ValueError("Agent summaries require the API-only summary.compute.v1 compute capability")
+    if profile.worker_version != get_version():
+        raise ValueError("worker_version must match the running API build")
     if max_lifetime_seconds > profile.max_lifetime_seconds:
         raise ValueError(
             "BIFROST_POOL_MAX_LIFETIME_SECONDS exceeds the capacity provider limit "

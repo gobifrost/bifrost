@@ -16,12 +16,13 @@ from pydantic import ValidationError
 from sqlalchemy import func, select
 
 from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
+from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES, WORKER_IMAGE_HANDLER_NAMES
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.enums import ExecutionStatus
 from src.services import work_dispatch
-from src.services.worker_pool import claims, controller, external_controller
+from src.services.worker_pool import claims, controller, external_controller, external_policy
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.external_controller import ExternalWorkerPoolController
 from src.services.worker_pool.coordinator import HybridWorkerPoolCoordinator
@@ -32,39 +33,46 @@ from tests.unit.services.worker_pool.test_worker_pool import (
 
 db = db_fixture
 TOKEN = "synthetic-capacity-token-" + "x" * 32
-ACTUAL_HANDLERS = ["workflow.execute"]
-ACTUAL_COMPUTE = ["app.compile.v2"]
+ACTUAL_HANDLERS = list(WORKER_IMAGE_HANDLER_NAMES)
+ACTUAL_COMPUTE = list(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
 
 
-def test_capacity_profile_requires_an_explicit_v2_capability_envelope() -> None:
+def test_capacity_profile_is_a_v1_hardware_envelope() -> None:
     profile = {
-        "protocol_version": 2,
+        "protocol_version": 1,
         "scope": "test-provider",
         "worker_version": "test-worker",
         "memory_limit_bytes": 2 * GIB,
         "max_workers": 2,
         "max_lifetime_seconds": 21600,
-        "execution_handlers": ["workflow.execute"],
-        "compute_capabilities": ["app.compile.v2"],
     }
-    assert WorkerCapacityProfile.model_validate(profile).execution_handlers == ["workflow.execute"]
+    assert WorkerCapacityProfile.model_validate(profile).protocol_version == 1
     for invalid in (
-        {key: value for key, value in profile.items() if key != "execution_handlers"},
-        {**profile, "execution_handlers": ["workflow.execute", "workflow.execute"]},
-        {**profile, "compute_capabilities": ["app.compile.v2", "app.compile.v2"]},
+        {**profile, "execution_handlers": ["workflow.execute"]},
+        {**profile, "compute_capabilities": ["app.compile.v2"]},
         {**profile, "unexpected": True},
-        {**profile, "protocol_version": 1},
+        {**profile, "protocol_version": 2},
     ):
         with pytest.raises(ValidationError):
             WorkerCapacityProfile.model_validate(invalid)
 
 
+def test_external_capacity_profile_build_must_match_the_api(monkeypatch) -> None:
+    monkeypatch.setattr(controller, "get_version", lambda: "api-build")
+    profile = WorkerCapacityProfile(
+        protocol_version=1, scope="test-provider", worker_version="worker-build",
+        memory_limit_bytes=2 * GIB, max_workers=2, max_lifetime_seconds=21600,
+    )
+
+    with pytest.raises(CapacityProtocolError, match="must match the running API build"):
+        ExternalWorkerPoolController(AsyncMock(), SETTINGS, profile)
+
+
 class Provider:
     def __init__(self):
         self.profile = WorkerCapacityProfile(
-            protocol_version=2, scope="test-provider", worker_version="test-worker",
+            protocol_version=1, scope="test-provider", worker_version="test-worker",
             memory_limit_bytes=2 * GIB, max_workers=2, max_lifetime_seconds=21600,
-            execution_handlers=["workflow.execute"], compute_capabilities=["app.compile.v2"],
         )
         self.resources = {}
         self.requests = []
@@ -120,6 +128,8 @@ async def capacity(db, monkeypatch):
     policy = replace(POLICY, largest_worker_mib=2048)
     await _store_policy(db.sessions, policy)
     monkeypatch.setattr(external_controller, "get_db_context", db.context)
+    monkeypatch.setattr(controller, "get_version", lambda: provider.profile.worker_version)
+    monkeypatch.setattr(external_policy, "get_version", lambda: provider.profile.worker_version)
     async with httpx.AsyncClient(transport=httpx.MockTransport(provider.handle)) as http:
         client = ExternalCapacityClient("https://capacity.invalid", TOKEN, http=http)
         pool = ExternalWorkerPoolController(client, SETTINGS, await client.profile())
@@ -144,7 +154,7 @@ async def test_prepared_uid_is_committed_before_start(db, capacity):
     assert capacity.provider.starts == [str(worker_id)]
 
 
-async def test_external_reservation_records_only_profile_capabilities(db, capacity):
+async def test_external_reservation_uses_the_worker_image_contract(db, capacity):
     await _accept_pool_run()
 
     [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
@@ -152,8 +162,8 @@ async def test_external_reservation_records_only_profile_capabilities(db, capaci
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker is not None
-        assert worker.supported_handlers == ["workflow.execute"]
-        assert worker.supported_compute == ["app.compile.v2"]
+        assert worker.supported_handlers == list(WORKER_IMAGE_HANDLER_NAMES)
+        assert worker.supported_compute == list(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
 
 
 async def test_external_warm_pool_does_not_count_kubernetes_capacity(db, capacity):
@@ -234,7 +244,7 @@ async def test_hybrid_cloud_cap_never_exceeds_its_profile(db, capacity):
     assert cloud_count == 1
 
 
-async def test_external_capacity_ignores_unsupported_agent_and_platform_demand(db, capacity):
+async def test_external_capacity_plans_worker_image_supported_agent_and_platform_demand(db, capacity):
     async with db.context() as session:
         work_dispatch.stage_dispatch(
             session, family="agent_run", subject_id=uuid4(), handler="agent.run",
@@ -246,10 +256,10 @@ async def test_external_capacity_ignores_unsupported_agent_and_platform_demand(d
             memory_required_bytes=64 * 1024**2,
         ))
 
-    assert await capacity.pool.launch_for_demand(capacity.policy) == []
+    assert len(await capacity.pool.launch_for_demand(capacity.policy)) == 2
 
 
-async def test_external_app_compile_demand_requires_the_profile_compute_capability(db, capacity):
+async def test_external_app_compile_demand_uses_the_worker_image_compute_contract(db, capacity):
     async with db.context() as session:
         session.add(PlatformJob(
             job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
@@ -262,18 +272,6 @@ async def test_external_app_compile_demand_requires_the_profile_compute_capabili
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker is not None
         assert worker.supported_compute == ["app.compile.v2"]
-
-
-async def test_external_app_compile_demand_does_not_launch_without_the_capability(db, capacity):
-    capacity.pool.profile = capacity.pool.profile.model_copy(update={"compute_capabilities": []})
-    async with db.context() as session:
-        session.add(PlatformJob(
-            job_type="application.sdk_update", payload={}, requested_by_user_id=str(uuid4()),
-            requested_by_email="test@example.com", requested_by_name="Test", title="SDK update",
-            memory_required_bytes=64 * 1024**2,
-        ))
-
-    assert await capacity.pool.launch_for_demand(capacity.policy) == []
 
 
 async def test_lost_start_response_is_observed_without_resending_the_start(db, capacity):
@@ -340,22 +338,17 @@ async def test_external_admission_binds_only_the_first_process(db, capacity):
         assert worker.hostname == "physical-worker"
 
 
-async def test_provider_rollout_fences_an_old_reservation_instead_of_relabeling_it(db, capacity):
+async def test_provider_build_change_is_rejected_before_it_relabels_a_reservation(db, capacity):
     await _accept_pool_run()
     [old_id] = await capacity.pool.launch_for_demand(capacity.policy)
     capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
-    capacity.pool.profile = capacity.provider.profile
-    capacity.pool.version = "next-worker"
-    await capacity.pool.reconcile_worker(old_id, capacity.policy)
+    with pytest.raises(CapacityProtocolError, match="must match the running API build"):
+        await capacity.pool.reconcile()
     assert capacity.provider.resources == {}
     assert capacity.provider.starts == []
     async with db.context() as session:
         old = await session.get(ExecutionWorker, old_id)
-        assert (old.state, old.version, old.end_reason) == ("lost", "test-worker", "provider_version_changed")
-    [new_id] = await capacity.pool.launch_for_demand(capacity.policy)
-    assert new_id != old_id
-    async with db.context() as session:
-        assert (await session.get(ExecutionWorker, new_id)).version == "next-worker"
+        assert (old.state, old.version, old.end_reason) == ("reserved", "test-worker", None)
 
 
 async def test_recovered_preparation_cannot_bind_or_start_a_different_build(db, capacity):

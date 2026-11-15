@@ -62,10 +62,6 @@ MAX_WORKERS = "4"
 # Cloudflare caps a container's inactivity timeout at six hours.
 MAX_LIFETIME_SECONDS = "21600"
 STARTING_GRACE_MS = "30000"
-# This capability envelope is explicit, not inferred from WORKER_VERSION. Set
-# it only when the pinned image implements the corresponding launcher paths.
-EXECUTION_HANDLERS = '["workflow.execute"]'
-COMPUTE_CAPABILITIES = '["app.compile.v2"]'
 # API-only container inputs, such as BIFROST_API_URL and runtime home paths.
 # Database, Redis, storage and installation signing credentials are forbidden.
 # The provider derives a per-resource control key from CAPACITY_TOKEN; that key

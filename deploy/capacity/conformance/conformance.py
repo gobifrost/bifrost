@@ -32,7 +32,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
 import ssl
 import subprocess
 import sys
@@ -283,21 +282,15 @@ def main() -> int:
         status, doc = suite.c.capabilities()
         assert status == 200, f"status {status}"
         for field in ("protocol_version", "scope", "worker_version", "memory_limit_bytes",
-                      "max_workers", "max_lifetime_seconds", "execution_handlers",
-                      "compute_capabilities"):
+                      "max_workers", "max_lifetime_seconds"):
             assert field in doc, f"missing {field}"
-        assert doc["protocol_version"] == 2, "protocol_version must be 2"
+        assert doc["protocol_version"] == 1, "protocol_version must be 1"
         assert doc["scope"] == args.scope, f"scope mismatch: {doc['scope']}"
         assert doc["worker_version"], "empty worker_version"
         assert 64 * 1024**2 <= doc["memory_limit_bytes"] <= 128 * 1024**4
         assert doc["memory_limit_bytes"] % 1048576 == 0, "memory not MiB aligned"
         assert 1 <= doc["max_workers"] <= 1000
         assert 60 <= doc["max_lifetime_seconds"] <= 604800
-        for field in ("execution_handlers", "compute_capabilities"):
-            assert isinstance(doc[field], list), f"{field} must be a list"
-            assert len(doc[field]) <= 64 and len(doc[field]) == len(set(doc[field])), f"{field} must be unique"
-            assert all(isinstance(name, str) and re.fullmatch(r"[a-z][a-z0-9._:-]{0,99}", name)
-                       for name in doc[field]), f"invalid {field}"
         suite.profile = doc
 
     @suite.case("capabilities: bearer auth required")

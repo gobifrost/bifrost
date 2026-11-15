@@ -40,7 +40,7 @@ models in `api/shared/models.py`.
 
 | Request | Contract |
 | --- | --- |
-| `GET /v1/capabilities` | Return protocol version 2, immutable provider scope, current build and bounds, plus explicit execution and compute capability lists. |
+| `GET /v1/capabilities` | Return protocol version 1, immutable provider scope, the build matching this API/worker image, and physical bounds. |
 | `GET /v1/workers/{uuid}` | Strongly read the resource, or return 404 when absent. |
 | `PUT /v1/workers/{uuid}` | Idempotently prepare the immutable reservation without starting a process. Return `prepared` and its stable resource UID. |
 | `POST /v1/workers/{uuid}/start` | Start the prepared resource matching the supplied `resource_uid`. Return `starting` or `running`. |
@@ -64,25 +64,22 @@ Providers must preserve idempotency and tombstones, reject conflicting
 reservations or resource UIDs, and never restart a stopped incarnation. Report
 out-of-memory only from explicit runtime evidence, not a generic process exit.
 
-## Capability Envelope Revision 2
+## Version-Matched Worker Image Contract
 
-The `/v1/` resource paths remain unchanged. Capability envelopes now use
-`protocol_version: 2` and require `execution_handlers` and
-`compute_capabilities`: unique, bounded capability-name lists. A provider must
-advertise only paths implemented by its pinned worker image; version strings do
-not imply feature support. For example, an API-only worker that can execute
-workflows and compile Apps advertises `workflow.execute` and `app.compile.v2`.
+The `/v1/` resource paths remain unchanged. Capability envelopes use
+`protocol_version: 1` and describe hardware only. The API derives the expected
+handlers and API-only compute stages from one shared contract for its own
+version-matched worker image; an adapter never declares job types or privileged
+platform-job support. Only the catalog's existing eligible API-only compute
+jobs participate in external demand; generic privileged PlatformJobs do not.
 
-The controller uses these declarations to plan only supported work. External
-capacity receives workflow dispatches and services only when it advertises
-`workflow.execute`; it receives `application.deploy` and
-`application.sdk_update` demand only when it advertises `app.compile.v2`.
-Agent runs and summaries require their corresponding execution handlers and
-`agent.loop.v1` or `summary.compute.v1`. The API intersects provider declarations
-with the physical launcher's advertised capabilities before admitting work.
-Other local platform job types remain on privileged/static or Kubernetes
-capacity. A v1 profile is rejected deliberately: deploy the matching provider
-and pinned worker image as part of the runtime change before selecting it.
+The provider reports its worker build, which must match the running API before
+policy can be saved; the controller also validates it against the immutable
+reservation before startup and enrollment. After boot, the signed launcher
+Hello negotiates the process's actual handlers and compute stages; a missing or
+different capability cannot enroll or claim work. This keeps the provider
+responsible for scope, build, memory, count, and lifetime while retaining the
+existing authenticated process-level fence.
 
 ## Confirmed Physical Cleanup
 

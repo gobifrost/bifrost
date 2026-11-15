@@ -16,15 +16,15 @@ the API. Requirements reach the worker through authenticated control bootstrap.
 Do not supply database, Redis, S3 or installation signing credentials in
 WORKER_CONTAINER_ENV; this candidate rejects them.
 
-The checked-in template declares `workflow.execute` and `app.compile.v2`.
-Only advertise handlers and compute capabilities implemented by the pinned
-image. With the matching API-only adapters, an image may also advertise agents
-and summaries; privileged platform-job runners remain out of scope. Sharing an
-image does not itself make any additional handler API-only.
+The template does not declare job types. The matching image registers its
+capabilities through authenticated worker hello; the provider reports only
+hardware and build. Settings rules choose which work may trigger overflow.
+Workflows, agents, summaries and App builds use the API-only adapters; generic
+privileged platform-job runners remain on their existing execution paths.
 
 API and launcher must be upgraded together for the bootstrap exchange; the
 external handshake deliberately does not accept the installation signing key.
-The provider resource protocol is version 2.
+The provider resource protocol is version 1.
 
 A Worker that implements the five capacity endpoints and starts container
 incarnations on request. The API remains canonical: it decides demand, admits
@@ -90,8 +90,9 @@ Wrangler `4.162.0`; do not substitute a floating Wrangler release.
 
 1. Set `wrangler.toml` values first: a digest-pinned image, the image's exact
    embedded `WORKER_VERSION`, an opaque `SCOPE`, and bounds that the API will
-   also enforce. Advertise only handlers and capabilities implemented by the
-   image. `MEMORY_LIMIT_BYTES` must equal the API policy's standard and
+   also enforce. The image registers its own capabilities after it connects;
+   do not configure job types in the provider. `MEMORY_LIMIT_BYTES` must equal
+   the API policy's standard and
    largest worker memory; `MAX_WORKERS` and `MAX_LIFETIME_SECONDS` must cover
    the API policy's worker-count, warm-minimum, and lifetime bounds; and
    `max_instances` must be at least `MAX_WORKERS`. Set
@@ -159,8 +160,6 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 | `max_instances` (in `[[containers]]`) | Must be at least `MAX_WORKERS`: a start beyond the application's instance count is refused even when the scope registry would admit it. |
 | `MAX_WORKERS` | Ceiling this provider will run. |
 | `MAX_LIFETIME_SECONDS` | Upper bound the API may request; cannot exceed six hours, which is the platform's inactivity-timeout maximum. |
-| `EXECUTION_HANDLERS` | Required JSON list of execution handlers implemented by the pinned image. |
-| `COMPUTE_CAPABILITIES` | Required JSON list of semantic compute capabilities; declare `app.compile.v2` only once that image supports App compilation. |
 | `WORKER_CONTAINER_ENV` | JSON object containing the API URL and runtime paths. Platform credentials are refused. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. |
 | `CAPACITY_TOKEN` | **Secret**, not a var: `npx wrangler secret put CAPACITY_TOKEN`, 32–512 non-space characters. The provider answers `503` rather than serving unauthenticated when it is missing. |
 
@@ -170,9 +169,11 @@ reaches the API and is closed with `1008 policy violation` during `hello` is thi
 fence: check that `WORKER_CONTAINER_ENV` does not carry a stale `BIFROST_VERSION`
 shadowing the image's own build.
 
-The capability lists form the protocol-v2 envelope. They are not inferred from
-`WORKER_VERSION`; a v1 provider is rejected. Upgrade and deploy the Worker and
-its pinned image together before declaring a new handler or compute capability.
+The provider profile has no job-type list. `WORKER_VERSION` remains the
+version-matched image identity for admission; after launch the worker hello
+automatically registers the image's actual capabilities. Upgrade and deploy
+the Worker and its pinned image together. UI overflow rules decide which jobs
+may use this capacity; they are not provider configuration.
 
 The second most common is a container smaller than the workload. The Containers
 application's size comes from `instance_type` in the `[[containers]]` block, not

@@ -12,12 +12,16 @@ import httpx
 from sqlalchemy import and_, select, update
 
 from shared.models import CloudflareCapacityRules, WorkerCapacityProfile, WorkerCapacityReservation
+from shared.worker_compute import (
+    WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES,
+    WORKER_IMAGE_HANDLER_NAMES,
+)
 from src.config import Settings
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
-    RECONCILE_SECONDS, SWEEP_SECONDS, LiveControllers, WorkerCapacityController, _now, _withdraw_live,
+    RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.demand import APP_COMPILE_CAPABILITY, EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
@@ -43,12 +47,12 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         *, hybrid: bool = False, rules: CloudflareCapacityRules | None = None,
     ) -> None:
         super().__init__(settings, worker_form="external")
+        if profile.worker_version != self.version:
+            raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.client = client
         self.profile = profile
         self.hybrid = hybrid
         self.rules = rules or CloudflareCapacityRules()
-        self.version = profile.worker_version
-        self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
         self.cleanup_states = ("lost", "retired")
 
     def _memory_environment(self, generation: int) -> dict[str, Any]:
@@ -74,14 +78,12 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
 
     def _planner_execution_handlers(self) -> tuple[str, ...]:
-        return tuple(self.profile.execution_handlers)
+        return WORKER_IMAGE_HANDLER_NAMES
 
     def _planner_compute_capabilities(self) -> tuple[str, ...]:
-        return tuple(self.profile.compute_capabilities)
+        return WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 
     def _planner_platform_job_types(self) -> frozenset[str]:
-        if APP_COMPILE_CAPABILITY not in self.profile.compute_capabilities:
-            return frozenset()
         return EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
 
     def _platform_request_capability(self) -> str | None:
@@ -92,8 +94,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
     def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
         return bool(
-            set(worker.supported_handlers).intersection(self.profile.execution_handlers)
-            or set(worker.supported_compute).intersection(self.profile.compute_capabilities)
+            set(worker.supported_handlers).intersection(WORKER_IMAGE_HANDLER_NAMES)
+            or set(worker.supported_compute).intersection(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
         )
 
     def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
@@ -118,8 +120,9 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
+        if current.worker_version != self.version:
+            raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.profile = current
-        self.version = current.worker_version
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])
