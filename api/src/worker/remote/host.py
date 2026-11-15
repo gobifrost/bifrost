@@ -41,11 +41,6 @@ from src.services.worker_pool.claims import (
 from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.agent_orchestration import (
-    ApiComputeAgentConsumer,
-    reconcile_agent_computes,
-)
-from src.worker.remote.summary_orchestration import reconcile_summary_computes
 from src.worker.remote.app_compile_host import (
     APP_COMPILE_JOB_TYPES, ApiAppBuildBackend, reconcile_app_compiles,
 )
@@ -633,6 +628,8 @@ class ApiExecutor(PoolWorker):
     def _make_agent_consumer(self) -> RemoteAgentConsumer:
         if self.bridge.agents is None:
             if any(capability in self.bridge.compute_capabilities for capability in (("agent.loop", 1), ("summary.compute", 1))):
+                from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
                 self.bridge.agents = ApiComputeAgentConsumer(self.bridge, worker_id=self.incarnation_id)
             else:
                 self.bridge.agents = RemoteAgentConsumer(self.bridge, worker_id=self.incarnation_id)
@@ -741,8 +738,13 @@ class ApiExecutor(PoolWorker):
             if self.bridge.agents is not None:
                 await self.bridge.agents.reject_missing(self.bridge.inventory)
             await reconcile_app_compiles(self.bridge)
-            await reconcile_agent_computes(self.bridge)
-            await reconcile_summary_computes(self.bridge)
+            if (self.bridge.inventory.get("agent_compute_stages", []) != []
+                    or self.bridge.agent_compute_runtimes):
+                from src.worker.remote.agent_orchestration import reconcile_agent_computes
+                from src.worker.remote.summary_orchestration import reconcile_summary_computes
+
+                await reconcile_agent_computes(self.bridge)
+                await reconcile_summary_computes(self.bridge)
             if self.bridge.inventory.get("compute_retirement_requested") is True:
                 self.request_stop()
             self._reconciled_generation = generation
@@ -1037,9 +1039,12 @@ class RemoteSession:
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0
         self.worker._lost = True
-        if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
-            await self.release_lease()
-            await self.bridge.agents.abandon_orchestrations()
+        if self.bridge.agents is not None:
+            from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
+            if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
+                await self.release_lease()
+                await self.bridge.agents.abandon_orchestrations()
         if self.bridge.pool is not None:
             await self.bridge.pool.ownership_lost(reason)
         self.worker.request_stop()
@@ -1058,12 +1063,15 @@ class RemoteSession:
     async def detach(self) -> None:
         """Drop an API owner after transport closure without killing children."""
         self.begin_handoff()
-        if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
-            await self.release_lease()
-            await self.bridge.agents.abandon_orchestrations()
-        elif self.bridge.agents is not None:
-            self.bridge.agents.detach()
-            await self.release_lease()
+        if self.bridge.agents is not None:
+            from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
+            if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
+                await self.release_lease()
+                await self.bridge.agents.abandon_orchestrations()
+            else:
+                self.bridge.agents.detach()
+                await self.release_lease()
         else:
             await self.release_lease()
         self.renewal.cancel()

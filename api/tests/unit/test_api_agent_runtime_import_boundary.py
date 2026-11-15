@@ -1,8 +1,8 @@
 """The API process does not import the agent runtime.
 
-Agent runs and chat turns execute on workers, in children of the launcher's
-agent template. Importing the API application must not load the runtime
-those children import (Pydantic AI, CodeMode, the agent executors).
+Physical agent compute executes in worker children. API orchestration loads
+its runtime only when needed; importing the API application and reconciling
+an idle worker must not eagerly load Pydantic AI or the agent executors.
 """
 
 from __future__ import annotations
@@ -29,8 +29,27 @@ def test_importing_the_api_application_loads_no_agent_runtime() -> None:
     code = f"""
 import json
 import sys
+import asyncio
+from unittest.mock import AsyncMock, Mock
+from uuid import uuid4
 
 import src.main  # noqa: F401
+from src.worker.remote.host import ApiExecutor, Bridge
+from src.worker.remote.ownership import RemoteOwnerLease
+
+async def reconcile_idle_worker():
+    lease = RemoteOwnerLease(
+        worker_id=uuid4(), owner_id=uuid4(), launcher_id=uuid4(), session_generation=1,
+    )
+    bridge = Bridge(Mock(), {{
+        "current": 1, "limit": 100, "hostname": "runner", "requirements": {{}},
+    }}, lease)
+    bridge.pool = Mock(reconcile_inventory=AsyncMock(return_value={{}}))
+    bridge.inventory = {{"routes": [], "agent_compute_stages": []}}
+    bridge.inventory_ready.set()
+    await ApiExecutor(bridge, lease.worker_id)._reconcile_transport_inventory()
+
+asyncio.run(reconcile_idle_worker())
 
 print(json.dumps(sorted(
     name for name in sys.modules
