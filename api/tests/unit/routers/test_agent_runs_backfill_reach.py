@@ -8,20 +8,24 @@ from src.routers import agent_runs
 from src.services.authorization.reach import OrgReach
 
 
+@pytest.mark.parametrize(
+    ("operation_global", "user_global", "allowed"),
+    [(True, True, True), (False, True, False), (True, False, False)],
+)
 @pytest.mark.asyncio
-async def test_global_backfill_job_requires_global_operation_reach(monkeypatch):
+async def test_global_backfill_job_requires_both_global_reaches(
+    monkeypatch, operation_global, user_global, allowed,
+):
     """A real Global agent is visible only to a caller authorized for Global."""
     job = SimpleNamespace(agent_id=uuid4(), requested_by=uuid4())
     db = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(organization_id=None)))
     caller = SimpleNamespace()
-    monkeypatch.setattr(agent_runs, "user_reach", lambda _caller: OrgReach(everything=True))
+    org = uuid4()
+    operation = OrgReach(everything=operation_global, organization_ids=frozenset({org}))
+    original_user = OrgReach(everything=user_global, organization_ids=frozenset({org}))
+    monkeypatch.setattr(agent_runs, "user_reach", lambda _caller: original_user)
 
-    assert await agent_runs._backfill_job_in_reach(
-        db, caller, job, OrgReach(everything=True)
-    )
-    assert not await agent_runs._backfill_job_in_reach(
-        db, caller, job, OrgReach(organization_ids=frozenset({uuid4()}))
-    )
+    assert await agent_runs._backfill_job_in_reach(db, caller, job, operation) is allowed
 
 
 @pytest.mark.asyncio
