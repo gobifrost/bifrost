@@ -33,28 +33,23 @@ def _receive(transfer: codec.AppBuildTransfer, *, temp_dir: Path) -> codec.Recei
 
 def test_input_round_trip_preserves_provenance_but_uses_remote_environment(tmp_path: Path) -> None:
     inputs = _inputs()
-    transfer = codec.encode_app_build_inputs(inputs, chunk_size=31)
-    try:
+    with codec.encode_app_build_inputs(inputs, chunk_size=31) as transfer:
         chunks = list(transfer.iter_chunks())
         assert all(len(chunk.data_b64) <= 4 * ((31 + 2) // 3) for chunk in chunks)
         with zipfile.ZipFile(transfer.path) as archive:
             assert "environment" not in archive.read("manifest.json").decode()
             assert "must-not-transfer" not in archive.read("manifest.json").decode()
         received = _receive(transfer, temp_dir=tmp_path)
-    finally:
-        transfer.close()
-    try:
-        decoded = codec.decode_app_build_inputs(received, environment={"PATH": "/remote-toolchain"})
-    finally:
-        received.close()
 
-    assert decoded.app_id == inputs.app_id
-    assert decoded.source_files == inputs.source_files
-    assert decoded.dependencies == inputs.dependencies
-    assert decoded.sdk_tarball == inputs.sdk_tarball
-    assert decoded.recipe == inputs.recipe
-    assert decoded.require_lockfile is True
-    assert decoded.environment == {"PATH": "/remote-toolchain"}
+    with received:
+        decoded = codec.decode_app_build_inputs(received, environment={"PATH": "/remote-toolchain"})
+        assert decoded.app_id == inputs.app_id
+        assert decoded.source_files == inputs.source_files
+        assert decoded.dependencies == inputs.dependencies
+        assert decoded.sdk_tarball == inputs.sdk_tarball
+        assert decoded.recipe == inputs.recipe
+        assert decoded.require_lockfile is True
+        assert decoded.environment == {"PATH": "/remote-toolchain"}
 
 
 def test_result_round_trip_is_bounded_and_preserves_artifacts(tmp_path: Path) -> None:
@@ -62,20 +57,15 @@ def test_result_round_trip_is_bounded_and_preserves_artifacts(tmp_path: Path) ->
         artifacts={"index.html": b"built", "assets/app.js": b"console.log(1)"},
         build_identity="identity",
     )
-    transfer = codec.encode_app_build_result(result, chunk_size=11)
-    try:
+    with codec.encode_app_build_result(result, chunk_size=11) as transfer:
         received = _receive(transfer, temp_dir=tmp_path)
-    finally:
-        transfer.close()
-    try:
+
+    with received:
         assert codec.decode_app_build_result(received) == result
-    finally:
-        received.close()
 
 
 def test_receiver_rejects_out_of_order_and_duplicate_chunks(tmp_path: Path) -> None:
-    transfer = codec.encode_app_build_inputs(_inputs(), chunk_size=20)
-    try:
+    with codec.encode_app_build_inputs(_inputs(), chunk_size=20) as transfer:
         chunks = list(transfer.iter_chunks())
         assert len(chunks) > 1
         with codec.AppBuildTransferReceiver(transfer.manifest, temp_dir=tmp_path) as receiver:
@@ -84,42 +74,34 @@ def test_receiver_rejects_out_of_order_and_duplicate_chunks(tmp_path: Path) -> N
             receiver.add_chunk(chunks[0])
             with pytest.raises(codec.AppBuildTransferError, match="ordered"):
                 receiver.add_chunk(chunks[0])
-    finally:
-        transfer.close()
 
 
 def test_receiver_rejects_corrupt_digest_and_removes_partial_temp_file(tmp_path: Path) -> None:
-    transfer = codec.encode_app_build_inputs(_inputs(), chunk_size=17)
-    bad_manifest = codec.AppBuildTransferManifest(
-        **{**transfer.manifest.to_dict(), "sha256": "0" * 64}
-    )
-    receiver = codec.AppBuildTransferReceiver(bad_manifest, temp_dir=tmp_path)
-    path = receiver.path
-    try:
+    with codec.encode_app_build_inputs(_inputs(), chunk_size=17) as transfer:
+        bad_manifest = codec.AppBuildTransferManifest(
+            **{**transfer.manifest.to_dict(), "sha256": "0" * 64}
+        )
+        receiver = codec.AppBuildTransferReceiver(bad_manifest, temp_dir=tmp_path)
+        path = receiver.path
         for chunk in transfer.iter_chunks():
             receiver.add_chunk(chunk)
         with pytest.raises(codec.AppBuildTransferError, match="digest"):
             receiver.finish()
-    finally:
-        transfer.close()
     assert not path.exists()
 
 
 def test_decoder_rejects_unsafe_and_duplicate_archive_paths(tmp_path: Path) -> None:
-    unsafe = _received_archive(
+    with _received_archive(
         tmp_path,
         [
             ("manifest.json", b'{"version":1,"kind":"app_build_result","build_identity":"id"}'),
             ("artifacts/../escape.js", b"nope"),
         ],
-    )
-    try:
+    ) as unsafe:
         with pytest.raises(codec.AppBuildTransferError, match="unsafe archive path"):
             codec.decode_app_build_result(unsafe)
-    finally:
-        unsafe.close()
 
-    duplicate = _received_archive(
+    with _received_archive(
         tmp_path,
         [
             ("manifest.json", b'{"version":1,"kind":"app_build_result","build_identity":"id"}'),
@@ -127,12 +109,9 @@ def test_decoder_rejects_unsafe_and_duplicate_archive_paths(tmp_path: Path) -> N
             ("artifacts/index.html", b"two"),
         ],
         expects_duplicate_warning=True,
-    )
-    try:
+    ) as duplicate:
         with pytest.raises(codec.AppBuildTransferError, match="duplicate"):
             codec.decode_app_build_result(duplicate)
-    finally:
-        duplicate.close()
 
 
 def test_source_and_result_limits_are_enforced(monkeypatch) -> None:

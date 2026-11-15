@@ -307,29 +307,28 @@ async def test_status_unknown_is_safe_readback_and_released_stays_fenced(
 def test_child_rebuilds_recipe_using_scrubbed_local_environment(
     tmp_path: Path, monkeypatch
 ) -> None:
-    transfer = codec.encode_app_build_inputs(_inputs())
-    output = tmp_path / "output.zip"
-    expected_environment = {"PATH": "/toolchain", "LANG": "C"}
-    seen: dict[str, object] = {}
-    recipe = {
-        "schema": 1,
-        "variant": "server-install-v2",
-        "sdk": "a" * 64,
-        "toolchain": "b" * 64,
-        "environment": "c" * 64,
-    }
+    with codec.encode_app_build_inputs(_inputs()) as transfer:
+        output = tmp_path / "output.zip"
+        expected_environment = {"PATH": "/toolchain", "LANG": "C"}
+        seen: dict[str, object] = {}
+        recipe = {
+            "schema": 1,
+            "variant": "server-install-v2",
+            "sdk": "a" * 64,
+            "toolchain": "b" * 64,
+            "environment": "c" * 64,
+        }
 
-    monkeypatch.setattr(app_compile, "package_tool_env", lambda: expected_environment)
-    monkeypatch.setattr(
-        app_compile, "build_recipe", lambda sdk, *, variant, environment: recipe
-    )
+        monkeypatch.setattr(app_compile, "package_tool_env", lambda: expected_environment)
+        monkeypatch.setattr(
+            app_compile, "build_recipe", lambda sdk, *, variant, environment: recipe
+        )
 
-    def fake_compile(inputs):
-        seen["environment"], seen["recipe"] = inputs.environment, inputs.recipe
-        return AppBuildResult({"index.html": b"done"}, "identity")
+        def fake_compile(inputs):
+            seen["environment"], seen["recipe"] = inputs.environment, inputs.recipe
+            return AppBuildResult({"index.html": b"done"}, "identity")
 
-    monkeypatch.setattr(app_compile, "compile_app", fake_compile)
-    try:
+        monkeypatch.setattr(app_compile, "compile_app", fake_compile)
         receipt = app_compile._compile_instruction(
             {
                 "input_path": str(transfer.path),
@@ -337,8 +336,6 @@ def test_child_rebuilds_recipe_using_scrubbed_local_environment(
                 "output_path": str(output),
             }
         )
-    finally:
-        transfer.close()
-    assert receipt["state"] == "succeeded"
-    assert seen == {"environment": expected_environment, "recipe": recipe}
-    assert output.exists()
+        assert receipt["state"] == "succeeded"
+        assert seen == {"environment": expected_environment, "recipe": recipe}
+        assert output.exists()
