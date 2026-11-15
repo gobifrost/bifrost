@@ -62,9 +62,8 @@ Rules the core relies on:
 CAPACITY_TOKEN=...            # 32-512 non-space ASCII
 CAPACITY_SCOPE=demo
 WORKER_VERSION=<image build>
-# Required v2 capability envelope; declare only paths the pinned image implements.
-EXECUTION_HANDLERS='["workflow.execute"]'
-COMPUTE_CAPABILITIES='[]'
+# The provider reports hardware/build only. The version-matched image registers
+# its capabilities automatically during authenticated worker hello.
 WORKER_IMAGE=<registry digest>
 TLS_CERT_FILE=... TLS_KEY_FILE=...   # required: the API dials HTTPS only
 STORE_PATH=/var/lib/capacity/ledger.json  # durable ledger; omit for memory-only

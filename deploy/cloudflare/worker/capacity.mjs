@@ -87,20 +87,6 @@ export function readSettings(env) {
         }
         return value;
     };
-    const capabilities = (name) => {
-        let value;
-        try {
-            value = JSON.parse(env[name]);
-        } catch {
-            throw new Error(`invalid or missing ${name}`);
-        }
-        if (!Array.isArray(value) || value.length > 64
-            || new Set(value).size !== value.length
-            || value.some((item) => typeof item !== "string" || !/^[a-z][a-z0-9._:-]{0,99}$/.test(item))) {
-            throw new Error(`invalid or missing ${name}`);
-        }
-        return value;
-    };
     return {
         scope: text("SCOPE", /^[a-zA-Z0-9._:-]{1,128}$/),
         workerVersion: text("WORKER_VERSION", /^.{1,100}$/),
@@ -110,8 +96,6 @@ export function readSettings(env) {
         // declared lifetime beyond that cannot be held open.
         maxLifetimeSeconds: lifetimeSeconds(env),
         startingGraceMs: integer("STARTING_GRACE_MS", 0, 600_000),
-        executionHandlers: capabilities("EXECUTION_HANDLERS"),
-        computeCapabilities: capabilities("COMPUTE_CAPABILITIES"),
         // Required. Without it the bearer comparison would accept the literal
         // string "Bearer undefined".
         token: text("CAPACITY_TOKEN", /^[^\s]{32,512}$/),
@@ -119,14 +103,12 @@ export function readSettings(env) {
 }
 
 const profileFor = (settings) => ({
-    protocol_version: 2,
+    protocol_version: 1,
     scope: settings.scope,
     worker_version: settings.workerVersion,
     memory_limit_bytes: settings.memoryLimitBytes,
     max_workers: settings.maxWorkers,
     max_lifetime_seconds: settings.maxLifetimeSeconds,
-    execution_handlers: settings.executionHandlers,
-    compute_capabilities: settings.computeCapabilities,
 });
 
 // Physical workers use the API and an incarnation key, never platform-service

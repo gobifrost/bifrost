@@ -39,7 +39,7 @@ export const newResourceUid = () =>
 
 /**
  * @param {object} options
- * @param {object} options.profile   advertised capabilities
+ * @param {object} options.profile   advertised hardware/build profile
  * @param {object} options.store     { read, write, countLive } — all async
  * @param {object} options.runtime   { start, destroy, observe } — all async
  * @param {object} [options.clock]   { now } injectable for tests
