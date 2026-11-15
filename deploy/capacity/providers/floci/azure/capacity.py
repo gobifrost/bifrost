@@ -133,24 +133,33 @@ class Adapter(CapacityAdapter):
         return Observation("starting", {**handle, "group": group, "started": True})
 
     def observe(self, ctx: Context, handle: dict) -> Observation:
-        if not handle.get("started"):
-            return Observation("prepared", handle)
         group = handle.get("group") or group_for(ctx.worker_id)
         found = self.aci.group(group)
+        observed_handle = {**handle, "group": group}
         if found is None:
-            return Observation("stopped", {**handle, "group": group})
+            return Observation("stopped" if handle.get("started") else "prepared", observed_handle)
         props = found.get("properties") or {}
         if props.get("provisioningState") == "Failed":
-            return Observation("stopped", {**handle, "group": group})
+            return Observation("stopped", observed_handle)
         state = (props.get("instanceView") or {}).get("state")
         if state == "Running":
-            return Observation("running", {**handle, "group": group})
-        return Observation("stopped", {**handle, "group": group})
+            return Observation("running", observed_handle)
+        if state in ("Stopped", "Terminated"):
+            return Observation("stopped", observed_handle)
+        return Observation("starting", observed_handle)
 
     def release(self, ctx: Context, handle: dict) -> Observation:
         group = handle.get("group") or group_for(ctx.worker_id)
         self.aci.delete_group(group)
-        return Observation("deleted", {**handle, "group": group})
+        found = self.aci.group(group)
+        released_handle = {**handle, "group": group}
+        if found is None:
+            return Observation("deleted", released_handle)
+        props = found.get("properties") or {}
+        state = (props.get("instanceView") or {}).get("state")
+        if props.get("provisioningState") == "Failed" or state in ("Stopped", "Terminated"):
+            return Observation("stopped", released_handle)
+        return Observation("running" if state == "Running" else "starting", released_handle)
 
 
 def group_for(worker_id: str) -> str:

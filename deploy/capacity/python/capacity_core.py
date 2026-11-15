@@ -10,7 +10,7 @@ Adapters implement four operations and never own protocol decisions:
     prepare(ctx, spec) -> handle      # MUST NOT start a process
     start(ctx, handle) -> Observation  # ensure at most ONE launcher
     observe(ctx, handle) -> Observation
-    release(ctx, handle) -> Observation
+    release(ctx, handle) -> Observation("deleted")
 
 The core owns authentication, scope checking, routing, reservation validation,
 resource UIDs, lifecycle transitions, capacity accounting, tombstones, and
@@ -45,6 +45,10 @@ STATE_STOPPED = "stopped"
 STATE_DELETED = "deleted"
 STATE_FAILED = "failed"
 
+# An adapter may only set this after positively proving its provider has not
+# accepted a physical start. A bare ``prepared`` observation is not proof.
+START_FACT_NEVER_STARTED = "never_started"
+
 LIVE_STATES = (STATE_PREPARED, STATE_STARTING, STATE_RUNNING)
 
 
@@ -69,6 +73,7 @@ class Observation:
     state: str
     handle: dict[str, Any] = field(default_factory=dict)
     out_of_memory: bool = False
+    start_fact: str | None = None
 
 
 class CapacityAdapter(Protocol):
@@ -82,7 +87,7 @@ class CapacityAdapter(Protocol):
         """Read the resource's current state without changing it."""
 
     def release(self, ctx: "Context", handle: dict[str, Any]) -> Observation:
-        """Delete the resource and confirm it is gone."""
+        """Delete the resource and confirm it is gone with ``deleted``."""
 
 
 @dataclass(frozen=True)
@@ -113,6 +118,7 @@ class Ledger:
     def __init__(self, path: str | None = None) -> None:
         self.path = path
         self.lock = threading.RLock()
+        self._worker_locks: dict[str, threading.RLock] = {}
         self.rows: dict[str, dict[str, Any]] = {}
         if path and os.path.isfile(path):
             with open(path, encoding="utf-8") as fh:
@@ -133,11 +139,35 @@ class Ledger:
             row = self.rows.get(worker_id)
             return json.loads(json.dumps(row)) if row else None
 
+    def worker_lock(self, worker_id: str) -> threading.RLock:
+        """Serialize one incarnation's operations without blocking other workers."""
+        with self.lock:
+            return self._worker_locks.setdefault(worker_id, threading.RLock())
+
+    def _write_locked(self, worker_id: str, row: dict[str, Any]) -> None:
+        row["revision"] = int(row.get("revision", 0)) + 1
+        self.rows[worker_id] = row
+        self._flush()
+
     def write(self, worker_id: str, row: dict[str, Any]) -> None:
         with self.lock:
-            row["revision"] = int(row.get("revision", 0)) + 1
-            self.rows[worker_id] = row
-            self._flush()
+            self._write_locked(worker_id, row)
+
+    def reserve(self, worker_id: str, row: dict[str, Any], max_workers: int) -> bool:
+        """Atomically record a new live reservation when the scope has room."""
+        with self.lock:
+            if worker_id in self.rows:
+                return False
+            live = sum(
+                1
+                for candidate in self.rows.values()
+                if candidate.get("scope") == row["scope"]
+                and candidate.get("state") in LIVE_STATES
+            )
+            if live >= max_workers:
+                return False
+            self._write_locked(worker_id, row)
+            return True
 
     def count_live(self, scope: str) -> int:
         with self.lock:
@@ -319,139 +349,171 @@ class CapacityEngine:
             row = self._settle(worker_id, row, obs)
         return resource_doc(self.cfg, worker_id, row, obs.state, obs.out_of_memory)
 
+    def _complete_prepare(self, worker_id: str, row: dict[str, Any]) -> dict[str, Any]:
+        """Finish an interrupted metadata-only prepare for this incarnation.
+
+        The intent and operation id are durable before the first adapter call.
+        Retrying the same reservation therefore reuses the same identity; the
+        adapter must make prepare idempotent for that operation.
+        """
+        ctx = self._ctx(worker_id, row)
+        try:
+            handle = self.adapter.prepare(ctx, row["reservation"])
+        except Exception as exc:
+            row = self.ledger.read(worker_id) or row
+            row["last_error"] = type(exc).__name__
+            self.ledger.write(worker_id, row)
+            raise ProtocolError(502, f"prepare failed: {type(exc).__name__}") from None
+        row = self.ledger.read(worker_id) or row
+        row["handle"] = handle or row.get("handle") or {}
+        row["intent"] = None
+        self.ledger.write(worker_id, row)
+        return row
+
     # -- operations ------------------------------------------------------
 
     def get(self, worker_id: str) -> dict[str, Any] | None:
-        row = self.ledger.read(worker_id)
-        if row is None or row.get("scope") != self.cfg.scope:
-            return None
-        return self._project(worker_id, row)
+        with self.ledger.worker_lock(worker_id):
+            row = self.ledger.read(worker_id)
+            if row is None or row.get("scope") != self.cfg.scope:
+                return None
+            return self._project(worker_id, row)
 
     def prepare(self, worker_id: str, reservation: dict[str, Any]) -> dict[str, Any]:
         self._validate_reservation(worker_id, reservation)
-        row = self.ledger.read(worker_id)
-        if row is not None:
-            if row.get("scope") != self.cfg.scope:
-                raise ProtocolError(409, "worker belongs to another scope")
-            if row["state"] == STATE_DELETED:
-                raise ProtocolError(409, "worker incarnation already terminated")
-            if row["reservation"] != reservation:
-                raise ProtocolError(409, "conflicting reservation for this worker")
-            return self._project(worker_id, row)
+        with self.ledger.worker_lock(worker_id):
+            row = self.ledger.read(worker_id)
+            if row is not None:
+                if row.get("scope") != self.cfg.scope:
+                    raise ProtocolError(409, "worker belongs to another scope")
+                if row["state"] == STATE_DELETED:
+                    raise ProtocolError(409, "worker incarnation already terminated")
+                if row["reservation"] != reservation:
+                    raise ProtocolError(409, "conflicting reservation for this worker")
+                if row.get("intent") == "prepare":
+                    row = self._complete_prepare(worker_id, row)
+                return self._project(worker_id, row)
 
-        if self.ledger.count_live(self.cfg.scope) >= self.cfg.max_workers:
-            raise ProtocolError(409, "capacity ceiling reached")
+            row = {
+                "scope": self.cfg.scope,
+                "reservation": reservation,
+                "resource_uid": new_resource_uid(),
+                "handle": {},
+                "state": STATE_PREPARED,
+                "revision": 0,
+                "created_at": time.time(),
+                "started_at": None,
+                "stopped_at": None,
+                "deleted_at": None,
+                "intent": "prepare",
+                "operation_id": uuid.uuid4().hex,
+            }
+            # Commit the reservation before any adapter work, so an interrupted
+            # prepare converges on readback instead of orphaning a resource.
+            if not self.ledger.reserve(worker_id, row, self.cfg.max_workers):
+                raise ProtocolError(409, "capacity ceiling reached")
 
-        row = {
-            "scope": self.cfg.scope,
-            "reservation": reservation,
-            "resource_uid": new_resource_uid(),
-            "handle": {},
-            "state": STATE_PREPARED,
-            "revision": 0,
-            "created_at": time.time(),
-            "started_at": None,
-            "stopped_at": None,
-            "deleted_at": None,
-            "intent": None,
-            "operation_id": uuid.uuid4().hex,
-        }
-        # Commit the reservation before any adapter work, so an interrupted
-        # prepare converges on readback instead of orphaning a resource.
-        self.ledger.write(worker_id, row)
-
-        ctx = self._ctx(worker_id, row)
-        try:
-            handle = self.adapter.prepare(ctx, reservation)
-        except Exception as exc:
-            # Preparation is metadata-only by contract; leaving the row
-            # prepared lets a retry re-run an idempotent prepare.
-            raise ProtocolError(502, f"prepare failed: {type(exc).__name__}") from None
-        row = self.ledger.read(worker_id) or row
-        row["handle"] = handle or {}
-        self.ledger.write(worker_id, row)
-        return resource_doc(self.cfg, worker_id, row, STATE_PREPARED)
+            row = self._complete_prepare(worker_id, row)
+            return resource_doc(self.cfg, worker_id, row, STATE_PREPARED)
 
     def start(self, worker_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        row = self.ledger.read(worker_id)
-        if row is None or row.get("scope") != self.cfg.scope:
-            raise ProtocolError(404, "unknown worker")
-        if row["state"] == STATE_DELETED:
-            raise ProtocolError(409, "worker incarnation already terminated")
-        if body.get("resource_uid") != row["resource_uid"]:
-            raise ProtocolError(409, "resource UID does not match the prepared incarnation")
-        if row["state"] in (STATE_STARTING, STATE_RUNNING):
-            # Replay: never start a second launcher for one incarnation.
-            return self._project(worker_id, row)
-        if row["state"] == STATE_STOPPED:
-            # Terminal. A stopped incarnation must never restart.
-            raise ProtocolError(409, "worker incarnation already stopped")
-
-        if row.get("intent") == "start":
-            # A previous attempt may have launched a container whose response we
-            # never saw. Observe before acting: a blind retry would start a
-            # SECOND physical launcher for the same incarnation.
-            ctx = self._ctx(worker_id, row)
-            try:
-                prior = self.adapter.observe(ctx, row.get("handle") or {})
-            except Exception:
-                raise ProtocolError(502, "start outcome unknown; provider unreachable") from None
-            if prior.state in (STATE_STARTING, STATE_RUNNING):
-                row = self._settle(worker_id, row, prior)
-                return resource_doc(self.cfg, worker_id, row, row["state"])
-            if prior.state in (STATE_STOPPED, STATE_FAILED):
-                self._settle(worker_id, row, Observation(STATE_STOPPED, prior.handle, prior.out_of_memory))
+        with self.ledger.worker_lock(worker_id):
+            row = self.ledger.read(worker_id)
+            if row is None or row.get("scope") != self.cfg.scope:
+                raise ProtocolError(404, "unknown worker")
+            if row["state"] == STATE_DELETED:
+                raise ProtocolError(409, "worker incarnation already terminated")
+            if body.get("resource_uid") != row["resource_uid"]:
+                raise ProtocolError(409, "resource UID does not match the prepared incarnation")
+            if row.get("intent") == "prepare":
+                row = self._complete_prepare(worker_id, row)
+            if row["state"] in (STATE_STARTING, STATE_RUNNING):
+                # Replay: never start a second launcher for one incarnation.
+                return self._project(worker_id, row)
+            if row["state"] == STATE_STOPPED:
+                # Terminal. A stopped incarnation must never restart.
                 raise ProtocolError(409, "worker incarnation already stopped")
 
-        row["intent"] = "start"
-        row["operation_id"] = row.get("operation_id") or uuid.uuid4().hex
-        self.ledger.write(worker_id, row)
+            if row.get("intent") == "start":
+                # A previous attempt may have launched a container whose response we
+                # never saw. Observe before acting: a blind retry would start a
+                # SECOND physical launcher for the same incarnation.
+                ctx = self._ctx(worker_id, row)
+                try:
+                    prior = self.adapter.observe(ctx, row.get("handle") or {})
+                except Exception:
+                    raise ProtocolError(502, "start outcome unknown; provider unreachable") from None
+                if prior.state in (STATE_STARTING, STATE_RUNNING):
+                    row = self._settle(worker_id, row, prior)
+                    return resource_doc(self.cfg, worker_id, row, row["state"])
+                if prior.state in (STATE_STOPPED, STATE_FAILED):
+                    self._settle(worker_id, row, Observation(STATE_STOPPED, prior.handle, prior.out_of_memory))
+                    raise ProtocolError(409, "worker incarnation already stopped")
+                if prior.start_fact != START_FACT_NEVER_STARTED:
+                    # ``prepared`` is ambiguous after a lost start reply: an
+                    # adapter must explicitly prove no provider accepted it
+                    # before the core can issue another physical start.
+                    raise ProtocolError(502, "start outcome unknown: provider cannot prove no launch occurred")
 
-        ctx = self._ctx(worker_id, row)
-        started_at = time.time()
-        try:
-            obs = self.adapter.start(ctx, row.get("handle") or {})
-        except Exception as exc:
-            row = self.ledger.read(worker_id) or row
-            # Keep the intent so reconciliation can determine whether the
-            # launcher was accepted. Never guess, never re-launch blindly.
-            row["last_error"] = type(exc).__name__
+            row["intent"] = "start"
+            row["operation_id"] = row.get("operation_id") or uuid.uuid4().hex
             self.ledger.write(worker_id, row)
-            raise ProtocolError(502, f"start outcome unknown: {type(exc).__name__}") from None
 
-        row = self.ledger.read(worker_id) or row
-        row["started_at"] = started_at
-        if obs.state == STATE_RUNNING and self.cfg.starting_grace_seconds > 0:
-            obs = Observation(STATE_STARTING, obs.handle, obs.out_of_memory)
-        row = self._settle(worker_id, row, obs)
-        return resource_doc(self.cfg, worker_id, row, row["state"], bool(row.get("out_of_memory")))
+            ctx = self._ctx(worker_id, row)
+            started_at = time.time()
+            try:
+                obs = self.adapter.start(ctx, row.get("handle") or {})
+            except Exception as exc:
+                row = self.ledger.read(worker_id) or row
+                # Keep the intent so reconciliation can determine whether the
+                # launcher was accepted. Never guess, never re-launch blindly.
+                row["last_error"] = type(exc).__name__
+                self.ledger.write(worker_id, row)
+                raise ProtocolError(502, f"start outcome unknown: {type(exc).__name__}") from None
+
+            row = self.ledger.read(worker_id) or row
+            row["started_at"] = started_at
+            if obs.state == STATE_RUNNING and self.cfg.starting_grace_seconds > 0:
+                obs = Observation(STATE_STARTING, obs.handle, obs.out_of_memory)
+            row = self._settle(worker_id, row, obs)
+            return resource_doc(self.cfg, worker_id, row, row["state"], bool(row.get("out_of_memory")))
 
     def remove(self, worker_id: str, body: dict[str, Any]) -> dict[str, Any]:
-        row = self.ledger.read(worker_id)
-        if row is None or row.get("scope") != self.cfg.scope:
-            raise ProtocolError(404, "unknown worker")
-        if body.get("resource_uid") != row["resource_uid"]:
-            raise ProtocolError(409, "resource UID does not match this worker")
-        if row["state"] == STATE_DELETED:
-            return resource_doc(self.cfg, worker_id, row, STATE_DELETED)
+        with self.ledger.worker_lock(worker_id):
+            row = self.ledger.read(worker_id)
+            if row is None or row.get("scope") != self.cfg.scope:
+                raise ProtocolError(404, "unknown worker")
+            if body.get("resource_uid") != row["resource_uid"]:
+                raise ProtocolError(409, "resource UID does not match this worker")
+            if row["state"] == STATE_DELETED:
+                return resource_doc(self.cfg, worker_id, row, STATE_DELETED)
 
-        row["intent"] = "delete"
-        self.ledger.write(worker_id, row)
-        ctx = self._ctx(worker_id, row)
-        try:
-            self.adapter.release(ctx, row.get("handle") or {})
-        except Exception as exc:
-            row = self.ledger.read(worker_id) or row
-            row["last_error"] = type(exc).__name__
+            if row.get("intent") == "prepare":
+                row = self._complete_prepare(worker_id, row)
+
+            row["intent"] = "delete"
             self.ledger.write(worker_id, row)
-            raise ProtocolError(502, f"delete outcome unknown: {type(exc).__name__}") from None
+            ctx = self._ctx(worker_id, row)
+            try:
+                observation = self.adapter.release(ctx, row.get("handle") or {})
+            except Exception as exc:
+                row = self.ledger.read(worker_id) or row
+                row["last_error"] = type(exc).__name__
+                self.ledger.write(worker_id, row)
+                raise ProtocolError(502, f"delete outcome unknown: {type(exc).__name__}") from None
 
-        row = self.ledger.read(worker_id) or row
-        row["state"] = STATE_DELETED
-        row["deleted_at"] = row.get("deleted_at") or time.time()
-        row["intent"] = None
-        self.ledger.write(worker_id, row)
-        return resource_doc(self.cfg, worker_id, row, STATE_DELETED, bool(row.get("out_of_memory")))
+            row = self.ledger.read(worker_id) or row
+            if observation.state != STATE_DELETED:
+                row["handle"] = observation.handle or row.get("handle") or {}
+                row["last_error"] = "unconfirmed_delete"
+                self.ledger.write(worker_id, row)
+                raise ProtocolError(502, "delete outcome unknown: provider did not confirm deletion")
+            row["state"] = STATE_DELETED
+            row["handle"] = observation.handle or row.get("handle") or {}
+            row["deleted_at"] = row.get("deleted_at") or time.time()
+            row["intent"] = None
+            self.ledger.write(worker_id, row)
+            return resource_doc(self.cfg, worker_id, row, STATE_DELETED, bool(row.get("out_of_memory")))
 
     # -- validation ------------------------------------------------------
 

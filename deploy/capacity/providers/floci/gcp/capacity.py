@@ -131,20 +131,29 @@ class Adapter(CapacityAdapter):
     def observe(self, ctx: Context, handle: dict) -> Observation:
         pool_id = handle.get("pool_id") or pool_id_for(ctx.worker_id)
         pool = self.cloud.pool(pool_id)
+        observed_handle = {**handle, "pool_id": pool_id}
         if pool is None:
-            return Observation("stopped", {**handle, "pool_id": pool_id})
+            return Observation("stopped" if handle.get("started") else "prepared", observed_handle)
         terminal = pool.get("terminalCondition") or {}
         if terminal.get("state") == "CONDITION_FAILED":
-            return Observation("stopped", {**handle, "pool_id": pool_id})
+            return Observation("stopped", observed_handle)
         replicas = int((pool.get("scaling") or {}).get("manualInstanceCount") or 0)
-        if not handle.get("started"):
-            return Observation("prepared", {**handle, "pool_id": pool_id})
-        return Observation("running" if replicas > 0 else "stopped", {**handle, "pool_id": pool_id})
+        if replicas > 0:
+            return Observation("running", observed_handle)
+        return Observation("stopped" if handle.get("started") else "prepared", observed_handle)
 
     def release(self, ctx: Context, handle: dict) -> Observation:
         pool_id = handle.get("pool_id") or pool_id_for(ctx.worker_id)
         self.cloud.delete_pool(pool_id)
-        return Observation("deleted", {**handle, "pool_id": pool_id})
+        pool = self.cloud.pool(pool_id)
+        released_handle = {**handle, "pool_id": pool_id}
+        if pool is None:
+            return Observation("deleted", released_handle)
+        terminal = pool.get("terminalCondition") or {}
+        replicas = int((pool.get("scaling") or {}).get("manualInstanceCount") or 0)
+        if terminal.get("state") == "CONDITION_FAILED" or replicas == 0:
+            return Observation("stopped", released_handle)
+        return Observation("running", released_handle)
 
 
 def pool_id_for(worker_id: str) -> str:
