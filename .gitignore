@@ -217,6 +217,3 @@ system//home/
 client/preview/
 .desloppify/
 scorecard.png
-
-# Cloudflare CLI local account/build cache
-.cloudflare/
