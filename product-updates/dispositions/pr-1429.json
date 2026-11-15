@@ -1,0 +1,14 @@
+{
+  "key": "pr:1429",
+  "classification": "other",
+  "category": "fix",
+  "summary": "Integration mappings now show 25 organizations per page and can be filtered by mapped or unmapped status.",
+  "entry_ids": [],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1429",
+      "Exact customer-facing sentence awaiting Jack approval; scoped implementation/publication/merge approval is recorded separately."
+    ]
+  }
+}
