@@ -43,7 +43,19 @@ class Ecs:
             with urllib.request.urlopen(req, timeout=20) as resp:
                 return json.loads(resp.read().decode() or "{}")
         except urllib.error.HTTPError as exc:
-            raise RuntimeError(f"ECS {action} failed: HTTP {exc.code}") from None
+            raise EcsHttpError(action, exc.code) from None
+
+    def task_definition(self, family: str) -> str | None:
+        payload = self.call("ListTaskDefinitions", {
+            "familyPrefix": family,
+            "status": "ACTIVE",
+            "sort": "DESC",
+        })
+        suffix = f"/{family}:"
+        for arn in payload.get("taskDefinitionArns") or []:
+            if isinstance(arn, str) and suffix in arn:
+                return arn
+        return None
 
     def ensure_cluster(self, name: str) -> None:
         self.call("CreateCluster", {"clusterName": name})
@@ -60,34 +72,49 @@ class Ecs:
             raise RuntimeError("RegisterTaskDefinition returned no ARN")
         return arn
 
-    def run_task(self, cluster: str, family: str, started_by: str) -> str:
+    def run_task(self, cluster: str, family: str, started_by: str, client_token: str) -> str:
         payload = self.call("RunTask", {
             "cluster": cluster, "taskDefinition": family, "launchType": "EC2",
-            "count": 1, "startedBy": started_by,
+            "count": 1, "startedBy": started_by, "clientToken": client_token,
         })
         tasks = payload.get("tasks") or []
         if not tasks:
             raise RuntimeError("RunTask started nothing")
         return tasks[0]["taskArn"]
 
+    def owned_tasks(self, cluster: str, started_by: str) -> list[str]:
+        payload = self.call("ListTasks", {"cluster": cluster, "startedBy": started_by})
+        return [arn for arn in payload.get("taskArns") or [] if isinstance(arn, str)]
+
     def describe_task(self, cluster: str, arn: str) -> dict | None:
-        payload = self.call("DescribeTasks", {"cluster": cluster, "tasks": [arn]})
+        try:
+            payload = self.call("DescribeTasks", {"cluster": cluster, "tasks": [arn]})
+        except EcsHttpError as exc:
+            if exc.status == 404:
+                return None
+            raise
         tasks = payload.get("tasks") or []
         return tasks[0] if tasks else None
 
     def stop_task(self, cluster: str, arn: str) -> None:
         try:
             self.call("StopTask", {"cluster": cluster, "task": arn, "reason": "capacity release"})
-        except RuntimeError:
-            # The task may already be gone; release is a best-effort stop.
-            pass
+        except EcsHttpError as exc:
+            if exc.status != 404:
+                raise
 
     def deregister(self, arn: str) -> None:
         try:
             self.call("DeregisterTaskDefinition", {"taskDefinition": arn})
-        except RuntimeError:
-            # Already deregistered: the desired end state holds.
-            pass
+        except EcsHttpError as exc:
+            if exc.status != 404:
+                raise
+
+
+class EcsHttpError(RuntimeError):
+    def __init__(self, action: str, status: int) -> None:
+        super().__init__(f"ECS {action} failed: HTTP {status}")
+        self.status = status
 
 
 class Adapter(CapacityAdapter):
@@ -129,40 +156,55 @@ class Adapter(CapacityAdapter):
 
     def prepare(self, ctx: Context, spec: dict) -> dict:
         # Registers a task definition only: no task runs.
-        family = family_for(ctx.worker_id)
-        arn = self.ecs.register_task_definition(family, self._container(ctx))
+        family = family_for(ctx.worker_id, ctx.operation_id)
+        arn = self.ecs.task_definition(family)
+        if arn is None:
+            arn = self.ecs.register_task_definition(family, self._container(ctx))
         return {"family": family, "task_definition_arn": arn, "started": False}
 
     def start(self, ctx: Context, handle: dict) -> Observation:
-        task_arn = self.ecs.run_task(self.cluster, handle["family"], ctx.worker_id)
+        task_arn = self.ecs.run_task(self.cluster, handle["family"], ctx.worker_id, ctx.operation_id)
         return Observation("starting", {**handle, "task_arn": task_arn, "started": True})
 
     def observe(self, ctx: Context, handle: dict) -> Observation:
-        if not handle.get("started"):
-            return Observation("prepared", handle)
         task_arn = handle.get("task_arn")
         if not task_arn:
-            return Observation("stopped", handle)
+            owned = self.ecs.owned_tasks(self.cluster, ctx.worker_id)
+            task_arn = owned[0] if owned else None
+        observed_handle = {**handle, "task_arn": task_arn, "started": True} if task_arn else handle
+        if not task_arn:
+            return Observation("prepared", observed_handle)
         task = self.ecs.describe_task(self.cluster, task_arn)
         if task is None:
-            return Observation("stopped", handle)
+            return Observation("stopped", observed_handle)
         last = task.get("lastStatus", "")
         if last in ("PROVISIONING", "PENDING", "ACTIVATING"):
-            return Observation("starting", handle)
+            return Observation("starting", observed_handle)
         if last == "RUNNING":
-            return Observation("running", handle)
-        return Observation("stopped", handle)
+            return Observation("running", observed_handle)
+        return Observation("stopped", observed_handle)
 
     def release(self, ctx: Context, handle: dict) -> Observation:
-        if handle.get("task_arn"):
-            self.ecs.stop_task(self.cluster, handle["task_arn"])
+        task_arns = [handle["task_arn"]] if handle.get("task_arn") else self.ecs.owned_tasks(self.cluster, ctx.worker_id)
+        released_handle = dict(handle)
+        for task_arn in task_arns:
+            self.ecs.stop_task(self.cluster, task_arn)
+            task = self.ecs.describe_task(self.cluster, task_arn)
+            released_handle.update({"task_arn": task_arn, "started": True})
+            if task is not None and task.get("lastStatus") != "STOPPED":
+                state = "running" if task.get("lastStatus") == "RUNNING" else "starting"
+                return Observation(state, released_handle)
         if handle.get("task_definition_arn"):
             self.ecs.deregister(handle["task_definition_arn"])
-        return Observation("deleted", handle)
+        return Observation("deleted", released_handle)
 
 
-def family_for(worker_id: str) -> str:
-    return FAMILY_PREFIX + worker_id.replace("-", "")[:20]
+def family_for(worker_id: str, operation_id: str | None = None) -> str:
+    worker = worker_id.replace("-", "")[:20]
+    if not operation_id:
+        return FAMILY_PREFIX + worker
+    operation = "".join(char for char in operation_id if char.isalnum())[:20]
+    return f"{FAMILY_PREFIX}{worker}-{operation}"
 
 
 def _require(name: str) -> str:

@@ -11,7 +11,7 @@ which jobs run.
 | Path | Purpose |
 |---|---|
 | `python/capacity_core.py` | Shared protocol core: auth, scope, routing, reservation validation, resource UIDs, lifecycle, capacity accounting, tombstones. |
-| `providers/floci/{gcp,aws,azure}/capacity.py` | Thin adapters against the Floci emulators — the free, Docker-backed proof of provider-agnosticism. |
+| `providers/floci/{gcp,aws,azure}/capacity.py` | Reference adapters for the Docker-backed Floci emulators. |
 | `conformance/conformance.py` | Black-box conformance suite. Point it at any provider. |
 | `conformance/hooks/control_http.py` | Reference hook: drives a provider's admin endpoints for restart / stop / fault. |
 | `conformance/selftest.py` | Proves the suite accepts a correct provider **and rejects a duplicate-launching one**. |
@@ -26,7 +26,7 @@ the protocol.
 prepare(ctx, spec) -> handle      # MUST NOT start a process
 start(ctx, handle) -> Observation  # at most ONE launcher per incarnation
 observe(ctx, handle) -> Observation
-release(ctx, handle) -> Observation
+release(ctx, handle) -> Observation("deleted")  # only after deletion is confirmed
 ```
 
 Rules the core relies on:
@@ -36,7 +36,13 @@ Rules the core relies on:
   stopped incarnation.
 - **Prepare launches nothing.** Where a cloud cannot create-without-starting
   (Azure Container Instances), prepare is ledger-only and creation happens in
-  start.
+  start. The core records a durable prepare intent before calling an adapter;
+  adapters must make repeated prepare calls with the same `operation_id`
+  idempotent, because a lost reply is reconciled before start or deletion.
+- **A lost start reply fails closed.** A `prepared` observation after an
+  interrupted start is ambiguous and must never cause another launch. Only an
+  adapter observation with `start_fact="never_started"` may authorize that
+  retry; otherwise the caller must delete the incarnation.
 - **Handles are opaque JSON.** Cloud identifiers belong here, never in
   `resource_uid`: that field is `^[a-zA-Z0-9._:-]+$`, which excludes `/`, so ECS
   ARNs and ACI/Cloud Run resource paths are invalid UIDs.
@@ -77,6 +83,14 @@ isolation, provider-restart durability, and physical launch identity.
 The hook is required for the physical cases. It must return the **cumulative set
 of launch identities ever observed** — a boolean or a count cannot distinguish
 one long-lived launcher from two sequential ones.
+
+## Floci qualification boundary
+
+The Floci adapters are reference implementations for the shared protocol. Their
+SDK-fake checks cover a repeated AWS prepare using a stable worker/operation
+identity and deletion readback before they report `deleted`. They do not prove
+real-cloud eventual-consistency, IAM, or provider idempotency beyond the Floci
+emulator; qualify those properties against each production provider separately.
 
 ## What conformance does not prove
 
