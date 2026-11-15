@@ -142,7 +142,10 @@ class RemoteFileCompute:
         async with asyncio.timeout(DEFAULT_OWNER_LEASE_SECONDS if cleanup else self.claim.timeout_seconds):
             while True:
                 self.bridge.transport_changed.clear()
-                if self.bridge.connected and self.bridge.reconciliation_ready.is_set():
+                # Orphan release is part of reconciliation itself. It must
+                # reach the authenticated transport before admission opens;
+                # new computation still waits for the completed inventory.
+                if self.bridge.connected and (cleanup or self.bridge.reconciliation_ready.is_set()):
                     return
                 await self.bridge.transport_changed.wait()
 

@@ -176,10 +176,13 @@ async def test_generic_transport_rejects_a_reply_bound_to_another_claim(monkeypa
 
 
 @pytest.mark.asyncio
-async def test_reconciliation_releases_orphan_before_runner_loss(monkeypatch):
+@pytest.mark.parametrize("admission_ready", [False, True])
+async def test_reconciliation_releases_orphan_before_runner_loss(monkeypatch, admission_ready):
     from src.jobs.schedulers import platform_jobs
     source, bridge = inputs(), Control(inputs())
     bridge.source = source
+    if not admission_ready:
+        bridge.reconciliation_ready.clear()
     binding = {key: str(uuid4()) for key in ("stage_id", "job_id", "lease_token")}
     digest = "a" * 64
     bridge.inventory = {"compute_stages": [{**binding, "operation": "app.compile.v2", "state": "running", "input_sha256": digest}]}
@@ -205,6 +208,7 @@ async def test_reconciliation_releases_orphan_before_runner_loss(monkeypatch):
         error_message="The API file-compute orchestrator stopped before the operation completed.",
         memory_sample=(100, 1000),
     )
+    assert bridge.reconciliation_ready.is_set() == admission_ready
 
 
 @pytest.mark.asyncio
@@ -232,3 +236,45 @@ async def test_reconciliation_never_fails_a_new_attempt_from_an_old_stage(monkey
     await generic.reconcile_file_computes(bridge)
     runner_loss.assert_not_awaited()
     assert bridge.state == "released"
+
+
+@pytest.mark.asyncio
+async def test_cleanup_before_admission_still_requires_current_owner_authorization(monkeypatch):
+    bridge = Control(inputs())
+    bridge.reconciliation_ready.clear()
+    bridge.state = "running"
+    claim = ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.deploy")
+    compute = generic.RemoteFileCompute(bridge, claim, "app.compile.v2")
+    compute.invoked = True
+
+    @asynccontextmanager
+    async def denied(_bridge):
+        raise PlatformJobCancelled
+        yield
+
+    monkeypatch.setattr(generic, "control_authorization", denied)
+    with pytest.raises(PlatformJobCancelled):
+        await compute.release()
+    assert not bridge.calls
+    assert bridge.state == "running" and not bridge.reconciliation_ready.is_set()
+    assert compute.stage_id in bridge.file_computes
+
+
+@pytest.mark.asyncio
+async def test_new_computation_still_waits_for_admission_reconciliation():
+    bridge = Control(inputs())
+    bridge.reconciliation_ready.clear()
+    claim = ClaimedPlatformJob(uuid4(), uuid4(), 60, .95, 1, "application.deploy")
+    compute = generic.RemoteFileCompute(bridge, claim, "app.compile.v2")
+    task = asyncio.create_task(compute._ready())
+    try:
+        await asyncio.sleep(0)
+        assert not task.done()
+        bridge.reconciliation_ready.set()
+        bridge.transport_changed.set()
+        await task
+        assert not bridge.calls
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
