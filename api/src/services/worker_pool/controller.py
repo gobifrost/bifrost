@@ -119,9 +119,9 @@ class LiveControllers:
         """Rotate admitted workers once no live controller advertises their build.
 
         Kubernetes controllers have a fixed build, so their own Jobs remain
-        protected from replacement loops. External controllers can adopt a
-        new provider build without restarting; their identity cannot protect
-        workers of the previous build. Unadmitted workers never rotate here.
+        protected from replacement loops. External workers remain bound to
+        the API/image build; controller identity alone cannot protect an
+        outdated external worker. Unadmitted workers never rotate here.
         """
         return (
             worker.form in MANAGED_WORKER_FORMS
