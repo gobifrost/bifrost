@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from datetime import date, datetime
-import re
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
@@ -308,29 +307,15 @@ class ApplicationBundleManifest(BaseModel):
 
 
 class WorkerCapacityProfile(BaseModel):
-    """Capabilities of an authenticated external physical-capacity provider."""
+    """Hardware bounds of an authenticated external physical-capacity provider."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
-    protocol_version: Literal[2]
+    protocol_version: Literal[1]
     scope: str = Field(min_length=1, max_length=128, pattern=r"^[a-zA-Z0-9._:-]+$")
     worker_version: str = Field(min_length=1, max_length=100)
     memory_limit_bytes: int = Field(ge=67108864, le=137438953472, multiple_of=1048576, strict=True)
     max_workers: int = Field(ge=1, le=1000, strict=True)
     max_lifetime_seconds: int = Field(ge=60, le=604800, strict=True)
-    # A v2 provider explicitly advertises each lane it can accept.  Never
-    # infer launcher support from a build string: the planner must fail closed
-    # while a provider and its pinned worker image are upgraded together.
-    execution_handlers: list[str] = Field(max_length=64)
-    compute_capabilities: list[str] = Field(max_length=64)
-
-    @field_validator("execution_handlers", "compute_capabilities")
-    @classmethod
-    def capability_names_are_bounded_and_unique(cls, values: list[str]) -> list[str]:
-        if len(values) != len(set(values)):
-            raise ValueError("capability names must be unique")
-        if any(not re.fullmatch(r"[a-z][a-z0-9._:-]{0,99}", value) for value in values):
-            raise ValueError("capability names must be 1-100 lowercase identifier characters")
-        return values
 
 
 class WorkerCapacityReservation(BaseModel):
