@@ -20,7 +20,7 @@ import io
 import re
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 import yaml
 
@@ -70,7 +70,7 @@ def _manifest_yaml(root_key: str, bodies: dict[str, dict[str, Any]]) -> str:
 
 def _put_zip_member(zf: zipfile.ZipFile, path: str, data: bytes | str) -> None:
     info = zipfile.ZipInfo(path, date_time=_ZIP_EPOCH)
-    info.compress_type = zipfile.ZIP_DEFLATED
+    info.compress_type = zf.compression
     zf.writestr(info, data)
 
 
@@ -109,17 +109,28 @@ def _file_payload_member(sf: Any) -> str:
     return f".bifrost/file-payloads/{digest}.bin.enc"
 
 
-def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None) -> bytes:
+def build_workspace_zip(
+    bundle: "SolutionBundle", *, password: str | None = None,
+    compression: int = zipfile.ZIP_DEFLATED,
+) -> bytes:
     """Serialize a (pre-remap) bundle into the installable workspace-zip shape.
 
     When ``password`` is provided and the bundle carries sensitive values
     (config_values or table_data), they are encrypted into ``.bifrost/secrets.enc``
     using the password.  Shareable exports (no password) never include the blob.
     """
-    solution = bundle.solution
     buf = io.BytesIO()
+    write_workspace_zip(bundle, buf, password=password, compression=compression)
+    return buf.getvalue()
 
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+
+def write_workspace_zip(
+    bundle: "SolutionBundle", destination: Path | BinaryIO, *,
+    password: str | None = None, compression: int = zipfile.ZIP_DEFLATED,
+) -> None:
+    """Serialize directly to a file without buffering the complete ZIP."""
+    solution = bundle.solution
+    with zipfile.ZipFile(destination, "w", compression) as zf:
 
         def put(path: str, data: bytes | str) -> None:
             _put_zip_member(zf, path, data)
@@ -326,8 +337,6 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                     password=password,
                 ),
             )
-
-    return buf.getvalue()
 
 
 async def build_workspace_zip_for_export(

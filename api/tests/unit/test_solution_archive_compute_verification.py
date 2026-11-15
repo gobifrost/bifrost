@@ -148,3 +148,65 @@ def test_password_flag_and_encrypted_blob_are_derived_from_api_original(tmp_path
         assert (verified.workspace / ".bifrost/secrets.enc").read_bytes() == b"API-only encrypted metadata"
     finally:
         verified.close()
+
+
+@pytest.mark.asyncio
+async def test_source_packing_compresses_in_worker_and_preserves_canonical_bytes():
+    import io
+    import hashlib
+    from uuid import uuid4
+    from src.models.orm.solutions import Solution
+    from src.services.solutions.deploy import SolutionBundle
+    from src.services.solutions.export import build_workspace_zip
+
+    bundle = SolutionBundle(
+        solution=Solution(id=uuid4(), slug="packing", name="Packing"),
+        python_files={"modules/value.py": "".join(
+            f"VALUE_{index} = {hashlib.sha256(str(index).encode()).hexdigest()!r}\n"
+            for index in range(400)
+        )},
+        readme="\n".join(hashlib.sha256(str(index).encode()).hexdigest() for index in range(400)),
+        config_values={"private": "API-only-value"},
+    )
+    transferred = []
+
+    async def compute(operation, transfer):
+        assert operation == codec.SOLUTION_ARCHIVE_INSPECT_OPERATION
+        transferred.append(transfer.path)
+        with zipfile.ZipFile(transfer.path) as archive:
+            assert all(info.compress_type == zipfile.ZIP_STORED for info in archive.infolist())
+            assert ".bifrost/secrets.enc" not in archive.namelist()
+            assert all(b"API-only-value" not in archive.read(name) for name in archive.namelist())
+        inputs = codec.decode_solution_archive_inspect_inputs(ReceivedFileTransfer(transfer.manifest, transfer.path))
+        result = codec.build_solution_archive_inspect_result(inputs)
+        return FileComputeResult(ReceivedFileTransfer(result.manifest, result.path), {})
+
+    packed = await archive_compute.pack_solution_source(bundle, compute)
+    assert packed == await archive_compute.pack_solution_source(bundle, compute)
+    with zipfile.ZipFile(io.BytesIO(packed)) as result, zipfile.ZipFile(io.BytesIO(build_workspace_zip(bundle))) as expected:
+        assert set(result.namelist()) == set(expected.namelist())
+        for info in result.infolist():
+            assert info.compress_type == zipfile.ZIP_DEFLATED
+            assert info.date_time == (1980, 1, 1, 0, 0, 0)
+            assert result.read(info) == expected.read(info.filename)
+    assert all(not path.exists() for path in transferred)
+
+
+@pytest.mark.asyncio
+async def test_source_packing_failure_releases_its_owned_input():
+    from uuid import uuid4
+    from src.models.orm.solutions import Solution
+    from src.services.solutions.deploy import SolutionBundle
+
+    paths = []
+
+    async def compute(_operation, transfer):
+        paths.append(transfer.path)
+        raise RuntimeError("worker stopped")
+
+    with pytest.raises(RuntimeError, match="worker stopped"):
+        await archive_compute.pack_solution_source(
+            SolutionBundle(solution=Solution(id=uuid4(), slug="packing", name="Packing")),
+            compute,
+        )
+    assert paths and all(not path.exists() for path in paths)

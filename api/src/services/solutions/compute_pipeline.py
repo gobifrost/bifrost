@@ -11,7 +11,7 @@ from pathlib import Path
 from src.core.database import get_db_context
 from src.jobs.platform.base import PlatformJobContext, PlatformJobFailure
 from src.models.orm.solutions import Solution
-from src.services.solutions.archive_compute import VerifiedSolutionArchive, inspect_solution_archive
+from src.services.solutions.archive_compute import VerifiedSolutionArchive, inspect_solution_archive, pack_solution_source
 from src.services.solutions.deploy import (
     PreparedSolutionAppBuilds,
     SolutionBundle,
@@ -20,7 +20,6 @@ from src.services.solutions.deploy import (
     compile_solution_app_builds,
     validate_solution_bundle,
 )
-from src.services.solutions.export import build_workspace_zip
 from src.services.solutions.write_lock import solution_write_lock
 from src.services.solutions.zip_install import (
     InactiveInstallExists,
@@ -95,7 +94,7 @@ async def prepare_solution_deployment(
                 plan = await SolutionDeployer(db).prepare_app_builds(bundle)
             await context.report("Compiling Solution applications", percent=15)
             app_builds = await compile_solution_app_builds(plan, context.app_build_compute)
-            source_artifact = await asyncio.to_thread(build_workspace_zip, bundle)
+            source_artifact = await pack_solution_source(bundle, context.file_compute)
             yield PreparedSolutionDeployment(archive, bundle, app_builds, source_artifact)
 
 

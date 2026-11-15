@@ -61,7 +61,12 @@ def preparation(monkeypatch, tmp_path):
     monkeypatch.setattr(pipeline, "_build_bundle", lambda solution, *_args: SimpleNamespace(solution=solution, python_files={}, workflows=[], version=None))
     monkeypatch.setattr(pipeline.SolutionDeployer, "prepare_app_builds", plan)
     monkeypatch.setattr(pipeline, "compile_solution_app_builds", compile_apps)
-    monkeypatch.setattr(pipeline, "build_workspace_zip", lambda _bundle: b"source")
+    async def pack_source(_bundle, compute):
+        assert state.db_count == 0 and state.locked
+        assert compute is context.file_compute
+        return b"source"
+
+    monkeypatch.setattr(pipeline, "pack_solution_source", pack_source)
     return state, context
 
 

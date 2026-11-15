@@ -1,7 +1,7 @@
 """File-backed transfer contract for isolated Solution archive inspection.
 
 The API retains the original staged backup for password-protected data.  This
-codec gives the worker a disposable hard-link transfer, then returns only an
+codec gives the worker a disposable source-only snapshot, then returns only an
 unencrypted source archive plus non-authoritative inspection metadata.
 """
 
@@ -12,6 +12,7 @@ import hashlib
 import json
 import os
 import stat
+import shutil
 import tempfile
 import zipfile
 from collections.abc import Mapping, Sequence
@@ -386,7 +387,10 @@ def _write_source_archive(workspace: Path, destination: Path) -> None:
             relative = path.relative_to(workspace).as_posix()
             if relative == _SECRETS_MEMBER or relative.startswith(PAYLOAD_PREFIX):
                 continue
-            archive.write(path, relative)
+            info = zipfile.ZipInfo(relative, date_time=(1980, 1, 1, 0, 0, 0))
+            info.compress_type = zipfile.ZIP_DEFLATED
+            with path.open("rb") as source, archive.open(info, "w", force_zip64=True) as output:
+                shutil.copyfileobj(source, output, _COPY_CHUNK_BYTES)
 
 
 def _project_preview(preview: PreviewResult) -> tuple[PreviewResult, dict[str, object]]:

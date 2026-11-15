@@ -6,7 +6,7 @@ artifacts through the external-isolated claim path. It does *not* prove
 Cloudflare placement, provider live conformance, or performance characteristics.
 
 Cost: one PlatformJob per case: an independent App deployment and a Solution
-deployment. The Solution case uniquely proves sequential inspect→compile stages
+deployment. The Solution case uniquely proves sequential inspect→compile→source-pack stages
 under one exact isolated claim. Existing thin-worker journeys
 cover legacy publish and SDK rebuilds; this case exclusively covers the
 external resource reservation → normal Launcher → API file-compute boundary.
@@ -297,7 +297,9 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
             assert persisted.executor_attempt == 1
             assert persisted.executor_capacity_scope == scope
             assert persisted.executor_capacity_resource_uid == resource_uid
-            assert persisted.executor_compute_capability == "app.compile.v2"
+            assert persisted.executor_compute_capability == (
+                "solution.archive.inspect.v1" if solution_id is not None else "app.compile.v2"
+            )
             assert app.active_deployment_id is not None
             deployment_id = app.active_deployment_id
         if solution_id is None:

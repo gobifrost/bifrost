@@ -9,8 +9,13 @@ import zipfile
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.services.solutions.deploy import SolutionBundle
 
 from shared.file_compute import FileCompute, decode_file_result, encode_file_transfer
+from shared.worker_transfer import FileTransfer, ReceivedFileTransfer
 from shared.solution_archive import PreviewResult, parse_workspace, validate_archive_size, validate_zip_members
 from shared.solution_archive_compute import (
     SOLUTION_ARCHIVE_INSPECT_OPERATION,
@@ -41,21 +46,11 @@ class VerifiedSolutionArchive:
 async def inspect_solution_archive(zip_path: Path, compute: FileCompute):
     """Return an API-verified source workspace from one isolated inspection."""
     transfer = await encode_file_transfer(encode_solution_archive_inspect_inputs, zip_path)
-    try:
-        outcome = await compute(SOLUTION_ARCHIVE_INSPECT_OPERATION, transfer)
-    except BaseException:
-        transfer.close()
-        raise
+    outcome = await _compute_inspection(transfer, compute)
+
     def decode_and_verify(received):
-        try:
-            inspection = decode_solution_archive_inspect_results(received, expected_input=transfer.manifest)
-            try:
-                return _verify_inspection(zip_path, transfer.path, inspection)
-            except BaseException:
-                inspection.close()
-                raise
-        finally:
-            transfer.close()
+        return _decode_verified_source(received, transfer, zip_path)
+
     verified = await decode_file_result(
         outcome, decode_and_verify, cleanup_cancelled_result=VerifiedSolutionArchive.close
     )
@@ -63,6 +58,54 @@ async def inspect_solution_archive(zip_path: Path, compute: FileCompute):
         yield verified
     finally:
         verified.close()
+
+
+async def pack_solution_source(bundle: "SolutionBundle", compute: FileCompute) -> bytes:
+    """Compress canonical source physically, retaining API byte verification."""
+    transfer = await encode_file_transfer(_encode_canonical_source, bundle)
+    outcome = await _compute_inspection(transfer, compute)
+
+    def decode_source(received):
+        verified = _decode_verified_source(received, transfer, transfer.path)
+        try:
+            return verified._inspection.source_archive.read_bytes()
+        finally:
+            verified.close()
+
+    return await decode_file_result(outcome, decode_source)
+
+
+def _encode_canonical_source(bundle: "SolutionBundle") -> FileTransfer:
+    from src.services.solutions.export import write_workspace_zip
+
+    fd, name = tempfile.mkstemp(prefix="bifrost-solution-canonical-")
+    path = Path(name)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            write_workspace_zip(bundle, output, compression=zipfile.ZIP_STORED)
+        return encode_solution_archive_inspect_inputs(path)
+    finally:
+        path.unlink(missing_ok=True)
+
+
+async def _compute_inspection(transfer: FileTransfer, compute: FileCompute):
+    try:
+        return await compute(SOLUTION_ARCHIVE_INSPECT_OPERATION, transfer)
+    except BaseException:
+        transfer.close()
+        raise
+
+
+def _decode_verified_source(received: ReceivedFileTransfer, transfer: FileTransfer, original: Path) -> VerifiedSolutionArchive:
+    try:
+        inspection = decode_solution_archive_inspect_results(received, expected_input=transfer.manifest)
+        try:
+            return _verify_inspection(original, transfer.path, inspection)
+        except BaseException:
+            inspection.close()
+            raise
+    finally:
+        transfer.close()
 
 
 def _verify_inspection(zip_path: Path, snapshot_path: Path, inspection: SolutionArchiveInspection) -> VerifiedSolutionArchive:
