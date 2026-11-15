@@ -305,6 +305,56 @@ def _current_version(account: str, script_name: str) -> str:
     return version_id
 
 
+def _verified_container_metadata(containers: object, context: str) -> list[dict]:
+    """Preserve the deployed container declaration only after verifying its binding.
+
+    A restart publishes a new Worker version. Reconstructing this declaration
+    would silently change the application name (and, for durable-object policy,
+    its named images), so the hook must copy the provider's current metadata or
+    refuse the mutation.
+    """
+    if not isinstance(containers, list) or not all(isinstance(container, dict) for container in containers):
+        raise Unsupported(f"Cloudflare API returned malformed {context} container metadata")
+    matches = [container for container in containers if container.get("class_name") == "WorkerContainer"]
+    if len(matches) != 1:
+        raise Unsupported(f"Cloudflare API returned incomplete {context} container metadata")
+    container = matches[0]
+    if not isinstance(container.get("name"), str) or not container["name"]:
+        raise Unsupported(f"Cloudflare API returned incomplete {context} container metadata")
+    if "images" in container and (
+        not isinstance(container["images"], dict)
+        or not all(isinstance(name, str) and name and isinstance(image, str) and image
+                   for name, image in container["images"].items())
+    ):
+        raise Unsupported(f"Cloudflare API returned malformed {context} container metadata")
+    # API payloads are JSON, but copy through JSON to avoid retaining a mutable
+    # readback object while assembling the write payload.
+    return json.loads(json.dumps(containers))
+
+
+def _current_version_container_metadata(account: str, script_name: str, version_id: str) -> list[dict]:
+    script = urllib.parse.quote(script_name, safe="")
+    version = _result(
+        _get(f"/accounts/{account}/workers/scripts/{script}/versions/{urllib.parse.quote(version_id, safe='')}"),
+        "Worker version",
+    )
+    if not isinstance(version, dict):
+        raise Unsupported("Cloudflare API returned malformed Worker version")
+    try:
+        containers = version["resources"]["script_runtime"]["containers"]
+    except (KeyError, TypeError):
+        raise Unsupported("Cloudflare API returned incomplete Worker version container metadata") from None
+    return _verified_container_metadata(containers, "Worker version")
+
+
+def _preserved_container_metadata(settings: dict, account: str, script_name: str) -> tuple[list[dict], str | None]:
+    """Return the deployed binding and an already-read current version, if needed."""
+    if "containers" in settings and settings["containers"] is not None:
+        return _verified_container_metadata(settings["containers"], "Worker settings"), None
+    version_id = _current_version(account, script_name)
+    return _current_version_container_metadata(account, script_name, version_id), version_id
+
+
 def _provider_modules(source: Path) -> dict[str, bytes]:
     modules: dict[str, bytes] = {}
     for name in ("capacity.mjs", "capacity-core.mjs"):
@@ -336,7 +386,7 @@ def _multipart_worker_upload(metadata: dict, modules: dict[str, bytes]) -> tuple
 
 
 def restart_provider(payload: dict) -> dict:
-    """Force a new Worker version without touching secrets, migrations, or containers."""
+    """Force a Worker version while preserving verified secrets, migrations, and containers."""
     account, script_name, source, scope = _mutation_configuration(payload)
     script = urllib.parse.quote(script_name, safe="")
     service = _result(
@@ -353,6 +403,7 @@ def restart_provider(payload: dict) -> dict:
     if not isinstance(settings, dict):
         raise Unsupported("Cloudflare API returned malformed Worker settings")
     bindings = _configured_bindings(settings, scope)
+    containers, previous_version_id = _preserved_container_metadata(settings, account, script_name)
     bindings.append({
         "name": "CONFORMANCE_RESTART_NONCE",
         "type": "plain_text",
@@ -361,7 +412,7 @@ def restart_provider(payload: dict) -> dict:
     metadata: dict[str, object] = {
         "main_module": "capacity.mjs",
         "bindings": bindings,
-        "containers": [{"class_name": "WorkerContainer"}],
+        "containers": containers,
         # Preserve CAPACITY_TOKEN without ever reading or sending its value.
         "keep_bindings": ["secret_text"],
     }
@@ -373,8 +424,14 @@ def restart_provider(payload: dict) -> dict:
             ):
                 raise Unsupported("Cloudflare API returned malformed Worker settings")
             metadata[key] = value
+    if "observability" in settings and settings["observability"] is not None:
+        observability = settings["observability"]
+        if not isinstance(observability, dict):
+            raise Unsupported("Cloudflare API returned malformed Worker settings")
+        metadata["observability"] = dict(observability)
 
-    previous_version_id = _current_version(account, script_name)
+    if previous_version_id is None:
+        previous_version_id = _current_version(account, script_name)
     headers, data = _multipart_worker_upload(metadata, _provider_modules(source))
     _request("PUT", f"/accounts/{account}/workers/scripts/{script}", headers=headers, data=data)
     version_id = _current_version(account, script_name)

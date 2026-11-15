@@ -444,6 +444,22 @@ test("accepted start is durable before a process can exit without a reply", asyn
     assert.notEqual((await (await restarted.fetch(lifecycleRequest("status"))).json()).lifecycle, "never_started");
 });
 
+test("accepted cold startup is held open before running is observed", async () => {
+    const { ctx, calls } = fakeContainer();
+    ctx.container.start = function () {
+        calls.start += 1;
+        // Runtime admission can precede the running observation.
+        this.running = false;
+    };
+    const worker = new WorkerContainer(ctx, ENV);
+    const response = await worker.fetch(startRequest());
+    assert.equal(response.status, 200);
+    assert.equal((await response.json()).lifecycle, "accepted");
+    assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
+    await worker.fetch(startRequest());
+    assert.equal(calls.start, 1);
+});
+
 test("start launches once and holds the container open", async () => {
     const { ctx, calls } = fakeContainer();
     const worker = new WorkerContainer(ctx, ENV);

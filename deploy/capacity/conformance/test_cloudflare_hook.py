@@ -74,8 +74,8 @@ def mutation_environment(monkeypatch, tmp_path):
     return source
 
 
-def _worker_settings(scope: str = "demo") -> dict:
-    return {
+def _worker_settings(scope: str = "demo", *, observability: dict | None = None) -> dict:
+    settings = {
         "bindings": [
             {"name": "WORKER_LEDGER", "type": "durable_object_namespace", "class_name": "WorkerLedger"},
             {"name": "SCOPE_REGISTRY", "type": "durable_object_namespace", "class_name": "ScopeRegistry"},
@@ -85,6 +85,24 @@ def _worker_settings(scope: str = "demo") -> dict:
         ],
         "compatibility_date": "2026-11-14",
         "compatibility_flags": ["nodejs_compat"],
+    }
+    if observability is not None:
+        settings["observability"] = observability
+    return settings
+
+
+def _current_version(version_id: str) -> dict:
+    return {
+        "id": version_id,
+        "resources": {
+            "script_runtime": {
+                "containers": [{
+                    "name": "capacity-provider-worker-container",
+                    "class_name": "WorkerContainer",
+                    "images": {"base": "registry.cloudflare.com/account/image@sha256:abc123"},
+                }],
+            },
+        },
     }
 
 
@@ -182,7 +200,7 @@ def test_restart_provider_rejects_a_scope_other_than_the_deployed_worker(monkeyp
     assert paths == ["/accounts/account-123/workers/services/capacity-provider", "/accounts/account-123/workers/scripts/capacity-provider/settings"]
 
 
-def test_restart_provider_reuploads_checked_in_modules_without_secret_or_migration(monkeypatch, mutation_environment):
+def test_restart_provider_preserves_verified_container_metadata_and_observability(monkeypatch, mutation_environment):
     uploads: list[tuple[str, str, dict[str, str], bytes]] = []
     version_reads = iter(("version-before", "version-after"))
 
@@ -193,9 +211,11 @@ def test_restart_provider_reuploads_checked_in_modules_without_secret_or_migrati
                 "result": {"default_environment": {"script": {"migration_tag": "v1"}}},
             }
         if path.endswith("/settings"):
-            return {"success": True, "result": _worker_settings()}
+            return {"success": True, "result": _worker_settings(observability={"enabled": True})}
         if path.endswith("/versions?per_page=1"):
             return {"success": True, "result": [{"id": next(version_reads)}]}
+        if path.endswith("/versions/version-before"):
+            return {"success": True, "result": _current_version("version-before")}
         raise AssertionError(path)
 
     def request(method: str, path: str, *, headers: dict[str, str], data: bytes, **_kwargs) -> dict:
@@ -217,7 +237,12 @@ def test_restart_provider_reuploads_checked_in_modules_without_secret_or_migrati
     assert b"the-capacity-token-must-not-be-uploaded" not in body
     metadata = _multipart_metadata(body)
     assert metadata["main_module"] == "capacity.mjs"
-    assert metadata["containers"] == [{"class_name": "WorkerContainer"}]
+    assert metadata["containers"] == [{
+        "name": "capacity-provider-worker-container",
+        "class_name": "WorkerContainer",
+        "images": {"base": "registry.cloudflare.com/account/image@sha256:abc123"},
+    }]
+    assert metadata["observability"] == {"enabled": True}
     assert metadata["keep_bindings"] == ["secret_text"]
     assert "migrations" not in metadata
     assert {binding["name"] for binding in metadata["bindings"]} >= {
@@ -229,6 +254,40 @@ def test_restart_provider_reuploads_checked_in_modules_without_secret_or_migrati
     }
     assert b'filename="capacity.mjs"' in body
     assert b'filename="capacity-core.mjs"' in body
+
+
+def test_restart_provider_refuses_to_upload_without_a_verified_current_container_binding(
+    monkeypatch, mutation_environment,
+):
+    requests: list[str] = []
+
+    def get(path: str) -> dict:
+        requests.append(path)
+        if "/workers/services/" in path:
+            return {
+                "success": True,
+                "result": {"default_environment": {"script": {"migration_tag": "v1"}}},
+            }
+        if path.endswith("/settings"):
+            return {"success": True, "result": _worker_settings()}
+        if path.endswith("/versions?per_page=1"):
+            return {"success": True, "result": [{"id": "version-before"}]}
+        if path.endswith("/versions/version-before"):
+            return {"success": True, "result": {"id": "version-before", "resources": {}}}
+        raise AssertionError(path)
+
+    monkeypatch.setattr(cloudflare, "_get", get)
+    monkeypatch.setattr(cloudflare, "_request", lambda *_args, **_kwargs: pytest.fail("must not upload"))
+
+    with pytest.raises(cloudflare.Unsupported, match="container metadata"):
+        cloudflare.restart_provider({"scope": "demo"})
+
+    assert requests == [
+        "/accounts/account-123/workers/services/capacity-provider",
+        "/accounts/account-123/workers/scripts/capacity-provider/settings",
+        "/accounts/account-123/workers/scripts/capacity-provider/versions?per_page=1",
+        "/accounts/account-123/workers/scripts/capacity-provider/versions/version-before",
+    ]
 
 
 def test_restart_provider_requires_a_changed_worker_version(monkeypatch, mutation_environment):
@@ -244,6 +303,8 @@ def test_restart_provider_requires_a_changed_worker_version(monkeypatch, mutatio
             return {"success": True, "result": _worker_settings()}
         if path.endswith("/versions?per_page=1"):
             return {"success": True, "result": [{"id": next(version_reads)}]}
+        if path.endswith("/versions/same-version"):
+            return {"success": True, "result": _current_version("same-version")}
         raise AssertionError(path)
 
     monkeypatch.setattr(cloudflare, "_get", get)
