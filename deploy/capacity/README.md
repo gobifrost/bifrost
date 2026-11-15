@@ -22,6 +22,15 @@ the protocol.
 
 ## Adapter contract
 
+The API-only worker spike derives each external launcher's control key from the
+dedicated CAPACITY_TOKEN and its canonical worker/resource identities. The three
+Floci adapters reuse api/shared/worker_control_auth.py; run them from a complete
+checkout. WORKER_ENV_JSON supplies the API URL and runtime paths, not database,
+Redis, storage or installation signing credentials. Privileged platform fields
+are rejected. Environment construction is covered by
+api/tests/unit/test_capacity_adapter_worker_env.py; that unit coverage does not
+qualify any adapter against a real cloud.
+
 ```python
 prepare(ctx, spec) -> handle      # MUST NOT start a process
 start(ctx, handle) -> Observation  # at most ONE launcher per incarnation
@@ -47,6 +56,9 @@ Rules the core relies on:
 CAPACITY_TOKEN=...            # 32-512 non-space ASCII
 CAPACITY_SCOPE=demo
 WORKER_VERSION=<image build>
+# Required v2 capability envelope; declare only paths the pinned image implements.
+EXECUTION_HANDLERS='["workflow.execute"]'
+COMPUTE_CAPABILITIES='[]'
 WORKER_IMAGE=<registry digest>
 TLS_CERT_FILE=... TLS_KEY_FILE=...   # required: the API dials HTTPS only
 STORE_PATH=/var/lib/capacity/ledger.json  # durable ledger; omit for memory-only

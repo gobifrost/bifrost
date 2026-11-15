@@ -1,9 +1,9 @@
 """The agent template profile: warm agent runtime, one forked child per run.
 
-Real template processes (fork behavior can't be mocked). The forked child's
-``run_agent_message`` is replaced by a stub through a ``sitecustomize`` module
-on the template's ``PYTHONPATH``, so these tests exercise the fork protocol
-without a database or a model.
+Real template processes (fork behavior can't be mocked). A stdlib-only import
+hook installed through ``sitecustomize`` patches the child's consumer only
+after its normal import completes, so these tests exercise the fork protocol
+without opening a database or invoking a model.
 """
 
 from __future__ import annotations
@@ -30,20 +30,45 @@ pytestmark = pytest.mark.slow
 
 _STUB = textwrap.dedent(
     """
-    import asyncio
-
-    import src.jobs.agent_run_child as agent_run_child
-
-
-    async def run_agent_message(message, *, handler="agent.run", worker_id=None):
-        if "raise" in message:
-            raise LookupError(message["raise"])
-        if "exit" in message:
-            raise SystemExit(message["exit"])
-        await asyncio.sleep(message.get("sleep", 0))
+    import importlib.abc
+    import importlib.machinery
+    import sys
 
 
-    agent_run_child.run_agent_message = run_agent_message
+    class _AgentRunChildLoader(importlib.abc.Loader):
+        def __init__(self, wrapped):
+            self._wrapped = wrapped
+
+        def create_module(self, spec):
+            create_module = getattr(self._wrapped, "create_module", None)
+            return create_module(spec) if create_module is not None else None
+
+        def exec_module(self, module):
+            self._wrapped.exec_module(module)
+
+            async def run_agent_message(message, *, handler="agent.run", worker_id=None):
+                if "raise" in message:
+                    raise LookupError(message["raise"])
+                if "exit" in message:
+                    raise SystemExit(message["exit"])
+                from asyncio import sleep
+                await sleep(message.get("sleep", 0))
+
+            module.run_agent_message = run_agent_message
+
+
+    class _AgentRunChildFinder(importlib.abc.MetaPathFinder):
+        def find_spec(self, fullname, path=None, target=None):
+            if fullname != "src.jobs.agent_run_child":
+                return None
+            spec = importlib.machinery.PathFinder.find_spec(fullname, path, target)
+            if spec is None or spec.loader is None:
+                return None
+            spec.loader = _AgentRunChildLoader(spec.loader)
+            return spec
+
+
+    sys.meta_path.insert(0, _AgentRunChildFinder())
     """
 )
 

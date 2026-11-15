@@ -40,7 +40,7 @@ models in `api/shared/models.py`.
 
 | Request | Contract |
 | --- | --- |
-| `GET /v1/capabilities` | Return protocol version 1 and immutable provider scope plus current build and bounds. |
+| `GET /v1/capabilities` | Return protocol version 2, immutable provider scope, current build and bounds, plus explicit execution and compute capability lists. |
 | `GET /v1/workers/{uuid}` | Strongly read the resource, or return 404 when absent. |
 | `PUT /v1/workers/{uuid}` | Idempotently prepare the immutable reservation without starting a process. Return `prepared` and its stable resource UID. |
 | `POST /v1/workers/{uuid}/start` | Start the prepared resource matching the supplied `resource_uid`. Return `starting` or `running`. |
@@ -63,6 +63,23 @@ follows no redirects and performs no automatic HTTP retries.
 Providers must preserve idempotency and tombstones, reject conflicting
 reservations or resource UIDs, and never restart a stopped incarnation. Report
 out-of-memory only from explicit runtime evidence, not a generic process exit.
+
+## Capability Envelope Revision 2
+
+The `/v1/` resource paths remain unchanged. Capability envelopes now use
+`protocol_version: 2` and require `execution_handlers` and
+`compute_capabilities`: unique, bounded capability-name lists. A provider must
+advertise only paths implemented by its pinned worker image; version strings do
+not imply feature support. For example, an API-only worker that can execute
+workflows and compile Apps advertises `workflow.execute` and `app.compile.v1`.
+
+The controller uses these declarations to plan only supported work. External
+capacity receives workflow dispatches and services only when it advertises
+`workflow.execute`; it receives `application.deploy` and
+`application.sdk_update` demand only when it advertises `app.compile.v1`.
+Other local platform job types remain on privileged/static or Kubernetes
+capacity. A v1 profile is rejected deliberately: deploy the matching provider
+and pinned worker image as part of the runtime change before selecting it.
 
 ## Confirmed Physical Cleanup
 

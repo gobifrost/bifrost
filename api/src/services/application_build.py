@@ -9,6 +9,7 @@ import tempfile
 import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import update
@@ -20,7 +21,7 @@ from shared.app_build_errors import (
     subprocess_memory_error,
 )
 from src.core.database import get_db_context
-from src.jobs.platform.base import PlatformJobFailure
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.models.orm.applications import Application
 from src.services.application_sdk_status import current_sdk_metadata
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
@@ -29,6 +30,9 @@ from src.services.solutions.app_build import (
     ReproducibleDependencyBuildError,
     SolutionAppBuilder,
 )
+
+if TYPE_CHECKING:
+    from src.jobs.platform.base import AppBuildAuthorization, AppBuildCompute
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +56,8 @@ async def rebuild_application_from_source(
     target_sdk_binding_api_major: int | None = None,
     retain_previous_deployment: bool = False,
     automatic_upgrade: bool = False,
+    app_build_compute: "AppBuildCompute | None" = None,
+    app_build_authorization: "AppBuildAuthorization | None" = None,
 ) -> dict[str, str]:
     if application is None and application_id is None:
         raise ValueError("application or application_id is required")
@@ -79,13 +85,22 @@ async def rebuild_application_from_source(
                 target_sdk_binding_api_major=target_sdk_binding_api_major,
             )
             build_kwargs = {"require_lockfile": True} if automatic_upgrade else {}
-            dist = await asyncio.to_thread(
-                builder.compile_dist,
-                app_id,
-                source.files,
-                source.dependencies,
-                **build_kwargs,
-            )
+            if app_build_compute is None:
+                dist = await asyncio.to_thread(
+                    builder.compile_dist,
+                    app_id,
+                    source.files,
+                    source.dependencies,
+                    **build_kwargs,
+                )
+            else:
+                dist = await builder.compile_dist_using(
+                    app_id,
+                    source.files,
+                    source.dependencies,
+                    app_build_compute,
+                    **build_kwargs,
+                )
         except PlatformJobFailure:
             raise
         except ReproducibleDependencyBuildError as exc:
@@ -152,6 +167,11 @@ async def rebuild_application_from_source(
                     "automatic_sdk_upgrades_disabled",
                     "Automatic App SDK upgrades were disabled before this update could activate.",
                 )
+            if (
+                app_build_authorization is not None
+                and not await app_build_authorization(db)
+            ):
+                raise PlatformJobCancelled
             app = await _get_activation_app(db, app_id, application)
             if app is None or app.app_model != "standalone_v2":
                 raise PlatformJobFailure(

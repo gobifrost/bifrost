@@ -82,6 +82,14 @@ class ExecutionWorker(Base):
             "\"agent.summarize_backfill\"]'::jsonb"
         ),
     )
+    # Semantic compute capabilities are separately granted from execution
+    # handlers. Existing rows intentionally receive no compute grant.
+    supported_compute: Mapped[list[str]] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=list,
+        server_default=text("'[]'::jsonb"),
+    )
     active_runs: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     # Owner-fenced occupancy for handlers with per-worker concurrency limits.
     # NULL means unreported; capacity planning cannot assume those slots free.

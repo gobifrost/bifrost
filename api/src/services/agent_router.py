@@ -20,7 +20,8 @@ from src.services.authorization.agent_runtime import (
     AgentRuntimeAuthorizationError,
     authorize_agent_execution,
 )
-from src.services.llm import get_llm_client, LLMMessage
+from src.services.llm import LLMMessage
+from src.services.llm.factory import get_llm_client
 
 logger = logging.getLogger(__name__)
 

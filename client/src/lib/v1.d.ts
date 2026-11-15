@@ -25410,6 +25410,29 @@ export interface components {
              */
             retryable: boolean;
         };
+        /**
+         * PlatformJobExecutorAttribution
+         * @description Sanitized durable identity of the worker that last ran a PlatformJob.
+         */
+        PlatformJobExecutorAttribution: {
+            /** Attempt */
+            attempt: number;
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /** Worker Form */
+            worker_form?: string | null;
+            /** Capacity Scope */
+            capacity_scope?: string | null;
+            /** Compute Capability */
+            compute_capability?: string | null;
+            /** Stage Id */
+            stage_id?: string | null;
+            /** Input Sha256 */
+            input_sha256?: string | null;
+        };
         /** PlatformJobListResponse */
         PlatformJobListResponse: {
             /** Jobs */
@@ -25500,6 +25523,7 @@ export interface components {
             memory_peak_bytes?: number | null;
             /** Memory Limit Bytes */
             memory_limit_bytes?: number | null;
+            executor?: components["schemas"]["PlatformJobExecutorAttribution"] | null;
             /** Started At */
             started_at?: string | null;
             /** Completed At */

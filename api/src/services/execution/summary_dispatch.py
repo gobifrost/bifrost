@@ -32,7 +32,7 @@ from src.models.orm.summary_backfill_job import SummaryBackfillJob
 from src.services.memory_requests import SUMMARY_REQUEST_BYTES
 from src.services.work_dispatch import WAKE_AGENT_SUMMARY, hand_off, stage_dispatch, take_dispatch_payload
 from src.core.database import get_db_context
-from src.worker.remote.fencing import fence_remote_owner
+from src.worker.remote.fencing import fence_remote_owner, require_remote_owner
 
 logger = logging.getLogger(__name__)
 
@@ -54,6 +54,7 @@ async def summary_owner_session(factory: Any, run_id: UUID, worker_id: UUID, cla
     connection or lock is held while the provider request runs.
     """
     async with factory() as db:
+        await require_remote_owner(db)
         worker = await db.scalar(select(ExecutionWorker.id).where(
             ExecutionWorker.id == worker_id,
             ExecutionWorker.state.in_(("ready", "draining")),

@@ -330,7 +330,7 @@ class TestForkedAIStream:
         async def _record_usage(**kwargs):
             usage_records.append(kwargs)
 
-        import src.services.llm as llm_pkg
+        import src.services.llm.factory as llm_factory
 
         monkeypatch.setenv("BIFROST_API_URL", "http://127.0.0.1:9")
 
@@ -341,7 +341,7 @@ class TestForkedAIStream:
         try:
             with (
                 patch.object(
-                    llm_pkg,
+                    llm_factory,
                     "get_llm_client",
                     new=AsyncMock(return_value=provider),
                 ),

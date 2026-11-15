@@ -22,10 +22,9 @@ from src.services.execution.summary_dispatch import SummaryOwnershipLost, summar
 from src.models.orm.work_dispatches import WorkDispatch
 from src.services.llm import LLMResponse
 from src.services.execution.run_summarizer import (
-    _clamp_confidence,
-    _extract_json_object,
     summarize_run,
 )
+from shared.agent_summary_compute import clamp_confidence, extract_json_object
 
 
 @pytest_asyncio.fixture
@@ -161,9 +160,7 @@ async def test_summarize_run_populates_asked_did_confidence(
         assert run.summary_status == "completed"
         assert run.summary_generated_at is not None
         # Prompt version stamped so backfill roll-forward can target old runs.
-        from src.services.execution.run_summarizer import (
-            SUMMARIZE_PROMPT_VERSION,
-        )
+        from shared.agent_summary_compute import SUMMARIZE_PROMPT_VERSION
         assert run.summary_prompt_version == SUMMARIZE_PROMPT_VERSION
         # Metadata merged (LLM-extracted intent)
         assert run.run_metadata.get("intent") == "password_reset"
@@ -395,14 +392,14 @@ async def test_summarize_run_skipped_when_run_not_completed(
 
 
 def test_clamp_confidence():
-    assert _clamp_confidence(0.5) == 0.5
-    assert _clamp_confidence(0.0) == 0.0
-    assert _clamp_confidence(1.0) == 1.0
-    assert _clamp_confidence(1.5) == 1.0  # clamped
-    assert _clamp_confidence(-0.2) == 0.0
-    assert _clamp_confidence(None) is None
-    assert _clamp_confidence("not a number") is None
-    assert _clamp_confidence("0.7") == 0.7  # numeric string parsed
+    assert clamp_confidence(0.5) == 0.5
+    assert clamp_confidence(0.0) == 0.0
+    assert clamp_confidence(1.0) == 1.0
+    assert clamp_confidence(1.5) == 1.0  # clamped
+    assert clamp_confidence(-0.2) == 0.0
+    assert clamp_confidence(None) is None
+    assert clamp_confidence("not a number") is None
+    assert clamp_confidence("0.7") == 0.7  # numeric string parsed
 
 
 @pytest.mark.asyncio
@@ -440,26 +437,26 @@ class TestExtractJsonObject:
     """Guards against the docker-log regression: every backfilled run's
     summarizer call returned content that json.loads rejected because the LLM
     either wrapped the object in markdown fences or added prose around it.
-    _extract_json_object must tolerate both."""
+    extract_json_object must tolerate both."""
 
     def test_plain_json_roundtrips(self):
         raw = '{"asked": "foo", "did": "bar"}'
-        assert _extract_json_object(raw) == raw
+        assert extract_json_object(raw) == raw
 
     def test_strips_markdown_code_fence_with_lang(self):
         raw = '```json\n{"asked": "foo"}\n```'
         import json
-        assert json.loads(_extract_json_object(raw)) == {"asked": "foo"}
+        assert json.loads(extract_json_object(raw)) == {"asked": "foo"}
 
     def test_strips_markdown_code_fence_without_lang(self):
         raw = '```\n{"asked": "foo"}\n```'
         import json
-        assert json.loads(_extract_json_object(raw)) == {"asked": "foo"}
+        assert json.loads(extract_json_object(raw)) == {"asked": "foo"}
 
     def test_strips_prose_preamble(self):
         raw = 'Here is the summary:\n{"asked": "foo", "did": "bar"}'
         import json
-        assert json.loads(_extract_json_object(raw)) == {
+        assert json.loads(extract_json_object(raw)) == {
             "asked": "foo",
             "did": "bar",
         }
@@ -467,12 +464,12 @@ class TestExtractJsonObject:
     def test_strips_trailing_prose(self):
         raw = '{"asked": "foo"}\n\nLet me know if you need anything else.'
         import json
-        assert json.loads(_extract_json_object(raw)) == {"asked": "foo"}
+        assert json.loads(extract_json_object(raw)) == {"asked": "foo"}
 
     def test_tolerates_braces_in_quoted_strings(self):
         raw = '{"url": "https://x.com/{id}", "did": "routed"}'
         import json
-        assert json.loads(_extract_json_object(raw)) == {
+        assert json.loads(extract_json_object(raw)) == {
             "url": "https://x.com/{id}",
             "did": "routed",
         }
@@ -480,21 +477,92 @@ class TestExtractJsonObject:
     def test_handles_escaped_quotes_inside_strings(self):
         raw = '{"did": "said \\"hello\\"", "asked": "x"}'
         import json
-        parsed = json.loads(_extract_json_object(raw))
+        parsed = json.loads(extract_json_object(raw))
         assert parsed["did"] == 'said "hello"'
 
     def test_nested_object_closes_at_outer_brace(self):
         raw = '{"metadata": {"ticket_id": "4821"}, "asked": "x"}'
         import json
-        parsed = json.loads(_extract_json_object(raw))
+        parsed = json.loads(extract_json_object(raw))
         assert parsed["metadata"] == {"ticket_id": "4821"}
         assert parsed["asked"] == "x"
 
     def test_empty_input_returns_empty(self):
-        assert _extract_json_object("") == ""
-        assert _extract_json_object("   ") == ""
+        assert extract_json_object("") == ""
+        assert extract_json_object("   ") == ""
 
     def test_no_object_returns_stripped_input(self):
         # Caller will still get a JSONDecodeError — we don't try to synthesise.
-        result = _extract_json_object("totally not json")
+        result = extract_json_object("totally not json")
         assert "{" not in result
+
+
+@pytest.mark.parametrize("content,expected_status", [
+    ('{"asked":"Test receipt","did":"Finished","answered":"Done"}', "completed"),
+    ('invalid provider JSON', "failed"),
+])
+async def test_api_compute_commits_provider_receipt_before_reply_even_for_invalid_summary(
+    async_session_factory, seed_completed_run, content, expected_status,
+):
+    from shared.agent_summary_compute import build_summary_completion_request, compute_summary
+    from src.services.agent_runtime.summary_compute_execution import summary_compute_execution, summary_compute_receipt
+
+    receipt_id = uuid4()
+    client = _build_mock_client(_build_mock_llm_response(content))
+
+    async def remote_compute(summary_input, complete):
+        with summary_compute_receipt(receipt_id):
+            completion = await complete(build_summary_completion_request(summary_input))
+        # The native API completion must be billed before the physical child
+        # receives it, including a paid response whose JSON cannot be parsed.
+        async with async_session_factory() as db:
+            row = await db.scalar(select(AIUsage).where(AIUsage.receipt_id == receipt_id))
+            assert row is not None
+            assert row.agent_run_id == seed_completed_run.id
+            assert row.input_tokens == completion.input_tokens
+
+        async def completed(_request):
+            return completion
+
+        return await compute_summary(summary_input, completed)
+
+    with (
+        patch("src.services.execution.run_summarizer.get_summarization_client", AsyncMock(return_value=(client, "claude-haiku-4-5"))),
+        patch("src.services.execution.run_summarizer._broadcast_run", AsyncMock()),
+        summary_compute_execution(remote_compute),
+    ):
+        await summarize_run(seed_completed_run.id, async_session_factory)
+
+    async with async_session_factory() as db:
+        usages = list((await db.scalars(select(AIUsage).where(AIUsage.agent_run_id == seed_completed_run.id))).all())
+        run = await db.get(AgentRun, seed_completed_run.id)
+        assert run is not None and run.summary_status == expected_status
+    assert len(usages) == 1
+    assert usages[0].receipt_id == receipt_id
+    client.complete.assert_awaited_once()
+
+
+async def test_stale_summary_stage_cannot_fail_regenerated_attempt(async_session_factory, seed_completed_run):
+    from src.services.execution.summary_dispatch import fail_remote_summary
+
+    worker_id, old_claim, new_claim = uuid4(), uuid4(), uuid4()
+    try:
+        async with async_session_factory() as db:
+            db.add(ExecutionWorker(id=worker_id, form="static", state="ready"))
+            await db.flush()
+            db.add(ExecutionWorkerClaim(id=new_claim, worker_id=worker_id, family="agent_summary", subject_id=seed_completed_run.id))
+            run = await db.get(AgentRun, seed_completed_run.id)
+            assert run is not None
+            run.summary_status = "pending"
+            await db.commit()
+        await fail_remote_summary(worker_id=worker_id, run_id=seed_completed_run.id,
+                                  claim_id=old_claim, reason="old compute owner stopped")
+        async with async_session_factory() as db:
+            run = await db.get(AgentRun, seed_completed_run.id)
+            assert run is not None
+            assert run.summary_status == "pending"
+            assert run.status == "completed"
+    finally:
+        async with async_session_factory() as db:
+            await db.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await db.commit()

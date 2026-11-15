@@ -12,6 +12,11 @@ def validate_external_policy(
     policy: "KubernetesPolicy", profile: WorkerCapacityProfile, *, max_lifetime_seconds: int,
 ) -> None:
     """Reject an incompatible policy without changing it or provisioning work."""
+    if "agent.run" in profile.execution_handlers and "agent.loop.v1" not in profile.compute_capabilities:
+        raise ValueError("agent.run requires the API-only agent.loop.v1 compute capability")
+    if (any(handler in profile.execution_handlers for handler in ("agent.summarize", "agent.summarize_backfill"))
+            and "summary.compute.v1" not in profile.compute_capabilities):
+        raise ValueError("Agent summaries require the API-only summary.compute.v1 compute capability")
     for field in ("worker_memory_mib", "largest_worker_mib"):
         if getattr(policy, field) * 2**20 != profile.memory_limit_bytes:
             raise ValueError(

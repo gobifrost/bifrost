@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import ssl
 import sys
 import threading
@@ -160,6 +161,8 @@ class ProviderConfig:
     memory_limit_bytes: int
     max_workers: int
     max_lifetime_seconds: int
+    execution_handlers: list[str]
+    compute_capabilities: list[str]
     port: int = 8443
     starting_grace_seconds: int = 30
     tls_cert_file: str | None = None
@@ -177,6 +180,8 @@ class ProviderConfig:
             memory_limit_bytes=_env_int("MEMORY_LIMIT_BYTES", 4 * 1024**3),
             max_workers=_env_int("MAX_WORKERS", 2),
             max_lifetime_seconds=_env_int("MAX_LIFETIME_SECONDS", 6 * 3600),
+            execution_handlers=_capabilities_env("EXECUTION_HANDLERS"),
+            compute_capabilities=_capabilities_env("COMPUTE_CAPABILITIES"),
             port=_env_int("PORT", 8443),
             starting_grace_seconds=_env_int("STARTING_GRACE_SECONDS", 30),
             tls_cert_file=os.environ.get("TLS_CERT_FILE"),
@@ -199,14 +204,32 @@ def _env_int(name: str, default: int) -> int:
         return default
 
 
+def _capabilities_env(name: str) -> list[str]:
+    try:
+        values = json.loads(_require_env(name))
+    except ValueError as exc:
+        raise SystemExit(f"{name} must be a JSON list") from exc
+    if (
+        not isinstance(values, list)
+        or len(values) > 64
+        or any(not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9._:-]{0,99}", value)
+               for value in values)
+        or len(values) != len(set(values))
+    ):
+        raise SystemExit(f"{name} must be a unique list of capability names")
+    return values
+
+
 def profile_doc(cfg: ProviderConfig) -> dict[str, Any]:
     return {
-        "protocol_version": 1,
+        "protocol_version": 2,
         "scope": cfg.scope,
         "worker_version": cfg.worker_version,
         "memory_limit_bytes": cfg.memory_limit_bytes,
         "max_workers": cfg.max_workers,
         "max_lifetime_seconds": cfg.max_lifetime_seconds,
+        "execution_handlers": cfg.execution_handlers,
+        "compute_capabilities": cfg.compute_capabilities,
     }
 
 

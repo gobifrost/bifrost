@@ -10,11 +10,16 @@ from __future__ import annotations
 import subprocess
 import uuid
 from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock
 
 import pytest
 
-import src.services.sdk_package as sdkpkg
 from shared.app_build_errors import AppBuildMemoryError
+from shared.solution_app_compiler import (
+    AppBuildResult,
+    BUILD_STEP_TIMEOUT_S,
+    FAILURE_OUTPUT_LINES,
+)
 from src.services.solutions import app_build as ab
 from src.services.solutions.app_build import SolutionAppBuilder
 from src.services.solutions.deploy import SolutionDeployConflict
@@ -22,9 +27,20 @@ from src.services.solutions.deploy import SolutionDeployConflict
 
 @pytest.fixture(autouse=True)
 def _stub_identity_toolchain(monkeypatch):
-    # These tests stub Vite/materialization; actual identity inputs have their
-    # own tests and must not query Node or npm through a stubbed subprocess.
-    monkeypatch.setattr(SolutionAppBuilder, "source_identity", lambda *a, **k: "a" * 64)
+    # Builder tests stub compiler execution; identity inputs have their own
+    # tests and must not query Node or npm through a stubbed subprocess.
+    monkeypatch.setattr(SolutionAppBuilder, "_sdk_tarball", lambda _self: b"FAKE_TGZ")
+    monkeypatch.setattr(
+        ab,
+        "build_recipe",
+        lambda *_args, **_kwargs: {
+            "schema": 1,
+            "variant": "server-install-v2",
+            "sdk": "a" * 64,
+            "toolchain": "b" * 64,
+            "environment": "c" * 64,
+        },
+    )
 
 
 @pytest.mark.e2e
@@ -35,10 +51,10 @@ async def test_prebuilt_dist_is_used_without_building(monkeypatch):
 
     b = SolutionAppBuilder()
 
-    def _boom(*a, **k):
-        raise AssertionError("vite build must not run when prebuilt dist is supplied")
+    def _boom(*_args, **_kwargs):
+        raise AssertionError("compiler must not run when prebuilt dist is supplied")
 
-    monkeypatch.setattr(b, "_run_vite_build", _boom)
+    monkeypatch.setattr(ab, "compile_app", _boom)
 
     out = await b.build(
         app_id=app_id,
@@ -55,18 +71,17 @@ async def test_prebuilt_dist_is_used_without_building(monkeypatch):
 
 @pytest.mark.e2e
 async def test_build_runs_vite_when_no_prebuilt_dist(monkeypatch):
-    """With no prebuilt dist, the builder runs vite and uploads the produced dist."""
+    """With no prebuilt dist, the builder compiles and uploads the produced dist."""
     app_id = uuid.uuid4()
     b = SolutionAppBuilder()
 
     captured = {}
 
-    def _fake_vite(workdir, base="/"):
-        captured["workdir"] = workdir
-        captured["base"] = base
-        return {"index.html": b"<html>built</html>"}
+    def _fake_compile(inputs):
+        captured["inputs"] = inputs
+        return AppBuildResult({"index.html": b"<html>built</html>"}, "a" * 64)
 
-    monkeypatch.setattr(b, "_run_vite_build", _fake_vite)
+    monkeypatch.setattr(ab, "compile_app", _fake_compile)
 
     out = await b.build(
         app_id=app_id,
@@ -75,85 +90,63 @@ async def test_build_runs_vite_when_no_prebuilt_dist(monkeypatch):
         prebuilt_dist=None,
     )
     assert out == {"index.html": b"<html>built</html>"}
-    assert "workdir" in captured
-    # base is the serving route so emitted asset URLs resolve there, not root.
-    assert captured["base"] == f"/api/applications/{app_id}/dist/"
+    assert captured["inputs"].app_id == app_id
+    assert b.last_build_identity == "a" * 64
 
 
-@pytest.mark.e2e
-def test_materialize_vendors_bifrost_sdk(monkeypatch, tmp_path):
-    """`_materialize` drops the bifrost SDK tarball into the workspace and adds a
-    file: dependency so `import from "bifrost"` resolves during the build (P1-a).
-    The SDK build is stubbed (no esbuild needed for this assertion)."""
-    import json
+@pytest.mark.asyncio
+async def test_remote_compute_uses_prepared_inputs_and_keeps_physical_receipt(monkeypatch):
+    """An injected compiler is authoritative; this path never invokes local Vite."""
+    app_id = uuid.uuid4()
+    builder = SolutionAppBuilder()
+    compute = AsyncMock(return_value=AppBuildResult(
+        {"index.html": b"remote"}, "physical-build-identity"
+    ))
 
-    from src.services.solutions import app_build as ab
+    def local_compile(*_args, **_kwargs):
+        raise AssertionError("remote compute must not fall back to local compilation")
 
-    monkeypatch.setattr(ab, "build_sdk_tarball", lambda v: b"FAKE_TGZ", raising=False)
-    # patch the symbol the method imports locally
-    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
+    monkeypatch.setattr(ab, "compile_app", local_compile)
 
-    b = SolutionAppBuilder()
-    b._materialize(tmp_path, {"src/main.tsx": b"export {}"}, {"react": "^18"})
+    dist = await builder.compile_dist_using(
+        app_id,
+        {"package.json": b"{}", "index.html": b"<main />"},
+        {"vite": "^6"},
+        compute,
+        require_lockfile=True,
+    )
 
-    # tarball vendored
-    assert (tmp_path / "bifrost-sdk.tgz").read_bytes() == b"FAKE_TGZ"
-    # package.json carries app deps + the file: ref to the SDK
-    pkg = json.loads((tmp_path / "package.json").read_text())
-    assert pkg["dependencies"]["react"] == "^18"
-    assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
-
-
-@pytest.mark.e2e
-def test_materialize_merges_into_app_package_json(monkeypatch, tmp_path):
-    """If the app shipped its own package.json, the SDK ref is merged in, not
-    clobbered (the app keeps its scripts/deps)."""
-    import json
-
-    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
-
-    app_pkg = {"name": "my-app", "scripts": {"dev": "vite"},
-               "dependencies": {"lodash": "^4"}}
-    (tmp_path / "package.json").write_text(json.dumps(app_pkg))
-
-    b = SolutionAppBuilder()
-    b._materialize(tmp_path, {}, {})
-
-    pkg = json.loads((tmp_path / "package.json").read_text())
-    assert pkg["scripts"] == {"dev": "vite"}          # preserved
-    assert pkg["dependencies"]["lodash"] == "^4"       # preserved
-    assert pkg["dependencies"]["bifrost"] == "file:./bifrost-sdk.tgz"
+    assert dist == {"index.html": b"remote"}
+    assert builder.last_build_identity == "physical-build-identity"
+    inputs = compute.await_args.args[0]
+    assert inputs.app_id == app_id
+    assert inputs.source_files["index.html"] == b"<main />"
+    assert inputs.dependencies == {"vite": "^6"}
+    assert inputs.require_lockfile is True
+    assert inputs.sdk_tarball == b"FAKE_TGZ"
 
 
-@pytest.mark.e2e
-def test_build_subprocesses_have_timeouts(monkeypatch, tmp_path):
-    """Both npm install and vite build run under the self-renewing per-install
-    write lock — without a timeout, a hanging npm postinstall wedges the install
-    until process restart (every deploy 409s). Both calls must carry one."""
+@pytest.mark.asyncio
+async def test_remote_compute_error_does_not_fall_back_to_local_compilation(monkeypatch):
+    builder = SolutionAppBuilder()
+    compute = AsyncMock(side_effect=RuntimeError("remote compile stopped"))
 
-    calls: list[tuple[list[str], dict]] = []
+    monkeypatch.setattr(
+        ab,
+        "compile_app",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("remote failures must not compile locally")
+        ),
+    )
 
-    def _fake_run(argv, **kwargs):
-        calls.append((list(argv), kwargs))
-        return subprocess.CompletedProcess(argv, 0)
-
-    monkeypatch.setattr(ab.subprocess, "run", _fake_run)
-    (tmp_path / "dist").mkdir()
-
-    b = SolutionAppBuilder()
-    out = b._run_vite_build(tmp_path, base="/x/")
-
-    assert out == {}
-    assert len(calls) == 2
-    assert calls[0][0] == [
-        "npm",
-        "install",
-        "--no-audit",
-        "--no-fund",
-        "--package-lock=false",
-    ]
-    for _argv, kwargs in calls:
-        assert kwargs.get("timeout") == ab._BUILD_STEP_TIMEOUT_S
+    with pytest.raises(RuntimeError, match="remote compile stopped"):
+        await builder.compile_dist_using(
+            uuid.uuid4(),
+            {"package.json": b"{}", "index.html": b"<main />"},
+            {},
+            compute,
+        )
+    compute.assert_awaited_once()
 
 
 @pytest.mark.e2e
@@ -161,23 +154,19 @@ def test_build_timeout_translated_to_deploy_failure(monkeypatch):
     """A TimeoutExpired from the npm/vite step surfaces as the deploy's
     build-failure exception (409 with the reason), not a raw TimeoutExpired."""
 
-    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
     app_id = uuid.uuid4()
-    b = SolutionAppBuilder()
 
-    def _hang(workdir, base="/"):
-        raise subprocess.TimeoutExpired(cmd=["npm", "install"], timeout=ab._BUILD_STEP_TIMEOUT_S)
+    def _hang(*_args, **_kwargs):
+        raise subprocess.TimeoutExpired(cmd=["npm", "install"], timeout=BUILD_STEP_TIMEOUT_S)
 
-    monkeypatch.setattr(b, "_run_vite_build", _hang)
+    monkeypatch.setattr(ab, "compile_app", _hang)
 
     with pytest.raises(SolutionDeployConflict, match="timed out"):
-        b.compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
+        SolutionAppBuilder().compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
 
 
-@pytest.mark.parametrize("stage", ["materialize", "vite"])
-def test_build_v8_memory_failure_is_classified(monkeypatch, stage):
-    """Both SDK materialization and Vite preserve actionable OOM diagnostics."""
-    builder = SolutionAppBuilder()
+def test_build_v8_memory_failure_is_classified(monkeypatch):
+    """Vite failures preserve actionable OOM diagnostics at the builder boundary."""
 
     def _oom(*_args, **_kwargs):
         raise subprocess.CalledProcessError(
@@ -186,30 +175,22 @@ def test_build_v8_memory_failure_is_classified(monkeypatch, stage):
             stderr=b"FATAL ERROR: JavaScript heap out of memory",
         )
 
-    if stage == "materialize":
-        monkeypatch.setattr(builder, "_materialize", _oom)
-    else:
-        monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda _version: b"FAKE_TGZ")
-        monkeypatch.setattr(builder, "_run_vite_build", _oom)
+    monkeypatch.setattr(ab, "compile_app", _oom)
 
     with pytest.raises(AppBuildMemoryError) as error:
-        builder.compile_dist(uuid.uuid4(), src_files={}, dependencies={})
+        SolutionAppBuilder().compile_dist(uuid.uuid4(), src_files={}, dependencies={})
 
     assert "increase the build container's memory limit" in str(error.value)
 
 
 def test_build_python_memory_error_is_classified(monkeypatch):
     """An allocation failure in the build path reaches callers as build OOM."""
-    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda _version: b"FAKE_TGZ")
-    builder = SolutionAppBuilder()
     monkeypatch.setattr(
-        builder,
-        "_run_vite_build",
-        lambda *_args, **_kwargs: (_ for _ in ()).throw(MemoryError()),
+        ab, "compile_app", lambda *_args, **_kwargs: (_ for _ in ()).throw(MemoryError())
     )
 
     with pytest.raises(AppBuildMemoryError) as error:
-        builder.compile_dist(uuid.uuid4(), src_files={}, dependencies={})
+        SolutionAppBuilder().compile_dist(uuid.uuid4(), src_files={}, dependencies={})
 
     assert str(error.value).startswith("The app build ran out of memory (OOM).")
 
@@ -219,37 +200,33 @@ def test_build_step_failure_surfaces_tool_output(monkeypatch):
     """A failing npm/vite step surfaces as the deploy's build-failure exception
     carrying the tail of the tool's stderr, so the deploy job reports the cause."""
 
-    monkeypatch.setattr(sdkpkg, "build_sdk_tarball", lambda v: b"FAKE_TGZ")
     app_id = uuid.uuid4()
-    b = SolutionAppBuilder()
     stderr = b"".join(f"npm verbose line {i}\n".encode() for i in range(40))
     stderr += b"npm error Cannot read properties of null (reading 'edgesOut')\n"
 
-    def _fail(workdir, base="/"):
+    def _fail(*_args, **_kwargs):
         raise subprocess.CalledProcessError(
             1, ["npm", "install", "--no-audit"], output=b"", stderr=stderr
         )
 
-    monkeypatch.setattr(b, "_run_vite_build", _fail)
+    monkeypatch.setattr(ab, "compile_app", _fail)
 
     with pytest.raises(SolutionDeployConflict) as raised:
-        b.compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
+        SolutionAppBuilder().compile_dist(app_id, src_files={}, dependencies={}, prebuilt_dist=None)
 
     message = str(raised.value)
     assert message.startswith(f"`npm install` failed for app {app_id} (exit 1):")
     assert message.endswith("npm error Cannot read properties of null (reading 'edgesOut')")
     assert "npm verbose line 20" not in message
-    assert len(message.splitlines()) == 1 + ab._FAILURE_OUTPUT_LINES
+    assert len(message.splitlines()) == 1 + FAILURE_OUTPUT_LINES
 
 
 @pytest.mark.e2e
-async def test_redeploy_clears_stale_dist_files(monkeypatch):
+async def test_redeploy_clears_stale_dist_files():
     """A second build with a different file set must not leave the old files
     fetchable (full replace of the dist/ artifact)."""
     app_id = uuid.uuid4()
     b = SolutionAppBuilder()
-    monkeypatch.setattr(b, "_run_vite_build", lambda *a, **k: {})
-
     # First deploy ships index.html + an old hashed asset.
     await b.build(
         app_id=app_id, src_files={}, dependencies={},
@@ -318,23 +295,3 @@ async def test_delete_all_app_artifacts_deletes_legacy_and_versioned_paginated(
         pages[None]["Contents"][1]["Key"],
         pages["page-2"]["Contents"][0]["Key"],
     ]
-
-
-def test_ordinary_build_with_lock_uses_locked_toolchain(tmp_path, monkeypatch):
-    from src.services.solutions.app_build import SolutionAppBuilder
-
-    (tmp_path / "package-lock.json").write_text("{}")
-    calls = []
-    monkeypatch.setattr(SolutionAppBuilder, "_refresh_sdk_lockfile", lambda *args: calls.append("refresh"))
-
-    def run(argv, **kwargs):
-        calls.append(list(argv))
-        if argv[:2] == ["npm", "ci"]:
-            vite = tmp_path / "node_modules/.bin/vite"
-            vite.parent.mkdir(parents=True)
-            vite.write_text("vite")
-
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", run)
-    SolutionAppBuilder()._run_vite_build(tmp_path)
-    assert calls == ["refresh", ["npm", "ci", "--no-audit", "--no-fund"],
-                     [str(tmp_path / "node_modules/.bin/vite"), "build", "--base", "/"]]

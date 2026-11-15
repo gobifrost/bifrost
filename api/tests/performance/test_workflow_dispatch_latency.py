@@ -47,6 +47,10 @@ async def {names['sdk']}(value: int = 1):
             row = await db.get(Execution, UUID(execution_id))
             assert row is not None and row.started_at and row.completed_at
             return {
+                "execution_id": str(row.id),
+                "created_at": row.created_at.isoformat(),
+                "started_at": row.started_at.isoformat(),
+                "completed_at": row.completed_at.isoformat(),
                 "server_total_seconds": (row.completed_at - row.created_at).total_seconds(),
                 "created_to_started_seconds": (row.started_at - row.created_at).total_seconds(),
                 "started_to_completed_seconds": (row.completed_at - row.started_at).total_seconds(),

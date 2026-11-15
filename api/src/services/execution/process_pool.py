@@ -167,6 +167,7 @@ async def _run_requirements_setup_subprocess() -> RequirementsInstallResult:
         sys.executable,
         "-m",
         "src.services.execution.requirements_setup_helper",
+        "--local",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,

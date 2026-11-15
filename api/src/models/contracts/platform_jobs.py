@@ -7,6 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from shared.models import PlatformJobExecutorAttribution
+
 
 class PlatformJobStatus(str, Enum):
     QUEUED = "queued"
@@ -72,6 +74,7 @@ class PlatformJobPublic(BaseModel):
     memory_start_bytes: int | None = None
     memory_peak_bytes: int | None = None
     memory_limit_bytes: int | None = None
+    executor: PlatformJobExecutorAttribution | None = None
     started_at: datetime | None = None
     completed_at: datetime | None = None
     created_at: datetime

@@ -19,6 +19,7 @@ from src.services.worker_pool.controller import (
     RECONCILE_SECONDS, SWEEP_SECONDS, LiveControllers, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
+from src.services.worker_pool.demand import APP_COMPILE_CAPABILITY, EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
 from src.services.worker_pool.external_policy import validate_external_policy
 from src.services.worker_pool.liveness import silent_executor
 from src.services.worker_pool.recovery import announce_lost_runs, end_runs_of_lost_worker
@@ -50,6 +51,12 @@ class ExternalWorkerPoolController(WorkerCapacityController):
     def _managed_scope(self) -> Any:
         return and_(ExecutionWorker.form == "external", ExecutionWorker.capacity_scope == self.profile.scope)
 
+    def _live_scope(self) -> str:
+        return f"external:{self.profile.scope}"
+
+    def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
+        return worker.form == "external" and worker.capacity_scope == self.profile.scope
+
     def _cleanup_scope(self) -> Any:
         # An outage must not turn an unconfirmed physical deletion into an orphan.
         return and_(
@@ -59,6 +66,26 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
+
+    def _planner_execution_handlers(self) -> tuple[str, ...]:
+        return tuple(self.profile.execution_handlers)
+
+    def _planner_compute_capabilities(self) -> tuple[str, ...]:
+        return tuple(self.profile.compute_capabilities)
+
+    def _planner_platform_job_types(self) -> frozenset[str]:
+        if APP_COMPILE_CAPABILITY not in self.profile.compute_capabilities:
+            return frozenset()
+        return EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
+
+    def _platform_request_capability(self) -> str | None:
+        return APP_COMPILE_CAPABILITY
+
+    def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
+        return bool(
+            set(worker.supported_handlers).intersection(self.profile.execution_handlers)
+            or set(worker.supported_compute).intersection(self.profile.compute_capabilities)
+        )
 
     def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
         try:
@@ -156,7 +183,20 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             return
         reason = None
         if resource is None or resource.state in ("deleted", "stopped"):
-            reason = "provider_resource_stopped"
+            if resource is None and state == "starting":
+                if _now() - created_at >= timedelta(seconds=self.settings.pool_start_timeout_seconds):
+                    reason = "start_timeout"
+                elif _now() - created_at < timedelta(
+                    seconds=self.settings.pool_provisioning_grace_seconds
+                ):
+                    # A provider read can lag a successful start. Only an
+                    # absent resource during its bounded visibility window is
+                    # ambiguous; explicit terminal reports still fence now.
+                    return
+                else:
+                    reason = "provider_resource_stopped"
+            else:
+                reason = "provider_resource_stopped"
         elif state == "starting":
             if _now() - created_at >= timedelta(seconds=self.settings.pool_start_timeout_seconds):
                 reason = "start_timeout"

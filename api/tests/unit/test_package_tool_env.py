@@ -188,14 +188,19 @@ async def _process_pool_pip_list(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
 
 async def _app_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.services.solutions.app_build import SolutionAppBuilder
+    from shared.solution_app_compiler import run_vite_build
 
     (tmp_path / "dist").mkdir()
-    SolutionAppBuilder()._run_vite_build(tmp_path)
+    run_vite_build(
+        tmp_path,
+        base="/",
+        require_lockfile=False,
+        environment=package_tool_env(),
+    )
 
 
 async def _locked_app_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    from src.services.solutions.app_build import SolutionAppBuilder
+    from shared.solution_app_compiler import run_vite_build
 
     sdk = "file:./bifrost-sdk.tgz"
     root = {"dependencies": {"bifrost": sdk}}
@@ -210,7 +215,12 @@ async def _locked_app_build(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> 
     vite = tmp_path / "node_modules/.bin/vite"
     vite.parent.mkdir(parents=True)
     vite.write_text("locked Vite")
-    SolutionAppBuilder()._run_vite_build(tmp_path)
+    run_vite_build(
+        tmp_path,
+        base="/",
+        require_lockfile=False,
+        environment=package_tool_env(),
+    )
 
 
 async def _router_outdated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -278,8 +288,8 @@ _CALL_SITES: dict[str, tuple[Callable[[Path, pytest.MonkeyPatch], Awaitable[None
     "simple_worker._pip_install": (_simple_worker_pip_install, 1),
     "requirements_setup_helper._get_installed_packages": (_setup_helper_pip_list, 1),
     "process_pool._get_installed_packages": (_process_pool_pip_list, 1),
-    "app_build._run_vite_build": (_app_build, 2),
-    "app_build.locked_build": (_locked_app_build, 3),
+    "solution_app_compiler.run_vite_build": (_app_build, 2),
+    "solution_app_compiler.locked_build": (_locked_app_build, 3),
     "packages.check_package_updates": (_router_outdated, 1),
     "packages.get_installed_packages_local": (_router_pip_list, 1),
     "package_install._pip_uninstall": (_consumer_uninstall, 1),
@@ -358,6 +368,15 @@ def _uses_package_tool_env(node: ast.Call) -> bool:
         name = target.id if isinstance(target, ast.Name) else getattr(target, "attr", None)
         if name == "package_tool_env":
             return True
+        # The API-only app compiler deliberately receives its already-sanitized
+        # environment as an explicit input, rather than reading platform state.
+        if (
+            name == "dict"
+            and len(keyword.value.args) == 1
+            and isinstance(keyword.value.args[0], ast.Name)
+            and keyword.value.args[0].id == "environment"
+        ):
+            return True
     return False
 
 
@@ -380,10 +399,10 @@ def test_package_tool_subprocesses_use_package_tool_env() -> None:
     found_files = {location.rsplit(":", 1)[0] for location in found}
     assert {
         "src/services/execution/simple_worker.py",
-        "src/services/solutions/app_build.py",
+        "shared/solution_app_compiler.py",
         "src/jobs/consumers/package_install.py",
     } <= found_files
     assert offenders == [], (
-        "pip / npm / npx / uv subprocesses must pass env=package_tool_env(): "
+        "pip / npm / npx / uv subprocesses must pass a sanitized package-tool environment: "
         f"{offenders}"
     )

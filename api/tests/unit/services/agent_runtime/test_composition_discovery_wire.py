@@ -11,8 +11,10 @@ from pydantic_ai import Agent
 
 from src.services.agent_runtime.composition import (
     AgentComposition,
+)
+from src.services.agent_runtime.composition_view import (
+    DeferredAgentSnapshot,
     ToolBinding,
-    _DeferredAgent,
     _capability_id,
     _qualified_tool_name,
 )
@@ -70,7 +72,15 @@ async def test_openrouter_receives_only_the_individually_discovered_tool_schema(
             for definition in (reset, unused)
         },
         deferred=(
-            _DeferredAgent(source, (root_id, source_id), (reset, unused), capability_id),
+            DeferredAgentSnapshot(
+                agent_id=source.id,
+                name=source.name,
+                description=source.description,
+                system_prompt=source.system_prompt,
+                path=(root_id, source_id),
+                definitions=(reset, unused),
+                capability_id=capability_id,
+            ),
         ),
         isolated_delegates={},
     )

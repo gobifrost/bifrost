@@ -20,6 +20,7 @@ from dataclasses import asdict, dataclass, field
 from collections.abc import Iterator
 from typing import Any, Mapping
 from uuid import UUID
+from shared.worker_compute import COMPUTE_CAPABILITIES
 
 
 AUTH_DOMAIN = b"bifrost.remote-control.hello.v1\0"
@@ -56,6 +57,23 @@ SUMMARY_CLAIM_PROTOCOL = 1
 # backfill, and adding physical workers adds one slot for each handler.
 HANDLER_CONCURRENCY_LIMITS = (("agent.summarize", 1), ("agent.summarize_backfill", 1))
 WORKER_DRAIN_GRACE_SECONDS = 300
+
+
+def hello_compute_capabilities(frame: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:
+    """Negotiate compute stages independently of privileged job runners."""
+    advertised = frame.get("compute_capabilities", [])
+    if not isinstance(advertised, list) or len(advertised) > 64:
+        raise ProtocolError("launcher compute capabilities must be a bounded list")
+    pairs: list[tuple[str, int]] = []
+    for pair in advertised:
+        if (not isinstance(pair, list) or len(pair) != 2 or not isinstance(pair[0], str)
+                or type(pair[1]) is not int or pair[1] < 1):
+            raise ProtocolError("invalid compute capability version")
+        value = (pair[0], pair[1])
+        if value in pairs:
+            raise ProtocolError("duplicate compute capability")
+        pairs.append(value)
+    return tuple(capability for capability in COMPUTE_CAPABILITIES if capability in pairs)
 
 
 def hello_execution_handlers(frame: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:

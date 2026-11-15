@@ -70,6 +70,18 @@ processes, reports their inventory and cgroup telemetry, and carries out
 commands from the API. The supervisor does not own durable claim loops. Its
 handler children retain their required database, Redis, and repository access.
 
+The remote-control host also claims one API-owned maintenance job at a time:
+OAuth refresh, webhook renewal, Solution update checks, model-catalog refresh,
+and workspace file-index reconciliation. These jobs use the same durable row,
+claim lease, runner subprocess, cancellation, retry, progress, and notification
+paths as physical-worker jobs, but do not require a physical launcher. They are
+bounded by the API cgroup's ordinary headroom before claim, so a scale-to-zero
+worker pool still maintains its control-plane state. The index reconciliation
+can be long-running total I/O but is memory-bounded and cancellable through the
+shared runner. Operators should monitor API I/O contention as deployments grow;
+the current policy intentionally prefers a single serialized maintenance job
+over a parallel maintenance worker or a second job framework.
+
 Agent runs, `agent.summarize`, and `agent.summarize_backfill` execute in separate
 children of the physical launcher's agent template. No summary executor runs in
 the API. Their memory reservations share that launcher's measured budget with

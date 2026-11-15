@@ -4,9 +4,11 @@ Execution helpers for forked worker processes.
 This module provides the helpers that forked children (spawned by
 TemplateProcess via os.fork) use to run an execution:
 
-- install_requirements(): called by a temporary setup helper to pip-install
-  user requirements before the template starts. All forked children inherit
-  the resulting filesystem.
+- install_requirements_from_content(): called by a temporary setup helper to
+  pip-install explicitly supplied user requirements before the template
+  starts. All forked children inherit the resulting filesystem.
+- install_requirements(): the local cache-backed wrapper retained for existing
+  bootstrap callers.
 - _execute_sync() / _execute_async(): run a single execution using context
   assembled by the parent consumer and delivered over a private pipe.
 - _get_process_rss() / _capture_resource_metrics():
@@ -29,6 +31,7 @@ import re
 import shlex
 import subprocess
 import sys
+import tempfile
 from datetime import datetime, timezone
 from typing import Any
 
@@ -99,13 +102,13 @@ def _pip_install(args: list[str]) -> "subprocess.CompletedProcess[str]":
     )
 
 
-def install_requirements() -> RequirementsInstallResult:
+def install_requirements_from_content(content: str | None) -> RequirementsInstallResult:
     """
-    Install packages from requirements.txt resiliently.
+    Install packages from explicit requirements.txt content resiliently.
 
-    Called once at pool startup (and on recycle_all) to ensure user-installed
-    packages persist across container restarts. Reads requirements via
-    get_requirements_sync() (Redis → S3 fallback).
+    The caller owns acquiring ``content``. In particular, remote workers use
+    this function so their package install path never reaches Redis, S3, or a
+    database. ``None`` and empty content mean there are no requirements.
 
     Strategy: attempt a single batch ``pip install -r`` for speed. If the batch
     fails (e.g. one package can't build), fall back to installing each
@@ -114,13 +117,8 @@ def install_requirements() -> RequirementsInstallResult:
 
     This function never raises — failures are captured in the returned result.
     """
-    import tempfile
-
-    from src.core.requirements_cache import get_requirements_sync
-
     result = RequirementsInstallResult()
 
-    content = get_requirements_sync()
     if not content:
         logger.info("[pool] No requirements.txt found")
         return result
@@ -190,6 +188,13 @@ def install_requirements() -> RequirementsInstallResult:
             logger.warning(f"[pool] Error installing '{pkg}': {e}")
 
     return result
+
+
+def install_requirements() -> RequirementsInstallResult:
+    """Install cache-backed requirements for existing local bootstrap callers."""
+    from src.core.requirements_cache import get_requirements_sync
+
+    return install_requirements_from_content(get_requirements_sync())
 
 
 def _execute_sync(

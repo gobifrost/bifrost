@@ -169,11 +169,10 @@ class TestForkedAISocket:
         fake_client.provider_name = "openai"
         fake_client.model_name = "gpt-4o"
         fake_client.complete.return_value = fake_response
-        import src.services.llm as llm_pkg
         import src.services.llm.factory as llm_factory
 
         monkeypatch.setattr(
-            llm_pkg, "get_llm_client", AsyncMock(return_value=fake_client)
+            llm_factory, "get_llm_client", AsyncMock(return_value=fake_client)
         )
         monkeypatch.setattr(
             llm_factory,

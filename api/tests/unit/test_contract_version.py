@@ -430,7 +430,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    "a9f0eff489bf67b1df1e78ed9ac1b33f82efdfaa792e6beee42c2bb6b8f2897a"
+    # Capacity provider profile v2 changes the internal provider protocol only;
+    # the CLI/SDK does not parse this profile. Existing command/runtime DTOs
+    # remain compatible, so MIN_CLI_VERSION is unchanged.
+    # Optional PlatformJob executor attribution is additive and sanitizes
+    # provider resource identifiers from the CLI-visible response.
+    "cef7ecd929d0248a8ee6c2243ef452b3f7817038bc2e64a2c292cbedb74e8f9d"
 )
 
 

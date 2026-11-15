@@ -180,6 +180,8 @@ def serve_provider(
         memory_limit_bytes=2 * 1024**3,
         max_workers=4,
         max_lifetime_seconds=3600,
+        execution_handlers=["workflow.execute"],
+        compute_capabilities=[],
         port=free_port(),
         starting_grace_seconds=0,
     )

@@ -29,6 +29,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections.abc import Collection
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -39,6 +40,7 @@ from sqlalchemy import and_, func, literal, select, text, update
 from shared.version import get_version
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
+from src.jobs.platform.catalog import executor_platform_job_types
 from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
@@ -158,9 +160,39 @@ class WorkerCapacityController(ABC):
         raise NotImplementedError
 
     @abstractmethod
+    def _live_scope(self) -> str:
+        """Stable identity for this provider's rolling-controller records."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
+        """Whether a managed worker belongs to this provider incarnation."""
+        raise NotImplementedError
+
+    @abstractmethod
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         """Persist provider identity before the resource can start."""
         raise NotImplementedError
+
+    def _planner_execution_handlers(self) -> tuple[str, ...]:
+        """Execution handlers a newly reserved worker can truthfully offer."""
+        return REMOTE_WORKER_HANDLER_NAMES
+
+    def _planner_compute_capabilities(self) -> tuple[str, ...]:
+        """Semantic compute grants a newly reserved worker can truthfully offer."""
+        return ()
+
+    def _planner_platform_job_types(self) -> frozenset[str]:
+        """Local platform types this provider may provision."""
+        return executor_platform_job_types()
+
+    def _platform_request_capability(self) -> str | None:
+        """The semantic compute capability for this provider's eligible jobs."""
+        return None
+
+    def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
+        """Keep privileged worker behavior unchanged for existing consumers."""
+        return "workflow.execute" in worker.supported_handlers
 
     @abstractmethod
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
@@ -174,7 +206,7 @@ class WorkerCapacityController(ABC):
         )
 
     async def reconcile(self) -> None:
-        self.live = await _publish_live(self.id, self.version)
+        self.live = await _publish_live(self.id, self.version, self._live_scope())
         async with get_db_context() as db:
             policy = await load_kubernetes_policy(db)
             ids = (
@@ -294,44 +326,52 @@ class WorkerCapacityController(ABC):
             ).scalar_one()
             if not locked:
                 return []
-            platform_job_ids = await pending_local_platform_job_ids(db, policy, _now())
+            planned_handlers = self._planner_execution_handlers()
+            planned_compute_capabilities = self._planner_compute_capabilities()
+            platform_job_ids = await pending_local_platform_job_ids(
+                db, policy, _now(), eligible_job_types=self._planner_platform_job_types(),
+            )
+            waiting_sources = [
+                select(
+                    WorkDispatch.id.label("id"),
+                    WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
+                    WorkDispatch.created_at.label("created_at"),
+                    WorkDispatch.handler.label("handler"),
+                    literal(None).label("compute_capability"),
+                ).where(
+                    WorkDispatch.assigned_worker_id.is_(None),
+                    WorkDispatch.execution_lane == "normal",
+                    WorkDispatch.handler.in_(planned_handlers),
+                )
+            ]
+            if platform_job_ids:
+                waiting_sources.append(
+                    select(
+                        PlatformJob.id,
+                        PlatformJob.memory_required_bytes,
+                        PlatformJob.created_at,
+                        literal(None),
+                        literal(self._platform_request_capability()),
+                    ).where(
+                        PlatformJob.id.in_(platform_job_ids),
+                        PlatformJob.status == "queued",
+                        PlatformJob.execution_backend == "local",
+                        PlatformJob.available_at <= _now(),
+                    )
+                )
+            if "workflow.execute" in planned_handlers:
+                waiting_sources.append(
+                    pending_service_statement(_now()).with_only_columns(
+                        ServiceDefinition.id,
+                        workflow_request_sql(Workflow),
+                        ServiceDefinition.updated_at,
+                        literal("workflow.execute"),
+                        literal(None),
+                    )
+                )
             waiting = (
                 await db.execute(
-                    select(
-                        WorkDispatch.id.label("id"),
-                        WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
-                        WorkDispatch.created_at.label("created_at"),
-                        WorkDispatch.handler.label("handler"),
-                    )
-                    .where(
-                        WorkDispatch.assigned_worker_id.is_(None),
-                        WorkDispatch.execution_lane == "normal",
-                        # Every advertised execution handler, including live
-                        # and backfill summaries, gains physical capacity.
-                        WorkDispatch.handler.in_(REMOTE_WORKER_HANDLER_NAMES),
-                    )
-                    .union_all(
-                        select(
-                            PlatformJob.id,
-                            PlatformJob.memory_required_bytes,
-                            PlatformJob.created_at,
-                            # Any physical worker runs local platform jobs.
-                            literal(None),
-                        ).where(
-                            PlatformJob.id.in_(platform_job_ids),
-                            PlatformJob.status == "queued",
-                            PlatformJob.execution_backend == "local",
-                            PlatformJob.available_at <= _now(),
-                        ),
-                        pending_service_statement(_now()).with_only_columns(
-                            ServiceDefinition.id,
-                            workflow_request_sql(Workflow),
-                            ServiceDefinition.updated_at,
-                            # Every physical executor supervises services.
-                            literal(None),
-                        ),
-                    )
-                    .order_by(text("created_at"))
+                    waiting_sources[0].union_all(*waiting_sources[1:]).order_by(text("created_at"))
                 )
             ).all()
             workers = (
@@ -368,13 +408,18 @@ class WorkerCapacityController(ABC):
             free: list[FreeBudget] = []
             covered: set[UUID] = set()
             for worker in workers:
-                # Only physical workers contribute launcher capacity.
                 if (
-                    "workflow.execute" not in worker.supported_handlers
-                    or worker.execution_lane != "normal"
+                    worker.form in MANAGED_WORKER_FORMS
+                    and not self._owns_managed_worker(worker)
                 ):
                     continue
-                handlers = frozenset(worker.supported_handlers)
+                if (
+                    worker.execution_lane != "normal"
+                    or not self._worker_contributes_to_planner(worker)
+                ):
+                    continue
+                worker_handlers = frozenset(worker.supported_handlers)
+                worker_compute = frozenset(worker.supported_compute)
                 if worker.state == "draining" or worker.memory_pressured:
                     continue
                 # A worker launched for one dispatch holds it until it claims it.
@@ -401,21 +446,23 @@ class WorkerCapacityController(ABC):
                     worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
                 ):
                     budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
-                    free.append(FreeBudget(max(0, budget - held), handlers, handler_slots))
+                    free.append(FreeBudget(max(0, budget - held), worker_handlers, worker_compute, handler_slots))
                 elif worker.state == "ready" and worker.memory_budget_bytes is not None:
                     free.append(FreeBudget(
                         max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held),
-                        handlers, handler_slots,
+                        worker_handlers, worker_compute, handler_slots,
                     ))
             plan = _plan_launches(
                 [
-                    Request(row.id, row.memory_request_bytes, row.handler)
+                    Request(row.id, row.memory_request_bytes, row.handler, row.compute_capability)
                     for row in waiting
                     if row.id not in covered
                 ],
                 free,
                 standard_budget=standard_reports[-1] if standard_reports else sizing.standard_budget_bytes,
                 largest_budget=confirmed_largest if confirmed_largest is not None else sizing.largest_budget_bytes,
+                new_handlers=planned_handlers,
+                new_compute_capabilities=planned_compute_capabilities,
                 cold=not measurements, probe_largest=confirmed_largest is None,
             )
             jobs = sum(1 for worker in workers if worker.form in MANAGED_WORKER_FORMS)
@@ -429,6 +476,7 @@ class WorkerCapacityController(ABC):
                 1
                 for worker in workers
                 if worker.form in MANAGED_WORKER_FORMS
+                and self._owns_managed_worker(worker)
                 and worker.execution_lane == "normal"
                 and worker.resource_class == "standard"
                 and worker.state != "draining"
@@ -444,6 +492,7 @@ class WorkerCapacityController(ABC):
                 1
                 for worker in workers
                 if worker.form in MANAGED_WORKER_FORMS
+                and self._owns_managed_worker(worker)
                 and worker.execution_lane == "fast_path"
                 and worker.resource_class == "standard"
                 and worker.state != "draining"
@@ -462,7 +511,9 @@ class WorkerCapacityController(ABC):
                  (worker.state == "ready" and worker.memory_budget_bytes is None))
                 and worker.memory_calibration
                 and worker.memory_calibration.get("environment") == environment
-                for worker in workers if worker.form in MANAGED_WORKER_FORMS
+                for worker in workers
+                if worker.form in MANAGED_WORKER_FORMS
+                and self._owns_managed_worker(worker)
             ):
                 return []
             # Pace failures per resource size without disabling recovery. An
@@ -479,6 +530,7 @@ class WorkerCapacityController(ABC):
             probing_limits = {
                 worker.memory_limit_bytes for worker in workers
                 if worker.form in MANAGED_WORKER_FORMS and worker.memory_budget_bytes is None
+                and self._owns_managed_worker(worker)
                 and worker.memory_calibration
                 and worker.memory_calibration.get("environment") == environment
                 and worker.memory_limit_bytes not in known_limits
@@ -500,6 +552,7 @@ class WorkerCapacityController(ABC):
                 normal_live = [
                     worker for worker in workers
                     if worker.form in MANAGED_WORKER_FORMS
+                    and self._owns_managed_worker(worker)
                     and worker.execution_lane == "normal"
                     and worker.state != "draining"
                 ]
@@ -538,6 +591,8 @@ class WorkerCapacityController(ABC):
                 for worker in ready:
                     if not any(row.memory_request_bytes > worker.memory_budget_bytes
                                and (row.handler is None or row.handler in worker.supported_handlers)
+                               and (row.compute_capability is None
+                                    or row.compute_capability in worker.supported_compute)
                                for row in needed):
                         continue
                     await db.execute(update(ExecutionWorker).where(
@@ -626,10 +681,20 @@ class WorkerCapacityController(ABC):
             jobs = (
                 await db.execute(
                     select(ExecutionWorker).where(
-                        ExecutionWorker.form.in_(MANAGED_WORKER_FORMS), ExecutionWorker.state.in_(LIVE_STATES)
+                        self._managed_scope(),
+                        ExecutionWorker.state.in_(LIVE_STATES),
                     )
                 )
             ).scalars().all()
+            managed_count = int(
+                await db.scalar(
+                    select(func.count()).select_from(ExecutionWorker).where(
+                        ExecutionWorker.form.in_(MANAGED_WORKER_FORMS),
+                        ExecutionWorker.state.in_(LIVE_STATES),
+                    )
+                )
+                or 0
+            )
             ready = [worker for worker in jobs if worker.state == "ready"]
             outdated = [
                 worker
@@ -680,7 +745,7 @@ class WorkerCapacityController(ABC):
                     and worker.memory_budget_bytes is not None
                 )
                 excess = max(0, ready_standard - floor)
-                if len(jobs) >= policy.max_workers and not current_starting:
+                if managed_count >= policy.max_workers and not current_starting:
                     drainable.extend(
                         worker
                         for worker in lane_outdated[:excess]
@@ -733,7 +798,8 @@ class WorkerCapacityController(ABC):
                 resource_class=resource_class,
                 memory_limit_bytes=memory_limit_bytes,
                 memory_calibration={"environment": environment},
-                supported_handlers=list(REMOTE_WORKER_HANDLER_NAMES),
+                supported_handlers=list(self._planner_execution_handlers()),
+                supported_compute=list(self._planner_compute_capabilities()),
                 execution_lane=execution_lane,
                 **self._binding_fields(worker_id),
             )
@@ -759,6 +825,12 @@ class WorkerPoolController(WorkerCapacityController):
             ExecutionWorker.form == "job",
             ExecutionWorker.kubernetes_namespace == self.client.namespace,
         )
+
+    def _live_scope(self) -> str:
+        return f"job:{self.client.namespace}"
+
+    def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
+        return worker.form == "job" and worker.kubernetes_namespace == self.client.namespace
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         return {
@@ -881,11 +953,12 @@ class LaunchPlan:
 
 @dataclass(frozen=True)
 class Request:
-    """Waiting work: a dispatch (with its handler) or a local platform job (None)."""
+    """Waiting dispatch, service, or platform work with explicit eligibility."""
 
     id: UUID
     bytes: int
     handler: str | None = None
+    compute_capability: str | None = None
 
 
 @dataclass(frozen=True)
@@ -894,10 +967,17 @@ class FreeBudget:
 
     bytes: int
     handlers: frozenset[str]
+    compute_capabilities: frozenset[str] = field(default_factory=frozenset)
     handler_slots: dict[str, int] = field(default_factory=lambda: dict(HANDLER_CONCURRENCY_LIMITS))
 
     def takes(self, request: Request) -> bool:
-        return request.handler is None or request.handler in self.handlers
+        return (
+            (request.handler is None or request.handler in self.handlers)
+            and (
+                request.compute_capability is None
+                or request.compute_capability in self.compute_capabilities
+            )
+        )
 
 
 def _plan_launches(
@@ -908,6 +988,8 @@ def _plan_launches(
     largest_budget: int,
     cold: bool = False,
     probe_largest: bool = False,
+    new_handlers: Collection[str] | None = None,
+    new_compute_capabilities: Collection[str] | None = None,
 ) -> LaunchPlan:
     """Place requests (oldest first) into free budgets, then into new Jobs.
 
@@ -945,7 +1027,11 @@ def _plan_launches(
             if request <= largest_budget or probe_largest:
                 sized.append((dispatch_id, request))
             continue
-        bins.append(FreeBudget(standard_budget, frozenset(REMOTE_WORKER_HANDLER_NAMES)))
+        bins.append(FreeBudget(
+            standard_budget,
+            frozenset(new_handlers) if new_handlers is not None else frozenset(REMOTE_WORKER_HANDLER_NAMES),
+            frozenset(new_compute_capabilities) if new_compute_capabilities is not None else frozenset(),
+        ))
         rooms.append(standard_budget - request)
         new_slots = dict(limited)
         if item.handler in limited:
@@ -969,7 +1055,9 @@ async def _publish_launchable(largest_budget: int | None, generation: int) -> No
             await pipe.execute()
 
 
-async def _publish_live(controller_id: UUID, version: str) -> LiveControllers:
+async def _publish_live(
+    controller_id: UUID, version: str, provider_scope: str
+) -> LiveControllers:
     """Record this instance as live and read every instance that is."""
     from src.core.cache.redis_client import get_redis
 
@@ -978,19 +1066,37 @@ async def _publish_live(controller_id: UUID, version: str) -> LiveControllers:
         seconds, microseconds = await redis.time()  # type: ignore[misc]
         now = seconds + microseconds / 1_000_000
         await redis.hset(  # type: ignore[misc]
-            CONTROLLERS_KEY, str(controller_id), json.dumps({"version": version, "at": now})
+            CONTROLLERS_KEY,
+            str(controller_id),
+            json.dumps({"version": version, "scope": provider_scope, "at": now}),
         )
         entries = await redis.hgetall(CONTROLLERS_KEY)  # type: ignore[misc]
         ids: set[UUID] = set()
         versions: set[str] = set()
         expired: list[str] = []
         for key, value in entries.items():
-            entry = json.loads(value)
-            if now - entry["at"] > HEARTBEAT_LOST_AFTER.total_seconds():
+            try:
+                entry = json.loads(value)
+                scope = entry["scope"]
+                entry_version = entry["version"]
+                at = entry["at"]
+            except (KeyError, TypeError, ValueError):
                 expired.append(key)
                 continue
+            if (
+                not isinstance(scope, str)
+                or not isinstance(entry_version, str)
+                or not isinstance(at, (int, float))
+            ):
+                expired.append(key)
+                continue
+            if now - at > HEARTBEAT_LOST_AFTER.total_seconds():
+                expired.append(key)
+                continue
+            if scope != provider_scope:
+                continue
             ids.add(UUID(key))
-            versions.add(entry["version"])
+            versions.add(entry_version)
         if expired:
             await redis.hdel(CONTROLLERS_KEY, *expired)  # type: ignore[misc]
     return LiveControllers(ids=frozenset(ids), versions=frozenset(versions))

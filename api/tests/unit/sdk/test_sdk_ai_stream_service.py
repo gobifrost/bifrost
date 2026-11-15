@@ -127,7 +127,10 @@ class _FakeClient:
 
 
 def _patch_llm(client):
-    return patch("src.services.llm.get_llm_client", new=AsyncMock(return_value=client))
+    return patch(
+        "src.services.llm.factory.get_llm_client",
+        new=AsyncMock(return_value=client),
+    )
 
 
 def _patch_usage(record=None):
@@ -191,7 +194,7 @@ async def test_stream_forwards_profile_model_max_tokens():
     redis_patch, record_patch, _ = _patch_usage()
 
     with (
-        patch("src.services.llm.get_llm_client", new=get_client),
+        patch("src.services.llm.factory.get_llm_client", new=get_client),
         redis_patch,
         record_patch,
     ):
@@ -566,7 +569,7 @@ async def test_http_stream_ignores_requested_profile():
     redis_patch, record_patch, _ = _patch_usage()
 
     with (
-        patch("src.services.llm.get_llm_client", new=get_client),
+        patch("src.services.llm.factory.get_llm_client", new=get_client),
         redis_patch,
         record_patch,
         patch("src.routers.cli.get_db_context", new=stream_db_context),

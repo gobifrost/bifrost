@@ -17,8 +17,10 @@ import sys
 import urllib.error
 import urllib.request
 from pathlib import Path
+from uuid import UUID
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "python"))
+sys.path.insert(0, str(Path(__file__).resolve().parents[5] / "api"))
 
 from capacity_core import (  # noqa: E402
     CapacityAdapter,
@@ -27,6 +29,7 @@ from capacity_core import (  # noqa: E402
     ProviderConfig,
     serve,
 )
+from shared.worker_control_auth import external_worker_environment  # noqa: E402
 
 GROUP_PREFIX = "bw-"
 CONTAINER_NAME = "worker"
@@ -87,7 +90,8 @@ class Aci:
 
 
 class Adapter(CapacityAdapter):
-    def __init__(self) -> None:
+    def __init__(self, control_token: str) -> None:
+        self.control_token = control_token
         self.aci = Aci()
         self.image = _require("WORKER_IMAGE")
         self.cpu = float(os.environ.get("WORKER_CPU", "2.0"))
@@ -99,14 +103,13 @@ class Adapter(CapacityAdapter):
             raise SystemExit(f"invalid WORKER_*_JSON: {exc}") from None
 
     def _container(self, ctx: Context) -> dict:
-        env = dict(self.env)
-        env.update({
-            "BIFROST_WORKER_FORM": "external",
-            "BIFROST_WORKER_INCARNATION_ID": ctx.worker_id,
-            "BIFROST_WORKER_RESOURCE_UID": ctx.resource_uid,
-            "BIFROST_POOL_WORKER_EXECUTION_LANE": "normal",
-            "HOSTNAME": group_for(ctx.worker_id),
-        })
+        env = external_worker_environment(
+            self.env,
+            self.control_token,
+            UUID(ctx.worker_id),
+            ctx.resource_uid,
+            hostname=group_for(ctx.worker_id),
+        )
         return {
             "name": CONTAINER_NAME,
             "properties": {
@@ -163,7 +166,7 @@ def _require(name: str) -> str:
 
 def main() -> int:
     cfg = ProviderConfig.from_env()
-    adapter = Adapter()
+    adapter = Adapter(cfg.token)
     return serve(cfg, adapter, os.environ.get("STORE_PATH") or None)
 
 

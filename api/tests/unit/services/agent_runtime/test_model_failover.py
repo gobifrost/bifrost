@@ -236,6 +236,27 @@ async def test_per_candidate_settings_substitution() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remote_runtime_cap_bounds_each_trusted_failover_candidate() -> None:
+    from shared.agent_model_compute import (
+        current_model_output_cap, serialize_model_request, serve_model_request,
+    )
+
+    primary = StubModel("primary", error=_http_error(429))
+    fallback = StubModel("fallback")
+    model = FailoverModel(
+        [primary, fallback],
+        candidate_settings=[{"max_tokens": 4000, "temperature": .2},
+                            {"max_tokens": 8000, "temperature": .4}],
+    )
+    await serve_model_request(
+        model, None, serialize_model_request([], _params(), max_tokens=1500),
+    )
+    assert primary.calls == [{"max_tokens": 1500, "temperature": .2}]
+    assert fallback.calls == [{"max_tokens": 1500, "temperature": .4}]
+    assert current_model_output_cap() is None
+
+
+@pytest.mark.asyncio
 async def test_candidate_settings_must_align() -> None:
     with pytest.raises(ValueError):
         FailoverModel([StubModel("only")], candidate_settings=[None, None])

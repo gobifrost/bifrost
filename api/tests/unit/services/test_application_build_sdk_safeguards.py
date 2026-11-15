@@ -14,10 +14,25 @@ import pytest
 
 from src.jobs.platform.base import PlatformJobFailure
 from src.services.application_source_resolver import ResolvedApplicationSource
-from src.services.solutions.app_build import (
+from bifrost.app_lockfile import (
     ReproducibleDependencyBuildError,
-    SolutionAppBuilder,
+    refresh_sdk_lockfile,
 )
+from shared.solution_app_compiler import BUILD_STEP_TIMEOUT_S, run_vite_build
+from shared.subprocess_env import package_tool_env
+
+
+def _run_vite(workdir: Path, *, require_lockfile: bool = False) -> dict[str, bytes]:
+    return run_vite_build(
+        workdir,
+        base="/",
+        require_lockfile=require_lockfile,
+        environment=package_tool_env(),
+    )
+
+
+def _refresh_sdk_lockfile(workdir: Path) -> None:
+    refresh_sdk_lockfile(workdir, npm="npm", timeout=BUILD_STEP_TIMEOUT_S, env=package_tool_env())
 
 
 def _locked_source() -> dict[str, Any]:
@@ -47,7 +62,7 @@ def _locked_source() -> dict[str, Any]:
 
 def test_automatic_build_requires_retained_lockfile(tmp_path) -> None:
     with pytest.raises(ReproducibleDependencyBuildError, match="package-lock.json"):
-        SolutionAppBuilder()._run_vite_build(tmp_path, require_lockfile=True)
+        _run_vite(tmp_path, require_lockfile=True)
 
 
 def test_automatic_build_refreshes_only_sdk_lock_entry_then_uses_ci(
@@ -85,9 +100,9 @@ def test_automatic_build_refreshes_only_sdk_lock_entry_then_uses_ci(
             vite.write_text("locked Vite executable")
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", fake_run)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", fake_run)
 
-    assert SolutionAppBuilder()._run_vite_build(tmp_path, require_lockfile=True) == {}
+    assert _run_vite(tmp_path, require_lockfile=True) == {}
     final_lock = json.loads(lock_path.read_text())
     assert (
         final_lock["packages"]["node_modules/react"]
@@ -110,19 +125,32 @@ def test_automatic_build_refreshes_only_sdk_lock_entry_then_uses_ci(
 
 
 def test_automatic_build_refuses_to_fetch_a_missing_build_tool(monkeypatch, tmp_path):
-    monkeypatch.setattr(SolutionAppBuilder, "_refresh_sdk_lockfile", lambda *_: None)
+    (tmp_path / "package-lock.json").write_text(json.dumps(_locked_source()))
+    (tmp_path / "package.json").write_text(
+        json.dumps(
+            {
+                "dependencies": {
+                    "bifrost": "file:./old-bifrost-sdk.tgz",
+                    "react": "18.3.1",
+                }
+            }
+        )
+    )
     calls = []
 
     def installed_without_vite(argv, **_kwargs):
         calls.append(argv)
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", installed_without_vite)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", installed_without_vite)
 
     with pytest.raises(ReproducibleDependencyBuildError, match="Vite"):
-        SolutionAppBuilder()._run_vite_build(tmp_path, require_lockfile=True)
+        _run_vite(
+            tmp_path,
+            require_lockfile=True,
+        )
 
-    assert calls == [["npm", "ci", "--no-audit", "--no-fund"]]
+    assert calls[-1] == ["npm", "ci", "--no-audit", "--no-fund"]
 
 
 def test_automatic_build_rejects_package_manifest_drift(
@@ -147,12 +175,12 @@ def test_automatic_build_rejects_package_manifest_drift(
         calls.append(list(argv))
         return subprocess.CompletedProcess(argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", record_run)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", record_run)
 
     with pytest.raises(
         ReproducibleDependencyBuildError, match="package.json.*package-lock.json"
     ):
-        SolutionAppBuilder()._refresh_sdk_lockfile(tmp_path)
+        _refresh_sdk_lockfile(tmp_path)
 
     assert lock_path.read_bytes() == original_bytes
     assert calls == []
@@ -216,10 +244,10 @@ def test_automatic_build_rejects_invalid_sdk_lock_entries(
         lock_path.write_text(json.dumps(candidate))
         return subprocess.CompletedProcess(_argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", fake_run)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", fake_run)
 
     with pytest.raises(ReproducibleDependencyBuildError, match=message):
-        SolutionAppBuilder()._refresh_sdk_lockfile(tmp_path)
+        _refresh_sdk_lockfile(tmp_path)
 
     assert lock_path.read_bytes() == original_bytes
 
@@ -250,9 +278,9 @@ def test_automatic_build_adds_sdk_entries_to_a_platform_injected_lockfile(
         lock_path.write_text(json.dumps(candidate))
         return subprocess.CompletedProcess(_argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", fake_run)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", fake_run)
 
-    SolutionAppBuilder()._refresh_sdk_lockfile(tmp_path)
+    _refresh_sdk_lockfile(tmp_path)
 
     refreshed = json.loads(lock_path.read_text())
     assert refreshed["packages"][""]["dependencies"]["bifrost"] == (
@@ -310,9 +338,9 @@ def test_automatic_build_grafts_the_sdk_legacy_lock_entry(
         lock_path.write_text(json.dumps(candidate))
         return subprocess.CompletedProcess(_argv, 0)
 
-    monkeypatch.setattr("src.services.solutions.app_build.subprocess.run", fake_run)
+    monkeypatch.setattr("shared.solution_app_compiler.subprocess.run", fake_run)
 
-    SolutionAppBuilder()._refresh_sdk_lockfile(tmp_path)
+    _refresh_sdk_lockfile(tmp_path)
 
     refreshed = json.loads(lock_path.read_text())
     assert refreshed["dependencies"]["bifrost"] == {
@@ -395,7 +423,7 @@ def test_automatic_build_replaces_old_local_sdk_lock_without_changing_other_deps
     old_locked_dependency = old_lock["packages"]["node_modules/locked-dependency"]
 
     shutil.copyfile(new_sdk, workdir / "bifrost-sdk.tgz")
-    SolutionAppBuilder()._refresh_sdk_lockfile(workdir)
+    _refresh_sdk_lockfile(workdir)
     refreshed_lock_bytes = lock_path.read_bytes()
     subprocess.run(
         ["npm", "ci", "--no-audit", "--no-fund"],

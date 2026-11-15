@@ -128,6 +128,9 @@ services:
     environment:
       BIFROST_ENVIRONMENT: development
       BIFROST_DEBUG: "true"
+      BIFROST_API_URL: http://api:8000
+      BIFROST_WORKER_CAPACITY_URL: ${BIFROST_WORKER_CAPACITY_URL:-}
+      BIFROST_WORKER_CAPACITY_TOKEN: ${BIFROST_WORKER_CAPACITY_TOKEN:-}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
@@ -179,9 +182,12 @@ services:
     user: root
     command: >
       uvicorn src.main:app --host 0.0.0.0 --port 8000 --reload
+      --timeout-graceful-shutdown 300
       --reload-dir /app/src --reload-dir /app/shared
 
   scheduler:
+    deploy:
+      replicas: ${BIFROST_DEBUG_SCHEDULER_REPLICAS:-1}
     build:
       context: .
       dockerfile: api/Dockerfile.dev
@@ -189,6 +195,7 @@ services:
         BIFROST_VERSION: ${BIFROST_VERSION:-debug}
     environment:
       BIFROST_ENVIRONMENT: development
+      BIFROST_API_URL: http://api:8000
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost
@@ -241,6 +248,8 @@ services:
       --pattern="*.py" --recursive -- python -m src.scheduler.main
 
   worker:
+    deploy:
+      replicas: ${BIFROST_DEBUG_WORKER_REPLICAS:-1}
     build:
       context: .
       dockerfile: api/Dockerfile.dev

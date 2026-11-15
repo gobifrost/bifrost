@@ -14,12 +14,11 @@ swallowed. The handler in :mod:`src.jobs.summarize_worker` does the same
 belt-and-suspenders so the message is never re-queued. The UI exposes a
 regenerate button for recovery.
 """
-import json
 import logging
-from datetime import datetime, timezone
 from collections.abc import Callable
 from contextlib import AbstractAsyncContextManager
-from typing import Any
+from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
@@ -30,140 +29,21 @@ from src.core.cache import get_shared_redis
 from src.models.orm.agent_runs import AgentRun
 from src.models.orm.agents import Agent
 from src.services.ai_behavior_service import AGENT_EXECUTION_MODE_METADATA_KEY
-from src.services.ai_usage_service import record_ai_usage
+from src.services.ai_usage_service import persist_ai_usage_receipt, record_ai_usage
+from src.services.agent_runtime.summary_compute_execution import (
+    compute_summary, current_summary_compute_receipt, is_summary_compute_execution,
+)
 from src.services.execution.model_selection import get_summarization_client
 from src.services.execution.run_metadata import MAX_KEYS
 from src.services.llm import LLMMessage
+from shared.agent_summary_compute import (
+    SUMMARIZE_PROMPT_VERSION,
+    SummaryCompletion,
+    SummaryComputeInput,
+    SummaryCompletionRequest,
+)
 
 logger = logging.getLogger(__name__)
-
-# Version tag written to AgentRun.summary_prompt_version on successful
-# summarization. Bump this string whenever ``SUMMARIZE_SYSTEM_PROMPT`` or the
-# user-message payload changes meaningfully, so admins can use the backfill
-# endpoint's ``prompt_version_below`` filter to re-summarize runs stamped
-# with an older version.
-SUMMARIZE_PROMPT_VERSION = "v4"
-
-SUMMARIZE_SYSTEM_PROMPT = """You summarize what an AI agent did on a single run.
-
-You receive the agent's name, the system prompt that defines its job, the
-run's input, and the run's output. Produce a JSON object with:
-
-  - asked: one short sentence (<100 chars) describing what the user or event
-    asked for, in the user's voice. Extract the specific ask, not a generic
-    restatement of the agent's purpose.
-
-  - did: a short prose explanation of how the agent worked through the
-    request — the way someone would describe their work to a coworker. 1-4
-    sentences (<800 chars total). Walk through the meaningful decisions
-    and the reason behind each one ("I needed X, so I called Y; that gave
-    me Z, which told me to..."). Skip filler tool calls (a couple of
-    look-ups aren't worth narrating). DO NOT restate the agent's role or
-    purpose — describe THIS run.
-
-    *** TOOL MARKERS — STRICT RULE ***
-    If the run made any tool calls (visible in the input as
-    tool_call/tool_response entries, or implied by the agent's output),
-    EVERY tool name you mention in `did` MUST be wrapped in square
-    brackets. Use the exact machine-readable tool name from the run's
-    tool_call steps (e.g. `ai_ticketing_get_ticket_details`,
-    `delegate_to_security_subagent`), NOT a friendly paraphrase. The
-    brackets are required syntax — the UI renders them as clickable chips.
-
-    GOOD example (markers present, tool names exact):
-      "I pulled the ticket via [ai_ticketing_get_ticket_details], saw the
-      EOL alert came from a Windows 2012 R2 host, then delegated to
-      [delegate_to_security_subagent] which recommended an in-place
-      upgrade. Wrote the categorization back with
-      [ai_ticketing_update_ticket]."
-
-    BAD example (markers MISSING — do not do this):
-      "I pulled the ticket details, saw the alert came from a 2012 R2
-      host, then asked the security sub-agent for guidance and updated
-      the ticket."
-
-    If no tools were called on this run, write `did` as plain prose with
-    no brackets. Brackets are required ONLY when tools were actually used.
-
-  - answered: one short sentence (<100 chars) capturing the agent's final
-    answer or outcome — the user-facing result of the run. Different from
-    `did`: `did` is the work, `answered` is the result.
-
-  - confidence: float 0.0-1.0 — how confident the agent's output appears to
-    be.
-  - confidence_reason: one sentence explaining the confidence assessment.
-  - metadata: object of k/v pairs (string -> string) extracting notable
-    entities from the run — the specific decisions, IDs, customer names,
-    categories, severity levels, billing status, and so on. Max 8 entries.
-
-Return a single JSON object and nothing else. Do not wrap it in markdown code
-fences. Do not add a preamble, trailing prose, or explanation. The first
-character of your response must be `{` and the last must be `}`."""
-
-
-def _extract_json_object(text: str) -> str:
-    """Best-effort extraction of a JSON object from an LLM response.
-
-    Tolerates the two common failure modes we see in practice:
-      1. Markdown code fences (```json ... ```) that json.loads won't parse.
-      2. A prose preamble / trailing text around the actual object.
-
-    Returns a string that may still fail json.loads; caller handles that.
-    """
-    s = (text or "").strip()
-    if not s:
-        return s
-
-    # Strip leading/trailing code fences. Handles ```json, ``` and variants.
-    if s.startswith("```"):
-        # Drop opening fence + optional language tag
-        first_newline = s.find("\n")
-        if first_newline != -1:
-            s = s[first_newline + 1 :]
-        # Drop closing fence
-        if s.rstrip().endswith("```"):
-            s = s.rstrip()[:-3].rstrip()
-
-    # If there's still prose around the object, slice from first `{` to
-    # matching `}`. Bracket-matching over quoted strings to avoid tripping
-    # on `"url": "https://x.com/{id}"`.
-    start = s.find("{")
-    if start == -1:
-        return s
-    depth = 0
-    in_str = False
-    esc = False
-    for i in range(start, len(s)):
-        ch = s[i]
-        if esc:
-            esc = False
-            continue
-        if in_str:
-            if ch == "\\":
-                esc = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            depth += 1
-        elif ch == "}":
-            depth -= 1
-            if depth == 0:
-                return s[start : i + 1]
-    return s[start:]
-
-
-def _clamp_confidence(value: Any) -> float | None:
-    """Clamp an LLM-returned confidence to [0.0, 1.0], or return ``None`` if invalid."""
-    if value is None:
-        return None
-    try:
-        f = float(value)
-    except (TypeError, ValueError):
-        return None
-    return max(0.0, min(1.0, f))
 
 
 async def _broadcast_run(run: AgentRun, db: AsyncSession) -> None:
@@ -182,14 +62,6 @@ async def _broadcast_run(run: AgentRun, db: AsyncSession) -> None:
         await publish_agent_run_update(run, agent_name)
     except Exception:
         logger.exception("Failed to broadcast run update for %s", run.id)
-
-
-def _truncate(value: Any, max_len: int) -> str | None:
-    """Coerce to non-empty truncated string, or ``None`` if blank/missing."""
-    if value is None:
-        return None
-    s = str(value)[:max_len]
-    return s or None
 
 
 async def summarize_run(
@@ -240,141 +112,105 @@ async def summarize_run(
             # only needs enough context to distinguish outcome from role.
             agent_system_prompt = (agent_row[1] or "")[:2000]
 
-    # Build the prompt with agent context so the summarizer can describe
-    # *what changed on this run* instead of paraphrasing the agent's role.
-    user_content = json.dumps(
-        {
-            "agent_name": agent_name,
-            "agent_system_prompt": agent_system_prompt,
-            "input": run_input,
-            "output": run_output,
-        },
-        default=str,
-    )
-    messages = [
-        LLMMessage(role="system", content=SUMMARIZE_SYSTEM_PROMPT),
-        LLMMessage(role="user", content=user_content),
-    ]
-
-    # Phase 2: call LLM (no DB connection held)
-    # We intentionally don't cap max_tokens here. Providers that support an
-    # omitted limit use their model default; Anthropic receives the adapter's
-    # required ceiling. A local cap had been causing silent mid-object
-    # truncation for reasoning models that spend tokens on hidden thinking.
-    response = None
-    try:
-        # Pydantic AI's native transport owns the single bounded request retry
-        # budget. Do not add an outer loop here: stacked budgets amplify 429s.
-        response = await llm_client.complete(
-            messages=messages,
-            model=resolved_model,
+    # Phase 2: call the authorized model boundary (no DB connection held).
+    # Pydantic AI's native transport owns the single bounded request retry
+    # budget. Do not add an outer loop here: stacked budgets amplify 429s.
+    async def complete(request: SummaryCompletionRequest) -> SummaryCompletion:
+        try:
+            response = await llm_client.complete(
+                messages=[
+                    LLMMessage(role=message.role, content=message.content)
+                    for message in request.messages
+                ],
+                model=request.model,
+            )
+        except Exception:
+            logger.exception("Summarizer LLM call failed for run %s", run_id)
+            raise
+        completion = SummaryCompletion(
+            content=response.content,
+            model=response.model,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            cache_read_tokens=response.cache_read_tokens,
+            cache_write_tokens=response.cache_write_tokens,
+            reasoning_tokens=response.reasoning_tokens,
+            provider_cost=(
+                str(response.provider_cost)
+                if response.provider_cost is not None
+                else None
+            ),
         )
-        raw_content = response.content or ""
-        # Empty content is its own class of failure — OpenAI / reasoning models
-        # sometimes return "" when the response is filtered or when token
-        # budget is consumed by hidden reasoning. Surface it explicitly so the
-        # admin knows to check model/config rather than chasing a parser bug.
-        if not raw_content.strip():
-            async with session_factory() as db:
-                run = (
-                    await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-                ).scalar_one()
-                run.summary_status = "failed"
-                run.summary_error = (
-                    "Summarization model returned empty content. "
-                    "Check model output filtering / reasoning-token budget."
-                )
-                await db.commit()
-                await _broadcast_run(run, db)
+        receipt = current_summary_compute_receipt()
+        if receipt is not None:
+            # This is consumed-provider evidence, independent of whether this
+            # owner can still publish a summary. Commit before the compute ACK.
+            await persist_ai_usage_receipt(
+                receipt,
+                agent_run_id=run_id, organization_id=org_id,
+                provider=getattr(llm_client, "provider_name", "unknown"),
+                model=completion.model or resolved_model,
+                input_tokens=completion.input_tokens or 0,
+                output_tokens=completion.output_tokens or 0,
+                cache_read_tokens=completion.cache_read_tokens,
+                cache_write_tokens=completion.cache_write_tokens,
+                reasoning_tokens=completion.reasoning_tokens,
+                provider_cost=Decimal(completion.provider_cost) if completion.provider_cost is not None else None,
+            )
+        return completion
+
+    result = await compute_summary(
+        SummaryComputeInput(
+            agent_name=agent_name,
+            agent_system_prompt=agent_system_prompt,
+            run_input=run_input,
+            run_output=run_output,
+            model=resolved_model,
+        ),
+        complete,
+    )
+    if result.failure is not None:
+        if result.failure.kind == "empty_content":
             logger.warning(
                 "Summarizer returned empty content for run %s (model=%s)",
                 run_id,
                 resolved_model,
             )
-            return
-        parsed = json.loads(_extract_json_object(raw_content))
-    except json.JSONDecodeError as exc:
-        # Log the actual content (truncated) so we can diagnose future failures
-        # — without this the docker logs only told us "invalid JSON" with no
-        # hint whether the model returned prose, fences, or garbage.
-        raw_preview = (response.content or "")[:500] if response else "<no response>"
-        logger.warning(
-            "Summarizer returned invalid JSON for run %s: %s | raw=%r",
-            run_id,
-            exc,
-            raw_preview,
-        )
-        # Detect the "truncated mid-object" case so the error message is
-        # distinguishable from a generic "invalid JSON" response.
-        looks_truncated = (
-            raw_preview
-            and raw_preview != "<no response>"
-            and raw_preview.lstrip().startswith("{")
-            and not raw_preview.rstrip().endswith("}")
-        )
-        async with session_factory() as db:
-            run = (
-                await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-            ).scalar_one()
-            run.summary_status = "failed"
-            if looks_truncated:
-                run.summary_error = (
-                    "Summarization model response was truncated mid-object "
-                    "(token budget exhausted). Retry or reduce run payload."
-                )
-            else:
-                run.summary_error = (
-                    f"Invalid JSON from summarization model: {str(exc)[:200]}"
-                )
-            await db.commit()
-            await _broadcast_run(run, db)
-        return
-    except Exception as exc:  # pragma: no cover - defensive
-        logger.exception("Summarizer LLM call failed for run %s", run_id)
-        async with session_factory() as db:
-            run = (
-                await db.execute(select(AgentRun).where(AgentRun.id == run_id))
-            ).scalar_one()
-            run.summary_status = "failed"
-            run.summary_error = (
-                f"LLM provider request failed ({type(exc).__name__}): "
-                f"{str(exc)[:160]}"
+        elif result.failure.kind == "invalid_json":
+            logger.warning(
+                "Summarizer returned invalid JSON for run %s: %s | raw=%r",
+                run_id,
+                result.failure.error,
+                result.raw_content[:500],
             )
-            await db.commit()
-            await _broadcast_run(run, db)
-        return
-
-    if not isinstance(parsed, dict):
         async with session_factory() as db:
             run = (
                 await db.execute(select(AgentRun).where(AgentRun.id == run_id))
             ).scalar_one()
             run.summary_status = "failed"
-            run.summary_error = "Summarization model did not return a JSON object"
+            run.summary_error = result.failure.error
             await db.commit()
             await _broadcast_run(run, db)
         return
 
     # Phase 3: persist success + AIUsage row
+    assert result.fields is not None
+    assert result.completion is not None
     async with session_factory() as db:
         run = (
             await db.execute(select(AgentRun).where(AgentRun.id == run_id))
         ).scalar_one()
-        run.asked = _truncate(parsed.get("asked"), 400)
-        run.did = _truncate(parsed.get("did"), 1200)
-        run.answered = _truncate(parsed.get("answered"), 400)
-        run.confidence = _clamp_confidence(parsed.get("confidence"))
-        run.confidence_reason = _truncate(parsed.get("confidence_reason"), 500)
+        run.asked = result.fields.asked
+        run.did = result.fields.did
+        run.answered = result.fields.answered
+        run.confidence = result.fields.confidence
+        run.confidence_reason = result.fields.confidence_reason
 
-        md = parsed.get("metadata") or {}
-        if isinstance(md, dict):
+        if result.fields.metadata is not None:
             extracted = {
-                str(k): str(v)[:256]
-                for k, v in md.items()
-                if (
-                    isinstance(v, (str, int, float))
-                    and k != AGENT_EXECUTION_MODE_METADATA_KEY
-                )
+                key: value
+                for key, value in result.fields.metadata.items()
+                if key != AGENT_EXECUTION_MODE_METADATA_KEY
             }
             existing = run.run_metadata or {}
             # Existing (agent-supplied) wins; LLM fills in gaps.
@@ -401,20 +237,25 @@ async def summarize_run(
         run.summary_prompt_version = SUMMARIZE_PROMPT_VERSION
 
         provider = getattr(llm_client, "provider_name", "unknown")
-        model_name = getattr(response, "model", None) or resolved_model
-        await record_ai_usage(
-            session=db,
-            redis_client=await get_shared_redis(),
-            agent_run_id=run.id,
-            organization_id=org_id,
-            provider=provider,
-            model=model_name,
-            input_tokens=response.input_tokens or 0,
-            output_tokens=response.output_tokens or 0,
-            cache_read_tokens=response.cache_read_tokens,
-            cache_write_tokens=response.cache_write_tokens,
-            reasoning_tokens=response.reasoning_tokens,
-            provider_cost=response.provider_cost,
-        )
+        model_name = result.completion.model or resolved_model
+        if not is_summary_compute_execution():
+            await record_ai_usage(
+                session=db,
+                redis_client=await get_shared_redis(),
+                agent_run_id=run.id,
+                organization_id=org_id,
+                provider=provider,
+                model=model_name,
+                input_tokens=result.completion.input_tokens or 0,
+                output_tokens=result.completion.output_tokens or 0,
+                cache_read_tokens=result.completion.cache_read_tokens,
+                cache_write_tokens=result.completion.cache_write_tokens,
+                reasoning_tokens=result.completion.reasoning_tokens,
+                provider_cost=(
+                    Decimal(result.completion.provider_cost)
+                    if result.completion.provider_cost is not None
+                    else None
+                ),
+            )
         await db.commit()
         await _broadcast_run(run, db)

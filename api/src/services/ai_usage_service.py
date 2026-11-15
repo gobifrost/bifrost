@@ -14,6 +14,7 @@ Redis Key Structure:
 - ai_pricing_notified:{provider}:{model} - Deduplication for missing price notifications (TTL: 24 hours)
 """
 
+import asyncio
 import json
 import logging
 from decimal import Decimal
@@ -22,6 +23,7 @@ from uuid import UUID
 
 import redis.asyncio as redis
 from sqlalchemy import func, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,6 +63,7 @@ async def record_ai_usage(
     message_id: UUID | None = None,
     organization_id: UUID | None = None,
     user_id: UUID | None = None,
+    receipt_id: UUID | None = None,
 ) -> None:
     """
     Record an AI usage event.
@@ -87,6 +90,7 @@ async def record_ai_usage(
         message_id: UUID of message within conversation
         organization_id: UUID of organization
         user_id: UUID of user who initiated the call
+        receipt_id: Stable provider-operation receipt for idempotent persistence
     """
     from src.models.orm.ai_usage import AIUsage
     from src.services.model_pricing import (
@@ -128,27 +132,37 @@ async def record_ai_usage(
             await _notify_missing_pricing(redis_client, provider, display_name)
 
         # 4. Insert to ai_usage table (using display name for consistency)
-        usage = AIUsage(
-            provider=provider,
-            model=display_name,
-            input_tokens=input_tokens,
-            output_tokens=output_tokens,
-            cache_read_tokens=cache_read_tokens,
-            cache_write_tokens=cache_write_tokens,
-            reasoning_tokens=reasoning_tokens,
-            provider_cost=provider_cost,
-            cost=cost,
-            duration_ms=duration_ms,
-            execution_id=execution_id,
-            conversation_id=conversation_id,
-            agent_run_id=agent_run_id,
-            message_id=message_id,
-            organization_id=organization_id,
-            user_id=user_id,
-            sequence=sequence,
-        )
-        session.add(usage)
-        await session.flush()
+        usage_values = {
+            "provider": provider,
+            "model": display_name,
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "cache_read_tokens": cache_read_tokens,
+            "cache_write_tokens": cache_write_tokens,
+            "reasoning_tokens": reasoning_tokens,
+            "provider_cost": provider_cost,
+            "cost": cost,
+            "duration_ms": duration_ms,
+            "execution_id": execution_id,
+            "conversation_id": conversation_id,
+            "agent_run_id": agent_run_id,
+            "message_id": message_id,
+            "organization_id": organization_id,
+            "user_id": user_id,
+            "sequence": sequence,
+        }
+        if receipt_id is None:
+            # Preserve the legacy ORM path, including flush timing and
+            # best-effort error semantics for callers without a receipt.
+            usage = AIUsage(**usage_values)
+            session.add(usage)
+            await session.flush()
+        else:
+            await session.execute(
+                pg_insert(AIUsage)
+                .values(**usage_values, receipt_id=receipt_id)
+                .on_conflict_do_nothing(constraint="uq_ai_usage_receipt_id")
+            )
 
         # 5. Invalidate aggregates cache
         await invalidate_usage_cache(redis_client, execution_id, conversation_id, agent_run_id)
@@ -166,8 +180,82 @@ async def record_ai_usage(
         # caller must see it (a retrying caller decides whether to retry).
         raise
     except Exception as e:
+        if receipt_id is not None:
+            raise
         logger.exception(f"Failed to record AI usage: {e}", exc_info=True)
         # Don't re-raise - AI usage recording should not block the main flow
+
+
+async def persist_ai_usage_receipt(
+    receipt_id: UUID,
+    *,
+    provider: str,
+    model: str,
+    input_tokens: int,
+    output_tokens: int,
+    cache_read_tokens: int = 0,
+    cache_write_tokens: int = 0,
+    reasoning_tokens: int = 0,
+    provider_cost: Decimal | None = None,
+    sequence: int = 1,
+    duration_ms: int | None = None,
+    execution_id: UUID | None = None,
+    conversation_id: UUID | None = None,
+    agent_run_id: UUID | None = None,
+    message_id: UUID | None = None,
+    organization_id: UUID | None = None,
+    user_id: UUID | None = None,
+) -> None:
+    """Commit one receipt-bearing usage row through the bounded DB retry path.
+
+    A provider operation may have completed before an RPC acknowledgement is
+    lost.  The receipt is stable across that retry, so PostgreSQL keeps one
+    row even when a commit acknowledgement was lost and the whole unit runs
+    again.  Cancellation drains the bounded write before propagating so the
+    caller never acknowledges an uncertain receipt.
+    """
+    from src.core.cache import get_shared_redis
+    from src.core.database import get_session_factory
+    from src.core.database_retry import RetryBudget, run_with_database_retry
+
+    async def persist(session: AsyncSession) -> None:
+        redis_client = await get_shared_redis()
+        await record_ai_usage(
+            session=session,
+            redis_client=redis_client,
+            provider=provider,
+            model=model,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens,
+            cache_read_tokens=cache_read_tokens,
+            cache_write_tokens=cache_write_tokens,
+            reasoning_tokens=reasoning_tokens,
+            provider_cost=provider_cost,
+            sequence=sequence,
+            duration_ms=duration_ms,
+            execution_id=execution_id,
+            conversation_id=conversation_id,
+            agent_run_id=agent_run_id,
+            message_id=message_id,
+            organization_id=organization_id,
+            user_id=user_id,
+            receipt_id=receipt_id,
+        )
+        await session.commit()
+
+    pending = asyncio.create_task(
+        run_with_database_retry(
+            get_session_factory(),
+            persist,
+            description=f"AI usage receipt {receipt_id}",
+            budget=RetryBudget(),
+        )
+    )
+    try:
+        await asyncio.shield(pending)
+    except asyncio.CancelledError:
+        await pending
+        raise
 
 
 async def get_cached_price(

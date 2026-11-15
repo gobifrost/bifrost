@@ -14,12 +14,15 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from typing import cast
 
 from pydantic_ai.messages import ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
+
+from shared.agent_model_compute import current_model_output_cap
 
 from src.services.agent_runtime.observed_model import (
     ModelCallObserver,
@@ -156,7 +159,14 @@ class FailoverModel(WrapperModel):
 
     def _settings_for(self, index: int, model_settings: ModelSettings | None) -> ModelSettings | None:
         override = self._candidate_settings[index]
-        return override if override is not None else model_settings
+        settings = override if override is not None else model_settings
+        cap = current_model_output_cap()
+        if cap is None:
+            return settings
+        bounded = cast(ModelSettings, dict(settings or {}))
+        configured = bounded.get("max_tokens")
+        bounded["max_tokens"] = min(cap, configured) if configured is not None else cap
+        return bounded
 
     def _advance(self, failed_index: int, exc: BaseException) -> int:
         """Record a switch and sync ``wrapped`` to the next candidate."""

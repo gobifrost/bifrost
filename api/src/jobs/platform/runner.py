@@ -13,6 +13,7 @@ from sqlalchemy import select
 from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
 from src.core.database import close_db, get_db_context, init_db
 from src.jobs.platform.base import (
+    AppBuildCompute,
     PlatformJobCancelled,
     PlatformJobContext,
     PlatformJobDeferred,
@@ -27,7 +28,12 @@ from src.services.platform_jobs import defer_platform_job, finish_platform_job, 
 logger = logging.getLogger(__name__)
 
 
-async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
+async def run_claimed_platform_job(
+    job_id: UUID,
+    lease_token: UUID,
+    *,
+    app_build_compute: AppBuildCompute | None = None,
+) -> bool:
     async with get_db_context() as db:
         job = (
             await db.execute(
@@ -78,6 +84,7 @@ async def run_claimed_platform_job(job_id: UUID, lease_token: UUID) -> bool:
             impersonated_by_user_id=job.impersonated_by_user_id,
             impersonation_session_id=job.impersonation_session_id,
             checkpoint=job.result,
+            app_build_compute=app_build_compute,
         )
 
     try:
