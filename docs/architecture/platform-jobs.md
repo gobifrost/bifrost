@@ -577,3 +577,15 @@ The API checks the input digest, exact result paths and artifact limits before
 publishing previews. App stages run sequentially under the same canonical job
 claim; other Git preview consumers retain their existing request-scoped path.
 No new capacity-provider declarations or operator settings are required.
+
+### Workflow permission cutover ownership
+
+`workflow.permissions.cutover` runs in the existing bounded API executor and is
+excluded from physical worker demand. It retains the reviewed analysis,
+acknowledgement, current source/consent fingerprints and active-inventory gates.
+The final transaction takes the canonical owner/job fence before the workflow
+registry lock, reauthorizes the administrator after source review, then commits
+the inherited default and audit record together. Large source summaries run off
+the API event loop. Cutover is a non-control API task, so its potentially long
+review does not occupy the reserved maintenance control slot. Analysis and apply
+retain their current placement until their separate compute migrations land.

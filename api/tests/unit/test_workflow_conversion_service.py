@@ -488,10 +488,13 @@ async def test_cutover_rejects_a_report_that_became_stale_after_analysis(
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "acknowledged,inventory_changed", [(False, False), (True, False), (True, True)]
+    "acknowledged,inventory_changed,revoked,cancelled", [
+        (False, False, False, False), (True, False, False, False),
+        (True, True, False, False), (True, False, True, False), (True, False, False, True),
+    ]
 )
 async def test_cutover_accepts_only_persisted_review_of_unchanged_unknowns(
-    monkeypatch, acknowledged, inventory_changed
+    monkeypatch, acknowledged, inventory_changed, revoked, cancelled
 ):
     workflow_id = uuid4()
     analysis = SimpleNamespace(
@@ -524,7 +527,7 @@ async def test_cutover_accepts_only_persisted_review_of_unchanged_unknowns(
     )
     _patch_db_context(monkeypatch, db)
     monkeypatch.setattr(
-        conversion, "load_human_caller", AsyncMock(return_value=_admin())
+        conversion, "load_human_caller", AsyncMock(side_effect=[_admin(), _caller(is_platform_admin=False) if revoked else _admin()])
     )
     monkeypatch.setattr(
         conversion,
@@ -541,7 +544,8 @@ async def test_cutover_accepts_only_persisted_review_of_unchanged_unknowns(
         "effective_workflow_permission_mode",
         AsyncMock(return_value=WorkflowPermissionMode.RESTRICTED),
     )
-    fenced = AsyncMock()
+    from src.jobs.platform.base import PlatformJobCancelled
+    fenced = AsyncMock(side_effect=PlatformJobCancelled if cancelled else None)
     audit = AsyncMock()
     monkeypatch.setattr(conversion, "_fenced_job", fenced)
     monkeypatch.setattr(conversion, "emit_audit", audit)
@@ -551,10 +555,21 @@ async def test_cutover_accepts_only_persisted_review_of_unchanged_unknowns(
         acknowledged_remaining_exceptions=True,
     )
 
-    if not acknowledged:
+    if cancelled:
+        with pytest.raises(PlatformJobCancelled):
+            await conversion.run_cutover(context, payload)
+        audit.assert_not_awaited()
+        db.commit.assert_not_awaited()
+    elif not acknowledged:
         with pytest.raises(PlatformJobFailure) as failure:
             await conversion.run_cutover(context, payload)
         assert failure.value.code == "cutover_unresolved"
+        db.commit.assert_not_awaited()
+    elif revoked:
+        with pytest.raises(PlatformJobFailure) as failure:
+            await conversion.run_cutover(context, payload)
+        assert failure.value.code == "authorization_changed"
+        audit.assert_not_awaited()
         db.commit.assert_not_awaited()
     elif inventory_changed:
         with pytest.raises(PlatformJobFailure) as failure:
@@ -686,3 +701,30 @@ def test_unknown_exception_named_like_a_missing_key_is_not_storage_evidence():
         pass
 
     assert not conversion._is_missing_source_error(NoSuchKey())
+
+
+@pytest.mark.asyncio
+async def test_conversion_owner_fence_precedes_job_lock(monkeypatch):
+    from src.jobs.platform.base import PlatformJobCancelled
+    db = SimpleNamespace(execute=AsyncMock())
+    owner = AsyncMock(return_value=False)
+    monkeypatch.setattr("src.worker.remote.fencing.fence_remote_owner", owner)
+    with pytest.raises(PlatformJobCancelled):
+        await conversion._fenced_job(db, _context())
+    owner.assert_awaited_once_with(db)
+    db.execute.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_source_summary_parser_runs_off_the_api_event_loop(db_session, monkeypatch):
+    import threading
+    from shared import workflow_conversion_analysis as analysis
+    event_loop_thread = threading.get_ident()
+    observed_threads = []
+    def parse(source):
+        observed_threads.append(threading.get_ident())
+        return summarize_source(source)
+    monkeypatch.setattr(analysis, "summarize_source", parse)
+    source = SourceFile(f"workflows/{uuid4()}.py", "run.py", "def run(): return 1", "f" * 64)
+    await conversion._summary(db_session, source)
+    assert observed_threads and observed_threads[0] != event_loop_thread

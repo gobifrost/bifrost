@@ -409,6 +409,7 @@ _METADATA = MappingProxyType(
                     min_memory_headroom_mb=384,
                     allow_running_cancellation=True,
                 ),
+                execution_owner="api",
             ),
         )
     }

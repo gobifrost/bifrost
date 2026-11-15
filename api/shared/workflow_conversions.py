@@ -6,6 +6,7 @@ and stores only its compact output.  It never executes workspace code.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from contextlib import AsyncExitStack
@@ -165,7 +166,8 @@ async def _summary(db: AsyncSession, source_file) -> dict:
         return dict(cached.summary)
     from shared.workflow_conversion_analysis import summarize_source
 
-    compact = summarize_source(source_file.source)
+    # API-owned review must not parse a large file on the request event loop.
+    compact = await asyncio.to_thread(summarize_source, source_file.source)
     db.add(
         WorkflowConversionAnalysisCache(
             source_key=_cache_source_key(source_file.key),
@@ -718,6 +720,10 @@ async def _refresh_applied_report(
 
 
 async def _fenced_job(db: AsyncSession, context: PlatformJobContext) -> PlatformJob:
+    from src.worker.remote.fencing import fence_remote_owner
+
+    if not await fence_remote_owner(db):
+        raise PlatformJobCancelled
     job = (
         await db.execute(
             select(PlatformJob)
@@ -1239,6 +1245,12 @@ async def run_cutover(context: PlatformJobContext, payload) -> dict:
         # Source analysis can take minutes. Freeze registry writes only for
         # this short final check + default commit, so a newly added inherited
         # workflow cannot slip into an already reviewed platform inventory.
+        # Preserve owner -> job -> registry lock order. Reauthorize after
+        # potentially long source verification before changing the default.
+        await _fenced_job(db, context)
+        caller = await _require_current_conversion_admin(
+            db, context, "workflows.permission_default.update"
+        )
         await db.execute(text("LOCK TABLE workflows IN SHARE MODE"))
         final_revisions = {
             row[0]: tuple(row)
@@ -1255,7 +1267,6 @@ async def run_cutover(context: PlatformJobContext, payload) -> dict:
                 "cutover_inventory_changed",
                 "The active workflow inventory changed during verification; run a new platform cutover analysis",
             )
-        await _fenced_job(db, context)
         setting = (
             await db.execute(
                 select(SystemConfig)
