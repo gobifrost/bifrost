@@ -748,7 +748,7 @@ async def claim_eligible_service(
 
 
 async def _locked_live_attempt(
-    db: AsyncSession, attempt_id: UUID, lease_token: str, now: datetime
+    db: AsyncSession, attempt_id: UUID, lease_token: str, now: datetime | None
 ) -> ServiceAttempt:
     """Load a live attempt under lock, enforcing lease ownership and time.
 
@@ -766,6 +766,9 @@ async def _locked_live_attempt(
         .with_for_update()
     )
     attempt = result.scalar_one_or_none()
+    # Fencing and the row lock may wait past expiry. Sample implicit time
+    # only after both have completed; explicit time remains caller-owned.
+    now = now or _now()
     if (
         attempt is None
         or attempt.state not in _SERVICE_LIVE_STATES
@@ -785,8 +788,8 @@ async def heartbeat_attempt(
     now: datetime | None = None,
 ) -> ServiceAttempt:
     """Renew a live attempt lease. Rejects superseded or terminal attempts."""
-    now = now or _now()
     attempt = await _locked_live_attempt(db, attempt_id, lease_token, now)
+    now = now or _now()
     attempt.heartbeat_at = now
     attempt.lease_expires_at = now + timedelta(seconds=lease_ttl_seconds)
     await db.flush()
@@ -801,8 +804,8 @@ async def mark_attempt_ready(
     now: datetime | None = None,
 ) -> ServiceAttempt:
     """Record service.ready() for a live attempt (starting → running)."""
-    now = now or _now()
     attempt = await _locked_live_attempt(db, attempt_id, lease_token, now)
+    now = now or _now()
     if attempt.state == "starting":
         attempt.state = "running"
     attempt.ready_at = attempt.ready_at or now
@@ -832,8 +835,8 @@ async def complete_attempt(
             f"Invalid completion reason: {reason!r}. "
             "Must be 'requested', 'clean_return', or 'failed'."
         )
-    now = now or _now()
     attempt = await _locked_live_attempt(db, attempt_id, lease_token, now)
+    now = now or _now()
     attempt.state = "stopped" if reason in ("requested", "clean_return") else "failed"
     attempt.stopped_at = now
     attempt.exit_code = exit_code
