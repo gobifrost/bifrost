@@ -6,9 +6,11 @@ Cloudflare Containers. The protocol is defined in
 
 ## What this deploys
 
-### API-only runtime spike
+### API-only runtime candidate
 
-The spike uses the provider from #1331 with an isolated runtime extension.
+This candidate uses the native Cloudflare provider with an isolated runtime
+extension. Earlier #1331 material is historical evidence only; it is not the
+current deployment reference.
 It derives each launcher's control credential from the dedicated capacity token,
 incarnation UUID and resource UID. The installation signing key never leaves
 the API. Requirements reach the worker through authenticated control bootstrap.
@@ -34,9 +36,76 @@ workers, and fences enrollment. This Worker never sees job payloads.
    you can read. A floating tag is not acceptable: the API fences reservations
    whose reported build differs from `WORKER_VERSION`.
 2. A dedicated bearer token, 32–512 non-space ASCII characters, stored as a
-   Worker secret: `npx wrangler secret put CAPACITY_TOKEN`.
-3. HTTPS/WebSocket reachability from the container to the API. This spike does
-   not provision database or Redis tunnels.
+   Worker secret. Do not place it in `wrangler.toml`, shell history, a command
+   argument, or `WORKER_CONTAINER_ENV`.
+3. A trusted public HTTPS API origin that the Cloudflare container can reach for
+   its WebSocket control connection. `localhost`, private addresses, a
+   development-only certificate, and a URL requiring an interactive browser
+   login are not valid container inputs. This candidate does not provision
+   database or Redis tunnels.
+
+## Pinned deployment order
+
+Run these commands from `deploy/cloudflare/worker`. This runbook qualifies only
+Wrangler `4.162.0`; do not substitute a floating Wrangler release.
+
+1. Set `wrangler.toml` values first: a digest-pinned image, the image's exact
+   embedded `WORKER_VERSION`, an opaque `SCOPE`, and bounds that the API will
+   also enforce. The image must contain only the handlers and capabilities you
+   advertise. `MEMORY_LIMIT_BYTES` must equal the API policy's standard and
+   largest worker memory; `MAX_WORKERS` and `MAX_LIFETIME_SECONDS` must cover
+   the API policy's worker-count, warm-minimum, and lifetime bounds; and
+   `max_instances` must be at least `MAX_WORKERS`. Set
+   `WORKER_CONTAINER_ENV` to a trusted public `BIFROST_API_URL` and required
+   runtime paths only. Do not set `BIFROST_VERSION` there: the pinned image's
+   reported build is the admission identity.
+2. Provision the dedicated provider token as a Worker secret before selecting
+   the provider in the API. The command reads the value interactively; never
+   pass it as an argument:
+
+   ```bash
+   npx --yes wrangler@4.162.0 secret put CAPACITY_TOKEN
+   ```
+
+3. Deploy and record the pinned Wrangler version and image digest with the
+   deployment receipt:
+
+   ```bash
+   npx --yes wrangler@4.162.0 --version
+   npx --yes wrangler@4.162.0 deploy
+   ```
+
+4. Only after the Worker secret and deployment are in place, configure the API
+   process with the existing external-capacity variables:
+
+   ```text
+   BIFROST_WORKER_CAPACITY_URL=https://<worker>.<account>.workers.dev
+   BIFROST_WORKER_CAPACITY_TOKEN=<same dedicated token>
+   ```
+
+   The URL and token are an all-or-nothing pair: setting one without the other
+   fails closed. The API host, not the Cloudflare Worker, owns these values. Do
+   not put them in `WORKER_CONTAINER_ENV`; that object is for the launched
+   Bifrost worker and must contain a trusted public `BIFROST_API_URL`, not
+   provider credentials.
+
+5. Verify the Worker returns only its expected health response before enabling
+   policy demand. Do not treat this reachability check as a worker-launch or
+   conformance result:
+
+   ```bash
+   python3 - <<'PY'
+   import json
+   import os
+   from urllib.request import Request, urlopen
+
+   worker_url = os.environ["BIFROST_WORKER_CAPACITY_URL"].rstrip("/")
+   token = os.environ["BIFROST_WORKER_CAPACITY_TOKEN"]
+   request = Request(f"{worker_url}/healthz", headers={"Authorization": f"Bearer {token}"})
+   with urlopen(request, timeout=10) as response:
+       print(json.dumps({"status": response.status, "health": json.load(response)}, sort_keys=True))
+   PY
+   ```
 
 ## Configure
 
@@ -76,10 +145,26 @@ reaches a location. Instances that never schedule, with `LOCATION` blank in
 before reading instance logs:
 
 ```bash
-curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  "https://api.cloudflare.com/client/v4/accounts/$CLOUDFLARE_ACCOUNT_ID/containers/applications/$APP_ID" \
-  | jq '.result.configuration, .result.health'
+python3 - <<'PY'
+import json
+import os
+from urllib.request import Request, urlopen
+
+account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
+application_id = os.environ["APP_ID"]
+token = os.environ["CLOUDFLARE_API_TOKEN"]
+url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/containers/applications/{application_id}"
+request = Request(url, headers={"Authorization": f"Bearer {token}"})
+with urlopen(request, timeout=10) as response:
+    result = json.load(response)["result"]
+print(json.dumps({"configuration": result.get("configuration"), "health": result.get("health")}, sort_keys=True))
+PY
 ```
+
+The token is read from the child process environment and exists only in memory;
+it is never placed in a command argument or printed. The command intentionally
+prints only the whitelisted configuration and health fields. Do not redirect
+provider request or response bodies to a log.
 
 Cloudflare documents image and `instance_type` changes on the `default`
 scheduling policy as application rollouts, and the scheduling policy itself is
@@ -170,9 +255,9 @@ launch identities.
 
 **Token.** The provider accepts exactly one token, so rotation is a coordinated
 replacement and there is a short window where one side rejects the other. Set the
-new secret on the provider and update `BIFROST_WORKER_CAPACITY_TOKEN` on the API
-controllers in the same change, then confirm workers reconcile. Replacing only
-one side fails enrollment or returns `401` until both match.
+new secret on the provider, update `BIFROST_WORKER_CAPACITY_TOKEN` on the API
+host, then confirm workers reconcile. Replacing only one side fails enrollment
+or returns `401` until both match.
 
 **Scope.** A scope change is a provider replacement, not an edit. Drain and
 confirm deletion of every worker on the old scope, then deploy under the new
@@ -184,6 +269,9 @@ workers that the new scope cannot address.
 - Container cold start is not guaranteed to fit the API's start timeout for a
   large image. Measure it against the API's start timeout before relying on the
   default.
+- Cloudflare cold-start and physical-launch conformance remain unqualified by
+  this runbook. A healthy provider or a completed settings deploy is not proof
+  of a `ContainerStarted` event or a completed workflow.
 - This provider does not implement Fast Path isolation or isolated builds.
 - Cost tracks container lifetime; use `MAX_LIFETIME_SECONDS` and the API's idle
   drain to bound it.
