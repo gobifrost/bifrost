@@ -20,7 +20,7 @@ from src.services.worker_pool.manifest import resolve_worker_job_spec
 
 @pytest.mark.parametrize("cluster", [False, True])
 async def test_external_capacity_is_the_only_selected_worker_provider(monkeypatch, cluster):
-    from src.services.worker_pool import controller, external_controller
+    from src.services.worker_pool import coordinator, controller, external_controller
     from src.jobs.schedulers import kubernetes_jobs
 
     stop = asyncio.Event()
@@ -30,6 +30,7 @@ async def test_external_capacity_is_the_only_selected_worker_provider(monkeypatc
 
     legacy_workers = AsyncMock(side_effect=wait)
     monkeypatch.setattr(controller, "worker_pool_loop", legacy_workers)
+    monkeypatch.setattr(coordinator, "hybrid_worker_pool_loop", wait)
     monkeypatch.setattr(external_controller, "external_worker_pool_loop", wait)
     monkeypatch.setattr(kubernetes_jobs, "kubernetes_build_loop", wait)
     monkeypatch.setattr(kubernetes_control, "may_manage_jobs", AsyncMock(return_value=cluster))
@@ -37,10 +38,66 @@ async def test_external_capacity_is_the_only_selected_worker_provider(monkeypatc
         worker_capacity_url="https://capacity.invalid", worker_capacity_token=SecretStr("x" * 40),
     ))
     try:
-        assert [task.get_name() for task in tasks] == ["external-worker-pool-controller"] + (
-            ["kubernetes-build-controller"] if cluster else []
+        assert [task.get_name() for task in tasks] == (
+            ["hybrid-worker-pool-controller", "kubernetes-build-controller"]
+            if cluster else ["external-worker-pool-controller"]
         )
         legacy_workers.assert_not_called()
+    finally:
+        stop.set()
+        await asyncio.gather(*tasks)
+
+
+async def test_external_capacity_and_kubernetes_start_one_hybrid_worker_loop(monkeypatch):
+    """A usable cluster keeps normal capacity while Cloud capacity is configured."""
+    from src.services.worker_pool import coordinator, external_controller
+    from src.jobs.schedulers import kubernetes_jobs
+
+    stop = asyncio.Event()
+    started = asyncio.Event()
+
+    async def wait(*args):
+        started.set()
+        await stop.wait()
+
+    hybrid = AsyncMock(side_effect=wait)
+    monkeypatch.setattr(coordinator, "hybrid_worker_pool_loop", hybrid)
+    monkeypatch.setattr(external_controller, "external_worker_pool_loop", AsyncMock())
+    monkeypatch.setattr(kubernetes_jobs, "kubernetes_build_loop", wait)
+    monkeypatch.setattr(kubernetes_control, "may_manage_jobs", AsyncMock(return_value=True))
+
+    tasks = await kubernetes_control.start_kubernetes_loops(stop, SimpleNamespace(
+        worker_capacity_url="https://capacity.invalid", worker_capacity_token=SecretStr("x" * 40),
+    ))
+    try:
+        assert [task.get_name() for task in tasks] == [
+            "hybrid-worker-pool-controller", "kubernetes-build-controller",
+        ]
+        await started.wait()
+        hybrid.assert_awaited_once()
+    finally:
+        stop.set()
+        await asyncio.gather(*tasks)
+
+
+async def test_cloud_only_install_keeps_resolver_alive_before_settings_onboarding(monkeypatch):
+    from src.services.worker_pool import external_controller
+
+    stop = asyncio.Event()
+    started = asyncio.Event()
+
+    async def wait(*args):
+        started.set()
+        await stop.wait()
+
+    monkeypatch.setattr(external_controller, "external_worker_pool_loop", wait)
+    monkeypatch.setattr(kubernetes_control, "may_manage_jobs", AsyncMock(return_value=False))
+    tasks = await kubernetes_control.start_kubernetes_loops(stop, SimpleNamespace(
+        worker_capacity_url=None, worker_capacity_token=None,
+    ))
+    try:
+        assert [task.get_name() for task in tasks] == ["external-worker-pool-controller"]
+        await started.wait()
     finally:
         stop.set()
         await asyncio.gather(*tasks)

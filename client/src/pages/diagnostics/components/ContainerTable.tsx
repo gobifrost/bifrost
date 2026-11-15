@@ -3,7 +3,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { ForkTable } from "./ForkTable";
 import type { ExecutionRowData } from "./ExecutionRow";
-import type { ProcessInfo, PoolDetail, PoolSummary } from "@/services/workers";
+import type { ProcessInfo, PoolDetail, PoolSummary, WorkerIncarnation } from "@/services/workers";
 import { CONTAINER_COLORS } from "./MemoryChart";
 
 type PoolData = PoolSummary | PoolDetail;
@@ -52,6 +52,48 @@ function getUptimeSeconds(pool: PoolData): number {
 	const startedAt = pool.started_at;
 	if (!startedAt) return 0;
 	return (Date.now() - new Date(startedAt).getTime()) / 1000;
+}
+
+function formatLifecycleTime(value: string | null): string {
+	return value ? new Date(value).toLocaleString() : "Not recorded";
+}
+
+function IncarnationDetails({ incarnation }: { incarnation: WorkerIncarnation }) {
+	const cleanup = incarnation.cleanup_confirmed === null
+		? null
+		: incarnation.cleanup_confirmed
+			? "Confirmed"
+			: "Pending";
+	return (
+		<dl className="mt-4 grid grid-cols-1 gap-4 border-t pt-4 text-sm sm:grid-cols-3">
+			<div>
+				<dt className="text-xs text-muted-foreground">Worker</dt>
+				<dd className="mt-1 flex flex-wrap items-center gap-2">
+					<Badge variant={incarnation.state === "lost" ? "destructive" : "secondary"}>
+						{incarnation.state}
+					</Badge>
+					<span>{incarnation.form} · {incarnation.execution_lane}</span>
+				</dd>
+			</div>
+			<div className="min-w-0">
+				<dt className="text-xs text-muted-foreground">Version & Scope</dt>
+				<dd className="mt-1 space-y-1 [overflow-wrap:anywhere]">
+					<div>{incarnation.version ?? "Version not reported"}</div>
+					<div className="text-muted-foreground">{incarnation.capacity_scope ?? "Local worker"}</div>
+				</dd>
+			</div>
+			<div>
+				<dt className="text-xs text-muted-foreground">Lifecycle</dt>
+				<dd className="mt-1 space-y-1 text-xs text-muted-foreground">
+					<div>Created {formatLifecycleTime(incarnation.created_at)}</div>
+					{incarnation.ready_at && <div>Ready {formatLifecycleTime(incarnation.ready_at)}</div>}
+					{incarnation.ended_at && <div>Ended {formatLifecycleTime(incarnation.ended_at)}</div>}
+					{incarnation.end_reason && <div>Reason: {incarnation.end_reason}</div>}
+					{cleanup && <div>Cleanup: {cleanup}</div>}
+				</dd>
+			</div>
+		</dl>
+	);
 }
 
 interface ContainerTableProps {
@@ -168,6 +210,7 @@ function ContainerRecord({
 					</dd>
 				</div>
 			</dl>
+			{pool.incarnation && <IncarnationDetails incarnation={pool.incarnation} />}
 			<details className="group mt-4 border-t pt-2">
 				<summary className="flex min-h-11 cursor-pointer list-none items-center justify-between gap-3 rounded-[var(--bf-radius-control)] text-sm font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
 					View processes{" "}
@@ -183,6 +226,7 @@ function ContainerRecord({
 							processes={counts.processes}
 							executions={executions}
 							containerMemoryMax={memMax > 0 ? memMax : undefined}
+							actionsEnabled={pool.incarnation?.state === undefined || pool.incarnation.state === "ready"}
 						/>
 					</div>
 				) : (

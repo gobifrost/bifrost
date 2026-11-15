@@ -18,6 +18,7 @@ from sqlalchemy.exc import OperationalError
 from shared.worker_control_auth import external_worker_control_key
 
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
+from src.services.worker_pool.connection import CapacityConnection
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import AuthenticationError, ControlEnvelope, FragmentAssembler, Hello, sign_hello
@@ -58,6 +59,9 @@ async def test_external_fast_path_hello_is_refused_before_admission() -> None:
         patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(
             secret_key="test-control-key", worker_capacity_token=SecretStr("provider-key"),
         )),
+        patch("src.worker.remote.host.load_capacity_provider_connection", new=AsyncMock(
+            return_value=CapacityConnection("https://capacity.example.test", "provider-key"),
+        )),
         patch("src.worker.remote.host.admit_external_worker", new=AsyncMock()) as admit,
     ):
         with pytest.raises(AuthenticationError, match="only support the Normal lane"):
@@ -81,6 +85,9 @@ async def test_external_worker_cannot_use_installation_signing_key_for_control()
     with (
         patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(
             secret_key="installation-key", worker_capacity_token=SecretStr("provider-key"),
+        )),
+        patch("src.worker.remote.host.load_capacity_provider_connection", new=AsyncMock(
+            return_value=CapacityConnection("https://capacity.example.test", "provider-key"),
         )),
         patch("src.worker.remote.host.admit_external_worker", new=AsyncMock()) as admit,
     ):
@@ -382,11 +389,15 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
             execute=AsyncMock(return_value=Mock(one_or_none=Mock(return_value=None))),
         )
 
+    connection_loader = AsyncMock(
+        return_value=CapacityConnection("https://capacity.example.test", "provider-key"),
+    )
     with (
         patch("src.worker.remote.host.get_settings", return_value=Mock(
             secret_key="secret", memory_pressure_threshold=.85,
             worker_capacity_token=SecretStr("provider-key"),
         )),
+        patch("src.worker.remote.host.load_capacity_provider_connection", new=connection_loader),
         patch("src.worker.remote.host.admit_worker", new_callable=AsyncMock) as admit,
         patch("src.worker.remote.host.admit_external_worker", new_callable=AsyncMock) as external,
         patch("src.worker.remote.host.register_static_worker", new_callable=AsyncMock) as register,
@@ -404,11 +415,14 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
         if other_form != form:
             method.assert_not_awaited()
     if form == "external":
+        connection_loader.assert_awaited_once()
         external.assert_awaited_once_with(
             LEASE.worker_id, resource_uid="capacity-resource",
             launcher_id=LEASE.launcher_id, version=reported, hostname="runner-0",
             actual_handlers=["workflow.execute", "agent.run"], actual_compute=[],
         )
+    else:
+        connection_loader.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -457,6 +471,9 @@ async def test_external_worker_intersects_actual_capabilities_with_its_reserved_
         patch("src.worker.remote.host.get_settings", return_value=Mock(
             secret_key="secret", memory_pressure_threshold=.85,
             worker_capacity_token=SecretStr("provider-key"),
+        )),
+        patch("src.worker.remote.host.load_capacity_provider_connection", new=AsyncMock(
+            return_value=CapacityConnection("https://capacity.example.test", "provider-key"),
         )),
         patch("src.worker.remote.host.get_liveness_db_context", new=database),
         patch(

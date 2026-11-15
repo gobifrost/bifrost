@@ -68,23 +68,34 @@ cancellation, timeout, and memory-admission paths. The physical launcher is a
 small standard-library supervisor: it owns its process templates and child
 processes, reports their inventory and cgroup telemetry, and carries out
 commands from the API. The supervisor does not own durable claim loops. Its
-handler children retain their required database, Redis, and repository access.
+legacy handler children retain their required database, Redis, and repository access.
+Capability-scoped API-only compute children do not receive that authority: for
+`app.compile.v2`, `agent.loop.v1`, and `summary.compute.v1`, the API owns
+authorization, model-provider requests, effects, database and storage access.
+The physical child receives only the inputs and scoped API/control access
+needed for its pure computation. Unsupported PlatformJobs retain their existing
+executor requirements; this is not a general migration of every job type.
 
 The remote-control host also claims one API-owned maintenance job at a time:
 OAuth refresh, webhook renewal, Solution update checks, model-catalog refresh,
-and workspace file-index reconciliation. These jobs use the same durable row,
+workspace file-index reconciliation, summary-backfill parent orchestration,
+and Cloudflare capacity setup. These jobs use the same durable row,
 claim lease, runner subprocess, cancellation, retry, progress, and notification
 paths as physical-worker jobs, but do not require a physical launcher. They are
 bounded by the API cgroup's ordinary headroom before claim, so a scale-to-zero
 worker pool still maintains its control-plane state. The index reconciliation
 can be long-running total I/O but is memory-bounded and cancellable through the
-shared runner. Operators should monitor API I/O contention as deployments grow;
+shared runner. Summary-backfill parents stage at most 5,000 existing run IDs
+then defer; model inference remains physical summary work. Operators should monitor API I/O contention as deployments grow;
 the current policy intentionally prefers a single serialized maintenance job
 over a parallel maintenance worker or a second job framework.
 
-Agent runs, `agent.summarize`, and `agent.summarize_backfill` execute in separate
-children of the physical launcher's agent template. No summary executor runs in
-the API. Their memory reservations share that launcher's measured budget with
+Agent runs, `agent.summarize`, and `agent.summarize_backfill` use separate
+children of the physical launcher's agent template. With `agent.loop.v1` and
+`summary.compute.v1`, the API retains canonical orchestration and runs model
+requests and persistence; the physical child runs the pure agent loop or
+summary computation. Legacy handlers retain their existing execution path.
+Physical memory reservations share the launcher's measured budget with
 workflows, services, and PlatformJobs. Each worker admits one live summary and
 one backfill summary at a time; backfills therefore cannot occupy the live
 summary slot. Additional capable launchers add capacity for both handlers.
@@ -127,6 +138,14 @@ keeps its children alive while a successor API replica authenticates and adopts
 its inventory. Losing a WebSocket therefore does not itself fail or kill
 children. A connected launcher can instead be asked to drain through the
 canonical control path.
+
+Retaining physical children across a control-WebSocket reconnect does not imply
+resuming API-owned orchestration after API-process loss. App, agent, and summary
+compute orchestration currently lives in API memory. A successor stops any
+untracked physical stage before settling its exact durable claim; it does not
+automatically rehydrate the orchestration. Any subsequent retry follows that
+job or dispatch's explicit policy. This limitation must be included in provider
+qualification and rolling-upgrade expectations.
 
 One API replica also holds the fenced `scheduler-triggers` database lease. Only
 that trigger leader runs APScheduler. On-demand work is persisted directly to

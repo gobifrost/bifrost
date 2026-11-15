@@ -13,7 +13,7 @@ import httpx
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
 from src.models.orm.execution_workers import ExecutionWorker
@@ -24,6 +24,7 @@ from src.services import work_dispatch
 from src.services.worker_pool import claims, controller, external_controller
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.external_controller import ExternalWorkerPoolController
+from src.services.worker_pool.coordinator import HybridWorkerPoolCoordinator
 from tests.unit.services.worker_pool.test_worker_pool import (
     GIB, POLICY, SETTINGS, _accept_pool_run, _clean as _clean, _job_worker,
     _store_policy, db as db_fixture,
@@ -171,6 +172,66 @@ async def test_external_warm_pool_does_not_count_kubernetes_capacity(db, capacit
         worker = await session.get(ExecutionWorker, worker_id)
     assert worker is not None
     assert (worker.form, worker.capacity_scope) == ("external", "test-provider")
+
+
+async def test_hybrid_planner_reserves_once_under_the_global_cap(db, capacity):
+    """Primary Kubernetes and Cloud overflow share one queue snapshot."""
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, MIB, SPEC, _set_request
+
+    first, second = await _accept_pool_run(), await _accept_pool_run()
+    await _set_request(db.sessions, first, 1024 * MIB)
+    await _set_request(db.sessions, second, 1024 * MIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(capacity.policy, warm_workers=0, max_workers=2))
+
+    async with db.context() as session:
+        workers = (await session.scalars(select(ExecutionWorker).where(
+            ExecutionWorker.state.in_(("reserved", "starting", "ready")),
+        ))).all()
+    assert len(workers) == 2
+    assert {worker.form for worker in workers} == {"job", "external"}
+
+
+async def test_hybrid_fast_path_is_kubernetes_only(db, capacity):
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, SPEC
+
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(
+        capacity.policy, warm_workers=0, max_workers=1, reserved_fast_path_workers=1,
+    ))
+
+    async with db.context() as session:
+        workers = (await session.scalars(select(ExecutionWorker))).all()
+    assert [(worker.form, worker.execution_lane) for worker in workers] == [("job", "fast_path")]
+
+
+async def test_hybrid_cloud_cap_never_exceeds_its_profile(db, capacity):
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, MIB, SPEC, _set_request
+
+    runs = [await _accept_pool_run() for _ in range(3)]
+    for run in runs:
+        await _set_request(db.sessions, run, 1024 * MIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    profile = capacity.provider.profile.model_copy(update={"max_workers": 1})
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(capacity.policy, warm_workers=0, max_workers=3))
+
+    async with db.context() as session:
+        cloud_count = await session.scalar(select(func.count()).select_from(
+            ExecutionWorker
+        ).where(ExecutionWorker.form == "external"))
+    assert cloud_count == 1
 
 
 async def test_external_capacity_ignores_unsupported_agent_and_platform_demand(db, capacity):
@@ -376,12 +437,14 @@ async def test_provider_cannot_replace_an_existing_resource_uid(db, capacity):
     assert not any(method == "DELETE" for method, _path in capacity.provider.requests)
 
 
-async def test_policy_exceeding_provider_capability_cannot_reserve(db, capacity):
+async def test_provider_capacity_is_independent_from_the_global_worker_ceiling(db, capacity):
     await _accept_pool_run()
-    with pytest.raises(CapacityProtocolError, match="capabilities"):
-        await capacity.pool.launch_for_demand(replace(capacity.policy, max_workers=3))
+    [worker_id] = await capacity.pool.launch_for_demand(replace(capacity.policy, max_workers=3))
+
     async with db.context() as session:
-        assert list(await session.scalars(select(ExecutionWorker.id).where(ExecutionWorker.form == "external"))) == []
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert worker is not None
+    assert worker.memory_limit_bytes == capacity.provider.profile.memory_limit_bytes
 
 
 async def test_provider_failure_never_ends_a_fresh_heartbeat_as_silent(db, capacity):

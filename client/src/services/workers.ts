@@ -8,8 +8,7 @@
  * - Queue status
  * - Pool statistics
  *
- * Note: These API endpoints are not yet in the OpenAPI spec, so we use
- * manual types and the authFetch function instead of the generated $api.
+ * Uses authFetch because worker controls predate the generated client wrapper.
  */
 
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
@@ -17,55 +16,20 @@ import { authFetch } from "@/lib/api-client";
 import type { components } from "@/lib/v1";
 
 // =============================================================================
-// Manual Type Definitions (until types are generated)
+// Worker Contracts
 // =============================================================================
 
 // Process states from ProcessPoolManager: idle, busy, killed
 export type ProcessState = "idle" | "busy" | "killed";
 
-export interface ProcessInfo {
-	process_id: string;
-	pid: number;
-	state: ProcessState;
-	current_execution_id: string | null;
-	executions_completed: number;
-	started_at: string | null;
-	uptime_seconds: number;
-	memory_mb: number;
-	is_alive: boolean;
-	pending_recycle?: boolean;
-}
+export type ProcessInfo = components["schemas"]["ProcessInfo"];
 
-export interface PoolSummary {
-	worker_id: string;
-	hostname: string | null;
-	status: string | null;
-	started_at: string | null;
-	pool_size: number;
-	idle_count: number;
-	busy_count: number;
-	last_heartbeat: string | null;
-	requirements_installed: number | null;
-	requirements_total: number | null;
-}
-
-export interface PoolDetail {
-	worker_id: string;
-	hostname: string | null;
-	status: string | null;
-	started_at: string | null;
-	last_heartbeat: string | null;
-	processes: ProcessInfo[];
-	requirements_installed: number | null;
-	requirements_total: number | null;
-	memory_current_bytes?: number;
-	memory_max_bytes?: number;
-}
-
-export interface PoolsListResponse {
-	pools: PoolSummary[];
-	total: number;
-}
+export type PoolSummary = components["schemas"]["PoolSummary"];
+export type PoolDetail = components["schemas"]["PoolDetail"];
+export type PoolsListResponse = components["schemas"]["PoolsListResponse"];
+export type WorkerIncarnation = components["schemas"]["PlatformWorkerIncarnation"];
+export type WorkerFormCapacity = components["schemas"]["PlatformWorkerFormCapacity"];
+export type WorkerCapacityOverview = components["schemas"]["PlatformWorkerCapacityOverview"];
 
 export interface PoolStatsResponse {
 	total_pools: number;
@@ -115,16 +79,17 @@ export interface RecycleAllResponse {
 /**
  * Hook to fetch all process pools
  */
-export function usePools() {
+export async function getWorkers(options?: { includeIncarnations?: boolean }): Promise<PoolsListResponse> {
+	const query = options?.includeIncarnations ? "?include_incarnations=true" : "";
+	const response = await authFetch(`/api/platform/workers${query}`);
+	if (!response.ok) throw new Error(`Failed to fetch pools: ${response.statusText}`);
+	return response.json();
+}
+
+export function usePools(options?: { includeIncarnations?: boolean }) {
 	return useQuery<PoolsListResponse>({
-		queryKey: ["pools"],
-		queryFn: async () => {
-			const response = await authFetch("/api/platform/workers");
-			if (!response.ok) {
-				throw new Error(`Failed to fetch pools: ${response.statusText}`);
-			}
-			return response.json();
-		},
+		queryKey: ["pools", options?.includeIncarnations === true],
+		queryFn: () => getWorkers(options),
 		// No polling - real-time updates come via WebSocket (useWorkerWebSocket)
 	});
 }

@@ -109,6 +109,16 @@ _METADATA = MappingProxyType(
                 execution_owner="api",
             ),
             _metadata(
+                "cloudflare.capacity.apply",
+                "src.jobs.platform.cloudflare_capacity",
+                "CLOUDFLARE_CAPACITY_APPLY_DEFINITION",
+                PlatformJobPolicy(
+                    60 * 60, max_attempts=2, max_concurrency=1,
+                    min_memory_headroom_mb=128, retry_on_failure=True, allow_running_cancellation=True,
+                ),
+                execution_owner="api",
+            ),
+            _metadata(
                 "webhook.renew",
                 "src.jobs.platform.system_maintenance",
                 "WEBHOOK_RENEWAL_DEFINITION",
@@ -292,6 +302,7 @@ _METADATA = MappingProxyType(
                 "SUMMARY_BACKFILL_DEFINITION",
                 PlatformJobPolicy(15 * 60, max_attempts=2, min_memory_headroom_mb=128),
                 encrypt_payload=True,
+                execution_owner="api",
             ),
             _metadata(
                 "chat.video_generation",

@@ -6,9 +6,9 @@ Cloudflare Containers. The protocol is defined in
 
 ## What this deploys
 
-### API-only runtime spike
+### API-owned execution
 
-The spike uses the provider from #1331 with an isolated runtime extension.
+The implementation builds on the provider from #1331.
 It derives each launcher's control credential from the dedicated capacity token,
 incarnation UUID and resource UID. The installation signing key never leaves
 the API. Requirements reach the worker through authenticated control bootstrap.
@@ -17,8 +17,9 @@ WORKER_CONTAINER_ENV; this candidate rejects them.
 
 The checked-in template declares `workflow.execute` and `app.compile.v2`.
 Only advertise handlers and compute capabilities implemented by the pinned
-image. Agents, summaries, and privileged platform-job runners are not implied
-by sharing the image; qualify their API-only adapters separately.
+image. With the matching API-only adapters, an image may also advertise agents
+and summaries; privileged platform-job runners remain out of scope. Sharing an
+image does not itself make any additional handler API-only.
 
 API and launcher must be upgraded together for the bootstrap exchange; the
 external handshake deliberately does not accept the installation signing key.
@@ -27,6 +28,45 @@ The provider resource protocol is version 2.
 A Worker that implements the five capacity endpoints and starts container
 incarnations on request. The API remains canonical: it decides demand, admits
 workers, and fences enrollment. This Worker never sees job payloads.
+
+## Connect Through Settings
+
+1. Set the installation's deployment-owned `BIFROST_PUBLIC_URL` to its public
+   HTTPS origin. Cloudflare containers need HTTPS and WebSocket access to it.
+   The setup API rejects an alternative control origin.
+2. Open **Settings → Workers → Scaling & Isolation → Cloudflare Workers**.
+   Enter a Cloudflare API token with account access to deploy Worker scripts,
+   manage Containers, and obtain registry push/pull credentials. See
+   [Cloudflare's token permission reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+3. Choose a small maximum worker count and select **Connect Cloudflare**. If the
+   token spans several accounts, choose the intended account when prompted.
+4. Follow the shared job progress. The API stores the token encrypted, copies
+   its matching published image into the account's registry, and reconciles the
+   Worker, Durable Objects, container application, and workers.dev route through
+   Cloudflare's APIs. Docker and Wrangler are not required inside the API.
+5. **Provider Ready** confirms the provider configuration; submit a supported
+   Normal job to verify the first physical worker. Use the capacity overview
+   and Diagnostics to distinguish Starting, Ready, Lost, and cleanup pending.
+6. Set the Cloudflare start categories. Ready local capacity is reused first;
+   selected work can start Cloudflare before adding Kubernetes workers unless
+   **Let Kubernetes Scale First** is enabled. With no local or Kubernetes capacity,
+   Cloudflare handles all supported Normal work. Fast Path stays local.
+
+The qualified profile is fixed at 4 GiB per worker. Its provider maximum and the
+global managed-worker limit both apply; Kubernetes memory settings do not resize
+Cloudflare. Start categories control provisioning, not affinity: an existing
+Cloudflare worker may execute any supported Normal work.
+
+Unpublished builds need a deployment-owned `BIFROST_WORKER_CAPACITY_IMAGE`
+reference pinned by digest. Its embedded version must exactly match the API.
+There is no alternate-image fallback. Legacy environment-based provider
+configuration and the stored connection cannot be active together.
+
+Running App deployment cancellation remains unavailable by its existing job
+policy. API process loss stops untracked compute and settles the fenced claim;
+it does not restore agent or App orchestration into a replacement API process.
+
+## Manual Provider Deployment
 
 ## Prerequisites
 
@@ -46,7 +86,7 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 |---|---|
 | `SCOPE` | Opaque provider scope. Must match the API side exactly. |
 | `WORKER_VERSION` | Must equal the image's embedded build version. |
-| `MEMORY_LIMIT_BYTES` | Fixed worker memory; the API's scaling policy must match. |
+| `MEMORY_LIMIT_BYTES` | Fixed worker memory matching the container profile; independent of Kubernetes sizing. |
 | `instance_type` (in `[[containers]]`) | Real memory and disk for each container; must be at least `MEMORY_LIMIT_BYTES` and large enough for the unpacked image. |
 | `max_instances` (in `[[containers]]`) | Must be at least `MAX_WORKERS`: a start beyond the application's instance count is refused even when the scope registry would admit it. |
 | `MAX_WORKERS` | Ceiling this provider will run. |

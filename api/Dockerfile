@@ -136,6 +136,11 @@ COPY LICENSE /app/LICENSE
 COPY assets/ /app/assets/
 RUN chmod -R a+rX /app/assets
 
+# The Cloudflare control-plane adapter uploads these immutable Worker modules.
+# Keep the canonical deployment source out of the API request path.
+COPY deploy/cloudflare/worker/capacity.mjs deploy/cloudflare/worker/capacity-core.mjs \
+     /app/artifacts/worker-capacity/cloudflare/
+
 # Build the CLI once as an immutable image artifact. The API serves this file;
 # it never packages the live source tree in a request handler.
 RUN PYTHONPATH=/app python /app/scripts/build_cli_artifact.py \

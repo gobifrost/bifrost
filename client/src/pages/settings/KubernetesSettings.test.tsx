@@ -26,6 +26,12 @@ vi.mock("@/services/kubernetes", async (importOriginal) => ({
 vi.mock("sonner", () => ({
 	toast: { success: vi.fn(), error: vi.fn(), info: vi.fn() },
 }));
+vi.mock("./CloudflareCapacitySettings", () => ({
+	CloudflareCapacitySettings: () => null,
+}));
+vi.mock("./WorkerCapacityOverview", () => ({
+	WorkerCapacityOverview: () => null,
+}));
 
 import { KubernetesRequestError } from "@/services/kubernetes";
 import { KubernetesSettings } from "./KubernetesSettings";
@@ -101,8 +107,12 @@ describe("KubernetesSettings", () => {
 		expect(
 			screen.getByLabelText("Prioritize App Workflows"),
 		).not.toBeChecked();
-		expect(screen.getByLabelText("Worker Memory (MiB)")).toHaveValue(2048);
-		expect(screen.getByLabelText("Largest Worker (MiB)")).toHaveValue(8192);
+		expect(
+			screen.getByLabelText("Kubernetes Worker Memory (MiB)"),
+		).toHaveValue(2048);
+		expect(
+			screen.getByLabelText("Largest Kubernetes Worker (MiB)"),
+		).toHaveValue(8192);
 		expect(screen.getByLabelText("Idle Time (Seconds)")).toHaveValue(300);
 		expect(screen.getByLabelText("Max Isolated Pods")).toHaveValue(2);
 		expect(screen.getByLabelText("Isolate Build Jobs")).not.toBeChecked();
@@ -424,7 +434,7 @@ describe("KubernetesSettings", () => {
 		await user.click(screen.getByLabelText("Isolate Build Jobs"));
 
 		await waitFor(() =>
-			expect(screen.getByLabelText("Worker Memory (MiB)")).toHaveValue(
+			expect(screen.getByLabelText("Kubernetes Worker Memory (MiB)")).toHaveValue(
 				4096,
 			),
 		);

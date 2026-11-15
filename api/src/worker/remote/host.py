@@ -38,6 +38,7 @@ from src.services.worker_pool.claims import (
     register_static_worker,
     report_worker_handlers,
 )
+from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
 from src.worker.remote.agent_orchestration import (
@@ -1124,10 +1125,16 @@ class RemoteControlHost:
             settings = get_settings()
             control_key = settings.secret_key
             if signed.form == "external":
-                if signed.resource_uid is None or not settings.worker_capacity_token:
+                if signed.resource_uid is None:
+                    raise AuthenticationError("External worker control is not configured")
+                # Resolve the installation connection in a short-lived DB session
+                # before authenticating the provider-owned launcher.
+                async with get_liveness_db_context() as db:
+                    connection = await load_capacity_provider_connection(db, settings)
+                if connection is None:
                     raise AuthenticationError("External worker control is not configured")
                 control_key = external_worker_control_key(
-                    settings.worker_capacity_token.get_secret_value(), signed.incarnation_id, signed.resource_uid,
+                    connection.token, signed.incarnation_id, signed.resource_uid,
                 )
             hello = verify_hello(control_key, signed)
             if hello.form == "external" and hello.execution_lane != "normal":

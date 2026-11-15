@@ -14,6 +14,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { SettingsToggleRow } from "@/components/shared/SettingsToggleRow";
 import { SettingsLoadError } from "@/components/shared/SettingsLoadError";
+import { CloudflareCapacitySettings } from "./CloudflareCapacitySettings";
+import { WorkerCapacityOverview } from "./WorkerCapacityOverview";
 import { formatDateShort } from "@/lib/utils";
 import {
 	KubernetesRequestError,
@@ -49,17 +51,17 @@ const SCALING_FIELDS: { name: ScalingField; label: string; help: string }[] = [
 	{
 		name: "max_workers",
 		label: "Max Workers",
-		help: "The most managed workers that run at once, including the Fast Path reservation. Leave room for Normal work.",
+		help: "The most managed workers that run at once across providers, including the Fast Path reservation. Leave room for Normal work.",
 	},
 	{
 		name: "worker_memory_mib",
-		label: "Worker Memory (MiB)",
-		help: "Memory limit of a standard worker. Workers started after a change use it.",
+		label: "Kubernetes Worker Memory (MiB)",
+		help: "Memory limit of a standard Kubernetes worker. Workers started after a change use it.",
 	},
 	{
 		name: "largest_worker_mib",
-		label: "Largest Worker (MiB)",
-		help: "The most memory a worker sized for a large run can get. Runs that need more fail instead of waiting.",
+		label: "Largest Kubernetes Worker (MiB)",
+		help: "The most memory a Kubernetes worker sized for a large run can get. Runs that need more fail instead of waiting.",
 	},
 	{
 		name: "idle_seconds",
@@ -572,6 +574,8 @@ export function KubernetesSettings() {
 					without a restart.
 				</p>
 			</div>
+			<CloudflareCapacitySettings />
+			<WorkerCapacityOverview />
 
 			{loadError && (
 				<SettingsLoadError name="worker settings" onRetry={retry} />

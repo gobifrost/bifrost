@@ -77,6 +77,9 @@ The controller uses these declarations to plan only supported work. External
 capacity receives workflow dispatches and services only when it advertises
 `workflow.execute`; it receives `application.deploy` and
 `application.sdk_update` demand only when it advertises `app.compile.v2`.
+Agent runs and summaries require their corresponding execution handlers and
+`agent.loop.v1` or `summary.compute.v1`. The API intersects provider declarations
+with the physical launcher's advertised capabilities before admitting work.
 Other local platform job types remain on privileged/static or Kubernetes
 capacity. A v1 profile is rejected deliberately: deploy the matching provider
 and pinned worker image as part of the runtime change before selecting it.

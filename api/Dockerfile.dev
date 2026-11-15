@@ -187,6 +187,11 @@ RUN mkdir -p /app/artifacts/app-sdk \
       /app/src/services/sdk_package/sdk_src /app/artifacts/app-sdk/hosted-v1.js \
     && chmod -R a+rX /app/src/services/sdk_package
 
+# Keep the deployment module source canonical while making the upload artifact
+# available to both test and production API images.
+COPY deploy/cloudflare/worker/capacity.mjs deploy/cloudflare/worker/capacity-core.mjs \
+     /app/artifacts/worker-capacity/cloudflare/
+
 # Source is bind-mounted at runtime in development, but the downloadable CLI
 # is deliberately frozen at image-build time just as it is in production.
 COPY api/bifrost/ /tmp/cli-build/bifrost/

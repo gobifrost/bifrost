@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import time
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -10,7 +11,7 @@ from uuid import UUID
 import httpx
 from sqlalchemy import and_, select, update
 
-from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
+from shared.models import CloudflareCapacityRules, WorkerCapacityProfile, WorkerCapacityReservation
 from src.config import Settings
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
@@ -37,10 +38,15 @@ logger = logging.getLogger(__name__)
 
 
 class ExternalWorkerPoolController(WorkerCapacityController):
-    def __init__(self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile) -> None:
+    def __init__(
+        self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile,
+        *, hybrid: bool = False, rules: CloudflareCapacityRules | None = None,
+    ) -> None:
         super().__init__(settings, worker_form="external")
         self.client = client
         self.profile = profile
+        self.hybrid = hybrid
+        self.rules = rules or CloudflareCapacityRules()
         self.version = profile.worker_version
         self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
         self.cleanup_states = ("lost", "retired")
@@ -81,6 +87,9 @@ class ExternalWorkerPoolController(WorkerCapacityController):
     def _platform_request_capability(self) -> str | None:
         return APP_COMPILE_CAPABILITY
 
+    def _max_managed_workers(self, policy: KubernetesPolicy) -> int:
+        return min(policy.max_workers, self.profile.max_workers)
+
     def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
         return bool(
             set(worker.supported_handlers).intersection(self.profile.execution_handlers)
@@ -91,18 +100,26 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         try:
             validate_external_policy(
                 policy, self.profile, max_lifetime_seconds=self.settings.pool_max_lifetime_seconds,
+                hybrid=self.hybrid,
             )
         except ValueError as exc:
             raise CapacityProtocolError(f"Worker policy differs from provider capabilities: {exc}") from exc
-        return super()._sizing(policy, workers)
+        fixed_mib = self.profile.memory_limit_bytes // 2**20
+        return super()._sizing(
+            replace(policy, worker_memory_mib=fixed_mib, largest_worker_mib=fixed_mib), workers,
+        )
 
     async def reconcile(self) -> None:
+        await self.refresh_profile()
+        await super().reconcile()
+
+    async def refresh_profile(self) -> None:
+        """Refresh the active provider declaration before a planning pass."""
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
         self.profile = current
         self.version = current.worker_version
-        await super().reconcile()
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])
@@ -233,13 +250,11 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
 
 async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Settings) -> None:
-    """Run only when explicitly selected; Kubernetes is never a failure fallback."""
-    assert settings.worker_capacity_url and settings.worker_capacity_token
+    """Run Cloud capacity alone, refreshing the canonical connection each pass."""
     async with httpx.AsyncClient() as http:
-        client = ExternalCapacityClient(
-            settings.worker_capacity_url, settings.worker_capacity_token.get_secret_value(), http=http,
-        )
+        client: ExternalCapacityClient | None = None
         controller: ExternalWorkerPoolController | None = None
+        connection_identity: tuple[str, str, object] | None = None
         wake = asyncio.Event()
         listener = asyncio.create_task(
             listen_for_pool_wake(
@@ -255,8 +270,30 @@ async def external_worker_pool_loop(stop_event: asyncio.Event, settings: Setting
             while not stop_event.is_set():
                 started = time.monotonic()
                 try:
+                    from src.services.worker_pool.connection import load_capacity_provider_connection
+
+                    async with get_db_context() as db:
+                        connection = await load_capacity_provider_connection(db, settings)
+                    if connection is None:
+                        controller = None
+                        client = None
+                        connection_identity = None
+                        await wait_for_next_pass(
+                            stop_event, wake, since=started, spacing=RECONCILE_SECONDS, sweep=SWEEP_SECONDS,
+                        )
+                        continue
+                    identity = (connection.endpoint, connection.token, connection.generation)
+                    if identity != connection_identity:
+                        client = ExternalCapacityClient(connection.endpoint, connection.token, http=http)
+                        controller = None
+                        connection_identity = identity
+                    assert client is not None
                     if controller is None:
-                        controller = ExternalWorkerPoolController(client, settings, await client.profile())
+                        controller = ExternalWorkerPoolController(
+                            client, settings, await client.profile(), rules=connection.rules,
+                        )
+                    else:
+                        controller.rules = connection.rules
                     if await controller.reachability.check():
                         await controller.reconcile()
                 except asyncio.CancelledError:

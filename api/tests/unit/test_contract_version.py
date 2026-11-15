@@ -202,6 +202,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
+# Optional PlatformJob executor attribution is additive; older CLIs ignore it.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -434,9 +435,8 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # the CLI/SDK does not parse this profile. Existing command/runtime DTOs
     # remain compatible, so MIN_CLI_VERSION is unchanged.
     # Optional PlatformJob executor attribution is additive and sanitizes
-    # provider resource identifiers from the CLI-visible response; existing
-    # clients ignore it, so MIN_CLI_VERSION remains unchanged.
-    "cef7ecd929d0248a8ee6c2243ef452b3f7817038bc2e64a2c292cbedb74e8f9d"
+    # provider resource identifiers from the CLI-visible response.
+    "909db7d28612fc486fbcf6486b4574f74a45457bff56cda8d735d0d5aa05b398"
 )
 
 

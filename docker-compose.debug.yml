@@ -131,6 +131,7 @@ services:
       BIFROST_API_URL: http://api:8000
       BIFROST_WORKER_CAPACITY_URL: ${BIFROST_WORKER_CAPACITY_URL:-}
       BIFROST_WORKER_CAPACITY_TOKEN: ${BIFROST_WORKER_CAPACITY_TOKEN:-}
+      BIFROST_WORKER_CAPACITY_IMAGE: ${BIFROST_WORKER_CAPACITY_IMAGE:-}
       BIFROST_SECRET_KEY: ${BIFROST_SECRET_KEY:-dev-secret-key-change-in-production-must-be-32-chars}
       BIFROST_DATABASE_URL: postgresql+asyncpg://bifrost:bifrost_debug@pgbouncer:5432/bifrost
       BIFROST_DATABASE_URL_SYNC: postgresql://bifrost:bifrost_debug@pgbouncer:5432/bifrost

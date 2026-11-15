@@ -30,6 +30,7 @@ from src.jobs.platform.catalog import (
     list_platform_job_metadata,
 )
 from src.jobs.platform.policy import PlatformJobPolicy
+from src.core.database import get_db_context
 from src.models.contracts.kubernetes import (
     POLICY_BOUNDS,
     KubernetesExecutionJobType,
@@ -50,6 +51,7 @@ from src.services.worker_pool.external_client import (
     CapacityProviderUnavailable,
     ExternalCapacityClient,
 )
+from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.services.worker_pool.external_policy import validate_external_policy
 
 logger = logging.getLogger(__name__)
@@ -433,16 +435,17 @@ class KubernetesExecutionService:
 
         settings = get_settings()
         profile = None
-        if settings.worker_capacity_url or settings.worker_capacity_token:
+        # The connection read must finish before provider I/O so no database
+        # transaction stays open while the remote capacity endpoint is slow.
+        async with get_db_context() as connection_db:
+            connection = await load_capacity_provider_connection(connection_db, settings)
+        if connection is not None:
             # Fetch before the policy advisory lock; a slow provider must not
             # block other administrators while holding the settings lock.
             try:
-                if not settings.worker_capacity_url or not settings.worker_capacity_token:
-                    raise ValueError("Incomplete capacity provider configuration")
                 async with httpx.AsyncClient() as http:
                     client = ExternalCapacityClient(
-                        settings.worker_capacity_url,
-                        settings.worker_capacity_token.get_secret_value(),
+                        connection.endpoint, connection.token,
                         http=http,
                     )
                     profile = await client.profile()
