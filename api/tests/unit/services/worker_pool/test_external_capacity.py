@@ -244,7 +244,7 @@ async def test_hybrid_cloud_cap_never_exceeds_its_profile(db, capacity):
     assert cloud_count == 1
 
 
-async def test_external_capacity_plans_worker_image_supported_agent_and_platform_demand(db, capacity):
+async def test_external_capacity_plans_agent_work_and_excludes_privileged_jobs(db, capacity):
     async with db.context() as session:
         work_dispatch.stage_dispatch(
             session, family="agent_run", subject_id=uuid4(), handler="agent.run",
@@ -256,7 +256,7 @@ async def test_external_capacity_plans_worker_image_supported_agent_and_platform
             memory_required_bytes=64 * 1024**2,
         ))
 
-    assert len(await capacity.pool.launch_for_demand(capacity.policy)) == 2
+    assert len(await capacity.pool.launch_for_demand(capacity.policy)) == 1
 
 
 async def test_external_app_compile_demand_uses_the_worker_image_compute_contract(db, capacity):
@@ -271,7 +271,7 @@ async def test_external_app_compile_demand_uses_the_worker_image_compute_contrac
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker is not None
-        assert worker.supported_compute == ["app.compile.v2"]
+        assert set(worker.supported_compute) == {"app.compile.v2", "agent.loop.v1", "summary.compute.v1"}
 
 
 async def test_lost_start_response_is_observed_without_resending_the_start(db, capacity):
@@ -389,7 +389,7 @@ async def test_build_mismatch_does_not_prevent_exact_cleanup_after_fencing(db, c
     assert capacity.provider.starts == [str(worker_id)]
 
 
-async def test_provider_rollout_rotates_an_admitted_worker_from_the_same_controller(db, capacity):
+async def test_api_build_rollout_rotates_an_admitted_external_worker(db, capacity):
     await _accept_pool_run()
     [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
     await capacity.pool.reconcile_worker(worker_id, capacity.policy)
@@ -398,8 +398,10 @@ async def test_provider_rollout_rotates_an_admitted_worker_from_the_same_control
         worker_id, resource_uid=uid, launcher_id=uuid4(), version="test-worker", hostname="old-build",
         actual_handlers=ACTUAL_HANDLERS, actual_compute=ACTUAL_COMPUTE,
     )
-    # This controller remains alive while the external provider changes builds.
-    capacity.pool.live = external_controller.LiveControllers(
+    # A live API/image build supersedes the previously admitted worker build.
+    from src.services.worker_pool.controller import LiveControllers
+
+    capacity.pool.live = LiveControllers(
         ids=frozenset({capacity.pool.id}), versions=frozenset({"next-worker"}),
     )
     kubernetes_worker = (await _job_worker(db.sessions, state="ready")).id

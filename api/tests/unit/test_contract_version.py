@@ -431,12 +431,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Capacity provider profile v2 changes the internal provider protocol only;
-    # the CLI/SDK does not parse this profile. Existing command/runtime DTOs
-    # remain compatible, so MIN_CLI_VERSION is unchanged.
+    # Preserve the existing hardware-only capacity profile; worker Hello owns
+    # capabilities. Unreleased provider job declarations have been removed.
+    # Cloudflare setup DTOs are additive; MIN_CLI_VERSION remains unchanged.
     # Optional PlatformJob executor attribution is additive and sanitizes
     # provider resource identifiers from the CLI-visible response.
-    "909db7d28612fc486fbcf6486b4574f74a45457bff56cda8d735d0d5aa05b398"
+    "5e19036a3fb6c2124cf44f0e90bac8c4e173874105454220df594b979e13d56f"
 )
 
 
