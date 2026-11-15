@@ -1,0 +1,13 @@
+{
+  "key": "pr:1423",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal capacity-provider implementation and conformance kit. No API, client, or deployed installation configuration is changed.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1423",
+      "Maintainer-requested delivery under #1400; this layer adds only deploy/capacity reference code. Docker self-test accepted the correct provider and rejected duplicate physical starts and terminal resurrection."
+    ]
+  }
+}
