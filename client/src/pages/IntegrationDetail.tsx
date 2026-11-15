@@ -251,10 +251,11 @@ export function IntegrationDetail() {
 		if (isLoadingOrgs || isLoadingIntegration) {
 			return [];
 		}
+		const mappingByOrg = new Map(
+			mappings.map((mapping) => [mapping.organization_id, mapping]),
+		);
 		return organizations.map((org: { id: string; name: string }) => {
-			const existingMapping = mappings.find(
-				(m) => m.organization_id === org.id,
-			);
+			const existingMapping = mappingByOrg.get(org.id);
 
 			const formData: MappingFormData = existingMapping
 				? {

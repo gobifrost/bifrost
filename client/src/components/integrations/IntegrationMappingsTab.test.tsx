@@ -112,7 +112,11 @@ describe("IntegrationMappingsTab — populated", () => {
 		expect(screen.getByText("Acme")).toBeInTheDocument();
 		expect(screen.getByText("Beta")).toBeInTheDocument();
 		// Acme is mapped
-		expect(screen.getByText("Mapped")).toBeInTheDocument();
+		expect(
+			within(
+				screen.getByRole("list", { name: "Organization mappings" }),
+			).getByText("Mapped"),
+		).toBeInTheDocument();
 		// Beta has no mapping and no entity_id -> Not Mapped
 		expect(screen.getByText("Not Mapped")).toBeInTheDocument();
 	});
@@ -730,5 +734,88 @@ describe("IntegrationMappingsTab — OAuth connection column", () => {
 		expect(onDisconnectMapping).toHaveBeenCalledWith(
 			props.orgsWithMappings[0],
 		);
+	});
+});
+
+describe("IntegrationMappingsTab — large lists", () => {
+	const organizations: OrgWithMapping[] = Array.from(
+		{ length: 2000 },
+		(_, index) => ({
+			id: `large-${index}`,
+			name: `Large Org ${String(index).padStart(4, "0")}`,
+			formData: {
+				organization_id: `large-${index}`,
+				entity_id: "",
+				entity_name: "",
+				config: {},
+			},
+		}),
+	);
+
+	it("bounds rows and searches across pages", async () => {
+		const { user } = renderTab({
+			orgsWithMappings: organizations,
+			hasDataProvider: false,
+		});
+		const list = screen.getByRole("list", {
+			name: "Organization mappings",
+		});
+		expect(within(list).getAllByRole("listitem")).toHaveLength(25);
+		await user.click(screen.getByRole("button", { name: /next/i }));
+		expect(within(list).getByText("Large Org 0025")).toBeInTheDocument();
+		await user.type(screen.getByRole("searchbox"), "1999");
+		expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+		expect(within(list).getByText("Large Org 1999")).toBeInTheDocument();
+	});
+
+	it("excludes entities used on another page", async () => {
+		const hidden = {
+			...organizations[1999],
+			formData: { ...organizations[1999].formData, entity_id: "taken" },
+		};
+		const { user } = renderTab({
+			orgsWithMappings: [...organizations.slice(0, 1999), hidden],
+			entities: [
+				{ value: "taken", label: "Taken Entity" },
+				{ value: "free", label: "Free Entity" },
+			],
+		});
+		const row = within(
+			screen.getByRole("list", { name: "Organization mappings" }),
+		).getAllByRole("listitem")[0];
+		await user.click(within(row).getByRole("combobox"));
+		expect(
+			screen.queryByRole("option", { name: "Taken Entity" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("option", { name: "Free Entity" }),
+		).toBeInTheDocument();
+	});
+
+	it("combines saved mapping status with search and clears empty filters", async () => {
+		const mapped = {
+			...organizations[0],
+			mapping: { id: "mapping" } as IntegrationMapping,
+		};
+		const { user } = renderTab({
+			orgsWithMappings: [mapped, organizations[1]],
+			hasDataProvider: false,
+		});
+		await user.selectOptions(
+			screen.getByRole("combobox", { name: "Mapping Status" }),
+			"mapped",
+		);
+		expect(screen.queryByText("Large Org 0001")).not.toBeInTheDocument();
+		await user.type(screen.getByRole("searchbox"), "0001");
+		expect(
+			screen.getByText("No mappings match your search"),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Clear Filters" }));
+		await user.selectOptions(
+			screen.getByRole("combobox", { name: "Mapping Status" }),
+			"unmapped",
+		);
+		expect(screen.queryByText("Large Org 0000")).not.toBeInTheDocument();
+		expect(screen.getByText("Large Org 0001")).toBeInTheDocument();
 	});
 });

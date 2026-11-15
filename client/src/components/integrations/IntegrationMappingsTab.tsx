@@ -17,6 +17,7 @@ import {
 	DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { ListPagination } from "@/components/pagination/ListPagination";
 import { Input } from "@/components/ui/input";
 import { ManualEntityIdInput } from "./ManualEntityIdInput";
 import {
@@ -146,15 +147,32 @@ export function IntegrationMappingsTab({
 
 	const isActionPending = pendingMappingAction !== null;
 	const [mappingSearch, setMappingSearch] = useState("");
+	const [mappingStatus, setMappingStatus] = useState("all");
+	const [offset, setOffset] = useState(0);
+	const pageSize = 25;
+	const usedEntityIds = useMemo(
+		() =>
+			new Set(
+				orgsWithMappings
+					.map((org) => org.formData.entity_id)
+					.filter(Boolean),
+			),
+		[orgsWithMappings],
+	);
+	const unusedEntities = useMemo(
+		() => entities.filter((entity) => !usedEntityIds.has(entity.value)),
+		[entities, usedEntityIds],
+	);
 	const entityLabelByValue = useMemo(
 		() => new Map(entities.map((entity) => [entity.value, entity.label])),
 		[entities],
 	);
 	const normalizedSearch = mappingSearch.trim().toLocaleLowerCase();
 	const filteredOrgs = useMemo(() => {
-		if (!normalizedSearch) return orgsWithMappings;
-
 		return orgsWithMappings.filter((org) => {
+			if (mappingStatus === "mapped" && !org.mapping) return false;
+			if (mappingStatus === "unmapped" && org.mapping) return false;
+			if (!normalizedSearch) return true;
 			const entityId =
 				org.formData.entity_id || org.mapping?.entity_id || "";
 			const searchable = [
@@ -170,7 +188,31 @@ export function IntegrationMappingsTab({
 
 			return searchable.includes(normalizedSearch);
 		});
-	}, [entityLabelByValue, normalizedSearch, orgsWithMappings]);
+	}, [entityLabelByValue, normalizedSearch, orgsWithMappings, mappingStatus]);
+	const pageOffset = Math.min(
+		offset,
+		Math.max(0, Math.ceil(filteredOrgs.length / pageSize) - 1) * pageSize,
+	);
+	const pageOrgs = useMemo(
+		() => filteredOrgs.slice(pageOffset, pageOffset + pageSize),
+		[filteredOrgs, pageOffset],
+	);
+	const availableEntitiesByOrg = useMemo(
+		() =>
+			new Map(
+				pageOrgs.map((org) => [
+					org.id,
+					org.formData.entity_id
+						? entities.filter(
+								(entity) =>
+									entity.value === org.formData.entity_id ||
+									!usedEntityIds.has(entity.value),
+							)
+						: unusedEntities,
+				]),
+			),
+		[pageOrgs, entities, usedEntityIds, unusedEntities],
+	);
 
 	return (
 		<Card className="overflow-clip border-t-0">
@@ -213,11 +255,30 @@ export function IntegrationMappingsTab({
 				</CardHeader>
 				{orgsWithMappings.length > 0 && (
 					<div className="px-(--card-spacing)">
+						<label className="flex items-center gap-2 mb-3 text-sm">
+							Mapping Status
+							<select
+								aria-label="Mapping Status"
+								value={mappingStatus}
+								onChange={(event) => {
+									setMappingStatus(event.target.value);
+									setOffset(0);
+								}}
+								className="rounded-md border bg-background p-2"
+							>
+								<option value="all">All</option>
+								<option value="mapped">Mapped</option>
+								<option value="unmapped">Unmapped</option>
+							</select>
+						</label>
 						<MappingListToolbar
 							value={mappingSearch}
 							totalCount={orgsWithMappings.length}
 							filteredCount={filteredOrgs.length}
-							onChange={setMappingSearch}
+							onChange={(value) => {
+								setMappingSearch(value);
+								setOffset(0);
+							}}
 							onClear={() => setMappingSearch("")}
 						/>
 					</div>
@@ -284,9 +345,15 @@ export function IntegrationMappingsTab({
 									type="button"
 									variant="outline"
 									className="mt-4 min-h-11"
-									onClick={() => setMappingSearch("")}
+									onClick={() => {
+										setMappingSearch("");
+										setMappingStatus("all");
+										setOffset(0);
+									}}
 								>
-									Clear search
+									{mappingStatus === "all"
+										? "Clear search"
+										: "Clear Filters"}
 								</Button>
 							</div>
 						) : (
@@ -294,21 +361,9 @@ export function IntegrationMappingsTab({
 								className="divide-y"
 								aria-label="Organization mappings"
 							>
-								{filteredOrgs.map((org) => {
-									// Filter out entities already mapped to other orgs
-									const usedEntityIds = orgsWithMappings
-										.filter(
-											(o) =>
-												o.id !== org.id &&
-												o.formData.entity_id,
-										)
-										.map((o) => o.formData.entity_id);
-									const availableEntities = entities.filter(
-										(e) =>
-											e.value ===
-												org.formData.entity_id ||
-											!usedEntityIds.includes(e.value),
-									);
+								{pageOrgs.map((org) => {
+									const availableEntities =
+										availableEntitiesByOrg.get(org.id)!;
 
 									return (
 										<IntegrationMappingRecord
@@ -360,6 +415,14 @@ export function IntegrationMappingsTab({
 						)}
 					</>
 				)}
+				{filteredOrgs.length > 0 && (
+					<ListPagination
+						offset={pageOffset}
+						limit={pageSize}
+						total={filteredOrgs.length}
+						onPageChange={setOffset}
+					/>
+				)}
 			</CardContent>
 		</Card>
 	);
@@ -406,7 +469,7 @@ function MappingListToolbar({
 				)}
 			</div>
 			<p className="text-sm text-muted-foreground">
-				{hasSearch
+				{hasSearch || filteredCount !== totalCount
 					? `${filteredCount} of ${totalCount} mappings`
 					: `${totalCount} mappings`}
 			</p>
