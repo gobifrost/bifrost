@@ -393,7 +393,7 @@ def run_agent_compute_child(work_recv: Connection, result_send: Connection, work
                 await channel.close()
         result_send.send({"kind": "terminal", "stage_id": frame["stage_id"], "ok": True,
                           "result": asyncio.run(run())})
-    except BaseException as exc:
+    except (Exception, asyncio.CancelledError) as exc:
         result_send.send({"kind": "terminal", "stage_id": frame.get("stage_id") if frame is not None else None,
                           "ok": False, "error_type": type(exc).__name__, "error": str(exc),
                           "result": {"output": "",

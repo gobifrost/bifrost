@@ -568,12 +568,9 @@ def _compile_instruction(instruction: Mapping[str, object]) -> dict[str, object]
                 package_name=inputs.package_name,
             )
         )
-        transfer_out = encode_app_build_result(result)
-        output_manifest = transfer_out.manifest
-        try:
+        with encode_app_build_result(result) as transfer_out:
+            output_manifest = transfer_out.manifest
             os.replace(transfer_out.path, output_path)
-        finally:
-            transfer_out.close()
         return {
             "state": "succeeded",
             "result_manifest": output_manifest.to_dict(),

@@ -56,8 +56,8 @@ async def rebuild_application_from_source(
     target_sdk_binding_api_major: int | None = None,
     retain_previous_deployment: bool = False,
     automatic_upgrade: bool = False,
-    app_build_compute: "AppBuildCompute | None" = None,
-    app_build_authorization: "AppBuildAuthorization | None" = None,
+    app_build_compute: AppBuildCompute | None = None,
+    app_build_authorization: AppBuildAuthorization | None = None,
 ) -> dict[str, str]:
     if application is None and application_id is None:
         raise ValueError("application or application_id is required")
