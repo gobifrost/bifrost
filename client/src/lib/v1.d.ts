@@ -16250,6 +16250,11 @@ export interface components {
              */
             app_builds: boolean;
             /**
+             * Other Jobs
+             * @default true
+             */
+            other_jobs: boolean;
+            /**
              * Prefer Kubernetes
              * @default false
              */

@@ -535,12 +535,14 @@ class NamedFileOperationStages:
             response["error"] = stage.error
         if stage.result is not None:
             response["result_manifest"] = stage.result.manifest.to_dict()
+            response["result_max_total_size"] = stage.result.manifest.max_total_size
             response.update(stage.result.fields)
         return response
 
     def _inventory(self, stage: FileOperationStage) -> dict[str, Any]:
         record = self._status(stage)
         record.pop("input_next_index", None)
+        record["operation"] = stage.operation.name
         record["input_sha256"] = stage.manifest.sha256
         return record
 

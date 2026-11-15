@@ -52,6 +52,11 @@ class AuditArchiveStore:
         async with self._get_store() as store:
             await store.delete(key)
 
+    async def promote(self, staging_key: str, key: str) -> None:
+        """Copy a completed private staging object to its visible export key."""
+        async with self._get_store() as store:
+            await store.copy(await store.stat(staging_key), key)
+
     async def put_chunks(self, key: str, chunks: AsyncIterator[bytes]) -> tuple[str, int]:
         async with self._get_store() as store:
             result = await store.write_stream(key, chunks, options=WriteOptions(

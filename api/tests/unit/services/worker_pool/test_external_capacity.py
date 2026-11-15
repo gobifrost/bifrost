@@ -15,7 +15,7 @@ import pytest_asyncio
 from pydantic import ValidationError
 from sqlalchemy import func, select
 
-from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
+from shared.models import CloudflareCapacityRules, WorkerCapacityProfile, WorkerCapacityReservation
 from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES, WORKER_IMAGE_HANDLER_NAMES
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
@@ -271,7 +271,7 @@ async def test_external_app_compile_demand_uses_the_worker_image_compute_contrac
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker is not None
-        assert set(worker.supported_compute) == {"app.compile.v2", "agent.loop.v1", "summary.compute.v1"}
+        assert set(worker.supported_compute) == set(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
 
 
 async def test_lost_start_response_is_observed_without_resending_the_start(db, capacity):
@@ -706,3 +706,69 @@ async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db,
     async with db.context() as session:
         assert await work_dispatch.largest_budget(session) == 512 * MIB
     assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None
+
+
+async def test_fixed_external_profile_covers_large_workflow_without_requesting_a_larger_worker(db, capacity):
+    """Cloud capacity uses its declared fixed profile, not Kubernetes sizing."""
+    from src.services.worker_pool.controller import WorkerPoolController, plan_capacity_launches
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, SPEC, _set_request
+
+    profile = capacity.provider.profile.model_copy(update={"memory_limit_bytes": 4 * GIB})
+    capacity.provider.profile = profile
+    run = await _accept_pool_run()
+    await _set_request(db.sessions, run, 2 * GIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(
+        capacity.client, SETTINGS, profile, hybrid=True,
+        rules=CloudflareCapacityRules(workflows=True),
+    )
+
+    launched = await plan_capacity_launches(
+        replace(capacity.policy, warm_workers=0), (kubernetes, cloud),
+    )
+
+    assert launched[kubernetes] == []
+    [worker_id] = launched[cloud]
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.memory_limit_bytes == 4 * GIB
+        assert worker.resource_class == "standard"
+        assert worker.reserved_for_dispatch_id is None
+
+
+async def test_fixed_external_profile_calibrates_only_its_declared_limit_before_refusing_unfit_work(db, capacity):
+    """Unknown capacity may measure once, but never asks the provider for more."""
+    from src.services.worker_pool.controller import plan_capacity_launches
+    from tests.unit.services.worker_pool.test_worker_pool import _report_budget, _set_request
+
+    run = await _accept_pool_run()
+    await _set_request(db.sessions, run, 3 * GIB)
+
+    [worker_id] = (await plan_capacity_launches(
+        replace(capacity.policy, warm_workers=0), (capacity.pool,),
+    ))[capacity.pool]
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.memory_limit_bytes == capacity.provider.profile.memory_limit_bytes
+        assert worker.resource_class == "standard"
+        assert worker.reserved_for_dispatch_id is None
+
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+    uid = capacity.provider.resources[str(worker_id)]["resource_uid"]
+    assert await claims.admit_external_worker(
+        worker_id, resource_uid=uid, launcher_id=uuid4(),
+        version=capacity.provider.profile.worker_version, hostname="calibrated-provider-worker",
+        actual_handlers=ACTUAL_HANDLERS, actual_compute=ACTUAL_COMPUTE,
+    ) is not None
+    await _report_budget(worker_id, GIB)
+
+    launched = await plan_capacity_launches(replace(capacity.policy, warm_workers=0), (capacity.pool,))
+
+    assert launched[capacity.pool] == []
+    async with db.context() as session:
+        assert await session.scalar(select(func.count()).select_from(ExecutionWorker).where(
+            ExecutionWorker.form == "external",
+        )) == 1

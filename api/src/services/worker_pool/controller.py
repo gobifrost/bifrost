@@ -451,6 +451,7 @@ class WorkerCapacityController(ABC):
         memory_limit_bytes: int,
         environment: dict[str, Any],
         execution_lane: str = "normal",
+        reserved_for_dispatch_id: UUID | None = None,
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -466,6 +467,7 @@ class WorkerCapacityController(ABC):
                 supported_handlers=list(self._planner_execution_handlers()),
                 supported_compute=list(self._planner_compute_capabilities()),
                 execution_lane=execution_lane,
+                reserved_for_dispatch_id=reserved_for_dispatch_id,
                 **self._binding_fields(worker_id),
             )
         )
@@ -511,6 +513,7 @@ async def plan_capacity_launches(
                 WorkDispatch.id.label("id"), WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
                 WorkDispatch.created_at.label("created_at"), WorkDispatch.handler.label("handler"),
                 literal(None).label("compute_capability"), literal(None).label("job_type"),
+                literal("dispatch").label("source"),
             ).where(
                 WorkDispatch.assigned_worker_id.is_(None), WorkDispatch.execution_lane == "normal",
                 WorkDispatch.handler.in_(handlers),
@@ -519,7 +522,7 @@ async def plan_capacity_launches(
         if platform_job_ids:
             sources.append(select(
                 PlatformJob.id, PlatformJob.memory_required_bytes, PlatformJob.created_at,
-                literal(None), literal(None), PlatformJob.job_type,
+                literal(None), literal(None), PlatformJob.job_type, literal("platform"),
             ).where(
                 PlatformJob.id.in_(platform_job_ids), PlatformJob.status == "queued",
                 PlatformJob.execution_backend == "local", PlatformJob.available_at <= now,
@@ -527,7 +530,7 @@ async def plan_capacity_launches(
         if any("workflow.execute" in provider._planner_execution_handlers() for provider in ordered):
             sources.append(pending_service_statement(now).with_only_columns(
                 ServiceDefinition.id, workflow_request_sql(Workflow), ServiceDefinition.updated_at,
-                literal("workflow.execute"), literal(None), literal(None),
+                literal("workflow.execute"), literal(None), literal(None), literal("service"),
             ))
         waiting = (await db.execute(sources[0].union_all(*sources[1:]).order_by(text("created_at")))).all()
         workers = (await db.execute(
@@ -601,10 +604,15 @@ async def plan_capacity_launches(
                     ),
                 ),
                 row.job_type,
+                row.id if row.source == "dispatch" and row.handler == "workflow.execute" else None,
             )
             for row in waiting
         ]
-        requests = {request.id: request for request, job_type in request_rows if job_type is None}
+        dispatch_requests = {
+            dispatch_id: request
+            for request, _job_type, dispatch_id in request_rows
+            if dispatch_id is not None
+        }
 
         def accepts(provider: WorkerCapacityController, request: Request, job_type: str | None) -> bool:
             if request.handler is not None:
@@ -638,11 +646,11 @@ async def plan_capacity_launches(
                 return rules.workflows
             if request.handler in {"agent.run", "agent.summarize", "agent.summarize_backfill"}:
                 return rules.agents
-            return bool(
-                job_type is not None
-                and request.compute_capability == "app.compile.v2"
-                and rules.app_builds
-            )
+            if job_type is None or request.compute_capability is None:
+                return False
+            if job_type.startswith("application."):
+                return rules.app_builds
+            return rules.other_jobs
 
         def reservation_providers(
             request: Request, job_type: str | None,
@@ -697,12 +705,16 @@ async def plan_capacity_launches(
             if owner is None and not _worker_can_claim_workflows(worker):
                 continue
             held = 0
-            held_request = requests.get(worker.reserved_for_dispatch_id)
+            held_request = dispatch_requests.get(worker.reserved_for_dispatch_id)
             if held_request is not None:
                 covered.add(held_request.id)
                 held = held_request.bytes
                 if held_request.handler in handler_slots:
                     handler_slots[held_request.handler] = max(0, handler_slots[held_request.handler] - 1)
+            elif worker.reserved_for_dispatch_id is not None:
+                # Cancellation removes a WorkDispatch. Do not leave the
+                # physical worker stranded behind its obsolete reservation.
+                worker.reserved_for_dispatch_id = None
             if worker.form in MANAGED_WORKER_FORMS and (
                 worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
             ):
@@ -729,7 +741,7 @@ async def plan_capacity_launches(
             """Publish once from this locked provider and demand snapshot."""
             compatible_unknown = any(
                 provider in unknown and accepts(provider, request, job_type)
-                for request, job_type in request_rows
+                for request, job_type, _dispatch_id in request_rows
                 for provider in ordered
             )
             measured = [budget for budget in largest.values() if budget is not None]
@@ -789,8 +801,8 @@ async def plan_capacity_launches(
                 managed_total += 1
                 fast_path_launches += 1
 
-        unplaced: list[tuple[Request, str | None]] = []
-        for request, job_type in request_rows:
+        unplaced: list[tuple[Request, str | None, UUID | None]] = []
+        for request, job_type, dispatch_id in request_rows:
             if request.id in covered:
                 continue
             placed = False
@@ -826,6 +838,7 @@ async def plan_capacity_launches(
                 if request.bytes > predicted_largest and provider not in unknown:
                     continue
                 limit = sizing[provider].pod_limit_bytes(request.bytes)
+                calibration_probe = limit is None
                 if limit is None:
                     limit = sizing[provider].largest_limit_bytes
                 if limit in blocked_limits[provider] or cold_busy[provider]:
@@ -833,6 +846,15 @@ async def plan_capacity_launches(
                 worker_id = provider._reserve(
                     db, resource_class="standard" if limit == sizing[provider].standard_limit_bytes else "sized",
                     memory_limit_bytes=limit, environment=provider._memory_environment(generation),
+                    reserved_for_dispatch_id=(
+                        dispatch_id
+                        if (
+                            dispatch_id is not None
+                            and not calibration_probe
+                            and request.bytes > standard[provider]
+                        )
+                        else None
+                    ),
                 )
                 launched[provider].append(worker_id)
                 provider_count[provider] += 1
@@ -854,7 +876,7 @@ async def plan_capacity_launches(
                 slots.append(new_slots)
                 break
             else:
-                unplaced.append((request, job_type))
+                unplaced.append((request, job_type, dispatch_id))
 
         if managed_total >= policy.max_workers and unplaced:
             ready = [
@@ -876,7 +898,7 @@ async def plan_capacity_launches(
                 if not any(
                     request.bytes > worker.memory_budget_bytes
                     and accepts(owner, request, job_type)
-                    for request, job_type in unplaced
+                    for request, job_type, _dispatch_id in unplaced
                 ):
                     continue
                 await db.execute(update(ExecutionWorker).where(

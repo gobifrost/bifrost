@@ -436,7 +436,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Cloudflare setup DTOs are additive; MIN_CLI_VERSION remains unchanged.
     # Optional PlatformJob executor attribution is additive and sanitizes
     # provider resource identifiers from the CLI-visible response.
-    "5e19036a3fb6c2124cf44f0e90bac8c4e173874105454220df594b979e13d56f"
+    # Other Jobs is an additive Cloudflare overflow rule with a default;
+    # existing CLI requests and minimum version remain compatible.
+    "26eb8382eeb360d6deee4ca08f300a7b5fffbdfbb3d8e2de276cf23d2644c23b"
 )
 
 

@@ -8,17 +8,32 @@ a page at a time, through one gzip stream into object storage.
 
 from __future__ import annotations
 
-import zlib
-from collections.abc import AsyncIterator
+import asyncio
+import logging
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
 from datetime import datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel
 from sqlalchemy import or_, select, tuple_
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.audit_archive_limits import BATCH_BYTES
+from shared.audit_export_compute import (
+    AUDIT_EXPORT_OPERATION,
+    AuditExportComputeError,
+    decode_audit_export_result,
+    encode_audit_export_inputs,
+)
+from shared.file_compute import FileCompute, decode_file_result, encode_file_transfer
+from shared.worker_transfer import FileTransfer
 from src.core.database import get_db_context
-from src.jobs.platform.base import PlatformJobContext, PlatformJobFailure
+from src.jobs.platform.base import (
+    PlatformJobCancelled,
+    PlatformJobContext,
+    PlatformJobFailure,
+)
 from src.models.contracts.audit_retention import AuditExportRequest
 from src.models.orm import AuditArchiveSegment, AuditLog, PlatformJob
 from src.services.audit_retention.archiver import BATCH_ROWS, snapshot_query, snapshot_row
@@ -26,7 +41,7 @@ from src.services.audit_retention.format import (
     ArchiveRow,
     ArchiveVerifyError,
     decode_segment,
-    encode_line,
+    line_size,
     verify_checksum,
 )
 from src.services.audit_retention.store import AuditArchiveStore
@@ -34,9 +49,12 @@ from src.services.authorization.reach import OrgReach
 
 EXPORT_TTL_DAYS = 7
 EXPORT_PREFIX = "_audit_exports/"
+EXPORT_STAGING_PREFIX = "_audit_export_staging/"
 EXPORT_SUFFIX = ".jsonl.gz"
 # Callers who do not reach everything read only report-only access checks.
 ACCESS_CHECK_ACTIONS = "access.check"
+logger = logging.getLogger(__name__)
+EffectAuthorizer = Callable[[AsyncSession], Awaitable[bool]]
 
 
 class ReachSnapshot(BaseModel):
@@ -75,6 +93,14 @@ def export_key(job_id: UUID) -> str:
     return f"{EXPORT_PREFIX}{job_id}{EXPORT_SUFFIX}"
 
 
+def export_staging_key(context: PlatformJobContext) -> str:
+    """Return the private, attempt-scoped object written before promotion."""
+    return (
+        f"{EXPORT_STAGING_PREFIX}{context.job_id}/{context.lease_token}"
+        f"{EXPORT_SUFFIX}"
+    )
+
+
 def line_matches(row: ArchiveRow, request: AuditExportRequest, reach: OrgReach) -> bool:
     """Whether ``row`` belongs in the export ``request`` made with ``reach``."""
     return (
@@ -101,9 +127,17 @@ def _segment_rows(key: str, blob: bytes, sha256: str) -> list[ArchiveRow]:
 async def build_export(
     context: PlatformJobContext, payload: AuditQueryPayload, store: AuditArchiveStore
 ) -> dict:
+    file_compute = context.file_compute
+    if file_compute is None:
+        raise PlatformJobFailure(
+            "audit_export_compute_unavailable",
+            "No eligible remote audit export compressor is available; nothing was exported.",
+            retryable=True,
+        )
     request = payload.request
     reach = payload.reach.to_reach()
     key = export_key(context.job_id)
+    staging_key = export_staging_key(context)
 
     segment_query = (
         select(AuditArchiveSegment.object_key, AuditArchiveSegment.sha256)
@@ -135,13 +169,15 @@ async def build_export(
 
     async def chunks() -> AsyncIterator[bytes]:
         nonlocal rows
-        compressor = zlib.compressobj(wbits=31)
+        emitted = False
 
-        def write(batch: list[ArchiveRow]) -> bytes:
+        async def write(batch: list[ArchiveRow]) -> AsyncIterator[bytes]:
             nonlocal rows
             matching = [row for row in batch if line_matches(row, request, reach)]
             rows += len(matching)
-            return compressor.compress(b"".join(encode_line(row) for row in matching))
+            bounded_batches = await asyncio.to_thread(_export_batches, matching)
+            for bounded in bounded_batches:
+                yield await _remote_gzip_member(file_compute, bounded)
 
         for index, (object_key, sha256) in enumerate(segments, start=1):
             try:
@@ -150,8 +186,9 @@ async def build_export(
                 raise PlatformJobFailure(
                     "archive_missing", f"Archived segment {object_key} is cataloged but not in storage"
                 ) from exc
-            chunk = write(_segment_rows(object_key, blob, sha256))
-            if chunk:
+            segment_rows = await asyncio.to_thread(_segment_rows, object_key, blob, sha256)
+            async for chunk in write(segment_rows):
+                emitted = True
                 yield chunk
             await context.report(
                 f"Exported {index} of {len(segments)} archived segments", current=index, total=len(segments)
@@ -170,15 +207,70 @@ async def build_export(
                 page = [snapshot_row(*record) for record in result.all()]
             if not page:
                 break
-            chunk = write(page)
-            if chunk:
+            async for chunk in write(page):
+                emitted = True
                 yield chunk
             after = (page[-1].created_at, page[-1].id)
 
-        yield compressor.flush()
+        if not emitted:
+            yield await _remote_gzip_member(file_compute, ())
 
-    _, size = await store.put_chunks(key, chunks())
-    return {"rows": rows, "bytes": size, "segments": len(segments), "export_key": key}
+    try:
+        _, size = await store.put_chunks(staging_key, chunks())
+        async with get_db_context() as db:
+            if not await context.authorize_effect(db):
+                raise PlatformJobCancelled
+            await store.promote(staging_key, key)
+        return {"rows": rows, "bytes": size, "segments": len(segments), "export_key": key}
+    finally:
+        try:
+            await store.delete(staging_key)
+        except Exception:
+            logger.warning("Failed to delete private audit export staging object", exc_info=True)
+
+
+async def _remote_gzip_member(
+    file_compute: FileCompute, rows: Sequence[ArchiveRow]
+) -> bytes:
+    """Compress one API-authorized canonical batch through the named worker."""
+    transfer: FileTransfer | None = None
+    try:
+        transfer = await encode_file_transfer(encode_audit_export_inputs, rows)
+        outcome = await file_compute(AUDIT_EXPORT_OPERATION, transfer)
+        return await decode_file_result(
+            outcome, decode_audit_export_result, expected_rows=rows
+        )
+    except AuditExportComputeError as exc:
+        raise PlatformJobFailure(
+            "audit_export_compute_invalid_result",
+            f"Remote audit export compression could not be verified: {exc}",
+            retryable=True,
+        ) from exc
+    finally:
+        if transfer is not None:
+            transfer.close()
+
+
+def _export_batches(rows: Sequence[ArchiveRow]) -> list[list[ArchiveRow]]:
+    """Preserve order while keeping each physical export stage bounded."""
+    batch: list[ArchiveRow] = []
+    batches: list[list[ArchiveRow]] = []
+    size = 0
+    for row in rows:
+        row_size = line_size(row)
+        if row_size > BATCH_BYTES:
+            raise PlatformJobFailure(
+                "audit_export_row_too_large",
+                f"Audit event {row.id} exceeds the {BATCH_BYTES}-byte export batch limit.",
+            )
+        if batch and (len(batch) == BATCH_ROWS or size + row_size > BATCH_BYTES):
+            batches.append(batch)
+            batch, size = [], 0
+        batch.append(row)
+        size += row_size
+    if batch:
+        batches.append(batch)
+    return batches
 
 
 def _job_id(key: str) -> UUID | None:
@@ -188,7 +280,12 @@ def _job_id(key: str) -> UUID | None:
         return None
 
 
-async def cleanup_expired_exports(store: AuditArchiveStore, *, older_than: datetime) -> int:
+async def cleanup_expired_exports(
+    store: AuditArchiveStore,
+    *,
+    older_than: datetime,
+    authorize_effect: EffectAuthorizer | None = None,
+) -> int:
     """Delete exports whose job finished before ``older_than``, or that name no existing job."""
     keys = {key: _job_id(key) async for key in store.iter_keys(EXPORT_PREFIX)}
     job_ids = [job_id for job_id in keys.values() if job_id is not None]
@@ -206,6 +303,12 @@ async def cleanup_expired_exports(store: AuditArchiveStore, *, older_than: datet
     removed = 0
     for key, job_id in keys.items():
         if job_id not in kept:
-            await store.delete(key)
+            if authorize_effect is None:
+                await store.delete(key)
+            else:
+                async with get_db_context() as db:
+                    if not await authorize_effect(db):
+                        raise PlatformJobCancelled
+                    await store.delete(key)
             removed += 1
     return removed

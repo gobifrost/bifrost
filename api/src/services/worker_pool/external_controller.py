@@ -24,7 +24,7 @@ from src.services.worker_pool.controller import (
     RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
-from src.services.worker_pool.demand import APP_COMPILE_CAPABILITY, EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
+from src.services.worker_pool.demand import EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
 from src.services.worker_pool.external_policy import validate_external_policy
 from src.services.worker_pool.liveness import silent_executor
 from src.services.worker_pool.recovery import announce_lost_runs, end_runs_of_lost_worker
@@ -85,9 +85,6 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
     def _planner_platform_job_types(self) -> frozenset[str]:
         return EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
-
-    def _platform_request_capability(self) -> str | None:
-        return APP_COMPILE_CAPABILITY
 
     def _max_managed_workers(self, policy: KubernetesPolicy) -> int:
         return min(policy.max_workers, self.profile.max_workers)

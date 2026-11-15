@@ -348,6 +348,7 @@ class CloudflareCapacityRules(BaseModel):
     workflows: bool = True
     agents: bool = True
     app_builds: bool = True
+    other_jobs: bool = True
     prefer_kubernetes: bool = False
 
 

@@ -188,3 +188,43 @@ async def test_recorded_compute_identity_only_accepts_identical_replay(
     await db_session.refresh(job)
     assert job.executor_stage_id == stage
     assert job.executor_input_sha256 == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_file_compute_stage_advances_only_from_its_exact_predecessor(
+    db_session: AsyncSession, platform_context,
+):
+    job, lease = await _running_job(db_session)
+    worker, other_worker = _worker(), _worker()
+    db_session.add_all((worker, other_worker))
+    await db_session.commit()
+    first_stage, second_stage = uuid4(), uuid4()
+    first = dict(
+        worker_id=worker.id,
+        compute_capability="app.compile.v2",
+        stage_id=first_stage,
+        input_sha256="a" * 64,
+    )
+    assert await service.record_platform_job_executor_attribution(job.id, lease, **first)
+
+    assert await service.record_platform_job_executor_attribution(
+        job.id, lease, worker_id=worker.id, compute_capability="app.compile.v2",
+        stage_id=second_stage, input_sha256="b" * 64,
+        predecessor_stage_id=first_stage,
+    )
+    await db_session.refresh(job)
+    assert job.executor_stage_id == second_stage
+    assert job.executor_input_sha256 == "b" * 64
+
+    with pytest.raises(service.PlatformJobExecutorAttributionConflict):
+        await service.record_platform_job_executor_attribution(
+            job.id, lease, worker_id=worker.id, compute_capability="app.compile.v2",
+            stage_id=uuid4(), input_sha256="c" * 64,
+            predecessor_stage_id=first_stage,
+        )
+    with pytest.raises(service.PlatformJobExecutorAttributionConflict):
+        await service.record_platform_job_executor_attribution(
+            job.id, lease, worker_id=other_worker.id, compute_capability="app.compile.v2",
+            stage_id=uuid4(), input_sha256="d" * 64,
+            predecessor_stage_id=second_stage,
+        )

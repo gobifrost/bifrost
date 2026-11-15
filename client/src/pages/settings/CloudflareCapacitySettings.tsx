@@ -44,6 +44,7 @@ const DEFAULT_RULES: CloudflareCapacityRules = {
 	workflows: true,
 	agents: true,
 	app_builds: true,
+	other_jobs: true,
 	prefer_kubernetes: false,
 };
 
@@ -474,6 +475,14 @@ export function CloudflareCapacitySettings() {
 									checked={rules.app_builds}
 									disabled={rulesDisabled}
 									onChange={(app_builds) => setRules((current) => ({ ...current, app_builds }))}
+								/>
+								<SettingsToggleRow
+									id="cloudflare-other-job-rules"
+									label="Run Other Jobs"
+									description="Start other supported Normal jobs on Cloudflare when local workers are unavailable."
+									checked={rules.other_jobs}
+									disabled={rulesDisabled}
+									onChange={(other_jobs) => setRules((current) => ({ ...current, other_jobs }))}
 								/>
 								<SettingsToggleRow
 									id="cloudflare-prefer-kubernetes"

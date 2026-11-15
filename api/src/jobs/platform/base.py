@@ -13,6 +13,7 @@ from src.jobs.platform.catalog import get_platform_job_metadata
 from src.jobs.platform.policy import PlatformJobPolicy
 
 if TYPE_CHECKING:
+    from shared.file_compute import FileCompute
     from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -75,9 +76,10 @@ class PlatformJobContext:
     app_build_compute: AppBuildCompute | None = field(
         default=None, repr=False, compare=False
     )
+    file_compute: "FileCompute | None" = field(default=None, repr=False, compare=False)
 
     async def authorize_effect(self, db: "AsyncSession") -> bool:
-        """Fence an App activation to this still-running job attempt.
+        """Fence a durable effect to this still-running job attempt.
 
         The remote-worker owner is locked first, then this PlatformJob lease,
         so the caller can take the App row lock only after both remain current.

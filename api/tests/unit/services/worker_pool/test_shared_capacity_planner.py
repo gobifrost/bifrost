@@ -5,16 +5,20 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from unittest.mock import AsyncMock
+from uuid import uuid4
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from shared.models import CloudflareCapacityRules
 from src.models.orm.execution_workers import ExecutionWorker
+from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.work_dispatches import WorkDispatch
 from src.services.worker_pool.coordinator import HybridWorkerPoolCoordinator
 from src.services.worker_pool.external_controller import ExternalWorkerPoolController
 from src.services.worker_pool.controller import WorkerPoolController, plan_capacity_launches
 from tests.unit.services.worker_pool.test_external_capacity import capacity as capacity_fixture
 from tests.unit.services.worker_pool.test_worker_pool import (
+    GIB,
     MIB,
     POLICY,
     SETTINGS,
@@ -153,3 +157,46 @@ async def test_cloudflare_without_local_capacity_ignores_start_categories(db, ca
     launched = await plan_capacity_launches(replace(capacity.policy, warm_workers=0), (cloud,))
 
     assert len(launched[cloud]) == 1
+
+
+async def test_sized_workflow_reservation_tracks_its_dispatch_and_clears_when_removed(db):
+    """A large workflow worker must not remain reserved after cancellation."""
+    run = await _accept_pool_run()
+    await _set_request(db.sessions, run, 3 * GIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+
+    [worker_id] = (await plan_capacity_launches(replace(POLICY, warm_workers=0), (kubernetes,)))[kubernetes]
+    async with db.context() as session:
+        dispatch_id = await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == run)
+        )
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.reserved_for_dispatch_id == dispatch_id
+        await session.execute(delete(WorkDispatch).where(WorkDispatch.id == dispatch_id))
+
+    await plan_capacity_launches(replace(POLICY, warm_workers=0), (kubernetes,))
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.reserved_for_dispatch_id is None
+
+
+async def test_sized_platform_job_does_not_use_a_work_dispatch_reservation(db):
+    """Platform job IDs are not valid inputs to the workflow claim fence."""
+    job = PlatformJob(
+        job_type="application.deploy", payload={}, requested_by_user_id=str(uuid4()),
+        requested_by_email="test@example.com", requested_by_name="Test", title="App deploy",
+        memory_required_bytes=3 * GIB,
+    )
+    async with db.context() as session:
+        session.add(job)
+
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    [worker_id] = (await plan_capacity_launches(replace(POLICY, warm_workers=0), (kubernetes,)))[kubernetes]
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.reserved_for_dispatch_id is None

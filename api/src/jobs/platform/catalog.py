@@ -11,7 +11,12 @@ from types import MappingProxyType
 from typing import Literal
 
 from src.jobs.platform.policy import PlatformJobPolicy
-from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
+from shared.worker_compute import (
+    APP_BUNDLE_CAPABILITY_NAME,
+    APP_COMPILE_CAPABILITY_NAME,
+    AUDIT_ARCHIVE_CAPABILITY_NAME,
+    AUDIT_EXPORT_CAPABILITY_NAME,
+)
 
 
 @dataclass(frozen=True)
@@ -98,6 +103,7 @@ _METADATA = MappingProxyType(
                 "src.jobs.platform.application_publish",
                 "APPLICATION_PUBLISH_DEFINITION",
                 PlatformJobPolicy(20 * 60, max_attempts=2, max_concurrency=1),
+                compute_capability=APP_BUNDLE_CAPABILITY_NAME,
             ),
             _metadata(
                 "oauth.refresh",
@@ -175,12 +181,14 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     allow_running_cancellation=True,
                 ),
+                compute_capability=AUDIT_ARCHIVE_CAPABILITY_NAME,
             ),
             _metadata(
                 "audit.query",
                 "src.jobs.platform.audit_query",
                 "AUDIT_QUERY_DEFINITION",
                 PlatformJobPolicy(2 * 60 * 60, allow_running_cancellation=True),
+                compute_capability=AUDIT_EXPORT_CAPABILITY_NAME,
             ),
             _metadata(
                 "run.retention",

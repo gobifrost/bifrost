@@ -8,13 +8,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.jobs.platform.catalog import get_platform_job_metadata, platform_job_types_for_compute
-from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
+from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.kubernetes_execution import KubernetesPolicy, effective_job_max_concurrency
 
 
-APP_COMPILE_CAPABILITY = APP_COMPILE_CAPABILITY_NAME
-EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES = platform_job_types_for_compute(APP_COMPILE_CAPABILITY)
+# Image capabilities are only reservation predictions.  A live launcher must
+# still prove the exact capability in signed Hello before it can claim work.
+EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES = frozenset().union(*(
+    platform_job_types_for_compute(capability)
+    for capability in WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
+))
 
 
 async def pending_local_platform_job_ids(

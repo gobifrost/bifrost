@@ -97,12 +97,15 @@ async def record_platform_job_executor_attribution(
     stage_id: UUID | None = None,
     input_sha256: str | None = None,
     phase: str | None = None,
+    predecessor_stage_id: UUID | None = None,
 ) -> bool:
     """Persist a fenced, API-side executor snapshot for one running attempt.
 
     The physical worker never supplies its own capacity identity.  A remote
     API task additionally proves that it still owns the launcher's lease
     before locking the exact PlatformJob attempt and loading the worker row.
+    A sequential file operation may advance only from its just-released,
+    currently attributed stage on the same worker and capability.
     """
     if (stage_id is None) != (input_sha256 is None):
         raise ValueError("executor stage identity and input digest must be recorded together")
@@ -155,14 +158,29 @@ async def record_platform_job_executor_attribution(
                     and job.executor_input_sha256 == input_sha256
                     and job.executor_compute_capability == compute_capability):
                 return True
-            raise PlatformJobExecutorAttributionConflict
-        set_platform_job_executor_attribution(
-            job,
-            worker,
-            compute_capability=compute_capability,
-            stage_id=stage_id,
-            input_sha256=input_sha256,
-        )
+            if (
+                predecessor_stage_id == job.executor_stage_id
+                and job.executor_attempt == job.attempt
+                and job.executor_worker_id == worker_id
+                and job.executor_compute_capability == compute_capability
+            ):
+                set_platform_job_executor_attribution(
+                    job,
+                    worker,
+                    compute_capability=compute_capability,
+                    stage_id=stage_id,
+                    input_sha256=input_sha256,
+                )
+            else:
+                raise PlatformJobExecutorAttributionConflict
+        else:
+            set_platform_job_executor_attribution(
+                job,
+                worker,
+                compute_capability=compute_capability,
+                stage_id=stage_id,
+                input_sha256=input_sha256,
+            )
         if phase is not None:
             job.phase = phase[:200]
         job.revision += 1

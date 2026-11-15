@@ -15,7 +15,6 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from shared.worker_control_auth import external_worker_control_key
-from shared.worker_compute import APP_COMPILE_CAPABILITY
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
@@ -27,7 +26,7 @@ from src.core.database import get_db_context, get_liveness_db_context
 from src.core.requirements_cache import get_requirements
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
-from src.jobs.platform.catalog import executor_platform_job_types
+from src.jobs.platform.catalog import executor_platform_job_types, get_platform_job_metadata
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.services.memory_requests import MemoryBudget
@@ -41,9 +40,11 @@ from src.services.worker_pool.claims import (
 from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.app_compile_host import (
-    APP_COMPILE_JOB_TYPES, ApiAppBuildBackend, reconcile_app_compiles,
+from src.worker.remote.file_compute_host import (
+    FILE_COMPUTE_JOB_TYPES, ApiFileComputeBackend, operation_for_job_type,
+    reconcile_file_computes,
 )
+from src.worker.remote.app_compile_host import ApiAppBuildBackend
 from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
@@ -149,7 +150,7 @@ class Bridge:
         self.reconciliation_ready = asyncio.Event()
         self.transport_changed = asyncio.Event()
         self.compute_changed = asyncio.Event()
-        self.app_compilers: dict[str, Any] = {}
+        self.file_computes: dict[str, Any] = {}
         self.agent_compute_runtimes: dict[str, Any] = {}
         self._deferred_terminal: list[dict[str, Any]] = []
         self.lease = lease
@@ -355,7 +356,7 @@ class Bridge:
                 self.requirements = requirements
             self.inventory = inventory
             self.inventory_ready.set()
-        elif event.get("event") == "app_compile_state":
+        elif event.get("event") in {"app_compile_state", "file_compute_state"}:
             if not isinstance(event.get("stage_id"), str):
                 raise ProtocolError("App compile notification requires a stage UUID")
             UUID(event["stage_id"])
@@ -662,10 +663,14 @@ class ApiExecutor(PoolWorker):
         return self.bridge.reconciliation_ready.is_set()
 
     async def _execute_platform_job(self, claim: Any) -> bool:
+        operation = operation_for_job_type(claim.job_type)
+        metadata = get_platform_job_metadata(claim.job_type)
+        supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
         backend = (
-            ApiAppBuildBackend(self.bridge)
-            if claim.job_type in APP_COMPILE_JOB_TYPES
-            and APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+            (ApiAppBuildBackend(self.bridge) if operation == "app.compile.v2" else ApiFileComputeBackend(self.bridge))
+            if operation is not None
+            and metadata is not None
+            and metadata.compute_capability in supported
             else self.bridge
         )
         return await run_claimed_platform_job(claim, backend=backend)
@@ -673,13 +678,25 @@ class ApiExecutor(PoolWorker):
     @property
     def supports_platform_jobs(self) -> bool:
         return super().supports_platform_jobs and (
-            self.bridge.supports_platform_jobs or APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+            self.bridge.supports_platform_jobs
+            or any(
+                (metadata := get_platform_job_metadata(job_type)) is not None
+                and metadata.compute_capability in {
+                    f"{name}.v{version}" for name, version in self.bridge.compute_capabilities
+                }
+                for job_type in FILE_COMPUTE_JOB_TYPES
+            )
         )
 
     async def _claim_platform_job(self, fits_bytes: int) -> Any:
         job_types = executor_platform_job_types()
         if not self.bridge.supports_platform_jobs:
-            job_types = job_types.intersection(APP_COMPILE_JOB_TYPES)
+            supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
+            job_types = frozenset(
+                job_type for job_type in job_types.intersection(FILE_COMPUTE_JOB_TYPES)
+                if (metadata := get_platform_job_metadata(job_type)) is not None
+                and metadata.compute_capability in supported
+            )
         return await claim_platform_job(
             backend="local", fits_bytes=fits_bytes, memory_sample=self.bridge.memory(),
             job_types=job_types,
@@ -737,7 +754,7 @@ class ApiExecutor(PoolWorker):
             self.bridge.reject_missing_platform_routes(self.bridge.inventory)
             if self.bridge.agents is not None:
                 await self.bridge.agents.reject_missing(self.bridge.inventory)
-            await reconcile_app_compiles(self.bridge)
+            await reconcile_file_computes(self.bridge)
             if (self.bridge.inventory.get("agent_compute_stages", []) != []
                     or self.bridge.agent_compute_runtimes):
                 from src.worker.remote.agent_orchestration import reconcile_agent_computes

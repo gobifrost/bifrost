@@ -8,26 +8,86 @@ generated source; no esbuild subprocess is run.
 from __future__ import annotations
 
 import pathlib
+import threading
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from shared.app_bundle_compute import (
+    AppBundleInputs,
+    AppBundleOutput,
+    encode_app_bundle_results,
+)
+from shared.file_compute import FileComputeResult
+from shared.worker_transfer import FileTransfer, ReceivedFileTransfer
+from src.services import app_bundler
 from src.services.app_bundler import (
     _PLATFORM_EXPORT_NAMES,
     SCHEMA_VERSION,
     TAILWIND_OUTPUT_CSS,
     BundleManifest,
+    BundleMessage,
     BundleResult,
     BundlerService,
+    build_snapshot_using_file_compute,
     build_with_migrate,
 )
-from src.services.app_compiler import TailwindGenerationError
-from src.services.app_resource_limits import AppArtifactLimitError, AppSourceLimitError
+from shared.app_bundle_compiler import BundleCompilation
+from src.services.app_resource_limits import AppSourceLimitError
 
 
 @pytest.fixture
 def bundler() -> BundlerService:
     return BundlerService()
+
+
+@pytest.mark.asyncio
+async def test_remote_bundle_transfer_codec_runs_outside_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codec_threads: list[int] = []
+    original_encode = app_bundler.encode_app_bundle_inputs
+    original_decode = app_bundler.decode_app_bundle_results
+
+    def capture_encode(inputs: AppBundleInputs) -> FileTransfer:
+        codec_threads.append(threading.get_ident())
+        return original_encode(inputs)
+
+    def capture_decode(transfer: ReceivedFileTransfer) -> AppBundleOutput:
+        codec_threads.append(threading.get_ident())
+        return original_decode(transfer)
+
+    async def file_compute(operation, _transfer):
+        assert operation == "app.bundle.v1"
+        output = encode_app_bundle_results(
+            AppBundleOutput(
+                success=True,
+                entry="entry.js",
+                css=None,
+                outputs=("entry.js",),
+                duration_ms=1,
+                warnings=(),
+                errors=(),
+                dependencies={},
+                artifacts={"entry.js": b"export {}"},
+            )
+        )
+        return FileComputeResult(ReceivedFileTransfer(output.manifest, output.path), {})
+
+    monkeypatch.setattr(app_bundler, "encode_app_bundle_inputs", capture_encode)
+    monkeypatch.setattr(app_bundler, "decode_app_bundle_results", capture_decode)
+
+    result, artifacts = await build_snapshot_using_file_compute(
+        "app-id",
+        {"pages/index.tsx": b"export default () => null"},
+        {},
+        file_compute,
+    )
+
+    assert result.success is True
+    assert artifacts == {"entry.js": b"export {}"}
+    assert len(codec_threads) == 2
+    assert all(thread_id != threading.get_ident() for thread_id in codec_threads)
 
 
 # ---------------------------------------------------------------------------
@@ -271,18 +331,16 @@ async def test_build_writes_current_schema_version_into_manifest(
         (src_dir / "_layout.tsx").write_text("export default function Layout(){}")
         return ["_layout.tsx"]
 
-    async def fake_run_esbuild(cfg: dict) -> dict:
-        out_dir = pathlib.Path(cfg["out_dir"])
-        out_dir.mkdir(exist_ok=True)
-        (out_dir / "entry.js").write_bytes(b"// fake entry\n")
-        return {
-            "success": True,
-            "outputs": [{"path": "entry.js"}],
-            "entry_file": "entry.js",
-            "css_file": None,
-            "duration_ms": 1,
-            "warnings": [],
-        }
+    async def fake_compile(*_args, **_kwargs) -> BundleCompilation:
+        result = BundleResult(
+            success=True,
+            manifest=BundleManifest(
+                entry="entry.js", css=None, outputs=["entry.js"],
+                duration_ms=1, warnings=[], dependencies={},
+            ),
+            duration_ms=1,
+        )
+        return BundleCompilation(result, {"entry.js": b"// fake entry\n"})
 
     written: dict[str, bytes] = {}
 
@@ -290,7 +348,7 @@ async def test_build_writes_current_schema_version_into_manifest(
         written[rel] = data
 
     with patch.object(bundler, "_materialize_source", new=fake_materialize), \
-         patch.object(bundler, "_run_esbuild", new=fake_run_esbuild), \
+         patch("src.services.app_bundler.compile_app_bundle", new=fake_compile), \
          patch.object(
              bundler._app_storage, "write_preview_file",
              new=AsyncMock(side_effect=fake_write_preview_file),
@@ -319,10 +377,14 @@ async def test_tailwind_operational_failure_does_not_publish_css_less_bundle(
         (src_dir / "_layout.tsx").write_text("export default function Layout() {}")
         return ["_layout.tsx"]
 
-    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch.object(
-        bundler,
-        "_generate_app_tailwind",
-        new=AsyncMock(side_effect=TailwindGenerationError("Tailwind unavailable")),
+    async def failed_compile(*_args, **_kwargs) -> BundleCompilation:
+        return BundleCompilation(
+            BundleResult(False, errors=[BundleMessage(text="Tailwind CSS generation failed: Tailwind unavailable")]),
+            {},
+        )
+
+    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch(
+        "src.services.app_bundler.compile_app_bundle", new=failed_compile
     ), patch.object(bundler._app_storage, "write_preview_file", new=AsyncMock()) as write:
         result = await bundler.build("app-id", "apps/test/", "preview")
 
@@ -349,37 +411,61 @@ async def test_materialize_rejects_oversized_source_before_read(
 
 
 @pytest.mark.asyncio
-async def test_bundle_uses_actual_artifact_size_before_reading_or_publishing(
+async def test_source_snapshot_freezes_coherent_object_version_map(
+    bundler: BundlerService,
+) -> None:
+    metadata = {
+        "apps/test/pages/index.tsx": type(
+            "Metadata", (), {"size": 26, "version": "object-version-1"}
+        )(),
+    }
+    bundler._repo.list_with_metadata = AsyncMock(side_effect=[metadata, metadata])
+    bundler._repo.read = AsyncMock(return_value=b"export default () => null")
+
+    files, versions = await bundler.source_snapshot("apps/test/")
+
+    assert files == {"pages/index.tsx": b"export default () => null"}
+    assert versions == {"pages/index.tsx": "object-version-1"}
+    assert bundler._repo.list_with_metadata.await_count == 2
+    bundler._repo.read.assert_awaited_once_with("apps/test/pages/index.tsx")
+
+
+@pytest.mark.asyncio
+async def test_source_snapshot_rejects_version_map_that_changes_while_reading(
+    bundler: BundlerService,
+) -> None:
+    before = {
+        "apps/test/pages/index.tsx": type(
+            "Metadata", (), {"size": 26, "version": "object-version-1"}
+        )(),
+    }
+    after = {
+        "apps/test/pages/index.tsx": type(
+            "Metadata", (), {"size": 26, "version": "object-version-2"}
+        )(),
+    }
+    bundler._repo.list_with_metadata = AsyncMock(side_effect=[before, after])
+    bundler._repo.read = AsyncMock(return_value=b"export default () => null")
+
+    with pytest.raises(ValueError, match="changed while creating"):
+        await bundler.source_snapshot("apps/test/")
+
+
+@pytest.mark.asyncio
+async def test_failed_compilation_does_not_publish_artifacts(
     bundler: BundlerService, tmp_path: pathlib.Path
 ) -> None:
     async def fake_materialize(src_dir: pathlib.Path, repo_prefix: str) -> list[str]:
         (src_dir / "_layout.tsx").write_text("export default function Layout() {}")
         return ["_layout.tsx"]
 
-    async def fake_esbuild(cfg: dict) -> dict:
-        out_dir = pathlib.Path(cfg["out_dir"])
-        out_dir.mkdir(exist_ok=True)
-        (out_dir / "entry.js").write_bytes(b"x" * 100)
-        return {
-            "success": True,
-            "outputs": [{"path": "entry.js", "bytes": 1}],
-            "entry_file": "entry.js",
-            "css_file": None,
-            "duration_ms": 1,
-            "warnings": [],
-        }
+    async def failed_compile(*_args, **_kwargs) -> BundleCompilation:
+        return BundleCompilation(
+            BundleResult(False, errors=[BundleMessage(text="artifact too large")]), {}
+        )
 
-    async def no_tailwind(*_args):
-        return False, set()
-
-    def check_actual_size(entries: dict[str, int]) -> None:
-        assert entries == {"entry.js": 100}
-        raise AppArtifactLimitError("artifact too large")
-
-    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch.object(
-        bundler, "_generate_app_tailwind", new=no_tailwind
-    ), patch.object(bundler, "_run_esbuild", new=fake_esbuild), patch(
-        "src.services.app_bundler.validate_app_artifacts", side_effect=check_actual_size
+    with patch.object(bundler, "_materialize_source", new=fake_materialize), patch(
+        "src.services.app_bundler.compile_app_bundle", new=failed_compile
     ), patch.object(bundler._app_storage, "write_preview_file", new=AsyncMock()) as write:
         result = await bundler.build("app-id", "apps/test/", "preview")
 

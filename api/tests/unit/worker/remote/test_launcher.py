@@ -177,7 +177,9 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
     try:
         await launcher.hello({})
         hello = json.loads(socket.send.await_args.args[0])
-        assert hello["compute_capabilities"] == [["app.compile", 2]]
+        assert hello["compute_capabilities"] == [
+            ["app.compile", 2], ["app.bundle", 1], ["audit.archive", 1], ["audit.export", 1],
+        ]
 
         warmed_socket = AsyncMock()
         warmed_socket.recv.side_effect = [
@@ -194,7 +196,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         await warmed.start_agent_compute_template()
         await warmed.hello({})
         warmed_hello = json.loads(warmed_socket.send.await_args.args[0])
-        assert warmed_hello["compute_capabilities"] == [["app.compile", 2], ["agent.loop", 1], ["summary.compute", 1]]
+        assert warmed_hello["compute_capabilities"] == [["app.compile", 2], ["app.bundle", 1], ["agent.loop", 1], ["summary.compute", 1], ["audit.archive", 1], ["audit.export", 1]]
         launcher.app_compiles.prepare(payload)
         assert launcher.inventory()["compute_stages"] == [
             {
@@ -202,6 +204,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
                 "job_id": payload["job_id"],
                 "lease_token": payload["lease_token"],
                 "state": "prepared",
+                "operation": "app.compile.v2",
                 "input_sha256": manifest.sha256,
             }
         ]

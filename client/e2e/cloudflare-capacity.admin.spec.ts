@@ -30,6 +30,7 @@ const DEFAULT_RULES: CloudflareCapacityRules = {
 	workflows: true,
 	agents: true,
 	app_builds: true,
+	other_jobs: true,
 	prefer_kubernetes: false,
 };
 
@@ -157,7 +158,7 @@ test("an admin connects Cloudflare capacity and saves start rules", async ({
 	await page.route("**/api/admin/worker-capacity/cloudflare/rules", async (route) => {
 		expect(route.request().method()).toBe("PUT");
 		const rules = route.request().postDataJSON() as CloudflareCapacityRules;
-		expect(rules).toEqual({ ...DEFAULT_RULES, agents: false });
+		expect(rules).toEqual({ ...DEFAULT_RULES, agents: false, other_jobs: false });
 		capacity = cloudflareStatus({
 			configured: true,
 			active: true,
@@ -243,6 +244,9 @@ test("an admin connects Cloudflare capacity and saves start rules", async ({
 	const agents = page.getByRole("switch", { name: "Run Agents and Summaries" });
 	await expect(agents).toBeChecked();
 	await agents.click();
+	const otherJobs = page.getByRole("switch", { name: "Run Other Jobs" });
+	await expect(otherJobs).toBeChecked();
+	await otherJobs.click();
 	const [savedRules] = await Promise.all([
 		page.waitForResponse(
 			(response) =>
@@ -253,6 +257,11 @@ test("an admin connects Cloudflare capacity and saves start rules", async ({
 	]);
 	expect(savedRules.ok(), await savedRules.text()).toBeTruthy();
 	await expect(agents).not.toBeChecked();
+	await expect(otherJobs).not.toBeChecked();
+	expect(savedRules.request().postDataJSON()).toMatchObject({
+		agents: false,
+		other_jobs: false,
+	});
 	await page.screenshot({ path: testInfo.outputPath("cloudflare-capacity-desktop.png"), fullPage: true });
 
 	await page.setViewportSize({ width: 390, height: 844 });

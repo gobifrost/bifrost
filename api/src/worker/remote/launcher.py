@@ -318,9 +318,24 @@ class Launcher:
         self.job_claims: dict[str, dict[str, str | int]] = {}
         # This owns only file-backed CPU compute; PlatformJob authority stays
         # with the API control host.
+        # Operation recipes are code-owned.  In particular, control payloads
+        # can select a registered name but can never import a callable or
+        # supply a subprocess command.
+        from src.worker.remote.audit_archive_compute import audit_archive_operation
+        from src.worker.remote.audit_export_compute import audit_export_operation
+        from src.worker.remote.app_bundle_compute import (
+            APP_BUNDLE_OPERATION,
+            app_bundle_operation,
+        )
+
         self.file_operations = NamedFileOperationStages(
-            operations={APP_COMPILE_OPERATION: app_compile_operation()},
-            terminal_notification=self.send_app_compile_state,
+            operations={
+                APP_COMPILE_OPERATION: app_compile_operation(),
+                APP_BUNDLE_OPERATION: app_bundle_operation(),
+                "audit.archive.v1": audit_archive_operation(),
+                "audit.export.v1": audit_export_operation(),
+            },
+            terminal_notification=self.send_file_compute_state,
         )
         self.app_compiles = AppCompileStages(self.file_operations)
         self.agent_compute_stages: dict[str, AgentComputeStage] = {}
@@ -852,6 +867,31 @@ class Launcher:
                 ):
                     self._compute_retirement_drain_sent = True
                     self.task(self.send_compute_retirement_drain())
+            elif action.startswith("file_compute_"):
+                operation = payload.get("operation")
+                if not isinstance(operation, str):
+                    raise ValueError("File compute operation is required")
+                if action == "file_compute_prepare":
+                    response = self.file_operations.prepare(operation, payload)
+                elif action == "file_compute_chunk":
+                    response = self.file_operations.add_chunk(operation, payload)
+                elif action == "file_compute_start":
+                    response = await self.file_operations.start(operation, payload)
+                elif action == "file_compute_status":
+                    response = self.file_operations.status(operation, payload)
+                elif action == "file_compute_result_chunk":
+                    response = self.file_operations.result_chunk(operation, payload)
+                elif action == "file_compute_release":
+                    response = await self.file_operations.release(operation, payload)
+                    if (
+                        self.file_operations.retire_requested
+                        and not self.file_operations.has_stages
+                        and not self._compute_retirement_drain_sent
+                    ):
+                        self._compute_retirement_drain_sent = True
+                        self.task(self.send_compute_retirement_drain())
+                else:
+                    raise ValueError("Unknown file compute command")
             elif action == "agent_compute_start":
                 response = await self.agent_compute_start(payload)
             elif action == "agent_compute_status":
@@ -971,10 +1011,12 @@ class Launcher:
             self.jobs.pop(route_id, None)
             self.job_claims.pop(route_id, None)
 
-    async def send_app_compile_state(self, binding: dict[str, str]) -> None:
+    async def send_file_compute_state(self, binding: dict[str, str]) -> None:
         """Wake the API to read retained compute state without sending artifacts."""
         with contextlib.suppress(ConnectionError):
-            await self.send({"event": "app_compile_state", "stage_id": binding["stage_id"]})
+            await self.send({"event": "file_compute_state", "stage_id": binding["stage_id"]})
+
+    send_app_compile_state = send_file_compute_state
 
     async def send_agent_compute_rpc(
         self, stage: AgentComputeStage, request_id: str, request: AgentComputeRequest

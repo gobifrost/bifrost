@@ -93,6 +93,7 @@ describe("worker capacity service", () => {
 				workflows: true,
 				agents: false,
 				app_builds: true,
+				other_jobs: true,
 				prefer_kubernetes: true,
 			},
 		};

@@ -153,7 +153,10 @@ describe("CloudflareCapacitySettings", () => {
 		await waitFor(() => expect(screen.getByText("Not Connected")).toBeVisible());
 	});
 
-	it("saves configured Cloudflare start rules without asking for the API key", async () => {
+	it.each([
+		{ label: "Run Agents and Summaries", field: "agents" as const },
+		{ label: "Run Other Jobs", field: "other_jobs" as const },
+	])("saves $field without asking for the API key", async ({ label, field }) => {
 		const user = userEvent.setup();
 		const configured = {
 			configured: true,
@@ -164,27 +167,26 @@ describe("CloudflareCapacitySettings", () => {
 				workflows: true,
 				agents: true,
 				app_builds: true,
+				other_jobs: true,
 				prefer_kubernetes: false,
 			},
 		};
 		mocks.getCloudflareCapacity.mockResolvedValue(configured);
 		mocks.updateCloudflareCapacityRules.mockResolvedValue({
 			...configured,
-			rules: { ...configured.rules, agents: false },
+			rules: { ...configured.rules, [field]: false },
 		});
 		renderSettings();
-		const agents = await screen.findByRole("switch", {
-			name: "Run Agents and Summaries",
+		const selectedRule = await screen.findByRole("switch", {
+			name: label,
 		});
-		await user.click(agents);
+		await user.click(selectedRule);
 		await user.click(screen.getByRole("button", { name: "Save Cloudflare Rules" }));
 
 		await waitFor(() =>
 			expect(mocks.updateCloudflareCapacityRules).toHaveBeenCalledWith({
-				workflows: true,
-				agents: false,
-				app_builds: true,
-				prefer_kubernetes: false,
+				...configured.rules,
+				[field]: false,
 			}),
 		);
 		expect(screen.queryByLabelText("Replace Cloudflare API Key")).toBeInTheDocument();
@@ -201,6 +203,7 @@ describe("CloudflareCapacitySettings", () => {
 				workflows: true,
 				agents: true,
 				app_builds: true,
+				other_jobs: true,
 				prefer_kubernetes: false,
 			},
 		});
