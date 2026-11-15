@@ -146,7 +146,7 @@ def _is_missing_source_error(exc: Exception) -> bool:
     return False
 
 
-async def _summary(db: AsyncSession, source_file) -> dict:
+async def _summary(db: AsyncSession, source_file, *, precomputed: dict | None = None) -> dict:
     # SDK shapes and resource defaults participate in source summaries.
     cache_version = hashlib.sha256(
         f"{_analysis_version()}:{_sdk_permission_fingerprint()}".encode()
@@ -167,7 +167,7 @@ async def _summary(db: AsyncSession, source_file) -> dict:
     from shared.workflow_conversion_analysis import summarize_source
 
     # API-owned review must not parse a large file on the request event loop.
-    compact = await asyncio.to_thread(summarize_source, source_file.source)
+    compact = precomputed if precomputed is not None else await asyncio.to_thread(summarize_source, source_file.source)
     db.add(
         WorkflowConversionAnalysisCache(
             source_key=_cache_source_key(source_file.key),
@@ -475,6 +475,7 @@ async def _policy_revision_snapshot(db: AsyncSession, workflow: Workflow) -> dic
 async def _report_for_workflow(
     db: AsyncSession, workflow: Workflow, *, source=None,
     module_inventory: RuntimeModuleInventory | None = None,
+    prepared_analysis: dict | None = None,
 ) -> dict:
     source = source or await _source_for_workflow(workflow)
     from shared.workflow_conversion_analysis import analyze_workflow
@@ -492,19 +493,22 @@ async def _report_for_workflow(
             )
         )
     )
-    analysis = await analyze_workflow(
-        source,
-        workflow.function_name,
-        lambda sf, module, level: _resolve_import(
-            sf,
-            module,
-            level,
-            workflow=workflow,
-            allow_outbound_access=allow_outbound_access,
-        ),
-        lambda sf: _summary(db, sf),
-        external_module_roots=module_inventory.roots,
-    )
+    if prepared_analysis is not None:
+        analysis = prepared_analysis
+    else:
+        analysis = await analyze_workflow(
+            source,
+            workflow.function_name,
+            lambda sf, module, level: _resolve_import(
+                sf,
+                module,
+                level,
+                workflow=workflow,
+                allow_outbound_access=allow_outbound_access,
+            ),
+            lambda sf: _summary(db, sf),
+            external_module_roots=module_inventory.roots,
+        )
     cutoff = date.today() - timedelta(days=OBSERVATION_WINDOW_DAYS)
     usages = (
         await db.execute(
@@ -792,7 +796,23 @@ def _conversion_actor(
     )
 
 
+async def _prepare_source_graph(context, workflow, source, module_inventory):
+    from src.services.workflow_graph_compute import prepare_workflow_graph
+
+    async with get_db_context() as db:
+        await _require_current_conversion_admin(db, context, "workflows.conversions.create")
+        allowed = workflow.solution_id is None or bool(await db.scalar(
+            select(Solution.allow_outbound_access).where(Solution.id == workflow.solution_id)))
+    prepared = await prepare_workflow_graph(source, workflow.function_name, module_inventory.roots,
+        lambda sf, module, level: _resolve_import(sf, module, level,
+            workflow=workflow, allow_outbound_access=allowed), context.file_compute)
+    prepared.allow_outbound_access = allowed
+    return prepared
+
+
 async def run_analysis(context: PlatformJobContext, payload) -> dict:
+    if context.file_compute is None:
+        raise PlatformJobFailure("file_compute_required", "Workflow analysis requires its source graph compute stage.")
     module_inventory = await read_runtime_modules()
     state = dict(context.checkpoint or {"completed": 0})
     selected_ids = list(payload.workflow_ids) if payload.workflow_ids else None
@@ -851,53 +871,52 @@ async def run_analysis(context: PlatformJobContext, payload) -> dict:
             break
         for workflow_id in batch:
             async with get_db_context() as db:
+                await _require_current_conversion_admin(db, context, "workflows.conversions.create")
                 workflow = await db.get(Workflow, workflow_id)
                 if workflow is None:
                     continue
-                try:
-                    source = await _source_for_workflow(workflow)
-                except UnicodeDecodeError:
-                    report = await _blocked_report_for_source(db, workflow)
-                except (FileNotFoundError, StorageError) as exc:
-                    if not _is_missing_source_error(exc):
-                        raise
-                    report = await _blocked_report_for_source(db, workflow)
-                else:
-                    report = await _report_for_workflow(
-                        db, workflow, source=source, module_inventory=module_inventory,
-                    )
+                reviewed_state = _workflow_review_state(workflow)
+            # Capture and pure graph stages hold no database transaction.
+            source = prepared = None
+            try:
+                source = await _source_for_workflow(workflow)
+            except UnicodeDecodeError:
+                pass
+            except (FileNotFoundError, StorageError) as exc:
+                if not _is_missing_source_error(exc):
+                    raise
+            else:
+                prepared = await _prepare_source_graph(context, workflow, source, module_inventory)
+            async with get_db_context() as db:
                 await _fenced_job(db, context)
-                row = (
-                    await db.execute(
-                        select(ReportRow)
-                        .where(
-                            ReportRow.job_id == context.job_id,
-                            ReportRow.workflow_id == workflow.id,
-                        )
-                        .with_for_update()
-                    )
-                ).scalar_one_or_none()
-                if row is None:
-                    db.add(
-                        ReportRow(
-                            job_id=context.job_id,
-                            workflow_id=workflow.id,
-                            source_fingerprint=report["source_fingerprint"],
-                            status=report["status"],
-                            report=report,
-                        )
-                    )
+                await _require_current_conversion_admin(db, context, "workflows.conversions.create")
+                workflow = await db.get(Workflow, workflow_id)
+                if workflow is None or _workflow_review_state(workflow) != reviewed_state:
+                    raise PlatformJobFailure("analysis_inputs_changed", "Workflow metadata changed during source analysis; analyze again.")
+                if prepared is None:
+                    report = await _blocked_report_for_source(db, workflow)
                 else:
-                    row.source_fingerprint, row.status, row.report = (
-                        report["source_fingerprint"],
-                        report["status"],
-                        report,
-                    )
+                    allowed = workflow.solution_id is None or bool(await db.scalar(
+                        select(Solution.allow_outbound_access).where(Solution.id == workflow.solution_id)))
+                    if allowed != prepared.allow_outbound_access:
+                        raise PlatformJobFailure("analysis_inputs_changed", "Solution scope changed during source analysis; analyze again.")
+                    for key in prepared.analysis["dependencies"]:
+                        await _summary(db, prepared.sources[key], precomputed=prepared.summaries[key])
+                    report = await _report_for_workflow(db, workflow, source=source,
+                        module_inventory=module_inventory, prepared_analysis=prepared.analysis)
+                row = (await db.execute(select(ReportRow).where(
+                    ReportRow.job_id == context.job_id, ReportRow.workflow_id == workflow.id,
+                ).with_for_update())).scalar_one_or_none()
+                if row is None:
+                    db.add(ReportRow(job_id=context.job_id, workflow_id=workflow.id,
+                        source_fingerprint=report["source_fingerprint"], status=report["status"], report=report))
+                else:
+                    row.source_fingerprint, row.status, row.report = report["source_fingerprint"], report["status"], report
                 state["completed"] += 1
                 state["cursor_created_at"] = workflow.created_at.isoformat()
                 state["cursor_id"] = str(workflow.id)
+                await context.checkpoint_in_transaction(db, state, phase="Analyzing workflows")
                 await db.commit()
-            await context.save_checkpoint(state, phase="Analyzing workflows")
             total = state["total"]
             await context.report(
                 "Analyzing workflows",

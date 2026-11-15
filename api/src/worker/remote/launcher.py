@@ -331,9 +331,11 @@ class Launcher:
         )
 
         from src.worker.remote.app_preview_compile import app_preview_operation
+        from src.worker.remote.workflow_graph_analyze import workflow_graph_operation
 
         self.file_operations = NamedFileOperationStages(
             operations={
+                "workflow.graph.analyze.v1": workflow_graph_operation(),
                 "app.preview.compile.v1": app_preview_operation(),
                 APP_COMPILE_OPERATION: app_compile_operation(),
                 APP_BUNDLE_OPERATION: app_bundle_operation(),

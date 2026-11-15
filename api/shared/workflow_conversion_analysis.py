@@ -20,15 +20,18 @@ from typing import Any, Awaitable, Callable
 
 from shared.workflow_conversion_sdk import sdk_call_contract, sdk_object_contract, sdk_object_is_data
 
-ANALYZER_VERSION = "27"
-MAX_SOURCE_BYTES = 2_000_000
-MAX_AST_NODES = 256_000
-MAX_EVENTS_PER_SCOPE = 2_048
-MAX_DEPENDENCIES = 256
-MAX_GRAPH_STEPS = 10_000
-MAX_SDK_CALLS = 2_048
-MAX_EVIDENCE = 4_096
-MAX_SELECTOR_VALUE_CHARS = 2_000
+from shared.workflow_conversion_limits import (
+    ANALYZER_VERSION as ANALYZER_VERSION,
+    MAX_SOURCE_BYTES as MAX_SOURCE_BYTES,
+    MAX_AST_NODES as MAX_AST_NODES,
+    MAX_EVENTS_PER_SCOPE as MAX_EVENTS_PER_SCOPE,
+    MAX_DEPENDENCIES as MAX_DEPENDENCIES,
+    MAX_GRAPH_STEPS as MAX_GRAPH_STEPS,
+    MAX_SDK_CALLS as MAX_SDK_CALLS,
+    MAX_EVIDENCE as MAX_EVIDENCE,
+    MAX_SELECTOR_VALUE_CHARS as MAX_SELECTOR_VALUE_CHARS,
+)
+
 _MODULE_INIT = "<import>"
 _THIRD_PARTY_ROOTS = {
     "aiohttp",

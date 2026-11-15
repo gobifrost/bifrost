@@ -178,6 +178,13 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         )
         assert denied.status_code == 403, denied.text
         _wait_for_job(e2e_client, platform_admin.headers, analysis_job_id)
+        from src.models.orm.platform_jobs import PlatformJob
+        async with db_session.bind.connect() as connection:
+            attribution = (await connection.execute(select(
+                PlatformJob.executor_worker_id, PlatformJob.executor_compute_capability,
+            ).where(PlatformJob.id == analysis_job_id))).one()
+        assert attribution.executor_worker_id is not None
+        assert attribution.executor_compute_capability == "workflow.graph.analyze.v1"
 
         report_response = e2e_client.get(
             f"/api/workflow-conversions/{analysis_job_id}/report",

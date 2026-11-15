@@ -659,7 +659,7 @@ async def test_analysis_records_missing_source_and_continues_to_the_next_workflo
     no_report.scalar_one_or_none.return_value = None
     db = SimpleNamespace(
         execute=AsyncMock(side_effect=[batch, no_report, no_report, empty]),
-        get=AsyncMock(side_effect=[missing, available]),
+        get=AsyncMock(side_effect=[missing, missing, available, available]),
         add=Mock(), commit=AsyncMock(),
     )
 
@@ -674,6 +674,8 @@ async def test_analysis_records_missing_source_and_continues_to_the_next_workflo
     monkeypatch.setattr(conversion, "_source_for_workflow", AsyncMock(side_effect=[
         StorageError("not_found", provider_code="NoSuchKey"), object(),
     ]))
+    monkeypatch.setattr(conversion, "_prepare_source_graph", AsyncMock(return_value=SimpleNamespace(
+        allow_outbound_access=True, summaries={}, sources={}, analysis={"dependencies": {}})))
     monkeypatch.setattr(conversion, "_blocked_report_for_source", AsyncMock(return_value={
         "source_fingerprint": "a" * 64, "status": "blocked",
     }))
@@ -682,7 +684,7 @@ async def test_analysis_records_missing_source_and_continues_to_the_next_workflo
     }))
     context = SimpleNamespace(
         job_id=uuid4(), checkpoint={"total": 2, "completed": 0},
-        save_checkpoint=AsyncMock(), report=AsyncMock(),
+        save_checkpoint=AsyncMock(), report=AsyncMock(), file_compute=AsyncMock(), checkpoint_in_transaction=AsyncMock(),
     )
     payload = SimpleNamespace(
         workflow_ids=[missing.id, available.id], scope="all", platform_cutover=False,

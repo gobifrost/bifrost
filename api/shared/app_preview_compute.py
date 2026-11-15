@@ -1,15 +1,12 @@
 """Bounded, source-only transport for the existing per-file preview compiler."""
 from __future__ import annotations
 
-import hashlib
-import json
-import os
-import tempfile
 from dataclasses import asdict
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 
 from shared.file_compute import FileCompute, decode_file_result, encode_file_transfer
-from shared.worker_transfer import FILE_TRANSFER_VERSION, MAX_CHUNK_BYTES, FileTransfer, FileTransferManifest, ReceivedFileTransfer
+from shared.worker_transfer import FileTransfer, ReceivedFileTransfer
+from shared.json_compute_transfer import write_json_transfer, read_json_transfer
 from src.services.app_compiler import AppCompilerInfrastructureError, CompileResult, _validate_compile_input
 from src.services.app_resource_limits import DEFAULT_APP_ARTIFACT_LIMITS
 from src.services.node_subprocess import APP_COMPILER_NODE_POLICY
@@ -21,34 +18,6 @@ MAX_INPUT_BYTES = APP_COMPILER_NODE_POLICY.max_input_bytes + 1024 * 1024
 MAX_RESULT_BYTES = APP_COMPILER_NODE_POLICY.max_output_bytes + 1024 * 1024
 
 
-def _write(value: dict, kind: str, limit: int) -> FileTransfer:
-    body = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode()
-    if len(body) > limit:
-        raise ValueError("Preview compiler transfer exceeds its byte limit")
-    fd, name = tempfile.mkstemp(prefix="bifrost-preview-")
-    path = Path(name)
-    try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(body)
-        return FileTransfer(FileTransferManifest(FILE_TRANSFER_VERSION, kind, len(body),
-            hashlib.sha256(body).hexdigest(), MAX_CHUNK_BYTES,
-            (len(body) + MAX_CHUNK_BYTES - 1) // MAX_CHUNK_BYTES, limit), path)
-    except BaseException:
-        path.unlink(missing_ok=True)
-        raise
-
-
-def _read(transfer: ReceivedFileTransfer, kind: str, limit: int) -> dict:
-    manifest = transfer.manifest
-    if manifest.kind != kind or manifest.total_size > limit or transfer.path.stat().st_size != manifest.total_size:
-        raise ValueError("Preview compiler transfer kind or size is invalid")
-    body = transfer.path.read_bytes()
-    if hashlib.sha256(body).hexdigest() != manifest.sha256:
-        raise ValueError("Preview compiler transfer digest is invalid")
-    value = json.loads(body)
-    if not isinstance(value, dict):
-        raise ValueError("Preview compiler transfer must be an object")
-    return value
 
 
 def _validated_files(files: object) -> list[dict]:
@@ -63,19 +32,19 @@ def _validated_files(files: object) -> list[dict]:
 
 
 def encode_inputs(files: list[dict]) -> FileTransfer:
-    return _write({"files": _validated_files(files)}, INPUT_KIND, MAX_INPUT_BYTES)
+    return write_json_transfer({"files": _validated_files(files)}, INPUT_KIND, MAX_INPUT_BYTES)
 
 
 def decode_inputs(transfer: ReceivedFileTransfer) -> list[dict]:
-    return _validated_files(_read(transfer, INPUT_KIND, MAX_INPUT_BYTES).get("files"))
+    return _validated_files(read_json_transfer(transfer, INPUT_KIND, MAX_INPUT_BYTES).get("files"))
 
 
 def encode_results(results: list[CompileResult], input_digest: str) -> FileTransfer:
-    return _write({"input_sha256": input_digest, "results": [asdict(item) for item in results]}, RESULT_KIND, MAX_RESULT_BYTES)
+    return write_json_transfer({"input_sha256": input_digest, "results": [asdict(item) for item in results]}, RESULT_KIND, MAX_RESULT_BYTES)
 
 
 def decode_results(transfer: ReceivedFileTransfer, *, input_digest: str, expected_paths: set[str]) -> list[CompileResult]:
-    value = _read(transfer, RESULT_KIND, MAX_RESULT_BYTES)
+    value = read_json_transfer(transfer, RESULT_KIND, MAX_RESULT_BYTES)
     raw = value.get("results")
     if value.get("input_sha256") != input_digest or not isinstance(raw, list) or len(raw) != len(expected_paths):
         raise AppCompilerInfrastructureError("Preview compiler result does not match its source snapshot")

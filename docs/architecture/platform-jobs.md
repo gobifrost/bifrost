@@ -587,5 +587,27 @@ The final transaction takes the canonical owner/job fence before the workflow
 registry lock, reauthorizes the administrator after source review, then commits
 the inherited default and audit record together. Large source summaries run off
 the API event loop. Cutover is a non-control API task, so its potentially long
-review does not occupy the reserved maintenance control slot. Analysis and apply
-retain their current placement until their separate compute migrations land.
+review does not occupy the reserved maintenance control slot. Apply retains its current placement pending its separate compute migration.
+
+### Workflow permission source graph compute
+
+`workflow.permissions.analyze` uses `workflow.graph.analyze.v1` on the normal
+launcher. The API captures source, resolves each requested dependency through
+its existing Solution/repository scope, and retains permission mappings,
+authorization, authority/consent reads, report/cache writes and publication.
+No database scope spans a physical graph stage. The API rechecks workflow
+metadata, Solution outbound scope, administrator authority and owner/job fences
+before committing a report and its cursor checkpoint together.
+
+Worker stages parse source and traverse the existing conservative static graph;
+they never import workspace code, read storage or receive platform credentials.
+Dependency requests are limited to captured source identities. Each source is
+parsed once per preparation, and later stages reuse compact summaries without
+retransmitting raw source. Shared transfer byte limits bound each round; the
+analyzer's dependency/graph limits remain conservative findings. Results bind to
+the exact input digest and captured dependency hashes, with evidence constrained
+to captured source. Source summaries are cached only for actual dependencies.
+All permission proposals still require the established explicit review/apply
+path. Cutover and the not-yet-migrated apply path retain their current source
+review behavior; the shared graph prerequisite is available for apply's next
+migration. Analyzer loading remains lazy outside actual analysis work.
