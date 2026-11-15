@@ -171,14 +171,17 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         title="Code",
         area="Automation",
         description=(
-            "Submitting arbitrary inline CPython to the workflow execution "
-            "endpoint. Execute Code admits that capability at the Platform "
-            "boundary; it does not change the execution's SDK context or "
-            "organization scope."
+            "Running trusted inline CPython on the execution worker. Treat "
+            "Execute Code as platform-administrator-level trust: the worker "
+            "does not provide a security sandbox for untrusted code. SDK "
+            "requests retain their existing permissions and organization "
+            "checks; those checks do not contain arbitrary Python."
         ),
         who_should_hold=(
-            "Platform admins, or an admin-assigned role at the Platform "
-            "boundary; never the User or Platform Operator built-in role."
+            "Platform admins, or explicitly trusted platform code authors "
+            "through an admin-assigned role at the Platform boundary. "
+            "Delegation requires platform-administrator-level trust; never "
+            "grant to the User or Platform Operator built-in role."
         ),
         verbs={"execute": "Execute Code"},
     ),

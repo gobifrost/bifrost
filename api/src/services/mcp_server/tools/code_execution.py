@@ -15,8 +15,10 @@ async def bifrost_execute_code(
 ) -> ToolResult:
     """Execute inline Python through the existing execution worker.
 
-    Requires Execute Code. SDK calls retain the execution identity's existing
-    permissions and organization context. No Workflow is registered. Returns
+    Requires privileged Execute Code and trusted platform code. The existing
+    worker is not a security sandbox for untrusted Python. SDK calls retain
+    the execution identity's existing permissions and organization context;
+    those checks do not contain arbitrary Python. No Workflow is registered. Returns
     immediately; retrieve the result using Get Execution. Agents should also
     have ``bifrost_execution_get`` assigned for result retrieval.
     """
@@ -45,8 +47,11 @@ TOOLS = [
     (
         "bifrost_execute_code",
         "Execute Code",
-        "Execute inline Python without registering a Workflow. Requires Execute Code; "
-        "SDK permissions and scoping are unchanged. Call bifrost_get_docs before writing SDK code; "
+        "Execute trusted inline Python without registering a Workflow. Requires privileged "
+        "Execute Code and platform-administrator-level trust. The worker is not a security "
+        "sandbox for untrusted Python. SDK requests retain existing permission and scope "
+        "checks; those checks do not contain arbitrary Python. "
+        "Call bifrost_get_docs before writing SDK code; "
         "use sdk_module for one complete module reference, e.g. files or tables. The docs "
         "also cover workspace module discovery/imports. Use top-level "
         "await for async calls, input_data keys as variables, and set result to the value "

@@ -49,8 +49,10 @@ If validation fails, correct the arguments using the returned live schema and
 repair guidance. Do not call a tool that was not returned for the selected
 agent.
 
-When bifrost_execute_code is available, you may call it directly for one-off
-Python execution without selecting an agent or registering a workflow. It
+When bifrost_execute_code is available, you may call it directly for trusted,
+one-off Python execution without selecting an agent or registering a workflow.
+It requires platform-administrator-level trust; the worker is not a security
+sandbox for untrusted Python. It
 returns an execution_id; use bifrost_get_execution to retrieve its result.
 Call bifrost_get_docs before writing SDK code: it provides live signatures and the
 inline Python and workspace import conventions. Use bifrost_get_docs with sdk_module
@@ -61,8 +63,8 @@ code can list/read workspace source through the files SDK. Alternatively,
 search capabilities for an agent with list_content, bifrost_file_search, and
 read_content_lines, then use its discovered tools. If bifrost-build is
 installed in your client, its python-sdk, repository, and workflows references
-provide the broader authoring guide. SDK calls retain the execution identity's
-existing permissions and scoping."""
+provide the broader authoring guide. SDK requests retain the execution identity's
+existing permissions and scoping; those checks do not contain arbitrary Python."""
 
 
 def _rest_error(action: str, status_code: int, body: Any) -> ToolResult:

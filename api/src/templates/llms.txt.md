@@ -4,10 +4,15 @@ Bifrost is an automation platform for building workflows, forms, agents, and app
 
 ## Execute Code Without a Workflow
 
-`bifrost_execute_code` runs one-off Python through the existing execution worker.
-It requires Execute Code (`code.execute`); SDK operations retain the execution
-identity's existing permissions and organization access. It does not register a
-workflow or grant repository, integration, or secrets access.
+`bifrost_execute_code` runs trusted, one-off Python through the existing execution
+worker without registering a workflow. Execute Code (`code.execute`) is a
+privileged capability: grant it only to platform administrators or code authors
+trusted with platform-administrator-level access. The worker does not provide a
+security sandbox for untrusted Python.
+
+SDK requests retain the execution identity's existing permissions and organization
+checks. Those checks govern SDK requests; they do not contain arbitrary Python
+or prevent harmful actions that the execution identity is authorized to perform.
 
 The script supports top-level `await`. Keys from `input_data` are available as
 variables. Assign the value to return to `result`; no decorator is needed:
