@@ -1,0 +1,94 @@
+{
+  "phase": "cloudflare-capacity-conformance-phase6",
+  "source_commit": "304c0d130",
+  "formal_conformance": {
+    "case_count": 17,
+    "executed": false,
+    "pass_count": null,
+    "fail_count": null,
+    "skip_count": null,
+    "reason": "No fixture reached a physical ContainerStarted warm-up proof."
+  },
+  "fixtures": [
+    {
+      "name": "p6",
+      "setup": "Wrangler",
+      "disposition": "Application naming mismatch before protocol",
+      "physical_launch_observed": false,
+      "cleanup": "owned application and script deleted"
+    },
+    {
+      "name": "p6b",
+      "setup": "Wrangler",
+      "disposition": "Wrangler DNS failure during secret upload before protocol",
+      "physical_launch_observed": false,
+      "cleanup": "owned application and script deleted"
+    },
+    {
+      "name": "p6c",
+      "setup": "Wrangler",
+      "disposition": "Cloudflare API code 10007 during Wrangler version readback before protocol",
+      "physical_launch_observed": false,
+      "cleanup": "owned script deleted; no owned application discovered"
+    },
+    {
+      "name": "p6d",
+      "setup": "HTTP adapter before metadata repair",
+      "disposition": "First physical start returned HTTP 502; dashboard had one Durable Object and zero instances",
+      "physical_launch_observed": false,
+      "cleanup": "application and script HTTP 200; namespace absent"
+    },
+    {
+      "name": "p6e",
+      "setup": "HTTP adapter before metadata repair",
+      "disposition": "Same-incarnation reconciliation later hit provider URLError; intermediate timeline was not durably flushed",
+      "physical_launch_observed": false,
+      "cleanup": "application and script HTTP 200; namespace absent"
+    },
+    {
+      "name": "p6f",
+      "setup": "Repaired HTTP adapter with index image digest",
+      "disposition": "One allowed replay returned HTTP 200; later provider DNS gaierror",
+      "physical_launch_observed": false,
+      "cleanup": "application and script HTTP 200; namespace absent"
+    },
+    {
+      "name": "p6g",
+      "setup": "Repaired HTTP adapter, resolved amd64 image, Docker DNS 1.1.1.1",
+      "image_digest": "sha256:7138a8c77dada29af2bc573176f2e9e41cf3d68b900694a751791074155e1fa7",
+      "warmup": {
+        "initial_start_status": 502,
+        "readback_status": 200,
+        "conditional_replay_status": 200,
+        "observation_deadline_seconds": 240,
+        "container_started_count": 0,
+        "dashboard": {
+          "durable_object_count": 1,
+          "instance_count": 0
+        }
+      },
+      "formal_suite_started": false,
+      "concurrent_probes_started": false,
+      "cleanup": "application and script HTTP 200; namespace absent"
+    }
+  ],
+  "configuration_differential": {
+    "repaired_adapter": {
+      "compatibility_date": "2026-11-10",
+      "container_metadata": "named WorkerContainer",
+      "observability": true
+    },
+    "fixture_uncertainties": [
+      "Fixture uses a sleeping entrypoint; root path uses the image default entrypoint.",
+      "Fixture uses a public dummy API origin and derived in-memory capacity credential.",
+      "The configuration repair is coupled evidence, not isolated causality."
+    ]
+  },
+  "claims_not_made": [
+    "Cloudflare capacity conformance",
+    "Physical singleton proof",
+    "Production qualification",
+    "Invoice or cost attribution",
+    "Sustained-load, recovery, or multi-worker scale qualification"
+  ]
+}

@@ -1,0 +1,151 @@
+{
+  "source_sha": "bac3aaf68",
+  "image_digest": "sha256:f0bf75427c4a0cb5918e26bffd967140b0064335853500ee8c1a9ffc07642411",
+  "topology": {
+    "local_worker_replicas": 0,
+    "local_scheduler_replicas": 0,
+    "caller": "host through NetBird EU relay",
+    "api": "isolated local Docker API",
+    "physical_compute": "Cloudflare Containers Virginia",
+    "profile_declared_handlers": [
+      "workflow.execute"
+    ],
+    "profile_declared_compute": [
+      "app.compile.v1"
+    ],
+    "warm_workers": 0,
+    "max_workers": 2,
+    "idle_seconds": 120
+  },
+  "deploy": {
+    "job_id": "f504bb85-a822-4058-bd9a-ad507ca1b22d",
+    "status": "succeeded",
+    "caller_seconds": 31.44000363908708,
+    "checkpoint": {
+      "job_id": "f504bb85-a822-4058-bd9a-ad507ca1b22d",
+      "stage_id": "ec7f223c-505a-42ac-ab0d-b0e9d1903e48",
+      "worker_id": "1b1cd6e3-b27e-4d38-9fcd-806a3d56b336",
+      "input_sha256": "9b397998b86023d77f9b95d4595e438e6b8d347f8fa8772130786710787f6955",
+      "capability": "app.compile.v1"
+    },
+    "app_id": "af184688-2950-4fc0-b1b2-5f1345dbfe4b",
+    "deployment_id": "9ffdba20-c1a6-446b-b235-272cc7cc9025",
+    "sdk_fingerprint": "bbb905d36e3b3f6e",
+    "index_sha256": "68cd078614e46933a8e9823297c213b5d5fbb7acf711e4d259b3866e85d02c0d",
+    "js_sha256": "44fb48cb5e348bcbbc8983eb9af8f506ef982c9a598e26347add5c98fd13f741",
+    "js_bytes": 17719
+  },
+  "sdk_rebuild": {
+    "job_id": "cd3d76da-fa43-4dd0-9251-f9a5fe6b487d",
+    "status": "succeeded",
+    "caller_seconds": 10.577436143532395,
+    "checkpoint": {
+      "job_id": "cd3d76da-fa43-4dd0-9251-f9a5fe6b487d",
+      "stage_id": "7e144a02-f9e1-4d55-a06c-e0606c834d76",
+      "worker_id": "1b1cd6e3-b27e-4d38-9fcd-806a3d56b336",
+      "input_sha256": "3592d113d3ae35a6544c3b28f491fc3d33cd28bdb70fd9e1905756990b05ea3f",
+      "capability": "app.compile.v1"
+    },
+    "app_id": "af184688-2950-4fc0-b1b2-5f1345dbfe4b",
+    "first_deployment_id": "9ffdba20-c1a6-446b-b235-272cc7cc9025",
+    "updated_deployment_id": "d74b7801-4fc1-42bf-ab72-1a580c37afcc",
+    "current_sdk_fingerprint": "bbb905d36e3b3f6e",
+    "retained_source_identical": true,
+    "synthetic_stale_marker": true
+  },
+  "cancellation_probe": {
+    "job_id": "cd0d7b7e-133e-46ce-a750-81d2b044da8c",
+    "status": "succeeded",
+    "request_accepted": false,
+    "physical_stop_proven": false,
+    "disposition": "application.deploy currently disallows running cancellation; shared endpoint correctly returned accepted=false. Probe expectation was invalid; build continued normally."
+  },
+  "workers_at_capture": [
+    {
+      "id": "1b1cd6e3-b27e-4d38-9fcd-806a3d56b336",
+      "state": "retired",
+      "version": "v2.0.0-111-gbac3aaf68",
+      "end_reason": "idle",
+      "capacity_resource_uid": "b0221fd47c44dd8175cd596fc97b9f42",
+      "capacity_resource_deleted_at": "2026-11-14 21:06:52.512246+00:00",
+      "created_at": "2026-11-14 21:04:16.753036+00:00",
+      "ready_at": "2026-11-14 21:04:26.274385+00:00",
+      "ended_at": "2026-11-14 21:06:47.724018+00:00",
+      "runs_handled": 0,
+      "memory_limit_bytes": 4294967296,
+      "supported_handlers": [
+        "workflow.execute"
+      ],
+      "supported_compute": [
+        "app.compile.v1",
+        "agent.loop.v1"
+      ]
+    },
+    {
+      "id": "bc92eaf8-1f25-4c07-99fc-6c237891cf50",
+      "state": "retired",
+      "version": "v2.0.0-111-gbac3aaf68",
+      "end_reason": "idle",
+      "capacity_resource_uid": "48c37f44c0e9c6aeb14952e3993bf6d4",
+      "capacity_resource_deleted_at": "2026-11-14 21:34:21.774884+00:00",
+      "created_at": "2026-11-14 21:31:00.419488+00:00",
+      "ready_at": "2026-11-14 21:31:12.400329+00:00",
+      "ended_at": "2026-11-14 21:34:18.583373+00:00",
+      "runs_handled": 2,
+      "memory_limit_bytes": 4294967296,
+      "supported_handlers": [
+        "workflow.execute"
+      ],
+      "supported_compute": [
+        "app.compile.v1",
+        "agent.loop.v1"
+      ]
+    }
+  ],
+  "limitations": [
+    "One deploy and one SDK rebuild are observations, not latency distributions.",
+    "SDK rebuild used a synthetic stale metadata marker; SDK source bytes were unchanged.",
+    "Running job checkpoints prove compute attribution, but terminal PlatformJob.result replaces them. Durable completed-job compute attribution remains unfinished.",
+    "Frozen enrollment stored extra advertised agent.loop.v1 despite profile omission; this was subsequently fixed with declaration intersection and focused tests, not qualified in this image. No agent handler was eligible.",
+    "No process-stop or API-process-loss recovery claim follows from the cancellation probe.",
+    "No invoice attribution, sustained load, production sizing, or local latency regression estimate follows from these cloud observations."
+  ],
+  "canonical_resource_lifetime_seconds": 357.115,
+  "application_deleted_at_utc": "2026-11-14T21:36:44.066839+00:00",
+  "physical_instances_after_work": {
+    "instances": [],
+    "durable_objects": [
+      {
+        "assigned_at": "2026-11-14T21:07:00Z",
+        "id": "0b3d6ac93c56f20bb466430dfe89b23bf9e3680a037209a6a9906feb1e1f07c9",
+        "name": "1b1cd6e3-b27e-4d38-9fcd-806a3d56b336"
+      },
+      {
+        "assigned_at": "2026-11-14T21:34:30Z",
+        "id": "d3486628cdf4bb9e0d116fbfb3076f979b7bab2c9e6a249acaad91ad8a9a8cd0",
+        "name": "bc92eaf8-1f25-4c07-99fc-6c237891cf50"
+      }
+    ]
+  },
+  "cost_rate_estimate": {
+    "rate_source": "https://developers.cloudflare.com/containers/platform/pricing/",
+    "memory_usd_per_gib_second": "0.0000025",
+    "active_cpu_usd_per_vcpu_second": "0.000020",
+    "disk_usd_per_gb_second": "0.00000007",
+    "assumed_per_worker": {
+      "memory_gib": 4,
+      "cpu_vcpu": 0.5,
+      "disk_gb": 8
+    },
+    "canonical_lifetime_memory_disk_usd": 0.003771,
+    "canonical_lifetime_with_full_cpu_usd": 0.007342,
+    "interpretation": "Rate estimate over canonical reservation-to-confirmed-resource-deletion windows, not measured billed runtime or invoice. Includes idle windows and excludes Workers plan/allowances, Durable Objects, logs, registry, and egress. Provider-side image distribution/pre-provisioning precedes canonical reservation and is outside these windows; this is not a total-spike cost bound."
+  },
+  "physical_app_instance": {
+    "id": "d03e8a53-48a7-4c6d-bfc5-6d76b54f0f9d",
+    "location": "iad03",
+    "observed_image_pull_seconds": 83.812,
+    "observed_vm_boot_seconds": 4.678,
+    "image_distribution_excluded_from_job_time": true
+  }
+}
