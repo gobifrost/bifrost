@@ -185,6 +185,74 @@ async def test_historic_unattended_pending_run_without_proven_identity_fails_bef
 
 
 @pytest.mark.asyncio
+async def test_stale_claim_drops_workflow_not_found_without_terminal_publication() -> None:
+    """A lost executor claim must not publish a terminal outcome."""
+    from src.services.execution.service import WorkflowNotFoundError
+
+    worker_id = UUID("00000000-0000-0000-0000-0000000000cc")
+    update = AsyncMock(return_value=False)
+    execution_update = AsyncMock()
+    history_update = AsyncMock()
+    consumer = _consumer()
+    consumer.owner_worker_id = worker_id
+
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()),
+        patch(f"{MODULE}.update_execution", new=update),
+        patch(f"{MODULE}.publish_execution_update", new=execution_update),
+        patch(f"{MODULE}.publish_history_update", new=history_update),
+        patch(
+            "src.services.execution.service.get_workflow_for_execution",
+            new=AsyncMock(side_effect=WorkflowNotFoundError()),
+        ),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ),
+    ):
+        await consumer.process_message(
+            {"execution_id": EXECUTION_ID, "workflow_id": RUN_USER_ID, "sync": True},
+            _claimed(workflow_id=RUN_USER_ID, script_name=None),  # type: ignore[arg-type]
+        )
+
+    assert update.await_args.kwargs["owner_worker_id"] == worker_id
+    execution_update.assert_not_awaited()
+    history_update.assert_not_awaited()
+    consumer._redis_client.push_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_stale_claim_drops_setup_failure_without_terminal_publication() -> None:
+    """Setup failures respect the same executor-claim fence as pool results."""
+    worker_id = UUID("00000000-0000-0000-0000-0000000000cc")
+    update = AsyncMock(return_value=False)
+    execution_update = AsyncMock()
+    history_update = AsyncMock()
+    consumer = _consumer()
+    consumer.owner_worker_id = worker_id
+    consumer._pool.route_execution.side_effect = RuntimeError("pool unavailable")
+
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()),
+        patch(f"{MODULE}.update_execution", new=update),
+        patch(f"{MODULE}.publish_execution_update", new=execution_update),
+        patch(f"{MODULE}.publish_history_update", new=history_update),
+        patch(
+            "src.services.execution.queue_tracker.request_queue_position_refresh",
+            new=Mock(),
+        ),
+    ):
+        await consumer.process_message(
+            {**MESSAGE, "sync": True}, _claimed()  # type: ignore[arg-type]
+        )
+
+    assert update.await_args.kwargs["owner_worker_id"] == worker_id
+    execution_update.assert_not_awaited()
+    history_update.assert_not_awaited()
+    consumer._redis_client.push_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_legacy_unattended_actor_uses_current_identity_and_roles() -> None:
     identity = SimpleNamespace(
         id=UUID(RUN_USER_ID),

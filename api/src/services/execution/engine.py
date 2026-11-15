@@ -562,6 +562,19 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
     captured_variables: dict[str, Any] = {}  # Initialize to empty dict
     cache_expires_at_str: str | None = None  # For data providers
 
+    def drain_standard_streams() -> None:
+        """Add captured stdout/stderr to the normal persisted log payload."""
+        source = 'script' if is_script else 'workflow'
+        for stream, level in ((stdout_capture, 'info'), (stderr_capture, 'error')):
+            for line in stream.getvalue().splitlines():
+                if line:
+                    logger_output.append({
+                        'timestamp': datetime.now(timezone.utc).isoformat(),
+                        'level': level,
+                        'message': line,
+                        'source': source,
+                    })
+
     # SDK authentication uses the pre-minted runtime credential installed by
     # worker.py for this one-shot child.
     # The SDK's get_client() finds these credentials automatically.
@@ -652,6 +665,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
             "value": context.roi.value,
         }
 
+        drain_standard_streams()
         scrubbed_result, scrubbed_vars, scrubbed_logs, _ = _scrub_outputs(
             context, result, captured_variables, logger_output
         )
@@ -746,6 +760,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         # Free traceback references — already formatted above
         original_exc.__traceback__ = None
 
+        drain_standard_streams()
         _, scrubbed_vars, scrubbed_logs, scrubbed_err = _scrub_outputs(
             context, None, captured_variables, logger_output, error_message
         )
@@ -792,6 +807,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         )
         e.__traceback__ = None  # Free traceback references
 
+        drain_standard_streams()
         _, scrubbed_vars, scrubbed_logs, scrubbed_err = _scrub_outputs(
             context, None, captured_variables, logger_output, _wf_err_msg
         )
@@ -861,6 +877,7 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         _gen_err_msg = error_message
         e.__traceback__ = None  # Free traceback references
 
+        drain_standard_streams()
         _, scrubbed_vars, scrubbed_logs, scrubbed_err = _scrub_outputs(
             context, None, captured_variables, logger_output, _gen_err_msg
         )

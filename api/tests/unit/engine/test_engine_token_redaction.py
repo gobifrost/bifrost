@@ -75,6 +75,24 @@ async def test_engine_token_redacted_from_logs():
     assert _ENGINE_TOKEN not in json.dumps(result.logs)
 
 
+async def test_stdout_and_stderr_are_captured_and_redacted():
+    """Direct stream output uses the same persisted, redacted log path."""
+    async def writes_to_standard_streams():
+        import sys
+
+        print(f"stdout token {_ENGINE_TOKEN}")
+        print(f"stderr token {_ENGINE_TOKEN}", file=sys.stderr)
+        return "ok"
+
+    result = await execute(_request(writes_to_standard_streams))
+
+    assert result.status == ExecutionStatus.SUCCESS
+    messages = [entry["message"] for entry in result.logs]
+    assert "stdout token [REDACTED]" in messages
+    assert "stderr token [REDACTED]" in messages
+    assert _ENGINE_TOKEN not in json.dumps(result.logs)
+
+
 async def test_engine_token_redacted_from_error_message():
     async def uses_engine_token():
         raise RuntimeError(f"auth failed for {_ENGINE_TOKEN}")
