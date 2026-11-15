@@ -341,7 +341,7 @@ class TestMCPStatusEndpoint(_PersistedMCPCallers):
 
     @pytest.mark.e2e
     def test_status_success_for_platform_admin(self):
-        """Status should report the stable default MCP gateway surface."""
+        """Admin status includes the gateway and permission-enabled default tools."""
         headers = self.admin_headers
 
         response = requests.get(
@@ -364,8 +364,10 @@ class TestMCPStatusEndpoint(_PersistedMCPCallers):
             "bifrost_search_memory",
             "bifrost_save_memory",
             "bifrost_remove_memory",
+            "bifrost_execute_code",
+            "bifrost_get_docs",
         }
-        assert data["tools_count"] == 7
+        assert data["tools_count"] == 9
 
 
 # ==================== Bifrost Agent Plugin Endpoint Tests ====================
