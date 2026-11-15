@@ -568,8 +568,8 @@ async def test_revoked_delegation_or_tool_binding_is_denied_before_dispatch(
             entry_workflow_ids=workflow_ids,
         )
         child_tool = next(
-            name
-            for name, binding in composition._bindings.items()
+            binding.name
+            for binding in composition.snapshot.bindings
             if binding.owner_id == UUID(child["id"])
             and binding.original_name == f"wf_{test_tool_workflow['name']}"
         )
@@ -664,7 +664,7 @@ async def test_foreign_organization_delegate_is_not_composed_from_a_readable_roo
 
         assert all(
             binding.owner_id != UUID(child["id"])
-            for binding in composition._bindings.values()
+            for binding in composition.snapshot.bindings
         )
         with pytest.raises(AgentCompositionError, match="is not available"):
             await composition.resolve_call("foreign-capability", {})
