@@ -6,7 +6,8 @@ artifacts through the external-isolated claim path. It does *not* prove
 Cloudflare placement, provider live conformance, or performance characteristics.
 
 Cost: one PlatformJob per case: an independent App deployment and a Solution
-deployment. The Solution case uniquely proves sequential inspect→compile→source-pack stages
+deployment, plus one durable export in the export case. The export proves API-only
+crypto, authorized download and immutable attempt publication. The Solution case uniquely proves sequential inspect→compile→source-pack stages
 under one exact isolated claim. Existing thin-worker journeys
 cover legacy publish and SDK rebuilds; this case exclusively covers the
 external resource reservation → normal Launcher → API file-compute boundary.
@@ -35,6 +36,12 @@ from src.models.orm.config import SystemConfig
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
+from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.models.orm.solution_config_schema import SolutionConfigSchema
+from src.models.orm.config import Config
+from src.models.orm.solutions import Solution
+from src.models.enums import ConfigType
+from src.services.solutions.secrets_blob import decode_secrets_blob
 from src.services.solutions.deploy import solution_entity_id
 from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 from src.services.application_source_artifact import ApplicationSourceArtifactStorage
@@ -93,7 +100,7 @@ async def _absent_config(async_session_factory, category: str, key: str) -> None
         pytest.fail(f"external isolated E2E requires an empty {category}/{key} config")
 
 
-@pytest.mark.parametrize("job_type", ["application.deploy", "solution.deploy"])
+@pytest.mark.parametrize("job_type", ["application.deploy", "solution.deploy", "solution.export"])
 async def test_external_isolated_launcher_promotes_one_app_deployment(
     e2e_client, e2e_api_url, platform_admin, async_session_factory, job_type
 ) -> None:
@@ -113,6 +120,9 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
     # MiB floor. This fixture proves execution, not hardware conformance.
     launcher_memory_mib = launcher_memory_limit // (1024 * 1024)
     launcher_memory_limit = launcher_memory_mib * 1024 * 1024
+    export_job_id: uuid.UUID | None = None
+    exported_config_key = f"export_value_{suffix}"
+    export_password = "fixture-export-password"
     solution_id: uuid.UUID | None = None
     solution_slug = f"external-solution-{suffix}"
     app_id: uuid.UUID | None = None
@@ -220,25 +230,57 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
             )
             assert created.status_code == 201, created.text
             solution_id = uuid.UUID(created.json()["id"])
-            manifest_app_id = uuid.uuid4()
-            app_id = solution_entity_id(solution_id, manifest_app_id)
-            source = io.BytesIO()
-            with zipfile.ZipFile(source, "w") as archive:
-                archive.writestr("bifrost.solution.yaml", f"slug: {solution_slug}\nname: External Solution\n")
-                archive.writestr(".bifrost/apps.yaml", json.dumps({"apps": {str(manifest_app_id): {
-                    "name": "External Solution App", "slug": f"solution-app-{suffix}",
-                    "path": "apps/demo", "app_model": "standalone_v2",
-                    "dependencies": {"vite": "^6.2.2"},
-                }}}))
-                with zipfile.ZipFile(io.BytesIO(_vite_source_zip())) as app_source:
-                    for info in app_source.infolist():
-                        archive.writestr(f"apps/demo/{info.filename}", app_source.read(info))
-            enqueued = e2e_client.post(
-                f"/api/solutions/{solution_id}/deploy", headers=upload_headers,
-                files={"file": ("solution.zip", source.getvalue(), "application/zip")},
-            )
+            if job_type == "solution.export":
+                async with async_session_factory() as db:
+                    solution = await db.get(Solution, solution_id)
+                    assert solution is not None
+                    solution.readme = "Current backup README"
+                    db.add(SolutionConfigSchema(solution_id=solution_id, key=exported_config_key, type="string"))
+                    db.add(Config(key=exported_config_key, value={"value": "API-only backup value"},
+                                  config_type=ConfigType.STRING, organization_id=None, updated_by="export-fixture"))
+                    await db.commit()
+                source = io.BytesIO()
+                with zipfile.ZipFile(source, "w") as archive:
+                    archive.writestr("bifrost.solution.yaml", f"slug: {solution_slug}\nname: Export Solution\n")
+                    archive.writestr("modules/retained.py", "VALUE = 'stored source'\n")
+                    archive.writestr("README.md", "Old README")
+                    archive.writestr(".bifrost/secrets.enc", b"stale encrypted content")
+                await SolutionSourceArtifactStorage(solution_id).write(source.getvalue())
+                enqueued = e2e_client.post(
+                    f"/api/solutions/{solution_id}/export-jobs", headers=headers,
+                    json={"options": {"include_configs": True, "include_secrets": False,
+                                     "include_tables": False, "include_files": False,
+                                     "password": export_password}},
+                )
+            else:
+                manifest_app_id = uuid.uuid4()
+                app_id = solution_entity_id(solution_id, manifest_app_id)
+                source = io.BytesIO()
+                with zipfile.ZipFile(source, "w") as archive:
+                    archive.writestr("bifrost.solution.yaml", f"slug: {solution_slug}\nname: External Solution\n")
+                    archive.writestr(".bifrost/apps.yaml", json.dumps({"apps": {str(manifest_app_id): {
+                        "name": "External Solution App", "slug": f"solution-app-{suffix}",
+                        "path": "apps/demo", "app_model": "standalone_v2",
+                        "dependencies": {"vite": "^6.2.2"},
+                    }}}))
+                    with zipfile.ZipFile(io.BytesIO(_vite_source_zip())) as app_source:
+                        for info in app_source.infolist():
+                            archive.writestr(f"apps/demo/{info.filename}", app_source.read(info))
+                enqueued = e2e_client.post(
+                    f"/api/solutions/{solution_id}/deploy", headers=upload_headers,
+                    files={"file": ("solution.zip", source.getvalue(), "application/zip")},
+                )
         assert enqueued.status_code == 202, enqueued.text
-        job_id = uuid.UUID(enqueued.json()["deploy_job_id" if solution_id is not None else "job_id"])
+        if job_type == "solution.export":
+            export_job_id = uuid.UUID(enqueued.json()["id"])
+            async with async_session_factory() as db:
+                job_id = await db.scalar(select(PlatformJob.id).where(
+                    PlatformJob.job_type == job_type, PlatformJob.resource_type == "solution_export",
+                    PlatformJob.resource_id == str(export_job_id),
+                ))
+            assert job_id is not None
+        else:
+            job_id = uuid.UUID(enqueued.json()["deploy_job_id" if solution_id is not None else "job_id"])
 
         async with async_session_factory() as db:
             job = await db.get(PlatformJob, job_id)
@@ -256,7 +298,9 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
                     version=get_version(),
                     supported_handlers=[],
                     supported_compute=(["app.compile.v2", "solution.archive.inspect.v1"]
-                                       if solution_id is not None else ["app.compile.v2"]),
+                                       if job_type == "solution.deploy" else
+                                       ["solution.archive.inspect.v1"] if job_type == "solution.export" else
+                                       ["app.compile.v2"]),
                     # This exact process will be the launcher below, so reserve
                     # its measured effective limit rather than fabricating a
                     # provider resource shape.
@@ -289,38 +333,64 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
         job = wait_for_job(e2e_client, headers, job_id, job_type, max_wait=120)
         assert job["attempt"] == 1
 
-        async with async_session_factory() as db:
-            persisted = await db.get(PlatformJob, job_id)
-            app = await db.get(Application, app_id)
-            assert persisted is not None and app is not None
-            assert persisted.executor_worker_id == worker_id
-            assert persisted.executor_attempt == 1
-            assert persisted.executor_capacity_scope == scope
-            assert persisted.executor_capacity_resource_uid == resource_uid
-            assert persisted.executor_compute_capability == (
-                "solution.archive.inspect.v1" if solution_id is not None else "app.compile.v2"
-            )
-            assert app.active_deployment_id is not None
-            deployment_id = app.active_deployment_id
-        if solution_id is None:
-            source = e2e_client.get(f"/api/applications/{app_id}/source", headers=headers)
-            assert source.status_code == 200, source.text
-            assert b"src/main.ts" in source.content
-            assert await ApplicationSourceArtifactStorage().deployment_source_exists(app_id, deployment_id)
+        if job_type == "solution.export":
+            async with async_session_factory() as db:
+                persisted = await db.get(PlatformJob, job_id)
+                exported = await db.get(SolutionExportJob, export_job_id)
+                assert persisted is not None and exported is not None
+                assert persisted.executor_worker_id == worker_id and persisted.executor_attempt == 1
+                assert persisted.executor_compute_capability == "solution.archive.inspect.v1"
+                assert exported.status == "completed" and exported.encrypted_options is None
+                assert exported.artifact_storage_key.startswith(f"solution-exports/{solution_id}/{export_job_id}/")
+                exported_digest = exported.artifact_sha256
+            detail = e2e_client.get(f"/api/solutions/export-jobs/{export_job_id}", headers=headers)
+            assert detail.status_code == 200, detail.text
+            assert detail.json()["status"] == "completed" and detail.json()["download_url"]
+            listing = e2e_client.get(f"/api/solutions/{solution_id}/export-jobs", headers=headers)
+            assert listing.status_code == 200, listing.text
+            assert any(item["id"] == str(export_job_id) and item["status"] == "completed" for item in listing.json()["jobs"])
+            downloaded = e2e_client.get(f"/api/solutions/export-jobs/{export_job_id}/download", headers=headers)
+            assert downloaded.status_code == 200, downloaded.text
+            import hashlib
+            assert hashlib.sha256(downloaded.content).hexdigest() == exported_digest
+            with zipfile.ZipFile(io.BytesIO(downloaded.content)) as archive:
+                assert archive.read("modules/retained.py") == b"VALUE = 'stored source'\n"
+                assert archive.read("README.md") == b"Current backup README"
+                content = decode_secrets_blob(archive.read(".bifrost/secrets.enc").decode(), password=export_password)
+                assert content.config_values == {exported_config_key: "API-only backup value"}
         else:
-            retained = await SolutionSourceArtifactStorage(solution_id).read()
-            assert retained is not None
-            with zipfile.ZipFile(io.BytesIO(retained)) as archive:
-                assert f"apps/solution-app-{suffix}/src/main.ts" in archive.namelist()
-        index_html = await SolutionAppBuilder().read_dist(
-            app_id, "index.html", deployment_id=deployment_id
-        )
-        assert b"assets/" in index_html
-        artifact = e2e_client.get(
-            f"/api/applications/{app_id}/dist/index.html", headers=headers
-        )
-        assert artifact.status_code == 200, artifact.text
-        assert artifact.content == index_html
+            async with async_session_factory() as db:
+                persisted = await db.get(PlatformJob, job_id)
+                app = await db.get(Application, app_id)
+                assert persisted is not None and app is not None
+                assert persisted.executor_worker_id == worker_id
+                assert persisted.executor_attempt == 1
+                assert persisted.executor_capacity_scope == scope
+                assert persisted.executor_capacity_resource_uid == resource_uid
+                assert persisted.executor_compute_capability == (
+                    "solution.archive.inspect.v1" if solution_id is not None else "app.compile.v2"
+                )
+                assert app.active_deployment_id is not None
+                deployment_id = app.active_deployment_id
+            if solution_id is None:
+                source = e2e_client.get(f"/api/applications/{app_id}/source", headers=headers)
+                assert source.status_code == 200, source.text
+                assert b"src/main.ts" in source.content
+                assert await ApplicationSourceArtifactStorage().deployment_source_exists(app_id, deployment_id)
+            else:
+                retained = await SolutionSourceArtifactStorage(solution_id).read()
+                assert retained is not None
+                with zipfile.ZipFile(io.BytesIO(retained)) as archive:
+                    assert f"apps/solution-app-{suffix}/src/main.ts" in archive.namelist()
+            index_html = await SolutionAppBuilder().read_dist(
+                app_id, "index.html", deployment_id=deployment_id
+            )
+            assert b"assets/" in index_html
+            artifact = e2e_client.get(
+                f"/api/applications/{app_id}/dist/index.html", headers=headers
+            )
+            assert artifact.status_code == 200, artifact.text
+            assert artifact.content == index_html
         assert process.wait(timeout=60) == 0
         async with async_session_factory() as db:
             worker = await db.get(ExecutionWorker, worker_id)
@@ -335,6 +405,9 @@ async def test_external_isolated_launcher_promotes_one_app_deployment(
             process.terminate()
             process.wait(timeout=20)
         async with async_session_factory() as db:
+            if export_job_id is not None:
+                await db.execute(delete(SolutionExportJob).where(SolutionExportJob.id == export_job_id))
+                await db.execute(delete(Config).where(Config.key == exported_config_key, Config.organization_id.is_(None)))
             if job_id is not None:
                 await db.execute(delete(SolutionDeployJob).where(SolutionDeployJob.id == job_id))
                 await db.execute(delete(PlatformJob).where(PlatformJob.id == job_id))

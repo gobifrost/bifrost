@@ -91,3 +91,23 @@ async def decode_file_result(
 
         task.add_done_callback(consume_late_decode)
         raise
+
+
+async def run_owned_file_io(operation: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+    """Join an owned file operation before cancellation can close its handles."""
+    task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+    cancelled = False
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            cancelled = True
+        except Exception:
+            if not cancelled:
+                raise
+    if cancelled:
+        # Consume a late failure without exposing input/crypto details.
+        if not task.cancelled():
+            task.exception()
+        raise asyncio.CancelledError
+    return task.result()

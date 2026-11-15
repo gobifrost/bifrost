@@ -246,7 +246,8 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="Solution Backup Exports",
-                description="Builds encrypted full-backup archives in an isolated pod.",
+                compute_capability=SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
+                description="Prepares backup source on a worker; the API encrypts and stores the backup.",
             ),
             _metadata(
                 "solution.deploy",

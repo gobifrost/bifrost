@@ -1531,12 +1531,12 @@ async def get_solution_export_job(
     row = await ctx.db.get(SolutionExportJob, job_id)
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Export job not found")
-    await _authorize_export_job(ctx.db, user, row)
+    canonical = await _authorize_export_job(ctx.db, user, row)
     await authorize_scope(ctx.db, user, row.organization_id, "solutions.read")
-    return public_job(row)
+    return public_job(row, canonical)
 
 
-async def _authorize_export_job(db: AsyncSession, user: UserPrincipal, row: SolutionExportJob) -> None:
+async def _authorize_export_job(db: AsyncSession, user: UserPrincipal, row: SolutionExportJob) -> PlatformJob:
     from src.services.platform_job_access import PlatformJobAccessDenied, require_platform_job_access
 
     caller = await load_caller(db, user)
@@ -1551,6 +1551,7 @@ async def _authorize_export_job(db: AsyncSession, user: UserPrincipal, row: Solu
         require_platform_job_access(caller, canonical)
     except PlatformJobAccessDenied as exc:
         raise HTTPException(404, "Export job not found") from exc
+    return canonical
 
 
 async def _downloadable_export_job(db: AsyncSession, job_id: UUID, user: UserPrincipal) -> SolutionExportJob:

@@ -63,6 +63,16 @@ async def inspect_solution_archive(zip_path: Path, compute: FileCompute):
 async def pack_solution_source(bundle: "SolutionBundle", compute: FileCompute) -> bytes:
     """Compress canonical source physically, retaining API byte verification."""
     transfer = await encode_file_transfer(_encode_canonical_source, bundle)
+    return await _pack_source_transfer(transfer, compute)
+
+
+async def pack_solution_archive(path: Path, compute: FileCompute) -> bytes:
+    """Compress a prepared source snapshot without transferring backup content."""
+    transfer = await encode_file_transfer(encode_solution_archive_inspect_inputs, path)
+    return await _pack_source_transfer(transfer, compute)
+
+
+async def _pack_source_transfer(transfer: FileTransfer, compute: FileCompute) -> bytes:
     outcome = await _compute_inspection(transfer, compute)
 
     def decode_source(received):

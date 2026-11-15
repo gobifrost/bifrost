@@ -391,3 +391,37 @@ async def test_job_cannot_select_an_operation_outside_its_declared_pipeline(tmp_
         checkpoint.assert_not_awaited()
     finally:
         await compute.release()
+
+
+@pytest.mark.asyncio
+async def test_owned_file_io_finishes_before_cancelled_caller_closes_handle():
+    import asyncio
+    import threading
+    from shared.file_compute import run_owned_file_io
+
+    entered, release = threading.Event(), threading.Event()
+    closed = False
+
+    def operation():
+        entered.set()
+        release.wait()
+        assert not closed
+
+    async def caller():
+        nonlocal closed
+        try:
+            await run_owned_file_io(operation)
+        finally:
+            closed = True
+
+    task = asyncio.create_task(caller())
+    try:
+        await asyncio.to_thread(entered.wait)
+        task.cancel()
+        await asyncio.sleep(0)
+        assert not task.done() and not closed
+    finally:
+        release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert closed
