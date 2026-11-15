@@ -24,7 +24,11 @@ from shared.version import get_version
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import effective_memory_sample, memory_pressure_ratio
 from src.services.execution.template_process import TemplateProcess
-from src.worker.remote.app_compile import AppCompileStages
+from src.worker.remote.app_compile import (
+    APP_COMPILE_OPERATION,
+    AppCompileStages,
+    app_compile_operation,
+)
 from shared.worker_compute import (
     AGENT_COMPUTE_CAPABILITY,
     SUMMARY_COMPUTE_CAPABILITY,
@@ -33,6 +37,7 @@ from shared.worker_compute import (
 from src.worker.remote.agent_compute import MAX_AGENT_COMPUTE_FRAME_BYTES
 from src.worker.remote.control_connection import connect_control, load_control_headers
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
+from src.worker.remote.file_operation import NamedFileOperationStages
 from src.worker.remote.protocol import (
     CREDENTIAL_PROTOCOL,
     EXECUTION_HANDLERS,
@@ -313,9 +318,11 @@ class Launcher:
         self.job_claims: dict[str, dict[str, str | int]] = {}
         # This owns only file-backed CPU compute; PlatformJob authority stays
         # with the API control host.
-        self.app_compiles = AppCompileStages(
+        self.file_operations = NamedFileOperationStages(
+            operations={APP_COMPILE_OPERATION: app_compile_operation()},
             terminal_notification=self.send_app_compile_state,
         )
+        self.app_compiles = AppCompileStages(self.file_operations)
         self.agent_compute_stages: dict[str, AgentComputeStage] = {}
         self._agent_compute_tombstones: dict[str, AgentComputeBinding] = {}
         self._agent_compute_retire_requested = False
@@ -529,8 +536,8 @@ class Launcher:
             "version": 1,
             "baseline_bytes": self.baseline_bytes,
             "routes": routes,
-            "compute_stages": self.app_compiles.inventory(),
-            "compute_retirement_requested": self.app_compiles.retire_requested,
+            "compute_stages": self.file_operations.inventory(),
+            "compute_retirement_requested": self.file_operations.retire_requested,
             "agent_compute_stages": [
                 {
                     **self.agent_compute_status(_agent_compute_binding_dict(stage.binding)),
@@ -839,8 +846,8 @@ class Launcher:
             elif action == "app_compile_release":
                 response = await self.app_compiles.release(payload)
                 if (
-                    self.app_compiles.retire_requested
-                    and not self.app_compiles.has_stages
+                    self.file_operations.retire_requested
+                    and not self.file_operations.has_stages
                     and not self._compute_retirement_drain_sent
                 ):
                     self._compute_retirement_drain_sent = True
@@ -1339,7 +1346,7 @@ class Launcher:
                 with contextlib.suppress(ConnectionError):
                     await self.send({"event": "sample", "current": current, "limit": limit,
                                      "pressure_ratio": memory_pressure_ratio(), "runs": samples,
-                                     "compute_stages": self.app_compiles.telemetry(),
+                                     "compute_stages": self.file_operations.telemetry(),
                                      "agent_compute_stages": self.agent_compute_telemetry()})
             tick += 1
             await asyncio.sleep(.25)
@@ -1395,7 +1402,7 @@ class Launcher:
                     asyncio.get_running_loop().remove_reader(stage.result.fileno())
                 stage.result.close()
         self.agent_compute_stages.clear()
-        await self.app_compiles.shutdown()
+        await self.file_operations.shutdown()
         await asyncio.to_thread(self.template.shutdown)
         if self.agent_template is not None:
             await asyncio.to_thread(self.agent_template.shutdown)
@@ -1414,7 +1421,7 @@ class Launcher:
         while (
             self.children
             or self.jobs
-            or self.app_compiles.has_live
+            or self.file_operations.has_live
             or any(stage.state in {"starting", "running"} for stage in self.agent_compute_stages.values())
             or self.pending_terminal
         ) and time.monotonic() < deadline:

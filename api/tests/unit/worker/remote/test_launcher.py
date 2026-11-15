@@ -12,7 +12,12 @@ import pytest
 from shared.app_build_compute import MAX_INPUT_TRANSFER_BYTES
 from shared.worker_transfer import FileTransferManifest
 from src.worker.remote.identity import LauncherIdentity
-from src.worker.remote.app_compile import AppCompileStages
+from src.worker.remote.app_compile import (
+    APP_COMPILE_OPERATION,
+    AppCompileStages,
+    app_compile_operation,
+)
+from src.worker.remote.file_operation import NamedFileOperationStages
 from src.worker.remote.launcher import Launcher
 from src.worker.remote.protocol import ControlEnvelope, MAX_FRAME_BYTES, fragment
 
@@ -201,7 +206,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
             }
         ]
     finally:
-        await launcher.app_compiles.shutdown()
+        await launcher.file_operations.shutdown()
 
 
 @pytest.mark.asyncio
@@ -217,9 +222,13 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
     socket = AsyncMock()
     launcher = Launcher(socket, identity=identity, secret="secret")
     launcher.session_generation = 1
-    launcher.app_compiles = AppCompileStages(
-        temp_dir=tmp_path, max_active=2, max_records=2
+    launcher.file_operations = NamedFileOperationStages(
+        operations={APP_COMPILE_OPERATION: app_compile_operation()},
+        temp_dir=tmp_path,
+        max_active=2,
+        max_records=2,
     )
+    launcher.app_compiles = AppCompileStages(launcher.file_operations)
     manifest = FileTransferManifest(
         version=1,
         kind="app_build_inputs",
@@ -249,7 +258,7 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
             generation=1,
         )
         await asyncio.sleep(0)
-        assert launcher.app_compiles.retire_requested is False
+        assert launcher.file_operations.retire_requested is False
         assert not any(
             ControlEnvelope.from_json(call.args[0]).payload == {"event": "draining"}
             for call in socket.send.await_args_list
@@ -273,4 +282,4 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
         with pytest.raises(RuntimeError, match="retirement"):
             launcher.app_compiles.prepare(payload())
     finally:
-        await launcher.app_compiles.shutdown()
+        await launcher.file_operations.shutdown()
