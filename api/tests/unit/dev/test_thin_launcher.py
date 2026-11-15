@@ -180,9 +180,16 @@ async def test_failed_bootstrap_exits_without_reusing_an_authenticated_identity(
 @pytest.mark.asyncio
 async def test_lost_initial_welcome_preserves_the_hello_sequence() -> None:
     first = Mock(send=AsyncMock(), recv=AsyncMock(side_effect=ConnectionError("welcome lost")))
-    second = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
-        "event": "welcome", "session_generation": 2,
-    })))
+    second = Mock(send=AsyncMock(), recv=AsyncMock())
+    second.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 2}),
+        ControlEnvelope(
+            session_generation=2,
+            sequence=1,
+            kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
     launcher = _launcher(first)
     launcher.start, launcher.stop, launcher.send = (AsyncMock() for _ in range(3))
     launcher.inventory = Mock(return_value={})
@@ -767,18 +774,26 @@ async def test_unencodable_result_becomes_replayable_failure_and_next_result_com
     assert len(launcher.pending_terminal) == len(launcher.pending_terminal_inventory) == 2
     assert "sensitive" not in json.dumps(sent)
 
-    new_socket = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
-        "event": "welcome", "session_generation": 2,
-    })))
+    new_socket = Mock(send=AsyncMock(), recv=AsyncMock())
+    new_socket.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 2}),
+        ControlEnvelope(
+            session_generation=2,
+            sequence=1,
+            kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
     await launcher.reconnect(new_socket, {})
     for event in list(launcher.pending_terminal.values()):
         await launcher.send(event)
     replayed = [ControlEnvelope.from_json(call.args[0]).payload for call in new_socket.send.await_args_list[1:]]
     assert replayed == sent
+    next_sequence = launcher._last_command_sequence + 1
     acks = [ControlEnvelope(session_generation=2, sequence=i, kind="ack",
                             payload={"event_id": event["_event_id"]}).to_json()
-            for i, event in enumerate(replayed, start=1)]
-    retired = ControlEnvelope(session_generation=2, sequence=3, kind="command",
+            for i, event in enumerate(replayed, start=next_sequence)]
+    retired = ControlEnvelope(session_generation=2, sequence=next_sequence + len(acks), kind="command",
                               payload={"id": "retire", "action": "retired", "payload": {}}).to_json()
     frames = iter([*acks, retired])
 
