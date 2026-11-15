@@ -1123,3 +1123,37 @@ async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_for
 @pytest.fixture(autouse=True)
 def isolate_kubernetes_compute_key_lookup(monkeypatch):
     monkeypatch.setattr("src.jobs.platform.kubernetes_compute.compute_control_key", AsyncMock(return_value=None))
+
+
+@pytest.mark.asyncio
+async def test_disconnect_during_send_does_not_leave_an_unobserved_reply_failure() -> None:
+    import gc
+
+    loop = asyncio.get_running_loop()
+    previous_handler = loop.get_exception_handler()
+    unhandled = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+    socket = AsyncMock()
+    bridge = Bridge(socket, {"current": 1, "limit": 100, "hostname": "fixture", "requirements": {}}, LEASE)
+
+    async def disconnect_during_send(_frame):
+        bridge.disconnect()
+        raise OSError("fixture transport closed during send")
+
+    socket.send_text.side_effect = disconnect_during_send
+    try:
+        # Catch inside an owned scope so no exception traceback retains the
+        # request frame and its completed Future during the GC observation.
+        async def request_and_release_traceback():
+            try:
+                await bridge.request("file_compute_status", {})
+            except ConnectionError:
+                return
+            raise AssertionError("Disconnected send unexpectedly succeeded")
+
+        await request_and_release_traceback()
+        gc.collect()
+        assert not bridge.pending
+        assert unhandled == []
+    finally:
+        loop.set_exception_handler(previous_handler)

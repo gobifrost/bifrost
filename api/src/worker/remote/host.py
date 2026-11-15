@@ -237,6 +237,11 @@ class Bridge:
             self.pending.pop(request_id, None)
             if not future.done():
                 future.cancel()
+            elif not future.cancelled():
+                # Disconnect can fail the reply while send/authorization is
+                # unwinding, before this caller ever awaits it. Observe that
+                # completed reply as well as removing it from the pending map.
+                future.exception()
 
     async def acknowledge(self, event_id: str) -> None:
         """Release a launcher-retained terminal result after canonical delivery."""
