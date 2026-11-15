@@ -1,0 +1,13 @@
+{
+  "key": "pr:1423",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal capacity-provider implementation, conformance, and CI kit. No API/client runtime or deployed installation configuration is changed.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1423",
+      "Maintainer-requested delivery under #1400; Docker conformance accepts the correct provider and rejects duplicate starts/resurrection. Deterministic tests cover atomic capacity, concurrent starts, interrupted preparation, and adapter cleanup readback."
+    ]
+  }
+}
