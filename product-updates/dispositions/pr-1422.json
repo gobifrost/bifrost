@@ -10,10 +10,11 @@
     "review_ref": "https://github.com/gobifrost/bifrost/pull/1422"
   },
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1422",
-      "Draft spike: exact Product Update copy and the permission transition require review before release."
+      "Jack approved the exact canonical Product Update and Agent Prompt on 2026-11-15 and authorized merge; the notice covers the custom-role permission transition.",
+      "Astra and Opus scope reviews support shipping privileged trusted-code execution with the documented administrator-level trust requirement."
     ]
   }
 }
