@@ -26,6 +26,7 @@ class PlatformJobMetadata:
     description: str | None = None
     compute_capability: str | None = None
     execution_owner: Literal["api", "executor"] = "executor"
+    api_control: bool = False
 
 
 def _metadata(
@@ -40,6 +41,7 @@ def _metadata(
     description: str | None = None,
     compute_capability: str | None = None,
     execution_owner: Literal["api", "executor"] = "executor",
+    api_control: bool = False,
 ) -> PlatformJobMetadata:
     return PlatformJobMetadata(
         job_type=job_type,
@@ -52,6 +54,7 @@ def _metadata(
         description=description,
         compute_capability=compute_capability,
         execution_owner=execution_owner,
+        api_control=api_control,
     )
 
 
@@ -107,6 +110,7 @@ _METADATA = MappingProxyType(
                     min_memory_headroom_mb=128,
                 ),
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "cloudflare.capacity.apply",
@@ -117,6 +121,7 @@ _METADATA = MappingProxyType(
                     min_memory_headroom_mb=128, retry_on_failure=True, allow_running_cancellation=True,
                 ),
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "webhook.renew",
@@ -129,6 +134,7 @@ _METADATA = MappingProxyType(
                     min_memory_headroom_mb=128,
                 ),
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "solution.update_check",
@@ -137,6 +143,7 @@ _METADATA = MappingProxyType(
                 PlatformJobPolicy(30 * 60, max_attempts=2, max_concurrency=1),
                 payload_version=2,
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "workspace.file_index_reconcile",
@@ -144,6 +151,7 @@ _METADATA = MappingProxyType(
                 "FILE_INDEX_RECONCILIATION_DEFINITION",
                 PlatformJobPolicy(60 * 60, max_attempts=2, max_concurrency=1),
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "artifact.retention_cleanup",
@@ -155,6 +163,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=128,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "audit.archive",
@@ -183,6 +192,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     allow_running_cancellation=True,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "model_catalog.refresh",
@@ -190,6 +200,7 @@ _METADATA = MappingProxyType(
                 "MODEL_CATALOG_REFRESH_DEFINITION",
                 PlatformJobPolicy(5 * 60, max_attempts=2, max_concurrency=1),
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "files.move",
@@ -201,6 +212,7 @@ _METADATA = MappingProxyType(
                     retry_on_runner_loss=False,
                     min_memory_headroom_mb=128,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "solution.export",
@@ -258,6 +270,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=512,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "workspace.reimport",
@@ -303,6 +316,7 @@ _METADATA = MappingProxyType(
                 PlatformJobPolicy(15 * 60, max_attempts=2, min_memory_headroom_mb=128),
                 encrypt_payload=True,
                 execution_owner="api",
+                api_control=True,
             ),
             _metadata(
                 "chat.video_generation",
@@ -316,6 +330,7 @@ _METADATA = MappingProxyType(
                     allow_running_cancellation=True,
                 ),
                 encrypt_payload=True,
+                execution_owner="api",
             ),
             _metadata(
                 "sdk.video_generation",
@@ -329,6 +344,7 @@ _METADATA = MappingProxyType(
                     allow_running_cancellation=True,
                 ),
                 encrypt_payload=True,
+                execution_owner="api",
             ),
             _metadata(
                 "workflow.permissions.analyze",
@@ -385,6 +401,15 @@ def api_platform_job_types() -> frozenset[str]:
         item.job_type
         for item in _METADATA.values()
         if item.execution_owner == "api"
+    )
+
+
+def api_control_platform_job_types() -> frozenset[str]:
+    """API jobs that retain one reserved maintenance admission slot."""
+    return frozenset(
+        item.job_type
+        for item in _METADATA.values()
+        if item.execution_owner == "api" and item.api_control
     )
 
 

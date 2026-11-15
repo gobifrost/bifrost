@@ -1,13 +1,14 @@
-"""Live disposable-runner coverage for non-build PlatformJob handlers.
+"""Live PlatformJob coverage for API-owned and physical non-build handlers.
 
 Each case queues work through ``enqueue_platform_job`` and observes it through
-the live API.  The thin API worker claims the job, hands it over the bridge,
-and starts the physical runner process.  The cases deliberately seed one
-observable unit of work instead of accepting an empty successful sweep.
+the live API. API-owned handlers run in the API control host without a physical
+worker attribution; executor-owned handlers retain the existing bridge and
+physical runner path. The cases deliberately seed one observable unit of work
+instead of accepting an empty successful sweep.
 
-Cost: eight PlatformJob runner children.  ``agent.summary_backfill`` also
-hands one real summary dispatch to the test worker, which is the cross-process
-contract unique to that parent job.
+Cost: API-owned cases consume no runner children. ``agent.summary_backfill``
+also hands one real summary dispatch to the test worker, which is the
+cross-process contract unique to that parent job.
 """
 
 from __future__ import annotations
@@ -148,6 +149,8 @@ async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_a
         assert job["result"] == {"enabled": True, "retention_days": 1, "deleted_count": 1, "failed_count": 0}
         async with async_session_factory() as db:
             assert await db.get(Artifact, artifact_id) is None
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
         assert not await _object_exists(key)
     finally:
         async with async_session_factory() as db:
@@ -279,6 +282,8 @@ async def test_run_retention_runs_real_handler_and_deletes_seeded_event(
         assert job["result"] is not None and job["result"]["events_deleted"] == 1
         async with async_session_factory() as db:
             assert await db.get(Event, event_id) is None
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
     finally:
         async with async_session_factory() as db:
             if previous is not None:
@@ -299,7 +304,7 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
     destination_key = resolve_s3_key("docs", scope, destination)
     job_id: UUID | None = None
     try:
-        await _put_s3(source_key, b"physical runner move")
+        await _put_s3(source_key, b"server-side move")
         user_id = platform_admin.user_id
         payload = FileMovePayload(
             location="docs", scope=scope, requested_by_user_id=user_id, policy_user_id=user_id,
@@ -311,7 +316,10 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
         assert job["result"]["results"] == [{"source": source, "destination": destination, "path": None,
                                             "renamed": False, "adopted": False, "status_code": 200, "error": None}]
         assert not await _object_exists(source_key)
-        assert await FileObjectStorage(get_settings()).read_uploaded_file(destination_key) == b"physical runner move"
+        assert await FileObjectStorage(get_settings()).read_uploaded_file(destination_key) == b"server-side move"
+        async with async_session_factory() as db:
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
     finally:
         await _delete_s3(source_key)
         await _delete_s3(destination_key)

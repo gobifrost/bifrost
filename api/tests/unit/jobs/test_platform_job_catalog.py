@@ -13,7 +13,7 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
 
     metadata = list_platform_job_metadata()
 
-    assert len(metadata) == 26
+    assert len(metadata) == 27
     assert {item.job_type for item in metadata} == {
         "agent.summary_backfill",
         "application.deploy",
@@ -33,6 +33,7 @@ def test_catalog_metadata_matches_each_materialized_definition() -> None:
         "solution.git_sync",
         "solution.update_check",
         "chat.video_generation",
+        "cloudflare.capacity.apply",
         "webhook.renew",
         "workflow.permissions.analyze",
         "workflow.permissions.apply",
@@ -98,6 +99,8 @@ def test_public_job_projection_uses_metadata_without_importing_handlers() -> Non
                 from src.services.platform_jobs import platform_job_to_public
 
                 now = datetime.now(timezone.utc)
+                private_resource_uid = "private-provider-resource-uid"
+                private_payload_marker = "payload-secret-not-public"
                 metadata = list_platform_job_metadata()
                 for item in metadata:
                     job = SimpleNamespace(
@@ -131,6 +134,16 @@ def test_public_job_projection_uses_metadata_without_importing_handlers() -> Non
                         memory_start_bytes=None,
                         memory_peak_bytes=None,
                         memory_limit_bytes=None,
+                        executor_attempt=1,
+                        executor_worker_id=uuid4(),
+                        executor_worker_form="external",
+                        executor_capacity_scope="provider:fixture",
+                        executor_capacity_resource_uid=private_resource_uid,
+                        executor_compute_capability="fixture.compute.v1",
+                        executor_stage_id=uuid4(),
+                        executor_input_sha256="0" * 64,
+                        payload={"credential": private_payload_marker},
+                        encrypted_payload=private_payload_marker,
                         started_at=now,
                         completed_at=None,
                         created_at=now,
@@ -138,6 +151,11 @@ def test_public_job_projection_uses_metadata_without_importing_handlers() -> Non
                     )
                     public = platform_job_to_public(job)
                     assert public.can_cancel is item.policy.allow_running_cancellation
+                    assert public.executor is not None
+                    assert not hasattr(public.executor, "capacity_resource_uid")
+                    public_json = public.model_dump_json()
+                    assert private_resource_uid not in public_json
+                    assert private_payload_marker not in public_json
 
                 assert not {item.module for item in metadata}.intersection(sys.modules)
                 """

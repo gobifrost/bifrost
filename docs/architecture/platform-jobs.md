@@ -76,19 +76,24 @@ The physical child receives only the inputs and scoped API/control access
 needed for its pure computation. Unsupported PlatformJobs retain their existing
 executor requirements; this is not a general migration of every job type.
 
-The remote-control host also claims one API-owned maintenance job at a time:
-OAuth refresh, webhook renewal, Solution update checks, model-catalog refresh,
-workspace file-index reconciliation, summary-backfill parent orchestration,
-and Cloudflare capacity setup. These jobs use the same durable row,
-claim lease, runner subprocess, cancellation, retry, progress, and notification
-paths as physical-worker jobs, but do not require a physical launcher. They are
-bounded by the API cgroup's ordinary headroom before claim, so a scale-to-zero
-worker pool still maintains its control-plane state. The index reconciliation
-can be long-running total I/O but is memory-bounded and cancellable through the
-shared runner. Summary-backfill parents stage at most 5,000 existing run IDs
-then defer; model inference remains physical summary work. Operators should monitor API I/O contention as deployments grow;
-the current policy intentionally prefers a single serialized maintenance job
-over a parallel maintenance worker or a second job framework.
+The remote-control host runs explicitly API-owned PlatformJobs in the canonical
+runner, without a physical-worker attribution: OAuth refresh, webhook renewal,
+Solution update checks, model-catalog refresh, workspace file-index
+reconciliation, summary-backfill parent orchestration, Cloudflare capacity
+setup, artifact and run retention, server-side file moves, embedding reindex,
+and chat or SDK video-provider requests. They retain the same durable row,
+claim lease, cancellation, retry, progress, and notification paths as
+physical-worker jobs. API admission has four task slots: three admit any
+API-owned job, while one stays available to the control set so long user I/O
+cannot block cloud setup or OAuth. Every admission serializes its short
+claim-and-reservation transaction and deducts the aggregate claimed memory
+from API cgroup headroom; the reserved control slot never overrides that memory
+limit. This keeps the control plane available with a scale-to-zero worker pool
+without adding a queue, status contract, or maintenance framework. The index
+reconciliation can be long-running total I/O but is memory-bounded and
+cancellable through the shared runner. Summary-backfill parents stage at most
+5,000 existing run IDs then defer; model inference remains physical summary
+work. Operators should monitor API I/O contention as deployments grow.
 
 Agent runs, `agent.summarize`, and `agent.summarize_backfill` use separate
 children of the physical launcher's agent template. With `agent.loop.v1` and
