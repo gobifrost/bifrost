@@ -71,12 +71,12 @@ The `/v1/` resource paths remain unchanged. Capability envelopes now use
 `compute_capabilities`: unique, bounded capability-name lists. A provider must
 advertise only paths implemented by its pinned worker image; version strings do
 not imply feature support. For example, an API-only worker that can execute
-workflows and compile Apps advertises `workflow.execute` and `app.compile.v1`.
+workflows and compile Apps advertises `workflow.execute` and `app.compile.v2`.
 
 The controller uses these declarations to plan only supported work. External
 capacity receives workflow dispatches and services only when it advertises
 `workflow.execute`; it receives `application.deploy` and
-`application.sdk_update` demand only when it advertises `app.compile.v1`.
+`application.sdk_update` demand only when it advertises `app.compile.v2`.
 Other local platform job types remain on privileged/static or Kubernetes
 capacity. A v1 profile is rejected deliberately: deploy the matching provider
 and pinned worker image as part of the runtime change before selecting it.

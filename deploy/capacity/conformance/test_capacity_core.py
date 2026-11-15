@@ -144,6 +144,8 @@ class CapacityCoreConcurrencyTests(unittest.TestCase):
             memory_limit_bytes=1024 * 1024 * 1024,
             max_workers=max_workers,
             max_lifetime_seconds=3600,
+            execution_handlers=["workflow.execute"],
+            compute_capabilities=[],
             starting_grace_seconds=0,
         )
 

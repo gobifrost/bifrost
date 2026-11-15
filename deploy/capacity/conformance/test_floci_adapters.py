@@ -13,6 +13,7 @@ from pathlib import Path
 
 
 CAPACITY_ROOT = Path(__file__).resolve().parents[1]
+CONTROL_TOKEN = "c" * 32
 sys.path.insert(0, str(CAPACITY_ROOT / "python"))
 
 from capacity_core import CapacityEngine, Context, Ledger, ProtocolError, ProviderConfig  # noqa: E402
@@ -102,12 +103,13 @@ class FakeAci:
 
 class FlociAdapterContracts(unittest.TestCase):
     def ctx(self) -> Context:
-        return Context("scope", "worker-1234567890", "resource", "operation-1234567890")
+        return Context("scope", "12345678-1234-5678-1234-567812345678", "resource", "operation-1234567890")
 
     def aws_adapter(self, ecs: FakeEcs):
         module = load_adapter("aws")
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.ecs = ecs
+        adapter.control_token = CONTROL_TOKEN
         adapter.cluster = "cluster"
         adapter.image = "worker:test"
         adapter.cpu_units = 2048
@@ -126,6 +128,8 @@ class FlociAdapterContracts(unittest.TestCase):
                 memory_limit_bytes=1024 * 1024 * 1024,
                 max_workers=1,
                 max_lifetime_seconds=3600,
+                execution_handlers=["workflow.execute"],
+                compute_capabilities=[],
                 starting_grace_seconds=0,
             ),
             adapter,
@@ -185,6 +189,7 @@ class FlociAdapterContracts(unittest.TestCase):
         cloud = FakeCloudRun()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.cloud = cloud
+        adapter.control_token = CONTROL_TOKEN
         handle = {"pool_id": "pool", "started": True}
         cloud.pools = [
             {"scaling": {"manualInstanceCount": 1}},
@@ -205,6 +210,7 @@ class FlociAdapterContracts(unittest.TestCase):
         aci = FakeAci()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.aci = aci
+        adapter.control_token = CONTROL_TOKEN
         handle = {"group": "group", "started": True}
         aci.groups = [
             {"properties": {"provisioningState": "Deleting", "instanceView": {"state": "Running"}}},
@@ -262,6 +268,7 @@ class FlociAdapterContracts(unittest.TestCase):
         cloud = FakeCloudRun()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.cloud = cloud
+        adapter.control_token = CONTROL_TOKEN
         adapter.image = "worker:test"
         adapter.cpu = "2000m"
         adapter.memory = "4096Mi"
@@ -291,6 +298,7 @@ class FlociAdapterContracts(unittest.TestCase):
         aci = FakeAci()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.aci = aci
+        adapter.control_token = CONTROL_TOKEN
         adapter.image = "worker:test"
         adapter.cpu = 2.0
         adapter.memory_gb = 4.0

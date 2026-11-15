@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
     worker_capacity_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
 
+    @field_validator("worker_capacity_url", "worker_capacity_token", mode="before")
+    @classmethod
+    def optional_capacity_setting(cls, value: object) -> object:
+        """Compose emits empty values for optional deployment settings."""
+        if value == "" or isinstance(value, SecretStr) and value.get_secret_value() == "":
+            return None
+        return value
+
     # ==========================================================================
     # Environment
     # ==========================================================================
