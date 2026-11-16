@@ -121,11 +121,12 @@ async def run_claimed_platform_job(
             status="succeeded",
             result=result or {},
         )
-    except PlatformJobCancelled:
+    except PlatformJobCancelled as exc:
         return await finish_platform_job(
             job_id,
             lease_token,
             status="cancelled",
+            preserve_checkpoint=exc.preserve_checkpoint,
         )
     except PlatformJobDeferred as exc:
         return await defer_platform_job(
@@ -135,7 +136,8 @@ async def run_claimed_platform_job(
             result=exc.result,
         )
     except PlatformJobFailure as exc:
-        return await retry_platform_job_failure(job_id, lease_token, exc, enabled=definition.policy.retry_on_failure)
+        return await retry_platform_job_failure(job_id, lease_token, exc, enabled=definition.policy.retry_on_failure,
+            preserve_checkpoint=exc.preserve_checkpoint)
     except PlatformJobRequiresAction as exc:
         return await finish_platform_job(
             job_id,

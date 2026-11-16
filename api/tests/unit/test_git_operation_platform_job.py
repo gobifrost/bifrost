@@ -39,7 +39,7 @@ async def test_app_jobs_reject_unbound_or_replaced_credentials_before_git(monkey
     monkeypatch.setattr("src.jobs.platform.git_operation.get_github_config", AsyncMock(return_value=config))
     service = Mock()
     monkeypatch.setattr("src.jobs.platform.git_operation.GitHubSyncService", service)
-    context = SimpleNamespace(organization_id=None, report=AsyncMock())
+    context = SimpleNamespace(organization_id=None, checkpoint=None, report=AsyncMock())
     with pytest.raises(PlatformJobFailure) as error:
         await run_git_operation(context, GitOperationPayload(operation="sync", options=options))
     assert error.value.code == "github_connection_changed"
@@ -104,6 +104,7 @@ async def test_git_job_calls_sync_service_directly(
 
     context = SimpleNamespace(
         job_id=uuid4(),
+        checkpoint=None,
         organization_id=uuid4(),
         report=AsyncMock(),
     )
@@ -142,7 +143,7 @@ async def test_git_job_passes_server_validated_retry_plan_to_sync_service(
         "src.core.repo_dirty.clear_repo_dirty", AsyncMock(),
     )
 
-    context = SimpleNamespace(job_id=uuid4(), organization_id=uuid4(), report=AsyncMock())
+    context = SimpleNamespace(job_id=uuid4(), organization_id=uuid4(), checkpoint=None, report=AsyncMock())
     await run_git_operation(
         context,
         GitOperationPayload(
@@ -161,6 +162,7 @@ async def test_git_job_dispatches_reviewed_connect_through_the_existing_workspac
     context = SimpleNamespace(
         requested_by_user_id="requester",
         organization_id=None,
+        checkpoint=None,
         report=AsyncMock(),
     )
 
@@ -299,7 +301,7 @@ async def _run_with_service(
         AsyncMock(return_value=GitHubConfig(token=PAT, repo_url="owner/repo", branch="main", status="connected")),
     )
     monkeypatch.setattr("src.jobs.platform.git_operation.GitHubSyncService", build_service)
-    context = SimpleNamespace(job_id=uuid4(), organization_id=uuid4(), report=AsyncMock())
+    context = SimpleNamespace(job_id=uuid4(), organization_id=uuid4(), checkpoint=None, report=AsyncMock())
     await run_git_operation(context, GitOperationPayload(operation=operation))  # type: ignore[arg-type]
     return captured
 
@@ -354,7 +356,7 @@ async def test_workspace_job_wires_attempt_fence_before_retained_publication(mon
             return SyncResult(success=True)
         return SimpleNamespace(desktop_sync=sync)
     monkeypatch.setattr('src.jobs.platform.git_operation.GitHubSyncService', service)
-    context = SimpleNamespace(job_id=uuid4(), organization_id=None, report=AsyncMock(),
+    context = SimpleNamespace(job_id=uuid4(), organization_id=None, checkpoint=None, report=AsyncMock(),
         authorize_effect=AsyncMock(return_value=False))
     with pytest.raises(PlatformJobCancelled):
         await run_git_operation(context, GitOperationPayload(operation='sync'))
@@ -379,3 +381,40 @@ async def test_git_wrappers_preserve_canonical_cancellation(monkeypatch, method,
     service.repo_manager = SimpleNamespace(workspace=cancelled, checkout=cancelled)
     with pytest.raises(PlatformJobCancelled):
         await getattr(service, method)(*args)
+
+
+@pytest.mark.asyncio
+async def test_sync_resumes_canonical_committed_import_plan_without_repreparing():
+    plan = WorkspaceSyncPlan(merge_sha="a"*40, workspace_fingerprint="b"*64,
+        db_applied=True, checkpoint_id=str(uuid4()))
+    service = SimpleNamespace(desktop_sync=AsyncMock(return_value=SyncResult(success=True)))
+    context = SimpleNamespace(report=AsyncMock(), checkpoint={"retry_plan": plan.model_dump(mode="json")})
+    await dispatch_git_operation(service, GitOperationPayload(operation="sync"), context)
+    assert service.desktop_sync.await_args.kwargs["retry_plan"] == plan
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('wrong_job', [False, True])
+async def test_completed_sync_receipt_skips_credentials_and_git_effects(monkeypatch, wrong_job):
+    from src.jobs.platform.base import PlatformJobFailure
+    job_id = uuid4()
+    receipt = {'git_publication_complete': True, 'job_id': str(uuid4() if wrong_job else job_id),
+        'checkpoint_id': str(uuid4()), 'result': SyncResult(success=True, pushed_commits=1).model_dump(mode='json')}
+    @asynccontextmanager
+    async def publication():
+        yield
+    cleanup = AsyncMock()
+    monkeypatch.setattr('src.services.git_repo_manager.GitRepoManager',
+        lambda *_args, **_kwargs: SimpleNamespace(authorized_publication=publication, delete_workspace_checkpoint=cleanup))
+    credentials = AsyncMock(side_effect=AssertionError('completed sync must not access credentials'))
+    monkeypatch.setattr('src.jobs.platform.git_operation.get_github_config', credentials)
+    context = SimpleNamespace(job_id=job_id, organization_id=None, checkpoint=receipt, report=AsyncMock())
+    if wrong_job:
+        with pytest.raises(PlatformJobFailure, match='another job'):
+            await run_git_operation(context, GitOperationPayload(operation='sync'))
+        cleanup.assert_not_awaited()
+    else:
+        result = await run_git_operation(context, GitOperationPayload(operation='sync'))
+        assert result['success']
+        cleanup.assert_awaited_once_with(receipt['checkpoint_id'])
+    credentials.assert_not_awaited()

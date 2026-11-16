@@ -572,6 +572,7 @@ async def finish_platform_job(
     error_message: str | None = None,
     error_retryable: bool = False,
     phase: str | None = None,
+    preserve_checkpoint: bool = False,
 ) -> bool:
     """Finalize only the currently leased attempt; stale runners are fenced out."""
     if status not in TERMINAL_PLATFORM_JOB_STATUSES:
@@ -601,7 +602,8 @@ async def finish_platform_job(
         }[status])[:200]
         if status == "succeeded":
             job.progress_percent = 100
-        job.result = result
+        if not preserve_checkpoint:
+            job.result = result
         job.error_code = error_code
         job.error_message = error_message.strip()[:4000] if error_message else None
         job.error_retryable = error_retryable if error_message else None
@@ -655,11 +657,11 @@ async def checkpoint_platform_job(
 
 
 async def retry_platform_job_failure(
-    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool
+    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool, preserve_checkpoint: bool = False
 ) -> bool:
     """Requeue a retryable failure while retaining its handler checkpoint."""
     if not enabled or not failure.retryable:
-        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable)
+        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable, preserve_checkpoint=preserve_checkpoint)
     async with get_db_context() as db:
         if not await fence_remote_owner(db):
             return False
@@ -686,7 +688,8 @@ async def retry_platform_job_failure(
             job.phase = "Retrying after recoverable failure"
             job.available_at = _now()
             job.error_retryable = True
-        job.result = failure.result
+        if not preserve_checkpoint:
+            job.result = failure.result
         job.error_code = failure.code
         job.error_message = failure.message[:4000]
         job.lease_owner = None

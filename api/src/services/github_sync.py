@@ -19,7 +19,7 @@ import shutil
 import subprocess
 import tempfile
 from collections.abc import Iterable, Callable
-from contextlib import AbstractAsyncContextManager
+from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
@@ -32,7 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
-from src.jobs.platform.base import PlatformJobCancelled
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.models.contracts.github import (
     EntityChange,
     GitConnectItem,
@@ -499,8 +499,12 @@ class GitHubSyncService:
         app_setup_id: UUID | None = None,
         app_auth: bool = False,
         workspace_authorization: Callable[[], AbstractAsyncContextManager] | None = None,
+        job_context: "PlatformJobContext | None" = None,
+        job_operation: str | None = None,
     ):
         self.db = db
+        self._job_context = job_context
+        self._job_operation = job_operation
         # A credential-free URL: it is written into .git/config. The token
         # reaches git only through _git_env.
         self.repo_url = repo_url
@@ -1200,7 +1204,7 @@ class GitHubSyncService:
                 await self._regenerate_manifest_to_dir(self.db, work_dir)
                 await _progress("Fetching remote...")
                 return await self._do_fetch(work_dir, repo)
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Fetch failed: {e}", exc_info=True)
@@ -1217,7 +1221,7 @@ class GitHubSyncService:
                 return self._do_status(work_dir, GitRepo(str(work_dir)))
         except GitStatusError:
             raise
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Status failed: {e}", exc_info=True)
@@ -1310,7 +1314,7 @@ class GitHubSyncService:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = await self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Commit failed: {e}", exc_info=True)
@@ -1360,6 +1364,62 @@ class GitHubSyncService:
             file_changes=self._plan_file_changes(work_dir, repo, base_sha, merge_sha),
         )
 
+    @asynccontextmanager
+    async def _staged_sync_checkpoint(self, work_dir: Path, plan: WorkspaceSyncPlan):
+        """Verify immutable source before taking the job/DB mutation fence."""
+        checkpoint_id = await self.repo_manager.checkpoint_workspace(work_dir)
+        yielded = False
+        try:
+            with tempfile.TemporaryDirectory(prefix="bifrost-git-import-") as raw:
+                verified = Path(raw) / "workspace"
+                verified.mkdir()
+                await self.repo_manager.restore_workspace_checkpoint(checkpoint_id, verified)
+                def matches(root):
+                    repo = GitRepo(str(root))
+                    sha = repo.head.commit.hexsha if repo.head.is_valid() else ""
+                    return sha == plan.merge_sha and _workspace_fingerprint(root) == plan.workspace_fingerprint
+                import asyncio
+                if not await asyncio.to_thread(matches, verified) or not await asyncio.to_thread(matches, work_dir):
+                    raise WorkspacePlanStale("workspace checkpoint changed after validation")
+                yielded = True
+                yield checkpoint_id, verified
+        finally:
+            if not yielded:
+                await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
+
+    async def _job_import_fence(self):
+        if self._job_context is not None and not await self._job_context.authorize_effect(self.db):
+            raise PlatformJobCancelled
+
+    @staticmethod
+    def _publication_receipt(plan: WorkspaceSyncPlan) -> dict:
+        return {"success": False, "retryable": True, "retry_plan": plan.model_dump(mode="json")}
+
+    async def _checkpoint_import(self, plan: WorkspaceSyncPlan):
+        if self._job_context is not None:
+            await self._job_context.checkpoint_in_transaction(self.db, self._publication_receipt(plan),
+                phase="Database import committed; publishing workspace")
+
+    async def _import_commit_witness(self, checkpoint_id: str) -> bool:
+        from src.core.database import get_db_context
+        from src.models.orm.platform_jobs import PlatformJob
+
+        assert self._job_context is not None
+        try:
+            async with get_db_context() as db:
+                if not await self._job_context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                job = await db.get(PlatformJob, self._job_context.job_id)
+                receipt = (job.result or {}).get("retry_plan") if job is not None else None
+                return isinstance(receipt, dict) and receipt.get("db_applied") is True and receipt.get("checkpoint_id") == checkpoint_id
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
+        except Exception as exc:
+            # A final status write must not erase a possibly committed receipt.
+            raise PlatformJobFailure("git_commit_unconfirmed",
+                "The workspace import outcome could not be confirmed; inspect the durable job before retrying.",
+                retryable=True, preserve_checkpoint=True) from exc
+
     async def apply_desktop_sync(
         self,
         work_dir: Path,
@@ -1390,57 +1450,68 @@ class GitHubSyncService:
                 entity_changes=plan.entity_changes,
             )
 
+        buffered_progress = []
+        async def buffer_progress(*args, **kwargs):
+            buffered_progress[:] = [(args, kwargs)]
+
         if plan.db_applied:
             entities_imported = 0
             all_entity_changes = list(plan.entity_changes)
+            await self._job_import_fence()
+            await self._checkpoint_import(plan)
+            if self._job_context is not None:
+                await self.db.commit()
+            publication_plan = plan
         else:
             if progress_fn:
                 await progress_fn("Importing entities...")
-            checkpoint_id = None
-            async with self.db.begin_nested():
-                entities_imported, entity_changes = await self._import_all_entities(
-                    work_dir, progress_fn=progress_fn,
-                )
-                all_entity_changes = list(entity_changes)
-                if plan.pending_deletes:
-                    if progress_fn:
-                        await progress_fn("Deleting removed entities...")
-                    approved_deletes = _delete_keys(plan.pending_deletes)
-                    current_deletes = await self._resolver._resolve_deletions(
-                        work_dir=work_dir,
-                        dry_run=True,
-                        lock_rows=True,
-                    )
-                    current_keys = _delete_keys(
-                        [change for change in current_deletes if change.action != "keep"]
-                    )
-                    if current_keys != approved_deletes:
-                        raise WorkspacePlanStale(
-                            "pending entity deletions changed after confirmation"
+            async with self._staged_sync_checkpoint(work_dir, plan) as (checkpoint_id, verified):
+                commit_attempted = False
+                try:
+                    await self._job_import_fence()
+                    async with self.db.begin_nested():
+                        entities_imported, entity_changes = await self._import_all_entities(
+                            verified, progress_fn=buffer_progress,
                         )
-                    all_entity_changes.extend(
-                        await self._resolver._resolve_deletions(
-                            work_dir=work_dir,
-                            approved_deletes=approved_deletes,
-                            lock_rows=True,
-                        )
-                    )
-                if progress_fn:
-                    await progress_fn("Updating file index...")
-                await self._update_file_index(work_dir)
-                checkpoint_id = await self.repo_manager.checkpoint_workspace(work_dir)
-            try:
-                await self.db.commit()
-            except Exception:
-                if checkpoint_id:
-                    await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
-                raise
-            plan = plan.model_copy(update={"checkpoint_id": checkpoint_id})
-
-        publication_plan = plan.model_copy(update={
-            "db_applied": True,
-            "entity_changes": all_entity_changes,
-        })
+                        all_entity_changes = list(entity_changes)
+                        if plan.pending_deletes:
+                            await buffer_progress("Deleting removed entities...")
+                            approved_deletes = _delete_keys(plan.pending_deletes)
+                            current_deletes = await self._resolver._resolve_deletions(
+                                work_dir=verified, dry_run=True, lock_rows=True,
+                            )
+                            current_keys = _delete_keys([change for change in current_deletes if change.action != "keep"])
+                            if current_keys != approved_deletes:
+                                raise WorkspacePlanStale("pending entity deletions changed after confirmation")
+                            all_entity_changes.extend(await self._resolver._resolve_deletions(
+                                work_dir=verified, approved_deletes=approved_deletes, lock_rows=True,
+                            ))
+                        await buffer_progress("Updating file index...")
+                        await self._update_file_index(verified)
+                    publication_plan = plan.model_copy(update={"checkpoint_id": checkpoint_id,
+                        "db_applied": True, "entity_changes": all_entity_changes})
+                    await self._checkpoint_import(publication_plan)
+                    commit_attempted = True
+                    try:
+                        await self.db.commit()
+                    except Exception:
+                        await self.db.rollback()
+                        # The same locked canonical job row is the commit
+                        # witness. Never delete a possibly referenced snapshot.
+                        if self._job_context is None:
+                            raise
+                        if not await self._import_commit_witness(checkpoint_id):
+                            await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
+                            raise
+                except BaseException:
+                    if not commit_attempted:
+                        if self._job_context is not None:
+                            await self.db.rollback()
+                        await self.repo_manager.delete_workspace_checkpoint(checkpoint_id)
+                    raise
+            if progress_fn and buffered_progress:
+                args, kwargs = buffered_progress[0]
+                await progress_fn(*args, **kwargs)
 
         if progress_fn:
             await progress_fn("Pushing to remote...")
@@ -1460,6 +1531,9 @@ class GitHubSyncService:
                 retry_plan=publication_plan,
             )
 
+        success_result = SyncResult(success=True, pushed_commits=push_result.pushed_commits,
+            commit_sha=push_result.commit_sha, entities_imported=entities_imported, entity_changes=all_entity_changes)
+        completion_saved = False
         try:
             if progress_fn:
                 await progress_fn("Syncing to storage...")
@@ -1471,11 +1545,30 @@ class GitHubSyncService:
             if progress_fn:
                 await progress_fn("Syncing app previews...")
             await self._sync_app_previews(work_dir)
+            if self._job_context is not None and self._job_operation == "sync":
+                await self._job_context.checkpoint_in_transaction(self.db, {
+                    "git_publication_complete": True, "job_id": str(self._job_context.job_id),
+                    "checkpoint_id": publication_plan.checkpoint_id, "result": success_result.model_dump(mode="json"),
+                }, phase="Workspace publication complete")
+                try:
+                    await self.db.commit()
+                except Exception as exc:
+                    await self.db.rollback()
+                    raise PlatformJobFailure("git_publication_commit_unconfirmed",
+                        "Git publication completed but its completion receipt could not be confirmed.",
+                        retryable=True, preserve_checkpoint=True) from exc
+                completion_saved = True
             if publication_plan.checkpoint_id:
                 await self.repo_manager.delete_workspace_checkpoint(
                     publication_plan.checkpoint_id
                 )
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as error:
+            if completion_saved:
+                raise PlatformJobFailure("git_checkpoint_cleanup_failed",
+                    "Git publication completed but its private checkpoint cleanup is unfinished.",
+                    retryable=True, preserve_checkpoint=True) from error
             from src.services.app_resource_limits import (
                 AppSourceCompilationError,
                 AppSourceLimitError,
@@ -1516,13 +1609,7 @@ class GitHubSyncService:
             entities_imported,
             push_result.commit_sha,
         )
-        return SyncResult(
-            success=True,
-            pushed_commits=push_result.pushed_commits,
-            commit_sha=push_result.commit_sha,
-            entities_imported=entities_imported,
-            entity_changes=all_entity_changes,
-        )
+        return success_result
 
     async def desktop_sync(
         self,
@@ -1564,7 +1651,7 @@ class GitHubSyncService:
                 conflicts=error.conflicts,
                 error=str(error),
             )
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as error:
             logger.exception("Sync failed: %s", error, exc_info=True)
@@ -1585,7 +1672,7 @@ class GitHubSyncService:
                 repo.git.merge("--abort")
                 logger.info("Merge aborted successfully")
                 return AbortMergeResult(success=True)
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Abort merge failed: {e}", exc_info=True)
@@ -1662,7 +1749,7 @@ class GitHubSyncService:
 
                 logger.info("Resolved conflicts, created merge commit (local)")
                 return ResolveResult(success=True, commits_ahead=ahead, commits_behind=behind)
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Resolve failed: {e}", exc_info=True)
@@ -1695,7 +1782,7 @@ class GitHubSyncService:
                     head_content=head_content,
                     working_content=working_content,
                 )
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Diff failed: {e}", exc_info=True)
@@ -1758,7 +1845,7 @@ class GitHubSyncService:
 
                 logger.info(f"Discarded {len(discarded)} file(s)")
                 return DiscardResult(success=True, discarded=discarded)
-        except PlatformJobCancelled:
+        except (PlatformJobCancelled, PlatformJobFailure):
             raise
         except Exception as e:
             logger.exception(f"Discard failed: {e}", exc_info=True)

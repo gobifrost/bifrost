@@ -646,7 +646,20 @@ the existing conditional-version semantics. Git operation wrappers propagate
 canonical cancellation instead of converting it into generic failure results.
 Direct request-scoped callers retain their existing request authorization.
 
-This is a publication prerequisite, not completion of workspace Git migration.
-Credentialed remote Git effects, canonical entity/publication transactions and
-preview/preflight compute still require their queued API execution integration
-and runtime/fault/performance qualification.
+The sync import stages and verifies an immutable source checkpoint before taking
+the job mutation fence. Entity changes, file indexing and the retry-plan receipt
+commit in one API database transaction. Import progress is buffered until that
+transaction releases its locks. A lost commit acknowledgement is resolved from
+the canonical job receipt; an unknown outcome preserves the receipt and source
+checkpoint rather than risking a repeated import or deleting its recovery data.
+Cancellation and designated failures preserve the locked canonical receipt.
+
+After sync publication and previews finish, a same-job completion receipt commits
+before private checkpoint cleanup. Recovery can finish cleanup and return the
+saved result without reimporting or requiring Git credentials. Connect activation
+has not yet adopted this completion cursor. Direct request callers retain
+ownership of their outer transaction when import validation fails.
+
+Workspace Git migration remains incomplete. Credentialed remote Git effects,
+connect activation and preview/preflight compute still require their queued API
+execution integration and runtime/fault/performance qualification.

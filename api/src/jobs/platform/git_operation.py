@@ -88,6 +88,8 @@ async def dispatch_git_operation(
         )
     if payload.operation == "sync":
         retry_plan_payload = options.get("retry_plan")
+        if retry_plan_payload is None and context.checkpoint:
+            retry_plan_payload = context.checkpoint.get("retry_plan")
         retry_plan = (
             WorkspaceSyncPlan.model_validate(retry_plan_payload)
             if retry_plan_payload is not None
@@ -136,7 +138,7 @@ async def workspace_publication_authorization(context: PlatformJobContext):
         yield
 
 
-async def run_git_operation(
+async def _run_git_operation(
     context: PlatformJobContext,
     payload: GitOperationPayload,
 ) -> dict:
@@ -147,6 +149,23 @@ async def run_git_operation(
             "Git operation organization does not match its platform job.",
         )
     organization_id = context.organization_id
+    if payload.operation == "sync" and context.checkpoint and context.checkpoint.get("git_publication_complete"):
+        from src.models.contracts.github import SyncResult
+        from src.services.git_repo_manager import GitRepoManager
+        if context.checkpoint.get("job_id") != str(context.job_id):
+            raise PlatformJobFailure("git_checkpoint_mismatch", "Git completion receipt belongs to another job.")
+        result = SyncResult.model_validate(context.checkpoint["result"]).model_dump(mode="json")
+        manager = GitRepoManager(get_settings(), publication_authorization=lambda: workspace_publication_authorization(context))
+        try:
+            async with manager.authorized_publication():
+                await manager.delete_workspace_checkpoint(context.checkpoint["checkpoint_id"])
+        except PlatformJobCancelled:
+            raise
+        except Exception as exc:
+            raise PlatformJobFailure("git_checkpoint_cleanup_failed", "Git publication completed but its private checkpoint cleanup is unfinished.",
+                retryable=True, preserve_checkpoint=True) from exc
+        await _report(context, "Git operation complete", current=100, total=100)
+        return result
     async with get_db_context() as db:
         config = await get_github_config(db, organization_id)
         setup_id = payload.options.get("request", {}).get("app_setup_id") if payload.operation == "connect" else None
@@ -197,6 +216,8 @@ async def run_git_operation(
             token_provider=credential_provider(db, config),
             app_auth=config.auth_kind == "app",
             workspace_authorization=lambda: workspace_publication_authorization(context),
+            job_context=context,
+            job_operation=payload.operation,
         )
         try:
             result = redact_token(
@@ -239,6 +260,16 @@ async def run_git_operation(
         await clear_repo_dirty()
     await _report(context, "Git operation complete", current=100, total=100)
     return result
+
+
+async def run_git_operation(context: PlatformJobContext, payload: GitOperationPayload) -> dict:
+    try:
+        return await _run_git_operation(context, payload)
+    except PlatformJobCancelled as exc:
+        # Keep any import/completion receipt from the locked canonical row,
+        # including cancellation after that transaction has already committed.
+        exc.preserve_checkpoint = True
+        raise
 
 
 GIT_OPERATION_DEFINITION = define_platform_job(

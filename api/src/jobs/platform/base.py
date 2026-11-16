@@ -30,12 +30,14 @@ class PlatformJobFailure(Exception):
         *,
         retryable: bool = False,
         result: dict[str, Any] | None = None,
+        preserve_checkpoint: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.result = result
+        self.preserve_checkpoint = preserve_checkpoint
 
 
 class PlatformJobRequiresAction(Exception):
@@ -48,7 +50,7 @@ class PlatformJobRequiresAction(Exception):
 
 
 class PlatformJobCancelled(Exception):
-    pass
+    preserve_checkpoint: bool = False
 
 
 class PlatformJobDeferred(Exception):
