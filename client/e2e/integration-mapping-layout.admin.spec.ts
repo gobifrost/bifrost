@@ -89,8 +89,14 @@ test.describe("Integration mapping layout", () => {
 	}) => {
 		await page.setViewportSize({ width: 1440, height: 800 });
 		await openMappings(page, integrationId);
+		// The list pages at 25 rows and the stack has other organizations;
+		// narrow to this spec's 24 so they all render on one page.
+		await page
+			.getByRole("searchbox", { name: "Search organization mappings" })
+			.fill(UNIQUE);
 
 		const list = page.getByRole("list", { name: "Organization mappings" });
+		await expect(list.getByRole("listitem")).toHaveCount(ORG_COUNT);
 		await expect(
 			mappingRow(page, `Layout Org ${ORG_COUNT - 1} ${UNIQUE}`),
 		).toBeAttached();
