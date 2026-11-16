@@ -10,7 +10,7 @@ import {
 	Search,
 	X,
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
 import {
 	DropdownMenuItem,
@@ -20,13 +20,7 @@ import { Button } from "@/components/ui/button";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import { Input } from "@/components/ui/input";
 import { ManualEntityIdInput } from "./ManualEntityIdInput";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { type IntegrationMapping } from "@/services/integrations";
 import { AutoMatchControls } from "@/components/integrations/AutoMatchControls";
@@ -247,14 +241,14 @@ export function IntegrationMappingsTab({
 			 * never cut off when pinned.
 			 */}
 			<div className="sticky top-0 z-20 -mt-(--card-spacing) flex flex-col gap-3 border-y border-border/70 bg-card pb-3 pt-(--card-spacing)">
-				<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-start lg:justify-between">
-					<div className="min-w-0">
-						<CardTitle>Organization Mappings</CardTitle>
-						<CardDescription>
-							Configure how each organization maps to external
-							entities
-						</CardDescription>
-					</div>
+				<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-center lg:justify-between">
+					<CardTitle>Organization Mappings</CardTitle>
+					{!hasDataProvider && orgsWithMappings.length > 0 && (
+						<p className="text-sm text-muted-foreground">
+							Auto-match is unavailable without a data provider.
+							Enter entity IDs manually.
+						</p>
+					)}
 					{/* Auto-Match Controls in header */}
 					{hasDataProvider &&
 						canManageAllMappings &&
@@ -276,23 +270,29 @@ export function IntegrationMappingsTab({
 				</CardHeader>
 				{orgsWithMappings.length > 0 && (
 					<div className="px-(--card-spacing)">
-						<div className="mb-3 flex flex-wrap items-center gap-3">
-							<label className="flex items-center gap-2 text-sm">
-								Mapping Status
-								<select
-									aria-label="Mapping Status"
-									value={mappingStatus}
-									onChange={(event) => {
-										setMappingStatus(event.target.value);
-										setOffset(0);
-									}}
-									className="rounded-md border bg-background p-2"
-								>
-									<option value="all">All</option>
-									<option value="mapped">Mapped</option>
-									<option value="unmapped">Unmapped</option>
-								</select>
-							</label>
+						<MappingListToolbar
+							value={mappingSearch}
+							totalCount={orgsWithMappings.length}
+							filteredCount={filteredOrgs.length}
+							onChange={(value) => {
+								setMappingSearch(value);
+								setOffset(0);
+							}}
+							onClear={() => setMappingSearch("")}
+						>
+							<select
+								aria-label="Mapping Status"
+								value={mappingStatus}
+								onChange={(event) => {
+									setMappingStatus(event.target.value);
+									setOffset(0);
+								}}
+								className="min-h-10 rounded-md border bg-background px-2"
+							>
+								<option value="all">All Mappings</option>
+								<option value="mapped">Mapped</option>
+								<option value="unmapped">Unmapped</option>
+							</select>
 							{knownTags.length > 0 && (
 								<TagFilter
 									tags={knownTags}
@@ -304,17 +304,7 @@ export function IntegrationMappingsTab({
 									className="sm:max-w-64"
 								/>
 							)}
-						</div>
-						<MappingListToolbar
-							value={mappingSearch}
-							totalCount={orgsWithMappings.length}
-							filteredCount={filteredOrgs.length}
-							onChange={(value) => {
-								setMappingSearch(value);
-								setOffset(0);
-							}}
-							onClear={() => setMappingSearch("")}
-						/>
+						</MappingListToolbar>
 					</div>
 				)}
 			</div>
@@ -355,17 +345,6 @@ export function IntegrationMappingsTab({
 					</div>
 				) : (
 					<>
-						{!hasDataProvider && (
-							<div className="mb-4 rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/30 p-3 text-sm text-muted-foreground">
-								<p>
-									No data provider is configured, so
-									auto-match is unavailable for this
-									integration. Enter entity IDs manually and
-									use Configure for organization-specific
-									settings.
-								</p>
-							</div>
-						)}
 						{filteredOrgs.length === 0 ? (
 							<div className="flex flex-col items-center justify-center rounded-[var(--bf-radius-control)] border border-dashed border-border/70 px-4 py-10 text-center">
 								<h3 className="text-base font-semibold">
@@ -470,17 +449,20 @@ function MappingListToolbar({
 	filteredCount,
 	onChange,
 	onClear,
+	children,
 }: {
 	value: string;
 	totalCount: number;
 	filteredCount: number;
 	onChange: (value: string) => void;
 	onClear: () => void;
+	/** Filters shown beside the search box. */
+	children: ReactNode;
 }) {
 	const hasSearch = value.trim().length > 0;
 
 	return (
-		<div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+		<div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
 			<div className="relative min-w-0 sm:max-w-sm sm:flex-1">
 				<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
 				<Input
@@ -504,7 +486,8 @@ function MappingListToolbar({
 					</Button>
 				)}
 			</div>
-			<p className="text-sm text-muted-foreground">
+			{children}
+			<p className="text-sm text-muted-foreground sm:ml-auto">
 				{hasSearch || filteredCount !== totalCount
 					? `${filteredCount} of ${totalCount} mappings`
 					: `${totalCount} mappings`}
