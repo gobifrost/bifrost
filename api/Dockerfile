@@ -3,7 +3,7 @@
 # Multi-stage build for efficient image size
 
 # Use the same supported Node runtime for every App build surface.
-FROM node:26.13.0-bookworm-slim@sha256:add5c17c14752c54d2f3d519ec46a3815684d41c33f198bcb09fb998f7dcbf68 AS node-toolchain
+FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS node-toolchain
 
 # Native Python dependencies require Rust >=1.96; keep it build-only and pinned.
 FROM rust:1.100.0-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37 AS rust-toolchain
