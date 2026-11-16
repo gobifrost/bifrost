@@ -1502,6 +1502,7 @@ function FormRendererInner({
 										? "number"
 										: "text"
 							}
+							step={field.type === "number" ? "any" : undefined}
 							placeholder={field.placeholder ?? undefined}
 							{...register(field.name)}
 							onBlur={handleFieldBlur}

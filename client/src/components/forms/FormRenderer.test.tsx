@@ -332,6 +332,44 @@ describe("FormRenderer — required validation", () => {
 		expect(body.body.submission_nonce).toMatch(/^[A-Za-z0-9-]{16,}$/);
 	});
 
+	it("accepts decimal defaults and submits edited decimal number fields", async () => {
+		const form = makeForm([
+			{
+				name: "annual_wage",
+				label: "Annual Wage",
+				type: "number",
+				required: true,
+				default_value: 12345.67,
+			},
+			{
+				name: "adjustment",
+				label: "Adjustment",
+				type: "number",
+				required: true,
+				default_value: 2.5,
+			},
+		]);
+		const { user } = renderWithProviders(<FormRenderer form={form} />);
+		const wage = screen.getByRole("spinbutton", { name: /annual wage/i });
+		const adjustment = screen.getByRole("spinbutton", {
+			name: /adjustment/i,
+		});
+		expect(wage).toHaveValue(12345.67);
+		expect(adjustment).toHaveValue(2.5);
+		expect(wage).toHaveAttribute("step", "any");
+		expect(adjustment).toHaveAttribute("step", "any");
+		fireEvent.change(wage, { target: { value: "12345.89" } });
+		fireEvent.change(adjustment, { target: { value: "2.75" } });
+		const submit = screen.getByRole("button", { name: /submit/i });
+		await waitFor(() => expect(submit).toBeEnabled());
+		await user.click(submit);
+		await waitFor(() => expect(mockMutateAsync).toHaveBeenCalledTimes(1));
+		expect(mockMutateAsync.mock.calls[0]![0].body.form_data).toEqual({
+			annual_wage: 12345.89,
+			adjustment: 2.75,
+		});
+	});
+
 	it("requires and submits a CAPTCHA payload for an anonymous runtime", async () => {
 		const form = {
 			...makeForm([]),
