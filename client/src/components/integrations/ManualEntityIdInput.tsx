@@ -20,7 +20,7 @@ export function ManualEntityIdInput({
 	return (
 		<Input
 			aria-label="External entity ID"
-			className="min-h-11"
+			className="h-9 md:h-9"
 			disabled={disabled}
 			value={local}
 			onChange={(e) =>

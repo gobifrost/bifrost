@@ -142,18 +142,15 @@ test.describe("Integration mapping acceptance", () => {
 		).toBeVisible({ timeout: 10_000 });
 
 		await page.getByRole("searchbox").fill(`Mapping `);
-		await page
-			.getByRole("combobox", { name: "Mapping Status" })
-			.selectOption("unmapped");
+		await page.getByRole("combobox", { name: "Mapping Status" }).click();
+		await page.getByRole("option", { name: /^Unmapped\b/ }).click();
 		await expect(mappingRow(page, SECOND_ORG_NAME)).toBeVisible();
 		await expect(mappingRow(page, FIRST_ORG_NAME)).toBeHidden();
-		await page
-			.getByRole("combobox", { name: "Mapping Status" })
-			.selectOption("mapped");
+		await page.getByRole("combobox", { name: "Mapping Status" }).click();
+		await page.getByRole("option", { name: /^Mapped\b/ }).click();
 		await expect(mappingRow(page, FIRST_ORG_NAME)).toBeVisible();
-		await page
-			.getByRole("combobox", { name: "Mapping Status" })
-			.selectOption("all");
+		await page.getByRole("combobox", { name: "Mapping Status" }).click();
+		await page.getByRole("option", { name: /^All Mappings\b/ }).click();
 
 		await setManualEntityId(
 			page,
