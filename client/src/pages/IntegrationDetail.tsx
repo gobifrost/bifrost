@@ -888,6 +888,7 @@ export function IntegrationDetail() {
 				hasSetupNotes={Boolean(integration.notes)}
 				showSetupNotes={showSetupNotes}
 				onToggleSetupNotes={() => setShowSetupNotes((value) => !value)}
+				onAddSetupNotes={() => setNotesDialogOpen(true)}
 				canTestConnection={
 					canTestAt(null) || testableOrganizations.length > 0
 				}

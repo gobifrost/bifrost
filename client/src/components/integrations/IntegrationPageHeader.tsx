@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Code, Download, Pencil, Zap } from "lucide-react";
+import { Code, Download, Pencil, Plus, Zap } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function IntegrationPageHeader({
@@ -13,6 +13,7 @@ export function IntegrationPageHeader({
 	hasSetupNotes,
 	showSetupNotes,
 	onToggleSetupNotes,
+	onAddSetupNotes,
 	canTestConnection,
 	canManageDefinitions,
 }: {
@@ -26,6 +27,7 @@ export function IntegrationPageHeader({
 	hasSetupNotes: boolean;
 	showSetupNotes: boolean;
 	onToggleSetupNotes: () => void;
+	onAddSetupNotes: () => void;
 	canTestConnection: boolean;
 	canManageDefinitions: boolean;
 }) {
@@ -58,12 +60,35 @@ export function IntegrationPageHeader({
 				</div>
 				<div className="flex flex-wrap items-center gap-2 xl:shrink-0">
 					{hasSetupNotes && (
-						<Button type="button" variant="outline" className="min-h-11" onClick={onToggleSetupNotes}>
-							{showSetupNotes ? "Hide Setup Instructions" : "Show Setup Instructions"}
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onToggleSetupNotes}
+						>
+							{showSetupNotes
+								? "Hide Setup Instructions"
+								: "Show Setup Instructions"}
+						</Button>
+					)}
+					{!hasSetupNotes && canManageDefinitions && (
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onAddSetupNotes}
+						>
+							<Plus className="size-4" />
+							Add Setup Instructions
 						</Button>
 					)}
 					{canExport && (
-						<Button type="button" variant="outline" className="min-h-11" onClick={onExport}>
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
+							onClick={onExport}
+						>
 							<Download className="size-4" />
 							Export
 						</Button>

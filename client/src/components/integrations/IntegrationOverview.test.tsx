@@ -1,9 +1,9 @@
 /**
  * Component tests for IntegrationOverview.
  *
- * Covers the OAuth card's status branches — connected vs. unconfigured vs.
- * expired — plus the Connect/Refresh/Create button wiring and the defaults
- * editor affordance.
+ * Covers the Default OAuth row's status branches — connected vs.
+ * unconfigured vs. expired — plus the Connect/Refresh/Create button wiring,
+ * the defaults summary and popover, and the defaults editor affordance.
  */
 
 import { describe, it, expect, vi } from "vitest";
@@ -59,15 +59,13 @@ function renderOverview(
 }
 
 describe("IntegrationOverview — no OAuth configured", () => {
-	it("shows 'No OAuth configured' and fires Configure handler", async () => {
+	it("shows Not Configured and fires the set-up handler", async () => {
 		const { user, onCreateOAuthConfig } = renderOverview();
 
-		expect(screen.getByText(/no oauth configured/i)).toBeInTheDocument();
-		const oauthCard = screen
-			.getByText("OAuth")
-			.closest<HTMLElement>("[data-slot=card]")!;
+		const oauth = screen.getByRole("region", { name: "Default OAuth" });
+		expect(within(oauth).getByText("Not Configured")).toBeInTheDocument();
 		await user.click(
-			within(oauthCard).getByRole("button", { name: "Configure" }),
+			within(oauth).getByRole("button", { name: /set up oauth/i }),
 		);
 		expect(onCreateOAuthConfig).toHaveBeenCalledTimes(1);
 	});
@@ -81,15 +79,42 @@ describe("IntegrationOverview — no OAuth configured", () => {
 		expect(onOpenDefaultsDialog).toHaveBeenCalledTimes(1);
 	});
 
-	it("keeps the unconfigured OAuth summary concise", () => {
-		renderOverview();
+	it("summarizes defaults and lists them, secrets masked, on demand", async () => {
+		const { user } = renderOverview({
+			canManageDefinitions: false,
+			integration: {
+				name: "Test",
+				has_oauth_config: false,
+				config_schema: [
+					{ key: "region", type: "string" },
+					{ key: "api_key", type: "secret" },
+					{ key: "page_size", type: "int" },
+				],
+				config_defaults: { region: "us", api_key: "hunter2" },
+				default_entity_id: "common",
+				entity_id_name: "Tenant ID",
+			},
+		});
 
+		const defaults = screen.getByRole("region", { name: "Defaults" });
+		expect(within(defaults).getByText("common")).toBeInTheDocument();
 		expect(
-			screen.getByText(/add oauth settings when this integration/i),
+			within(defaults).getByText(/2 of 3 config defaults set/),
 		).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Configure" })).toHaveClass(
-			"min-h-11",
+		expect(
+			screen.queryByRole("button", { name: /configure default values/i }),
+		).not.toBeInTheDocument();
+
+		await user.click(
+			within(defaults).getByRole("button", { name: /view defaults/i }),
 		);
+		expect(screen.getByText("us")).toBeInTheDocument();
+		expect(screen.queryByText("hunter2")).not.toBeInTheDocument();
+		expect(
+			screen.getByText(
+				"\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022",
+			),
+		).toBeInTheDocument();
 	});
 });
 
@@ -199,7 +224,7 @@ describe("IntegrationOverview — default fallback helper text", () => {
 		});
 		expect(
 			screen.getByText(
-				/used when an organization isn't individually connected/i,
+				/fallback for organizations without their own connection/i,
 			),
 		).toBeInTheDocument();
 	});
