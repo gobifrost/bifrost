@@ -104,16 +104,24 @@ class EventUser(Protocol):
     """The user attributes the ``user.*`` topics publish."""
 
     @property
-    def id(self) -> UUID: ...
+    def id(self) -> UUID:
+        """The user's id."""
+        raise NotImplementedError
 
     @property
-    def email(self) -> str: ...
+    def email(self) -> str:
+        """The user's email address."""
+        raise NotImplementedError
 
     @property
-    def name(self) -> str | None: ...
+    def name(self) -> str | None:
+        """The user's display name."""
+        raise NotImplementedError
 
     @property
-    def organization_id(self) -> UUID | None: ...
+    def organization_id(self) -> UUID | None:
+        """The user's organization, or None for a global user."""
+        raise NotImplementedError
 
 
 SignInMethod = Literal["password", "passkey", "sso"]

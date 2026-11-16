@@ -10,6 +10,8 @@ Key Features:
 - Idempotent - safe to call multiple times
 """
 
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
@@ -56,7 +58,7 @@ async def ensure_user_provisioned(
     email: str,
     name: str | None = None,
     *,
-    created_via: "UserCreationMethod",
+    created_via: UserCreationMethod,
     provider: str | None = None,
 ) -> ProvisioningResult:
     """
