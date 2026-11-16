@@ -18,6 +18,7 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.orm.identity_providers import IdentityProvider, IdentityProviderToken
+from src.models.orm.organizations import Organization
 
 TOKEN_PREFIX = "bfidp_"
 ROTATION_OVERLAP = timedelta(hours=1)
@@ -101,12 +102,16 @@ async def authenticate(
                 IdentityProvider,
                 IdentityProvider.id == IdentityProviderToken.identity_provider_id,
             )
+            # A disabled organization's connections stop provisioning; they
+            # resume if it is reactivated.
+            .join(Organization, Organization.id == IdentityProvider.organization_id)
             .where(
                 IdentityProviderToken.token_hash == digest,
                 IdentityProviderToken.identity_provider_id == identity_provider_id,
                 IdentityProviderToken.revoked_at.is_(None),
                 IdentityProviderToken.expires_at > now,
                 IdentityProvider.is_enabled.is_(True),
+                Organization.is_active.is_(True),
             )
         )
     ).one_or_none()

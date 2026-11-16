@@ -69,6 +69,7 @@ async def collect_expiry_notices(session: AsyncSession, now: datetime) -> list[E
             .join(Organization, Organization.id == IdentityProvider.organization_id)
             .where(
                 IdentityProvider.is_enabled.is_(True),
+                Organization.is_active.is_(True),
                 IdentityProviderToken.revoked_at.is_(None),
             )
             .order_by(IdentityProvider.id, IdentityProviderToken.created_at.desc())
