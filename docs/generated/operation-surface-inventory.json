@@ -10741,13 +10741,690 @@
         "summary": "Rename or move a file or folder in the browser editor",
         "target_kind": "workspace"
       }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.domains.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "identityproviders.read at the organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.domains.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/identity-providers/domains",
+          "request_model": null,
+          "response_model": "OrganizationDomainResponse"
+        },
+        "side_effects": [],
+        "summary": "List an organization's claimed email domains",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.domains.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.domain_claimed",
+        "authorization_resolver": "identityproviders.readwrite at the organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.domains.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/identity-providers/domains",
+          "request_model": "OrganizationDomainCreate",
+          "response_model": "OrganizationDomainResponse"
+        },
+        "side_effects": [],
+        "summary": "Claim an email domain for an organization",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.domains.verify",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.domain_verified",
+        "authorization_resolver": "identityproviders.readwrite at the claim's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.domains.verify",
+        "rest": {
+          "method": "POST",
+          "path": "/api/identity-providers/domains/{claim_id}/verify",
+          "request_model": null,
+          "response_model": "OrganizationDomainResponse"
+        },
+        "side_effects": [],
+        "summary": "Verify a domain claim through its DNS TXT record",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.domains.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.domain_removed",
+        "authorization_resolver": "identityproviders.readwrite at the claim's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.domains.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/identity-providers/domains/{claim_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [],
+        "summary": "Remove a domain claim",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "Filtered to organizations where the caller holds identityproviders.read",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/identity-providers",
+          "request_model": null,
+          "response_model": "IdentityProviderResponse"
+        },
+        "side_effects": [],
+        "summary": "List identity provider connections",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.create",
+        "authorization_resolver": "identityproviders.readwrite at the organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/identity-providers",
+          "request_model": "IdentityProviderCreate",
+          "response_model": "IdentityProviderCreated"
+        },
+        "side_effects": [],
+        "summary": "Create an identity provider connection and its first token",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.get",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "identityproviders.read at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.get",
+        "rest": {
+          "method": "GET",
+          "path": "/api/identity-providers/{identity_provider_id}",
+          "request_model": null,
+          "response_model": "IdentityProviderResponse"
+        },
+        "side_effects": [],
+        "summary": "Read an identity provider connection",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.update",
+        "authorization_resolver": "identityproviders.readwrite at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/identity-providers/{identity_provider_id}",
+          "request_model": "IdentityProviderUpdate",
+          "response_model": "IdentityProviderResponse"
+        },
+        "side_effects": [],
+        "summary": "Update an identity provider connection",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.delete",
+        "authorization_resolver": "identityproviders.readwrite at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/identity-providers/{identity_provider_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [],
+        "summary": "Delete an identity provider connection",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.token.rotate",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.token_rotated",
+        "authorization_resolver": "identityproviders.readwrite at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.token.rotate",
+        "rest": {
+          "method": "POST",
+          "path": "/api/identity-providers/{identity_provider_id}/token",
+          "request_model": "IdentityProviderTokenRotate",
+          "response_model": "IdentityProviderTokenIssued"
+        },
+        "side_effects": [],
+        "summary": "Issue a new identity provider token",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.groups.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "identityproviders.read at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.groups.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/identity-providers/{identity_provider_id}/groups",
+          "request_model": null,
+          "response_model": "IdentityProviderGroupResponse"
+        },
+        "side_effects": [],
+        "summary": "List the groups an identity provider pushed",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.groups.map",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite",
+          "roleassignments.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.group_mapped",
+        "authorization_resolver": "identityproviders.readwrite at the connection's organization, plus the manual role-assignment checks for each mapped role",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.groups.map",
+        "rest": {
+          "method": "PUT",
+          "path": "/api/identity-providers/{identity_provider_id}/groups/{group_id}/mapping",
+          "request_model": "IdentityProviderGroupMappingUpdate",
+          "response_model": "IdentityProviderGroupResponse"
+        },
+        "side_effects": [],
+        "summary": "Map an identity provider group to roles",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": null,
+          "status": "intentionally_unsupported"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": null,
+          "status": "intentionally_unsupported"
+        },
+        "rest": {
+          "operation_id": "identityproviders.groups.unmap",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "missing_surface"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "identityproviders.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "identity_provider.group_unmapped",
+        "authorization_resolver": "identityproviders.readwrite at the connection's organization",
+        "cli": null,
+        "exclusions": {
+          "cli": "Identity provider administration is available through the administrative UI and REST API.",
+          "manifest": "Identity provider connections, tokens and domain claims are deployment-local identity state.",
+          "mcp": "Identity provider administration is intentionally excluded from coding-harness MCP tools.",
+          "native_builder": "Identity provider administration is not a coding target."
+        },
+        "manifest": null,
+        "mcp": null,
+        "native_builder": false,
+        "operation_id": "identityproviders.groups.unmap",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/identity-providers/{identity_provider_id}/groups/{group_id}/mapping",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [],
+        "summary": "Remove an identity provider group mapping",
+        "target_kind": "resource"
+      }
     }
   ],
   "counts": {
     "cli": 180,
     "manifest": 16,
     "mcp": 101,
-    "rest": 724,
+    "rest": 754,
     "sdk": 21
   },
   "schema_version": 1,
@@ -14299,6 +14976,125 @@
         "path": "/api/schedules/validate",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups/{group_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups/{group_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "PATCH",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups/{group_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Groups/{group_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/ResourceTypes",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/ResourceTypes/{type_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Schemas",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Schemas/{schema_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/ServiceProviderConfig",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "DELETE",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users/{user_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users/{user_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "PATCH",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users/{user_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/api/scim/v2/{identity_provider_id}/Users/{user_id}",
+        "reason": "SCIM 2.0 wire protocol an external identity provider calls with a connection token; writes go through the identity provisioning core, administered by the identityproviders operations.",
+        "status": "transport_only"
       },
       {
         "method": "POST",

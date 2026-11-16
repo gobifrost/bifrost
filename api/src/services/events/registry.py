@@ -21,6 +21,31 @@ _ADMIN_ACTOR = {
     "name": "Admin User",
 }
 
+_IDENTITY_PROVIDER = {
+    "id": "550e8400-e29b-41d4-a716-446655440050",
+    "name": "Contoso Entra ID",
+    "vendor": "entra",
+}
+
+_IDENTITY_PROVIDER_ACTOR = {
+    "type": "identity_provider",
+    "id": _IDENTITY_PROVIDER["id"],
+    "email": None,
+    "name": _IDENTITY_PROVIDER["name"],
+}
+
+_PROVISIONED_USER = {
+    "id": "550e8400-e29b-41d4-a716-446655440051",
+    "email": "alice@contoso.com",
+    "name": "Alice Example",
+    "is_active": True,
+    "external_id": "6f1c2d3e-0000-4000-8000-000000000001",
+    "attributes": {
+        "userName": "alice@contoso.com",
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"department": "Support"},
+    },
+}
+
 _BASE_BODY = {
     "schema_version": 1,
     "occurred_at": "2026-05-28T12:34:56Z",
@@ -54,6 +79,62 @@ CURATED_TOPICS = [
                 "expires_at": "2026-05-29T12:34:56Z",
                 "reason": "created",
             },
+        ),
+    },
+    {
+        "topic": "user.provisioned",
+        "description": "Fired when an identity provider creates a user or adopts an existing one.",
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            adopted=False,
+        ),
+    },
+    {
+        "topic": "user.updated",
+        "description": "Fired when an identity provider changes a user it manages.",
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+        ),
+    },
+    {
+        "topic": "user.deprovisioned",
+        "description": (
+            "Fired when an identity provider deactivates or deletes a user, or the "
+            "user loses their last mapped group."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user={**_PROVISIONED_USER, "is_active": False},
+            deprovision={"reason": "inactive", "account_removed": False},
+        ),
+    },
+    {
+        "topic": "user.groups_changed",
+        "description": "Fired when an identity provider adds a user to a group or removes them.",
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            group={
+                "id": "550e8400-e29b-41d4-a716-446655440052",
+                "display_name": "Support Techs",
+                "change": "added",
+            },
+            roles_added=["550e8400-e29b-41d4-a716-446655440053"],
+            roles_removed=[],
         ),
     },
     {

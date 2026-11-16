@@ -144,8 +144,13 @@ async def insert_assignment(
     role_id: UUID,
     boundaries: Iterable[Boundary],
     assigned_by: str,
+    identity_provider_id: UUID | None = None,
 ) -> None:
-    """Add a ``user_roles`` row and its boundary rows."""
+    """Add a ``user_roles`` row and its boundary rows.
+
+    ``identity_provider_id`` marks an assignment that identity provisioning
+    made from a group mapping (it is the only writer that passes one).
+    """
     from shared.account_guards import (
         AccountGuardError,
         assert_role_assignment_allowed_for_user,
@@ -163,6 +168,7 @@ async def insert_assignment(
             role_id=role_id,
             assigned_by=assigned_by,
             assigned_at=datetime.now(timezone.utc),
+            identity_provider_id=identity_provider_id,
         )
     )
     # The boundary rows reference the assignment by a composite foreign key.

@@ -99,6 +99,15 @@ def _rest_disposition(method: str, path: str) -> dict[str, str]:
                 "owns no entity state."
             ),
         }
+    if path.startswith("/api/scim/v2/{identity_provider_id}/"):
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "SCIM 2.0 wire protocol an external identity provider calls with "
+                "a connection token; writes go through the identity provisioning "
+                "core, administered by the identityproviders operations."
+            ),
+        }
     if (method, path) == ("POST", "/api/solutions/{solution_id}/dev-context"):
         return {
             "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,

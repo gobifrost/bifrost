@@ -44,6 +44,7 @@ VOCABULARY = frozenset(
         "filepolicies.read", "filepolicies.readwrite",
         "forms.read", "forms.readbasic", "forms.readwrite",
         "home.read", "home.read.all", "home.readwrite", "home.readwrite.all",
+        "identityproviders.read", "identityproviders.readwrite",
         "integrations.read", "integrations.readwrite",
         "knowledge.read", "knowledge.readwrite",
         "mcp.read", "mcp.readbasic", "mcp.readwrite",

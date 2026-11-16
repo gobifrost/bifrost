@@ -455,3 +455,41 @@ async def emit_event_delivery_retry_exhausted(
         body,
         organization_id=organization_id,
     )
+
+
+def identity_provider_user_body(
+    *,
+    organization_id: str | UUID,
+    identity_provider: dict[str, str | None],
+    user: dict[str, Any],
+) -> dict[str, Any]:
+    """Body for the ``user.*`` topics identity provisioning emits; the actor
+    is the identity provider connection."""
+    return {
+        **_base_body(
+            organization_id=organization_id,
+            actor={
+                "type": "identity_provider",
+                "id": identity_provider["id"],
+                "email": None,
+                "name": identity_provider["name"],
+            },
+        ),
+        "identity_provider": identity_provider,
+        "user": user,
+    }
+
+
+async def emit_identity_provider_event(
+    topic: str,
+    body: dict[str, Any],
+    *,
+    organization_id: str | UUID,
+    identity_provider_id: str | UUID,
+) -> None:
+    await _emit(
+        topic,
+        body,
+        organization_id=organization_id,
+        triggered_by=f"identity_provider:{identity_provider_id}",
+    )

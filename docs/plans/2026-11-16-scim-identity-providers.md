@@ -78,7 +78,7 @@ Out of scope for v1:
 | 8 | One active bearer token per connection, stored hashed, with an expiry. Rotation creates a new token and shortens the previous token's expiry to **one hour** from the rotation, so the old and new tokens overlap briefly. |
 | 9 | Keep all the data. The full SCIM payload, enterprise extension included, is stored on the user's link. Odd vendor extensions are normalized or ignored as they come up. |
 | 10 | Provision / update / deprovision / group-membership changes emit platform events. |
-| 11 | External (portal) users: a per-connection **Provision as External users** setting, off by default. An External user (`User.is_external`) keeps the same org cascade but is not covered by `access_level="authenticated"` sharing; they see only what a role or an explicit grant gives them. |
+| 11 | External (portal) users: a per-connection **Provision as External users** setting, off by default. It applies to users the connection creates; an adopted user keeps their current setting. An External user (`User.is_external`) keeps the same org cascade but is not covered by `access_level="authenticated"` sharing; they see only what a role or an explicit grant gives them. |
 | 12 | The provisioning core is protocol-independent. Connections have `source_type` = `scim` \| `google_directory`. The UI is the same for both: groups seen, "N/N mapped", last sync, credential expiry. |
 
 ## Data model
@@ -167,11 +167,17 @@ not be expired or revoked, and the connection must be enabled. Responses use
   (`src/core/rate_limit.py`) and a body-size cap.
 
 Libraries:
-- `scim2-models` (Apache-2.0, Pydantic v2, pinned) for resource and message
-  validation and serialization.
+- `scim2-models` (Apache-2.0, Pydantic v2, pinned to `0.12.x`) validates
+  resources, applies `PatchOp` requests (`PatchOp.patch`) and parses filters
+  (`ScimFilter`, which brings in `lark`). Requests are normalized first for
+  quirks the library rejects: Entra's bare-string `manager`, and
+  Okta's `remove members` with a value list. Vendor extensions with no
+  schema are kept verbatim and patched directly.
 - `dnspython`, now a direct dependency (it was transitive), for TXT lookups.
-- `scim2-tester` runs RFC compliance checks in the e2e suite.
-- No filter-grammar dependency; the supported subset is small and explicit.
+- `scim2-tester` (dev only) runs the RFC discovery checks and the Group CRUD
+  checks in the e2e suite. User CRUD is covered by an Entra/Okta-shaped
+  lifecycle test instead, because the tester invents random email domains,
+  which the domain-claim rule correctly refuses.
 
 ## Management API and permissions
 

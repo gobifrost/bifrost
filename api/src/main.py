@@ -55,6 +55,8 @@ from src.routers.github import router as github_router
 from src.routers.health import close_health_check_clients
 from src.routers.health import router as health_router
 from src.routers.hooks import router as hooks_router
+from src.routers.scim import router as scim_router
+from src.routers.identity_providers import router as identity_providers_router
 from src.routers.identities import router as identities_router
 from src.routers.base_role_defaults import router as base_role_defaults_router
 from src.routers.integrations import router as integrations_router
@@ -506,6 +508,8 @@ def create_app() -> FastAPI:
     app.include_router(events_router)
     app.include_router(services_router)
     app.include_router(hooks_router)
+    app.include_router(scim_router)
+    app.include_router(identity_providers_router)
     app.include_router(tables_router)
     app.include_router(claims_router)
     app.include_router(solutions_router)

@@ -176,6 +176,12 @@ class UserRole(Base):
     assigned_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), server_default=text("NOW()")
     )
+    # Set when identity provisioning created this assignment from a group
+    # mapping; provisioning only ever removes assignments it created. NULL is
+    # a manual assignment (a manual edit or a deleted connection clears it).
+    identity_provider_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("identity_providers.id", ondelete="SET NULL"), default=None
+    )
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="roles")
