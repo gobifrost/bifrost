@@ -19,6 +19,9 @@ WORKDIR /app
 # Install build dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
+    uuid-dev \
+    curl \
+    xz-utils \
     libpq-dev \
     libxml2-dev \
     libxslt1-dev \
@@ -67,6 +70,10 @@ RUN CPPFLAGS="-DHAVE_PROTOTYPES=1" pip install --no-cache-dir --require-hashes -
 COPY api/scripts/patch_aiormq.py /tmp/patch_aiormq.py
 RUN python /tmp/patch_aiormq.py && rm /tmp/patch_aiormq.py
 
+# Repair UUID copy/pickle crashes in the pinned interpreter before packaging.
+COPY api/scripts/build_uuid_extension.sh /tmp/build_uuid_extension.sh
+RUN sh /tmp/build_uuid_extension.sh && rm /tmp/build_uuid_extension.sh
+
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================
@@ -113,6 +120,7 @@ RUN sh /usr/local/bin/install-npm.sh && rm /usr/local/bin/install-npm.sh
 
 # Copy installed packages from builder
 COPY --from=builder /usr/local/lib/python3.16/site-packages /usr/local/lib/python3.16/site-packages
+COPY --from=builder /usr/local/lib/python3.16/lib-dynload/_uuid*.so /usr/local/lib/python3.16/lib-dynload/
 COPY --from=builder /usr/local/bin /usr/local/bin
 RUN mv /usr/local/bin/uvicorn /usr/local/bin/uvicorn-real
 
