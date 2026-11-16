@@ -20,7 +20,7 @@ function PopoverContent({
 	align = "center",
 	variant = "default",
 	arrow = false,
-	sideOffset = arrow ? 8 : 4,
+	sideOffset = 4,
 	children,
 	...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content> & {
@@ -44,14 +44,17 @@ function PopoverContent({
 			>
 				{children}
 				{arrow && (
-					<PopoverPrimitive.Arrow asChild width={12} height={6}>
-						{/* A square turned 45°, half under the panel: its two outer
-						 * edges carry the panel border and its fill covers the
-						 * panel's own border where they meet. */}
+					<PopoverPrimitive.Arrow asChild>
+						{/* Radix offsets the panel by this element's height, so it is
+						 * only as tall as the visible point. Inside it, a square turned
+						 * 45° sits half under the panel: its outer edges carry the
+						 * border and its fill covers the panel's edge where they meet. */}
 						<span
 							data-slot="popover-arrow"
-							className="block size-3 -translate-y-1/2 rotate-45 border-r border-b border-border/70 bg-popover"
-						/>
+							className="block h-1.5 w-3"
+						>
+							<span className="block size-3 -translate-y-1/2 rotate-45 border-r border-b border-border/70 bg-popover" />
+						</span>
 					</PopoverPrimitive.Arrow>
 				)}
 			</PopoverPrimitive.Content>
