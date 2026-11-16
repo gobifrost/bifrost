@@ -38,6 +38,11 @@ result = await events.emit(
 print(result["subscribers_notified"])
 ```
 
+Built-in topics (every topic in the sections below, such as `user.signed_in`
+or `integration.refresh_failed`) are reserved: only Bifrost emits them, so a
+subscriber can trust their origin. `events.emit()` and `POST /api/events/emit`
+refuse them with a 400. Use your own topic name, such as `acme.deal_won`.
+
 `scope` defaults to the current execution's org. Pass an org UUID to override:
 ```python
 await events.emit("acme.deal_won", data, scope="org-uuid-here")
@@ -157,9 +162,13 @@ authorizes the CLI (device code) or an MCP client.
 
 For SSO, `identity` carries the identity provider's id_token claims that
 Bifrost verified during sign-in. Bifrost removes token-binding values
-(`nonce`, `at_hash`, `c_hash`, `s_hash`), the IdP session id (`sid`) and
-Microsoft's opaque `aio`, `uti` and `rh`, and passes every other verified claim
-through, so tenant-specific claims such as `roles` reach the workflow. Access,
+(`nonce`, `at_hash`, `c_hash`, `s_hash`), token and IdP session identifiers
+(`jti`, `origin_jti`, `sid`, `session_state`) and Microsoft's opaque `aio`,
+`uti` and `rh`, and passes every other verified claim through, so
+tenant-specific claims such as `roles` reach the workflow. Those claims can
+include personal data (for example phone number or address, when the provider
+sends them); they are stored with the event and visible to anyone who can read
+the organization's events. Access,
 refresh and id tokens and the provider's unverified userinfo are never
 included. `identity` is `null` for password and passkey sign-ins.
 
@@ -188,7 +197,12 @@ groups from Microsoft Graph.
 ### Syncing identity-provider groups to roles
 
 Subscribe a workflow to `user.signed_in` and map `identity.groups` to Bifrost
-roles. Delivery is asynchronous: the sign-in completes before the workflow
+roles. A verified signature proves which identity provider issued the claims,
+not that the claims are yours to trust: Microsoft sign-in accepts users from
+any Entra tenant, and each tenant's administrators control its group and role
+claims. Match on the tenant (`identity.claims.tid` or `iss`) together with the
+group's object ID, never on a group name or `roles` value alone. Treat a null
+`identity.groups` as "groups not provided", not "no groups". Delivery is asynchronous: the sign-in completes before the workflow
 runs, and the workflow cannot block it. A workflow that deactivates the user
 cuts them off on their next request, because every request checks that the
 user is active.

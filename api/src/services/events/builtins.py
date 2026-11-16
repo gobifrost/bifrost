@@ -128,13 +128,17 @@ SignInMethod = Literal["password", "passkey", "sso"]
 UserCreationMethod = Literal["admin", "sso_provisioning", "registration", "bootstrap"]
 
 # Verified id_token claims that describe the token exchange rather than the
-# person: replay and binding values (``nonce``, ``*_hash``), the IdP session
-# identifier, and Microsoft's opaque internal claims. Every other verified
+# person: replay and binding values (``nonce``, ``*_hash``), token and IdP
+# session identifiers, and Microsoft's opaque internal claims. Every other verified
 # claim reaches workflows so tenant-specific claims (roles, custom attributes)
 # work without a Bifrost change. Raw tokens and unverified userinfo are never
 # passed to this module.
 _EXCLUDED_ID_TOKEN_CLAIMS = frozenset(
-    {"nonce", "at_hash", "c_hash", "s_hash", "sid", "aio", "uti", "rh"}
+    {
+        "nonce", "at_hash", "c_hash", "s_hash",
+        "jti", "origin_jti", "sid", "session_state",
+        "aio", "uti", "rh",
+    }
 )
 
 

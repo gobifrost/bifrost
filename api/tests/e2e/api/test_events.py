@@ -1437,6 +1437,16 @@ class TestTopicEmitEndpoints:
         )
         assert response.status_code == 400, f"Expected 400, got {response.status_code}: {response.text}"
 
+    def test_emit_built_in_topic_is_refused(self, e2e_client, platform_admin):
+        """Only Bifrost can emit a built-in topic, even for a platform admin."""
+        response = e2e_client.post(
+            "/api/events/emit",
+            headers=platform_admin.headers,
+            json={"topic": "user.signed_in", "data": {"user": {"id": "forged"}}},
+        )
+        assert response.status_code == 400, response.text
+        assert "built-in Bifrost event" in response.text
+
     def test_emit_no_source_returns_zero_subscribers(self, e2e_client, platform_admin):
         """POST /api/events/emit for a topic with no source is a no-op (0 subscribers)."""
         response = e2e_client.post(

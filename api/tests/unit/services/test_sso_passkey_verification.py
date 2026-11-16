@@ -24,6 +24,7 @@ async def test_passkey_policy_is_checked_before_tokens(allowed):
         if allowed:
             assert await verify_authentication(request, Response(), db) == 'tokens'
             tokens.assert_awaited_once()
+            assert tokens.await_args.kwargs['sign_in_method'] == 'passkey'
         else:
             with pytest.raises(HTTPException) as refused:
                 await verify_authentication(request, Response(), db)

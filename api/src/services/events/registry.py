@@ -92,12 +92,13 @@ CURATED_TOPICS = [
         "description": (
             "Fired after Bifrost signs a user in with a password (including MFA), a passkey, or "
             "SSO (microsoft, google, oidc). SSO events include the identity provider's verified "
-            "id_token claims, minus token-binding values (nonce, at_hash, c_hash, s_hash), the IdP "
-            "session id (sid) and Microsoft's opaque aio/uti/rh; access, refresh and id tokens and "
+            "id_token claims, minus token-binding values (nonce, at_hash, c_hash, s_hash), token and "
+            "IdP session ids (jti, origin_jti, sid, session_state) and Microsoft's opaque aio/uti/rh; access, refresh and id tokens and "
             "unverified userinfo are never included. identity.groups carries the groups claim when "
             "it is a list. When Entra sends _claim_names/hasgroups instead (groups overage), "
             "identity.groups_overage is true and the workflow must read the user's groups from "
-            "Microsoft Graph. Delivered asynchronously: a workflow can update roles or deactivate the "
+            "Microsoft Graph. Map roles on the tenant (tid or iss) plus group object ID, never a group "
+            "name alone. Delivered asynchronously: a workflow can update roles or deactivate the "
             "user, but cannot block the sign-in that fired it. CLI device and MCP client "
             "authorizations by an already signed-in user do not fire it."
         ),
@@ -389,3 +390,7 @@ CURATED_TOPICS = [
         ),
     },
 ]
+
+# Topics only Bifrost emits. Custom emission (REST, SDK, workflows) refuses
+# them so a subscriber can trust that one of these events came from Bifrost.
+RESERVED_TOPICS = frozenset(entry["topic"] for entry in CURATED_TOPICS)
