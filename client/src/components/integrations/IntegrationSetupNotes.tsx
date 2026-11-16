@@ -1,5 +1,5 @@
 import { lazy, Suspense, useState, type ReactNode } from "react";
-import { BookOpen, ChevronDown, ChevronUp, Pencil, Plus } from "lucide-react";
+import { BookOpen, ChevronDown, ChevronUp, Pencil } from "lucide-react";
 import {
 	MarkdownContent,
 	type MarkdownContentProps,
@@ -42,24 +42,7 @@ export function IntegrationSetupNotes({
 	onEdit?: () => void;
 }) {
 	const [expanded, setExpanded] = useState(true);
-	if (!notes) {
-		return canEdit && onEdit ? (
-			<section
-				className="integration-setup-notes-empty"
-				aria-label="Setup instructions"
-			>
-				<Button
-					type="button"
-					variant="outline"
-					className="min-h-11"
-					onClick={onEdit}
-				>
-					<Plus className="size-4" />
-					Add Setup Instructions
-				</Button>
-			</section>
-		) : null;
-	}
+	if (!notes) return null;
 
 	return (
 		<section
@@ -125,7 +108,7 @@ export function IntegrationSetupNotesContext({
 	onEdit?: () => void;
 	children: ReactNode;
 }) {
-	const showReference = Boolean(notes || (canEdit && onEdit));
+	const showReference = Boolean(notes);
 	return (
 		<div className="integration-setup-notes-container">
 			<div

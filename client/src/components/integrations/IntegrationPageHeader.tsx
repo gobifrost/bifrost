@@ -1,6 +1,21 @@
+import type { ReactNode } from "react";
 import { Link } from "react-router-dom";
-import { Code, Download, Pencil, Zap } from "lucide-react";
+import {
+	BookOpen,
+	Code,
+	Download,
+	MoreHorizontal,
+	Pencil,
+	Plus,
+	Zap,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import {
+	DropdownMenu,
+	DropdownMenuContent,
+	DropdownMenuItem,
+	DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 
 export function IntegrationPageHeader({
 	name,
@@ -13,8 +28,10 @@ export function IntegrationPageHeader({
 	hasSetupNotes,
 	showSetupNotes,
 	onToggleSetupNotes,
+	onAddSetupNotes,
 	canTestConnection,
 	canManageDefinitions,
+	status,
 }: {
 	name: string;
 	description?: string;
@@ -26,9 +43,15 @@ export function IntegrationPageHeader({
 	hasSetupNotes: boolean;
 	showSetupNotes: boolean;
 	onToggleSetupNotes: () => void;
+	onAddSetupNotes: () => void;
 	canTestConnection: boolean;
 	canManageDefinitions: boolean;
+	/** Status chips shown under the name. */
+	status?: ReactNode;
 }) {
+	const canAddSetupNotes = !hasSetupNotes && canManageDefinitions;
+	const hasMoreActions =
+		hasSetupNotes || canAddSetupNotes || canExport || canManageDefinitions;
 	return (
 		<header className="min-w-0 space-y-3">
 			<nav
@@ -46,28 +69,21 @@ export function IntegrationPageHeader({
 					{name}
 				</span>
 			</nav>
-			<div className="flex min-w-0 flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-				<div className="min-w-0">
-					<h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
-						{name}
-					</h1>
-					<p className="mt-2 max-w-2xl text-sm text-muted-foreground [overflow-wrap:anywhere]">
-						{description ||
-							"Configure OAuth, data providers, and organization mappings"}
-					</p>
+			<div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+				<div className="min-w-0 space-y-3">
+					<div>
+						<h1 className="text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
+							{name}
+						</h1>
+						{description && (
+							<p className="mt-1 max-w-2xl text-sm text-muted-foreground [overflow-wrap:anywhere]">
+								{description}
+							</p>
+						)}
+					</div>
+					{status}
 				</div>
-				<div className="flex flex-wrap items-center gap-2 xl:shrink-0">
-					{hasSetupNotes && (
-						<Button type="button" variant="outline" className="min-h-11" onClick={onToggleSetupNotes}>
-							{showSetupNotes ? "Hide Setup Instructions" : "Show Setup Instructions"}
-						</Button>
-					)}
-					{canExport && (
-						<Button type="button" variant="outline" className="min-h-11" onClick={onExport}>
-							<Download className="size-4" />
-							Export
-						</Button>
-					)}
+				<div className="flex flex-wrap items-center gap-2 lg:shrink-0">
 					{canTestConnection && (
 						<Button
 							type="button"
@@ -84,22 +100,56 @@ export function IntegrationPageHeader({
 							type="button"
 							variant="outline"
 							className="min-h-11"
-							onClick={onGenerateSDK}
-						>
-							<Code className="size-4" />
-							Generate SDK
-						</Button>
-					)}
-					{canManageDefinitions && (
-						<Button
-							type="button"
-							variant="outline"
-							className="min-h-11"
 							onClick={onEdit}
 						>
 							<Pencil className="size-4" />
 							Edit
 						</Button>
+					)}
+					{hasMoreActions && (
+						<DropdownMenu>
+							<DropdownMenuTrigger asChild>
+								<Button
+									type="button"
+									variant="outline"
+									size="icon"
+									className="size-11"
+									aria-label="More integration actions"
+								>
+									<MoreHorizontal className="size-4" />
+								</Button>
+							</DropdownMenuTrigger>
+							<DropdownMenuContent align="end">
+								{hasSetupNotes && (
+									<DropdownMenuItem
+										onClick={onToggleSetupNotes}
+									>
+										<BookOpen />
+										{showSetupNotes
+											? "Hide Setup Instructions"
+											: "Show Setup Instructions"}
+									</DropdownMenuItem>
+								)}
+								{canAddSetupNotes && (
+									<DropdownMenuItem onClick={onAddSetupNotes}>
+										<Plus />
+										Add Setup Instructions
+									</DropdownMenuItem>
+								)}
+								{canExport && (
+									<DropdownMenuItem onClick={onExport}>
+										<Download />
+										Export
+									</DropdownMenuItem>
+								)}
+								{canManageDefinitions && (
+									<DropdownMenuItem onClick={onGenerateSDK}>
+										<Code />
+										Generate SDK
+									</DropdownMenuItem>
+								)}
+							</DropdownMenuContent>
+						</DropdownMenu>
 					)}
 				</div>
 			</div>
