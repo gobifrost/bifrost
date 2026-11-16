@@ -1,0 +1,13 @@
+{
+  "key": "pr:1430",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Announcement bookkeeping only: implements Jack explicit no-Product-Update instruction for PR1429; no application behavior changes.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1430",
+      "Jack November 16 native instruction: No product update."
+    ]
+  }
+}

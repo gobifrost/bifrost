@@ -1,14 +1,13 @@
 {
   "key": "pr:1429",
-  "classification": "other",
-  "category": "fix",
-  "summary": "Integration mappings now show 25 organizations per page and can be filtered by mapped or unmapped status.",
+  "classification": "omit",
   "entry_ids": [],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1429",
-      "Chief relayed approval of this exact sentence under Jack November 15 scoped performance/filter merge authorization; 25-row page size and filtered page slice verified against implementation head 20d85c7f7e7d3ee83832f55bb17bff830a85b8f3. No 2,000-organization browser-latency or hang-resolution claim."
+      "Jack November 16 native reply to the Product Updates approval question: No product update."
     ]
-  }
+  },
+  "reason": "Jack explicitly requested no Product Update for the scoped #1428 mapping pagination/status-filter repair; this latest instruction supersedes the earlier sentence approval."
 }
