@@ -25,7 +25,7 @@ from src.models.contracts.identity_providers import (
     IdentityProviderTokenIssued,
     IdentityProviderUpdate,
     OrganizationDomainResponse,
-    RoleSummary,
+    MappedRole,
 )
 from src.models.orm.identity_providers import (
     IdentityProvider,
@@ -418,7 +418,7 @@ async def list_groups(
             )
         )
     ) if group_ids else set()
-    roles: dict[UUID, list[RoleSummary]] = {}
+    roles: dict[UUID, list[MappedRole]] = {}
     if group_ids:
         for group_id, role_id, role_name in (
             await session.execute(
@@ -428,7 +428,7 @@ async def list_groups(
                 .order_by(Role.name)
             )
         ).all():
-            roles.setdefault(group_id, []).append(RoleSummary(id=role_id, name=role_name))
+            roles.setdefault(group_id, []).append(MappedRole(id=role_id, name=role_name))
     return [
         IdentityProviderGroupResponse(
             id=g.id,

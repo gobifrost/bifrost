@@ -103,7 +103,7 @@ class IdentityProviderCreated(BaseModel):
     token: IdentityProviderTokenIssued
 
 
-class RoleSummary(BaseModel):
+class MappedRole(BaseModel):
     id: UUID
     name: str
 
@@ -114,7 +114,7 @@ class IdentityProviderGroupResponse(BaseModel):
     external_id: str | None
     member_count: int
     mapped: bool
-    roles: list[RoleSummary]
+    roles: list[MappedRole]
 
 
 class IdentityProviderGroupMappingUpdate(BaseModel):

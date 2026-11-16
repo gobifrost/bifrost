@@ -9296,6 +9296,147 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/identity-providers/domains": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Domains */
+        get: operations["identityproviders.domains.list"];
+        put?: never;
+        /** Add Domain */
+        post: operations["identityproviders.domains.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers/domains/{claim_id}/verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Verify Domain */
+        post: operations["identityproviders.domains.verify"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers/domains/{claim_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Domain */
+        delete: operations["identityproviders.domains.delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Identity Providers */
+        get: operations["identityproviders.list"];
+        put?: never;
+        /** Create Identity Provider */
+        post: operations["identityproviders.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers/{identity_provider_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Identity Provider */
+        get: operations["identityproviders.get"];
+        put?: never;
+        post?: never;
+        /** Delete Identity Provider */
+        delete: operations["identityproviders.delete"];
+        options?: never;
+        head?: never;
+        /** Update Identity Provider */
+        patch: operations["identityproviders.update"];
+        trace?: never;
+    };
+    "/api/identity-providers/{identity_provider_id}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rotate Identity Provider Token */
+        post: operations["identityproviders.token.rotate"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers/{identity_provider_id}/groups": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Identity Provider Groups */
+        get: operations["identityproviders.groups.list"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/identity-providers/{identity_provider_id}/groups/{group_id}/mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Map Identity Provider Group */
+        put: operations["identityproviders.groups.map"];
+        post?: never;
+        /** Unmap Identity Provider Group */
+        delete: operations["identityproviders.groups.unmap"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/tables": {
         parameters: {
             query?: never;
@@ -21394,6 +21535,170 @@ export interface components {
              */
             base_role_id?: string | null;
         };
+        /** IdentityProviderCreate */
+        IdentityProviderCreate: {
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Vendor
+             * @enum {string}
+             */
+            vendor: "entra" | "okta" | "jumpcloud" | "google" | "other";
+            /**
+             * Source Type
+             * @default scim
+             * @constant
+             */
+            source_type: "scim";
+            /**
+             * Provision As External
+             * @default false
+             */
+            provision_as_external: boolean;
+            /**
+             * Token Lifetime Days
+             * @default 365
+             * @enum {integer}
+             */
+            token_lifetime_days: 90 | 180 | 365 | 730;
+        };
+        /** IdentityProviderCreated */
+        IdentityProviderCreated: {
+            identity_provider: components["schemas"]["IdentityProviderResponse"];
+            token: components["schemas"]["IdentityProviderTokenIssued"];
+        };
+        /**
+         * IdentityProviderGroupMappingUpdate
+         * @description Map a group. An empty ``role_ids`` maps it for access only.
+         */
+        IdentityProviderGroupMappingUpdate: {
+            /** Role Ids */
+            role_ids?: string[];
+        };
+        /** IdentityProviderGroupResponse */
+        IdentityProviderGroupResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Display Name */
+            display_name: string;
+            /** External Id */
+            external_id: string | null;
+            /** Member Count */
+            member_count: number;
+            /** Mapped */
+            mapped: boolean;
+            /** Roles */
+            roles: components["schemas"]["MappedRole"][];
+        };
+        /** IdentityProviderResponse */
+        IdentityProviderResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Organization Name */
+            organization_name: string;
+            /** Name */
+            name: string;
+            /** Source Type */
+            source_type: string;
+            /**
+             * Vendor
+             * @enum {string}
+             */
+            vendor: "entra" | "okta" | "jumpcloud" | "google" | "other";
+            /** Is Enabled */
+            is_enabled: boolean;
+            /** Provision As External */
+            provision_as_external: boolean;
+            /** Scim Base Url */
+            scim_base_url: string;
+            token: components["schemas"]["IdentityProviderTokenInfo"] | null;
+            /** Verified Domains */
+            verified_domains: string[];
+            /** User Count */
+            user_count: number;
+            /** Group Count */
+            group_count: number;
+            /** Mapped Group Count */
+            mapped_group_count: number;
+            /** Last Request At */
+            last_request_at: string | null;
+            /** Last Sync At */
+            last_sync_at: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /**
+             * Updated At
+             * Format: date-time
+             */
+            updated_at: string;
+        };
+        /** IdentityProviderTokenInfo */
+        IdentityProviderTokenInfo: {
+            /** Hint */
+            hint: string;
+            /**
+             * Expires At
+             * Format: date-time
+             */
+            expires_at: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Last Used At */
+            last_used_at: string | null;
+        };
+        /**
+         * IdentityProviderTokenIssued
+         * @description The raw token is returned only here, once.
+         */
+        IdentityProviderTokenIssued: {
+            /** Token */
+            token: string;
+            info: components["schemas"]["IdentityProviderTokenInfo"];
+            /** Previous Tokens Expire At */
+            previous_tokens_expire_at: string | null;
+        };
+        /** IdentityProviderTokenRotate */
+        IdentityProviderTokenRotate: {
+            /**
+             * Lifetime Days
+             * @default 365
+             * @enum {integer}
+             */
+            lifetime_days: 90 | 180 | 365 | 730;
+        };
+        /** IdentityProviderUpdate */
+        IdentityProviderUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Vendor */
+            vendor?: ("entra" | "okta" | "jumpcloud" | "google" | "other") | null;
+            /** Is Enabled */
+            is_enabled?: boolean | null;
+            /** Provision As External */
+            provision_as_external?: boolean | null;
+        };
         /** IdentityPublic */
         IdentityPublic: {
             /**
@@ -21438,6 +21743,24 @@ export interface components {
             name: string;
             /** Boundaries */
             boundaries: components["schemas"]["RoleBoundaryPublic"][];
+        };
+        /**
+         * IdentitySource
+         * @description Where a user's identity comes from (None on a user means Native).
+         */
+        IdentitySource: {
+            /**
+             * Identity Provider Id
+             * Format: uuid
+             */
+            identity_provider_id: string;
+            /** Name */
+            name: string;
+            /**
+             * Vendor
+             * @enum {string}
+             */
+            vendor: "entra" | "okta" | "jumpcloud" | "google" | "other";
         };
         /** IdentityUpdate */
         IdentityUpdate: {
@@ -23645,6 +23968,16 @@ export interface components {
              */
             last_reindex?: string | null;
         };
+        /** MappedRole */
+        MappedRole: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /** Name */
+            name: string;
+        };
         /**
          * MappingAuthorizeRequest
          * @description Request to begin OAuth authorize flow for a specific mapping.
@@ -24768,6 +25101,44 @@ export interface components {
              * @description Labels for grouping and filtering organizations (e.g. 'MSP')
              */
             tags?: string[];
+        };
+        /** OrganizationDomainCreate */
+        OrganizationDomainCreate: {
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Domain */
+            domain: string;
+        };
+        /** OrganizationDomainResponse */
+        OrganizationDomainResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Organization Id
+             * Format: uuid
+             */
+            organization_id: string;
+            /** Domain */
+            domain: string;
+            /** Verified At */
+            verified_at: string | null;
+            /** Last Checked At */
+            last_checked_at: string | null;
+            /** Txt Record Name */
+            txt_record_name: string;
+            /** Txt Record Value */
+            txt_record_value: string;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
         };
         /**
          * OrganizationMetricsResponse
@@ -31118,6 +31489,8 @@ export interface components {
              * @default false
              */
             is_protected: boolean;
+            /** @description The identity provider connection that manages this user; null for a Native user. */
+            identity_source?: components["schemas"]["IdentitySource"] | null;
         };
         /**
          * UserResponse
@@ -49822,6 +50195,421 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+        };
+    };
+    "identityproviders.domains.list": {
+        parameters: {
+            query: {
+                organization_id: string;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDomainResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.domains.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationDomainCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDomainResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.domains.verify": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationDomainResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.domains.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                claim_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.list": {
+        parameters: {
+            query?: {
+                organization_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityProviderCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderCreated"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityProviderUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.token.rotate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityProviderTokenRotate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderTokenIssued"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.groups.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderGroupResponse"][];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.groups.map": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdentityProviderGroupMappingUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdentityProviderGroupResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "identityproviders.groups.unmap": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                identity_provider_id: string;
+                group_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };
