@@ -17,7 +17,6 @@ import logging
 import os
 import asyncio
 import shutil
-import subprocess
 import tempfile
 from collections.abc import Iterable, Callable
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
@@ -1596,7 +1595,11 @@ class GitHubSyncService:
 
             if progress_fn:
                 await progress_fn("Syncing app previews...")
-            await self._sync_app_previews(work_dir)
+            if self._job_context is not None:
+                await self._close_compute_read_scope()
+                await self._sync_app_previews(work_dir, context=self._job_context)
+            else:
+                await self._sync_app_previews(work_dir)
             if self._job_context is not None and self._job_operation in {"sync", "connect"}:
                 await self._job_context.checkpoint_in_transaction(self.db, {
                     "git_publication_complete": True, "job_id": str(self._job_context.job_id),
@@ -2075,6 +2078,12 @@ class GitHubSyncService:
     # App preview sync
     # -----------------------------------------------------------------
 
+    async def _close_compute_read_scope(self) -> None:
+        if self.db.in_transaction():
+            if self.db.new or self.db.dirty or self.db.deleted:
+                raise PlatformJobFailure("git_compute_transaction_open", "Git compute cannot run with pending database mutations.")
+            await self.db.rollback()
+
     async def _sync_app_previews(self, work_dir: Path, *, context: "PlatformJobContext | None" = None) -> None:
         """Sync app preview files from repo working tree to _apps/{id}/preview/ in S3.
 
@@ -2426,50 +2435,33 @@ class GitHubSyncService:
                     fix_hint="The manifest is malformed. Run 'Reimport' from Settings > Maintenance.",
                 ))
 
-        # 2. Syntax check every publishable Python source.  Resolve candidates
-        # first so no preflight path can read through a symlink outside the tree.
+        # Manifest/identity validation stays API-owned. Only the reviewed
+        # Python/lint snapshot crosses the existing file-compute boundary.
+        from shared import workspace_preflight_compute as preflight_compute
+        from shared.file_compute import run_owned_file_io
         try:
-            python_sources = list(_workspace_python_sources(repo_dir))
-        except DefinitionValidationError:
-            python_sources = []
-        for rel, source in python_sources:
-            try:
-                compile(source, rel, "exec")
-            except SyntaxError as e:
-                issues.append(PreflightIssue(
-                    path=rel,
-                    line=e.lineno,
-                    message=f"Syntax error: {e.msg}",
-                    severity="error",
-                    category="syntax",
-                    fix_hint=f"Fix the syntax error in {rel} at line {e.lineno}.",
-                ))
-
-        # 3. Ruff lint check
-        py_files = [str(repo_dir / path) for path, _source in python_sources]
-        if py_files:
-            try:
-                result = subprocess.run(
-                    ["ruff", "check", "--output-format=json", "--no-fix", *py_files],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                    cwd=str(repo_dir),
-                )
-                if result.stdout.strip():
-                    import json
-                    for violation in json.loads(result.stdout):
-                        rel_path = str(Path(violation["filename"]).relative_to(repo_dir))
-                        issues.append(PreflightIssue(
-                            path=rel_path,
-                            line=violation.get("location", {}).get("row"),
-                            message=f"{violation.get('code', '?')}: {violation.get('message', '')}",
-                            severity="warning",
-                            category="lint",
-                            fix_hint="This is a style warning and won't block your commit.",
-                        ))
-            except (subprocess.TimeoutExpired, FileNotFoundError):
-                pass  # ruff not available or timed out — skip lint
+            snapshot = await run_owned_file_io(_preflight_source_snapshot, repo_dir)
+        except DefinitionValidationError as error:
+            for issue in error.issues:
+                field = ".".join(map(str, issue.location))
+                issues.append(PreflightIssue(path=issue.path, line=issue.line,
+                    message=f"{field}: {issue.message}" if field else issue.message,
+                    severity="error", category="syntax",
+                    fix_hint="Remove or migrate the unsupported decorator setting, then retry."))
+        except ValueError as error:
+            issues.append(PreflightIssue(path=".", message=str(error), severity="error", category="syntax",
+                fix_hint="Review workspace source limits and Ruff configuration, then retry."))
+        else:
+            if self._job_context is not None:
+                if self._job_context.file_compute is None:
+                    raise PlatformJobFailure("file_compute_required", "Git preflight requires API-owned source compute.")
+                await self._close_compute_read_scope()
+                source_issues = await preflight_compute.analyze_using(snapshot, self._job_context.file_compute)
+            else:
+                source_issues = await run_owned_file_io(preflight_compute.analyze, snapshot)
+            if await run_owned_file_io(_preflight_source_snapshot, repo_dir) != snapshot:
+                raise WorkspacePlanStale("workspace source changed during preflight")
+            issues.extend(source_issues)
 
         # 4. Ref resolution (UUID references in forms)
         # Forms now carry workflow_id / launch_workflow_id inline in the manifest.
@@ -2494,9 +2486,6 @@ class GitHubSyncService:
                     except Exception:
                         pass
             return None, None
-
-        for issue in _decorator_preflight_issues(repo_dir):
-            issues.append(issue)
 
         if manifest:
             entity_ids = get_all_entity_ids(manifest)
@@ -2661,19 +2650,46 @@ def _validate_workspace_python_decorators(work_dir: Path) -> None:
         raise DefinitionValidationError(issues)
 
 
-def _decorator_preflight_issues(work_dir: Path) -> list[PreflightIssue]:
-    issues: list[PreflightIssue] = []
-    try:
-        _validate_workspace_python_decorators(work_dir)
-    except DefinitionValidationError as error:
-        for issue in error.issues:
-            field = ".".join(map(str, issue.location))
-            issues.append(PreflightIssue(
-                path=issue.path,
-                line=issue.line,
-                message=f"{field}: {issue.message}" if field else issue.message,
-                severity="error",
-                category="syntax",
-                fix_hint="Remove or migrate the unsupported decorator setting, then retry.",
-            ))
-    return issues
+def _preflight_source_snapshot(work_dir: Path) -> dict:
+    """Capture only Python and relevant Ruff settings, never Git/env/manifests."""
+    from shared import workspace_preflight_compute as codec
+    from src.services.editor.file_filter import is_excluded_path
+
+    sources, configs = {}, {}
+    total = 0
+    def read(path):
+        nonlocal total
+        codec.source_path(path)
+        entry = _confined_workspace_entry(work_dir, path)
+        if entry is None or not entry.is_file():
+            raise ValueError("Preflight configuration/source file is missing")
+        codec.source_path(entry.relative_to(work_dir.resolve()).as_posix())
+        if entry.stat().st_size > codec.MAX_FILE_BYTES:
+            raise ValueError("Preflight source exceeds file byte budget")
+        try:
+            content = entry.read_text(encoding="utf-8")
+        except UnicodeDecodeError as exc:
+            raise DefinitionValidationError([DefinitionIssue(path=path, location=(), code="invalid_python",
+                message="Workspace source must be valid UTF-8.")]) from exc
+        total += len(content.encode())
+        if total > codec.MAX_SOURCE_BYTES or len(sources) + len(configs) >= codec.MAX_FILES:
+            raise ValueError("Preflight source exceeds snapshot budget")
+        return content
+    for path in work_dir.rglob("*.py"):
+        relative = path.relative_to(work_dir).as_posix()
+        if not is_excluded_path(relative) and ".bifrost" not in path.relative_to(work_dir).parts and not any(
+                part.startswith(".env") for part in path.relative_to(work_dir).parts):
+            sources[relative] = read(relative)
+    if sources:
+        pending = [path.relative_to(work_dir).as_posix() for name in ("pyproject.toml", "ruff.toml", ".ruff.toml")
+            for path in work_dir.rglob(name)
+            if not is_excluded_path(path.relative_to(work_dir)) and ".bifrost" not in path.relative_to(work_dir).parts]
+        while pending:
+            path = pending.pop()
+            if path in configs:
+                continue
+            configs[path] = codec.lint_configuration(path, read(path))
+            extension = codec.ruff_extension(path, configs[path])
+            if extension is not None and extension not in configs:
+                pending.append(extension)
+    return codec.validate_inputs({"sources": sources, "configs": configs})

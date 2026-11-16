@@ -320,8 +320,9 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=512,
                 ),
-                payload_version=4,
-                execution_owner="api",
+                payload_version=5,
+                compute_capability="workspace.preflight.v1",
+                additional_compute_capabilities=(APP_PREVIEW_CAPABILITY_NAME,),
             ),
             _metadata(
                 "workspace.bundle_import",

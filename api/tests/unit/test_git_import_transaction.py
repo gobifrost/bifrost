@@ -83,7 +83,7 @@ async def test_entity_import_checkpoint_precedes_progress_and_publication(monkey
 async def test_completion_receipt_is_durable_before_deleting_import_snapshot(monkeypatch, cleanup_fails):
     from uuid import uuid4
     from src.jobs.platform.base import PlatformJobFailure
-    db = SimpleNamespace(active=False, commit=AsyncMock())
+    db = SimpleNamespace(active=False, commit=AsyncMock(), in_transaction=lambda: False)
     async def commit():
         db.active = False
     db.commit.side_effect = commit

@@ -21,18 +21,19 @@ from src.services.github_config import GitHubConfig, _get_fernet
 
 
 def _context(**kwargs):
-    defaults = dict(job_id=uuid4(), checkpoint=None, report=AsyncMock(),
+    defaults = dict(job_id=uuid4(), checkpoint=None, report=AsyncMock(), file_compute=AsyncMock(),
         authorize_effect=AsyncMock(return_value=True), checkpoint_in_transaction=AsyncMock())
     defaults.update(kwargs)
     return SimpleNamespace(**defaults)
 
 
 def test_git_payload_version_fences_old_executors_and_retains_queued_schema():
-    assert GIT_OPERATION_DEFINITION.payload_version == 4
+    assert GIT_OPERATION_DEFINITION.payload_version == 5
     assert GIT_OPERATION_DEFINITION.payload_model_for_version(1) is GitOperationPayload
     assert GIT_OPERATION_DEFINITION.payload_model_for_version(2) is GitOperationPayload
     assert GIT_OPERATION_DEFINITION.payload_model_for_version(3) is GitOperationPayload
     assert GIT_OPERATION_DEFINITION.payload_model_for_version(4) is GitOperationPayload
+    assert GIT_OPERATION_DEFINITION.payload_model_for_version(5) is GitOperationPayload
 
 
 @pytest.mark.asyncio
@@ -55,12 +56,12 @@ async def test_app_jobs_reject_unbound_or_replaced_credentials_before_git(monkey
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("legacy_version", [1, 2, 3])
+@pytest.mark.parametrize("legacy_version", [1, 2, 3, 4])
 async def test_old_git_runner_refuses_app_aware_workspace_jobs(monkeypatch, legacy_version):
     from src.jobs.platform import runner
 
     job_id, lease_token = uuid4(), uuid4()
-    job = SimpleNamespace(id=job_id, status="running", job_type="workspace.git", payload_version=4)
+    job = SimpleNamespace(id=job_id, status="running", job_type="workspace.git", payload_version=5)
     db = AsyncMock()
     db.execute.return_value = MagicMock()
     db.execute.return_value.scalar_one_or_none.return_value = job

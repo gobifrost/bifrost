@@ -231,6 +231,8 @@ async def _run_git_operation(
                 retryable=True, preserve_checkpoint=True) from exc
         await _report(context, "Git operation complete", current=100, total=100)
         return result
+    if context.file_compute is None:
+        raise PlatformJobFailure("file_compute_required", "Workspace Git requires API-owned source compute.")
     async with get_db_context() as db:
         config = await get_github_config(db, organization_id)
         setup_id = payload.options.get("request", {}).get("app_setup_id") if payload.operation == "connect" else None
@@ -369,7 +371,7 @@ async def run_git_operation(context: PlatformJobContext, payload: GitOperationPa
 
 GIT_OPERATION_DEFINITION = define_platform_job(
     "workspace.git", GitOperationPayload, run_git_operation,
-    # v4 fences older credential-bearing executor handlers. Git effects now
-    # run in the API; old queued schemas retain their exact admission checks.
-    historical_payload_models={1: GitOperationPayload, 2: GitOperationPayload, 3: GitOperationPayload},
+    # v5 requires the source-only compute path. The API still owns credentials
+    # and effects; worker admission supplies only registered CPU stages.
+    historical_payload_models={1: GitOperationPayload, 2: GitOperationPayload, 3: GitOperationPayload, 4: GitOperationPayload},
 )

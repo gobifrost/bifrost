@@ -8,11 +8,11 @@ import tempfile
 from pathlib import Path
 from shared.worker_transfer import FILE_TRANSFER_VERSION, MAX_CHUNK_BYTES, FileTransfer, FileTransferManifest, ReceivedFileTransfer
 
-def write_json_transfer(value: dict, kind: str, limit: int) -> FileTransfer:
+def write_json_transfer(value: dict, kind: str, limit: int, *, temp_dir: Path | None = None) -> FileTransfer:
     body = json.dumps(value, ensure_ascii=True, separators=(",", ":")).encode()
     if len(body) > limit:
         raise ValueError("JSON compute transfer exceeds its byte limit")
-    fd, name = tempfile.mkstemp(prefix="bifrost-json-compute-")
+    fd, name = tempfile.mkstemp(prefix="bifrost-json-compute-", dir=temp_dir)
     path = Path(name)
     try:
         with os.fdopen(fd, "wb") as stream:

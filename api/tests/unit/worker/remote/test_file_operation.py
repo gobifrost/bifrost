@@ -242,3 +242,32 @@ async def test_disk_admission_failure_creates_no_stage_or_files(tmp_path, monkey
         assert not list(tmp_path.iterdir())
     finally:
         await engine.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_release_removes_only_owned_nested_scratch(tmp_path):
+    definition = _definition()
+    engine = NamedFileOperationStages(operations={definition.name: definition}, temp_dir=tmp_path)
+    operation = engine.operation(definition.name)
+    payload = {
+        'stage_id': 'e2312a47-3c2e-4e12-a2e5-7ca178cbe5dc',
+        'job_id': 'c7c8119f-31b6-498a-bbaf-f47d1a638f08',
+        'lease_token': '6ed55d0f-921d-49cd-b67b-ab2e129984cf',
+        'input': {'manifest': _manifest().to_dict()},
+    }
+    neighbor = tmp_path / 'neighbor'
+    neighbor.mkdir()
+    (neighbor / 'keep.txt').write_text('not owned by stage')
+    try:
+        operation.prepare(payload)
+        stage = engine._stages[payload['stage_id']]
+        scratch = stage.directory / 'interrupted-source'
+        scratch.mkdir()
+        (scratch / 'source.py').write_text('pass')
+        (scratch / 'neighbor-link').symlink_to(neighbor, target_is_directory=True)
+        await operation.release(payload)
+        assert not stage.directory.exists()
+        assert (neighbor / 'keep.txt').read_text() == 'not owned by stage'
+        assert operation.status(payload)['state'] == 'released'
+    finally:
+        await engine.shutdown()

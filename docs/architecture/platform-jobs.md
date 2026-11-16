@@ -663,15 +663,34 @@ remaining owned-checkpoint and temporary setup-token cleanup is fenced. Direct
 request callers retain ownership of their outer transaction when import
 validation fails.
 
-Workspace Git now runs in the existing bounded non-control API runner. Payload
-version 4 fences older executor handlers; versions 1–3 keep their exact queued
-schemas and current connection checks. Credential refresh uses a separate API
-session that closes before Git subprocess I/O. Clone, fetch and push run off the
-event loop, with short owner/job/connection checks before and after I/O. A
-canceled task joins its in-flight Git call before checkout cleanup. These fences
-cannot undo a push already accepted by a remote; this is not exactly-once Git.
+Workspace Git orchestration still runs in the API. Its existing compute-capable
+worker admission now supplies source-only `workspace.preflight.v1` and
+`app.preview.compile.v1` stages under the same canonical claim, rather than an
+API-only maintenance slot. Credentials, clone/fetch/push, imports, publication,
+and connect activation remain API-owned; no Git handler runs in a physical
+child. Payload version 5 fences older handlers that could run the source stages
+locally. Versions 1–4 keep their exact queued schemas on the new path.
 
-Workspace Git migration remains incomplete. Preview/preflight compute still
-requires its queued shared-compute integration. Current-candidate runtime,
-external-effect fault windows, scaling, cost and performance qualification remain
-open; routing the handler to the API is not full migration acceptance.
+Python syntax, decorator and Ruff checks share one analyzer between short direct
+requests and registered worker computation. The API captures a bounded Python
+snapshot plus Ruff settings and `requires-python`; unrelated project metadata,
+Git state, env files and Bifrost manifests stay out of that transfer. Ruff
+extensions must resolve within the captured workspace, including through source
+aliases; malformed TOML is rejected at capture. Diagnostics bind to the input
+digest and source paths. The API retains manifest/definition/reference checks,
+health warnings and final import validation, and rejects source changes during
+preflight. Job-owned read transactions close before CPU stages; pending SQL
+mutations refuse compute instead of being implicitly committed. Preview uses
+the existing sequential per-file compile path and fenced API publication.
+Preflight scratch and result staging live inside the owned stage directory;
+shared release removes nested leftovers after stopping its child, while
+preserving neighboring paths. Ruff caching is disabled for this disposable tree.
+
+Clone, fetch and push run off the event loop, with short owner/job/connection
+checks before and after I/O. A canceled task joins its in-flight Git call before
+checkout cleanup. These fences cannot undo an already accepted remote push;
+stalled-network stopping and cleanup latency remain unqualified.
+
+This is local integration evidence, not full migration acceptance. Actual
+current-candidate runtime/fault, Cloudflare/scaling, cost and controlled
+before/after performance qualification remain open.

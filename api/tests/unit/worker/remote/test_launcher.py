@@ -178,7 +178,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         await launcher.hello({})
         hello = json.loads(socket.send.await_args.args[0])
         assert hello["compute_capabilities"] == [
-            ["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1],
+            ["workspace.preflight", 1], ["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1],
         ]
 
         warmed_socket = AsyncMock()
@@ -196,7 +196,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         await warmed.start_agent_compute_template()
         await warmed.hello({})
         warmed_hello = json.loads(warmed_socket.send.await_args.args[0])
-        assert warmed_hello["compute_capabilities"] == [["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["agent.loop", 1], ["summary.compute", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1]]
+        assert warmed_hello["compute_capabilities"] == [["workspace.preflight", 1], ["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["agent.loop", 1], ["summary.compute", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1]]
         launcher.app_compiles.prepare(payload)
         assert launcher.inventory()["compute_stages"] == [
             {

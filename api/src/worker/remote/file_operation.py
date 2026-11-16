@@ -463,8 +463,11 @@ class NamedFileOperationStages:
         if stage.input_transfer is not None:
             stage.input_transfer.close()
         stage.output_path.unlink(missing_ok=True)
-        with contextlib.suppress(OSError):
-            stage.directory.rmdir()
+        # The directory was created by this registry for this exact stage.
+        # Reap nested scratch left by an interrupted registered child too;
+        # only missing paths are benign, real cleanup failures retain the stage.
+        with contextlib.suppress(FileNotFoundError):
+            shutil.rmtree(stage.directory)
         self._stages.pop(binding.stage_id, None)
         self._tombstones[binding.stage_id] = _Tombstone(operation_name, binding)
         if len(self._tombstones) >= self._max_records:

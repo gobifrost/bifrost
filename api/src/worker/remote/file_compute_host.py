@@ -11,6 +11,7 @@ from sqlalchemy import func, select
 
 from shared.app_build_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUILD_RESULT_LIMIT
 from shared.app_bundle_compute import MAX_RESULT_TRANSFER_BYTES as APP_BUNDLE_RESULT_LIMIT
+from shared.workspace_preflight_compute import MAX_RESULT_BYTES as WORKSPACE_PREFLIGHT_RESULT_LIMIT
 from shared.app_preview_compute import MAX_RESULT_BYTES as APP_PREVIEW_RESULT_LIMIT
 from shared.workflow_graph_compute import MAX_TRANSFER_BYTES as WORKFLOW_GRAPH_RESULT_LIMIT
 from shared.audit_archive_compute import MAX_RESULT_TRANSFER_BYTES as AUDIT_ARCHIVE_RESULT_LIMIT
@@ -33,6 +34,7 @@ from src.worker.remote.ownership import DEFAULT_OWNER_LEASE_SECONDS
 
 
 _OPERATION_CAPABILITIES = {
+    "workspace.preflight.v1": "workspace.preflight.v1",
     "workflow.graph.analyze.v1": "workflow.graph.analyze.v1",
     "app.preview.compile.v1": APP_PREVIEW_CAPABILITY_NAME,
     "app.compile.v2": APP_COMPILE_CAPABILITY_NAME,
@@ -42,6 +44,7 @@ _OPERATION_CAPABILITIES = {
     "solution.archive.inspect.v1": SOLUTION_ARCHIVE_INSPECT_CAPABILITY_NAME,
 }
 _OPERATION_RESULT_LIMITS = {
+    "workspace.preflight.v1": WORKSPACE_PREFLIGHT_RESULT_LIMIT,
     "workflow.graph.analyze.v1": WORKFLOW_GRAPH_RESULT_LIMIT,
     "app.preview.compile.v1": APP_PREVIEW_RESULT_LIMIT,
     "app.compile.v2": APP_BUILD_RESULT_LIMIT,
