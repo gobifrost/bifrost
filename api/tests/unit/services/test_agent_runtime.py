@@ -1186,7 +1186,7 @@ def test_request_observability_breaks_down_context_without_recording_contents() 
         ]
     )
 
-    breakdown = ObservedModel._context_breakdown(messages, parameters)
+    breakdown = ObservedModel(TestModel(), AsyncMock())._context_breakdown(messages, parameters)
 
     assert breakdown["system_prompt_bytes"] > 0
     assert breakdown["user_history_bytes"] > 0
@@ -1229,7 +1229,7 @@ def test_triage_style_loop_exposes_stable_cache_prefix_and_history_growth() -> N
     ]
     breakdowns: list[dict[str, int | str]] = []
     for index in range(9):
-        breakdowns.append(ObservedModel._context_breakdown(messages, parameters))
+        breakdowns.append(ObservedModel(TestModel(), AsyncMock())._context_breakdown(messages, parameters))
         messages.extend(
             [
                 ModelResponse(

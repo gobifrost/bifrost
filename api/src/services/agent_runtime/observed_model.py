@@ -113,8 +113,8 @@ class ObservedModel(WrapperModel):
             )
         return provider_messages
 
-    @staticmethod
     def _context_breakdown(
+        self,
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
     ) -> dict[str, int | str]:
@@ -178,7 +178,7 @@ class ObservedModel(WrapperModel):
                 else:
                     categories["other_history_bytes"] += size
 
-        instructions = Model._get_instruction_parts(
+        instructions = self.wrapped._get_instruction_parts(
             provider_messages, model_request_parameters
         ) or []
         instruction_bytes = sum(len(part.content.encode()) for part in instructions)

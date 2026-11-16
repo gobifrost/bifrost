@@ -5,7 +5,7 @@
 # Use the same supported Node runtime for every App build surface.
 FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a53c0161664a011f7ff6b0f1 AS node-toolchain
 
-# Native Python dependencies require Rust >=1.96; keep it build-only and pinned.
+# Native Python dependencies require Rust >=1.98; keep it build-only and pinned.
 FROM rust:1.100.0-slim-bookworm@sha256:7c7d4eb4d05b7781187a327809466cfddf29753f6defdc3d19a0e291951b7a37 AS rust-toolchain
 
 # =============================================================================
@@ -146,7 +146,7 @@ COPY api/alembic.ini /app/
 COPY api/bifrost/ /app/bifrost/
 COPY api/bifrost.py /app/
 COPY api/scripts/ /app/scripts/
-COPY LICENSE /app/LICENSE
+COPY --chmod=644 LICENSE /app/LICENSE
 COPY assets/ /app/assets/
 RUN chmod -R a+rX /app/assets
 
