@@ -3176,6 +3176,28 @@ OPERATION_CATALOG: tuple[OperationDefinition, ...] = (
         },
     ),
     OperationDefinition(
+        operation_id="organizations.tags.bulk_update",
+        summary="Add or remove tags on several Organizations",
+        target_kind=OperationTargetKind.COLLECTION,
+        rest=RestOperationBinding(
+            method="PATCH",
+            path="/api/organizations/tags",
+            request_model="OrganizationTagsBulkUpdate",
+            response_model="list[OrganizationPublic]",
+        ),
+        action_scopes=("organizations.readwrite",),
+        authorization_resolver="organizations.readwrite at every requested Organization; all or nothing",
+        audit_event="organization.tags_bulk_update",
+        side_effects=("replace the tags of each requested Organization",),
+        exclusions={
+            "cli": "Bulk tagging is an administrative UI action; `bifrost orgs update --tags` sets one Organization's tags.",
+            "mcp": "Bulk tagging is an administrative UI action; bifrost_organization_update sets one Organization's tags.",
+            "native_builder": _ORGANIZATION_BUILDER_EXCLUSION,
+            "manifest": "Organizations are deployment-local and are not portable manifest content.",
+            "sdk": _ORGANIZATION_SDK_EXCLUSION,
+        },
+    ),
+    OperationDefinition(
         operation_id="organizations.delete",
         summary="Disable an Organization",
         target_kind=OperationTargetKind.RESOURCE,

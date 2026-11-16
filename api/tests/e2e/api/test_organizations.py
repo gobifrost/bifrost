@@ -139,6 +139,56 @@ class TestOrganizationCRUD:
 
 
 @pytest.mark.e2e
+class TestOrganizationTags:
+    """Organization tags persist and can be added or removed in bulk."""
+
+    def test_bulk_add_and_remove_tags(self, e2e_client, platform_admin, org1, org2):
+        ids = [org1["id"], org2["id"]]
+        try:
+            added = e2e_client.patch(
+                "/api/organizations/tags",
+                headers=platform_admin.headers,
+                json={"organization_ids": ids, "add": ["MSP", "Licence"]},
+            )
+            assert added.status_code == 200, added.text
+            assert [org["tags"] for org in added.json()] == [
+                ["MSP", "Licence"],
+                ["MSP", "Licence"],
+            ]
+
+            removed = e2e_client.patch(
+                "/api/organizations/tags",
+                headers=platform_admin.headers,
+                json={"organization_ids": [org2["id"]], "remove": ["licence"]},
+            )
+            assert removed.status_code == 200, removed.text
+
+            listed = e2e_client.get(
+                "/api/organizations", headers=platform_admin.headers
+            )
+            tags_by_id = {org["id"]: org["tags"] for org in listed.json()}
+            assert tags_by_id[org1["id"]] == ["MSP", "Licence"]
+            assert tags_by_id[org2["id"]] == ["MSP"]
+        finally:
+            for org_id in ids:
+                e2e_client.patch(
+                    f"/api/organizations/{org_id}",
+                    headers=platform_admin.headers,
+                    json={"tags": []},
+                )
+
+    def test_org_user_cannot_tag_another_organization(
+        self, e2e_client, org1_user, org2
+    ):
+        response = e2e_client.patch(
+            "/api/organizations/tags",
+            headers=org1_user.headers,
+            json={"organization_ids": [org2["id"]], "add": ["MSP"]},
+        )
+        assert response.status_code == 403, response.text
+
+
+@pytest.mark.e2e
 class TestOrganizationAccess:
     """Test organization access control."""
 
