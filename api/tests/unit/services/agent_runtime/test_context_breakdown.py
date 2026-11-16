@@ -43,10 +43,10 @@ def _tool(name: str, *, deferred: bool = False) -> ToolDefinition:
 def test_context_breakdown_counts_only_provider_selected_instruction_bytes() -> None:
     instruction = "Use caf\u00e9 workflows."
     messages = [ModelRequest(parts=[UserPromptPart(content="Current request")])]
-    without_instructions = ObservedModel._context_breakdown(
+    without_instructions = ObservedModel(TestModel(), AsyncMock())._context_breakdown(
         messages, ModelRequestParameters()
     )
-    breakdown = ObservedModel._context_breakdown(
+    breakdown = ObservedModel(TestModel(), AsyncMock())._context_breakdown(
         messages,
         ModelRequestParameters(
             instruction_parts=[InstructionPart(content=instruction)]
@@ -72,7 +72,7 @@ def test_context_breakdown_uses_native_instruction_fallback_without_contents() -
         )
     ]
 
-    breakdown = ObservedModel._context_breakdown(messages, ModelRequestParameters())
+    breakdown = ObservedModel(TestModel(), AsyncMock())._context_breakdown(messages, ModelRequestParameters())
 
     assert breakdown["instruction_bytes"] == len(instructions.encode())
     assert breakdown["provider_cache_prefix_bytes"] == len(instructions.encode())
@@ -90,10 +90,10 @@ def test_context_breakdown_excludes_tool_return_metadata_from_provider_estimates
     messages = [ModelRequest(parts=[result])]
     parameters = ModelRequestParameters()
 
-    without_metadata = ObservedModel._context_breakdown(
+    without_metadata = ObservedModel(TestModel(), AsyncMock())._context_breakdown(
         [ModelRequest(parts=[replace(result, metadata=None)])], parameters
     )
-    with_metadata = ObservedModel._context_breakdown(messages, parameters)
+    with_metadata = ObservedModel(TestModel(), AsyncMock())._context_breakdown(messages, parameters)
 
     for field in (
         "tool_result_bytes",
@@ -113,7 +113,7 @@ def test_context_breakdown_separates_active_and_deferred_tool_schemas() -> None:
     system = SystemPromptPart(content="Stable instructions")
     parameters = ModelRequestParameters(function_tools=[active, deferred])
 
-    breakdown = ObservedModel._context_breakdown(
+    breakdown = ObservedModel(TestModel(), AsyncMock())._context_breakdown(
         [ModelRequest(parts=[system, UserPromptPart(content="Find it")])],
         parameters,
     )
@@ -144,7 +144,7 @@ def test_loaded_tools_are_active_even_though_their_deferred_flag_stays_set(resol
         function_tools=[tool], revealed_tool_names={tool.name},
         tool_visibility={tool.name: "visible"} if resolved else None,
     )
-    breakdown = ObservedModel._context_breakdown([], parameters)
+    breakdown = ObservedModel(TestModel(), AsyncMock())._context_breakdown([], parameters)
     assert tool.defer_loading is True
     assert breakdown["active_tools_count"] == 1
     assert breakdown["deferred_tools_count"] == 0
@@ -156,8 +156,8 @@ def test_hidden_tool_inventory_does_not_exhaust_the_context_budget():
         name="unloaded", description="Specialist contract. " * 10_000,
         defer_loading=True,
     )
-    visible = ObservedModel._context_breakdown([], ModelRequestParameters(function_tools=[active]))
-    with_inventory = ObservedModel._context_breakdown(
+    visible = ObservedModel(TestModel(), AsyncMock())._context_breakdown([], ModelRequestParameters(function_tools=[active]))
+    with_inventory = ObservedModel(TestModel(), AsyncMock())._context_breakdown(
         [], ModelRequestParameters(function_tools=[active, hidden]),
     )
     assert with_inventory["tool_schema_bytes"] > visible["tool_schema_bytes"]
@@ -220,3 +220,15 @@ async def test_context_breakdown_does_not_replace_provider_usage() -> None:
 
     assert response.usage.input_tokens == 123
     assert response.usage.output_tokens == 45
+
+
+def test_context_breakdown_uses_serving_model_instruction_selection() -> None:
+    class ProviderModel(TestModel):
+        def _get_instruction_parts(self, messages, model_request_parameters):
+            return [InstructionPart(content="Provider framing\nApplication instructions")]
+
+    observed = ObservedModel(ProviderModel(), AsyncMock())
+    breakdown = observed._context_breakdown([], ModelRequestParameters())
+
+    assert breakdown["instruction_bytes"] == len("Provider framing\nApplication instructions".encode())
+    assert "Application instructions" not in str(breakdown)
