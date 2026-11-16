@@ -432,7 +432,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
-    "29db8cac5f28f5bfc11c5b37d0e4bbef43143d0dbde96527819fa280c3330fbf"
+    "5001d16c3d26682f5f3bddfb388303378b8d28bd0239b3e20507f9417e334925"
 )
 
 

@@ -15,7 +15,8 @@ one at Platform); the list is filtered here to the caller's reach.
 
 Scope is the five SDK methods: ``create``, ``get``, ``list``,
 ``update``, ``delete``. Each maps 1:1 to one HTTP call, so there are no
-composite facades to decompose here. Delete is a soft disable
+composite facades to decompose here. ``bulk_update_organization_tags``
+serves the administrative bulk tag route only. Delete is a soft disable
 (``is_active=False``); the HTTP handler returns 204 and the SDK maps
 that to ``True``.
 
@@ -98,6 +99,7 @@ async def create_organization(
     domain: str | None,
     is_active: bool = True,
     settings: dict | None = None,
+    tags: list[str] | None = None,
     actor_email: str,
 ) -> OrganizationPublic:
     """Create an organization (shared by the HTTP handler and worker-local calls)."""
@@ -115,6 +117,7 @@ async def create_organization(
         domain=domain.lower() if domain else None,
         is_active=is_active,
         settings=settings if settings is not None else {},
+        tags=tags if tags is not None else [],
         created_by=actor_email,
         created_at=now,
         updated_at=now,
@@ -177,6 +180,7 @@ async def update_organization(
     domain: str | None = None,
     is_active: bool | None = None,
     settings: dict | None = None,
+    tags: list[str] | None = None,
 ) -> OrganizationPublic:
     """Update an organization. Only non-None fields are applied.
 
@@ -210,6 +214,8 @@ async def update_organization(
         if settings.get("default_base_role_id") != (org.settings or {}).get("default_base_role_id"):
             raise OrganizationServiceError(422, "Set the default base role through Base Role Defaults")
         org.settings = settings
+    if tags is not None:
+        org.tags = tags
 
     org.updated_at = datetime.now(timezone.utc)
 
@@ -237,6 +243,7 @@ async def update_organization(
             ("domain", domain),
             ("is_active", is_active),
             ("settings", settings),
+            ("tags", tags),
         )
         if v is not None
     ]
@@ -248,6 +255,70 @@ async def update_organization(
         details={"name": org.name, "changed_fields": changed_fields},
     )
     return OrganizationPublic.model_validate(org)
+
+
+async def bulk_update_organization_tags(
+    session: AsyncSession,
+    *,
+    organization_ids: list[UUID],
+    add: list[str],
+    remove: list[str],
+) -> list[OrganizationPublic]:
+    """Add and remove tags on several organizations in one transaction.
+
+    ``add``/``remove`` are already normalized by the request contract.
+    Removal is case-insensitive; an added tag that an organization already
+    carries in another case keeps the existing spelling. Raises 404 when any
+    organization is missing, so nothing changes. The caller authorizes every
+    organization before calling.
+    """
+    from src.models import Organization as OrganizationORM
+    from src.models import OrganizationPublic
+    from src.models.contracts.organizations import normalize_organization_tags
+    from src.services.audit import emit_audit
+
+    unique_ids = list(dict.fromkeys(organization_ids))
+    result = await session.execute(
+        select(OrganizationORM)
+        .where(OrganizationORM.id.in_(unique_ids))
+        .order_by(OrganizationORM.id)
+        .with_for_update()
+    )
+    orgs = list(result.scalars().all())
+    if len(orgs) != len(unique_ids):
+        raise OrganizationServiceError(404, "Organization not found")
+
+    removed = {tag.casefold() for tag in remove}
+    now = datetime.now(timezone.utc)
+    changed = 0
+    for org in orgs:
+        current = list(org.tags or [])
+        kept = [tag for tag in current if tag.casefold() not in removed]
+        try:
+            updated = normalize_organization_tags(kept + add)
+        except ValueError as exc:
+            raise OrganizationServiceError(422, f"{org.name}: {exc}") from None
+        if updated != current:
+            org.tags = updated
+            org.updated_at = now
+            changed += 1
+
+    await session.flush()
+    logger.info(f"Bulk-updated tags on {changed} of {len(orgs)} organizations")
+    await emit_audit(
+        session,
+        "organization.tags_bulk_update",
+        resource_type="organization",
+        resource_id=None,
+        details={
+            "requested": len(unique_ids),
+            "changed": changed,
+            "added": add,
+            "removed": remove,
+        },
+    )
+    by_id = {org.id: org for org in orgs}
+    return [OrganizationPublic.model_validate(by_id[org_id]) for org_id in unique_ids]
 
 
 async def delete_organization(

@@ -46,6 +46,7 @@ async def bifrost_organization_list(context: Any) -> ToolResult:
             "name": org.get("name"),
             "domain": org.get("domain"),
             "is_active": org.get("is_active"),
+            "tags": org.get("tags", []),
         }
         for org in orgs
     ]
@@ -140,10 +141,12 @@ async def bifrost_organization_update(
     organization_ref: str,
     name: str | None = None,
     is_active: bool | None = None,
+    tags: list[str] | None = None,
 ) -> ToolResult:
     """Update an organization — ``PATCH /api/organizations/{uuid}``.
 
-    ``organization_ref`` is a UUID or organization name. ``domain`` and
+    ``organization_ref`` is a UUID or organization name. ``tags`` replaces
+    the organization's full tag list; omit it to leave tags unchanged. ``domain`` and
     ``settings`` are excluded by design (see
     :data:`bifrost.dto_flags.DTO_EXCLUDES` — ``domain`` is
     auto-provisioning policy, ``settings`` is a UI-managed JSON blob).
@@ -167,7 +170,7 @@ async def bifrost_organization_update(
                 _ref_error_payload(exc),
             )
 
-        fields: dict[str, Any] = {"name": name, "is_active": is_active}
+        fields: dict[str, Any] = {"name": name, "is_active": is_active, "tags": tags}
         try:
             body = await assemble_body(
                 OrganizationUpdate,
@@ -226,7 +229,7 @@ TOOLS = [
     ("bifrost_organization_list", "List Organizations", "List all organizations in the platform."),
     ("bifrost_organization_get", "Get Organization", "Get organization details by ID or domain."),
     ("bifrost_organization_create", "Create Organization", "Create a new organization."),
-    ("bifrost_organization_update", "Update Organization", "Update an organization (name, is_active)."),
+    ("bifrost_organization_update", "Update Organization", "Update an organization (name, is_active, tags)."),
     ("bifrost_organization_delete", "Delete Organization", "Delete (soft-delete) an organization."),
 ]
 

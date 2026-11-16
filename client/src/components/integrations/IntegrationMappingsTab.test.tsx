@@ -818,4 +818,41 @@ describe("IntegrationMappingsTab — large lists", () => {
 		expect(screen.queryByText("Large Org 0000")).not.toBeInTheDocument();
 		expect(screen.getByText("Large Org 0001")).toBeInTheDocument();
 	});
+
+	it("filters mappings by organization tag alongside status", async () => {
+		const tagged = [
+			{ ...organizations[0], tags: ["MSP"] },
+			{
+				...organizations[1],
+				tags: ["Licence"],
+				mapping: { id: "mapping" } as IntegrationMapping,
+			},
+			{ ...organizations[2], tags: ["licence", "MSP"] },
+			organizations[3],
+		];
+		const { user } = renderTab({
+			orgsWithMappings: tagged,
+			hasDataProvider: false,
+		});
+		await user.click(
+			screen.getByRole("combobox", { name: "Filter by tag" }),
+		);
+		await user.click(screen.getByRole("option", { name: "Licence" }));
+		await user.keyboard("{Escape}");
+
+		const list = screen.getByRole("list", {
+			name: "Organization mappings",
+		});
+		expect(within(list).getAllByRole("listitem")).toHaveLength(2);
+		expect(within(list).getByText("Large Org 0001")).toBeInTheDocument();
+		expect(within(list).getByText("Large Org 0002")).toBeInTheDocument();
+		expect(screen.getByText("2 of 4 mappings")).toBeInTheDocument();
+
+		await user.selectOptions(
+			screen.getByRole("combobox", { name: "Mapping Status" }),
+			"unmapped",
+		);
+		expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+		expect(within(list).getByText("Large Org 0002")).toBeInTheDocument();
+	});
 });
