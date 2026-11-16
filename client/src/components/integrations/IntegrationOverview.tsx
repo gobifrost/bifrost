@@ -316,7 +316,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 						<ChevronDown className="size-3 opacity-60" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent arrow align="start" className="w-80 space-y-3">
+				<PopoverContent align="start" className="w-80 space-y-3">
 					<div className="flex items-start justify-between gap-2">
 						<div>
 							<h2 className="text-sm font-medium">
@@ -437,7 +437,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 						<ChevronDown className="size-3 opacity-60" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent arrow align="start" className="w-80 space-y-3">
+				<PopoverContent align="start" className="w-80 space-y-3">
 					<div>
 						<h2 className="text-sm font-medium">Defaults</h2>
 						<p className="text-xs text-muted-foreground">
