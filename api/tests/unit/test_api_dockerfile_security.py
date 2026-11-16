@@ -82,3 +82,9 @@ def test_native_build_compiler_is_pinned_and_build_only(filename):
     assert "RUSTUP_HOME" not in runtime
     assert "/opt/cargo" not in runtime
     assert "/opt/rustup" not in runtime
+
+
+@pytest.mark.parametrize("filename", ["Dockerfile", "Dockerfile.dev"])
+def test_sdk_license_is_readable_by_runtime_user(filename):
+    text = (_api_dir() / filename).read_text()
+    assert "COPY --chmod=644 LICENSE /app/LICENSE" in text
