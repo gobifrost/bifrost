@@ -76,6 +76,7 @@ import {
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
+import { identitySourceLabel } from "@/services/identity-providers";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
@@ -537,6 +538,14 @@ export function Users() {
 													)}
 												</dd>
 											</div>
+											<div className="col-span-2">
+												<dt className="text-xs text-muted-foreground">
+													Identity Source
+												</dt>
+												<dd className="mt-1 [overflow-wrap:anywhere]">
+													{identitySourceLabel(user)}
+												</dd>
+											</div>
 											<div>
 												<dt className="text-xs text-muted-foreground">
 													Created
@@ -654,6 +663,9 @@ export function Users() {
 												sortDirection={sortDirection}
 											/>
 										</button>
+									</DataTableHead>
+									<DataTableHead className="w-0 whitespace-nowrap">
+										Identity Source
 									</DataTableHead>
 									<DataTableHead
 										className="w-0 whitespace-nowrap"
@@ -806,6 +818,9 @@ export function Users() {
 													/>
 												)}
 											</DataTableCell>
+											<DataTableCell className="w-0 whitespace-nowrap">
+												{identitySourceLabel(user)}
+											</DataTableCell>
 											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 												{user.created_at
 													? new Date(
@@ -830,7 +845,7 @@ export function Users() {
 							<DataTableFooter>
 								<DataTableRow>
 									<DataTableCell
-										colSpan={showSelection ? 8 : 7}
+										colSpan={showSelection ? 9 : 8}
 										className="p-0"
 									>
 										<ListPagination
