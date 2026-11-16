@@ -108,3 +108,19 @@ export function useUpdateOrganization(options?: {
 		},
 	});
 }
+
+/**
+ * Add and/or remove tags across several organizations in one request.
+ * The server applies every change or none; callers report errors themselves.
+ */
+export function useBulkUpdateOrganizationTags() {
+	const queryClient = useQueryClient();
+
+	return $api.useMutation("patch", "/api/organizations/tags", {
+		onSuccess: () => {
+			queryClient.invalidateQueries({
+				queryKey: ["get", "/api/organizations"],
+			});
+		},
+	});
+}

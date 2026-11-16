@@ -846,6 +846,13 @@ ORGANIZATION_OPERATIONS = {
         ("organizations", "update"),
         "bifrost_organization_update",
     ),
+    "organizations.tags.bulk_update": (
+        "PATCH",
+        "/api/organizations/tags",
+        None,
+        None,
+        False,
+    ),
     "organizations.delete": (
         "DELETE",
         "/api/organizations/{org_id}",

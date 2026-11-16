@@ -34,6 +34,14 @@ import { EntitySelector } from "@/components/integrations/EntitySelector";
 import { MatchSuggestionBadge } from "@/components/integrations/MatchSuggestionBadge";
 import type { MatchMode, MatchSuggestion, MatchResult } from "@/lib/matching";
 import { isExpired } from "@/lib/client-types";
+import {
+	OrganizationTagList,
+	TagFilter,
+} from "@/components/organizations/OrganizationTags";
+import {
+	collectOrganizationTags,
+	matchesTagFilter,
+} from "@/lib/organization-tags";
 
 interface MappingFormData {
 	organization_id: string;
@@ -46,6 +54,7 @@ interface MappingFormData {
 export interface OrgWithMapping {
 	id: string;
 	name: string;
+	tags?: string[] | null;
 	mapping?: IntegrationMapping;
 	formData: MappingFormData;
 }
@@ -148,6 +157,11 @@ export function IntegrationMappingsTab({
 	const isActionPending = pendingMappingAction !== null;
 	const [mappingSearch, setMappingSearch] = useState("");
 	const [mappingStatus, setMappingStatus] = useState("all");
+	const [tagFilter, setTagFilter] = useState<string[]>([]);
+	const knownTags = useMemo(
+		() => collectOrganizationTags(orgsWithMappings),
+		[orgsWithMappings],
+	);
 	const [offset, setOffset] = useState(0);
 	const pageSize = 25;
 	const usedEntityIds = useMemo(
@@ -172,6 +186,7 @@ export function IntegrationMappingsTab({
 		return orgsWithMappings.filter((org) => {
 			if (mappingStatus === "mapped" && !org.mapping) return false;
 			if (mappingStatus === "unmapped" && org.mapping) return false;
+			if (!matchesTagFilter(org, tagFilter)) return false;
 			if (!normalizedSearch) return true;
 			const entityId =
 				org.formData.entity_id || org.mapping?.entity_id || "";
@@ -188,7 +203,13 @@ export function IntegrationMappingsTab({
 
 			return searchable.includes(normalizedSearch);
 		});
-	}, [entityLabelByValue, normalizedSearch, orgsWithMappings, mappingStatus]);
+	}, [
+		entityLabelByValue,
+		normalizedSearch,
+		orgsWithMappings,
+		mappingStatus,
+		tagFilter,
+	]);
 	const pageOffset = Math.min(
 		offset,
 		Math.max(0, Math.ceil(filteredOrgs.length / pageSize) - 1) * pageSize,
@@ -255,22 +276,35 @@ export function IntegrationMappingsTab({
 				</CardHeader>
 				{orgsWithMappings.length > 0 && (
 					<div className="px-(--card-spacing)">
-						<label className="flex items-center gap-2 mb-3 text-sm">
-							Mapping Status
-							<select
-								aria-label="Mapping Status"
-								value={mappingStatus}
-								onChange={(event) => {
-									setMappingStatus(event.target.value);
-									setOffset(0);
-								}}
-								className="rounded-md border bg-background p-2"
-							>
-								<option value="all">All</option>
-								<option value="mapped">Mapped</option>
-								<option value="unmapped">Unmapped</option>
-							</select>
-						</label>
+						<div className="mb-3 flex flex-wrap items-center gap-3">
+							<label className="flex items-center gap-2 text-sm">
+								Mapping Status
+								<select
+									aria-label="Mapping Status"
+									value={mappingStatus}
+									onChange={(event) => {
+										setMappingStatus(event.target.value);
+										setOffset(0);
+									}}
+									className="rounded-md border bg-background p-2"
+								>
+									<option value="all">All</option>
+									<option value="mapped">Mapped</option>
+									<option value="unmapped">Unmapped</option>
+								</select>
+							</label>
+							{knownTags.length > 0 && (
+								<TagFilter
+									tags={knownTags}
+									value={tagFilter}
+									onChange={(value) => {
+										setTagFilter(value);
+										setOffset(0);
+									}}
+									className="sm:max-w-64"
+								/>
+							)}
+						</div>
 						<MappingListToolbar
 							value={mappingSearch}
 							totalCount={orgsWithMappings.length}
@@ -348,10 +382,12 @@ export function IntegrationMappingsTab({
 									onClick={() => {
 										setMappingSearch("");
 										setMappingStatus("all");
+										setTagFilter([]);
 										setOffset(0);
 									}}
 								>
-									{mappingStatus === "all"
+									{mappingStatus === "all" &&
+									tagFilter.length === 0
 										? "Clear search"
 										: "Clear Filters"}
 								</Button>
@@ -594,6 +630,7 @@ function IntegrationMappingRecord({
 				<h3 className="min-w-0 font-medium [overflow-wrap:anywhere]">
 					{org.name}
 				</h3>
+				<OrganizationTagList tags={org.tags} />
 				{!canManage && (
 					<Badge variant="outline" className="text-xs">
 						Read Only
