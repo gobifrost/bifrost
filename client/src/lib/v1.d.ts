@@ -1449,6 +1449,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/organizations/tags": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Bulk add or remove organization tags
+         * @description Add and/or remove tags on several organizations in one transaction. Every organization must be updatable by the caller, or nothing changes.
+         */
+        patch: operations["organizations.tags.bulk_update"];
+        trace?: never;
+    };
     "/api/organizations/{org_id}": {
         parameters: {
             query?: never;
@@ -24743,6 +24763,11 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             };
+            /**
+             * Tags
+             * @description Labels for grouping and filtering organizations (e.g. 'MSP')
+             */
+            tags?: string[];
         };
         /**
          * OrganizationMetricsResponse
@@ -24802,6 +24827,11 @@ export interface components {
                 [key: string]: unknown;
             };
             /**
+             * Tags
+             * @description Labels for grouping and filtering organizations (e.g. 'MSP')
+             */
+            tags?: string[];
+            /**
              * Id
              * Format: uuid
              */
@@ -24842,6 +24872,24 @@ export interface components {
             name: string;
         };
         /**
+         * OrganizationTagsBulkUpdate
+         * @description Add and/or remove tags across several organizations at once.
+         */
+        OrganizationTagsBulkUpdate: {
+            /** Organization Ids */
+            organization_ids: string[];
+            /**
+             * Add
+             * @description Tags to add to every organization
+             */
+            add?: string[];
+            /**
+             * Remove
+             * @description Tags to remove from every organization (case-insensitive)
+             */
+            remove?: string[];
+        };
+        /**
          * OrganizationUpdate
          * @description Input for updating an organization (all fields optional).
          */
@@ -24856,6 +24904,11 @@ export interface components {
             settings?: {
                 [key: string]: unknown;
             } | null;
+            /**
+             * Tags
+             * @description Replaces the organization's tags; omit to leave them unchanged
+             */
+            tags?: string[] | null;
         };
         /**
          * OrganizationUsage
@@ -34720,6 +34773,39 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["OrganizationPublic"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "organizations.tags.bulk_update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["OrganizationTagsBulkUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["OrganizationPublic"][];
                 };
             };
             /** @description Validation Error */

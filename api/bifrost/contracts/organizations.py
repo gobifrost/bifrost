@@ -13,6 +13,7 @@ class OrganizationCreate(BaseModel):
     is_active: bool = Field(default=True)
     is_provider: bool = Field(default=False)
     settings: dict = Field(default_factory=dict)
+    tags: list[str] = Field(default_factory=list)
 
 
 class OrganizationUpdate(BaseModel):
@@ -22,3 +23,4 @@ class OrganizationUpdate(BaseModel):
     domain: str | None = None
     is_active: bool | None = None
     settings: dict | None = None
+    tags: list[str] | None = None

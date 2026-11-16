@@ -6061,6 +6061,20 @@
     "inline_effect": null,
     "intended_change": null,
     "mcp_tool": null,
+    "method": "PATCH",
+    "operation_id": "organizations.tags.bulk_update",
+    "path": "/api/organizations/tags",
+    "permission": "organizations.readwrite",
+    "reason": "Adds and removes tags on several organizations, all or nothing. Decided by the evaluator (src.services.authorization.enforce) at every requested organization."
+  },
+  {
+    "access_class": "permission",
+    "boundary": "organization",
+    "current_gate": "evaluator",
+    "inline_checks": [],
+    "inline_effect": null,
+    "intended_change": null,
+    "mcp_tool": null,
     "method": "DELETE",
     "operation_id": "organizations.delete",
     "path": "/api/organizations/{org_id}",
@@ -6093,7 +6107,7 @@
     "operation_id": "organizations.update",
     "path": "/api/organizations/{org_id}",
     "permission": "organizations.readwrite",
-    "reason": "Updates one organization record (name, domain, active state, settings). Decided by the evaluator (src.services.authorization.enforce) at that organization."
+    "reason": "Updates one organization record (name, domain, active state, settings, tags). Decided by the evaluator (src.services.authorization.enforce) at that organization."
   },
   {
     "access_class": "permission",

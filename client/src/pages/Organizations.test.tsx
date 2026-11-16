@@ -3,9 +3,10 @@ import userEvent from "@testing-library/user-event";
 import { useState } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { mockUseOrganizations, mockUpdate } = vi.hoisted(() => ({
+const { mockUseOrganizations, mockUpdate, mockBulkTags } = vi.hoisted(() => ({
 	mockUseOrganizations: vi.fn(),
 	mockUpdate: vi.fn(),
+	mockBulkTags: vi.fn(),
 }));
 const mockCreate = vi.fn();
 const mockUseMediaQuery = vi.fn(() => false);
@@ -20,6 +21,7 @@ const organizations = [
 		is_active: true,
 		is_provider: false,
 		settings: {},
+		tags: ["MSP", "Licence"],
 		created_at: "2026-08-13T00:00:00Z",
 		updated_at: "2026-08-13T00:00:00Z",
 		created_by: "admin@example.com",
@@ -47,7 +49,9 @@ const manyOrganizations = Array.from({ length: 30 }, (_, index) => ({
 	updated_at: "2026-08-13T00:00:00Z",
 	created_by: "admin@example.com",
 }));
-let organizationRows = organizations;
+let organizationRows: Array<
+	(typeof organizations)[number] | (typeof manyOrganizations)[number]
+> = organizations;
 
 vi.mock("@/hooks/useOrganizations", () => ({
 	useOrganizations: (options?: { includeInactive?: boolean }) => {
@@ -93,6 +97,12 @@ vi.mock("@/hooks/useOrganizations", () => ({
 			reset: () => setError(undefined),
 		};
 	},
+	useBulkUpdateOrganizationTags: () => ({
+		error: null,
+		isPending: false,
+		mutateAsync: async (variables: unknown) => mockBulkTags(variables),
+		reset: vi.fn(),
+	}),
 	useUpdateOrganization: () => {
 		const [error, setError] = useState<Error | undefined>();
 		const [isPending, setIsPending] = useState(false);
@@ -168,6 +178,7 @@ beforeEach(() => {
 	mockUseOrganizations.mockClear();
 	mockCreate.mockReset();
 	mockUpdate.mockReset();
+	mockBulkTags.mockReset();
 	nextCreateError = undefined;
 	nextUpdateError = undefined;
 	organizationRows = organizations;
@@ -287,6 +298,7 @@ describe("Organizations", () => {
 					name: "Acme",
 					domain: "acme.example",
 					is_active: false,
+					tags: ["MSP", "Licence"],
 				},
 			}),
 		);
@@ -537,6 +549,101 @@ describe("Organizations", () => {
 	});
 });
 
+describe("Organization tags", () => {
+	const taggedRows = [
+		organizations[0],
+		{
+			...manyOrganizations[1],
+			name: "Globex",
+			tags: ["connectivity"],
+		},
+		{ ...manyOrganizations[2], name: "Initech" },
+	];
+
+	it("shows tags in a column and filters organizations by tag", async () => {
+		const user = userEvent.setup();
+		organizationRows = taggedRows;
+		render(<Organizations />);
+
+		expect(
+			screen.getByRole("columnheader", { name: "Tags" }),
+		).toBeInTheDocument();
+		const acmeRow = screen.getByRole("row", { name: /Acme/ });
+		expect(within(acmeRow).getByText("MSP")).toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("combobox", { name: "Filter by tag" }),
+		);
+		await user.click(screen.getByRole("option", { name: "connectivity" }));
+
+		expect(screen.getByText("Globex")).toBeInTheDocument();
+		expect(screen.queryByText("Acme")).not.toBeInTheDocument();
+		expect(screen.queryByText("Initech")).not.toBeInTheDocument();
+	});
+
+	it("adds a tag to the selected organizations in one request", async () => {
+		const user = userEvent.setup();
+		organizationRows = taggedRows;
+		render(<Organizations />);
+
+		await user.click(screen.getByRole("checkbox", { name: "Select Acme" }));
+		await user.click(
+			screen.getByRole("checkbox", { name: "Select Initech" }),
+		);
+		const bar = screen.getByRole("region", {
+			name: "Bulk organization actions",
+		});
+		expect(within(bar).getByText("2 selected")).toBeInTheDocument();
+
+		await user.click(within(bar).getByRole("button", { name: "Add Tags" }));
+		const dialog = screen.getByRole("dialog", { name: "Add Tags" });
+		await user.type(
+			within(dialog).getByRole("textbox", { name: "Tags to add" }),
+			"Connectivity{Enter}",
+		);
+		await user.click(
+			within(dialog).getByRole("button", { name: "Add Tags" }),
+		);
+
+		await waitFor(() =>
+			expect(mockBulkTags).toHaveBeenCalledWith({
+				body: {
+					organization_ids: ["org-1", "org-3"],
+					add: ["Connectivity"],
+					remove: [],
+				},
+			}),
+		);
+		await waitFor(() =>
+			expect(
+				screen.queryByRole("region", {
+					name: "Bulk organization actions",
+				}),
+			).not.toBeInTheDocument(),
+		);
+	});
+
+	it("removes a tag present on the selection", async () => {
+		const user = userEvent.setup();
+		organizationRows = taggedRows;
+		render(<Organizations />);
+
+		await user.click(screen.getByRole("checkbox", { name: "Select Acme" }));
+		await user.click(screen.getByRole("button", { name: "Remove Tags" }));
+		const dialog = screen.getByRole("dialog", { name: "Remove Tags" });
+		await user.click(within(dialog).getByRole("button", { name: "MSP" }));
+		await user.click(
+			within(dialog).getByRole("button", { name: "Remove Tags" }),
+		);
+
+		await waitFor(() =>
+			expect(mockBulkTags).toHaveBeenCalledWith({
+				body: { organization_ids: ["org-1"], add: [], remove: ["MSP"] },
+			}),
+		);
+	});
+});
+
 describe("Organizations permissions", () => {
 	it("shows a viewer the list without create, edit, or disable controls", () => {
 		authz.canAt = () => false;
@@ -558,6 +665,9 @@ describe("Organizations permissions", () => {
 		).not.toBeInTheDocument();
 		expect(
 			screen.queryByRole("columnheader", { name: "Actions" }),
+		).not.toBeInTheDocument();
+		expect(
+			screen.queryByRole("checkbox", { name: "Select Acme" }),
 		).not.toBeInTheDocument();
 	});
 
