@@ -1,0 +1,13 @@
+{
+  "key": "pr:1445",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1445",
+      "Jack November 16 instruction for issue #1428 work: No product update."
+    ]
+  },
+  "reason": "Jack explicitly requested no Product Update for #1428 work; this mappings-tab redesign came from his review of the #1428 filters."
+}
