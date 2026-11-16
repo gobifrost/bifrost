@@ -15,6 +15,7 @@ import base64
 import hashlib
 import logging
 import os
+import asyncio
 import shutil
 import subprocess
 import tempfile
@@ -501,10 +502,12 @@ class GitHubSyncService:
         workspace_authorization: Callable[[], AbstractAsyncContextManager] | None = None,
         job_context: "PlatformJobContext | None" = None,
         job_operation: str | None = None,
+        remote_authorization: Callable | None = None,
     ):
         self.db = db
         self._job_context = job_context
         self._job_operation = job_operation
+        self._remote_authorization = remote_authorization
         # A credential-free URL: it is written into .git/config. The token
         # reaches git only through _git_env.
         self.repo_url = repo_url
@@ -526,6 +529,35 @@ class GitHubSyncService:
         if repo is not None:
             repo.git.update_environment(**self._git_env)
 
+    async def _remote_git(self, operation, *args, repo=None, **kwargs):
+        """Keep credentialed Git I/O in the API and join it before checkout cleanup."""
+        await self._refresh_git_auth(repo)
+        authorization = self._remote_authorization
+        if authorization is not None:
+            await authorization()
+        if repo is None:
+            kwargs["env"] = self._git_env
+        task = asyncio.create_task(asyncio.to_thread(operation, *args, **kwargs))
+        try:
+            result = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # GitPython owns a synchronous subprocess. Do not remove its work
+            # directory while it still runs, or publish its result on cancel.
+            while not task.done():
+                try:
+                    await asyncio.shield(task)
+                except asyncio.CancelledError:
+                    continue
+                except Exception:
+                    break
+            # Observe a failed subprocess even when cancellation wins.
+            if not task.cancelled():
+                task.exception()
+            raise
+        if authorization is not None:
+            await authorization()
+        return result
+
     def _raise_app_access_error(self, error: Exception) -> None:
         message = str(getattr(error, "stderr", error)).lower()
         if self._app_auth and (
@@ -539,10 +571,11 @@ class GitHubSyncService:
     async def _clone_connect_remote(self, destination: Path, repository_url: str, branch: str) -> GitRepo | None:
         """Clone the reviewed remote branch, treating an empty remote as an empty tree."""
         try:
-            await self._refresh_git_auth()
-            repo = GitRepo.clone_from(
-                repository_url, str(destination), branch=branch, env=self._git_env,
+            repo = await self._remote_git(
+                GitRepo.clone_from, repository_url, str(destination), branch=branch,
             )
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as exc:
             message = str(exc).lower()
             if "empty repository" in message:
@@ -555,10 +588,11 @@ class GitHubSyncService:
                 if destination.exists():
                     shutil.rmtree(destination)
                 try:
-                    await self._refresh_git_auth()
-                    fallback = GitRepo.clone_from(
-                        repository_url, str(destination), env=self._git_env,
+                    fallback = await self._remote_git(
+                        GitRepo.clone_from, repository_url, str(destination),
                     )
+                except (PlatformJobCancelled, PlatformJobFailure):
+                    raise
                 except Exception as fallback_exc:
                     if "empty repository" in str(fallback_exc).lower():
                         return None
@@ -710,6 +744,13 @@ class GitHubSyncService:
         progress_fn=None,
     ) -> "SyncResult":
         """Materialize a reviewed first connection, then use the normal sync apply path."""
+        if self._job_context is not None and self._job_context.checkpoint:
+            retry = self._job_context.checkpoint.get("retry_plan")
+            if retry is not None:
+                return await self.desktop_sync(
+                    confirm_deletes=False, retry_plan=WorkspaceSyncPlan.model_validate(retry),
+                    progress_fn=progress_fn,
+                )
         record = await self.load_connect_preview(
             request.preview_token,
             requested_by_user_id=requested_by_user_id,
@@ -791,13 +832,20 @@ class GitHubSyncService:
                 if progress_fn:
                     await progress_fn("Validating reconciled workspace")
                 plan = await self.prepare_desktop_sync(work_dir, repo, progress_fn=progress_fn)
-                return await self.apply_desktop_sync(
+                result = await self.apply_desktop_sync(
                     work_dir,
                     repo,
                     plan,
                     confirm_deletes=False,
                     progress_fn=progress_fn,
                 )
+                if result.requires_action and self._job_context is not None:
+                    await self._job_context.save_checkpoint({
+                        "git_connect_ready": True, "job_id": str(self._job_context.job_id),
+                        "operation": "connect", "result": result.model_dump(mode="json"),
+                        "connection": {"repository_url": self.repo_url.removesuffix(".git"), "branch": self.branch},
+                    }, phase="Git connection awaiting deletion review")
+                return result
 
     # -----------------------------------------------------------------
     # Preflight: validate repo health
@@ -832,8 +880,9 @@ class GitHubSyncService:
 
         remote_exists = True
         try:
-            await self._refresh_git_auth(repo)
-            repo.remotes.origin.fetch(self.branch)
+            await self._remote_git(repo.remotes.origin.fetch, self.branch, repo=repo)
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as e:
             self._raise_app_access_error(e)
             err_str = str(e).lower()
@@ -1057,8 +1106,9 @@ class GitHubSyncService:
         await _progress("Fetching remote...")
         remote_exists = True
         try:
-            await self._refresh_git_auth(repo)
-            repo.remotes.origin.fetch(self.branch)
+            await self._remote_git(repo.remotes.origin.fetch, self.branch, repo=repo)
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as e:
             self._raise_app_access_error(e)
             err_str = str(e).lower()
@@ -1110,9 +1160,10 @@ class GitHubSyncService:
         # Count ahead before push
         ahead = 0
         try:
-            await self._refresh_git_auth(repo)
-            repo.remotes.origin.fetch(self.branch)
+            await self._remote_git(repo.remotes.origin.fetch, self.branch, repo=repo)
             ahead = int(repo.git.rev_list("--count", f"origin/{self.branch}..HEAD"))
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as e:
             self._raise_app_access_error(e)
             ahead = int(repo.git.rev_list("--count", "HEAD"))
@@ -1121,8 +1172,7 @@ class GitHubSyncService:
             return PushResult(success=True, pushed_commits=0)
 
         # Push
-        await self._refresh_git_auth(repo)
-        push_infos = repo.remotes.origin.push(refspec=f"HEAD:{self.branch}")
+        push_infos = await self._remote_git(repo.remotes.origin.push, refspec=f"HEAD:{self.branch}", repo=repo)
 
         from git.remote import PushInfo
         for pi in push_infos:
@@ -1391,9 +1441,11 @@ class GitHubSyncService:
         if self._job_context is not None and not await self._job_context.authorize_effect(self.db):
             raise PlatformJobCancelled
 
-    @staticmethod
-    def _publication_receipt(plan: WorkspaceSyncPlan) -> dict:
-        return {"success": False, "retryable": True, "retry_plan": plan.model_dump(mode="json")}
+    def _publication_receipt(self, plan: WorkspaceSyncPlan) -> dict:
+        receipt = {"success": False, "retryable": True, "retry_plan": plan.model_dump(mode="json")}
+        if self._job_operation == "connect":
+            receipt["connection"] = {"repository_url": self.repo_url.removesuffix(".git"), "branch": self.branch}
+        return receipt
 
     async def _checkpoint_import(self, plan: WorkspaceSyncPlan):
         if self._job_context is not None:
@@ -1545,10 +1597,12 @@ class GitHubSyncService:
             if progress_fn:
                 await progress_fn("Syncing app previews...")
             await self._sync_app_previews(work_dir)
-            if self._job_context is not None and self._job_operation == "sync":
+            if self._job_context is not None and self._job_operation in {"sync", "connect"}:
                 await self._job_context.checkpoint_in_transaction(self.db, {
                     "git_publication_complete": True, "job_id": str(self._job_context.job_id),
                     "checkpoint_id": publication_plan.checkpoint_id, "result": success_result.model_dump(mode="json"),
+                    "operation": self._job_operation,
+                    "connection": {"repository_url": self.repo_url.removesuffix(".git"), "branch": self.branch},
                 }, phase="Workspace publication complete")
                 try:
                     await self.db.commit()
@@ -2191,12 +2245,8 @@ class GitHubSyncService:
             # Clone into a temp dir first (git clone requires clean dir)
             clone_dir = Path(tempfile.mkdtemp(prefix="bifrost-clone-"))
             try:
-                await self._refresh_git_auth()
-                GitRepo.clone_from(
-                    self.repo_url,
-                    str(clone_dir),
-                    branch=self.branch,
-                    env=self._git_env,
+                await self._remote_git(
+                    GitRepo.clone_from, self.repo_url, str(clone_dir), branch=self.branch,
                 )
                 # Move .git/ to the target
                 shutil.move(str(clone_dir / ".git"), str(target / ".git"))
@@ -2216,6 +2266,8 @@ class GitHubSyncService:
                 return GitRepo(str(target))
             finally:
                 shutil.rmtree(clone_dir, ignore_errors=True)
+        except (PlatformJobCancelled, PlatformJobFailure):
+            raise
         except Exception as e:
             self._raise_app_access_error(e)
             err_str = str(e)

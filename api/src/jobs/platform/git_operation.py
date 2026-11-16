@@ -18,8 +18,8 @@ from src.jobs.platform.base import (
     PlatformJobRequiresAction,
 )
 from src.models.contracts.github import WorkspaceSyncPlan
-from src.services.github_config import get_github_config, save_github_config
-from shared.github_git_app import activate, credential_provider, pending_config
+from src.services.github_config import get_github_config, save_github_config, lock_github_config
+from shared.github_git_app import activate, credential_provider, pending_config, validate_current_connection, cleanup_setup_credentials
 from src.services.github_sync import (
     GitConnectDecisionError,
     GitConnectPreviewError,
@@ -138,6 +138,63 @@ async def workspace_publication_authorization(context: PlatformJobContext):
         yield
 
 
+async def _authorize_remote(context: PlatformJobContext, config) -> None:
+    async with get_db_context() as db:
+        if not await context.authorize_effect(db):
+            raise PlatformJobCancelled
+        await validate_current_connection(db, config)
+
+
+async def _cleanup_connection_receipt(context, receipt) -> None:
+    from src.services.git_repo_manager import GitRepoManager
+    async with workspace_publication_authorization(context):
+        if receipt.get("checkpoint_id"):
+            manager = GitRepoManager(get_settings())
+            await manager.delete_workspace_checkpoint(receipt["checkpoint_id"])
+        if receipt.get("setup_id"):
+            await cleanup_setup_credentials(UUID(receipt["setup_id"]))
+
+
+async def _activate_connection(context, config, connection, result) -> None:
+    """Commit connection activation and its same-job receipt in one transaction."""
+    async with get_db_context() as db:
+        if not await context.authorize_effect(db):
+            raise PlatformJobCancelled
+        await lock_github_config(db, config.scope)
+        if context.organization_id != config.scope:
+            # A global PAT may be inherited when first connecting an org.
+            # Lock its target too before checking for a newer org connection.
+            await lock_github_config(db, context.organization_id)
+        await validate_current_connection(db, config)
+        if config.setup_id:
+            await activate(db, config, connection["branch"], context.requested_by_email, commit=False)
+        else:
+            current = await get_github_config(db, context.organization_id)
+            if current is None or current.generation != config.generation or current.repo_url:
+                raise PlatformJobFailure("github_connection_changed", "The GitHub connection changed during setup.")
+            if config.token is None:
+                raise PlatformJobFailure("github_not_configured", "GitHub PAT credentials are missing.")
+            await save_github_config(db=db, org_id=context.organization_id, token=config.token,
+                repo_url=connection["repository_url"], branch=connection["branch"],
+                updated_by=context.requested_by_email, commit=False)
+        from src.models.orm.platform_jobs import PlatformJob
+        job = await db.get(PlatformJob, context.job_id)
+        previous = (job.result or {}) if job is not None else {}
+        receipt = {
+            "git_connection_complete": True, "job_id": str(context.job_id),
+            "result": result, "setup_id": str(config.setup_id) if config.setup_id else None,
+            "checkpoint_id": previous.get("checkpoint_id"),
+        }
+        await context.checkpoint_in_transaction(db, receipt, phase="Git connection activated")
+        try:
+            await db.commit()
+        except Exception as exc:
+            raise PlatformJobFailure("git_activation_commit_unconfirmed",
+                "Git connection activation could not be confirmed; its durable receipt is retained.",
+                retryable=True, preserve_checkpoint=True) from exc
+    await _cleanup_connection_receipt(context, receipt)
+
+
 async def _run_git_operation(
     context: PlatformJobContext,
     payload: GitOperationPayload,
@@ -149,6 +206,14 @@ async def _run_git_operation(
             "Git operation organization does not match its platform job.",
         )
     organization_id = context.organization_id
+    if context.checkpoint and context.checkpoint.get("git_connection_complete"):
+        if payload.operation != "connect" or context.checkpoint.get("job_id") != str(context.job_id):
+            raise PlatformJobFailure("git_checkpoint_mismatch", "Git completion receipt belongs to another operation.")
+        await _cleanup_connection_receipt(context, context.checkpoint)
+        result = context.checkpoint["result"]
+        if result.get("requires_action"):
+            raise PlatformJobRequiresAction("Delete confirmation required", result)
+        return result
     if payload.operation == "sync" and context.checkpoint and context.checkpoint.get("git_publication_complete"):
         from src.models.contracts.github import SyncResult
         from src.services.git_repo_manager import GitRepoManager
@@ -181,7 +246,18 @@ async def _run_git_operation(
             raise PlatformJobFailure("github_connection_changed", "GitHub connection changed after this operation was queued.")
         if config is None or not config.has_credentials:
             raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
-        if payload.operation == "connect":
+        connect_receipt = context.checkpoint if payload.operation == "connect" and context.checkpoint and (context.checkpoint.get("git_publication_complete") or context.checkpoint.get("git_connect_ready")) else None
+        import_receipt = context.checkpoint if payload.operation == "connect" and context.checkpoint and context.checkpoint.get("retry_plan") else None
+        if connect_receipt:
+            if connect_receipt.get("job_id") != str(context.job_id) or connect_receipt.get("operation") != "connect":
+                raise PlatformJobFailure("git_checkpoint_mismatch", "Git completion receipt belongs to another operation.")
+            connection = connect_receipt["connection"]
+            result = connect_receipt["result"]
+        elif import_receipt:
+            connection = import_receipt["connection"]
+            service_url = _github_remote_url(config, connection["repository_url"])
+            service_branch = connection["branch"]
+        elif payload.operation == "connect":
             try:
                 request_data = payload.options["request"]
                 preview = await GitHubSyncService.load_connect_preview(
@@ -202,22 +278,38 @@ async def _run_git_operation(
                 )
             service_url = _github_remote_url(config, preview.repository_url)
             service_branch = preview.branch
+            connection = {"repository_url": preview.repository_url, "branch": preview.branch}
         else:
             if not config.repo_url:
                 raise PlatformJobFailure("github_not_configured", "GitHub is not configured.")
             service_url = _github_remote_url(config)
             service_branch = config.branch
+    if connect_receipt:
+        await _activate_connection(context, config, connection, result)
+        if result.get("requires_action"):
+            raise PlatformJobRequiresAction("Delete confirmation required", result)
+        return result
+
+    async def token_provider():
+        # No credential-bearing session or provider token reaches a worker.
+        # The refresh session closes before Git's subprocess begins.
+        await _authorize_remote(context, config)
+        async with get_db_context() as credential_db:
+            return await credential_provider(credential_db, config)()
+
+    async with get_db_context() as db:
         service = GitHubSyncService(
             db=db,
             repo_url=service_url,
             branch=service_branch,
             settings=get_settings(),
             token=config.token,
-            token_provider=credential_provider(db, config),
+            token_provider=token_provider,
             app_auth=config.auth_kind == "app",
             workspace_authorization=lambda: workspace_publication_authorization(context),
             job_context=context,
             job_operation=payload.operation,
+            remote_authorization=lambda: _authorize_remote(context, config),
         )
         try:
             result = redact_token(
@@ -231,19 +323,9 @@ async def _run_git_operation(
             raise PlatformJobFailure(
                 "git_connect_decision_invalid", redact_token(str(exc), config.token)
             ) from exc
-        if payload.operation == "connect" and (
-            result.get("success") or result.get("requires_action")
-        ):
-            if setup_id:
-                await activate(db, config, preview.branch, context.requested_by_email)
-            else:
-                if config.token is None:
-                    raise PlatformJobFailure("github_not_configured", "GitHub PAT credentials are missing.")
-                await save_github_config(
-                    db=db, org_id=organization_id, token=config.token,
-                    repo_url=preview.repository_url, branch=preview.branch,
-                    updated_by=context.requested_by_email,
-                )
+
+    if payload.operation == "connect" and (result.get("success") or result.get("requires_action")):
+        await _activate_connection(context, config, connection, result)
 
     if result.get("requires_action"):
         raise PlatformJobRequiresAction("Delete confirmation required", result)
@@ -253,6 +335,9 @@ async def _run_git_operation(
             result.get("error") or f"{payload.operation.replace('_', ' ').title()} failed.",
             retryable=bool(result.get("retryable")),
             result=result,
+            # Connect's canonical import receipt also binds its target. The
+            # public SyncResult must not erase that private recovery binding.
+            preserve_checkpoint=payload.operation == "connect" and result.get("retry_plan") is not None,
         )
     if payload.operation == "sync":
         from src.core.repo_dirty import clear_repo_dirty
@@ -270,11 +355,21 @@ async def run_git_operation(context: PlatformJobContext, payload: GitOperationPa
         # including cancellation after that transaction has already committed.
         exc.preserve_checkpoint = True
         raise
+    except PlatformJobRequiresAction:
+        raise
+    except PlatformJobFailure as exc:
+        if exc.result is None:
+            exc.preserve_checkpoint = True
+        raise
+    except Exception as exc:
+        raise PlatformJobFailure("git_operation_interrupted",
+            "Git operation was interrupted; its durable recovery receipt is retained.",
+            retryable=True, preserve_checkpoint=True) from exc
 
 
 GIT_OPERATION_DEFINITION = define_platform_job(
     "workspace.git", GitOperationPayload, run_git_operation,
-    # v3 fences executors that could ignore App setup and reuse a saved PAT.
-    # Old queued jobs retain their exact schema and are checked before effects.
-    historical_payload_models={1: GitOperationPayload, 2: GitOperationPayload},
+    # v4 fences older credential-bearing executor handlers. Git effects now
+    # run in the API; old queued schemas retain their exact admission checks.
+    historical_payload_models={1: GitOperationPayload, 2: GitOperationPayload, 3: GitOperationPayload},
 )

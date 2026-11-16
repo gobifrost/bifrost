@@ -51,6 +51,7 @@ async def test_api_maintenance_claims_only_its_catalogued_jobs(monkeypatch) -> N
                 "solution.update_check",
                 "webhook.renew",
                 "workspace.file_index_reconcile",
+                "workspace.git",
                 "workflow.permissions.cutover",
             }
         ),
@@ -103,6 +104,7 @@ def test_api_owned_maintenance_is_excluded_from_executor_types() -> None:
             "solution.update_check",
             "webhook.renew",
             "workspace.file_index_reconcile",
+            "workspace.git",
             "workflow.permissions.cutover",
         }
     )

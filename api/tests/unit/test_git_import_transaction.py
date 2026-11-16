@@ -39,6 +39,9 @@ async def test_entity_import_checkpoint_precedes_progress_and_publication(monkey
         records.append(result)
     service = GitHubSyncService.__new__(GitHubSyncService)
     service.db = db
+    service.repo_url = "https://github.com/fixture/private.git"
+    service.branch = "main"
+    service._job_operation = None
     service._job_context = SimpleNamespace(authorize_effect=authorize, checkpoint_in_transaction=checkpoint)
     service.repo_manager = SimpleNamespace(delete_workspace_checkpoint=AsyncMock())
     @asynccontextmanager
@@ -93,6 +96,9 @@ async def test_completion_receipt_is_durable_before_deleting_import_snapshot(mon
         records.append(result)
     service = GitHubSyncService.__new__(GitHubSyncService)
     service.db = db
+    service.repo_url = "https://github.com/fixture/private.git"
+    service.branch = "main"
+    service._job_operation = None
     service._job_operation = 'sync'
     service._job_context = SimpleNamespace(job_id=uuid4(), authorize_effect=authorize, checkpoint_in_transaction=checkpoint)
     async def cleanup(identifier):

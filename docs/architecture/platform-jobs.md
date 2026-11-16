@@ -657,9 +657,21 @@ Cancellation and designated failures preserve the locked canonical receipt.
 After sync publication and previews finish, a same-job completion receipt commits
 before private checkpoint cleanup. Recovery can finish cleanup and return the
 saved result without reimporting or requiring Git credentials. Connect activation
-has not yet adopted this completion cursor. Direct request callers retain
-ownership of their outer transaction when import validation fails.
+uses the same publication cursor, then commits its connection and activation
+receipt together. Recovery skips the expired preview and completed Git effects;
+remaining owned-checkpoint and temporary setup-token cleanup is fenced. Direct
+request callers retain ownership of their outer transaction when import
+validation fails.
 
-Workspace Git migration remains incomplete. Credentialed remote Git effects,
-connect activation and preview/preflight compute still require their queued API
-execution integration and runtime/fault/performance qualification.
+Workspace Git now runs in the existing bounded non-control API runner. Payload
+version 4 fences older executor handlers; versions 1–3 keep their exact queued
+schemas and current connection checks. Credential refresh uses a separate API
+session that closes before Git subprocess I/O. Clone, fetch and push run off the
+event loop, with short owner/job/connection checks before and after I/O. A
+canceled task joins its in-flight Git call before checkout cleanup. These fences
+cannot undo a push already accepted by a remote; this is not exactly-once Git.
+
+Workspace Git migration remains incomplete. Preview/preflight compute still
+requires its queued shared-compute integration. Current-candidate runtime,
+external-effect fault windows, scaling, cost and performance qualification remain
+open; routing the handler to the API is not full migration acceptance.

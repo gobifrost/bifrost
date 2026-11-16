@@ -135,6 +135,11 @@ async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(
     try:
         job = await asyncio.to_thread(wait_for_job, e2e_client, platform_admin.headers, queued.json()["job_id"], "workspace.git")
         assert job["attempt"] == 1
+        from src.models.orm.platform_jobs import PlatformJob
+        canonical_job = await db_session.get(PlatformJob, UUID(queued.json()["job_id"]))
+        assert canonical_job.payload_version == 4
+        assert canonical_job.executor_worker_id is None
+        assert canonical_job.executor_compute_capability is None
         config = await get_github_config(db_session, preserve_git_configuration)
         assert config.auth_kind == "app" and config.token is None
         assert config.app["repository_id"] == 1618

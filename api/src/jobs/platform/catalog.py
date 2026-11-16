@@ -320,7 +320,8 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=512,
                 ),
-                payload_version=3,
+                payload_version=4,
+                execution_owner="api",
             ),
             _metadata(
                 "workspace.bundle_import",
