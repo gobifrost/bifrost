@@ -1,21 +1,19 @@
-import type { ReactNode } from "react";
+import type { ComponentType } from "react";
 import {
-	Eye,
+	AlertTriangle,
+	CheckCircle2,
+	ChevronDown,
+	CircleDashed,
 	Loader2,
-	MoreVertical,
 	Pencil,
 	Plus,
 	RotateCw,
 	Trash2,
+	XCircle,
 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import {
-	DropdownMenu,
-	DropdownMenuContent,
-	DropdownMenuItem,
-	DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Button } from "@/components/ui/button";
 import {
 	Popover,
 	PopoverContent,
@@ -141,7 +139,7 @@ function oauthStatus({
 	| "canUseAuthCodeFlow"
 >): { label: string; tone: OAuthTone; detail?: string } {
 	if (!integration.has_oauth_config) {
-		return { label: "Not Configured", tone: "outline" };
+		return { label: "Not Set Up", tone: "outline" };
 	}
 	if (isOAuthExpired) {
 		return {
@@ -151,14 +149,11 @@ function oauthStatus({
 		};
 	}
 	if (isOAuthConnected) {
-		const expires = oauthConfig?.expires_at
-			? `Expires ${formatDateTime(oauthConfig.expires_at)}`
-			: undefined;
 		if (isOAuthExpiringSoon) {
 			return {
 				label: "Expires Soon",
 				tone: "warning",
-				detail: `${expires} - consider refreshing`,
+				detail: "Expires soon - consider refreshing the token",
 			};
 		}
 		if (oauthConfig?.has_refresh_token === false && canUseAuthCodeFlow) {
@@ -168,7 +163,7 @@ function oauthStatus({
 				detail: "No refresh token - reconnect manually when it expires",
 			};
 		}
-		return { label: "Connected", tone: "success", detail: expires };
+		return { label: "Connected", tone: "success" };
 	}
 	if (oauthConfig?.status === "failed") {
 		return { label: "Failed", tone: "destructive" };
@@ -188,274 +183,305 @@ function formatDefaultValue(field: ConfigSchemaField, value: unknown) {
 	return typeof value === "object" ? JSON.stringify(value) : String(value);
 }
 
-/** One labelled row of the overview strip. */
-function OverviewRow({
-	title,
-	hint,
-	summary,
-	actions,
-}: {
-	title: string;
-	hint: string;
-	summary: ReactNode;
-	actions?: ReactNode;
-}) {
-	return (
-		<section
-			aria-label={title}
-			className="flex min-w-0 flex-col gap-2 px-4 py-3 sm:flex-row sm:items-center sm:gap-4"
-		>
-			<div className="min-w-0 sm:w-48 sm:shrink-0">
-				<h2 className="text-sm font-medium">{title}</h2>
-				<p className="text-xs text-muted-foreground">{hint}</p>
-			</div>
-			<div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-3 gap-y-1 text-sm">
-				{summary}
-			</div>
-			{actions && (
-				<div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-					{actions}
-				</div>
-			)}
-		</section>
-	);
+const TONE_ICON: Record<OAuthTone, ComponentType<{ className?: string }>> = {
+	success: CheckCircle2,
+	warning: AlertTriangle,
+	destructive: XCircle,
+	outline: CircleDashed,
+};
+const TONE_TEXT: Record<OAuthTone, string> = {
+	success: "text-success",
+	warning: "text-warning",
+	destructive: "text-destructive",
+	outline: "text-muted-foreground",
+};
+
+/** "authorization_code" -> "Authorization Code". */
+function flowLabel(flow?: string) {
+	return (flow ?? "")
+		.split("_")
+		.filter(Boolean)
+		.map((word) => word[0].toUpperCase() + word.slice(1))
+		.join(" ");
 }
 
-export function IntegrationOverview({
+/** Connect, reconnect, get a token, or retry: the one action that fixes the default connection. */
+function OAuthPrimaryAction({
 	integration,
 	oauthConfig,
 	isOAuthConnected,
 	isOAuthExpired,
-	isOAuthExpiringSoon,
 	canUseAuthCodeFlow,
-	onOpenDefaultsDialog,
 	onOAuthConnect,
 	onOAuthRefresh,
-	onEditOAuthConfig,
-	onDeleteOAuthConfig,
-	onCreateOAuthConfig,
 	isAuthorizePending,
 	isRefreshPending,
-	canManageDefinitions,
 }: IntegrationOverviewProps) {
-	const status = oauthStatus({
+	if (!integration.has_oauth_config || !oauthConfig) return null;
+	if (canUseAuthCodeFlow) {
+		return (
+			<Button
+				size="sm"
+				variant={
+					isOAuthConnected && !isOAuthExpired ? "outline" : "default"
+				}
+				className="min-h-11 sm:min-h-8"
+				onClick={onOAuthConnect}
+				disabled={isAuthorizePending}
+			>
+				{isAuthorizePending ? (
+					<>
+						<Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+						Connecting...
+					</>
+				) : isOAuthConnected ? (
+					"Reconnect default"
+				) : (
+					"Connect default"
+				)}
+			</Button>
+		);
+	}
+	if (isOAuthConnected) return null;
+	return (
+		<Button
+			size="sm"
+			className="min-h-11 sm:min-h-8"
+			onClick={onOAuthRefresh}
+			disabled={isRefreshPending}
+		>
+			{isRefreshPending ? (
+				<>
+					<Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+					Getting Token...
+				</>
+			) : oauthConfig.status === "failed" ? (
+				"Retry"
+			) : (
+				"Get Token"
+			)}
+		</Button>
+	);
+}
+
+/**
+ * The integration's default OAuth connection and defaults as two header
+ * chips. Each opens a popover with details and the actions that change it.
+ */
+export function IntegrationStatusChips(props: IntegrationOverviewProps) {
+	const {
 		integration,
 		oauthConfig,
 		isOAuthConnected,
-		isOAuthExpired,
-		isOAuthExpiringSoon,
-		canUseAuthCodeFlow,
-	});
+		isRefreshPending,
+		canManageDefinitions,
+		onOAuthRefresh,
+		onEditOAuthConfig,
+		onDeleteOAuthConfig,
+		onCreateOAuthConfig,
+		onOpenDefaultsDialog,
+	} = props;
+	const status = oauthStatus(props);
+	const StatusIcon = TONE_ICON[status.tone];
 	const schema = integration.config_schema ?? [];
 	const setDefaults = schema.filter((field) => {
 		const value = integration.config_defaults?.[field.key];
 		return value !== null && value !== undefined;
 	}).length;
 	const entityLabel = integration.entity_id_name || "Entity ID";
-
-	const oauthActions = canManageDefinitions && (
-		<>
-			{!integration.has_oauth_config && (
-				<Button
-					variant="outline"
-					size="sm"
-					className="min-h-11 sm:min-h-8"
-					onClick={onCreateOAuthConfig}
-				>
-					<Plus className="h-3 w-3" />
-					Set Up OAuth
-				</Button>
-			)}
-			{integration.has_oauth_config && canUseAuthCodeFlow && (
-				<Button
-					variant={
-						isOAuthConnected && !isOAuthExpired
-							? "outline"
-							: "default"
-					}
-					size="sm"
-					className="min-h-11 sm:min-h-8"
-					onClick={onOAuthConnect}
-					disabled={isAuthorizePending}
-				>
-					{isAuthorizePending ? (
-						<>
-							<Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
-							Connecting...
-						</>
-					) : isOAuthConnected ? (
-						"Reconnect default"
-					) : (
-						"Connect default"
-					)}
-				</Button>
-			)}
-			{integration.has_oauth_config &&
-				!canUseAuthCodeFlow &&
-				!isOAuthConnected &&
-				oauthConfig && (
-					<Button
-						size="sm"
-						className="min-h-11 sm:min-h-8"
-						onClick={onOAuthRefresh}
-						disabled={isRefreshPending}
-					>
-						{isRefreshPending ? (
-							<>
-								<Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
-								Getting Token...
-							</>
-						) : oauthConfig.status === "failed" ? (
-							"Retry"
-						) : (
-							"Get Token"
-						)}
-					</Button>
-				)}
-			{isOAuthConnected && oauthConfig?.expires_at && (
-				<Button
-					variant="outline"
-					size="sm"
-					className="min-h-11 sm:min-h-8"
-					onClick={onOAuthRefresh}
-					disabled={isRefreshPending}
-					aria-label="Refresh default token"
-					title="Refresh default token"
-				>
-					{isRefreshPending ? (
-						<Loader2 className="h-3 w-3 animate-spin motion-reduce:animate-none" />
-					) : (
-						<RotateCw className="h-3 w-3" />
-					)}
-					Refresh
-				</Button>
-			)}
-			{integration.has_oauth_config && (
-				<DropdownMenu>
-					<DropdownMenuTrigger asChild>
-						<Button
-							variant="ghost"
-							size="icon"
-							className="h-11 w-11 sm:h-8 sm:w-8"
-							aria-label="OAuth configuration actions"
-						>
-							<MoreVertical className="h-4 w-4 shrink-0" />
-						</Button>
-					</DropdownMenuTrigger>
-					<DropdownMenuContent align="end">
-						<DropdownMenuItem onClick={onEditOAuthConfig}>
-							<Pencil className="h-4 w-4 mr-2" />
-							Edit Configuration
-						</DropdownMenuItem>
-						<DropdownMenuItem
-							variant="destructive"
-							onClick={onDeleteOAuthConfig}
-							className="focus:text-destructive"
-						>
-							<Trash2 className="h-4 w-4 mr-2" />
-							Delete Configuration
-						</DropdownMenuItem>
-					</DropdownMenuContent>
-				</DropdownMenu>
-			)}
-		</>
-	);
+	const connectedFor =
+		isOAuthConnected && oauthConfig?.expires_at && status.tone === "success"
+			? ` · expires ${formatDateTime(oauthConfig.expires_at)}`
+			: "";
 
 	return (
-		<div className="min-w-0 divide-y divide-border/60 rounded-xl border bg-card text-card-foreground">
-			<OverviewRow
-				title="Default OAuth"
-				hint="Fallback for organizations without their own connection."
-				summary={
-					<>
+		<div className="flex min-w-0 flex-wrap items-center gap-2">
+			<Popover>
+				<PopoverTrigger asChild>
+					<Button
+						variant="outline"
+						size="sm"
+						className="min-h-11 rounded-full sm:min-h-8"
+						aria-label={`Default OAuth: ${status.label}`}
+					>
+						<StatusIcon
+							className={`size-4 ${TONE_TEXT[status.tone]}`}
+						/>
+						<span>
+							OAuth: {status.label}
+							<span className="text-muted-foreground">
+								{connectedFor}
+							</span>
+						</span>
+						<ChevronDown className="size-3 opacity-60" />
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent align="start" className="w-80 space-y-3">
+					<div className="flex items-start justify-between gap-2">
+						<div>
+							<h2 className="text-sm font-medium">
+								Default OAuth
+							</h2>
+							<p className="text-xs text-muted-foreground">
+								Fallback for organizations without their own
+								connection.
+							</p>
+						</div>
 						<Badge variant={status.tone}>{status.label}</Badge>
-						{oauthConfig?.oauth_flow_type && (
-							<span className="text-muted-foreground">
-								{oauthConfig.oauth_flow_type}
-							</span>
-						)}
-						{status.detail && (
-							<span
-								className={
-									status.tone === "destructive"
-										? "text-destructive"
-										: "text-muted-foreground"
-								}
-							>
-								{status.detail}
-							</span>
-						)}
-					</>
-				}
-				actions={oauthActions || undefined}
-			/>
-			<OverviewRow
-				title="Defaults"
-				hint="Applied to new mappings."
-				summary={
-					<>
-						<span className="text-muted-foreground">
-							Default {entityLabel}
-						</span>
-						<span className="max-w-full rounded-md bg-muted px-2 py-0.5 font-mono text-xs [overflow-wrap:anywhere]">
-							{integration.default_entity_id || "Not set"}
-						</span>
-						{schema.length > 0 && (
-							<span className="text-muted-foreground">
-								{setDefaults} of {schema.length} config defaults
-								set
-							</span>
-						)}
-					</>
-				}
-				actions={
-					<>
-						{schema.length > 0 && (
-							<Popover>
-								<PopoverTrigger asChild>
+					</div>
+					{integration.has_oauth_config && oauthConfig ? (
+						<dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
+							<dt className="text-muted-foreground">Flow</dt>
+							<dd>{flowLabel(oauthConfig.oauth_flow_type)}</dd>
+							{oauthConfig.expires_at && (
+								<>
+									<dt className="text-muted-foreground">
+										{status.label === "Expired"
+											? "Expired"
+											: "Expires"}
+									</dt>
+									<dd>
+										{formatDateTime(oauthConfig.expires_at)}
+									</dd>
+								</>
+							)}
+						</dl>
+					) : (
+						<p className="text-sm text-muted-foreground">
+							Add OAuth settings when this integration needs
+							default authentication.
+						</p>
+					)}
+					{status.detail && (
+						<p className={`text-sm ${TONE_TEXT[status.tone]}`}>
+							{status.detail}
+						</p>
+					)}
+					{canManageDefinitions && (
+						<div className="flex flex-wrap gap-2 border-t border-border/60 pt-3">
+							{!integration.has_oauth_config ? (
+								<Button
+									size="sm"
+									className="min-h-11 sm:min-h-8"
+									onClick={onCreateOAuthConfig}
+								>
+									<Plus className="size-3" />
+									Set Up OAuth
+								</Button>
+							) : (
+								<>
+									<OAuthPrimaryAction {...props} />
+									{isOAuthConnected &&
+										oauthConfig?.expires_at && (
+											<Button
+												variant="outline"
+												size="sm"
+												className="min-h-11 sm:min-h-8"
+												onClick={onOAuthRefresh}
+												disabled={isRefreshPending}
+												aria-label="Refresh default token"
+											>
+												{isRefreshPending ? (
+													<Loader2 className="size-3 animate-spin motion-reduce:animate-none" />
+												) : (
+													<RotateCw className="size-3" />
+												)}
+												Refresh
+											</Button>
+										)}
 									<Button
 										variant="ghost"
 										size="sm"
 										className="min-h-11 sm:min-h-8"
+										onClick={onEditOAuthConfig}
 									>
-										<Eye className="h-3 w-3" />
-										View Defaults
+										<Pencil className="size-3" />
+										Edit
 									</Button>
-								</PopoverTrigger>
-								<PopoverContent align="end" className="w-80">
-									<dl
-										aria-label="Configuration defaults"
-										className="max-h-72 space-y-2 overflow-auto text-sm"
+									<Button
+										variant="ghost"
+										size="sm"
+										className="min-h-11 text-destructive sm:min-h-8"
+										onClick={onDeleteOAuthConfig}
 									>
-										{schema.map((field) => (
-											<div
-												key={field.key}
-												className="flex min-w-0 flex-wrap items-center justify-between gap-2"
-											>
-												<dt className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
-													{field.key}
-													{field.required && (
-														<span className="ml-1 text-destructive">
-															*
-														</span>
-													)}
-												</dt>
-												<dd className="max-w-full rounded-md bg-muted px-2 py-0.5 font-mono text-xs [overflow-wrap:anywhere]">
-													{formatDefaultValue(
-														field,
-														integration
-															.config_defaults?.[
-															field.key
-														],
-													)}
-												</dd>
-											</div>
-										))}
-									</dl>
-								</PopoverContent>
-							</Popover>
-						)}
-						{canManageDefinitions && (
+										<Trash2 className="size-3" />
+										Delete
+									</Button>
+								</>
+							)}
+						</div>
+					)}
+				</PopoverContent>
+			</Popover>
+
+			<Popover>
+				<PopoverTrigger asChild>
+					<Button
+						variant="outline"
+						size="sm"
+						className="min-h-11 rounded-full sm:min-h-8"
+						aria-label="Defaults"
+					>
+						<span>
+							{entityLabel}:{" "}
+							<span className="font-mono text-xs">
+								{integration.default_entity_id || "not set"}
+							</span>
+							{schema.length > 0 && (
+								<span className="text-muted-foreground">
+									{" "}
+									· {setDefaults} of {schema.length} defaults
+								</span>
+							)}
+						</span>
+						<ChevronDown className="size-3 opacity-60" />
+					</Button>
+				</PopoverTrigger>
+				<PopoverContent align="start" className="w-80 space-y-3">
+					<div>
+						<h2 className="text-sm font-medium">Defaults</h2>
+						<p className="text-xs text-muted-foreground">
+							Applied to new mappings.
+						</p>
+					</div>
+					<dl
+						aria-label="Configuration defaults"
+						className="max-h-72 space-y-2 overflow-auto text-sm"
+					>
+						<div className="flex min-w-0 flex-wrap items-center justify-between gap-2">
+							<dt className="text-muted-foreground">
+								Default {entityLabel}
+							</dt>
+							<dd className="max-w-full rounded-md bg-muted px-2 py-0.5 font-mono text-xs [overflow-wrap:anywhere]">
+								{integration.default_entity_id || "\u2014"}
+							</dd>
+						</div>
+						{schema.map((field) => (
+							<div
+								key={field.key}
+								className="flex min-w-0 flex-wrap items-center justify-between gap-2"
+							>
+								<dt className="min-w-0 text-muted-foreground [overflow-wrap:anywhere]">
+									{field.key}
+									{field.required && (
+										<span className="ml-1 text-destructive">
+											*
+										</span>
+									)}
+								</dt>
+								<dd className="max-w-full rounded-md bg-muted px-2 py-0.5 font-mono text-xs [overflow-wrap:anywhere]">
+									{formatDefaultValue(
+										field,
+										integration.config_defaults?.[
+											field.key
+										],
+									)}
+								</dd>
+							</div>
+						))}
+					</dl>
+					{canManageDefinitions && (
+						<div className="border-t border-border/60 pt-3">
 							<Button
 								variant="outline"
 								size="sm"
@@ -463,13 +489,33 @@ export function IntegrationOverview({
 								onClick={onOpenDefaultsDialog}
 								aria-label="Configure default values"
 							>
-								<Pencil className="h-3 w-3" />
+								<Pencil className="size-3" />
 								Configure
 							</Button>
-						)}
-					</>
-				}
-			/>
+						</div>
+					)}
+				</PopoverContent>
+			</Popover>
 		</div>
+	);
+}
+
+/** Shown only when the default connection is broken and needs action. */
+export function IntegrationOAuthAlert(props: IntegrationOverviewProps) {
+	const status = oauthStatus(props);
+	if (status.tone !== "destructive") return null;
+	return (
+		<Alert variant="destructive">
+			<AlertTitle>Default OAuth {status.label.toLowerCase()}</AlertTitle>
+			<AlertDescription className="flex flex-wrap items-center justify-between gap-3">
+				<span>
+					Organizations without their own connection can't
+					authenticate until it is fixed.
+				</span>
+				{props.canManageDefinitions && (
+					<OAuthPrimaryAction {...props} />
+				)}
+			</AlertDescription>
+		</Alert>
 	);
 }

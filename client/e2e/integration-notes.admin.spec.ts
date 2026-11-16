@@ -46,6 +46,7 @@ test("integration setup instructions work across detail, defaults, and phone lay
 			animations: "disabled",
 		});
 
+		await page.getByRole("button", { name: "Defaults", exact: true }).click();
 		await page
 			.getByRole("button", { name: "Configure default values" })
 			.click();
@@ -134,7 +135,12 @@ test("integration setup instructions work across detail, defaults, and phone lay
 		expect(stored).toMatch(/- Parent\n\s+- Child/);
 
 		const downloaded = page.waitForEvent("download");
-		await page.getByRole("button", { name: "Export", exact: true }).click();
+		await page
+			.getByRole("button", { name: "More integration actions" })
+			.click();
+		await page
+			.getByRole("menuitem", { name: "Export", exact: true })
+			.click();
 		const download = await downloaded;
 		const stream = await download.createReadStream();
 		const chunks: Buffer[] = [];
