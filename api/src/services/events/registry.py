@@ -138,6 +138,25 @@ CURATED_TOPICS = [
         ),
     },
     {
+        "topic": "identity_provider.token_expiry",
+        "description": (
+            "Fired once when an identity provider connection's token comes within "
+            "14 days of expiry, and once more when it expires. Provisioning stops "
+            "until the token is regenerated and updated in the identity provider."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_SYSTEM_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            token={
+                "hint": "x7Qa",
+                "expires_at": "2026-06-11T12:34:56Z",
+                "stage": "expiring",
+            },
+        ),
+    },
+    {
         "topic": "workflow.failed",
         "description": "Fired when a workflow execution attempt fails.",
         "category": "Workflows",

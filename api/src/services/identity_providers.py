@@ -359,7 +359,9 @@ async def delete_connection(
 
 async def rotate_token(
     session: AsyncSession, caller: Caller, identity_provider_id: UUID, lifetime_days: int
-) -> IdentityProviderTokenIssued:
+) -> tuple[IdentityProviderTokenIssued, str]:
+    """Issue a new token; returns it with the connection's name, whose expiry
+    warnings the caller clears after committing."""
     connection = await _connection(
         session, caller, identity_provider_id, operation="identityproviders.token.rotate"
     )
@@ -380,9 +382,10 @@ async def rotate_token(
     )
     info = _token_info(token)
     assert info is not None
-    return IdentityProviderTokenIssued(
+    issued = IdentityProviderTokenIssued(
         token=raw, info=info, previous_tokens_expire_at=previous_expiry
     )
+    return issued, connection.name
 
 
 # ---------------------------------------------------------------------------

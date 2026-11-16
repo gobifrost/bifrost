@@ -480,6 +480,29 @@ def identity_provider_user_body(
     }
 
 
+async def emit_identity_provider_token_expiry(
+    *,
+    organization_id: str | UUID,
+    organization_name: str | None,
+    identity_provider: dict[str, str | None],
+    token_hint: str,
+    expires_at: datetime,
+    stage: str,
+) -> None:
+    """A connection's token entered the ``expiring`` or ``expired`` stage."""
+    body = {
+        **_base_body(organization_id=organization_id, organization_name=organization_name),
+        "identity_provider": identity_provider,
+        "token": {"hint": token_hint, "expires_at": _iso(expires_at), "stage": stage},
+    }
+    await _emit(
+        "identity_provider.token_expiry",
+        body,
+        organization_id=organization_id,
+        triggered_by=f"identity_provider:{identity_provider['id']}",
+    )
+
+
 async def emit_identity_provider_event(
     topic: str,
     body: dict[str, Any],

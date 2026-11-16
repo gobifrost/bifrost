@@ -232,9 +232,18 @@ Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
 2. **UI:** list, detail and edit dialog, the domains card, the token reveal,
    the mapping editor, and the Identity Source column; vitest plus one
    Playwright happy path.
-3. **Credential expiry warnings:** a daily scheduled task that re-raises admin
-   notifications (they are Redis-backed with a TTL) for tokens within 14 days
-   of expiry.
+3. **Credential expiry warnings (done):** an hourly scheduled task checks each
+   enabled connection's current token. Superseded tokens are ignored, so the
+   one-hour rotation overlap never raises a warning.
+   - While a token is within 14 days of expiry or past it, the task keeps a
+     platform-admin notification up with a Regenerate Token action.
+     Notifications are Redis-backed and live an hour, which is why the check
+     runs hourly.
+   - It emits `identity_provider.token_expiry` once per stage (`expiring`,
+     then `expired`), recorded on the token. A workflow can use it to reach the
+     organization's own admins, who don't see platform notifications.
+   - Rotating the token dismisses the outstanding warnings.
+   - The list and detail pages flag the same states.
 4. **Google Directory sync:** connections with `source_type="google_directory"`.
    The customer supplies a service account with domain-wide delegation and
    read-only Admin SDK scopes (`admin.directory.group.readonly`, plus

@@ -23,6 +23,7 @@ from src.models.contracts.identity_providers import (
 )
 from src.services import identity_providers as service
 from src.services.authorization.enforce import load_caller
+from src.services.identity_provisioning.expiry import clear_expiry_notifications
 from src.services.operation_catalog import operation_route
 
 router = APIRouter(prefix="/api/identity-providers", tags=["Identity Providers"])
@@ -163,7 +164,12 @@ async def rotate_identity_provider_token(
     user: CurrentActiveUser,
 ) -> IdentityProviderTokenIssued:
     caller = await load_caller(db, user)
-    return await service.rotate_token(db, caller, identity_provider_id, request.lifetime_days)
+    issued, name = await service.rotate_token(
+        db, caller, identity_provider_id, request.lifetime_days
+    )
+    await db.commit()
+    await clear_expiry_notifications(name)
+    return issued
 
 
 # ---------------------------------------------------------------------------

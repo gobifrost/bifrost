@@ -122,6 +122,9 @@ class IdentityProviderToken(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    # The expiry stage ("expiring" | "expired") already announced with a
+    # platform event, so the hourly check fires each stage once.
+    expiry_warning_stage: Mapped[str | None] = mapped_column(String(16), default=None)
     created_by: Mapped[str] = mapped_column(String(255), nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, server_default=text("NOW()")
@@ -129,6 +132,10 @@ class IdentityProviderToken(Base):
 
     __table_args__ = (
         Index("ix_identity_provider_tokens_identity_provider_id", "identity_provider_id"),
+        CheckConstraint(
+            "expiry_warning_stage IN ('expiring', 'expired')",
+            name="ck_identity_provider_tokens_expiry_warning_stage",
+        ),
     )
 
 
