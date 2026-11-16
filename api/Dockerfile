@@ -59,6 +59,10 @@ RUN rustc --version && cargo --version
 COPY pyproject.toml requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
 
+# aiormq 7.2.5 still assigns an asyncio marker removed in Python 3.16.
+COPY api/scripts/patch_aiormq.py /tmp/patch_aiormq.py
+RUN python /tmp/patch_aiormq.py && rm /tmp/patch_aiormq.py
+
 # =============================================================================
 # Stage 2: Runtime
 # =============================================================================

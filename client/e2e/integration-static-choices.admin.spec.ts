@@ -47,6 +47,7 @@ test("an integration author defines choices that consumers use for defaults", as
 		expect(schema.options).toEqual(["eu"]);
 		expect(schema.option_labels).toEqual({ eu: "Europe" });
 		await page.goto(`/integrations/${id}`);
+		await page.getByRole("button", { name: "Defaults", exact: true }).click();
 		await page
 			.getByRole("button", { name: "Configure default values" })
 			.click();
@@ -58,6 +59,7 @@ test("an integration author defines choices that consumers use for defaults", as
 		await defaults.getByRole("button", { name: "Save Defaults" }).click();
 		await expect(defaults).toBeHidden();
 		await page.reload();
+		await page.getByRole("button", { name: "Defaults", exact: true }).click();
 		await page
 			.getByRole("button", { name: "Configure default values" })
 			.click();
