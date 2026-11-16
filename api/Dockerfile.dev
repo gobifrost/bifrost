@@ -58,7 +58,9 @@ RUN rustc --version && cargo --version
 # setuptools-scm build an immutable version tied to that exact commit.
 ENV SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTEST_ASYNCIO=2.0.0.dev0+g47bbcba
 COPY pyproject.toml requirements-dev.lock requirements-pyright.lock ./
-RUN pip install --no-cache-dir --require-hashes -r requirements-dev.lock \
+# Pillow 12.3 checks this obsolete C89 capability macro, removed in Python 3.16a2.
+# Our GCC supports prototypes; scope the definition to dependency compilation.
+RUN CPPFLAGS="-DHAVE_PROTOTYPES=1" pip install --no-cache-dir --require-hashes -r requirements-dev.lock \
     && pip install --no-cache-dir --require-hashes -r requirements-pyright.lock
 
 # =============================================================================

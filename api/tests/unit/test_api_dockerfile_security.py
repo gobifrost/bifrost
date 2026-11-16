@@ -82,3 +82,13 @@ def test_native_build_compiler_is_pinned_and_build_only(filename):
     assert "RUSTUP_HOME" not in runtime
     assert "/opt/cargo" not in runtime
     assert "/opt/rustup" not in runtime
+
+
+@pytest.mark.parametrize("filename", ["Dockerfile", "Dockerfile.dev"])
+def test_pillow_prototype_macro_is_build_only(filename):
+    """Pillow's obsolete compiler check must not alter the runtime environment."""
+    text = (_api_dir() / filename).read_text()
+    assert 'RUN CPPFLAGS="-DHAVE_PROTOTYPES=1" pip install' in text
+    runtime = text.split("# Stage 2: Runtime", 1)[1]
+    assert "HAVE_PROTOTYPES" not in runtime
+    assert "ENV CPPFLAGS" not in text

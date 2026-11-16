@@ -57,7 +57,9 @@ RUN rustc --version && cargo --version
 # flags unpinned `pip install <pkg>` invocations. The bundled pip already
 # supports --require-hashes (>= 8.0).
 COPY pyproject.toml requirements.lock ./
-RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+# Pillow 12.3 checks this obsolete C89 capability macro, removed in Python 3.16a2.
+# Our GCC supports prototypes; scope the definition to dependency compilation.
+RUN CPPFLAGS="-DHAVE_PROTOTYPES=1" pip install --no-cache-dir --require-hashes -r requirements.lock
 
 # =============================================================================
 # Stage 2: Runtime
