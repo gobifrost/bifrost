@@ -301,7 +301,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 					<Button
 						variant="outline"
 						size="sm"
-						className="min-h-11 rounded-full sm:min-h-8"
+						className="min-h-11 sm:min-h-8"
 						aria-label={`Default OAuth: ${status.label}`}
 					>
 						<StatusIcon
@@ -316,7 +316,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 						<ChevronDown className="size-3 opacity-60" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent align="start" className="w-80 space-y-3">
+				<PopoverContent arrow align="start" className="w-80 space-y-3">
 					<div className="flex items-start justify-between gap-2">
 						<div>
 							<h2 className="text-sm font-medium">
@@ -419,7 +419,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 					<Button
 						variant="outline"
 						size="sm"
-						className="min-h-11 rounded-full sm:min-h-8"
+						className="min-h-11 sm:min-h-8"
 						aria-label="Defaults"
 					>
 						<span>
@@ -437,7 +437,7 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 						<ChevronDown className="size-3 opacity-60" />
 					</Button>
 				</PopoverTrigger>
-				<PopoverContent align="start" className="w-80 space-y-3">
+				<PopoverContent arrow align="start" className="w-80 space-y-3">
 					<div>
 						<h2 className="text-sm font-medium">Defaults</h2>
 						<p className="text-xs text-muted-foreground">

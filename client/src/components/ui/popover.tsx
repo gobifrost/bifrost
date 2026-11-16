@@ -19,10 +19,14 @@ function PopoverContent({
 	className,
 	align = "center",
 	variant = "default",
-	sideOffset = 4,
+	arrow = false,
+	sideOffset = arrow ? 8 : 4,
+	children,
 	...props
 }: React.ComponentProps<typeof PopoverPrimitive.Content> & {
 	variant?: "default" | "picker";
+	/** Point at the trigger, for a popover that reads as attached to it. */
+	arrow?: boolean;
 }) {
 	return (
 		<PopoverPrimitive.Portal>
@@ -32,11 +36,25 @@ function PopoverContent({
 				sideOffset={sideOffset}
 				className={cn(
 					"z-50 flex w-72 origin-(--radix-popover-content-transform-origin) flex-col gap-4 rounded-[var(--bf-radius-surface)] border border-border/70 bg-popover p-4 text-sm text-popover-foreground shadow-lg ring-1 ring-foreground/5 outline-none duration-[var(--bf-motion-disclosure)] [animation-duration:var(--bf-motion-disclosure)] motion-reduce:animate-none! motion-reduce:transition-none data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 dark:ring-foreground/10 data-open:animate-in data-open:fade-in-0 data-open:zoom-in-95 data-closed:animate-out data-closed:fade-out-0 data-closed:zoom-out-95",
-					variant === "picker" && "w-[max(20rem,var(--radix-popover-trigger-width,0px))] max-w-[calc(100vw-2rem)] p-0",
+					variant === "picker" &&
+						"w-[max(20rem,var(--radix-popover-trigger-width,0px))] max-w-[calc(100vw-2rem)] p-0",
 					className,
 				)}
 				{...props}
-			/>
+			>
+				{children}
+				{arrow && (
+					<PopoverPrimitive.Arrow asChild width={12} height={6}>
+						{/* A square turned 45°, half under the panel: its two outer
+						 * edges carry the panel border and its fill covers the
+						 * panel's own border where they meet. */}
+						<span
+							data-slot="popover-arrow"
+							className="block size-3 -translate-y-1/2 rotate-45 border-r border-b border-border/70 bg-popover"
+						/>
+					</PopoverPrimitive.Arrow>
+				)}
+			</PopoverPrimitive.Content>
 		</PopoverPrimitive.Portal>
 	);
 }
