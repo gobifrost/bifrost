@@ -1,0 +1,13 @@
+{
+  "key": "pr:1431",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1431",
+      "Jack November 16 instruction for issue #1428: No product update."
+    ]
+  },
+  "reason": "Jack explicitly requested no Product Update for the #1428 organization-tags remainder."
+}
