@@ -356,6 +356,7 @@ async def create_default_user() -> None:
             db=db,
             email=settings.default_user_email,
             name="Dev Admin",
+            created_via="bootstrap",
         )
         user = result.user
         user.hashed_password = get_password_hash(settings.default_user_password)

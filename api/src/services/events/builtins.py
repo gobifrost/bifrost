@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from collections.abc import Mapping
+from typing import Any, Literal, Protocol
 from uuid import UUID
 
 from src.core.constants import SYSTEM_USER_ID, SYSTEM_USER_EMAIL
@@ -97,6 +98,145 @@ async def _emit(
             exc,
             exc_info=True,
         )
+
+
+class EventUser(Protocol):
+    """The user attributes the ``user.*`` topics publish."""
+
+    @property
+    def id(self) -> UUID:
+        """The user's id."""
+        raise NotImplementedError
+
+    @property
+    def email(self) -> str:
+        """The user's email address."""
+        raise NotImplementedError
+
+    @property
+    def name(self) -> str | None:
+        """The user's display name."""
+        raise NotImplementedError
+
+    @property
+    def organization_id(self) -> UUID | None:
+        """The user's organization, or None for a global user."""
+        raise NotImplementedError
+
+
+SignInMethod = Literal["password", "passkey", "sso"]
+UserCreationMethod = Literal["admin", "sso_provisioning", "registration", "bootstrap"]
+
+# Verified id_token claims that describe the token exchange rather than the
+# person: replay and binding values (``nonce``, ``*_hash``), token and IdP
+# session identifiers, and Microsoft's opaque internal claims. Every other verified
+# claim reaches workflows so tenant-specific claims (roles, custom attributes)
+# work without a Bifrost change. Raw tokens and unverified userinfo are never
+# passed to this module.
+_EXCLUDED_ID_TOKEN_CLAIMS = frozenset(
+    {
+        "nonce", "at_hash", "c_hash", "s_hash",
+        "jti", "origin_jti", "sid", "session_state",
+        "aio", "uti", "rh",
+    }
+)
+
+
+def identity_claims_for_event(claims: Mapping[str, Any]) -> dict[str, Any]:
+    """Return the ``identity`` object of a ``user.signed_in`` SSO event.
+
+    ``claims`` must be the verified id_token claims. ``groups`` is lifted to the
+    top level when the IdP sent a list. Entra replaces the list with
+    ``_claim_names``/``hasgroups`` when a user is in too many groups; that is
+    reported as ``groups_overage`` so a workflow knows to call Graph instead.
+    """
+    filtered = {
+        key: value for key, value in claims.items() if key not in _EXCLUDED_ID_TOKEN_CLAIMS
+    }
+    groups = claims.get("groups")
+    claim_names = claims.get("_claim_names")
+    overage = claims.get("hasgroups") is True or (
+        isinstance(claim_names, Mapping) and "groups" in claim_names
+    )
+    return {
+        "claims": filtered,
+        "groups": list(groups) if isinstance(groups, list) else None,
+        "groups_overage": overage,
+    }
+
+
+def _event_user(user: EventUser) -> dict[str, str | None]:
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "name": user.name,
+        "organization_id": str(user.organization_id) if user.organization_id else None,
+    }
+
+
+def _self_actor(user: EventUser) -> dict[str, str | None]:
+    return _user_actor(user_id=user.id, email=user.email, name=user.name)
+
+
+async def emit_user_signed_in(
+    user: EventUser,
+    *,
+    method: SignInMethod,
+    provider: str | None = None,
+    id_token_claims: Mapping[str, Any] | None = None,
+) -> None:
+    """Emit ``user.signed_in`` after Bifrost issues a session to ``user``.
+
+    ``id_token_claims`` are the provider's verified id_token claims for an SSO
+    sign-in; they are filtered by :func:`identity_claims_for_event`.
+    """
+    body = {
+        **_base_body(organization_id=user.organization_id, actor=_self_actor(user)),
+        "user": _event_user(user),
+        "sign_in": {"method": method, "provider": provider},
+        "identity": identity_claims_for_event(id_token_claims)
+        if id_token_claims is not None
+        else None,
+    }
+    await _emit(
+        "user.signed_in",
+        body,
+        organization_id=user.organization_id,
+        triggered_by=str(user.id),
+    )
+
+
+async def emit_user_created(
+    user: EventUser,
+    *,
+    method: UserCreationMethod,
+    provider: str | None = None,
+    actor_user_id: str | UUID | None = None,
+    actor_email: str | None = None,
+    actor_name: str | None = None,
+) -> None:
+    """Emit ``user.created`` once the new user row is committed.
+
+    The actor is the administrator for ``admin``, the new user for
+    self-service methods, and Bifrost for ``bootstrap``.
+    """
+    if method == "admin":
+        actor = _user_actor(user_id=actor_user_id, email=actor_email, name=actor_name)
+    elif method == "bootstrap":
+        actor = _system_actor()
+    else:
+        actor = _self_actor(user)
+    body = {
+        **_base_body(organization_id=user.organization_id, actor=actor),
+        "user": _event_user(user),
+        "creation": {"method": method, "provider": provider},
+    }
+    await _emit(
+        "user.created",
+        body,
+        organization_id=user.organization_id,
+        triggered_by=actor["id"],
+    )
 
 
 def _trigger_from_event_context(event: dict[str, Any] | None) -> dict[str, Any]:
