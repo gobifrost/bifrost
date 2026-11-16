@@ -18,7 +18,8 @@ import os
 import shutil
 import subprocess
 import tempfile
-from collections.abc import Iterable
+from collections.abc import Iterable, Callable
+from contextlib import AbstractAsyncContextManager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Mapping
@@ -31,6 +32,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import Settings, get_settings
+from src.jobs.platform.base import PlatformJobCancelled
 from src.models.contracts.github import (
     EntityChange,
     GitConnectItem,
@@ -496,6 +498,7 @@ class GitHubSyncService:
         token_provider=None,
         app_setup_id: UUID | None = None,
         app_auth: bool = False,
+        workspace_authorization: Callable[[], AbstractAsyncContextManager] | None = None,
     ):
         self.db = db
         # A credential-free URL: it is written into .git/config. The token
@@ -506,7 +509,7 @@ class GitHubSyncService:
         self._app_setup_id = app_setup_id
         self._app_auth = app_auth
         self.branch = branch
-        self.repo_manager = GitRepoManager(settings or get_settings())
+        self.repo_manager = GitRepoManager(settings or get_settings(), publication_authorization=workspace_authorization)
         self._resolver = ManifestResolver(db)
 
     @staticmethod
@@ -1197,6 +1200,8 @@ class GitHubSyncService:
                 await self._regenerate_manifest_to_dir(self.db, work_dir)
                 await _progress("Fetching remote...")
                 return await self._do_fetch(work_dir, repo)
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Fetch failed: {e}", exc_info=True)
             return FetchResult(success=False, error=str(e))
@@ -1211,6 +1216,8 @@ class GitHubSyncService:
                     return WorkingTreeStatus()
                 return self._do_status(work_dir, GitRepo(str(work_dir)))
         except GitStatusError:
+            raise
+        except PlatformJobCancelled:
             raise
         except Exception as e:
             logger.exception(f"Status failed: {e}", exc_info=True)
@@ -1303,6 +1310,8 @@ class GitHubSyncService:
                 await self.repo_manager.ensure_storage_unchanged(work_dir, self.branch)
                 repo = await self._open_or_init(work_dir)
                 return await self._do_commit(work_dir, repo, message)
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Commit failed: {e}", exc_info=True)
             return CommitResult(success=False, error=str(e))
@@ -1555,6 +1564,8 @@ class GitHubSyncService:
                 conflicts=error.conflicts,
                 error=str(error),
             )
+        except PlatformJobCancelled:
+            raise
         except Exception as error:
             logger.exception("Sync failed: %s", error, exc_info=True)
             return SyncResult(success=False, error=str(error))
@@ -1574,6 +1585,8 @@ class GitHubSyncService:
                 repo.git.merge("--abort")
                 logger.info("Merge aborted successfully")
                 return AbortMergeResult(success=True)
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Abort merge failed: {e}", exc_info=True)
             return AbortMergeResult(success=False, error=str(e))
@@ -1649,6 +1662,8 @@ class GitHubSyncService:
 
                 logger.info("Resolved conflicts, created merge commit (local)")
                 return ResolveResult(success=True, commits_ahead=ahead, commits_behind=behind)
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Resolve failed: {e}", exc_info=True)
             return ResolveResult(success=False, error=str(e))
@@ -1680,6 +1695,8 @@ class GitHubSyncService:
                     head_content=head_content,
                     working_content=working_content,
                 )
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Diff failed: {e}", exc_info=True)
             return DiffResult(path=path)
@@ -1741,6 +1758,8 @@ class GitHubSyncService:
 
                 logger.info(f"Discarded {len(discarded)} file(s)")
                 return DiscardResult(success=True, discarded=discarded)
+        except PlatformJobCancelled:
+            raise
         except Exception as e:
             logger.exception(f"Discard failed: {e}", exc_info=True)
             return DiscardResult(success=False, error=str(e))

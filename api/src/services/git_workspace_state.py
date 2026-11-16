@@ -215,7 +215,8 @@ class GitWorkspaceState:
             not force and previous is not None
             and previous.fingerprint == fingerprint and previous.baseline == baseline
         ):
-            self.record(root, etag, fingerprint)
+            async with self.manager.authorized_publication():
+                self.record(root, etag, fingerprint)
             return
         checkpoint = await self.manager.checkpoint_workspace(root)
         # Verify the stored bytes, not just a before/after hash of a mutable
@@ -231,13 +232,26 @@ class GitWorkspaceState:
         state = WorkspaceState(checkpoint, baseline, fingerprint)
         # Do not delete either checkpoint after an ambiguous PUT: its pointer
         # may already be committed. A later reader sees one complete snapshot.
-        async with self._get_store() as store:
-            result = await store.write(STATE_KEY, json.dumps(asdict(state)).encode(), options=WriteOptions(
-                properties=ContentProperties(content_type="application/json"),
-                create_only=etag is None,
-                expected_version=store.restore_version(etag) if etag is not None else None,
-            ))
-            witness = store.serialize_version(result.version)
-        self.record(root, witness, fingerprint)
+        from src.jobs.platform.base import PlatformJobCancelled
+
+        attempted = False
+        try:
+            async with self.manager.authorized_publication():
+                attempted = True
+                async with self._get_store() as store:
+                    result = await store.write(STATE_KEY, json.dumps(asdict(state)).encode(), options=WriteOptions(
+                        properties=ContentProperties(content_type="application/json"),
+                        create_only=etag is None,
+                        expected_version=store.restore_version(etag) if etag is not None else None,
+                    ))
+                    witness = store.serialize_version(result.version)
+                self.record(root, witness, fingerprint)
+        except PlatformJobCancelled:
+            if not attempted:
+                # This uniquely created checkpoint was never published. Never
+                # clean either side of an attempted/ambiguous pointer write.
+                await self.manager.delete_workspace_checkpoint(checkpoint)
+            raise
         if previous is not None:
-            await self.manager.delete_workspace_checkpoint(previous.checkpoint)
+            async with self.manager.authorized_publication():
+                await self.manager.delete_workspace_checkpoint(previous.checkpoint)

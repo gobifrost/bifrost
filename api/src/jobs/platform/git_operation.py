@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import Any, Literal
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from src.config import get_settings
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
+    PlatformJobCancelled,
     PlatformJobFailure,
     define_platform_job,
     PlatformJobRequiresAction,
@@ -125,6 +127,15 @@ async def dispatch_git_operation(
     raise PlatformJobFailure("invalid_git_operation", "Unknown Git operation.")
 
 
+@asynccontextmanager
+async def workspace_publication_authorization(context: PlatformJobContext):
+    """Fence the short retained-state publication, not immutable staging I/O."""
+    async with get_db_context() as db:
+        if not await context.authorize_effect(db):
+            raise PlatformJobCancelled
+        yield
+
+
 async def run_git_operation(
     context: PlatformJobContext,
     payload: GitOperationPayload,
@@ -185,6 +196,7 @@ async def run_git_operation(
             token=config.token,
             token_provider=credential_provider(db, config),
             app_auth=config.auth_kind == "app",
+            workspace_authorization=lambda: workspace_publication_authorization(context),
         )
         try:
             result = redact_token(

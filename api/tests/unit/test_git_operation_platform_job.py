@@ -335,3 +335,47 @@ async def test_git_job_redacts_the_token_from_failures(
 
     assert PAT not in failure.value.message
     assert PAT not in str(failure.value.result)
+
+
+@pytest.mark.asyncio
+async def test_workspace_job_wires_attempt_fence_before_retained_publication(monkeypatch):
+    from src.jobs.platform.base import PlatformJobCancelled
+    @asynccontextmanager
+    async def database():
+        yield object()
+    monkeypatch.setattr('src.jobs.platform.git_operation.get_db_context', database)
+    monkeypatch.setattr('src.jobs.platform.git_operation.get_github_config', AsyncMock(
+        return_value=GitHubConfig(token='fixture', repo_url='owner/repo', branch='main', status='connected')))
+    writes = []
+    def service(**kwargs):
+        async def sync(**_args):
+            async with kwargs['workspace_authorization']():
+                writes.append('published')
+            return SyncResult(success=True)
+        return SimpleNamespace(desktop_sync=sync)
+    monkeypatch.setattr('src.jobs.platform.git_operation.GitHubSyncService', service)
+    context = SimpleNamespace(job_id=uuid4(), organization_id=None, report=AsyncMock(),
+        authorize_effect=AsyncMock(return_value=False))
+    with pytest.raises(PlatformJobCancelled):
+        await run_git_operation(context, GitOperationPayload(operation='sync'))
+    context.authorize_effect.assert_awaited_once()
+    assert not writes
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('method,args', [
+    ('desktop_fetch', ()), ('desktop_status', ()), ('desktop_commit', ('message',)),
+    ('desktop_sync', ()), ('desktop_abort_merge', ()), ('desktop_resolve', ({},)),
+    ('desktop_diff', ('file.py',)), ('desktop_discard', (['file.py'],)),
+])
+async def test_git_wrappers_preserve_canonical_cancellation(monkeypatch, method, args):
+    from src.jobs.platform.base import PlatformJobCancelled
+    from src.services.github_sync import GitHubSyncService
+    @asynccontextmanager
+    async def cancelled(*args, **kwargs):
+        raise PlatformJobCancelled
+        yield
+    service = GitHubSyncService.__new__(GitHubSyncService)
+    service.repo_manager = SimpleNamespace(workspace=cancelled, checkout=cancelled)
+    with pytest.raises(PlatformJobCancelled):
+        await getattr(service, method)(*args)

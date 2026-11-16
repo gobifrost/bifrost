@@ -19,6 +19,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import TYPE_CHECKING
+from collections.abc import Callable
+from contextlib import AbstractAsyncContextManager
 
 import redis.asyncio as redis
 
@@ -139,9 +141,20 @@ def _unsynced_work_warning(work_dir: Path, branch: str) -> str:
 class GitRepoManager:
     """Context manager that syncs _repo/ between S3 and a persistent local working dir."""
 
-    def __init__(self, settings: Settings | None = None):
+    def __init__(self, settings: Settings | None = None, *,
+                 publication_authorization: Callable[[], AbstractAsyncContextManager] | None = None):
         self._settings = settings or get_settings()
         self._mirror = workspace_mirror(self._settings)
+        self._publication_authorization = publication_authorization
+
+    @asynccontextmanager
+    async def authorized_publication(self):
+        """Durable jobs supply an attempt fence; direct request callers keep their authorization."""
+        if self._publication_authorization is None:
+            yield
+        else:
+            async with self._publication_authorization():
+                yield
 
 
     @property

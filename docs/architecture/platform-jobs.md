@@ -629,3 +629,24 @@ approval, audit records and report refresh remain API-owned. Their completion
 cursor commits in the same transaction. Progress runs only after commit and
 lock release. Persisted applied-selection receipts continue to prevent replay
 of older completed selections when a runner lost its checkpoint.
+
+### Retained workspace Git publication fencing
+
+The `workspace.git` handler supplies its current job-attempt authorization to
+`GitHubSyncService` and the shared `GitRepoManager`. Retained Git state prepares
+and verifies its immutable checkpoint without holding a job-row lock. The
+conditional state-pointer write and local receipt acknowledgement use a short
+owner/job-fenced publication scope. No-op receipt acknowledgement also requires
+the current attempt. Deleting a superseded checkpoint requires a fresh fence.
+
+If authorization fails before the pointer write starts, only that uniquely
+created unpublished checkpoint is removed; the old pointer and receipt remain.
+An attempted or ambiguous PUT retains both checkpoints for recovery, preserving
+the existing conditional-version semantics. Git operation wrappers propagate
+canonical cancellation instead of converting it into generic failure results.
+Direct request-scoped callers retain their existing request authorization.
+
+This is a publication prerequisite, not completion of workspace Git migration.
+Credentialed remote Git effects, canonical entity/publication transactions and
+preview/preflight compute still require their queued API execution integration
+and runtime/fault/performance qualification.
