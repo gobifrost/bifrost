@@ -24,7 +24,7 @@ from src.services.agent_runtime.toolset import (
 )
 
 DEFAULT_CODE_MODE_RESOURCE_LIMITS: CodeModeResourceLimits = {
-    "max_duration_secs": 10,
+    "max_duration_seconds": 10,
     "max_memory": 128 * 1024 * 1024,
     "max_suspensions": 128,
 }
