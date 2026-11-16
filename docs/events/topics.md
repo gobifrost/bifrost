@@ -113,6 +113,92 @@ registration_url: "{{ _event.body.registration_url }}"
 
 ---
 
+## user.created
+
+**Topic:** `user.created`
+**Emitted by:** Bifrost platform
+
+Fired once a new user account is committed. `creation.method` says how:
+
+| Method | When |
+|--------|------|
+| `admin` | An administrator calls `POST /api/users`. The actor is the administrator. |
+| `sso_provisioning` | A first SSO sign-in creates the account by email-domain match. `creation.provider` is `microsoft`, `google` or `oidc`. The actor is the new user. |
+| `registration` | `POST /auth/register` or first-user passkey setup creates the account. The actor is the new user. |
+| `bootstrap` | The configured default user is created at startup. The actor is Bifrost. |
+
+Accepting an invite completes an account an administrator already created, so it
+does not fire `user.created` again.
+
+```jsonc
+{
+  "schema_version": 1,
+  "occurred_at": "2026-11-16T12:34:56+00:00",
+  "organization": {"id": "…", "name": null},
+  "actor": {"type": "user", "id": "…", "email": "alice@example.com", "name": "Alice"},
+  "user": {"id": "…", "email": "alice@example.com", "name": "Alice", "organization_id": "…"},
+  "creation": {"method": "sso_provisioning", "provider": "microsoft"}
+}
+```
+
+## user.signed_in
+
+**Topic:** `user.signed_in`
+**Emitted by:** Bifrost platform
+
+Fired after Bifrost issues a session to a user who signed in with a password
+(after MFA, when MFA applies), a passkey, or SSO. `sign_in.method` is
+`password`, `passkey` or `sso`; `sign_in.provider` is `microsoft`, `google` or
+`oidc` for SSO and `null` otherwise. A first SSO sign-in that provisions the
+account fires `user.created` and then `user.signed_in`.
+
+It does not fire for token refresh, or when an already signed-in user
+authorizes the CLI (device code) or an MCP client.
+
+For SSO, `identity` carries the identity provider's id_token claims that
+Bifrost verified during sign-in. Bifrost removes token-binding values
+(`nonce`, `at_hash`, `c_hash`, `s_hash`), the IdP session id (`sid`) and
+Microsoft's opaque `aio`, `uti` and `rh`, and passes every other verified claim
+through, so tenant-specific claims such as `roles` reach the workflow. Access,
+refresh and id tokens and the provider's unverified userinfo are never
+included. `identity` is `null` for password and passkey sign-ins.
+
+`identity.groups` is the `groups` claim when the provider sent a list. Entra
+replaces the list with `_claim_names` / `hasgroups` when a user belongs to too
+many groups (groups overage). Then `identity.groups` is `null`,
+`identity.groups_overage` is `true`, and the workflow must read the user's
+groups from Microsoft Graph.
+
+```jsonc
+{
+  "schema_version": 1,
+  "occurred_at": "2026-11-16T12:34:56+00:00",
+  "organization": {"id": "…", "name": null},
+  "actor": {"type": "user", "id": "…", "email": "alice@example.com", "name": "Alice"},
+  "user": {"id": "…", "email": "alice@example.com", "name": "Alice", "organization_id": "…"},
+  "sign_in": {"method": "sso", "provider": "microsoft"},
+  "identity": {
+    "claims": {"iss": "…", "sub": "…", "tid": "…", "oid": "…", "groups": ["…"]},
+    "groups": ["…"],
+    "groups_overage": false
+  }
+}
+```
+
+### Syncing identity-provider groups to roles
+
+Subscribe a workflow to `user.signed_in` and map `identity.groups` to Bifrost
+roles. Delivery is asynchronous: the sign-in completes before the workflow
+runs, and the workflow cannot block it. A workflow that deactivates the user
+cuts them off on their next request, because every request checks that the
+user is active.
+
+Both topics are stamped with the user's organization. Emission is best effort:
+a failure to record the event is logged and never fails the sign-in or the
+account creation.
+
+---
+
 ## workflow.completed
 
 **Topic:** `workflow.completed`

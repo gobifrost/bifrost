@@ -22,6 +22,7 @@ from src.core.log_safety import log_safe
 from src.models import User
 from src.repositories.organizations import OrganizationRepository
 from src.repositories.users import UserRepository
+from src.services.events.builtins import UserCreationMethod, emit_user_created
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +52,9 @@ async def ensure_user_provisioned(
     db: AsyncSession,
     email: str,
     name: str | None = None,
+    *,
+    created_via: UserCreationMethod,
+    provider: str | None = None,
 ) -> ProvisioningResult:
     """
     Ensure user exists in the system, creating if necessary.
@@ -66,6 +70,8 @@ async def ensure_user_provisioned(
         db: Database session
         email: User's email address
         name: Optional display name
+        created_via: How a newly created user is reported in ``user.created``
+        provider: The SSO provider when ``created_via`` is ``sso_provisioning``
 
     Returns:
         ProvisioningResult with user info, type, admin status, and org_id
@@ -117,6 +123,7 @@ async def ensure_user_provisioned(
         await db.refresh(user)
 
         logger.info(f"Successfully created first user as superuser: {log_safe(email)}")
+        await emit_user_created(user, method=created_via, provider=provider)
 
         return ProvisioningResult(
             user=user,
@@ -155,6 +162,7 @@ async def ensure_user_provisioned(
     await db.refresh(user)
 
     logger.info(f"Auto-created ORG user: {log_safe(email)} for org {matched_org.id}")
+    await emit_user_created(user, method=created_via, provider=provider)
 
     return ProvisioningResult(
         user=user,

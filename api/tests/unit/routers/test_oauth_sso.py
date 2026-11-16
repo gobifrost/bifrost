@@ -80,6 +80,7 @@ async def _callback(
     photo_side_effect: object | None = None,
     state_payload: dict | None = None,
     trust_provider_email: bool = False,
+    sign_in_event: AsyncMock | None = None,
 ):
     state = "callback-state"
     redis = _Redis(state, state_payload)
@@ -116,6 +117,7 @@ async def _callback(
         AsyncMock(return_value=SimpleNamespace(access_token="access-token", refresh_token="refresh-token")),
     )
     monkeypatch.setattr(oauth_sso, "set_auth_cookies", lambda *args: None)
+    monkeypatch.setattr(oauth_sso, "emit_user_signed_in", sign_in_event or AsyncMock())
     if reject_validation:
         monkeypatch.setattr(
             OAuthService,
@@ -196,6 +198,8 @@ async def test_new_microsoft_link_uses_upn_and_never_graph_mail(monkeypatch):
 
     assert response.status_code == 200
     assert provision.await_args.kwargs["email"] == "attacker@clientco.com"
+    assert provision.await_args.kwargs["created_via"] == "sso_provisioning"
+    assert provision.await_args.kwargs["provider"] == "microsoft"
     saved_user, access_token = photo.await_args.args
     assert saved_user is provisioned_user
     assert access_token == "access"
@@ -264,6 +268,26 @@ async def test_missing_stable_id_cannot_reach_lookup_or_provision(monkeypatch, p
     assert response.status_code == 400
     lookup.assert_not_awaited()
     provision.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_sso_sign_in_publishes_the_verified_id_token_claims(monkeypatch):
+    user = _user()
+    claims = {"tid": "tenant", "oid": "microsoft-id", "groups": ["g1"]}
+    sign_in_event = AsyncMock()
+
+    response, _lookup, _provision, _photo = await _callback(
+        monkeypatch,
+        user_info=OAuthUserInfo("microsoft", "microsoft-id", user.email, raw_data={"id": "microsoft-id"}),
+        tokens=OAuthTokens("provider-access-token", id_token="raw.id.token", id_token_claims=claims),
+        existing_user=user,
+        sign_in_event=sign_in_event,
+    )
+
+    assert response.status_code == 200
+    sign_in_event.assert_awaited_once_with(
+        user, method="sso", provider="microsoft", id_token_claims=claims
+    )
 
 
 @pytest.mark.asyncio
