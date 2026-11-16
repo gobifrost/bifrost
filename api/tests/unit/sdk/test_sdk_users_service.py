@@ -27,7 +27,7 @@ from shared.sdk_users import UserServiceError
 
 
 def _stub_actor(email: str = "admin@example.com", user_id=None):
-    return SimpleNamespace(user_id=user_id or uuid4(), email=email)
+    return SimpleNamespace(user_id=user_id or uuid4(), email=email, name="")
 
 
 def _admin(email: str = "admin@example.com", user_id=None):
@@ -410,11 +410,26 @@ class TestUsersRouterBoundary:
         from src.routers.users import create_user
 
         request = UserCreate(email="n@example.com", name="N")
-        with patch(
-            "shared.sdk_users.create_user", new=AsyncMock(return_value="USER")
-        ) as mock_create:
-            assert await create_user(request, _stub_actor(), AsyncMock()) == "USER"
+        actor = _stub_actor()
+        db = AsyncMock()
+        with (
+            patch(
+                "shared.sdk_users.create_user", new=AsyncMock(return_value="USER")
+            ) as mock_create,
+            patch(
+                "src.services.events.builtins.emit_user_created", new=AsyncMock()
+            ) as emit_created,
+        ):
+            assert await create_user(request, actor, db) == "USER"
         assert mock_create.call_args[0][1] is admin_caller
+        db.commit.assert_awaited_once()
+        emit_created.assert_awaited_once_with(
+            "USER",
+            method="admin",
+            actor_user_id=actor.user_id,
+            actor_email=actor.email,
+            actor_name="",
+        )
         kwargs = mock_create.call_args[1]
         assert kwargs == {
             "email": "n@example.com",

@@ -44,7 +44,6 @@ from src.models.contracts.user_invites import (
     CreateInviteResponse,
     SendInviteRequest,
 )
-from src.services.events.builtins import emit_user_created
 from src.services.operation_catalog import operation_route
 
 logger = logging.getLogger(__name__)
@@ -122,6 +121,7 @@ async def create_user(
 ) -> UserPublic:
     """Create a new user."""
     from shared.sdk_users import UserServiceError, create_user as create_user_service
+    from src.services.events.builtins import emit_user_created
 
     try:
         created = await create_user_service(

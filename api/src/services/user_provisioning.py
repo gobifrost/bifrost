@@ -12,6 +12,7 @@ Key Features:
 
 import logging
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -22,7 +23,9 @@ from src.core.log_safety import log_safe
 from src.models import User
 from src.repositories.organizations import OrganizationRepository
 from src.repositories.users import UserRepository
-from src.services.events.builtins import UserCreationMethod, emit_user_created
+
+if TYPE_CHECKING:
+    from src.services.events.builtins import UserCreationMethod
 
 logger = logging.getLogger(__name__)
 
@@ -53,7 +56,7 @@ async def ensure_user_provisioned(
     email: str,
     name: str | None = None,
     *,
-    created_via: UserCreationMethod,
+    created_via: "UserCreationMethod",
     provider: str | None = None,
 ) -> ProvisioningResult:
     """
@@ -79,6 +82,10 @@ async def ensure_user_provisioned(
     Raises:
         ValueError: If email is invalid format or no matching org found
     """
+    # Deferred: this module is on the core auth import path, which must not
+    # load the event-processing service graph.
+    from src.services.events.builtins import emit_user_created
+
     if not email or "@" not in email:
         raise ValueError(f"Invalid email format: {email}")
 
