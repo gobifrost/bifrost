@@ -220,10 +220,15 @@ Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
 
 ## Phases
 
-1. **Backend foundation:** migration and models, domain claims and DNS
-   verification, connection and token management, the provisioning core, the
-   SCIM endpoint, events, audit, the permission domain, and tests (unit, e2e,
-   scim2-tester).
+1. **Backend foundation (done):** migration and models, domain claims and
+   DNS verification, connection and token management, the provisioning core,
+   the SCIM endpoint, events, audit, the permission domain, and tests (unit,
+   e2e, scim2-tester).
+   - **Sign-in check (no code):** test Cloudflare Access for SaaS end to end
+     as Bifrost's generic OIDC provider, with Prefer SSO on. If it works,
+     that removes the double sign-in behind Access without trusting proxy
+     headers, and the result goes in the docs. Proxy header trust stays out
+     of scope: it isn't a standard, and every proxy does it differently.
 2. **UI:** list, detail and edit dialog, the domains card, the token reveal,
    the mapping editor, and the Identity Source column; vitest plus one
    Playwright happy path.
@@ -240,9 +245,19 @@ Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
    beta (this also covers secondary domains), and feeds the same core with the
    snapshot guards. This is the only way to get Google group membership,
    because Google's OIDC ID tokens carry no groups claim.
-5. **Upstream RFC:** per-IdP sign-in consolidation, retiring or keeping the
-   legacy `Organization.domain` login auto-join in favour of verified claims,
-   and whether customer orgs may self-manage connections.
+5. **Sign-in group claims:** once the platform emits `user.signed_in` with
+   the verified sign-in claims, groups in those claims feed the same core and
+   the same group mappings. A connection can then cover a tenant without
+   SCIM, and the mappings stay the one source of truth for group-to-role
+   rules. On its own this only acts when someone signs in. Revoking access
+   from someone who never signs in again still needs SCIM or a Directory sync.
+6. **Upstream RFC**, per-organization sign-in first. Sign-in is
+   instance-wide today: one provider of each kind, one Prefer SSO default and
+   one callback URL. That blocks the common split of staff on one IdP and
+   client organizations on plain Microsoft SSO. The RFC also covers retiring
+   or keeping the legacy `Organization.domain` login auto-join in favour of
+   verified claims, and whether customer organizations may manage their own
+   connections.
 
 ## IdP notes
 
@@ -250,6 +265,9 @@ Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
   - Provisioning cycles run about every 40 minutes; use "Provision on demand"
     for testing.
   - It sends the PATCH quirks above.
+  - It doesn't provision nested group membership: a user in a group nested
+    inside an assigned group isn't sent. Map the groups people are directly
+    in.
   - Validate with Microsoft's SCIM Validator.
 - **Okta:** validate with Okta's SCIM test suite.
 - **JumpCloud:** custom SCIM app.
@@ -262,6 +280,53 @@ Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
   - "Test connection" creates, updates and deletes a test user and expects
     `201`. The test user must pass the domain claim. The never-signed-in
     `DELETE` rule in decision 5 keeps it from leaving disabled users behind.
+
+## Multiple connections per organization
+
+An organization can have several connections. Each one has its own token,
+groups and mappings, and revokes only the roles it granted. A user belongs to
+exactly one connection: the first connection to provision or adopt them owns
+them, and a second connection that sends the same person gets
+`409 uniqueness`. Domain claims belong to the organization, so any connection
+in the organization can provision any of its verified domains.
+
+This works for disjoint populations, such as an organization migrating
+between tenants or a merger where each tenant covers different people. It does
+not merge identities that appear in more than one directory.
+
+## Future direction (noted, not prioritized)
+
+Design goal: stay usable for large organizations whose internal IT looks like
+an MSP, such as an enterprise managing many Microsoft 365 tenants or business
+units. Nothing below is scheduled. Each item is recorded so v1 choices do not
+close it off.
+
+1. **Scope a connection to domains.** Give each connection an optional
+   allowlist drawn from its organization's verified domains, so two IdPs in
+   one organization cannot compete for the same users.
+2. **Hand a user off between connections.** Add an explicit "move to
+   connection B" action that transfers the link and the roles the connection
+   granted. Today a move depends on a `DELETE` from A followed by adoption in
+   B, and that path is not specified or tested.
+3. **Test two connections in one organization.** Cover the `409` for an
+   overlapping user, and confirm that revocation by A leaves B's roles alone.
+4. **One directory serving several organizations.** An enterprise may run one
+   Entra tenant while modelling business units as separate Bifrost
+   organizations. v1 binds a connection to one organization and lets only one
+   organization verify a domain, so this would need routing from one
+   connection to several organizations (by group or attribute) and a domain
+   model that allows it. Revisit together with per-IdP sign-in in the RFC.
+
+To keep these options open:
+
+- Keep connection ownership explicit on every row that provisioning writes
+  (links, groups, `user_roles.identity_provider_id`). Do not infer it from the
+  organization.
+- Keep the provisioning core protocol-neutral and per connection, so routing
+  or merging can be layered over it later.
+- Treat the unique `user_id` on `identity_provider_users` (one identity source
+  per user) as a deliberate v1 constraint, not a permanent one. Multi-source
+  identity would relax it.
 
 ## Open questions (for the RFC)
 
