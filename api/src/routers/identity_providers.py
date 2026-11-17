@@ -5,10 +5,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Query, Response
+from fastapi import APIRouter, HTTPException, Query, Response
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
+from src.core.transaction_conflicts import conflict_aware_route
 from src.models.contracts.identity_providers import (
     IdentityProviderCreate,
     IdentityProviderCreated,
@@ -26,7 +27,19 @@ from src.services.authorization.enforce import load_caller
 from src.services.identity_provisioning.expiry import clear_expiry_notifications
 from src.services.operation_catalog import operation_route
 
-router = APIRouter(prefix="/api/identity-providers", tags=["Identity Providers"])
+def _conflict() -> HTTPException:
+    return HTTPException(
+        409,
+        "A concurrent change to the same users or roles was in progress, so this one was "
+        "cancelled and nothing was saved. Try again.",
+    )
+
+
+router = APIRouter(
+    prefix="/api/identity-providers",
+    tags=["Identity Providers"],
+    route_class=conflict_aware_route(_conflict),
+)
 
 
 # ---------------------------------------------------------------------------

@@ -180,6 +180,15 @@ three refresh-and-replay attempts could all lose the race.
   group also lock the group row. Deleting the last mapped group reconciles
   every linked user, since the mapped-group requirement lifts for all of
   them.
+- **Deadlocks that remain possible** (a pass and a mapping change on
+  another connection both granting one role to External users, or two
+  mapping changes) are broken by PostgreSQL, which rolls one transaction
+  back. Each surface answers explicitly and logs a warning: SCIM returns
+  503 with `Retry-After: 5` (identity providers retry it), the management
+  API returns 409 "nothing was saved; try again", and the pass counts a
+  `conflicts` entry and leaves the link waiting for the next run.
+  Classification is by SQLSTATE (`40P01`, `40001`), shared with the
+  database retry helper.
 - **Events.** `user.groups_changed` reports the membership change only.
   `user.access_changed` reports applied access (`activated`, `roles_added`,
   `roles_removed`) when the request revokes and when the pass grants.

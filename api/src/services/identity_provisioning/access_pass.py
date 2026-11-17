@@ -29,6 +29,7 @@ from uuid import UUID
 from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.core.database_retry import is_transaction_conflict
 from src.models.orm.identity_providers import IdentityProvider, IdentityProviderUser
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
@@ -46,11 +47,14 @@ BATCH_LIMIT = 500
 class AccessPassResult:
     applied: int = 0
     failed: int = 0
+    # Links PostgreSQL rolled back to break a deadlock; they wait for the
+    # next run.
+    conflicts: int = 0
     # Provisioners to run ``after_commit`` on once the caller commits.
     provisioners: list[Provisioner] = field(default_factory=list)
 
     def summary(self) -> dict[str, int]:
-        return {"applied": self.applied, "failed": self.failed}
+        return {"applied": self.applied, "failed": self.failed, "conflicts": self.conflicts}
 
 
 def _waiting(*columns: Any) -> Select[Any]:
@@ -116,15 +120,26 @@ async def run_access_pass(session: AsyncSession) -> AccessPassResult:
         try:
             async with session.begin_nested():
                 await provisioner.apply_pending([link_id])
-        except Exception:
+        except Exception as exc:
             del provisioner.pending_events[queued:]
             provisioner.stale_roles, provisioner.stale_users = stale_roles, stale_users
-            result.failed += 1
-            logger.exception(
-                "Identity provider %s could not apply access for link %s",
-                connection_id,
-                link_id,
-            )
+            if is_transaction_conflict(exc):
+                # PostgreSQL broke a deadlock (e.g. with a mapping change
+                # granting the same role) by rolling this link back.
+                result.conflicts += 1
+                logger.warning(
+                    "Identity provider %s access for link %s was rolled back to break a "
+                    "deadlock; it waits for the next run",
+                    connection_id,
+                    link_id,
+                )
+            else:
+                result.failed += 1
+                logger.exception(
+                    "Identity provider %s could not apply access for link %s",
+                    connection_id,
+                    link_id,
+                )
             await session.execute(
                 update(IdentityProviderUser)
                 .where(IdentityProviderUser.id == link_id)

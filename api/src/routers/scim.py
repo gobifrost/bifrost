@@ -19,6 +19,7 @@ from sqlalchemy import func, select
 
 from src.core.db_deps import DbSession
 from src.core.rate_limit import RateLimiter
+from src.core.transaction_conflicts import conflict_aware_route
 from src.models.orm.identity_providers import (
     IdentityProvider,
     IdentityProviderGroup,
@@ -29,10 +30,21 @@ from src.services.identity_provisioning import scim, tokens
 from src.services.identity_provisioning.core import ProvisioningError, Provisioner
 from src.services.identity_provisioning.scim import ScimError
 
+def _conflict() -> ScimError:
+    # Identity providers retry a 503; the request changed nothing.
+    return ScimError(
+        503,
+        "A concurrent change to the same users was in progress, so this request was "
+        "cancelled and nothing was saved. Retry it.",
+        retry_after=5,
+    )
+
+
 router = APIRouter(
     prefix="/api/scim/v2/{identity_provider_id}",
     tags=["SCIM"],
     include_in_schema=False,
+    route_class=conflict_aware_route(_conflict),
 )
 
 # Generous: a large Entra or Okta cycle sends bursts of user and membership
@@ -49,7 +61,11 @@ def scim_response(body: Any, status_code: int = 200, *, location: str | None = N
 
 
 def scim_error_response(exc: ScimError) -> JSONResponse:
-    headers = {"WWW-Authenticate": 'Bearer realm="SCIM"'} if exc.status == 401 else None
+    headers: dict[str, str] = {}
+    if exc.status == 401:
+        headers["WWW-Authenticate"] = 'Bearer realm="SCIM"'
+    if exc.retry_after is not None:
+        headers["Retry-After"] = str(exc.retry_after)
     return JSONResponse(
         exc.body(), status_code=exc.status, media_type=scim.SCIM_MEDIA_TYPE, headers=headers
     )

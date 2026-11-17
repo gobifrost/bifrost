@@ -66,11 +66,20 @@ GROUP_FILTER_ATTRIBUTES = ("displayName", "externalId", "id")
 class ScimError(Exception):
     """An RFC 7644 §3.12 error response."""
 
-    def __init__(self, status: int, detail: str, scim_type: str | None = None):
+    def __init__(
+        self,
+        status: int,
+        detail: str,
+        scim_type: str | None = None,
+        *,
+        retry_after: int | None = None,
+    ):
         super().__init__(detail)
         self.status = status
         self.detail = detail
         self.scim_type = scim_type
+        # Seconds, sent as Retry-After.
+        self.retry_after = retry_after
 
     def body(self) -> dict[str, Any]:
         body: dict[str, Any] = {

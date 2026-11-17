@@ -294,6 +294,28 @@ async def test_a_failing_link_rolls_back_alone_and_waits(setup, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_deadlocked_link_counts_as_a_conflict_and_waits(setup, monkeypatch):
+    import asyncpg
+    from sqlalchemy.exc import DBAPIError
+
+    session = setup["session"]
+    group = await _mapped_group(setup)
+    provisioner = Provisioner(session, setup["connection"])
+    link = await provisioner.create_user(_record(f"raced@{setup['domain']}"))
+    await provisioner.set_group_members(group, [link.id])
+
+    async def deadlocked(self, link_ids):
+        raise DBAPIError("INSERT", {}, asyncpg.exceptions.DeadlockDetectedError("deadlock"))
+
+    monkeypatch.setattr(Provisioner, "apply_pending", deadlocked)
+    result = await run_access_pass(session)
+
+    assert result.summary() == {"applied": 0, "failed": 0, "conflicts": 1}
+    user, link = await _refreshed(session, link)
+    assert not user.is_active and link.access_pending_since is not None
+
+
+@pytest.mark.asyncio
 async def test_the_oldest_grant_goes_first_across_connections(setup, monkeypatch):
     import src.services.identity_provisioning.access_pass as access_pass
 
