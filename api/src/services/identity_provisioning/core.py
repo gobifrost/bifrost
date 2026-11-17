@@ -375,7 +375,16 @@ class Provisioner:
             .where(IdentityProviderGroup.id == group.id)
             .with_for_update()
         )
-        wanted = await self._known_links(set(member_link_ids))
+        requested = set(member_link_ids)
+        current = await self.group_member_ids(group.id)
+        wanted = await self._known_links(requested)
+        # Lock the affected users before touching membership rows, the order
+        # delete_user follows (user, then the link and its memberships), so
+        # the two can't deadlock. Then read again: a deletion that held one
+        # of those locks has committed by now, and a member it removed is
+        # refused as unknown rather than written.
+        await self._lock_users_of(wanted ^ current)
+        wanted = await self._known_links(requested)
         current = await self.group_member_ids(group.id)
         added, removed = wanted - current, current - wanted
         if removed:
@@ -698,6 +707,23 @@ class Provisioner:
         )
         assert user is not None
         return user
+
+    async def _lock_users_of(self, link_ids: set[UUID]) -> None:
+        """Lock the users behind these links, in id order."""
+        if not link_ids:
+            return
+        await self.session.execute(
+            select(User.id)
+            .where(
+                User.id.in_(
+                    select(IdentityProviderUser.user_id).where(
+                        IdentityProviderUser.id.in_(link_ids)
+                    )
+                )
+            )
+            .order_by(User.id)
+            .with_for_update()
+        )
 
     def _mark_stale(self, user_id: UUID, role_ids: set[UUID]) -> None:
         """Queue cache invalidation for after the commit. Each role's
