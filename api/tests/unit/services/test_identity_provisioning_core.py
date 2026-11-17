@@ -87,6 +87,14 @@ async def _map(session, group_id, role_ids=()):
     await session.flush()
 
 
+async def _map_and_apply(session, connection, group_id, role_ids):
+    """What the mapping service does: exclusive policy lock, then apply."""
+    mapper = Provisioner(session, connection)
+    await mapper.hold_policy(exclusive=True)
+    await _map(session, group_id, role_ids)
+    await mapper.reconcile_all()
+
+
 @pytest.mark.asyncio
 async def test_creates_an_active_verified_user_in_the_connection_org(setup):
     provisioner = Provisioner(setup["session"], setup["connection"])
@@ -145,8 +153,7 @@ async def test_mapped_group_grants_tagged_roles_and_removing_it_revokes_access(s
     group = await provisioner.create_group(
         GroupRecord(display_name="Techs", external_id="g1", attributes={}), [link.id]
     )
-    await _map(session, group.id, [role.id])
-    await provisioner.reconcile_all()
+    await _map_and_apply(session, setup["connection"], group.id, [role.id])
 
     assignment = await session.scalar(
         select(UserRole).where(UserRole.user_id == link.user_id, UserRole.role_id == role.id)
@@ -176,10 +183,10 @@ async def test_a_manual_grant_of_a_mapped_role_survives_unmapping(setup):
     group = await provisioner.create_group(
         GroupRecord(display_name="Techs", external_id="g1", attributes={}), [link.id]
     )
-    await _map(session, group.id, [role.id])
-    await provisioner.reconcile_all()
+    await _map_and_apply(session, setup["connection"], group.id, [role.id])
 
-    await provisioner.delete_group(group)
+    # Deleting a group changes policy: its own exclusive-lock transaction.
+    await Provisioner(session, setup["connection"]).delete_group(group)
 
     manual = await session.scalar(
         select(UserRole).where(UserRole.user_id == link.user_id, UserRole.role_id == role.id)

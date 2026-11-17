@@ -206,7 +206,7 @@ async def map_identity_provider_group(
         db, caller, identity_provider_id, group_id, request.role_ids
     )
     await db.commit()
-    await provisioner.emit_pending_events()
+    await provisioner.after_commit()
     return response
 
 
@@ -221,6 +221,6 @@ async def unmap_identity_provider_group(
     caller = await load_caller(db, user)
     provisioner = await service.delete_group_mapping(db, caller, identity_provider_id, group_id)
     await db.commit()
-    await provisioner.emit_pending_events()
+    await provisioner.after_commit()
     return Response(status_code=204)
 

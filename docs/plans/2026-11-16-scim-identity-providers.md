@@ -136,7 +136,56 @@ runs inside the request transaction and:
    union of mapped-group roles. It inserts missing roles, tagged with the
    connection, and deletes tagged roles that are no longer wanted. Active =
    `link.active` and (no mappings, or at least one mapped group).
+   **Revoke now, grant later** (see below).
 5. Emits audit and events after the commit.
+
+### Batched grants (the access pass)
+
+Every role or activation change replaces the single global authority epoch,
+which retires every access token on the instance. Each SCIM request is its
+own transaction, so a 2,000-user initial sync applied request by request
+would do that about 2,000 times in 40 minutes — far past the authority
+runbook's 30-an-hour threshold, and fast enough that a running workflow's
+three refresh-and-replay attempts could all lose the race.
+
+- **Revocations apply in the request:** deactivation (`active=false`,
+  DELETE, losing the last mapped group, with sessions revoked) and removing
+  roles the connection granted.
+- **Grants wait:** activation, new role assignments and display-name changes
+  are recorded on the link (`access_pending_since`, with the provider's
+  `display_name`). The SCIM resource the provider reads back comes from the
+  link, so it sees no difference.
+- **The access pass** (`identity_provider_access_pass`, every 2 minutes)
+  applies up to 500 waiting links, oldest first, across all connections in
+  one transaction, skipping users a request holds (`SKIP LOCKED`). Each link
+  runs in its own savepoint; one that fails rolls back alone and goes to the
+  back of the queue. Caches are invalidated and events sent after the
+  commit. Grants cost at most one epoch change per run (30 an hour);
+  revocations, email changes and deletions still change it per request, so
+  they count separately against the runbook's threshold.
+- **Immediate where an admin acts:** a mapping change in the UI applies
+  grants in its own single transaction.
+- New users are inserted in their final state. An insert doesn't change the
+  epoch, so on a connection without mappings, creating a user costs nothing.
+- Email changes stay in the request: they need the synchronous uniqueness
+  and domain checks, and they are rare.
+- A grant refused by policy (e.g. a privileged role mapped for an External
+  user) is skipped and audited (`identity_provider.role_grant_refused`); the
+  next mapping or directory change for that user tries again.
+- **Locking.** Every provisioning write takes a per-connection policy lock
+  (a transaction-scoped advisory lock, shared); a mapping change takes it
+  exclusively. A user created while the first mapping is added therefore
+  can't be missed. After that lock, users are locked in id order, and links,
+  memberships and assignments are read fresh. Membership changes to one
+  group also lock the group row. Deleting the last mapped group reconciles
+  every linked user, since the mapped-group requirement lifts for all of
+  them.
+- **Events.** `user.groups_changed` reports the membership change only.
+  `user.access_changed` reports applied access (`activated`, `roles_added`,
+  `roles_removed`) when the request revokes and when the pass grants.
+
+The lasting fix is per-subject epochs (the `authz_versions` table is already
+keyed by subject); that belongs to the upstream RFC.
 
 The Google Directory sync (phase 4) calls the same commands with a full
 snapshot. It adds snapshot-only guards: never deprovision after a failed or
@@ -198,9 +247,10 @@ Libraries:
 
 ## Events
 
-Topics `user.provisioned`, `user.updated`, `user.deprovisioned` and
-`user.groups_changed`, registered in `CURATED_TOPICS` with the standard
-`_base_body` envelope. The actor is the connection.
+Topics `user.provisioned`, `user.updated`, `user.deprovisioned`,
+`user.groups_changed` and `user.access_changed`, registered in
+`CURATED_TOPICS` with the standard `_base_body` envelope. The actor is the
+connection.
 
 ## UI
 
@@ -338,6 +388,12 @@ To keep these options open:
   identity would relax it.
 
 ## Open questions (for the RFC)
+
+- Per-subject authority epochs. Provisioning is the workload most likely to
+  cross the runbook's 30-bumps-an-hour threshold; the access pass caps it in
+  v1, at the cost of grants waiting up to two minutes. A per-user version
+  (or skipping the bump for users who hold no credentials) would let grants
+  apply in the request again.
 
 - Deleting a connection: the proposal is to unlink its users (they become
   Native) and convert the roles it granted to manual. The alternative is to

@@ -164,6 +164,14 @@ class IdentityProviderUser(Base):
     )
     # True when this connection created the Bifrost user (vs adopting one).
     created_user: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # The name the provider sent; the access pass copies it to the user.
+    display_name: Mapped[str | None] = mapped_column(String(255), default=None)
+    # When a change that grants something (activation, a role, a new name)
+    # began waiting for the batched access pass; None when nothing waits.
+    # Revocations never wait. See ``identity_provisioning.access_pass``.
+    access_pending_since: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=_now, server_default=text("NOW()")
     )
@@ -177,6 +185,11 @@ class IdentityProviderUser(Base):
         ),
         UniqueConstraint(
             "identity_provider_id", "user_name", name="uq_identity_provider_users_user_name"
+        ),
+        Index(
+            "ix_identity_provider_users_access_pending",
+            "access_pending_since",
+            postgresql_where=text("access_pending_since IS NOT NULL"),
         ),
     )
 

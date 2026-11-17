@@ -503,6 +503,8 @@ async def set_group_mapping(
     group = await _group(session, connection, group_id)
     wanted = set(role_ids)
     await _authorize_mapped_roles(session, caller, connection.organization_id, wanted)
+    provisioner = Provisioner(session, connection)
+    await provisioner.hold_policy(exclusive=True)
     mapping = await session.get(IdentityProviderGroupMapping, group.id)
     if mapping is None:
         session.add(
@@ -531,7 +533,6 @@ async def set_group_mapping(
             "role_ids": sorted(str(r) for r in wanted),
         },
     )
-    provisioner = Provisioner(session, connection)
     await provisioner.reconcile_all()
     (response,) = [g for g in await list_groups(session, caller, connection.id) if g.id == group.id]
     return response, provisioner
@@ -544,6 +545,8 @@ async def delete_group_mapping(
         session, caller, identity_provider_id, operation="identityproviders.groups.unmap"
     )
     group = await _group(session, connection, group_id)
+    provisioner = Provisioner(session, connection)
+    await provisioner.hold_policy(exclusive=True)
     mapping = await session.get(IdentityProviderGroupMapping, group.id)
     if mapping is None:
         raise HTTPException(404, "This group is not mapped")
@@ -556,7 +559,6 @@ async def delete_group_mapping(
         resource_id=connection.id,
         details={"group": group.display_name},
     )
-    provisioner = Provisioner(session, connection)
     await provisioner.reconcile_all()
     return provisioner
 

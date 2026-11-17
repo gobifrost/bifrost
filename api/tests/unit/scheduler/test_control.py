@@ -91,6 +91,9 @@ LEGACY_SCHEDULES = {
     # Added with identity provider connections: re-raises token-expiry
     # warnings, which live an hour as notifications.
     "identity_provider_token_expiry": ("interval", {"minutes": 60}, True),
+    # Applies provisioning grants in one transaction per run, so a SCIM sync
+    # burst changes the global authority epoch at most once a run.
+    "identity_provider_access_pass": ("interval", {"minutes": 2}, True),
 }
 
 

@@ -104,7 +104,7 @@ def _paging(start_index: int, count: int | None) -> tuple[int, int]:
 
 async def _commit_and_emit(db: DbSession, provisioner: Provisioner) -> None:
     await db.commit()
-    await provisioner.emit_pending_events()
+    await provisioner.after_commit()
 
 
 def _parse_id(resource_id: str) -> UUID:
@@ -159,6 +159,15 @@ async def schema(schema_id: str, connection: Connection) -> Response:
 
 async def _user_link(provisioner: Provisioner, user_id: str) -> IdentityProviderUser:
     link = await provisioner.get_user_link(_parse_id(user_id))
+    if link is None:
+        raise ScimError(404, "User not found")
+    return link
+
+
+async def _locked_user_link(provisioner: Provisioner, user_id: str) -> IdentityProviderUser:
+    """The link, locked for a write: a change computed from it can't
+    overwrite a concurrent one."""
+    link = await provisioner.lock_user_link(_parse_id(user_id))
     if link is None:
         raise ScimError(404, "User not found")
     return link
@@ -240,9 +249,9 @@ async def get_user(
 async def replace_user(
     user_id: str, request: Request, connection: Connection, db: DbSession
 ) -> Response:
-    provisioner = Provisioner(db, connection)
-    link = await _user_link(provisioner, user_id)
     resource, unknown = scim.parse_user(await _json_body(request))
+    provisioner = Provisioner(db, connection)
+    link = await _locked_user_link(provisioner, user_id)
     try:
         link = await provisioner.replace_user(link, scim.user_record(resource, unknown))
     except ProvisioningError as exc:
@@ -257,9 +266,10 @@ async def replace_user(
 async def patch_user(
     user_id: str, request: Request, connection: Connection, db: DbSession
 ) -> Response:
+    patch = await _json_body(request)
     provisioner = Provisioner(db, connection)
-    link = await _user_link(provisioner, user_id)
-    resource, unknown = scim.apply_user_patch(link, await _json_body(request))
+    link = await _locked_user_link(provisioner, user_id)
+    resource, unknown = scim.apply_user_patch(link, patch)
     try:
         link = await provisioner.replace_user(link, scim.user_record(resource, unknown))
     except ProvisioningError as exc:
@@ -273,7 +283,7 @@ async def patch_user(
 @router.delete("/Users/{user_id}")
 async def delete_user(user_id: str, connection: Connection, db: DbSession) -> Response:
     provisioner = Provisioner(db, connection)
-    link = await _user_link(provisioner, user_id)
+    link = await _locked_user_link(provisioner, user_id)
     try:
         await provisioner.delete_user(link)
     except ProvisioningError as exc:
@@ -289,6 +299,17 @@ async def delete_user(user_id: str, connection: Connection, db: DbSession) -> Re
 
 async def _group(provisioner: Provisioner, group_id: str) -> IdentityProviderGroup:
     group = await provisioner.get_group(_parse_id(group_id))
+    if group is None:
+        raise ScimError(404, "Group not found")
+    return group
+
+
+async def _locked_group(
+    provisioner: Provisioner, group_id: str, *, exclusive_policy: bool = False
+) -> IdentityProviderGroup:
+    """The group, locked for a write: a membership change computed from it
+    can't overwrite a concurrent one."""
+    group = await provisioner.lock_group(_parse_id(group_id), exclusive_policy=exclusive_policy)
     if group is None:
         raise ScimError(404, "Group not found")
     return group
@@ -421,9 +442,9 @@ async def get_group(
 async def replace_group(
     group_id: str, request: Request, connection: Connection, db: DbSession
 ) -> Response:
-    provisioner = Provisioner(db, connection)
-    group = await _group(provisioner, group_id)
     resource = scim.parse_group(await _json_body(request))
+    provisioner = Provisioner(db, connection)
+    group = await _locked_group(provisioner, group_id)
     try:
         await provisioner.replace_group(group, scim.group_record(resource))
         await provisioner.set_group_members(group, scim.group_member_ids(resource))
@@ -439,10 +460,11 @@ async def replace_group(
 async def patch_group(
     group_id: str, request: Request, connection: Connection, db: DbSession
 ) -> Response:
+    patch = await _json_body(request)
     provisioner = Provisioner(db, connection)
-    group = await _group(provisioner, group_id)
+    group = await _locked_group(provisioner, group_id)
     current_members = await provisioner.group_member_ids(group.id)
-    resource = scim.apply_group_patch(group, current_members, await _json_body(request))
+    resource = scim.apply_group_patch(group, current_members, patch)
     try:
         await provisioner.replace_group(group, scim.group_record(resource))
         await provisioner.set_group_members(group, scim.group_member_ids(resource))
@@ -456,7 +478,7 @@ async def patch_group(
 @router.delete("/Groups/{group_id}")
 async def delete_group(group_id: str, connection: Connection, db: DbSession) -> Response:
     provisioner = Provisioner(db, connection)
-    group = await _group(provisioner, group_id)
+    group = await _locked_group(provisioner, group_id, exclusive_policy=True)
     try:
         await provisioner.delete_group(group)
     except ProvisioningError as exc:

@@ -121,7 +121,10 @@ CURATED_TOPICS = [
     },
     {
         "topic": "user.groups_changed",
-        "description": "Fired when an identity provider adds a user to a group or removes them.",
+        "description": (
+            "Fired when an identity provider adds a user to a group or removes them. "
+            "The access that follows is reported by user.access_changed."
+        ),
         "category": "Users",
         "emitted_by": "Identity provisioning",
         "example_body": _body(
@@ -133,8 +136,26 @@ CURATED_TOPICS = [
                 "display_name": "Support Techs",
                 "change": "added",
             },
-            roles_added=["550e8400-e29b-41d4-a716-446655440053"],
-            roles_removed=[],
+        ),
+    },
+    {
+        "topic": "user.access_changed",
+        "description": (
+            "Fired when identity provisioning activates a user or grants or removes "
+            "mapped roles. Removals apply at once; activations and grants are applied "
+            "in batches within about two minutes of the identity provider's change."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            access={
+                "activated": True,
+                "roles_added": ["550e8400-e29b-41d4-a716-446655440053"],
+                "roles_removed": [],
+            },
         ),
     },
     {

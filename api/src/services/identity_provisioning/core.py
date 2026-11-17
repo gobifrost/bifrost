@@ -17,10 +17,18 @@ Every command runs inside the caller's transaction. The rules it enforces:
 - Deleting a user disables and unlinks them, except a user this connection
   created who has never signed in: that account has no history to keep and
   is removed permanently.
+- Revoke now, grant later: deactivation and role removal apply in the
+  request; activation, new roles and renames wait for the access pass
+  (``access_pass``), which applies a whole burst in one transaction. Each of
+  those writes changes the global authority epoch.
 
-Audit rows are written in the transaction; platform events are collected in
-``pending_events`` and sent with :meth:`Provisioner.emit_pending_events`
-after the caller commits.
+Locking: every command takes the connection's policy lock (shared; a mapping
+change takes it exclusively) before any user row lock, and locks users in id
+order before reading the links and memberships it decides from.
+
+Audit rows are written in the transaction; platform events and cache
+invalidations are collected and run by :meth:`Provisioner.after_commit` once
+the caller commits.
 """
 
 from __future__ import annotations
@@ -33,7 +41,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import (
@@ -115,6 +123,10 @@ class Provisioner:
         self.session = session
         self.connection = connection
         self.pending_events: list[tuple[str, dict[str, Any]]] = []
+        # Cache entries to drop once the transaction commits.
+        self.stale_roles: set[UUID] = set()
+        self.stale_users: set[UUID] = set()
+        self._policy_lock: str | None = None
         self._actor = ActorContext(
             user_id=None,
             organization_id=connection.organization_id,
@@ -123,6 +135,28 @@ class Provisioner:
             source="identity_provider",
             surface="service",
         )
+
+    async def hold_policy(self, *, exclusive: bool = False) -> None:
+        """Take the connection's policy lock for this transaction.
+
+        Every provisioning command decides access from the connection's group
+        mappings, and a mapping change recomputes every linked user. Commands
+        share the lock and a mapping change takes it exclusively, so a user
+        created while the first mapping is added can't be missed by either.
+        Take it before any user row lock; every path keeps that order. Decide
+        the mode up front: two transactions upgrading shared to exclusive
+        would deadlock, so an upgrade is refused.
+        """
+        if self._policy_lock == "exclusive" or (self._policy_lock == "shared" and not exclusive):
+            return
+        if self._policy_lock == "shared":
+            raise RuntimeError("The policy lock is held shared; take it exclusively from the start")
+        function = "pg_advisory_xact_lock" if exclusive else "pg_advisory_xact_lock_shared"
+        await self.session.execute(
+            text(f"SELECT {function}(hashtextextended(:key, 0))"),
+            {"key": f"identity_provider_policy:{self.connection.id}"},
+        )
+        self._policy_lock = "exclusive" if exclusive else "shared"
 
     # ------------------------------------------------------------------
     # Lookups
@@ -134,6 +168,43 @@ class Provisioner:
                 IdentityProviderUser.id == link_id,
                 IdentityProviderUser.identity_provider_id == self.connection.id,
             )
+        )
+
+    async def lock_user_link(self, link_id: UUID) -> IdentityProviderUser | None:
+        """The link, read after taking the policy lock and its user's row
+        lock, so a change computed from it (a PATCH) can't overwrite a
+        concurrent one."""
+        await self.hold_policy()
+        user_id = await self.session.scalar(
+            select(IdentityProviderUser.user_id).where(
+                IdentityProviderUser.id == link_id,
+                IdentityProviderUser.identity_provider_id == self.connection.id,
+            )
+        )
+        if user_id is None:
+            return None
+        await self._lock_user(user_id)
+        return await self.session.scalar(
+            select(IdentityProviderUser)
+            .where(IdentityProviderUser.id == link_id)
+            .execution_options(populate_existing=True)
+        )
+
+    async def lock_group(
+        self, group_id: UUID, *, exclusive_policy: bool = False
+    ) -> IdentityProviderGroup | None:
+        """The group, read after taking the policy lock and its row lock, so
+        a membership change computed from it can't overwrite a concurrent
+        one. Deleting a group changes policy: pass ``exclusive_policy``."""
+        await self.hold_policy(exclusive=exclusive_policy)
+        return await self.session.scalar(
+            select(IdentityProviderGroup)
+            .where(
+                IdentityProviderGroup.id == group_id,
+                IdentityProviderGroup.identity_provider_id == self.connection.id,
+            )
+            .with_for_update()
+            .execution_options(populate_existing=True)
         )
 
     async def get_group(self, group_id: UUID) -> IdentityProviderGroup | None:
@@ -157,30 +228,42 @@ class Provisioner:
     # ------------------------------------------------------------------
 
     async def create_user(self, record: UserRecord) -> IdentityProviderUser:
+        await self.hold_policy()
         await self._refuse_duplicate_link(record, exclude_link_id=None)
         email = normalize_email(record.email)
         await self._require_claimed_domain(email)
 
-        user = await self.session.scalar(select(User).where(User.email == email))
+        # Lock a user being adopted before deciding it may be.
+        user = await self.session.scalar(
+            select(User)
+            .where(User.email == email)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         created_user = user is None
         if user is None:
-            user = await self._new_user(email, record)
+            # Insert in the final state: a new user carries no token, so the
+            # insert leaves the authority epoch alone where a later flip of
+            # is_active would not. A new user has no groups yet, so once the
+            # connection maps any group, the user waits for one.
+            active = record.active and not await self._mapped_group_roles()
+            user = await self._new_user(email, record, active=active)
         else:
             await self._require_adoptable(user)
-            user.name = record.display_name or user.name
 
         link = IdentityProviderUser(
             identity_provider_id=self.connection.id,
             user_id=user.id,
             external_id=record.external_id,
             user_name=record.user_name,
+            display_name=record.display_name,
             active=record.active,
             attributes=record.attributes,
             created_user=created_user,
         )
         self.session.add(link)
         await self.session.flush()
-        await self._reconcile_access([link.id])
+        await self._reconcile_access([link.id], defer_grants=True)
         await self._audit(
             "identity_provider.user_provisioned",
             user,
@@ -192,9 +275,9 @@ class Provisioner:
     async def replace_user(
         self, link: IdentityProviderUser, record: UserRecord
     ) -> IdentityProviderUser:
+        await self.hold_policy()
         await self._refuse_duplicate_link(record, exclude_link_id=link.id)
-        user = await self.session.get(User, link.user_id, with_for_update=True)
-        assert user is not None
+        user = await self._lock_user(link.user_id)
         email = normalize_email(record.email)
         if email != user.email:
             await self._require_claimed_domain(email)
@@ -206,20 +289,20 @@ class Provisioner:
                     ProvisioningErrorKind.CONFLICT, "Another user already has this email"
                 )
             user.email = email
-        user.name = record.display_name or user.name
         link.external_id = record.external_id
         link.user_name = record.user_name
+        link.display_name = record.display_name
         link.active = record.active
         link.attributes = record.attributes
         await self.session.flush()
-        await self._reconcile_access([link.id])
+        await self._reconcile_access([link.id], defer_grants=True)
         await self._audit("identity_provider.user_updated", user, {"email": user.email})
         self._queue_user_event("user.updated", user, link)
         return link
 
     async def delete_user(self, link: IdentityProviderUser) -> None:
-        user = await self.session.get(User, link.user_id, with_for_update=True)
-        assert user is not None
+        await self.hold_policy()
+        user = await self._lock_user(link.user_id)
         if link.created_user and user.last_login is None:
             from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 
@@ -240,8 +323,7 @@ class Provisioner:
         removed = await self._remove_granted_roles(user.id, None)
         await self.session.delete(link)
         await self.session.flush()
-        for role_id in removed:
-            await self._invalidate_role(role_id)
+        self._mark_stale(user.id, removed)
         await self._audit("identity_provider.user_unlinked", user, {"email": user.email})
         self.pending_events.append(
             (
@@ -285,6 +367,14 @@ class Provisioner:
     async def set_group_members(
         self, group: IdentityProviderGroup, member_link_ids: Iterable[UUID]
     ) -> None:
+        await self.hold_policy()
+        # Two membership changes to one group serialize on the group row, so
+        # neither computes its difference from a stale member list.
+        await self.session.execute(
+            select(IdentityProviderGroup.id)
+            .where(IdentityProviderGroup.id == group.id)
+            .with_for_update()
+        )
         wanted = await self._known_links(set(member_link_ids))
         current = await self.group_member_ids(group.id)
         added, removed = wanted - current, current - wanted
@@ -301,42 +391,105 @@ class Provisioner:
             )
         await self.session.flush()
         if added or removed:
-            await self._reconcile_access(added | removed, group_changes={
-                link_id: ("added" if link_id in added else "removed") for link_id in added | removed
-            }, group=group)
+            await self._reconcile_access(
+                added | removed,
+                defer_grants=True,
+                group_changes={
+                    link_id: ("added" if link_id in added else "removed")
+                    for link_id in added | removed
+                },
+                group=group,
+            )
 
     async def delete_group(self, group: IdentityProviderGroup) -> None:
-        members = await self.group_member_ids(group.id)
+        # Deleting a mapped group deletes its mapping: a policy change.
+        await self.hold_policy(exclusive=True)
+        affected = await self.group_member_ids(group.id)
+        mapped = await self._mapped_group_roles()
+        if mapped.keys() == {group.id}:
+            # Deleting the last mapped group lifts the mapped-group
+            # requirement from every linked user, members or not.
+            affected = set(
+                await self.session.scalars(
+                    select(IdentityProviderUser.id).where(
+                        IdentityProviderUser.identity_provider_id == self.connection.id
+                    )
+                )
+            )
         await self.session.delete(group)
         await self.session.flush()
-        if members:
-            await self._reconcile_access(members)
+        await self._reconcile_access(affected, defer_grants=True)
 
     # ------------------------------------------------------------------
     # Access reconciliation
     # ------------------------------------------------------------------
 
     async def reconcile_all(self) -> None:
-        """Recompute access for every linked user (after a mapping change)."""
+        """Recompute and apply access for every linked user, grants included:
+        an administrator changed a mapping and expects it to take effect.
+        The caller took the policy lock exclusively before the change."""
+        assert self._policy_lock == "exclusive", "take hold_policy(exclusive=True) first"
         link_ids = await self.session.scalars(
             select(IdentityProviderUser.id).where(
                 IdentityProviderUser.identity_provider_id == self.connection.id
             )
         )
-        await self._reconcile_access(set(link_ids))
+        await self._reconcile_access(set(link_ids), defer_grants=False)
+
+    async def apply_pending(self, link_ids: Iterable[UUID]) -> None:
+        """Apply the grants these links wait for (the access pass)."""
+        await self._reconcile_access(link_ids, defer_grants=False)
 
     async def _reconcile_access(
         self,
         link_ids: Iterable[UUID],
         *,
+        defer_grants: bool,
         group_changes: dict[UUID, str] | None = None,
         group: IdentityProviderGroup | None = None,
     ) -> None:
+        """Bring each linked user's activity, mapped roles and name in line
+        with the directory.
+
+        Revocations (deactivating, removing roles this connection granted)
+        always apply now. With ``defer_grants``, grants (activating, adding a
+        role, renaming) are recorded on the link for the access pass instead
+        (``access_pass``). Each of those writes changes the global authority
+        epoch, which retires every access token on the instance; the pass
+        applies a whole provisioning burst in one transaction.
+        """
         link_ids = set(link_ids)
         if not link_ids:
             return
+        await self.hold_policy()
         mapped_roles = await self._mapped_group_roles()
         has_mappings = bool(mapped_roles)
+        # Lock users in id order so a change touching many users can't
+        # deadlock with another, then read everything the decision rests on
+        # (links, memberships, assignments) fresh: a writer that held a lock
+        # has committed by now, and READ COMMITTED shows its work.
+        user_ids = set(
+            await self.session.scalars(
+                select(IdentityProviderUser.user_id).where(IdentityProviderUser.id.in_(link_ids))
+            )
+        )
+        users = {
+            user.id: user
+            for user in await self.session.scalars(
+                select(User)
+                .where(User.id.in_(user_ids))
+                .order_by(User.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        }
+        links = (
+            await self.session.scalars(
+                select(IdentityProviderUser)
+                .where(IdentityProviderUser.id.in_(link_ids))
+                .execution_options(populate_existing=True)
+            )
+        ).all()
         memberships: dict[UUID, set[UUID]] = {}
         for link_id, group_id in (
             await self.session.execute(
@@ -348,32 +501,39 @@ class Provisioner:
         ).all():
             memberships.setdefault(link_id, set()).add(group_id)
 
-        links = (
-            await self.session.scalars(
-                select(IdentityProviderUser).where(IdentityProviderUser.id.in_(link_ids))
-            )
-        ).all()
-        for link in links:
-            user = await self.session.get(User, link.user_id, with_for_update=True)
-            assert user is not None
+        now = datetime.now(timezone.utc)
+        for link in sorted(links, key=lambda link: link.user_id):
+            user = users[link.user_id]
             mapped = memberships.get(link.id, set()) & mapped_roles.keys()
             desired_roles: set[UUID] = set()
             for group_id in mapped:
                 desired_roles |= mapped_roles[group_id]
             desired_active = link.active and (not has_mappings or bool(mapped))
-            change = _AccessChange()
-            if user.is_active != desired_active:
-                await self._set_active(user, desired_active)
-                change.activated = desired_active
-                change.deactivated = not desired_active
-            change.roles_removed = await self._remove_granted_roles(user.id, desired_roles)
-            change.roles_added = await self._grant_roles(user, desired_roles)
-            for role_id in change.roles_added | change.roles_removed:
-                await self._invalidate_role(role_id)
-            if change.roles_added or change.roles_removed:
-                from shared.role_cache import invalidate_user
+            desired_name = link.display_name or user.name
 
-                await invalidate_user(user.id)
+            change = _AccessChange()
+            if user.is_active and not desired_active:
+                await self._set_active(user, False)
+                change.deactivated = True
+            change.roles_removed = await self._remove_granted_roles(user.id, desired_roles)
+            if defer_grants:
+                waiting = (
+                    (desired_active and not user.is_active)
+                    or bool(await self._missing_roles(user, desired_roles))
+                    or user.name != desired_name
+                )
+                link.access_pending_since = (link.access_pending_since or now) if waiting else None
+            else:
+                if desired_active and not user.is_active:
+                    await self._set_active(user, True)
+                    change.activated = True
+                change.roles_added = await self._grant_roles(user, desired_roles)
+                if user.name != desired_name:
+                    user.name = desired_name
+                link.access_pending_since = None
+            await self.session.flush()
+
+            self._mark_stale(user.id, change.roles_added | change.roles_removed)
             if group is not None and group_changes and link.id in group_changes:
                 self.pending_events.append(
                     (
@@ -385,8 +545,20 @@ class Provisioner:
                                 "display_name": group.display_name,
                                 "change": group_changes[link.id],
                             },
-                            "roles_added": sorted(str(r) for r in change.roles_added),
-                            "roles_removed": sorted(str(r) for r in change.roles_removed),
+                        },
+                    )
+                )
+            if change.activated or change.roles_added or change.roles_removed:
+                self.pending_events.append(
+                    (
+                        "user.access_changed",
+                        {
+                            **self._user_event_body(user, link),
+                            "access": {
+                                "activated": change.activated,
+                                "roles_added": sorted(str(r) for r in change.roles_added),
+                                "roles_removed": sorted(str(r) for r in change.roles_removed),
+                            },
                         },
                     )
                 )
@@ -431,6 +603,13 @@ class Provisioner:
                 roles.add(role_id)
         return mapped
 
+    async def _missing_roles(self, user: User, desired: set[UUID]) -> set[UUID]:
+        """Desired roles the user doesn't hold yet."""
+        held = set(
+            await self.session.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id))
+        )
+        return desired - held - {user.base_role_id}
+
     async def _grant_roles(self, user: User, desired: set[UUID]) -> set[UUID]:
         from shared.account_guards import AccountGuardError
         from src.services.user_role_assignments import (
@@ -439,11 +618,8 @@ class Provisioner:
             insert_assignment,
         )
 
-        held = set(
-            await self.session.scalars(select(UserRole.role_id).where(UserRole.user_id == user.id))
-        )
         added: set[UUID] = set()
-        for role_id in sorted(desired - held - {user.base_role_id}):
+        for role_id in sorted(await self._missing_roles(user, desired)):
             try:
                 await insert_assignment(
                     self.session,
@@ -454,14 +630,22 @@ class Provisioner:
                     identity_provider_id=self.connection.id,
                 )
             except (RoleAssignmentError, AccountGuardError) as exc:
-                # e.g. a privileged role mapped for an External user: skip the
-                # grant, keep provisioning the rest.
+                # A policy refusal, e.g. a privileged role mapped for an
+                # External user. Retrying can't change it, so skip the grant,
+                # keep provisioning the rest and record why; the next mapping
+                # or directory change tries again.
+                detail = exc.detail
                 logger.warning(
                     "Identity provider %s skipped role %s for user %s: %s",
                     self.connection.id,
                     role_id,
                     user.id,
-                    log_safe(str(exc)),
+                    log_safe(detail),
+                )
+                await self._audit(
+                    "identity_provider.role_grant_refused",
+                    user,
+                    {"email": user.email, "role_id": str(role_id), "reason": detail},
                 )
                 continue
             added.add(role_id)
@@ -505,10 +689,22 @@ class Provisioner:
             user.is_active = True
             await self.session.flush()
 
-    async def _invalidate_role(self, role_id: UUID) -> None:
-        from src.core.cache import invalidate_role_users
+    async def _lock_user(self, user_id: UUID) -> User:
+        user = await self.session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        assert user is not None
+        return user
 
-        await invalidate_role_users(None, str(role_id))
+    def _mark_stale(self, user_id: UUID, role_ids: set[UUID]) -> None:
+        """Queue cache invalidation for after the commit. Each role's
+        invalidation scans Redis, so a burst touching one role scans once."""
+        if role_ids:
+            self.stale_roles |= role_ids
+            self.stale_users.add(user_id)
 
     # ------------------------------------------------------------------
     # Guards
@@ -601,7 +797,7 @@ class Provisioner:
     # Creation, audit and events
     # ------------------------------------------------------------------
 
-    async def _new_user(self, email: str, record: UserRecord) -> User:
+    async def _new_user(self, email: str, record: UserRecord, *, active: bool) -> User:
         from shared.base_role_defaults import BaseRoleDefaultError, resolve_base_role
         from shared.identities import is_identity_email
         from shared.sdk_users import set_user_base_role
@@ -619,8 +815,7 @@ class Provisioner:
             email=email,
             name=record.display_name,
             hashed_password="",
-            # Activation is decided by reconciliation right after linking.
-            is_active=False,
+            is_active=active,
             is_superuser=False,
             is_external=self.connection.provision_as_external,
             # The identity provider vouches for the address; the person signs
@@ -694,9 +889,19 @@ class Provisioner:
             body["adopted"] = adopted
         self.pending_events.append((topic, body))
 
-    async def emit_pending_events(self) -> None:
-        """Send collected platform events. Call only after commit."""
+    async def after_commit(self) -> None:
+        """Drop stale cache entries and send collected platform events. Call
+        only after the transaction commits, so neither can run ahead of it."""
+        from shared.role_cache import invalidate_user
+        from src.core.cache import invalidate_role_users
         from src.services.events.builtins import emit_identity_provider_event
+
+        roles, self.stale_roles = self.stale_roles, set()
+        users, self.stale_users = self.stale_users, set()
+        for role_id in sorted(roles):
+            await invalidate_role_users(None, str(role_id))
+        for user_id in sorted(users):
+            await invalidate_user(user_id)
 
         events, self.pending_events = self.pending_events, []
         for topic, body in events:
