@@ -573,6 +573,8 @@ class FormRuntimeField(BaseModel):
     validation: dict[str, Any] | None = None
     has_dynamic_options: bool = False
     data_provider_inputs: dict[str, DataProviderInputConfig] | None = None
+    optional_provider_inputs: list[str] = Field(
+        default_factory=list, description="Configured inputs the provider declares optional")
     default_value: Any | None = None
     placeholder: str | None = None
     help_text: str | None = None
