@@ -45,7 +45,8 @@ from src.models import (
 )
 from src.models.orm import Config as ConfigModel
 from src.models.orm import OAuthToken
-from src.repositories.integrations import IntegrationConfigError, IntegrationsRepository
+from src.repositories.integrations import IntegrationsRepository
+from src.services.config_values import ConfigValueError
 from src.services.oauth_provider import (
     append_query_params,
     get_url_resolution_defaults,
@@ -458,7 +459,7 @@ async def update_integration(
 
     try:
         integration = await repo.update_integration(integration_id, request)
-    except IntegrationConfigError as exc:
+    except ConfigValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not integration:
@@ -684,7 +685,7 @@ async def update_integration_config(
             config=request.config,
             updated_by=user.email,
         )
-    except IntegrationConfigError as exc:
+    except ConfigValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info(f"Updated default config for integration {log_safe(integration_id)}")
@@ -806,7 +807,7 @@ async def create_mapping(
 
     try:
         mapping = await repo.create_mapping(integration_id, request, updated_by=user.email)
-    except IntegrationConfigError as exc:
+    except ConfigValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info(
         f"Created mapping for integration {log_safe(integration_id)} in org {log_safe(request.organization_id)}"
@@ -936,7 +937,7 @@ async def update_mapping(
         mapping = await repo.update_mapping(
             integration_id, mapping_id, request, updated_by=user.email
         )
-    except IntegrationConfigError as exc:
+    except ConfigValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not mapping:
         raise HTTPException(

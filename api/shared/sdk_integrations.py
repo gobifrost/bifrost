@@ -757,10 +757,8 @@ async def upsert_sdk_integration_mapping(
         IntegrationMappingCreate,
         IntegrationMappingUpdate,
     )
-    from src.repositories.integrations import (
-        IntegrationConfigError,
-        IntegrationsRepository,
-    )
+    from src.repositories.integrations import IntegrationsRepository
+    from src.services.config_values import ConfigValueError
 
     from shared.sdk_config import resolve_sdk_scope
 
@@ -810,7 +808,7 @@ async def upsert_sdk_integration_mapping(
             logger.info(
                 f"SDK created mapping for integration '{log_safe(name)}', org '{log_safe(str(org_id))}' by {actor_email}"
             )
-    except IntegrationConfigError as exc:
+    except ConfigValueError as exc:
         raise IntegrationServiceError(400, str(exc)) from exc
 
     await session.commit()

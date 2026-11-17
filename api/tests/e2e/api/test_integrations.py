@@ -1835,6 +1835,66 @@ class TestIntegrationConfigSecrets:
             e2e_client.delete(base, headers=platform_admin.headers)
 
 
+    def test_generic_config_writes_keep_integration_rows_consistent(
+        self,
+        e2e_client,
+        platform_admin,
+        integration_with_secret_schema,
+        org1,
+        async_session_factory,
+    ):
+        """``PUT /api/config/{id}`` cannot give an integration value a type other
+        than its schema field's, and SDK ``configs.set`` of the same key writes a
+        separate plain config instead of the integration's row."""
+        integration = integration_with_secret_schema
+        base = f"/api/integrations/{integration['id']}"
+        secret = f"integration-secret-{uuid4().hex}"
+        mapping = e2e_client.post(
+            f"{base}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "generic-write",
+                "config": {"api_key": secret},
+            },
+        )
+        assert mapping.status_code == 201, mapping.text
+        try:
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            stored = row.value["value"]
+
+            retype = e2e_client.put(
+                f"/api/config/{row.id}",
+                headers=platform_admin.headers,
+                json={"type": "string", "value": "now-plain"},
+            )
+            assert retype.status_code == 400, retype.text
+
+            sdk_set = e2e_client.post(
+                "/api/sdk/config/set",
+                headers=platform_admin.headers,
+                json={"key": "api_key", "value": "plain-config", "scope": str(org1["id"])},
+            )
+            assert sdk_set.status_code == 204, sdk_set.text
+
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            assert row.config_type.value == "secret"
+            assert row.value["value"] == stored
+        finally:
+            e2e_client.delete(
+                f"{base}/mappings/{mapping.json()['id']}", headers=platform_admin.headers
+            )
+            e2e_client.post(
+                "/api/sdk/config/delete",
+                headers=platform_admin.headers,
+                json={"key": "api_key", "scope": str(org1["id"])},
+            )
+
+
 async def _stored_configs(session_factory, integration_id: str, key: str, org_id=None):
     """The stored config rows for one integration key (org row only when given)."""
     async with session_factory() as session:

@@ -24,11 +24,10 @@ from src.models.contracts.integrations import (
 from src.models.enums import ConfigType
 from src.models.orm.config import Config
 from src.repositories.integrations import (
-    IntegrationConfigError,
     IntegrationsRepository,
     retype_integration_config_values,
-    validate_config_value,
 )
+from src.services.config_values import ConfigValueError
 
 
 def _scalars(items: list) -> MagicMock:
@@ -47,16 +46,23 @@ def _schema(key: str, type_: str) -> SimpleNamespace:
     return SimpleNamespace(id=uuid4(), key=key, type=type_)
 
 
-def _session(*results) -> AsyncMock:
+def _session(*results, schema_type: str | None = None) -> AsyncMock:
+    """A session whose ``execute`` returns ``results`` in order and whose
+    ``scalar`` (the integration field-type lookup) returns ``schema_type``."""
     session = AsyncMock()
     session.execute = AsyncMock(side_effect=list(results))
+    session.scalar = AsyncMock(return_value=schema_type)
     session.add = MagicMock()
     return session
 
 
-def _update_values(statement) -> dict:
-    """The literal SET values of an ``update(Config)`` statement."""
-    return {column.key: value.value for column, value in statement._values.items()}
+def _stored(key: str, value, config_type: ConfigType, integration_id=None) -> Config:
+    return Config(
+        key=key,
+        value={"value": value},
+        config_type=config_type,
+        integration_id=integration_id or uuid4(),
+    )
 
 
 # =============================================================================
@@ -66,7 +72,9 @@ def _update_values(statement) -> dict:
 
 class TestSaveConfig:
     async def test_new_secret_is_inserted_encrypted_as_secret(self) -> None:
-        session = _session(_scalars([_schema("api_key", "secret")]), _scalar(None))
+        session = _session(
+            _scalars([_schema("api_key", "secret")]), _scalar(None), schema_type="secret"
+        )
 
         await IntegrationsRepository(session).save_config(
             uuid4(), uuid4(), {"api_key": "plain-key"}, updated_by="a@example.test"
@@ -81,17 +89,17 @@ class TestSaveConfig:
     async def test_existing_secret_is_updated_encrypted_as_secret(self) -> None:
         """An update re-encrypts and keeps SECRET (the old mapping path wrote
         plaintext over the ciphertext while the row stayed SECRET)."""
+        row = _stored("api_key", encrypt_secret("old"), ConfigType.SECRET)
         session = _session(
-            _scalars([_schema("api_key", "secret")]), _scalar(uuid4()), MagicMock()
+            _scalars([_schema("api_key", "secret")]), _scalar(row), schema_type="secret"
         )
 
         await IntegrationsRepository(session).save_config(
-            uuid4(), uuid4(), {"api_key": "rotated"}
+            row.integration_id, uuid4(), {"api_key": "rotated"}
         )
 
-        values = _update_values(session.execute.await_args_list[2].args[0])
-        assert values["config_type"] == ConfigType.SECRET
-        assert decrypt_secret(values["value"]["value"]) == "rotated"
+        assert row.config_type == ConfigType.SECRET
+        assert decrypt_secret(row.value["value"]) == "rotated"
         session.add.assert_not_called()
 
     async def test_placeholder_keeps_the_stored_secret(self) -> None:
@@ -105,7 +113,7 @@ class TestSaveConfig:
         session.add.assert_not_called()
 
     async def test_non_secret_is_stored_with_its_schema_type(self) -> None:
-        session = _session(_scalars([_schema("port", "int")]), _scalar(None))
+        session = _session(_scalars([_schema("port", "int")]), _scalar(None), schema_type="int")
 
         await IntegrationsRepository(session).save_config(uuid4(), None, {"port": 443})
 
@@ -116,7 +124,7 @@ class TestSaveConfig:
     async def test_mismatched_value_is_rejected_before_any_write(self) -> None:
         session = _session(_scalars([_schema("api_key", "secret")]))
 
-        with pytest.raises(IntegrationConfigError):
+        with pytest.raises(ConfigValueError):
             await IntegrationsRepository(session).save_config(
                 uuid4(), uuid4(), {"api_key": {"nested": "x"}}
             )
@@ -180,40 +188,39 @@ class TestMappingWritesUseSaveConfig:
 # =============================================================================
 
 
-def _row(value, config_type: ConfigType) -> SimpleNamespace:
-    return SimpleNamespace(value={"value": value}, config_type=config_type)
-
-
 class TestRetypeConfigValues:
-    async def test_becoming_secret_encrypts_plaintext(self) -> None:
-        row = _row("plain", ConfigType.STRING)
-        session = _session(_scalars([row]))
+    """The schema field already carries its new type when rows are retyped."""
 
-        await retype_integration_config_values(session, uuid4(), "api_key", "secret")
+    async def test_becoming_secret_encrypts_plaintext(self) -> None:
+        row = _stored("api_key", "plain", ConfigType.STRING)
+        session = _session(_scalars([row]), schema_type="secret")
+
+        await retype_integration_config_values(session, row.integration_id, "api_key", "secret")
 
         assert row.config_type == ConfigType.SECRET
         assert decrypt_secret(row.value["value"]) == "plain"
 
     async def test_becoming_secret_rejects_a_non_text_value(self) -> None:
-        session = _session(_scalars([_row(42, ConfigType.INT)]))
+        row = _stored("k", 42, ConfigType.INT)
+        session = _session(_scalars([row]), schema_type="secret")
 
-        with pytest.raises(IntegrationConfigError):
-            await retype_integration_config_values(session, uuid4(), "k", "secret")
+        with pytest.raises(ConfigValueError):
+            await retype_integration_config_values(session, row.integration_id, "k", "secret")
 
     async def test_leaving_secret_is_refused_while_a_value_is_stored(self) -> None:
         ciphertext = encrypt_secret("stored")
-        row = _row(ciphertext, ConfigType.SECRET)
-        session = _session(_scalars([row]))
+        row = _stored("api_key", ciphertext, ConfigType.SECRET)
+        session = _session(_scalars([row]), schema_type="string")
 
-        with pytest.raises(IntegrationConfigError):
-            await retype_integration_config_values(session, uuid4(), "api_key", "string")
+        with pytest.raises(ConfigValueError):
+            await retype_integration_config_values(session, row.integration_id, "api_key", "string")
         assert row.value["value"] == ciphertext
 
     async def test_leaving_secret_relabels_an_empty_value(self) -> None:
-        row = _row(None, ConfigType.SECRET)
-        session = _session(_scalars([row]))
+        row = _stored("api_key", None, ConfigType.SECRET)
+        session = _session(_scalars([row]), schema_type="string")
 
-        await retype_integration_config_values(session, uuid4(), "api_key", "string")
+        await retype_integration_config_values(session, row.integration_id, "api_key", "string")
 
         assert row.config_type == ConfigType.STRING
 
@@ -298,20 +305,3 @@ class TestReadsUseSchemaType:
         )
 
         assert config == {"api_key": "k"}
-
-
-@pytest.mark.parametrize(
-    ("schema_type", "value"),
-    [("int", "abc"), ("int", 1.5), ("bool", "true"), ("json", "{bad"), ("secret", 123)],
-)
-def test_validate_config_value_rejects(schema_type: str, value) -> None:
-    with pytest.raises(IntegrationConfigError):
-        validate_config_value("k", value, schema_type)
-
-
-@pytest.mark.parametrize(
-    ("schema_type", "value"),
-    [("int", 5), ("int", "5"), ("bool", False), ("json", "{}"), ("secret", "s"), ("secret", None)],
-)
-def test_validate_config_value_accepts(schema_type: str, value) -> None:
-    validate_config_value("k", value, schema_type)

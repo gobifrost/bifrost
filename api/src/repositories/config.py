@@ -23,6 +23,7 @@ from src.models.enums import ConfigType as ConfigTypeEnum
 from src.models.orm.integrations import Integration
 from src.repositories.org_scoped import OrgScopedRepository
 from src.services.authorization.reach import OrgReach
+from src.services.config_values import KEEP, new_config_row, unwrap, write_config_value
 
 logger = logging.getLogger(__name__)
 
@@ -496,17 +497,8 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
     ) -> ConfigWrite:
         """Create or update a config in current org scope."""
         now = datetime.now(timezone.utc)
-
-        stored_value = request.value
-        if request.type == ConfigType.SECRET:
-            from src.core.security import encrypt_secret
-
-            stored_value = encrypt_secret(request.value)
-
-        db_config_type = (
-            ConfigTypeEnum(request.type.value)
-            if request.type
-            else ConfigTypeEnum.STRING
+        config_type = (
+            ConfigTypeEnum(request.type.value) if request.type else ConfigTypeEnum.STRING
         )
 
         # Upsert by the unique natural key (integration_id IS NULL, org, key).
@@ -518,34 +510,33 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         existing = (await self.session.execute(existing_q)).scalar_one_or_none()
 
         if existing:
-            existing.value = {"value": stored_value}
-            existing.config_type = db_config_type
+            await write_config_value(
+                self.session, existing, config_type=config_type, value=request.value
+            )
             existing.description = request.description
             existing.updated_at = now
             existing.updated_by = updated_by
-            await self.session.flush()
-            await self.session.refresh(existing)
             config = existing
         else:
-            config = ConfigModel(
+            config = await new_config_row(
+                self.session,
                 key=request.key,
-                value={"value": stored_value},
-                config_type=db_config_type,
+                config_type=config_type,
+                value=request.value,
                 description=request.description,
                 organization_id=self.org_id,
                 created_at=now,
                 updated_at=now,
                 updated_by=updated_by,
             )
-            self.session.add(config)
-            await self.session.flush()
-            await self.session.refresh(config)
+        await self.session.flush()
+        await self.session.refresh(config)
 
         logger.info(f"Set config {log_safe(request.key)} in org {self.org_id}")
 
         return ConfigWrite(
             response=self._to_response(config, integration_name=None),
-            stored_value=stored_value,
+            stored_value=unwrap(config.value),
         )
 
     async def update_config_by_id(
@@ -566,29 +557,26 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
         now = datetime.now(timezone.utc)
 
         effective_type = (
-            request.type
+            ConfigTypeEnum(request.type.value)
             if request.type is not None
-            else (
-                ConfigType(config.config_type.value)
-                if config.config_type
-                else ConfigType.STRING
-            )
+            else (config.config_type or ConfigTypeEnum.STRING)
         )
-
-        if request.value is not None and request.value != "":
-            stored_value = request.value
-            if effective_type == ConfigType.SECRET:
-                from src.core.security import encrypt_secret
-
-                stored_value = encrypt_secret(request.value)
-            config.value = {"value": stored_value}
-        elif effective_type != ConfigType.SECRET and request.value is not None:
-            config.value = {"value": request.value}
-
+        # Rename first, so an integration row is checked against the field
+        # it will belong to.
         if request.key is not None:
             config.key = request.key
-        if request.type is not None:
-            config.config_type = ConfigTypeEnum(request.type.value)
+        # An omitted value keeps the stored one; so does an empty value for a
+        # secret (the edit form leaves a secret blank to keep it).
+        keep = request.value is None or (
+            request.value == "" and effective_type == ConfigTypeEnum.SECRET
+        )
+        await write_config_value(
+            self.session,
+            config,
+            config_type=effective_type,
+            value=KEEP if keep else request.value,
+        )
+
         if "description" in (request.model_fields_set or set()):
             config.description = request.description
         if "organization_id" in (request.model_fields_set or set()):
@@ -603,10 +591,9 @@ class ConfigRepository(OrgScopedRepository[ConfigModel]):  # type: ignore[type-v
             f"(id={log_safe(config_id)}) org={log_safe(config.organization_id)}"
         )
 
-        stored_value = config.value.get("value") if isinstance(config.value, dict) else config.value
         write = ConfigWrite(
             response=self._to_response(config, integration_name=None),
-            stored_value=stored_value,
+            stored_value=unwrap(config.value),
         )
         return write, old_org_id, old_key
 

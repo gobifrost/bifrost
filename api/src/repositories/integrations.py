@@ -2,11 +2,10 @@
 Integrations Repository
 
 Database operations for integrations, their organization mappings and their
-config values. ``IntegrationsRepository`` is the only integration config
-writer: every surface (REST, SDK, worker-local engine) saves through it.
+config values. Every surface (REST, SDK, worker-local engine) saves
+integration config through ``IntegrationsRepository.save_config``.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from typing import Any
@@ -17,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, joinedload, selectinload
 
 from src.core.log_safety import log_safe
-from src.core.security import SECRET_PLACEHOLDER, decrypt_secret, encrypt_secret
+from src.core.security import SECRET_PLACEHOLDER, decrypt_secret
 from src.models.contracts.integrations import (
     IntegrationCreate,
     IntegrationUpdate,
@@ -31,6 +30,13 @@ from src.models.orm.oauth import OAuthProvider, OAuthToken
 from src.repositories.base import BaseRepository
 from src.repositories.org_scoped import OrgScopedRepository
 from src.services.authorization.reach import OrgReach
+from src.services.config_values import (
+    config_type_for_schema_type,
+    new_config_row,
+    unwrap,
+    validate_schema_value,
+    write_config_value,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -81,89 +87,20 @@ class IntegrationMappingRepository(OrgScopedRepository[IntegrationMapping]):
         return await self.get(integration_id=integration.id)
 
 
-class IntegrationConfigError(ValueError):
-    """An integration config value cannot be stored as its schema requires."""
-
-
-# Integration config-schema type strings, mapped to the stored config type.
-_CONFIG_TYPE_BY_SCHEMA_TYPE: dict[str, ConfigType] = {
-    "string": ConfigType.STRING,
-    "int": ConfigType.INT,
-    "bool": ConfigType.BOOL,
-    "json": ConfigType.JSON,
-    "secret": ConfigType.SECRET,
-}
-
-
-def config_type_for_schema_type(schema_type: str | None) -> ConfigType:
-    """The stored ``ConfigType`` for an integration config-schema type."""
-    return _CONFIG_TYPE_BY_SCHEMA_TYPE.get(schema_type or "", ConfigType.STRING)
-
-
-def validate_config_value(key: str, value: Any, schema_type: str) -> None:
-    """Raise ``IntegrationConfigError`` when ``value`` does not fit ``schema_type``.
-
-    ``None`` and ``""`` always pass: they clear the stored value.
-    """
-    if value is None or value == "":
-        return
-
-    if schema_type == "int":
-        if isinstance(value, str):
-            try:
-                int(value)
-            except ValueError:
-                raise IntegrationConfigError(
-                    f"Config key '{key}' expects integer, got invalid value"
-                )
-        elif not isinstance(value, int):
-            raise IntegrationConfigError(
-                f"Config key '{key}' expects integer, got {type(value).__name__}"
-            )
-    elif schema_type == "bool":
-        if not isinstance(value, bool):
-            raise IntegrationConfigError(
-                f"Config key '{key}' expects boolean, got {type(value).__name__}"
-            )
-    elif schema_type == "json":
-        if isinstance(value, str):
-            try:
-                json.loads(value)
-            except json.JSONDecodeError:
-                raise IntegrationConfigError(f"Config key '{key}' contains invalid JSON")
-    elif schema_type == "secret":
-        if not isinstance(value, str):
-            raise IntegrationConfigError(
-                f"Config key '{key}' expects a text secret, got {type(value).__name__}"
-            )
-
-
-def _unwrap(stored: Any) -> Any:
-    """Unwrap the ``{"value": X}`` storage envelope."""
-    if isinstance(stored, dict) and "value" in stored:
-        return stored["value"]
-    return stored
-
-
 async def retype_integration_config_values(
     session: AsyncSession,
     integration_id: UUID,
     key: str,
     new_schema_type: str,
 ) -> None:
-    """Convert every stored value of one schema key to its new schema type.
+    """Convert every stored value of one schema key to the field's new type.
 
-    Call this whenever a config-schema item's ``type`` changes:
-
-    - becoming ``secret`` encrypts each stored plaintext value;
-    - leaving ``secret`` is refused while any stored secret value exists,
-      because decrypting it would hand every organization's secret to whoever
-      may edit the schema, without ``secrets.read``; clear the values first;
-    - any other change relabels ``config_type``.
-
-    A value that cannot be converted raises ``IntegrationConfigError``;
-    nothing is silently rewritten.
+    Call this after setting a config-schema item's new ``type``; the change
+    is flushed first so each row is checked against it. Conversion follows
+    ``src.services.config_values``: becoming ``secret`` encrypts stored
+    values; leaving ``secret`` is refused while a value is stored.
     """
+    await session.flush()
     target = config_type_for_schema_type(new_schema_type)
     rows = (
         await session.execute(
@@ -173,31 +110,17 @@ async def retype_integration_config_values(
             )
         )
     ).scalars().all()
-
     for row in rows:
-        raw = _unwrap(row.value)
-        was_secret = row.config_type == ConfigType.SECRET
-        if target == ConfigType.SECRET and not was_secret and raw not in (None, ""):
-            if not isinstance(raw, str):
-                raise IntegrationConfigError(
-                    f"Config key '{key}' has a stored {type(raw).__name__} value "
-                    "that cannot become a secret; clear it first"
-                )
-            row.value = {"value": encrypt_secret(raw)}
-        elif was_secret and target != ConfigType.SECRET and raw not in (None, ""):
-            raise IntegrationConfigError(
-                f"Config key '{key}' has stored secret values; clear them before "
-                "changing the field from secret"
-            )
-        row.config_type = target
+        await write_config_value(session, row, config_type=target)
     await session.flush()
 
 
 class IntegrationsRepository(BaseRepository[Integration]):
     """The one data-access path for integrations, mappings and their config.
 
-    Every integration config write goes through :meth:`save_config`, which
-    stores ``secret`` schema values encrypted with ``config_type=SECRET``.
+    Integration config values are written by :meth:`save_config`, which
+    stores rows through ``src.services.config_values`` (secret schema values
+    encrypted with ``config_type=SECRET``).
     Every config read masks or decrypts by the field's schema type, not only
     by the stored row's ``config_type``.
     """
@@ -418,11 +341,12 @@ class IntegrationsRepository(BaseRepository[Integration]):
             for idx, item_data in enumerate(request.config_schema):
                 if item_data.key in existing_by_key:
                     existing = existing_by_key[item_data.key]
-                    if existing.type != item_data.type:
+                    retyped = existing.type != item_data.type
+                    existing.type = item_data.type
+                    if retyped:
                         await retype_integration_config_values(
                             self.session, integration.id, item_data.key, item_data.type
                         )
-                    existing.type = item_data.type
                     existing.required = item_data.required
                     existing.description = item_data.description
                     existing.options = item_data.options
@@ -644,27 +568,27 @@ class IntegrationsRepository(BaseRepository[Integration]):
 
         For each key-value pair:
         - Validate the value against the key's schema type
-          (``IntegrationConfigError`` on mismatch)
+          (``ConfigValueError`` on mismatch)
         - ``None`` or ``""`` deletes the stored value (fall back to the default)
         - ``SECRET_PLACEHOLDER`` for a secret key keeps the stored value
           (admin reads return the placeholder and the UI saves back what it read)
-        - Otherwise upsert, with ``config_type`` from the schema and secret
-          values encrypted
+        - Otherwise upsert through ``src.services.config_values``, with
+          ``config_type`` from the schema (secret values encrypted)
 
-        Uses explicit SELECT + INSERT/UPDATE because PostgreSQL's ON CONFLICT
-        doesn't work with the COALESCE functional index.
+        Uses explicit SELECT then update/insert because PostgreSQL's ON
+        CONFLICT doesn't work with the COALESCE functional index.
         """
         schema_items = await self._schema_items(integration_id)
 
         for key, value in config.items():
             schema_item = schema_items.get(key)
             if schema_item:
-                validate_config_value(key, value, schema_item.type)
-            db_config_type = config_type_for_schema_type(
+                validate_schema_value(key, value, schema_item.type)
+            config_type = config_type_for_schema_type(
                 schema_item.type if schema_item else None
             )
 
-            if db_config_type == ConfigType.SECRET and value == SECRET_PLACEHOLDER:
+            if config_type == ConfigType.SECRET and value == SECRET_PLACEHOLDER:
                 continue
 
             if organization_id is None:
@@ -684,35 +608,26 @@ class IntegrationsRepository(BaseRepository[Integration]):
                 await self.session.execute(delete(Config).where(where_clause))
                 continue
 
-            stored_value = (
-                encrypt_secret(value) if db_config_type == ConfigType.SECRET else value
-            )
             existing = (
-                await self.session.execute(select(Config.id).where(where_clause))
+                await self.session.execute(select(Config).where(where_clause))
             ).scalar_one_or_none()
-
+            schema_id = schema_item.id if schema_item else None
             if existing:
-                await self.session.execute(
-                    update(Config)
-                    .where(Config.id == existing)
-                    .values(
-                        value={"value": stored_value},
-                        config_type=db_config_type,
-                        updated_by=updated_by,
-                        config_schema_id=schema_item.id if schema_item else None,
-                    )
+                await write_config_value(
+                    self.session, existing, config_type=config_type, value=value
                 )
+                existing.updated_by = updated_by
+                existing.config_schema_id = schema_id
             else:
-                self.session.add(
-                    Config(
-                        integration_id=integration_id,
-                        organization_id=organization_id,
-                        key=key,
-                        value={"value": stored_value},
-                        config_type=db_config_type,
-                        updated_by=updated_by,
-                        config_schema_id=schema_item.id if schema_item else None,
-                    )
+                await new_config_row(
+                    self.session,
+                    key=key,
+                    config_type=config_type,
+                    value=value,
+                    integration_id=integration_id,
+                    organization_id=organization_id,
+                    updated_by=updated_by,
+                    config_schema_id=schema_id,
                 )
 
         # Flush so the writes are visible to subsequent queries.
@@ -743,7 +658,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
         stored as ``SECRET``. Revealed secrets are decrypted; a value that
         cannot be decrypted reads as ``None``.
         """
-        value = _unwrap(entry.value)
+        value = unwrap(entry.value)
         if entry.key not in secret_keys and entry.config_type != ConfigType.SECRET:
             return value
         if not reveal_secrets:

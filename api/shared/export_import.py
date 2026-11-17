@@ -14,7 +14,7 @@ from shared.policies.probe import make_seed_admin_bypass
 from shared.claims.preresolve import preresolve_for_policies
 from shared.table_batch_writes import BatchWriteRow, write_table_batch
 from shared.table_documents import query_table_documents
-from src.core.security import decrypt_with_key, encrypt_secret, derive_fernet_key
+from src.core.security import decrypt_with_key, derive_fernet_key
 from src.models.enums import ConfigType
 from src.models.orm.config import Config
 from src.models.orm.integrations import Integration, IntegrationConfigSchema, IntegrationMapping
@@ -33,6 +33,12 @@ from src.services.authorization.enforce import Caller, require_permission, user_
 from src.services.access_check_policies import enforced_policy_principal
 from src.services.table_policy_loader import load_resolved_table_policies
 from src.core.pubsub import publish_table_invalidated
+from src.repositories.integrations import retype_integration_config_values
+from src.services.config_values import (
+    config_type_for_schema_type,
+    new_config_row,
+    write_config_value,
+)
 
 
 async def _resolve_org_names(db: AsyncSession, org_ids: set[UUID]) -> dict[UUID, str]:
@@ -581,8 +587,7 @@ async def import_configs(
                     )
                 if item.config_type == "secret" and value and source_secret_key:
                     try:
-                        plaintext = decrypt_with_key(value, source_secret_key)
-                        value = encrypt_secret(plaintext)
+                        value = decrypt_with_key(value, source_secret_key)
                     except Exception as exc:
                         raise ValueError("Could not re-encrypt the imported secret") from exc
 
@@ -618,8 +623,9 @@ async def import_configs(
 
                 if existing:
                     if replace_existing:
-                        existing.value = {"value": value}
-                        existing.config_type = config_type_enum
+                        await write_config_value(
+                            db, existing, config_type=config_type_enum, value=value
+                        )
                         existing.description = item.description
                         existing.updated_by = str(caller.principal.user_id)
                         result.updated += 1
@@ -628,15 +634,16 @@ async def import_configs(
                         result.skipped += 1
                         result.details.append(ImportResultItem(name=item.key, status="skipped"))
                 else:
-                    db.add(Config(
+                    await new_config_row(
+                        db,
                         key=item.key,
-                        value={"value": value},
                         config_type=config_type_enum,
+                        value=value,
                         description=item.description,
                         organization_id=org_id,
                         integration_id=integration_id,
                         updated_by=str(caller.principal.user_id),
-                    ))
+                    )
                     result.created += 1
                     result.details.append(ImportResultItem(name=item.key, status="created"))
         except HTTPException:
@@ -884,7 +891,6 @@ async def _sync_config_schema(
     schema_items: list[ConfigSchemaExportItem],
 ) -> None:
     """Sync config schema items for an existing integration."""
-    from src.repositories.integrations import retype_integration_config_values
 
     existing_keys = {cs.key: cs for cs in integration.config_schema}
     import_keys = {cs.key for cs in schema_items}
@@ -893,11 +899,12 @@ async def _sync_config_schema(
     for cs_item in schema_items:
         if cs_item.key in existing_keys:
             existing_cs = existing_keys[cs_item.key]
-            if existing_cs.type != cs_item.type:
+            retyped = existing_cs.type != cs_item.type
+            existing_cs.type = cs_item.type
+            if retyped:
                 await retype_integration_config_values(
                     db, integration.id, cs_item.key, cs_item.type
                 )
-            existing_cs.type = cs_item.type
             existing_cs.required = cs_item.required
             existing_cs.description = cs_item.description
             existing_cs.options = cs_item.options
@@ -935,7 +942,7 @@ async def _import_config_value(
 ) -> None:
     """Import a single config value, handling secret re-encryption."""
     require_permission(caller, "integrations.readwrite", org_id)
-    # Determine config type from schema
+    # The schema field decides an integration value's type.
     schema_result = await db.execute(
         select(IntegrationConfigSchema).where(
             IntegrationConfigSchema.integration_id == integration_id,
@@ -943,23 +950,17 @@ async def _import_config_value(
         )
     )
     schema_item = schema_result.scalar_one_or_none()
-    config_type = ConfigType.STRING
-    config_schema_id = None
-    if schema_item:
-        config_schema_id = schema_item.id
-        try:
-            config_type = ConfigType(schema_item.type)
-        except ValueError:
-            config_type = ConfigType.STRING
+    config_type = config_type_for_schema_type(schema_item.type if schema_item else None)
+    config_schema_id = schema_item.id if schema_item else None
 
     await _require_config_secret_write(db, caller, org_id, key, config_type == ConfigType.SECRET)
-    # Re-encrypt secrets only after target authorization.
+    # Decrypt with the source key only after target authorization; the
+    # write below encrypts with this instance's key.
     if config_type == ConfigType.SECRET and value and not source_secret_key:
         raise HTTPException(400, "Provide source_secret_key to re-encrypt imported secrets")
     if config_type == ConfigType.SECRET and value and source_secret_key:
         try:
-            plaintext = decrypt_with_key(value, source_secret_key)
-            value = encrypt_secret(plaintext)
+            value = decrypt_with_key(value, source_secret_key)
         except Exception as exc:
             raise ValueError("Could not re-encrypt the imported secret") from exc
 
@@ -977,19 +978,19 @@ async def _import_config_value(
     existing = existing_result.scalar_one_or_none()
 
     if existing:
-        existing.value = {"value": value}
-        existing.config_type = config_type
+        await write_config_value(db, existing, config_type=config_type, value=value)
         existing.updated_by = user_id
     else:
-        db.add(Config(
+        await new_config_row(
+            db,
             key=key,
-            value={"value": value},
             config_type=config_type,
+            value=value,
             organization_id=org_id,
             integration_id=integration_id,
             config_schema_id=config_schema_id,
             updated_by=user_id,
-        ))
+        )
 
 
 
