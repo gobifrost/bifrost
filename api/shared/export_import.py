@@ -884,6 +884,8 @@ async def _sync_config_schema(
     schema_items: list[ConfigSchemaExportItem],
 ) -> None:
     """Sync config schema items for an existing integration."""
+    from src.repositories.integrations import retype_integration_config_values
+
     existing_keys = {cs.key: cs for cs in integration.config_schema}
     import_keys = {cs.key for cs in schema_items}
 
@@ -891,6 +893,10 @@ async def _sync_config_schema(
     for cs_item in schema_items:
         if cs_item.key in existing_keys:
             existing_cs = existing_keys[cs_item.key]
+            if existing_cs.type != cs_item.type:
+                await retype_integration_config_values(
+                    db, integration.id, cs_item.key, cs_item.type
+                )
             existing_cs.type = cs_item.type
             existing_cs.required = cs_item.required
             existing_cs.description = cs_item.description

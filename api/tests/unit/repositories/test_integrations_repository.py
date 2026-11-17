@@ -1,473 +1,317 @@
-"""
-Unit tests for IntegrationsRepository.
+"""Unit tests for IntegrationsRepository, the one integration config path.
 
-Tests the database operations for integration management and mapping.
+The session is an ``AsyncMock``: these pin what the repository writes and how
+it shapes values for readers. Live-database coverage of the same contracts
+(REST, SDK upsert, schema type changes) is in
+``tests/e2e/api/test_integrations.py::TestIntegrationConfigSecrets``.
 """
 
-import pytest
+from __future__ import annotations
+
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
+import pytest
+
+from src.core.security import SECRET_PLACEHOLDER, decrypt_secret, encrypt_secret
 from src.models.contracts.integrations import (
     ConfigSchemaItem,
-    IntegrationCreate,
-    IntegrationUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
+    IntegrationUpdate,
 )
-from src.repositories.integrations import IntegrationsRepository
-from src.services.authorization.reach import EVERYTHING
+from src.models.enums import ConfigType
+from src.models.orm.config import Config
+from src.repositories.integrations import (
+    IntegrationConfigError,
+    IntegrationsRepository,
+    retype_integration_config_values,
+    validate_config_value,
+)
 
 
-class TestIntegrationsRepository:
-    """Tests for IntegrationsRepository methods."""
+def _scalars(items: list) -> MagicMock:
+    result = MagicMock()
+    result.scalars.return_value.all.return_value = items
+    return result
 
-    @pytest.fixture
-    def mock_session(self):
-        """Create a mock database session."""
-        session = AsyncMock()
-        session.execute = AsyncMock()
-        session.flush = AsyncMock()
-        session.refresh = AsyncMock()
-        return session
 
-    @pytest.fixture
-    def repository(self, mock_session):
-        """Create repository with mock session."""
-        return IntegrationsRepository(mock_session)
+def _scalar(value) -> MagicMock:
+    result = MagicMock()
+    result.scalar_one_or_none.return_value = value
+    return result
 
-    @pytest.fixture
-    def mock_integration(self):
-        """Create a mock integration object."""
-        integration = MagicMock()
-        integration.id = uuid4()
-        integration.name = "Test Integration"
-        integration.oauth_provider_id = uuid4()
-        integration.list_entities_data_provider_id = uuid4()
 
-        # config_schema should be a list of objects with .key attribute, not dicts
-        mock_schema_item = MagicMock()
-        mock_schema_item.key = "api_key"
-        mock_schema_item.type = "secret"
-        mock_schema_item.required = True
-        mock_schema_item.description = "API Key"
-        integration.config_schema = [mock_schema_item]
+def _schema(key: str, type_: str) -> SimpleNamespace:
+    return SimpleNamespace(id=uuid4(), key=key, type=type_)
 
-        integration.is_deleted = False
-        integration.created_at = MagicMock()
-        integration.updated_at = MagicMock()
-        integration.oauth_provider = None
-        integration.mappings = []
-        return integration
 
-    @pytest.fixture
-    def mock_mapping(self):
-        """Create a mock integration mapping object."""
-        mapping = MagicMock()
-        mapping.id = uuid4()
-        mapping.integration_id = uuid4()
-        mapping.organization_id = uuid4()
-        mapping.entity_id = "tenant-123"
-        mapping.entity_name = "Test Tenant"
-        mapping.oauth_token_id = uuid4()
-        mapping.created_at = MagicMock()
-        mapping.updated_at = MagicMock()
-        mapping.integration = MagicMock()
-        mapping.organization = MagicMock()
-        mapping.oauth_token = None
-        return mapping
+def _session(*results) -> AsyncMock:
+    session = AsyncMock()
+    session.execute = AsyncMock(side_effect=list(results))
+    session.add = MagicMock()
+    return session
 
-    # =========================================================================
-    # Integration CRUD Tests
-    # =========================================================================
 
-    async def test_create_integration(self, repository, mock_session, mock_integration):
-        """Test creating an integration with all fields."""
-        # Mock the create method (inherited from BaseRepository)
-        mock_session.add = MagicMock()
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
-        repository.create = AsyncMock(return_value=mock_integration)
+def _update_values(statement) -> dict:
+    """The literal SET values of an ``update(Config)`` statement."""
+    return {column.key: value.value for column, value in statement._values.items()}
 
-        data = IntegrationCreate(
-            name="Test Integration",
-            oauth_provider_id=uuid4(),
-            list_entities_data_provider_id=uuid4(),
-            config_schema=[
-                ConfigSchemaItem(
-                    key="api_key",
-                    type="secret",
-                    required=True,
-                    description="API Key",
-                )
-            ],
+
+# =============================================================================
+# save_config — the single writer
+# =============================================================================
+
+
+class TestSaveConfig:
+    async def test_new_secret_is_inserted_encrypted_as_secret(self) -> None:
+        session = _session(_scalars([_schema("api_key", "secret")]), _scalar(None))
+
+        await IntegrationsRepository(session).save_config(
+            uuid4(), uuid4(), {"api_key": "plain-key"}, updated_by="a@example.test"
         )
 
-        result = await repository.create_integration(data)
+        row = session.add.call_args.args[0]
+        assert isinstance(row, Config)
+        assert row.config_type == ConfigType.SECRET
+        assert row.value["value"] != "plain-key"
+        assert decrypt_secret(row.value["value"]) == "plain-key"
 
-        assert result == mock_integration
-        assert result.name == "Test Integration"
-        repository.create.assert_called_once()
+    async def test_existing_secret_is_updated_encrypted_as_secret(self) -> None:
+        """An update re-encrypts and keeps SECRET (the old mapping path wrote
+        plaintext over the ciphertext while the row stayed SECRET)."""
+        session = _session(
+            _scalars([_schema("api_key", "secret")]), _scalar(uuid4()), MagicMock()
+        )
 
-    async def test_create_integration_minimal(
-        self, repository, mock_session, mock_integration
-    ):
-        """Test creating an integration with only required fields."""
-        mock_integration.oauth_provider_id = None
-        mock_integration.name = "Minimal Integration"
-        mock_integration.list_entities_data_provider_id = None
-        mock_integration.config_schema = None
+        await IntegrationsRepository(session).save_config(
+            uuid4(), uuid4(), {"api_key": "rotated"}
+        )
 
-        repository.create = AsyncMock(return_value=mock_integration)
+        values = _update_values(session.execute.await_args_list[2].args[0])
+        assert values["config_type"] == ConfigType.SECRET
+        assert decrypt_secret(values["value"]["value"]) == "rotated"
+        session.add.assert_not_called()
 
-        data = IntegrationCreate(name="Minimal Integration")
+    async def test_placeholder_keeps_the_stored_secret(self) -> None:
+        session = _session(_scalars([_schema("api_key", "secret")]))
 
-        result = await repository.create_integration(data)
+        await IntegrationsRepository(session).save_config(
+            uuid4(), uuid4(), {"api_key": SECRET_PLACEHOLDER}
+        )
 
-        assert result == mock_integration
-        assert result.name == "Minimal Integration"
-        assert result.oauth_provider_id is None
-        assert result.config_schema is None
+        assert session.execute.await_count == 1  # schema lookup only
+        session.add.assert_not_called()
 
-    async def test_get_integration(self, repository, mock_session, mock_integration):
-        """Test getting an integration by ID."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = mock_integration
-        mock_session.execute.return_value = mock_result
+    async def test_non_secret_is_stored_with_its_schema_type(self) -> None:
+        session = _session(_scalars([_schema("port", "int")]), _scalar(None))
 
-        result = await repository.get_integration(mock_integration.id)
+        await IntegrationsRepository(session).save_config(uuid4(), None, {"port": 443})
 
-        assert result == mock_integration
-        assert result.id == mock_integration.id
-        mock_session.execute.assert_called_once()
+        row = session.add.call_args.args[0]
+        assert row.config_type == ConfigType.INT
+        assert row.value == {"value": 443}
 
-    async def test_get_integration_not_found(self, repository, mock_session):
-        """Test getting an integration that doesn't exist."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = mock_result
+    async def test_mismatched_value_is_rejected_before_any_write(self) -> None:
+        session = _session(_scalars([_schema("api_key", "secret")]))
 
-        result = await repository.get_integration(uuid4())
-
-        assert result is None
-        mock_session.execute.assert_called_once()
-
-    async def test_get_integration_by_name(self, repository, mock_session, mock_integration):
-        """Test getting an integration by name."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = mock_integration
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.get_integration_by_name("Test Integration")
-
-        assert result == mock_integration
-        assert result.name == "Test Integration"
-        mock_session.execute.assert_called_once()
-
-    async def test_list_integrations(self, repository, mock_session, mock_integration):
-        """Test listing all non-deleted integrations."""
-        mock_result = MagicMock()
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [mock_integration]
-        mock_result.scalars.return_value = mock_scalars
-        mock_result.unique.return_value = mock_result
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.list_integrations()
-
-        assert len(result) == 1
-        assert result[0] == mock_integration
-        assert result[0].is_deleted is False
-
-    async def test_list_integrations_include_deleted(
-        self, repository, mock_session, mock_integration
-    ):
-        """Test listing integrations including deleted ones."""
-        deleted_integration = MagicMock()
-        deleted_integration.is_deleted = True
-        deleted_integration.name = "Deleted Integration"
-
-        mock_result = MagicMock()
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [mock_integration, deleted_integration]
-        mock_result.scalars.return_value = mock_scalars
-        mock_result.unique.return_value = mock_result
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.list_integrations(include_deleted=True)
-
-        assert len(result) == 2
-        assert any(i.is_deleted for i in result)
-
-    async def test_update_integration(self, repository, mock_session, mock_integration):
-        """Test updating an integration with partial data."""
-        repository.get_integration = AsyncMock(return_value=mock_integration)
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
-
-        new_name = "Updated Integration"
-        data = IntegrationUpdate(name=new_name)
-
-        result = await repository.update_integration(mock_integration.id, data)
-
-        assert result == mock_integration
-        assert result.name == new_name
-        # get_integration is called twice: once to fetch, once to reload with relationships
-        assert repository.get_integration.call_count == 2
-
-    async def test_update_integration_config_schema(
-        self, repository, mock_session, mock_integration
-    ):
-        """Test updating integration config schema."""
-        repository.get_integration = AsyncMock(return_value=mock_integration)
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
-
-        new_schema = [
-            ConfigSchemaItem(
-                key="new_key",
-                type="string",
-                required=False,
-                description="New config",
+        with pytest.raises(IntegrationConfigError):
+            await IntegrationsRepository(session).save_config(
+                uuid4(), uuid4(), {"api_key": {"nested": "x"}}
             )
-        ]
-        data = IntegrationUpdate(config_schema=new_schema)
+        session.add.assert_not_called()
 
-        result = await repository.update_integration(mock_integration.id, data)
 
-        assert result == mock_integration
-        mock_session.flush.assert_called_once()
+class TestMappingWritesUseSaveConfig:
+    """Mapping create/update (REST and SDK ``upsert_mapping``) save config
+    through ``save_config``."""
 
-    async def test_update_integration_not_found(self, repository, mock_session):
-        """Test updating a non-existent integration."""
-        repository.get_integration = AsyncMock(return_value=None)
+    async def test_create_mapping_saves_config(self) -> None:
+        session = AsyncMock()
+        session.add = MagicMock()
+        repo = IntegrationsRepository(session)
+        repo.save_config = AsyncMock()
+        integration_id, org_id = uuid4(), uuid4()
 
-        data = IntegrationUpdate(name="New Name")
-        result = await repository.update_integration(uuid4(), data)
-
-        assert result is None
-        repository.get_integration.assert_called_once()
-
-    async def test_delete_integration(self, repository, mock_session, mock_integration):
-        """Test soft deleting an integration."""
-        repository.get_integration = AsyncMock(return_value=mock_integration)
-        mock_session.flush = AsyncMock()
-
-        result = await repository.delete_integration(mock_integration.id)
-
-        assert result is True
-        assert mock_integration.is_deleted is True
-        mock_session.flush.assert_called_once()
-
-    async def test_delete_integration_not_found(self, repository, mock_session):
-        """Test deleting a non-existent integration."""
-        repository.get_integration = AsyncMock(return_value=None)
-
-        result = await repository.delete_integration(uuid4())
-
-        assert result is False
-        repository.get_integration.assert_called_once()
-
-    # =========================================================================
-    # Integration Mapping CRUD Tests
-    # =========================================================================
-
-    async def test_create_mapping(self, repository, mock_session, mock_mapping):
-        """Test creating an integration mapping."""
-        repository.create = AsyncMock(return_value=mock_mapping)
-        repository.get_mapping = AsyncMock(return_value=mock_mapping)
-
-        data = IntegrationMappingCreate(
-            organization_id=uuid4(),
-            entity_id="tenant-123",
-            entity_name="Test Tenant",
-            oauth_token_id=uuid4(),
+        await repo.create_mapping(
+            integration_id,
+            IntegrationMappingCreate(
+                organization_id=org_id, entity_id="t", config={"api_key": "k"}
+            ),
+            updated_by="a@example.test",
         )
 
-        result = await repository.create_mapping(uuid4(), data)
-
-        assert result == mock_mapping
-        assert result.entity_id == "tenant-123"
-        assert result.entity_name == "Test Tenant"
-
-    async def test_get_mapping(self, repository, mock_session, mock_mapping):
-        """Test getting a mapping by ID."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = mock_mapping
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.get_mapping(mock_mapping.id)
-
-        assert result == mock_mapping
-        assert result.id == mock_mapping.id
-        mock_session.execute.assert_called_once()
-
-    async def test_get_mapping_not_found(self, repository, mock_session):
-        """Test getting a mapping that doesn't exist."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.get_mapping(uuid4())
-
-        assert result is None
-
-    async def test_get_mapping_by_org(
-        self, repository, mock_session, mock_mapping
-    ):
-        """Test getting a mapping by integration and organization IDs."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = mock_mapping
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.get_mapping_by_org(
-            mock_mapping.integration_id, mock_mapping.organization_id
+        repo.save_config.assert_awaited_once_with(
+            integration_id=integration_id,
+            organization_id=org_id,
+            config={"api_key": "k"},
+            updated_by="a@example.test",
         )
 
-        assert result == mock_mapping
-        mock_session.execute.assert_called_once()
-
-    async def test_get_mapping_by_org_not_found(self, repository, mock_session):
-        """Test getting a mapping that doesn't exist for an org."""
-        mock_result = MagicMock()
-        mock_result.unique.return_value = mock_result
-        mock_result.scalar_one_or_none.return_value = None
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.get_mapping_by_org(uuid4(), uuid4())
-
-        assert result is None
-
-    async def test_list_mappings(self, repository, mock_session, mock_mapping):
-        """Test listing all mappings for an integration."""
-        mock_result = MagicMock()
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = [mock_mapping]
-        mock_result.scalars.return_value = mock_scalars
-        mock_result.unique.return_value = mock_result
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.list_mappings(mock_mapping.integration_id, reach=EVERYTHING)
-
-        assert len(result) == 1
-        assert result[0] == mock_mapping
-
-    async def test_list_mappings_empty(self, repository, mock_session):
-        """Test listing mappings when none exist."""
-        mock_result = MagicMock()
-        mock_scalars = MagicMock()
-        mock_scalars.all.return_value = []
-        mock_result.scalars.return_value = mock_scalars
-        mock_result.unique.return_value = mock_result
-        mock_session.execute.return_value = mock_result
-
-        result = await repository.list_mappings(uuid4(), reach=EVERYTHING)
-
-        assert len(result) == 0
-
-    async def test_update_mapping(self, repository, mock_session, mock_mapping):
-        """Test updating a mapping with partial data."""
-        repository.get_mapping = AsyncMock(return_value=mock_mapping)
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
-
-        new_entity_name = "Updated Tenant"
-        data = IntegrationMappingUpdate(entity_name=new_entity_name)
-
-        result = await repository.update_mapping(mock_mapping.id, data)
-
-        assert result == mock_mapping
-        assert result.entity_name == new_entity_name
-        repository.get_mapping.assert_called()
-
-    async def test_update_mapping_oauth_token(self, repository, mock_session, mock_mapping):
-        """Test updating a mapping's OAuth token."""
-        repository.get_mapping = AsyncMock(return_value=mock_mapping)
-        mock_session.flush = AsyncMock()
-        mock_session.refresh = AsyncMock()
-
-        new_token_id = uuid4()
-        data = IntegrationMappingUpdate(oauth_token_id=new_token_id)
-
-        result = await repository.update_mapping(mock_mapping.id, data)
-
-        assert result == mock_mapping
-        assert result.oauth_token_id == new_token_id
-
-    async def test_update_mapping_not_found(self, repository, mock_session):
-        """Test updating a non-existent mapping."""
-        repository.get_mapping = AsyncMock(return_value=None)
-
-        data = IntegrationMappingUpdate(entity_name="New Name")
-        result = await repository.update_mapping(uuid4(), data)
-
-        assert result is None
-
-    async def test_delete_mapping(self, repository, mock_session, mock_mapping):
-        """Test deleting a mapping (hard delete)."""
-        repository.get_mapping = AsyncMock(return_value=mock_mapping)
-        repository.delete = AsyncMock()
-
-        result = await repository.delete_mapping(mock_mapping.id)
-
-        assert result is True
-        repository.delete.assert_called_once_with(mock_mapping)
-
-    async def test_delete_mapping_not_found(self, repository, mock_session):
-        """Test deleting a non-existent mapping."""
-        repository.get_mapping = AsyncMock(return_value=None)
-
-        result = await repository.delete_mapping(uuid4())
-
-        assert result is False
-
-    # =========================================================================
-    # Convenience Methods Tests
-    # =========================================================================
-
-    async def test_get_integration_for_org(
-        self, repository, mock_session, mock_integration, mock_mapping
-    ):
-        """Test convenience method to get integration mapping by name and org."""
-        repository.get_integration_by_name = AsyncMock(return_value=mock_integration)
-        repository.get_mapping_by_org = AsyncMock(return_value=mock_mapping)
-
-        result = await repository.get_integration_for_org(
-            "Test Integration", mock_mapping.organization_id
-        )
-
-        assert result == mock_mapping
-        repository.get_integration_by_name.assert_called_once_with("Test Integration")
-        repository.get_mapping_by_org.assert_called_once_with(
-            mock_integration.id, mock_mapping.organization_id
-        )
-
-    async def test_get_integration_for_org_not_found_integration(
-        self, repository, mock_session
-    ):
-        """Test get_integration_for_org when integration doesn't exist."""
-        repository.get_integration_by_name = AsyncMock(return_value=None)
-
-        result = await repository.get_integration_for_org("Nonexistent", uuid4())
-
-        assert result is None
-        repository.get_integration_by_name.assert_called_once_with("Nonexistent")
-
-    async def test_get_integration_for_org_not_found_mapping(
-        self, repository, mock_session, mock_integration
-    ):
-        """Test get_integration_for_org when mapping doesn't exist."""
-        repository.get_integration_by_name = AsyncMock(return_value=mock_integration)
-        repository.get_mapping_by_org = AsyncMock(return_value=None)
-
+    async def test_update_mapping_saves_config_at_the_mapping_org(self) -> None:
         org_id = uuid4()
-        result = await repository.get_integration_for_org("Test Integration", org_id)
+        mapping = SimpleNamespace(
+            organization_id=org_id, entity_id=None, entity_name=None, oauth_token_id=None
+        )
+        session = AsyncMock()
+        repo = IntegrationsRepository(session)
+        repo.get_mapping_by_id = AsyncMock(return_value=mapping)
+        repo.save_config = AsyncMock()
+        integration_id = uuid4()
 
-        assert result is None
-        repository.get_mapping_by_org.assert_called_once_with(mock_integration.id, org_id)
+        await repo.update_mapping(
+            integration_id,
+            uuid4(),
+            IntegrationMappingUpdate(config={"api_key": "k"}),
+            updated_by="a@example.test",
+        )
+
+        repo.save_config.assert_awaited_once_with(
+            integration_id=integration_id,
+            organization_id=org_id,
+            config={"api_key": "k"},
+            updated_by="a@example.test",
+        )
+
+
+# =============================================================================
+# Schema type changes
+# =============================================================================
+
+
+def _row(value, config_type: ConfigType) -> SimpleNamespace:
+    return SimpleNamespace(value={"value": value}, config_type=config_type)
+
+
+class TestRetypeConfigValues:
+    async def test_becoming_secret_encrypts_plaintext(self) -> None:
+        row = _row("plain", ConfigType.STRING)
+        session = _session(_scalars([row]))
+
+        await retype_integration_config_values(session, uuid4(), "api_key", "secret")
+
+        assert row.config_type == ConfigType.SECRET
+        assert decrypt_secret(row.value["value"]) == "plain"
+
+    async def test_becoming_secret_rejects_a_non_text_value(self) -> None:
+        session = _session(_scalars([_row(42, ConfigType.INT)]))
+
+        with pytest.raises(IntegrationConfigError):
+            await retype_integration_config_values(session, uuid4(), "k", "secret")
+
+    async def test_leaving_secret_is_refused_while_a_value_is_stored(self) -> None:
+        ciphertext = encrypt_secret("stored")
+        row = _row(ciphertext, ConfigType.SECRET)
+        session = _session(_scalars([row]))
+
+        with pytest.raises(IntegrationConfigError):
+            await retype_integration_config_values(session, uuid4(), "api_key", "string")
+        assert row.value["value"] == ciphertext
+
+    async def test_leaving_secret_relabels_an_empty_value(self) -> None:
+        row = _row(None, ConfigType.SECRET)
+        session = _session(_scalars([row]))
+
+        await retype_integration_config_values(session, uuid4(), "api_key", "string")
+
+        assert row.config_type == ConfigType.STRING
+
+    async def test_update_integration_retypes_only_changed_fields(self, monkeypatch) -> None:
+        import src.repositories.integrations as module
+
+        api_key = SimpleNamespace(key="api_key", type="string")
+        region = SimpleNamespace(key="region", type="string")
+        integration = MagicMock(id=uuid4(), config_schema=[api_key, region])
+        session = AsyncMock()
+        repo = IntegrationsRepository(session)
+        repo.get_integration_by_id = AsyncMock(return_value=integration)
+        retype = AsyncMock()
+        monkeypatch.setattr(module, "retype_integration_config_values", retype)
+
+        await repo.update_integration(
+            integration.id,
+            IntegrationUpdate(
+                config_schema=[
+                    ConfigSchemaItem(key="api_key", type="secret"),
+                    ConfigSchemaItem(key="region", type="string"),
+                ]
+            ),
+        )
+
+        retype.assert_awaited_once_with(session, integration.id, "api_key", "secret")
+        assert api_key.type == "secret"
+
+
+# =============================================================================
+# Reads mask and decrypt by schema type
+# =============================================================================
+
+
+def _config(key: str, value, config_type: ConfigType, org_id=None) -> SimpleNamespace:
+    return SimpleNamespace(
+        key=key, value={"value": value}, config_type=config_type, organization_id=org_id
+    )
+
+
+class TestReadsUseSchemaType:
+    async def test_string_row_of_a_secret_field_is_masked(self) -> None:
+        """A legacy STRING row of a secret field never reads as plaintext."""
+        org_id = uuid4()
+        session = _session(
+            _scalars([_config("api_key", "legacy-plain", ConfigType.STRING, org_id)]),
+            _scalars(["api_key"]),
+        )
+
+        config = await IntegrationsRepository(session).get_org_config_overrides(
+            uuid4(), org_id
+        )
+
+        assert config == {"api_key": SECRET_PLACEHOLDER}
+
+    async def test_sdk_read_masks_without_secrets_read(self) -> None:
+        org_id = uuid4()
+        session = _session(
+            _scalars(
+                [
+                    _config("api_key", encrypt_secret("k"), ConfigType.SECRET, org_id),
+                    _config("region", "eu", ConfigType.STRING, org_id),
+                ]
+            ),
+            _scalars(["api_key"]),
+        )
+
+        config = await IntegrationsRepository(session).get_config_for_mapping(
+            uuid4(), org_id, external=False, reveal_secrets=False
+        )
+
+        assert config == {"api_key": SECRET_PLACEHOLDER, "region": "eu"}
+
+    async def test_sdk_read_decrypts_with_secrets_read(self) -> None:
+        session = _session(
+            _scalars([_config("api_key", encrypt_secret("k"), ConfigType.SECRET)]),
+            _scalars(["api_key"]),
+        )
+
+        config = await IntegrationsRepository(session).get_integration_defaults(
+            uuid4(), external=False, reveal_secrets=True
+        )
+
+        assert config == {"api_key": "k"}
+
+
+@pytest.mark.parametrize(
+    ("schema_type", "value"),
+    [("int", "abc"), ("int", 1.5), ("bool", "true"), ("json", "{bad"), ("secret", 123)],
+)
+def test_validate_config_value_rejects(schema_type: str, value) -> None:
+    with pytest.raises(IntegrationConfigError):
+        validate_config_value("k", value, schema_type)
+
+
+@pytest.mark.parametrize(
+    ("schema_type", "value"),
+    [("int", 5), ("int", "5"), ("bool", False), ("json", "{}"), ("secret", "s"), ("secret", None)],
+)
+def test_validate_config_value_accepts(schema_type: str, value) -> None:
+    validate_config_value("k", value, schema_type)

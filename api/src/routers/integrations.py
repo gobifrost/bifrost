@@ -16,11 +16,10 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 from typing import Any
 
-from sqlalchemy import and_, delete, func, select, union, update
+from sqlalchemy import func, select
 
 from src.core.auth import Context, CurrentActiveUser
 from src.core.log_safety import log_safe, log_safe_exception
-from sqlalchemy.orm import defer, joinedload, selectinload
 
 from src.models import (
     ConfigSchemaItem,
@@ -45,8 +44,8 @@ from src.models import (
     OAuthConfigSummary,
 )
 from src.models.orm import Config as ConfigModel
-from src.models.orm import IntegrationConfigSchema
-from src.models.orm import OAuthProvider, OAuthToken
+from src.models.orm import OAuthToken
+from src.repositories.integrations import IntegrationConfigError, IntegrationsRepository
 from src.services.oauth_provider import (
     append_query_params,
     get_url_resolution_defaults,
@@ -68,7 +67,6 @@ from src.services.authorization.enforce import (
     require_operation,
 )
 from src.services.authorization.evaluator import GLOBAL
-from src.services.authorization.reach import OrgReach
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +90,7 @@ async def _global_definition_writer(
 
 
 async def _mapping_for_operation(
-    repo: "IntegrationsRepository",
+    repo: IntegrationsRepository,
     ctx: Context,
     user: CurrentActiveUser,
     integration_id: UUID,
@@ -184,678 +182,6 @@ class OAuthAuthorizeResponse(BaseModel):
     authorization_url: str = Field(..., description="URL to redirect user for authorization")
     state: str = Field(..., description="State parameter for CSRF protection")
     message: str = Field(default="Redirect user to authorization_url to complete OAuth flow")
-
-
-# =============================================================================
-# Repository
-# =============================================================================
-
-
-class IntegrationsRepository:
-    """Repository for integration CRUD operations."""
-
-    def __init__(self, db_session):
-        self.db = db_session
-
-    async def list_integrations(self) -> list[Integration]:
-        """List all integrations (excluding deleted)."""
-        query = (
-            select(Integration)
-            .where(Integration.is_deleted.is_(False))
-            .options(
-                selectinload(Integration.config_schema),
-                defer(Integration.logo_data),
-                defer(Integration.logo_thumbnail_data),
-            )
-            .order_by(Integration.name)
-        )
-        result = await self.db.execute(query)
-        return list(result.scalars().all())
-
-    async def get_list_connection_summaries(
-        self,
-        reach: OrgReach,
-    ) -> dict[UUID, tuple[int, int, dict[str, int]]]:
-        """Aggregate mapping counts and distinct OAuth connection health."""
-        mapping_query = select(
-                IntegrationMapping.integration_id,
-                func.count(IntegrationMapping.id),
-            )
-        predicate = reach.where(IntegrationMapping.organization_id)
-        if predicate is not None:
-            mapping_query = mapping_query.where(predicate)
-        mapping_result = await self.db.execute(mapping_query.group_by(IntegrationMapping.integration_id))
-        summaries: dict[UUID, tuple[int, int, dict[str, int]]] = {
-            integration_id: (int(count or 0), 0, {})
-            for integration_id, count in mapping_result.all()
-        }
-
-        ranked_defaults = (
-            select(
-                OAuthProvider.integration_id.label("integration_id"),
-                OAuthToken.id.label("token_id"),
-                OAuthToken.status.label("token_status"),
-                func.row_number()
-                .over(
-                    partition_by=OAuthProvider.integration_id,
-                    order_by=(OAuthToken.created_at.desc(), OAuthToken.id.desc()),
-                )
-                .label("token_rank"),
-            )
-            .join(OAuthToken, OAuthToken.provider_id == OAuthProvider.id)
-            .where(
-                OAuthProvider.integration_id.isnot(None),
-                OAuthToken.organization_id.is_(None),
-            )
-            .subquery()
-        )
-        default_connections = select(
-            ranked_defaults.c.integration_id,
-            ranked_defaults.c.token_id,
-            ranked_defaults.c.token_status,
-        ).where(ranked_defaults.c.token_rank == 1)
-        override_connections = (
-            select(
-                IntegrationMapping.integration_id.label("integration_id"),
-                OAuthToken.id.label("token_id"),
-                OAuthToken.status.label("token_status"),
-            )
-            .join(OAuthToken, OAuthToken.id == IntegrationMapping.oauth_token_id)
-        )
-        if predicate is not None:
-            override_connections = override_connections.where(predicate)
-        connections = (
-            union(default_connections, override_connections)
-            if reach.covers(None)
-            else override_connections
-        ).subquery()
-        status_result = await self.db.execute(
-            select(
-                connections.c.integration_id,
-                connections.c.token_status,
-                func.count(connections.c.token_id),
-            ).group_by(connections.c.integration_id, connections.c.token_status)
-        )
-        for integration_id, token_status, count in status_result.all():
-            mapping_count, connected_count, status_counts = summaries.get(
-                integration_id, (0, 0, {})
-            )
-            count_int = int(count or 0)
-            status_counts[token_status] = status_counts.get(token_status, 0) + count_int
-            if token_status in {"completed", "connected"}:
-                connected_count += count_int
-            summaries[integration_id] = (mapping_count, connected_count, status_counts)
-        return summaries
-
-    async def get_integration_by_id(self, integration_id: UUID) -> Integration | None:
-        """Get integration by ID."""
-        result = await self.db.execute(
-            select(Integration)
-            .where(
-                and_(
-                    Integration.id == integration_id,
-                    Integration.is_deleted.is_(False),
-                )
-            )
-            .options(selectinload(Integration.config_schema))
-        )
-        return result.scalar_one_or_none()
-
-    async def get_integration_detail_by_id(self, integration_id: UUID) -> Integration | None:
-        """Get integration by ID with relationships loaded (oauth_provider, mappings, config_schema)."""
-        from src.models.orm import OAuthProvider
-
-        result = await self.db.execute(
-            select(Integration)
-            .where(
-                and_(
-                    Integration.id == integration_id,
-                    Integration.is_deleted.is_(False),
-                )
-            )
-            .options(
-                joinedload(Integration.oauth_provider).selectinload(OAuthProvider.tokens),
-                selectinload(Integration.mappings),
-                selectinload(Integration.config_schema),
-            )
-        )
-        return result.unique().scalar_one_or_none()
-
-    async def get_integration_by_name(self, name: str) -> Integration | None:
-        """Get integration by name."""
-        result = await self.db.execute(
-            select(Integration)
-            .where(
-                and_(
-                    Integration.name == name,
-                    Integration.is_deleted.is_(False),
-                )
-            )
-            .options(selectinload(Integration.config_schema))
-        )
-        return result.scalar_one_or_none()
-
-    async def create_integration(self, request: IntegrationCreate) -> Integration:
-        """Create a new integration with normalized config schema."""
-        integration = Integration(
-            name=request.name,
-            description=request.description,
-            notes=request.notes,
-            entity_id=request.entity_id,
-            entity_id_name=request.entity_id_name,
-            default_entity_id=request.default_entity_id,
-            is_deleted=False,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-
-        # Add config schema items to the normalized table
-        if request.config_schema:
-            for idx, item in enumerate(request.config_schema):
-                schema_item = IntegrationConfigSchema(
-                    key=item.key,
-                    type=item.type,
-                    required=item.required,
-                    description=item.description,
-                    options=item.options,
-                    option_labels=item.option_labels,
-                    position=idx,
-                )
-                integration.config_schema.append(schema_item)
-
-        self.db.add(integration)
-        await self.db.flush()
-        await self.db.refresh(integration)
-        return integration
-
-    async def update_integration(
-        self, integration_id: UUID, request: IntegrationUpdate
-    ) -> Integration | None:
-        """Update an integration with normalized config schema handling."""
-        integration = await self.get_integration_by_id(integration_id)
-        if not integration:
-            return None
-
-        if request.name is not None:
-            integration.name = request.name
-        if "description" in request.model_fields_set:
-            integration.description = request.description
-        if "notes" in request.model_fields_set:
-            integration.notes = request.notes
-        if request.list_entities_data_provider_id is not None:
-            integration.list_entities_data_provider_id = (
-                request.list_entities_data_provider_id
-            )
-        if request.entity_id is not None:
-            integration.entity_id = request.entity_id
-        if request.entity_id_name is not None:
-            integration.entity_id_name = request.entity_id_name
-        if request.default_entity_id is not None:
-            # Allow setting to empty string to clear the value
-            integration.default_entity_id = request.default_entity_id if request.default_entity_id else None
-
-        # Handle config_schema updates (normalized table)
-        if request.config_schema is not None:
-            # Build lookup of existing schema items by key
-            existing_by_key = {item.key: item for item in integration.config_schema}
-            new_keys = {item.key for item in request.config_schema}
-
-            # Remove schema items that are not in the new list
-            # (cascade delete will remove related configs)
-            for key in list(existing_by_key.keys()):
-                if key not in new_keys:
-                    item = existing_by_key[key]
-                    integration.config_schema.remove(item)
-                    await self.db.delete(item)
-
-            # Update existing or add new schema items
-            for idx, item_data in enumerate(request.config_schema):
-                if item_data.key in existing_by_key:
-                    # Update existing
-                    existing = existing_by_key[item_data.key]
-                    existing.type = item_data.type
-                    existing.required = item_data.required
-                    existing.description = item_data.description
-                    existing.options = item_data.options
-                    existing.option_labels = item_data.option_labels
-                    existing.position = idx
-                else:
-                    # Add new
-                    new_item = IntegrationConfigSchema(
-                        integration_id=integration.id,
-                        key=item_data.key,
-                        type=item_data.type,
-                        required=item_data.required,
-                        description=item_data.description,
-                        options=item_data.options,
-                        option_labels=item_data.option_labels,
-                        position=idx,
-                    )
-                    integration.config_schema.append(new_item)
-
-        integration.updated_at = datetime.now(timezone.utc)
-        await self.db.flush()
-        await self.db.refresh(integration)
-        # Reload with relationships
-        return await self.get_integration_by_id(integration_id)
-
-    async def delete_integration(self, integration_id: UUID) -> bool:
-        """Soft delete an integration and remove its OAuth credentials.
-
-        The integration row is kept, but its OAuth provider and tokens are
-        deleted: a soft-deleted integration can't be managed from the UI,
-        so leaving them would keep the refresh scheduler refreshing (and
-        alerting on) a connection nobody can disconnect.
-        """
-        integration = await self.get_integration_by_id(integration_id)
-        if not integration:
-            return False
-
-        integration.is_deleted = True
-        integration.updated_at = datetime.now(timezone.utc)
-
-        provider_ids = select(OAuthProvider.id).where(
-            OAuthProvider.integration_id == integration_id
-        )
-        token_ids = select(OAuthToken.id).where(OAuthToken.provider_id.in_(provider_ids))
-        await self.db.execute(
-            update(IntegrationMapping)
-            .where(IntegrationMapping.oauth_token_id.in_(token_ids))
-            .values(oauth_token_id=None)
-        )
-        await self.db.execute(
-            delete(OAuthToken).where(OAuthToken.provider_id.in_(provider_ids))
-        )
-        await self.db.execute(
-            delete(OAuthProvider).where(OAuthProvider.integration_id == integration_id)
-        )
-        await self.db.flush()
-        return True
-
-    async def list_mappings_for_integration(
-        self, integration_id: UUID, reach: OrgReach
-    ) -> list[IntegrationMapping]:
-        """List all mappings for a specific integration."""
-        query = select(IntegrationMapping).where(IntegrationMapping.integration_id == integration_id)
-        predicate = reach.where(IntegrationMapping.organization_id)
-        if predicate is not None:
-            query = query.where(predicate)
-        result = await self.db.execute(query.order_by(IntegrationMapping.organization_id))
-        return list(result.scalars().all())
-
-    async def get_mapping_by_id(
-        self, integration_id: UUID, mapping_id: UUID
-    ) -> IntegrationMapping | None:
-        """Get a specific mapping by ID and integration ID."""
-        result = await self.db.execute(
-            select(IntegrationMapping).where(
-                and_(
-                    IntegrationMapping.id == mapping_id,
-                    IntegrationMapping.integration_id == integration_id,
-                )
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def get_mapping_by_org(
-        self, integration_id: UUID, org_id: UUID
-    ) -> IntegrationMapping | None:
-        """Get the mapping for an integration in a specific organization."""
-        result = await self.db.execute(
-            select(IntegrationMapping).where(
-                and_(
-                    IntegrationMapping.integration_id == integration_id,
-                    IntegrationMapping.organization_id == org_id,
-                )
-            )
-        )
-        return result.scalar_one_or_none()
-
-    async def create_mapping(
-        self, request: IntegrationMappingCreate, integration_id: UUID, updated_by: str = "system"
-    ) -> IntegrationMapping:
-        """Create a new integration mapping."""
-        mapping = IntegrationMapping(
-            integration_id=integration_id,
-            organization_id=request.organization_id,
-            entity_id=request.entity_id,
-            entity_name=request.entity_name,
-            oauth_token_id=request.oauth_token_id,
-            created_at=datetime.now(timezone.utc),
-            updated_at=datetime.now(timezone.utc),
-        )
-        self.db.add(mapping)
-        await self.db.flush()
-        await self.db.refresh(mapping)
-
-        # Persist config to configs table if provided
-        if request.config is not None:
-            await self._save_config(
-                integration_id=integration_id,
-                organization_id=request.organization_id,
-                config=request.config,
-                updated_by=updated_by,
-            )
-
-        return mapping
-
-    async def _validate_config_value(
-        self,
-        key: str,
-        value: Any,
-        schema_type: str,
-    ) -> None:
-        """Validate that a config value matches its schema type."""
-        import json
-
-        if value is None or value == "":
-            return  # Allow clearing values
-
-        if schema_type == "int":
-            if not isinstance(value, int):
-                # Allow string representation of int
-                if isinstance(value, str):
-                    try:
-                        int(value)
-                    except ValueError:
-                        raise HTTPException(
-                            status_code=400,
-                            detail=f"Config key '{key}' expects integer, got invalid value"
-                        )
-                else:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Config key '{key}' expects integer, got {type(value).__name__}"
-                    )
-
-        elif schema_type == "bool":
-            if not isinstance(value, bool):
-                raise HTTPException(
-                    status_code=400,
-                    detail=f"Config key '{key}' expects boolean, got {type(value).__name__}"
-                )
-
-        elif schema_type == "json":
-            if isinstance(value, str):
-                try:
-                    json.loads(value)
-                except json.JSONDecodeError:
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"Config key '{key}' contains invalid JSON"
-                    )
-
-    async def _save_config(
-        self,
-        integration_id: UUID,
-        organization_id: UUID | None,
-        config: dict[str, Any],
-        updated_by: str = "system",
-    ) -> None:
-        """
-        Persist config values to the configs table.
-
-        For each key-value pair:
-        - If value is None or empty string, delete the entry (fall back to default)
-        - If a secret key carries ``SECRET_PLACEHOLDER``, keep the stored value
-          (admin reads return the placeholder, and the UI saves back what it read)
-        - Otherwise, upsert the entry
-        - Sets config_type based on integration config schema
-        - Encrypts secret values before storage
-
-        Uses explicit SELECT + INSERT/UPDATE pattern because PostgreSQL's
-        ON CONFLICT doesn't work with functional indexes (COALESCE for NULL handling).
-        """
-        from src.core.security import SECRET_PLACEHOLDER, encrypt_secret
-        from src.models.enums import ConfigType as ConfigTypeEnum
-
-        # Look up schema items for this integration to get config_schema_id
-        schema_result = await self.db.execute(
-            select(IntegrationConfigSchema)
-            .where(IntegrationConfigSchema.integration_id == integration_id)
-        )
-        schema_items = {item.key: item for item in schema_result.scalars().all()}
-
-        # Map schema type strings to ConfigTypeEnum
-        SCHEMA_TYPE_MAP = {
-            "string": ConfigTypeEnum.STRING,
-            "int": ConfigTypeEnum.INT,
-            "bool": ConfigTypeEnum.BOOL,
-            "json": ConfigTypeEnum.JSON,
-            "secret": ConfigTypeEnum.SECRET,
-        }
-
-        for key, value in config.items():
-            # Get the schema item for this key (for FK reference)
-            schema_item = schema_items.get(key)
-
-            # Validate value against schema type if schema exists
-            if schema_item:
-                await self._validate_config_value(key, value, schema_item.type)
-
-            # Determine config_type from schema
-            db_config_type = ConfigTypeEnum.STRING
-            if schema_item:
-                db_config_type = SCHEMA_TYPE_MAP.get(schema_item.type, ConfigTypeEnum.STRING)
-
-            if db_config_type == ConfigTypeEnum.SECRET and value == SECRET_PLACEHOLDER:
-                continue
-
-            # Build the WHERE clause for matching existing config
-            # Handle NULL comparison properly with IS NULL
-            if organization_id is None:
-                where_clause = and_(
-                    ConfigModel.integration_id == integration_id,
-                    ConfigModel.organization_id.is_(None),
-                    ConfigModel.key == key,
-                )
-            else:
-                where_clause = and_(
-                    ConfigModel.integration_id == integration_id,
-                    ConfigModel.organization_id == organization_id,
-                    ConfigModel.key == key,
-                )
-
-            if value is None or value == "":
-                # Delete override (fall back to default)
-                await self.db.execute(delete(ConfigModel).where(where_clause))
-            else:
-                # Encrypt secret values before storage
-                stored_value = value
-                if db_config_type == ConfigTypeEnum.SECRET and isinstance(value, str):
-                    stored_value = encrypt_secret(value)
-
-                # Check if record exists
-                result = await self.db.execute(
-                    select(ConfigModel.id).where(where_clause)
-                )
-                existing = result.scalar_one_or_none()
-
-                if existing:
-                    # Update existing record
-                    await self.db.execute(
-                        update(ConfigModel)
-                        .where(ConfigModel.id == existing)
-                        .values(
-                            value={"value": stored_value},
-                            config_type=db_config_type,
-                            updated_by=updated_by,
-                            config_schema_id=schema_item.id if schema_item else None,
-                        )
-                    )
-                else:
-                    # Insert new record
-                    new_config = ConfigModel(
-                        integration_id=integration_id,
-                        organization_id=organization_id,
-                        key=key,
-                        value={"value": stored_value},
-                        config_type=db_config_type,
-                        updated_by=updated_by,
-                        config_schema_id=schema_item.id if schema_item else None,
-                    )
-                    self.db.add(new_config)
-
-        # Flush changes so they're visible to subsequent queries
-        await self.db.flush()
-
-    async def update_mapping(
-        self,
-        integration_id: UUID,
-        mapping_id: UUID,
-        request: IntegrationMappingUpdate,
-        updated_by: str = "system",
-    ) -> IntegrationMapping | None:
-        """Update an integration mapping."""
-        mapping = await self.get_mapping_by_id(integration_id, mapping_id)
-        if not mapping:
-            return None
-
-        if request.entity_id is not None:
-            mapping.entity_id = request.entity_id
-        if request.entity_name is not None:
-            mapping.entity_name = request.entity_name
-        if request.oauth_token_id is not None:
-            mapping.oauth_token_id = request.oauth_token_id
-
-        # Persist config to configs table
-        if request.config is not None:
-            await self._save_config(
-                integration_id=integration_id,
-                organization_id=mapping.organization_id,
-                config=request.config,
-                updated_by=updated_by,
-            )
-
-        mapping.updated_at = datetime.now(timezone.utc)
-        await self.db.flush()
-        await self.db.refresh(mapping)
-        return mapping
-
-    async def delete_mapping(
-        self, integration_id: UUID, mapping_id: UUID
-    ) -> bool:
-        """Delete an integration mapping."""
-        mapping = await self.get_mapping_by_id(integration_id, mapping_id)
-        if not mapping:
-            return False
-
-        await self.db.delete(mapping)
-        await self.db.flush()
-        return True
-
-    async def _extract_config_value(self, entry: ConfigModel) -> Any:
-        """Extract a config value for an admin response, masking secrets.
-
-        Every caller is a human-facing admin route; the engine reads decrypted
-        values through ``src.repositories.integrations`` on the /api/sdk paths.
-        """
-        from src.core.security import SECRET_PLACEHOLDER
-        from src.models.enums import ConfigType as ConfigTypeEnum
-
-        if entry.config_type == ConfigTypeEnum.SECRET:
-            return SECRET_PLACEHOLDER
-
-        value = entry.value
-        if isinstance(value, dict) and "value" in value:
-            return value["value"]
-        return value
-
-    async def get_integration_defaults(
-        self, integration_id: UUID, *, external: bool
-    ) -> dict[str, Any]:
-        """
-        Get integration-level default config values.
-
-        These are stored in the configs table with integration_id set
-        but organization_id is NULL.
-
-        Secret values come back as ``SECRET_PLACEHOLDER``.
-
-        ``external`` is REQUIRED (no default — EXT-1 NEW-G/NEW-H defense in
-        depth). These defaults ARE the global (org_id=NULL) tier. An EXTERNAL
-        portal caller passes True and gets {};
-        the superuser admin routes that use this class pass False explicitly.
-        No default so a future call site can't silently leak the global tier
-        (this is the class behind the now-deleted cross-tenant /sdk/{name}).
-        """
-        if external:
-            return {}
-
-        config_query = select(ConfigModel).where(
-            and_(
-                ConfigModel.integration_id == integration_id,
-                ConfigModel.organization_id.is_(None),
-            )
-        )
-        result = await self.db.execute(config_query)
-        config_entries = result.scalars().all()
-
-        config: dict[str, Any] = {}
-        for entry in config_entries:
-            config[entry.key] = await self._extract_config_value(entry)
-
-        return config
-
-    async def get_org_config_overrides(
-        self, integration_id: UUID, org_id: UUID
-    ) -> dict[str, Any]:
-        """
-        Get ONLY org-specific config overrides (not merged with defaults).
-
-        Used for admin UI where we only want to show what the org has explicitly set,
-        not the default values. This prevents users from accidentally saving defaults
-        back to the org config.
-        """
-        config_query = select(ConfigModel).where(
-            and_(
-                ConfigModel.organization_id == org_id,
-                ConfigModel.integration_id == integration_id,
-            )
-        )
-        result = await self.db.execute(config_query)
-        config_entries = result.scalars().all()
-
-        config: dict[str, Any] = {}
-        for entry in config_entries:
-            config[entry.key] = await self._extract_config_value(entry)
-
-        return config
-
-    async def get_all_org_config_overrides(
-        self, integration_id: UUID, reach: OrgReach
-    ) -> dict[UUID, dict[str, Any]]:
-        """
-        Get org-specific config overrides for ALL orgs mapped to this integration.
-        Returns {org_id: {key: value, ...}} dict.
-        """
-        config_query = select(ConfigModel).where(
-            and_(
-                ConfigModel.integration_id == integration_id,
-                ConfigModel.organization_id.isnot(None),
-            )
-        )
-        predicate = reach.where(ConfigModel.organization_id)
-        if predicate is not None:
-            config_query = config_query.where(predicate)
-        result = await self.db.execute(config_query)
-        config_entries = result.scalars().all()
-
-        configs_by_org: dict[UUID, dict[str, Any]] = {}
-        for entry in config_entries:
-            org_id = entry.organization_id
-            if org_id not in configs_by_org:
-                configs_by_org[org_id] = {}
-            configs_by_org[org_id][entry.key] = await self._extract_config_value(entry)
-
-        return configs_by_org
-
-    async def get_oauth_provider(self, integration_id: UUID):
-        """Get the OAuth provider associated with an integration."""
-        integration = await self.get_integration_by_id(integration_id)
-        if not integration:
-            return None
-        return integration.oauth_provider
 
 
 # =============================================================================
@@ -994,7 +320,7 @@ async def get_integration(
 
     # Get integration-level default config values
     config_defaults = await repo.get_integration_defaults(
-        integration.id, external=False
+        integration.id, external=False, reveal_secrets=False
     )
 
     return IntegrationDetailResponse(
@@ -1130,7 +456,10 @@ async def update_integration(
                     },
                 )
 
-    integration = await repo.update_integration(integration_id, request)
+    try:
+        integration = await repo.update_integration(integration_id, request)
+    except IntegrationConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if not integration:
         raise HTTPException(
@@ -1348,18 +677,21 @@ async def update_integration_config(
         )
 
     # Save config with integration_id only (no org_id = defaults)
-    await repo._save_config(
-        integration_id=integration_id,
-        organization_id=None,
-        config=request.config,
-        updated_by=user.email,
-    )
+    try:
+        await repo.save_config(
+            integration_id=integration_id,
+            organization_id=None,
+            config=request.config,
+            updated_by=user.email,
+        )
+    except IntegrationConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     logger.info(f"Updated default config for integration {log_safe(integration_id)}")
 
     # Return the saved config
     saved_config = await repo.get_integration_defaults(
-        integration_id, external=False
+        integration_id, external=False, reveal_secrets=False
     )
     return IntegrationConfigResponse(
         integration_id=integration_id,
@@ -1390,7 +722,9 @@ async def get_integration_config(
             detail="Integration not found",
         )
 
-    config = await repo.get_integration_defaults(integration_id, external=False)
+    config = await repo.get_integration_defaults(
+        integration_id, external=False, reveal_secrets=False
+    )
     return IntegrationConfigResponse(
         integration_id=integration_id,
         config=config,
@@ -1470,7 +804,10 @@ async def create_mapping(
             detail="Mapping already exists for this organization and integration",
         )
 
-    mapping = await repo.create_mapping(request, integration_id)
+    try:
+        mapping = await repo.create_mapping(integration_id, request, updated_by=user.email)
+    except IntegrationConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     logger.info(
         f"Created mapping for integration {log_safe(integration_id)} in org {log_safe(request.organization_id)}"
     )
@@ -1515,7 +852,7 @@ async def list_mappings(
             detail="Integration not found",
         )
 
-    mappings = await repo.list_mappings_for_integration(integration_id, reach)
+    mappings = await repo.list_mappings(integration_id, reach=reach)
 
     items = [await _mapping_to_response(ctx.db, m) for m in mappings]
     return IntegrationMappingListResponse(items=items, total=len(items))
@@ -1595,9 +932,12 @@ async def update_mapping(
         repo, ctx, user, integration_id, mapping_id, operation="integrations.mappings.update"
     )
 
-    mapping = await repo.update_mapping(
-        integration_id, mapping_id, request, updated_by=user.email
-    )
+    try:
+        mapping = await repo.update_mapping(
+            integration_id, mapping_id, request, updated_by=user.email
+        )
+    except IntegrationConfigError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     if not mapping:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -1667,7 +1007,7 @@ async def batch_upsert_mappings(
                     entity_id=item.entity_id,
                     entity_name=item.entity_name,
                 )
-                await repo.create_mapping(create_data, integration_id, updated_by=user.email)
+                await repo.create_mapping(integration_id, create_data, updated_by=user.email)
                 created += 1
         except Exception as e:
             errors.append(f"org {item.organization_id}: {str(e)}")

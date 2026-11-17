@@ -2180,6 +2180,8 @@ class ManifestResolver:
         # Sync config schema items: upsert by (integration_id, key) to preserve IDs
         # (Config rows reference schema IDs via FK — deleting schema cascades to configs)
         from sqlalchemy import delete as sa_delete
+
+        from src.repositories.integrations import retype_integration_config_values
         if cache is not None:
             existing_cs_by_key = dict(cache["integ_cs"].get(integ_id, {}))
         else:
@@ -2194,6 +2196,8 @@ class ManifestResolver:
         for cs in minteg.config_schema:
             if cs.key in existing_cs_by_key:
                 existing_cs = existing_cs_by_key[cs.key]
+                if existing_cs.type != cs.type:
+                    await retype_integration_config_values(self.db, integ_id, cs.key, cs.type)
                 existing_cs.type = cs.type
                 existing_cs.required = cs.required
                 existing_cs.description = cs.description
@@ -2340,15 +2344,33 @@ class ManifestResolver:
 
         # Check prefetch cache for existing config by natural key
         cache_hit = cache["config_by_natural"].get((vals["key"], integ_id, org_id))
-        schema_id = None
+        schema = None
         if integ_id is not None:
             schema = cache.get("integ_cs", {}).get(integ_id, {}).get(vals["key"])
-            schema_id = schema.id if schema is not None else None
+        schema_id = schema.id if schema is not None else None
 
         # Convert string config_type to enum for proper DB storage
         from src.models.enums import ConfigType
         ct = ConfigType(vals["config_type"]) if isinstance(vals["config_type"], str) else vals["config_type"]
         is_secret = ct == ConfigType.SECRET
+
+        # An integration value whose schema field is secret is always stored
+        # encrypted as SECRET, even when the manifest still lists it as plain.
+        secret_value: dict | None = None
+        if schema is not None and schema.type == "secret" and not is_secret:
+            from src.core.security import encrypt_secret
+            from src.repositories.integrations import IntegrationConfigError
+
+            ct = ConfigType.SECRET
+            is_secret = True
+            raw = vals["value"].get("value") if isinstance(vals["value"], dict) else vals["value"]
+            if isinstance(raw, str) and raw != "":
+                secret_value = {"value": encrypt_secret(raw)}
+            elif raw not in (None, ""):
+                raise IntegrationConfigError(
+                    f"Config key '{vals['key']}' has a {type(raw).__name__} value "
+                    "but its integration schema field is secret"
+                )
 
         if cache_hit is not None:
             existing_id, _existing_value, _config_schema_id = cache_hit
@@ -2367,7 +2389,9 @@ class ManifestResolver:
             }
             if schema_id is not None:
                 update_values["config_schema_id"] = schema_id
-            if not is_secret:
+            if secret_value is not None:
+                update_values["value"] = secret_value
+            elif not is_secret:
                 update_values["value"] = vals["value"] if vals["value"] is not None else {}
 
             return [Upsert(
@@ -2386,7 +2410,11 @@ class ManifestResolver:
                 "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
-                "value": vals["value"] if vals["value"] is not None else {},
+                "value": (
+                    secret_value
+                    if secret_value is not None
+                    else vals["value"] if vals["value"] is not None else {}
+                ),
                 "updated_by": "git-sync",
             }
             if schema_id is not None:

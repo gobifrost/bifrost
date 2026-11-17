@@ -717,8 +717,11 @@ async def upsert_sdk_integration_mapping(
     Preserves the HTTP endpoint order: the missing-integration 404 comes
     before scope validation, and a global scope is a 400 (not a valid
     mapping target). The existing row keeps its OAuth link: updates never
-    touch ``oauth_token_id``. Config writes go through the repository's
-    override semantics (``None``/``""`` deletes the override). The
+    touch ``oauth_token_id``. Config writes go through
+    ``IntegrationsRepository.save_config`` — the same path as the REST
+    mapping routes — so values are validated against the schema, secrets
+    are encrypted, ``SECRET_PLACEHOLDER`` keeps a stored secret, and
+    ``None``/``""`` deletes the override. The
     post-write echo carries the merged config, dropping the global tier
     for external callers.
 
@@ -746,7 +749,7 @@ async def upsert_sdk_integration_mapping(
 
     Raises:
         IntegrationServiceError: 404 for a missing integration, 400 for
-            a global scope, 500 when the write cannot be audited or the
+            a global scope or a config value that does not fit its schema, 500 when the write cannot be audited or the
             update fails.
         ScopeResolutionError: 422/403 from the mutation scope gate.
     """
@@ -754,7 +757,10 @@ async def upsert_sdk_integration_mapping(
         IntegrationMappingCreate,
         IntegrationMappingUpdate,
     )
-    from src.repositories.integrations import IntegrationsRepository
+    from src.repositories.integrations import (
+        IntegrationConfigError,
+        IntegrationsRepository,
+    )
 
     from shared.sdk_config import resolve_sdk_scope
 
@@ -773,37 +779,39 @@ async def upsert_sdk_integration_mapping(
 
     existing_mapping = await repo.get_mapping_by_org(integration.id, org_id)
 
-    if existing_mapping:
-        update_data = IntegrationMappingUpdate(
-            entity_id=entity_id,
-            entity_name=entity_name,
-            config=config,
-        )
-        mapping = await repo.update_mapping(
-            existing_mapping.id,
-            update_data,
-            updated_by=actor_email,
-        )
-        if not mapping:
-            raise IntegrationServiceError(500, "Failed to update mapping")
-        logger.info(
-            f"SDK updated mapping for integration '{log_safe(name)}', org '{log_safe(str(org_id))}' by {actor_email}"
-        )
-    else:
-        create_data = IntegrationMappingCreate(
-            organization_id=org_id,
-            entity_id=entity_id,
-            entity_name=entity_name,
-            config=config,
-        )
-        mapping = await repo.create_mapping(
-            integration.id,
-            create_data,
-            updated_by=actor_email,
-        )
-        logger.info(
-            f"SDK created mapping for integration '{log_safe(name)}', org '{log_safe(str(org_id))}' by {actor_email}"
-        )
+    try:
+        if existing_mapping:
+            mapping = await repo.update_mapping(
+                integration.id,
+                existing_mapping.id,
+                IntegrationMappingUpdate(
+                    entity_id=entity_id,
+                    entity_name=entity_name,
+                    config=config,
+                ),
+                updated_by=actor_email,
+            )
+            if not mapping:
+                raise IntegrationServiceError(500, "Failed to update mapping")
+            logger.info(
+                f"SDK updated mapping for integration '{log_safe(name)}', org '{log_safe(str(org_id))}' by {actor_email}"
+            )
+        else:
+            mapping = await repo.create_mapping(
+                integration.id,
+                IntegrationMappingCreate(
+                    organization_id=org_id,
+                    entity_id=entity_id,
+                    entity_name=entity_name,
+                    config=config,
+                ),
+                updated_by=actor_email,
+            )
+            logger.info(
+                f"SDK created mapping for integration '{log_safe(name)}', org '{log_safe(str(org_id))}' by {actor_email}"
+            )
+    except IntegrationConfigError as exc:
+        raise IntegrationServiceError(400, str(exc)) from exc
 
     await session.commit()
 
@@ -863,7 +871,7 @@ async def delete_sdk_integration_mapping(
         )
         return {"deleted": False}
 
-    deleted = await repo.delete_mapping(mapping.id)
+    deleted = await repo.delete_mapping(integration.id, mapping.id)
     await session.commit()
 
     logger.info(
