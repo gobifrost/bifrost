@@ -1,10 +1,4 @@
-"""
-{{ title }} - Python SDK
-
-Auto-generated from OpenAPI spec with Bifrost integration support.
-Integration: {{ integration_name }}
-Auth Type: {{ auth_type }}
-"""
+{{ module_docstring | pystr }}
 
 from __future__ import annotations
 
@@ -84,7 +78,7 @@ class {{ model.name }}:
             return None
         return cls(**{
 {% for field in model.fields %}
-            '{{ field.name }}': data.get('{{ field.original_name }}'),
+            '{{ field.name }}': data.get({{ field.original_name | pystr }}),
 {% endfor %}
         })
 {% endif %}
@@ -176,7 +170,7 @@ class _{{ class_name }}Client:
 {% for method in methods %}
     def {{ method.name }}(self, {{ method.params }}) -> {{ method.return_type }}:
         {{ method.summary | pystr }}
-        url = f"{self.base_url}{{ method.url_template }}"
+        url = {{ method.url_expression }}
 {% if method.http_method in ['post', 'put', 'patch'] %}
         response = self._request_with_retry("{{ method.http_method | upper }}", url, json=data, params=kwargs)
 {% else %}
@@ -218,7 +212,7 @@ class _LazyClient:
     updates select a new current-thread client immediately.
     """
 
-    _integration_name: str = "{{ integration_name }}"
+    _integration_name: str = {{ integration_name | pystr }}
     _auth_type: str = "{{ auth_type }}"
 
     def __init__(self):
