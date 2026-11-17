@@ -28,7 +28,9 @@ function renderTab(
 		onDisconnectMapping: vi.fn(),
 		onRefreshMapping: vi.fn(),
 	};
-	const utils = renderWithProviders(
+	const element = (
+		next: Partial<Parameters<typeof IntegrationMappingsTab>[0]>,
+	) => (
 		<IntegrationMappingsTab
 			orgsWithMappings={[]}
 			entities={[]}
@@ -44,10 +46,39 @@ function renderTab(
 			canManageMapping={() => true}
 			canManageAllMappings
 			{...handlers}
-			{...overrides}
-		/>,
+			{...next}
+		/>
 	);
-	return { ...utils, ...handlers };
+	const utils = renderWithProviders(element(overrides));
+	const rerenderWith = (
+		next: Partial<Parameters<typeof IntegrationMappingsTab>[0]>,
+	) => utils.rerender(element({ ...overrides, ...next }));
+	return { ...utils, ...handlers, rerenderWith };
+}
+
+const STATUS_LABELS = {
+	All: "All Mappings",
+	Mapped: "Mapped",
+	Unmapped: "Unmapped",
+	Suggested: "Suggested",
+} as const;
+
+async function selectStatus(
+	user: ReturnType<typeof renderTab>["user"],
+	label: keyof typeof STATUS_LABELS,
+) {
+	await user.click(screen.getByRole("combobox", { name: "Mapping Status" }));
+	await user.click(
+		screen.getByRole("option", {
+			name: new RegExp(`^${STATUS_LABELS[label]}\\b`),
+		}),
+	);
+}
+
+function expectStatus(label: keyof typeof STATUS_LABELS) {
+	expect(
+		screen.getByRole("combobox", { name: "Mapping Status" }),
+	).toHaveTextContent(new RegExp(`^${STATUS_LABELS[label]}`));
 }
 
 describe("IntegrationMappingsTab — empty states", () => {
@@ -222,10 +253,8 @@ describe("IntegrationMappingsTab — populated", () => {
 			],
 		});
 
-		await user.click(
-			screen.getByRole("button", { name: /auto-match unmapped/i }),
-		);
-		expect(onRunAutoMatch).toHaveBeenCalledWith("exact");
+		await user.click(screen.getByRole("button", { name: "Auto-Match" }));
+		expect(onRunAutoMatch).toHaveBeenCalledTimes(1);
 	});
 
 	it("filters mappings by organization and entity labels", async () => {
@@ -267,7 +296,7 @@ describe("IntegrationMappingsTab — populated", () => {
 		).toBeInTheDocument();
 		expect(screen.getByText("0 of 2 mappings")).toBeInTheDocument();
 
-		await user.click(screen.getByRole("button", { name: "Clear search" }));
+		await user.click(screen.getByRole("button", { name: "Clear Filters" }));
 
 		expect(screen.getByText("2 mappings")).toBeInTheDocument();
 		expect(screen.getByText("Acme")).toBeInTheDocument();
@@ -289,12 +318,10 @@ describe("IntegrationMappingsTab — populated", () => {
 			}),
 			"Acme",
 		);
-		await user.click(
-			screen.getByRole("button", { name: /auto-match unmapped/i }),
-		);
+		await user.click(screen.getByRole("button", { name: "Auto-Match" }));
 
 		expect(screen.getByText("1 of 2 mappings")).toBeInTheDocument();
-		expect(onRunAutoMatch).toHaveBeenCalledWith("exact");
+		expect(onRunAutoMatch).toHaveBeenCalledTimes(1);
 	});
 
 	it("fires onDeleteMapping for the org whose Unlink button is clicked", async () => {
@@ -398,7 +425,7 @@ describe("IntegrationMappingsTab — no data provider manual input", () => {
 		});
 
 		expect(
-			screen.queryByText(/auto-match unmapped/i),
+			screen.queryByRole("button", { name: "Auto-Match" }),
 		).not.toBeInTheDocument();
 		expect(
 			screen.getByText(/auto-match is unavailable/i),
@@ -768,6 +795,49 @@ describe("IntegrationMappingsTab — large lists", () => {
 		expect(within(list).getByText("Large Org 1999")).toBeInTheDocument();
 	});
 
+	it("keeps the tag filter discoverable when organizations have no tags", () => {
+		renderTab({
+			orgsWithMappings: [organizations[0]],
+			hasDataProvider: false,
+		});
+		expect(
+			screen.getByRole("combobox", { name: "Filter by tag" }),
+		).toBeDisabled();
+	});
+
+	it("searches tag names across pages and combines them with status", async () => {
+		const tagged = {
+			...organizations[1999],
+			tags: ["Connectivity"],
+			mapping: { id: "mapping" } as IntegrationMapping,
+		};
+		const { user } = renderTab({
+			orgsWithMappings: [...organizations.slice(0, 1999), tagged],
+			hasDataProvider: false,
+		});
+		await user.click(screen.getByRole("button", { name: /next/i }));
+		await user.type(screen.getByRole("searchbox"), "CONNECTIVITY");
+		const list = screen.getByRole("list", {
+			name: "Organization mappings",
+		});
+		expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+		expect(within(list).getByText(tagged.name)).toBeInTheDocument();
+		await selectStatus(user, "Mapped");
+		expectStatus("Mapped");
+		expect(within(list).getByText(tagged.name)).toBeInTheDocument();
+		await selectStatus(user, "Unmapped");
+		expect(
+			screen.getByText("No mappings match your search"),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Clear Filters" }));
+		expectStatus("All");
+		expect(
+			within(
+				screen.getByRole("list", { name: "Organization mappings" }),
+			).getAllByRole("listitem"),
+		).toHaveLength(25);
+	});
+
 	it("excludes entities used on another page", async () => {
 		const hidden = {
 			...organizations[1999],
@@ -801,22 +871,48 @@ describe("IntegrationMappingsTab — large lists", () => {
 			orgsWithMappings: [mapped, organizations[1]],
 			hasDataProvider: false,
 		});
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Mapping Status" }),
-			"mapped",
-		);
+		await selectStatus(user, "Mapped");
 		expect(screen.queryByText("Large Org 0001")).not.toBeInTheDocument();
 		await user.type(screen.getByRole("searchbox"), "0001");
 		expect(
 			screen.getByText("No mappings match your search"),
 		).toBeInTheDocument();
 		await user.click(screen.getByRole("button", { name: "Clear Filters" }));
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Mapping Status" }),
-			"unmapped",
-		);
+		await selectStatus(user, "Unmapped");
 		expect(screen.queryByText("Large Org 0000")).not.toBeInTheDocument();
 		expect(screen.getByText("Large Org 0001")).toBeInTheDocument();
+	});
+
+	it("clears search, status, and tags while matching rows are still visible", async () => {
+		const { user } = renderTab({
+			orgsWithMappings: [
+				{
+					...organizations[0],
+					tags: ["MSP"],
+					mapping: { id: "mapping" } as IntegrationMapping,
+				},
+				organizations[1],
+			],
+			hasDataProvider: false,
+		});
+		expect(
+			screen.queryByRole("button", { name: "Clear Filters" }),
+		).not.toBeInTheDocument();
+		await user.type(screen.getByRole("searchbox"), "Large");
+		await selectStatus(user, "Mapped");
+		await user.click(
+			screen.getByRole("combobox", { name: "Filter by tag" }),
+		);
+		await user.click(screen.getByRole("option", { name: "MSP" }));
+		await user.keyboard("{Escape}");
+		expect(screen.getByText("1 of 2 mappings")).toBeInTheDocument();
+		await user.click(screen.getByRole("button", { name: "Clear Filters" }));
+		expect(screen.getByRole("searchbox")).toHaveValue("");
+		expectStatus("All");
+		expect(
+			screen.getByRole("combobox", { name: "Filter by tag" }),
+		).toHaveTextContent("All Tags");
+		expect(screen.getByText("2 mappings")).toBeInTheDocument();
 	});
 
 	it("filters mappings by organization tag alongside status", async () => {
@@ -848,11 +944,100 @@ describe("IntegrationMappingsTab — large lists", () => {
 		expect(within(list).getByText("Large Org 0002")).toBeInTheDocument();
 		expect(screen.getByText("2 of 4 mappings")).toBeInTheDocument();
 
-		await user.selectOptions(
-			screen.getByRole("combobox", { name: "Mapping Status" }),
-			"unmapped",
-		);
+		await selectStatus(user, "Unmapped");
 		expect(within(list).getAllByRole("listitem")).toHaveLength(1);
 		expect(within(list).getByText("Large Org 0002")).toBeInTheDocument();
+	});
+});
+
+describe("IntegrationMappingsTab — auto-match suggestions", () => {
+	const org: OrgWithMapping = {
+		id: "org-alpine",
+		name: "Alpine Services",
+		formData: {
+			organization_id: "org-alpine",
+			entity_id: "",
+			entity_name: "",
+			config: {},
+		},
+	};
+	const suggestion = {
+		organizationId: org.id,
+		organizationName: org.name,
+		entityId: "cust-100",
+		entityName: "Alpine Services",
+		score: 100,
+	};
+	const entities = [
+		{ value: "cust-100", label: "Alpine Services" },
+		{ value: "cust-101", label: "Alpine Group" },
+	];
+
+	it("shows the suggested entity in the row's dropdown with accept and reject", async () => {
+		const { user, onAcceptSuggestion, onRejectSuggestion } = renderTab({
+			orgsWithMappings: [org],
+			entities,
+			autoMatchSuggestions: new Map([[org.id, suggestion]]),
+		});
+		expect(
+			screen.getByRole("combobox", {
+				name: "External entity for Alpine Services",
+			}),
+		).toHaveTextContent("Alpine Services");
+		expect(screen.getByText("100%")).toBeInTheDocument();
+		await user.click(
+			screen.getByRole("button", {
+				name: "Accept suggestion Alpine Services",
+			}),
+		);
+		expect(onAcceptSuggestion).toHaveBeenCalledWith(org.id);
+		await user.click(
+			screen.getByRole("button", {
+				name: "Reject suggestion Alpine Services",
+			}),
+		);
+		expect(onRejectSuggestion).toHaveBeenCalledWith(org.id);
+	});
+
+	it("opens the Suggested view when suggestions arrive and accepts them all", async () => {
+		const other: OrgWithMapping = {
+			...org,
+			id: "org-other",
+			name: "Other Org",
+			formData: { ...org.formData, organization_id: "org-other" },
+		};
+		const props = { orgsWithMappings: [org, other], entities };
+		const { user, rerenderWith, onAcceptAllSuggestions } = renderTab(props);
+		expectStatus("All");
+		rerenderWith({
+			autoMatchSuggestions: new Map([[org.id, suggestion]]),
+		});
+		expectStatus("Suggested");
+		const list = screen.getByRole("list", {
+			name: "Organization mappings",
+		});
+		expect(within(list).getAllByRole("listitem")).toHaveLength(1);
+		await user.click(screen.getByRole("button", { name: /Accept All/ }));
+		expect(onAcceptAllSuggestions).toHaveBeenCalledTimes(1);
+	});
+
+	it("replaces the suggestion when another entity is chosen", async () => {
+		const { user, onRejectSuggestion, onUpdateOrgMapping } = renderTab({
+			orgsWithMappings: [org],
+			entities,
+			autoMatchSuggestions: new Map([[org.id, suggestion]]),
+		});
+		await user.click(
+			screen.getByRole("combobox", {
+				name: "External entity for Alpine Services",
+			}),
+		);
+		await user.click(screen.getByRole("option", { name: /Alpine Group/ }));
+		expect(onRejectSuggestion).toHaveBeenCalledWith(org.id);
+		expect(onUpdateOrgMapping).toHaveBeenCalledWith(
+			org.id,
+			"cust-101",
+			"Alpine Group",
+		);
 	});
 });
