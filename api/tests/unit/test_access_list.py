@@ -1943,7 +1943,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
     "shared.event_emission.emit_topic_event": (1, "current_role_derivation"),
-    "shared.form_provider.execute_form_field_provider": (3, "internal_authorized_resource"),
+    # Both form routes authorize the persisted form before this provider lookup;
+    # callers cannot select a provider outside that form's configured fields.
+    "shared.form_provider._resolve_provider": (1, "internal_authorized_resource"),
+    "shared.form_provider.execute_form_field_provider": (2, "internal_authorized_resource"),
     "shared.form_execution.create_form_execution_context": (1, "actor_facts"),
     "shared.form_publication._resolve_form_workflow": (1, "internal_authorized_resource"),
     "shared.sdk_agent_runs.enqueue_sdk_agent_run": (2, "actor_facts"),
