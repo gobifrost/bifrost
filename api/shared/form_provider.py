@@ -59,6 +59,44 @@ def _normalize_options(result: Any, metadata_keys: set[str]) -> list[dict[str, A
     return options
 
 
+async def _resolve_provider(db: Any, form: Any, field: Any, caller_org_id: Any) -> Any:
+    from src.repositories.workflows import WorkflowRepository
+    from src.services.solution_scope import solution_allows_global
+
+    repo = WorkflowRepository(
+        db, org_id=form.organization_id or caller_org_id, is_superuser=True
+    )
+    allow_shared = (
+        form.solution_id is None
+        or await solution_allows_global(db, form.solution_id)
+    )
+    return await repo.resolve(
+        str(field.data_provider_id),
+        solution_scope=form.solution_id,
+        allow_shared_fallback=allow_shared,
+    )
+
+
+async def optional_form_provider_inputs(
+    db: Any, form: Any, caller_org_id: Any
+) -> dict[str, list[str]]:
+    """Project optionality for configured names without exposing provider identities or defaults."""
+    optional = {}
+    for field in form.fields:
+        if not field.data_provider_id or not field.data_provider_inputs:
+            continue
+        provider = await _resolve_provider(db, form, field, caller_org_id)
+        if provider is None or not provider.is_active or provider.type != "data_provider":
+            continue
+        optional[field.name] = [
+            param["name"]
+            for param in provider.parameters_schema
+            if param.get("required") is False
+            and param["name"] in field.data_provider_inputs
+        ]
+    return optional
+
+
 async def execute_form_field_provider(
     *,
     db: Any,
@@ -71,22 +109,11 @@ async def execute_form_field_provider(
 ) -> list[dict[str, Any]]:
     """Execute only the provider persisted on ``field`` in the form's scope."""
 
-    from src.repositories.workflows import WorkflowRepository
     from src.services.execution.service import run_workflow
-    from src.services.solution_scope import solution_allows_global
     from src.services.authorization.enforce import load_caller, user_reach
 
     anchor_org_id = form.organization_id or caller_org_id
-    repo = WorkflowRepository(db, org_id=anchor_org_id, is_superuser=True)
-    allow_shared = (
-        form.solution_id is None
-        or await solution_allows_global(db, form.solution_id)
-    )
-    provider = await repo.resolve(
-        str(field.data_provider_id),
-        solution_scope=form.solution_id,
-        allow_shared_fallback=allow_shared,
-    )
+    provider = await _resolve_provider(db, form, field, caller_org_id)
     if provider is None or not provider.is_active or provider.type != "data_provider":
         raise FormProviderError("Provider unavailable")
     # The form capability is the resource gate; authenticated callers still

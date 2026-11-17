@@ -1111,3 +1111,143 @@ it("unblocks the initial loader when the options mount chain rejects", async () 
 		log.mockRestore();
 	}
 });
+
+describe("provider input optionality", () => {
+	it.each(["fieldRef", "expression"] as const)(
+		"loads choices with blank optional %s and reloads when populated",
+		async (mode) => {
+			const { user } = renderWithProviders(
+				<FormRenderer
+					form={makeForm([
+						{ name: "middle", label: "Middle Name", type: "text" },
+						{
+							name: "username",
+							label: "Username",
+							type: "select",
+							has_dynamic_options: true,
+							optional_provider_inputs: ["middle_name"],
+							data_provider_inputs: {
+								middle_name:
+									mode === "fieldRef"
+										? { mode, field_name: "middle" }
+										: {
+												mode,
+												expression:
+													"context.field.middle || ''",
+											},
+							},
+						},
+					])}
+				/>,
+			);
+			await waitFor(() =>
+				expect(mockGetOptions).toHaveBeenCalledWith(
+					"form-1",
+					"username",
+					undefined,
+					undefined,
+				),
+			);
+			await user.type(screen.getByLabelText("Middle Name"), "Lee");
+			await user.tab();
+			await waitFor(() =>
+				expect(mockGetOptions).toHaveBeenCalledWith(
+					"form-1",
+					"username",
+					{ middle_name: "Lee" },
+					undefined,
+				),
+			);
+		},
+	);
+	it.each(["fieldRef", "expression"] as const)(
+		"waits for a required %s input",
+		async (mode) => {
+			const { user } = renderWithProviders(
+				<FormRenderer
+					form={makeForm([
+						{ name: "country", label: "Country", type: "text" },
+						{
+							name: "city",
+							label: "City",
+							type: "select",
+							has_dynamic_options: true,
+							optional_provider_inputs: [],
+							data_provider_inputs: {
+								country:
+									mode === "fieldRef"
+										? { mode, field_name: "country" }
+										: {
+												mode,
+												expression:
+													"context.field.country || ''",
+											},
+							},
+						},
+					])}
+				/>,
+			);
+			expect(mockGetOptions).not.toHaveBeenCalled();
+			await user.type(screen.getByLabelText("Country"), "UK");
+			await user.tab();
+			await waitFor(() =>
+				expect(mockGetOptions).toHaveBeenCalledWith(
+					"form-1",
+					"city",
+					{
+						country: "UK",
+					},
+					undefined,
+				),
+			);
+		},
+	);
+	it.each(["false", "0"])(
+		"passes a valid expression result of %s",
+		async (expression) => {
+			renderWithProviders(
+				<FormRenderer
+					form={makeForm([
+						{
+							name: "choice",
+							type: "select",
+							has_dynamic_options: true,
+							data_provider_inputs: {
+								filter: { mode: "expression", expression },
+							},
+						},
+					])}
+				/>,
+			);
+			await waitFor(() =>
+				expect(mockGetOptions).toHaveBeenCalledWith(
+					"form-1",
+					"choice",
+					{ filter: JSON.parse(expression) },
+					undefined,
+				),
+			);
+		},
+	);
+	it("does not hide expression errors on optional inputs", () => {
+		renderWithProviders(
+			<FormRenderer
+				form={makeForm([
+					{
+						name: "choice",
+						type: "select",
+						has_dynamic_options: true,
+						optional_provider_inputs: ["filter"],
+						data_provider_inputs: {
+							filter: {
+								mode: "expression",
+								expression: "context.field.missing.value",
+							},
+						},
+					},
+				])}
+			/>,
+		);
+		expect(mockGetOptions).not.toHaveBeenCalled();
+	});
+});

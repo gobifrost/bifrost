@@ -20438,6 +20438,11 @@ export interface components {
             data_provider_inputs?: {
                 [key: string]: components["schemas"]["DataProviderInputConfig"];
             } | null;
+            /**
+             * Optional Provider Inputs
+             * @description Configured inputs the provider declares optional
+             */
+            optional_provider_inputs?: string[];
             /** Default Value */
             default_value?: unknown | null;
             /** Placeholder */
