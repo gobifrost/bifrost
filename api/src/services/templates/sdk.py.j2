@@ -68,7 +68,7 @@ class SDKError(Exception):
 @dataclass
 class {{ model.name }}:
 {% if model.description %}
-    """{{ model.description }}"""
+    {{ model.description | pystr }}
 {% endif %}
 {% if not model.fields %}
     pass
@@ -175,7 +175,7 @@ class _{{ class_name }}Client:
 
 {% for method in methods %}
     def {{ method.name }}(self, {{ method.params }}) -> {{ method.return_type }}:
-        """{{ method.summary }}"""
+        {{ method.summary | pystr }}
         url = f"{self.base_url}{{ method.url_template }}"
 {% if method.http_method in ['post', 'put', 'patch'] %}
         response = self._request_with_retry("{{ method.http_method | upper }}", url, json=data, params=kwargs)

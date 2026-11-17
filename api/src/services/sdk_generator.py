@@ -376,6 +376,29 @@ def python_type_from_schema(
 # =============================================================================
 
 
+def _single_line(text: str | None) -> str | None:
+    """Collapse text to one line for a trailing ``#`` comment.
+
+    A newline ends a comment and leaves the remaining prose as invalid Python.
+    Docstring content is serialized by ``_py_string`` instead and keeps its
+    original text, including newlines.
+    """
+    if not text:
+        return None
+    collapsed = " ".join(str(text).split())
+    return collapsed or None
+
+
+def _py_string(text: str | None) -> str:
+    """Render text as a complete Python string literal.
+
+    Descriptions and summaries are wrapped in docstrings. Interpolating raw
+    text lets a trailing quote, backslash or escape sequence terminate the
+    literal, so the value is serialized rather than quoted by the template.
+    """
+    return repr(str(text or ""))
+
+
 def generate_model(
     name: str,
     schema: dict[str, Any],
@@ -415,7 +438,7 @@ def generate_model(
             original_name=prop_name,
             type=py_type if prop_name in required else f"Optional[{py_type}]",
             default=None if prop_name in required else "None",
-            comment=desc if desc else None,
+            comment=_single_line(desc),
         )
 
         if prop_name in required:
@@ -633,6 +656,7 @@ def generate_sdk(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["pystr"] = _py_string
     template = env.get_template("sdk.py.j2")
 
     code = template.render(
