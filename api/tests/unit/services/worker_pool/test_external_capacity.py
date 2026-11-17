@@ -468,3 +468,85 @@ async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db,
     async with db.context() as session:
         assert await work_dispatch.largest_budget(session) == 512 * MIB
     assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None
+
+
+def _capability_reads(provider) -> int:
+    return sum(path == "/v1/capabilities" for _method, path in provider.requests)
+
+
+async def test_idle_pool_sends_the_provider_nothing(db, capacity):
+    capacity.provider.requests.clear()
+    for _ in range(3):
+        await capacity.pool.reconcile()
+    assert capacity.provider.requests == []
+
+
+async def test_demand_reads_capabilities_before_the_first_provider_operation(db, capacity):
+    await capacity.pool.reconcile()
+    capacity.provider.requests.clear()
+    await _accept_pool_run()
+
+    await capacity.pool.reconcile()
+
+    assert capacity.provider.requests[0] == ("GET", "/v1/capabilities")
+    assert _capability_reads(capacity.provider) == 1
+    assert [method for method, _path in capacity.provider.requests[1:]] == ["GET", "PUT", "POST"]
+    assert len(capacity.provider.starts) == 1
+
+
+async def test_held_resources_read_capabilities_every_pass(db, capacity):
+    await _accept_pool_run()
+    await capacity.pool.reconcile()
+    capacity.provider.requests.clear()
+
+    await capacity.pool.reconcile()
+    await capacity.pool.reconcile()
+
+    assert _capability_reads(capacity.provider) == 2
+
+
+async def test_rollout_while_idle_fences_the_first_reservation(db, capacity):
+    await capacity.pool.reconcile()
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
+    await _accept_pool_run()
+
+    await capacity.pool.reconcile()
+
+    assert capacity.provider.resources == {}
+    async with db.context() as session:
+        [old] = (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all()
+        assert (old.state, old.version, old.end_reason) == ("lost", "test-worker", "provider_version_changed")
+
+    await capacity.pool.reconcile()
+
+    [resource] = capacity.provider.resources.values()
+    assert resource["worker_version"] == "next-worker"
+    assert capacity.provider.starts == [resource["worker_id"]]
+
+
+async def test_stale_capabilities_cannot_strand_a_policy_the_provider_now_accepts(db, capacity):
+    await capacity.pool.reconcile()
+    # The provider grew and the operator raised the policy to match while idle.
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"max_workers": 3})
+    await _store_policy(db.sessions, replace(capacity.policy, max_workers=3))
+    await _accept_pool_run()
+
+    await capacity.pool.reconcile()
+
+    assert capacity.pool.profile.max_workers == 3
+    assert len(capacity.provider.starts) == 1
+
+
+async def test_scope_change_while_idle_stops_before_any_provider_operation(db, capacity):
+    await capacity.pool.reconcile()
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"scope": "other-provider"})
+    await _accept_pool_run()
+
+    for _ in range(2):
+        with pytest.raises(CapacityProtocolError, match="scope changed"):
+            await capacity.pool.reconcile()
+
+    # The reservation stays in the original scope, unprepared, until an
+    # operator restores or drains the original provider, as before.
+    assert capacity.provider.resources == {}
+    assert {path for _method, path in capacity.provider.requests} == {"/v1/capabilities"}

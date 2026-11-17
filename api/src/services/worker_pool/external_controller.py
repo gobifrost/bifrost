@@ -16,7 +16,8 @@ from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
-    RECONCILE_SECONDS, SWEEP_SECONDS, LiveControllers, WorkerCapacityController, _now, _withdraw_live,
+    LIVE_STATES, RECONCILE_SECONDS, SWEEP_SECONDS, LiveControllers, WorkerCapacityController, _now,
+    _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.external_policy import validate_external_policy
@@ -43,6 +44,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         self.version = profile.worker_version
         self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
         self.cleanup_states = ("lost", "retired")
+        # Whether this pass has read the provider's capabilities.
+        self._profile_read = False
 
     def _memory_environment(self, generation: int) -> dict[str, Any]:
         return {**super()._memory_environment(generation), "scope": self.profile.scope}
@@ -70,12 +73,42 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         return super()._sizing(policy, workers)
 
     async def reconcile(self) -> None:
+        # Capabilities change only when the provider is redeployed. While this
+        # provider holds no resource and no demand needs one, a pass sends it
+        # nothing, so a provider that scales on request traffic can stop.
+        # Every other pass reads them first, exactly as before.
+        self._profile_read = False
+        async with get_db_context() as db:
+            held = await db.scalar(select(ExecutionWorker.id).where(
+                self._managed_scope(), ExecutionWorker.state.in_(LIVE_STATES) | self._cleanup_scope(),
+            ).limit(1))
+        if held is not None:
+            await self._read_profile()
+        await super().reconcile()
+
+    async def _read_profile(self) -> None:
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
         self.profile = current
         self.version = current.worker_version
-        await super().reconcile()
+        self._profile_read = True
+
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
+        if self._profile_read:
+            return await super().launch_for_demand(policy)
+        # An idle pass sized demand against the cached capabilities. If that
+        # copy is stale it may refuse a policy the provider now accepts, so
+        # read them and decide again. Anything reserved reads them before the
+        # first provider operation; a changed build fences those reservations.
+        try:
+            launched = await super().launch_for_demand(policy)
+        except CapacityProtocolError:
+            await self._read_profile()
+            return await super().launch_for_demand(policy)
+        if launched:
+            await self._read_profile()
+        return launched
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])
