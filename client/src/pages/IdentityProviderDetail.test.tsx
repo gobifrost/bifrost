@@ -100,6 +100,7 @@ function provider(overrides: Partial<IdentityProvider> = {}): IdentityProvider {
 		user_count: 30,
 		group_count: 2,
 		mapped_group_count: 2,
+		pending_access_count: 0,
 		last_request_at: null,
 		last_sync_at: null,
 		created_at: new Date().toISOString(),

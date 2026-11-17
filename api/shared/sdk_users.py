@@ -235,7 +235,6 @@ async def _with_protection(session: AsyncSession, users: list) -> list["UserPubl
     from src.models import UserPublic
     from src.services.authorization.enforce import privileged_user_ids
 
-    from src.models.contracts.identity_providers import IdentitySource
     from src.services.identity_providers import identity_sources
 
     user_ids = [u.id for u in users]
@@ -245,11 +244,7 @@ async def _with_protection(session: AsyncSession, users: list) -> list["UserPubl
     for u in users:
         public = UserPublic.model_validate(u)
         public.is_protected = u.id in privileged
-        if u.id in sources:
-            provider_id, name, vendor = sources[u.id]
-            public.identity_source = IdentitySource(
-                identity_provider_id=provider_id, name=name, vendor=vendor  # type: ignore[arg-type]
-            )
+        public.identity_source = sources.get(u.id)
         out.append(public)
     return out
 

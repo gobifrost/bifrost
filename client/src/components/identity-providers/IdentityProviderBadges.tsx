@@ -2,10 +2,39 @@ import { CheckCircle2, CircleSlash, Clock, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
 import { formatDateShort } from "@/lib/utils";
+import type { components } from "@/lib/v1";
 import {
 	credentialStatus,
+	identitySourceLabel,
 	type IdentityProvider,
 } from "@/services/identity-providers";
+
+/**
+ * Where a user's identity comes from. While an activation, role grant or
+ * rename from the identity provider waits for the batched access pass, says
+ * so: Bifrost applies those within about two minutes, not at once.
+ */
+export function IdentitySourceLabel({
+	user,
+}: {
+	user: Pick<components["schemas"]["UserPublic"], "identity_source">;
+}) {
+	const source = user.identity_source;
+	return (
+		<span className="inline-flex flex-wrap items-center gap-2">
+			{identitySourceLabel(user)}
+			{source?.access_pending_since ? (
+				<Badge
+					variant="secondary"
+					title={`Changes from ${source.name} apply within about two minutes`}
+				>
+					<Clock aria-hidden="true" className="h-3.5 w-3.5" />
+					Access Pending
+				</Badge>
+			) : null}
+		</span>
+	);
+}
 
 /** Whether the connection accepts provisioning requests. */
 export function ProvisioningStatusBadge({ enabled }: { enabled: boolean }) {

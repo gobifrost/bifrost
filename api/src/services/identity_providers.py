@@ -24,6 +24,7 @@ from src.models.contracts.identity_providers import (
     IdentityProviderTokenInfo,
     IdentityProviderTokenIssued,
     IdentityProviderUpdate,
+    IdentitySource,
     OrganizationDomainResponse,
     MappedRole,
 )
@@ -215,6 +216,16 @@ async def _responses(
             .group_by(IdentityProviderGroup.identity_provider_id)
         )).all()
     )
+    pending_counts = dict(
+        (await session.execute(
+            select(IdentityProviderUser.identity_provider_id, func.count())
+            .where(
+                IdentityProviderUser.identity_provider_id.in_(ids),
+                IdentityProviderUser.access_pending_since.is_not(None),
+            )
+            .group_by(IdentityProviderUser.identity_provider_id)
+        )).all()
+    )
     current_tokens = {c.id: await tokens.current_token(session, c.id) for c in connections}
     return [
         IdentityProviderResponse(
@@ -232,6 +243,7 @@ async def _responses(
             user_count=user_counts.get(c.id, 0),
             group_count=group_counts.get(c.id, 0),
             mapped_group_count=mapped_counts.get(c.id, 0),
+            pending_access_count=pending_counts.get(c.id, 0),
             last_request_at=c.last_request_at,
             last_sync_at=c.last_sync_at,
             created_at=c.created_at,
@@ -565,8 +577,8 @@ async def delete_group_mapping(
 
 async def identity_sources(
     session: AsyncSession, user_ids: list[UUID]
-) -> dict[UUID, tuple[UUID, str, str]]:
-    """``user_id -> (identity_provider_id, name, vendor)`` for linked users."""
+) -> dict[UUID, IdentitySource]:
+    """``user_id -> IdentitySource`` for linked users."""
     if not user_ids:
         return {}
     rows = await session.execute(
@@ -575,9 +587,18 @@ async def identity_sources(
             IdentityProvider.id,
             IdentityProvider.name,
             IdentityProvider.vendor,
+            IdentityProviderUser.access_pending_since,
         )
         .join(IdentityProvider, IdentityProvider.id == IdentityProviderUser.identity_provider_id)
         .where(IdentityProviderUser.user_id.in_(user_ids))
     )
-    return {user_id: (idp_id, name, vendor) for user_id, idp_id, name, vendor in rows.all()}
+    return {
+        user_id: IdentitySource(
+            identity_provider_id=idp_id,
+            name=name,
+            vendor=vendor,
+            access_pending_since=pending_since,
+        )
+        for user_id, idp_id, name, vendor, pending_since in rows.all()
+    }
 

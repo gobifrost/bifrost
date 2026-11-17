@@ -76,7 +76,7 @@ import {
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
-import { identitySourceLabel } from "@/services/identity-providers";
+import { IdentitySourceLabel } from "@/components/identity-providers/IdentityProviderBadges";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
@@ -543,7 +543,7 @@ export function Users() {
 													Identity Source
 												</dt>
 												<dd className="mt-1 [overflow-wrap:anywhere]">
-													{identitySourceLabel(user)}
+													<IdentitySourceLabel user={user} />
 												</dd>
 											</div>
 											<div>
@@ -819,7 +819,7 @@ export function Users() {
 												)}
 											</DataTableCell>
 											<DataTableCell className="w-0 whitespace-nowrap">
-												{identitySourceLabel(user)}
+												<IdentitySourceLabel user={user} />
 											</DataTableCell>
 											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 												{user.created_at

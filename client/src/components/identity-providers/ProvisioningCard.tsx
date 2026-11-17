@@ -223,6 +223,14 @@ export function ProvisioningCard({
 						<span className="tabular-nums">
 							{provider.user_count}
 						</span>
+						{provider.pending_access_count > 0 ? (
+							<span
+								className="ml-2 text-muted-foreground"
+								title="Activations, role grants and renames apply within about two minutes"
+							>
+								{provider.pending_access_count} awaiting access
+							</span>
+						) : null}
 					</Row>
 				</dl>
 			</CardContent>

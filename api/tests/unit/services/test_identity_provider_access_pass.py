@@ -347,6 +347,25 @@ async def test_the_oldest_grant_goes_first_across_connections(setup, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_a_waiting_grant_shows_on_the_users_identity_source(setup):
+    from src.services.identity_providers import identity_sources
+
+    session = setup["session"]
+    group = await _mapped_group(setup)
+    provisioner = Provisioner(session, setup["connection"])
+    link = await provisioner.create_user(_record(f"waiting@{setup['domain']}"))
+    await provisioner.set_group_members(group, [link.id])
+
+    source = (await identity_sources(session, [link.user_id]))[link.user_id]
+    assert source.name == "Contoso Entra" and source.access_pending_since is not None
+
+    await run_access_pass(session)
+
+    source = (await identity_sources(session, [link.user_id]))[link.user_id]
+    assert source.access_pending_since is None
+
+
+@pytest.mark.asyncio
 async def test_a_disabled_connections_grants_wait(setup):
     session, connection = setup["session"], setup["connection"]
     group = await _mapped_group(setup)

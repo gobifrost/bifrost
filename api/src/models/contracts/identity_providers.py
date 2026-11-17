@@ -38,6 +38,9 @@ class IdentitySource(BaseModel):
     identity_provider_id: UUID
     name: str
     vendor: IdentityProviderVendor
+    # Set while an activation, role grant or rename from the identity
+    # provider waits for the access pass (applied within about two minutes).
+    access_pending_since: datetime | None = None
 
 
 class IdentityProviderTokenInfo(BaseModel):
@@ -79,6 +82,8 @@ class IdentityProviderResponse(BaseModel):
     user_count: int
     group_count: int
     mapped_group_count: int
+    # Users whose activation, role grant or rename waits for the access pass.
+    pending_access_count: int
     last_request_at: datetime | None
     last_sync_at: datetime | None
     created_at: datetime

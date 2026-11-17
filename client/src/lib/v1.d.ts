@@ -21636,6 +21636,8 @@ export interface components {
             group_count: number;
             /** Mapped Group Count */
             mapped_group_count: number;
+            /** Pending Access Count */
+            pending_access_count: number;
             /** Last Request At */
             last_request_at: string | null;
             /** Last Sync At */
@@ -21761,6 +21763,8 @@ export interface components {
              * @enum {string}
              */
             vendor: "entra" | "okta" | "jumpcloud" | "google" | "other";
+            /** Access Pending Since */
+            access_pending_since?: string | null;
         };
         /** IdentityUpdate */
         IdentityUpdate: {
