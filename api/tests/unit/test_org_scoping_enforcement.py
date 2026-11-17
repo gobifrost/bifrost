@@ -78,11 +78,6 @@ ALLOW_LIST_INLINE_ORG: set[tuple[str, str, str]] = {
     # removed in the SDK table-metadata stage: cli_create_table now shares
     # shared/sdk_table_metadata.py (exact-scope check, no cascade).
     # cli_list_tables migrated to TableRepository.list() in phase 6.
-    ('routers/integrations.py', 'IntegrationMapping.organization_id == org_id,', 'integration mapping inline; phase 6 migrates'),
-    ('routers/integrations.py', 'OAuthToken.organization_id.is_(None),', 'integration health summary exact-scope lookup for the global default OAuth token (NOT cascade)'),
-    ('routers/integrations.py', 'ConfigModel.organization_id.is_(None),', 'integration config inline; phase 5 migrates'),
-    ('routers/integrations.py', 'ConfigModel.organization_id == organization_id,', 'integration config inline; phase 5 migrates'),
-    ('routers/integrations.py', 'ConfigModel.organization_id == org_id,', 'integration config inline; phase 5 migrates'),
     ('routers/claims.py', 'stmt = stmt.where(ClaimORM.organization_id == target)', 'claims list constrains an explicitly selected organization only after require_operation at that target; the collection case uses operation_reach'),
     ('routers/events.py', 'conditions.append(EventSource.organization_id.is_(None))', 'event-source Global-only view first verifies original-user reach and events.read at Global; this is an exact selected-target predicate'),
     ('routers/events.py', 'conditions.append(EventSource.organization_id == organization_id)', 'event-source selected-organization view first verifies original-user reach and events.read at that organization; this is an exact selected-target predicate'),

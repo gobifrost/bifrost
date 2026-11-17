@@ -699,13 +699,21 @@ class ManifestResolver:
             cache["file_policy_ids"].add(row[0])
             cache["file_policy_by_natural"][(row[1], row[2], row[3], row[4])] = row[0]
 
-        # Configs: {(key, integ_id, org_id): (id, value, config_schema_id)}
+        # Configs: {(key, integ_id, org_id): (id, value, config_schema_id, config_type)}
         cfg_result = await self.db.execute(
-            select(Config.id, Config.key, Config.integration_id, Config.organization_id, Config.value, Config.config_schema_id)
+            select(
+                Config.id,
+                Config.key,
+                Config.integration_id,
+                Config.organization_id,
+                Config.value,
+                Config.config_schema_id,
+                Config.config_type,
+            )
         )
         cache["config_by_natural"] = {}
         for row in cfg_result.all():
-            cache["config_by_natural"][(row[1], row[2], row[3])] = (row[0], row[4], row[5])
+            cache["config_by_natural"][(row[1], row[2], row[3])] = (row[0], row[4], row[5], row[6])
 
         # Policy rules: {(name, domain, org_id): id} + {id} set
         from src.models.orm.policy_rule import PolicyRule as PolicyRuleOrm
@@ -2180,6 +2188,8 @@ class ManifestResolver:
         # Sync config schema items: upsert by (integration_id, key) to preserve IDs
         # (Config rows reference schema IDs via FK — deleting schema cascades to configs)
         from sqlalchemy import delete as sa_delete
+
+        from src.repositories.integrations import retype_integration_config_values
         if cache is not None:
             existing_cs_by_key = dict(cache["integ_cs"].get(integ_id, {}))
         else:
@@ -2194,7 +2204,10 @@ class ManifestResolver:
         for cs in minteg.config_schema:
             if cs.key in existing_cs_by_key:
                 existing_cs = existing_cs_by_key[cs.key]
+                retyped = existing_cs.type != cs.type
                 existing_cs.type = cs.type
+                if retyped:
+                    await retype_integration_config_values(self.db, integ_id, cs.key, cs.type)
                 existing_cs.required = cs.required
                 existing_cs.description = cs.description
                 existing_cs.options = cs.options
@@ -2314,8 +2327,10 @@ class ManifestResolver:
     def _resolve_config(self, mcfg, cache: dict) -> "list[SyncOp]":
         """Resolve a config entry from manifest into SyncOps.
 
-        Uses prefetch cache for lookup. Secret values are never replaced by
-        portable manifest content; declaration metadata still updates.
+        Uses prefetch cache for lookup. Values and types are decided by
+        ``src.services.config_values.stored_manifest_value``: a secret without
+        a manifest value keeps the stored one; declaration metadata still
+        updates.
         """
         from uuid import UUID
 
@@ -2340,18 +2355,29 @@ class ManifestResolver:
 
         # Check prefetch cache for existing config by natural key
         cache_hit = cache["config_by_natural"].get((vals["key"], integ_id, org_id))
-        schema_id = None
+        schema = None
         if integ_id is not None:
             schema = cache.get("integ_cs", {}).get(integ_id, {}).get(vals["key"])
-            schema_id = schema.id if schema is not None else None
+        schema_id = schema.id if schema is not None else None
 
-        # Convert string config_type to enum for proper DB storage
         from src.models.enums import ConfigType
-        ct = ConfigType(vals["config_type"]) if isinstance(vals["config_type"], str) else vals["config_type"]
-        is_secret = ct == ConfigType.SECRET
+        from src.services.config_values import (
+            config_type_for_schema_type,
+            stored_manifest_value,
+        )
+
+        # An integration value has its schema field's type; anything else
+        # the type the manifest declares.
+        ct = (
+            config_type_for_schema_type(schema.type)
+            if schema is not None
+            else ConfigType(vals["config_type"])
+            if isinstance(vals["config_type"], str)
+            else vals["config_type"]
+        )
 
         if cache_hit is not None:
-            existing_id, _existing_value, _config_schema_id = cache_hit
+            existing_id, existing_value, _config_schema_id, existing_type = cache_hit
 
             # Update existing row (including ID if it changed)
             update_values: dict = {
@@ -2367,8 +2393,13 @@ class ManifestResolver:
             }
             if schema_id is not None:
                 update_values["config_schema_id"] = schema_id
-            if not is_secret:
-                update_values["value"] = vals["value"] if vals["value"] is not None else {}
+            update_values["value"] = stored_manifest_value(
+                vals["key"],
+                config_type=ct,
+                manifest_value=vals["value"],
+                current=existing_value,
+                current_type=existing_type,
+            )
 
             return [Upsert(
                 model=Config,
@@ -2386,7 +2417,9 @@ class ManifestResolver:
                 "position": vals["position"],
                 "integration_id": integ_id,
                 "organization_id": org_id,
-                "value": vals["value"] if vals["value"] is not None else {},
+                "value": stored_manifest_value(
+                    vals["key"], config_type=ct, manifest_value=vals["value"]
+                ),
                 "updated_by": "git-sync",
             }
             if schema_id is not None:

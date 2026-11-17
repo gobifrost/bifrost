@@ -1,0 +1,13 @@
+{
+  "key": "pr:1447",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Backend security fix to config value storage; no announcement value.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1447",
+      "Jack's task instruction for this fix: “Product Updates disposition: omit (backend security fix).”"
+    ]
+  }
+}
