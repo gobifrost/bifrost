@@ -225,8 +225,6 @@ class TestRetypeConfigValues:
         assert row.config_type == ConfigType.STRING
 
     async def test_update_integration_retypes_only_changed_fields(self, monkeypatch) -> None:
-        import src.repositories.integrations as module
-
         api_key = SimpleNamespace(key="api_key", type="string")
         region = SimpleNamespace(key="region", type="string")
         integration = MagicMock(id=uuid4(), config_schema=[api_key, region])
@@ -234,7 +232,9 @@ class TestRetypeConfigValues:
         repo = IntegrationsRepository(session)
         repo.get_integration_by_id = AsyncMock(return_value=integration)
         retype = AsyncMock()
-        monkeypatch.setattr(module, "retype_integration_config_values", retype)
+        monkeypatch.setattr(
+            "src.repositories.integrations.retype_integration_config_values", retype
+        )
 
         await repo.update_integration(
             integration.id,
