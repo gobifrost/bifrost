@@ -19,15 +19,12 @@ from src.models.orm.identity_providers import (
     IdentityProviderGroupMapping,
     IdentityProviderGroupRole,
     IdentityProviderToken,
-    IdentityProviderUser,
     OrganizationDomain,
 )
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, RolePermission, User, UserRole
 from src.services.identity_provisioning.core import (
     GroupRecord,
-    ProvisioningError,
-    ProvisioningErrorKind,
     Provisioner,
     UserRecord,
 )
@@ -103,10 +100,39 @@ async def _waits(task: asyncio.Task) -> bool:
     return not task.done()
 
 
-@pytest.mark.asyncio
-async def test_adoption_after_a_committed_move_is_refused(async_session_factory, committed):
-    from shared.sdk_users import update_user
+async def _move(session, user_id, organization_id, *, bulk: bool) -> bool:
+    """Move the user as an administrator would; whether it was allowed."""
+    from shared.sdk_users import UserServiceError, bulk_update_users, update_user
+    from src.models.contracts.users import BulkUserOperation
 
+    if bulk:
+        result = await bulk_update_users(
+            session,
+            admin_caller(),
+            BulkUserOperation(
+                user_ids=[user_id], operation="move_org", organization_id=organization_id
+            ),
+        )
+        return not result.failed
+    try:
+        await update_user(
+            session,
+            admin_caller(),
+            user_id=str(user_id),
+            fields={"organization_id"},
+            organization_id=organization_id,
+        )
+    except UserServiceError as exc:
+        assert exc.status_code == 409
+        return False
+    return True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True])
+async def test_a_move_waits_for_an_adoption_and_is_refused(
+    async_session_factory, committed, bulk
+):
     email = f"mover@{committed['domain']}"
     async with async_session_factory() as session:
         user = User(email=email, organization_id=committed["organization_id"])
@@ -114,36 +140,26 @@ async def test_adoption_after_a_committed_move_is_refused(async_session_factory,
         await session.commit()
         user_id = user.id
 
-    async def adopt() -> None:
+    async def move() -> bool:
         async with async_session_factory() as session:
-            connection = await session.get(IdentityProvider, committed["connection_id"])
-            assert connection is not None
-            await Provisioner(session, connection).create_user(_record(email))
+            allowed = await _move(session, user_id, committed["other_id"], bulk=bulk)
             await session.commit()
+            return allowed
 
     async with asyncio.timeout(30):
-        async with async_session_factory() as mover:
-            await update_user(
-                mover,
-                admin_caller(),
-                user_id=str(user_id),
-                fields={"organization_id"},
-                organization_id=committed["other_id"],
-            )
-            adoption = asyncio.create_task(adopt())
-            assert await _waits(adoption)
-            await mover.commit()
-        with pytest.raises(ProvisioningError) as raised:
-            await adoption
+        async with async_session_factory() as adopter:
+            connection = await adopter.get(IdentityProvider, committed["connection_id"])
+            assert connection is not None
+            # Adoption holds the user's row lock with the link not yet committed.
+            await Provisioner(adopter, connection).create_user(_record(email))
+            moving = asyncio.create_task(move())
+            assert await _waits(moving)
+            await adopter.commit()
+        assert await moving is False
 
-    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
     async with async_session_factory() as session:
-        assert (
-            await session.scalar(
-                select(IdentityProviderUser.id).where(IdentityProviderUser.user_id == user_id)
-            )
-            is None
-        )
+        moved = await session.get(User, user_id)
+        assert moved is not None and moved.organization_id == committed["organization_id"]
 
 
 @pytest.mark.asyncio

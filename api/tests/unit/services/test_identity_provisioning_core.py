@@ -282,25 +282,64 @@ async def test_refuses_to_adopt_a_privileged_user(setup):
 
 
 @pytest.mark.asyncio
-async def test_a_user_who_becomes_privileged_is_left_to_bifrost(setup):
+async def test_a_user_who_becomes_privileged_can_only_lose_access(setup):
     session, connection = setup["session"], setup["connection"]
     provisioner = Provisioner(session, connection)
-    link = await provisioner.create_user(_record(f"promoted@{setup['domain']}"))
+    email = f"promoted@{setup['domain']}"
+    link = await provisioner.create_user(_record(email))
     group = await provisioner.create_group(
         GroupRecord(display_name="Techs", external_id="g1", attributes={}), [link.id]
     )
     await _map_and_apply(session, connection, group.id, [])
     await _make_privileged(session, link.user_id)
 
+    # No new email for a privileged user.
     with pytest.raises(ProvisioningError) as raised:
-        await provisioner.replace_user(link, _record(f"promoted@{setup['domain']}", active=False))
+        await provisioner.replace_user(link, _record(f"renamed@{setup['domain']}"))
     assert raised.value.kind is ProvisioningErrorKind.CONFLICT
-    with pytest.raises(ProvisioningError):
-        await provisioner.delete_user(link)
 
-    # Losing the mapped group would deactivate anyone else.
+    # Offboarding still works: losing the mapped group deactivates.
     await provisioner.set_group_members(group, [])
-    assert (await _user(session, link)).is_active
+    assert not (await _user(session, link)).is_active
+
+    # But the directory can't turn them back on.
+    await provisioner.set_group_members(group, [link.id])
+    await Provisioner(session, connection).apply_pending([link.id])
+    assert not (await _user(session, link)).is_active
+    assert link.access_pending_since is None
+
+    await provisioner.delete_user(link)
+    assert (
+        await session.scalar(
+            select(IdentityProviderUser.id).where(IdentityProviderUser.id == link.id)
+        )
+        is None
+    )
+
+
+@pytest.mark.asyncio
+async def test_adoption_that_omits_active_keeps_the_users_state(setup):
+    session = setup["session"]
+    email = f"disabled@{setup['domain']}"
+    existing = User(email=email, organization_id=setup["organization"].id, is_active=False)
+    session.add(existing)
+    await session.flush()
+    record = _record(email)
+
+    link = await Provisioner(session, setup["connection"]).create_user(
+        UserRecord(
+            user_name=record.user_name,
+            email=record.email,
+            external_id=record.external_id,
+            display_name=record.display_name,
+            active=None,
+            attributes=record.attributes,
+        )
+    )
+    await Provisioner(session, setup["connection"]).apply_pending([link.id])
+
+    assert not link.active
+    assert not (await _user(session, link)).is_active
 
 
 @pytest.mark.asyncio

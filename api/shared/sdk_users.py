@@ -182,6 +182,14 @@ IDENTITY_MANAGEMENT_MESSAGE = "Identities are managed from Identities"
 RESERVED_EMAIL_MESSAGE = "This email domain is reserved"
 
 
+async def _lock_user_row(session: AsyncSession, user_id: UUID) -> None:
+    """Lock the user before any guard locks a role: identity provisioning
+    takes the same order (user, then roles), so the two can't deadlock."""
+    from src.models import User as UserORM
+
+    await session.execute(select(UserORM.id).where(UserORM.id == user_id).with_for_update())
+
+
 def refuse_identity_management(user: "UserORM") -> None:
     """Identities aren't edited, deleted or bulk-changed as people."""
     from shared.identities import is_identity
@@ -653,6 +661,7 @@ async def update_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be modified")
     refuse_identity_management(db_user)
+    await _lock_user_row(session, db_user.id)
     if email is not None:
         refuse_reserved_email(email)
     _authorize_update(
@@ -676,17 +685,13 @@ async def update_user(
         else PROVIDER_ORG_ID if is_superuser else db_user.organization_id
     )
     if destination != db_user.organization_id:
-        from src.models import User as UserORM
         from src.services.identity_providers import (
             managed_user_move_message,
             managing_connections,
         )
 
-        # Adoption links a user while holding this row lock, so a link
-        # committed by then is seen and a later one sees the new org.
-        await session.execute(
-            select(UserORM.id).where(UserORM.id == db_user.id).with_for_update()
-        )
+        # Adoption links a user while holding the row lock taken above, so
+        # a link committed by then is seen and a later one sees the new org.
         managing = await managing_connections(session, [db_user.id])
         if db_user.id in managing:
             raise UserServiceError(409, managed_user_move_message(managing[db_user.id]))
@@ -819,6 +824,7 @@ async def delete_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be deleted")
     refuse_identity_management(db_user)
+    await _lock_user_row(session, db_user.id)
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
     require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]), db_user.organization_id)
 
@@ -911,7 +917,15 @@ async def bulk_update_users(
     succeeded: list[UUID] = []
     failed: list[BulkUserFailure] = []
 
-    rows = await session.execute(select(UserORM).where(UserORM.id.in_(request.user_ids)))
+    # Lock the users first, in id order: before any guard locks a role, as
+    # identity provisioning does, and before a move checks for a link, as
+    # adoption locks before linking.
+    rows = await session.execute(
+        select(UserORM)
+        .where(UserORM.id.in_(request.user_ids))
+        .order_by(UserORM.id)
+        .with_for_update()
+    )
     users_by_id = {u.id: u for u in rows.scalars().all()}
     held = await held_permissions_by_user(session, list(users_by_id))
     operators = (
@@ -925,14 +939,6 @@ async def bulk_update_users(
             managing_connections,
         )
 
-        # Lock the users first, in id order, as adoption does before linking:
-        # a link committed by then is seen, and a later adoption sees the move.
-        await session.execute(
-            select(UserORM.id)
-            .where(UserORM.id.in_(list(users_by_id)))
-            .order_by(UserORM.id)
-            .with_for_update()
-        )
         managing = await managing_connections(session, list(users_by_id))
     else:
         managing = {}

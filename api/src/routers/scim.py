@@ -96,7 +96,9 @@ async def scim_connection(
         else None
     )
     if connection is None or connection.source_type != "scim":
-        await _limit(_AUTH_FAILURE_LIMIT, "scim_auth_failure", identity_provider_id)
+        # The parsed id: one connection, however its UUID is spelled.
+        key = str(connection_id) if connection_id is not None else "invalid"
+        await _limit(_AUTH_FAILURE_LIMIT, "scim_auth_failure", key)
         raise ScimError(401, "Invalid or expired token")
     await _limit(_RATE_LIMIT, "scim", str(connection.id))
     return connection

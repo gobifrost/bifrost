@@ -10,9 +10,12 @@ Every command runs inside the caller's transaction. The rules it enforces:
   another organization is a conflict. Emails and userNames match without
   regard to case.
 - Privileged access is decided in Bifrost, never by a directory: a
-  privileged user is not adopted, changed or deleted (a conflict), the
-  access pass leaves one alone, and a role carrying privileged permissions
-  is never granted.
+  privileged user is never adopted, a role carrying privileged permissions
+  is never granted, and a linked user who becomes privileged is revoke-only
+  (the directory can still deactivate or unlink them and remove roles it
+  granted, but not re-activate, rename, re-email or grant).
+- A connection acts only on users in its organization; one that has left
+  it is left alone.
 - The identity provider owns name, email and active for linked users.
 - Roles come from group mappings. Provisioning only removes the role
   assignments it created (``UserRole.identity_provider_id``), so a manual
@@ -266,7 +269,8 @@ class Provisioner:
             )
         user = matches[0] if matches else None
         created_user = user is None
-        link_active = record.active is not False
+        # Unsaid, a new user starts active and an adopted one keeps its state.
+        link_active = record.active if record.active is not None else (user is None or user.is_active)
         if user is None:
             # Insert in the final state: a new user carries no token, so the
             # insert leaves the authority epoch alone where a later flip of
@@ -304,9 +308,11 @@ class Provisioner:
         await self.hold_policy()
         await self._refuse_duplicate_link(record, exclude_link_id=link.id)
         user = await self._lock_user(link.user_id)
-        await self._refuse_unmanaged(user)
+        revoke_only = await self._revoke_only(user)
         email = normalize_email(record.email)
-        if email != user.email:
+        if email != user.email.lower():
+            if revoke_only:
+                raise ProvisioningError(ProvisioningErrorKind.CONFLICT, PRIVILEGED_USER_MESSAGE)
             await self._require_claimed_domain(email)
             taken = await self.session.scalar(
                 select(User.id).where(func.lower(User.email) == email, User.id != user.id)
@@ -331,7 +337,8 @@ class Provisioner:
     async def delete_user(self, link: IdentityProviderUser) -> None:
         await self.hold_policy()
         user = await self._lock_user(link.user_id)
-        await self._refuse_unmanaged(user)
+        # Removing access is always the directory's call, privileged or not.
+        await self._revoke_only(user)
         if link.created_user and user.last_login is None:
             from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 
@@ -562,12 +569,15 @@ class Provisioner:
         now = datetime.now(timezone.utc)
         for link in sorted(links, key=lambda link: link.user_id):
             user = users[link.user_id]
-            if user.id in unmanaged:
-                # Membership is still recorded, but the directory decides
-                # nothing about this user's access.
+            reason = unmanaged.get(user.id)
+            if reason == OTHER_ORG_USER_MESSAGE:
+                # Membership is still recorded, but this connection decides
+                # nothing about a user outside its organization.
                 link.access_pending_since = None
                 queue_group_event(user, link)
                 continue
+            # A privileged user's access only ever shrinks from here.
+            revoke_only = reason is not None
             mapped = memberships.get(link.id, set()) & mapped_roles.keys()
             desired_roles: set[UUID] = set()
             for group_id in mapped:
@@ -580,7 +590,9 @@ class Provisioner:
                 await self._set_active(user, False)
                 change.deactivated = True
             change.roles_removed = await self._remove_granted_roles(user.id, desired_roles)
-            if defer_grants:
+            if revoke_only:
+                link.access_pending_since = None
+            elif defer_grants:
                 waiting = (
                     (desired_active and not user.is_active)
                     or bool(await self._missing_roles(user, desired_roles))
@@ -679,7 +691,10 @@ class Provisioner:
         await self._lock_roles_shared(missing)
         roles = await load_roles(self.session, missing)
         for role_id in sorted(missing):
-            if role_id in roles and is_privileged_principal(roles[role_id].permissions):
+            if role_id not in roles:
+                # Deleted since the mapping was read: nothing to grant.
+                continue
+            if is_privileged_principal(roles[role_id].permissions):
                 await self._refuse_grant(user, role_id, PRIVILEGED_ROLE_MESSAGE)
                 continue
             try:
@@ -859,6 +874,15 @@ class Provisioner:
         reason = (await self._unmanaged([user])).get(user.id)
         if reason is not None:
             raise ProvisioningError(ProvisioningErrorKind.CONFLICT, reason)
+
+    async def _revoke_only(self, user: User) -> bool:
+        """Whether the directory may only take access away from this
+        linked user (they're privileged); refuses one outside the
+        connection's organization."""
+        reason = (await self._unmanaged([user])).get(user.id)
+        if reason == OTHER_ORG_USER_MESSAGE:
+            raise ProvisioningError(ProvisioningErrorKind.CONFLICT, reason)
+        return reason is not None
 
     async def _refuse_duplicate_link(
         self, record: UserRecord, *, exclude_link_id: UUID | None
