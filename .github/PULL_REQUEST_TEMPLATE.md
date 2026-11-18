@@ -5,9 +5,9 @@ reviewers use to write the canonical
 `product-updates/dispositions/pr-<number>.json`; checking a box alone does not
 satisfy the Product Updates check.
 
-- [ ] Highlight — list the entry UUID(s), or say that the entry is being drafted before this PR receives a number.
-- [ ] Other — give the concise user-visible change that belongs in the durable disposition.
-- [ ] Omit — give the concrete reason this has no announcement value.
+- [ ] Highlight — new user-facing feature or breaking change; list entry UUID(s), or say the entry is being drafted.
+- [ ] Other — concise new user-facing feature or breaking change in the durable disposition.
+- [ ] Omit — routine fix, hardening, or maintenance; give the reason. No announcement prose approval is needed.
 
 PR number and contributor attribution are verified after the PR opens. Security,
 action-required, and breaking changes need explicit review evidence in the
