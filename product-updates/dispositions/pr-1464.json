@@ -1,0 +1,15 @@
+{
+  "key": "pr:1464",
+  "classification": "highlight",
+  "entry_ids": [
+    "182c8b4f-4cb8-467c-bc96-0c24b16106b7"
+  ],
+  "reason": "New user-facing feature: SCIM provisioning and group-to-role mapping per organization.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1464",
+      "https://github.com/gobifrost/bifrost/issues/1463"
+    ]
+  }
+}
