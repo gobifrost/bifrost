@@ -436,9 +436,17 @@ Query options:
 | `where` | `DocumentFilter` | none | Filter conditions, see DSL below |
 | `page` | `number` | `1` | 1-indexed page number |
 | `pageSize` | `number` | `100` | Rows per page (server cap 1000) |
-| `order_by` | `string` | `created_at` column | JSONB data field to sort by (compared as text, `id` tiebreaker) |
+| `order_by` | `string` | `created_at` column | JSONB data field to sort by (numbers numerically before other values ascending; other values as text; null/missing last ascending, first descending; `id` tiebreaker) |
 | `order_dir` | `"asc" \| "desc"` | `"asc"` | Sort direction |
 | `scope` | `string` | app's org / caller's org | Org scope override |
+
+Table query ranges (`gt/gte/lt/lte`) with numeric operands match only JSON numbers;
+string operands retain text comparison, including ISO timestamp strings.
+Field filters and ordering can scan/sort the table's documents without a matching
+index. `document_id_prefix` can bound candidate IDs; `limit` alone does not bound
+scan cost. Prefix reads use document-ID ordering and cannot combine with
+`order_by`. Authorization continues to restrict visible rows.
+
 
 Live updates: `insert` events bump `total`. With `order_by`, the row is placed at its sorted position and the window trims to `pageSize`; inserts that sort after the last row of a full page (or, on `page > 1`, before the first row) belong to another page and are not shown. Without `order_by` the server orders by `created_at`, so a new row is the newest: ascending (the default) appends iff there's room; `order_dir: "desc"` places it first on page 1 and leaves later pages unchanged. An insert for a row already in the window is applied like an update rather than duplicated. `update` replaces in place (with `order_by`, a changed sort key moves the row within the window); `delete` removes from the window and decrements `total`.
 

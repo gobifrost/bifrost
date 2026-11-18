@@ -12,6 +12,7 @@ Supported auth types:
 - oauth: Uses Bifrost OAuth provider tokens
 """
 
+import hashlib
 import ipaddress
 import json
 import logging
@@ -329,11 +330,59 @@ def sanitize_spec(spec: dict) -> dict:
 # =============================================================================
 
 
+def _model_names(spec: dict[str, Any], client_name: str) -> dict[int, str]:
+    """Reserve model names by schema path before rendering any references."""
+    candidates: dict[str, list[tuple[int, tuple[str, ...]]]] = {}
+
+    def visit(schema: dict, context: str, path: tuple[str, ...]) -> None:
+        if "$ref" in schema:
+            return
+        if schema.get("type", "object") == "array":
+            visit(schema.get("items", {}), f"{context}Item", (*path, "items"))
+        elif schema.get("type", "object") == "object" and schema.get("properties"):
+            name = to_pascal_case(context)
+            candidates.setdefault(name, []).append((id(schema), path))
+            for prop, child in schema["properties"].items():
+                visit(child, f"{name}{to_pascal_case(prop)}", (*path, "properties", prop))
+
+    for name, schema in spec.get("components", {}).get("schemas", {}).items():
+        if schema.get("type") == "object":
+            visit(schema, name, ("components", "schemas", name))
+            if not schema.get("properties"):
+                candidates.setdefault(to_pascal_case(name), []).append(
+                    (id(schema), ("components", "schemas", name))
+                )
+    for path, item in spec.get("paths", {}).items():
+        for method in ["get", "post", "put", "patch", "delete"]:
+            operation = item.get(method, {})
+            context = to_pascal_case(operation.get("operationId") or generate_method_name(path, method))
+            for status in ["200", "201", "204", "default"]:
+                schema = operation.get("responses", {}).get(status, {}).get(
+                    "content", {}
+                ).get("application/json", {}).get("schema", {})
+                visit(schema, f"{context}Response", ("paths", path, method, status))
+
+    reserved = set(candidates) | {client_name}
+    resolved: dict[int, str] = {}
+    for name, identities in sorted(candidates.items()):
+        for schema_id, path in identities:
+            resolved_name = name
+            if len(identities) > 1 or name == client_name:
+                digest = hashlib.sha256(json.dumps(path).encode()).hexdigest()
+                resolved_name = f"{name}_{digest}"
+                if resolved_name in reserved:
+                    raise ValueError("Generated SDK contains duplicate model names")
+                reserved.add(resolved_name)
+            resolved[schema_id] = resolved_name
+    return resolved
+
+
 def python_type_from_schema(
     schema: dict[str, Any],
     components: dict,
     inline_schemas: dict[str, dict] | None = None,
     context_name: str | None = None,
+    model_names: dict[int, str] | None = None,
 ) -> str:
     """Convert OpenAPI schema to Python type hint."""
     if not schema:
@@ -341,6 +390,9 @@ def python_type_from_schema(
 
     if "$ref" in schema:
         ref_name = schema["$ref"].split("/")[-1]
+        target = components.get("schemas", {}).get(ref_name)
+        if model_names is not None and target is not None and id(target) in model_names:
+            return model_names[id(target)]
         return to_pascal_case(ref_name)
 
     schema_type = schema.get("type", "object")
@@ -348,12 +400,15 @@ def python_type_from_schema(
     if schema_type == "array":
         items = schema.get("items", {})
         item_context = f"{context_name}Item" if context_name else None
-        item_type = python_type_from_schema(items, components, inline_schemas, item_context)
+        item_type = python_type_from_schema(items, components, inline_schemas, item_context, model_names)
         return f"List[{item_type}]"
     elif schema_type == "object":
         properties = schema.get("properties", {})
         if properties and inline_schemas is not None and context_name:
-            class_name = to_pascal_case(context_name)
+            class_name = (
+                model_names[id(schema)] if model_names is not None
+                else to_pascal_case(context_name)
+            )
             if class_name not in inline_schemas:
                 inline_schemas[class_name] = schema
             return class_name
@@ -404,9 +459,10 @@ def generate_model(
     schema: dict[str, Any],
     components: dict,
     inline_schemas: dict[str, dict] | None = None,
+    model_names: dict[int, str] | None = None,
 ) -> ModelInfo:
     """Generate a ModelInfo from an OpenAPI schema."""
-    class_name = to_pascal_case(name)
+    class_name = model_names[id(schema)] if model_names is not None else to_pascal_case(name)
     properties = schema.get("properties", {})
     required = set(schema.get("required", []))
 
@@ -429,7 +485,7 @@ def generate_model(
         nested_context = (
             f"{class_name}{to_pascal_case(prop_name)}" if inline_schemas is not None else None
         )
-        py_type = python_type_from_schema(prop_schema, components, inline_schemas, nested_context)
+        py_type = python_type_from_schema(prop_schema, components, inline_schemas, nested_context, model_names)
 
         desc = prop_schema.get("description", "")
 
@@ -494,6 +550,7 @@ def extract_models_and_methods(
     components = spec.get("components", {})
     paths = spec.get("paths", {})
     inline_schemas: dict[str, dict] = {}
+    model_names = _model_names(spec, class_name)
 
     models: list[ModelInfo] = []
     methods: list[MethodInfo] = []
@@ -525,20 +582,20 @@ def extract_models_and_methods(
                         method_name = generate_method_name(path, http_method)
                         context_name = f"{to_pascal_case(method_name)}Response"
 
-                    python_type_from_schema(schema, components, inline_schemas, context_name)
+                    python_type_from_schema(schema, components, inline_schemas, context_name, model_names)
 
     # Generate models from component schemas
     schemas = components.get("schemas", {})
     for schema_name, schema_def in sorted(schemas.items()):
         if schema_def.get("type") == "object":
-            models.append(generate_model(schema_name, schema_def, components, inline_schemas))
+            models.append(generate_model(schema_name, schema_def, components, inline_schemas, model_names))
 
     # Generate models from inline schemas
     generated_schemas: set[str] = set()
     while len(generated_schemas) < len(inline_schemas):
         for schema_name, schema_def in sorted(inline_schemas.items()):
             if schema_name not in generated_schemas:
-                models.append(generate_model(schema_name, schema_def, components, inline_schemas))
+                models.append(generate_model(schema_name, schema_def, components, inline_schemas, model_names))
                 generated_schemas.add(schema_name)
 
     # Generate methods
@@ -593,7 +650,7 @@ def extract_models_and_methods(
                     context_name = f"{to_pascal_case(method_name)}Response"
 
                 return_type = python_type_from_schema(
-                    schema, components, inline_schemas, context_name
+                    schema, components, inline_schemas, context_name, model_names
                 )
 
             # Serialize literal path segments; only generated parameter identifiers
@@ -620,6 +677,9 @@ def extract_models_and_methods(
                 )
             )
 
+    names = [model.name for model in models]
+    if len(names) != len(set(names)) or class_name in names:
+        raise ValueError("Generated SDK contains duplicate model names")
     return models, methods
 
 

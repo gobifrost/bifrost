@@ -22,6 +22,7 @@ from shared.models import (
 from src.core.auth import Context, CurrentActiveUser
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
+from src.core.database import get_db_context
 from src.core.db_deps import DbSession
 from src.models import (
     CommitHistoryResponse,
@@ -668,8 +669,11 @@ async def disconnect_github(
 ) -> dict:
     """Disconnect GitHub integration."""
     try:
+        # Authorization has finished; release its connection before storage I/O.
+        await db.commit()
         await GitRepoManager().remove_stored_credentials()
-        await delete_github_config(db, ctx.org_id)
+        async with get_db_context() as delete_db:
+            await delete_github_config(delete_db, ctx.org_id)
 
         logger.info("GitHub integration disconnected")
 
