@@ -21,7 +21,6 @@ _ADMIN_ACTOR = {
     "name": "Admin User",
 }
 
-<<<<<<< HEAD
 _IDENTITY_PROVIDER = {
     "id": "550e8400-e29b-41d4-a716-446655440050",
     "name": "Contoso Entra ID",
@@ -45,7 +44,8 @@ _PROVISIONED_USER = {
         "userName": "alice@contoso.com",
         "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"department": "Support"},
     },
-=======
+}
+
 _USER_ACTOR = {
     "type": "user",
     "id": "550e8400-e29b-41d4-a716-446655440030",
@@ -58,7 +58,6 @@ _EVENT_USER = {
     "email": "alice@example.com",
     "name": "Alice",
     "organization_id": "550e8400-e29b-41d4-a716-446655440010",
->>>>>>> origin/main
 }
 
 _BASE_BODY = {
@@ -97,7 +96,6 @@ CURATED_TOPICS = [
         ),
     },
     {
-<<<<<<< HEAD
         "topic": "user.provisioned",
         "description": "Fired when an identity provider creates a user or adopts an existing one.",
         "category": "Users",
@@ -190,7 +188,10 @@ CURATED_TOPICS = [
                 "hint": "x7Qa",
                 "expires_at": "2026-06-11T12:34:56Z",
                 "stage": "expiring",
-=======
+            },
+        ),
+    },
+    {
         "topic": "user.created",
         "description": (
             "Fired after a user account is created: by an administrator (admin), on a first SSO "
@@ -241,7 +242,6 @@ CURATED_TOPICS = [
                 },
                 "groups": ["5d8f3c1e-2b4a-4c6d-8e9f-1a2b3c4d5e6f"],
                 "groups_overage": False,
->>>>>>> origin/main
             },
         ),
     },
