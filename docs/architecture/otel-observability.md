@@ -29,8 +29,9 @@ env var is absent.
 
 1. **Distro over hand-rolled setup.** `opentelemetry-distro` +
    `opentelemetry-exporter-otlp-proto-http` plus instrumentations for
-   FastAPI, SQLAlchemy, asyncpg, `redis.asyncio`, httpx, logging, and
-   system metrics. No custom exporter, sampler, or propagator code.
+   FastAPI, httpx, logging, and system metrics. Database and Redis clients
+   are not instrumented (see "Span budget" below). No custom exporter,
+   sampler, or propagator code.
 2. **Default off, env-only config.** A shared setup module is called at each
    process boundary described below,
    only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set;
@@ -116,11 +117,9 @@ allowlist before enabling export. Manual run spans permit only `run.id`,
 route-template, status and timing fields. IDs must not become metric labels.
 Operator resource attributes must also be documented as exported data.
 
-- SQLAlchemy/asyncpg: disable statement/parameter capture; no SQL text,
-  bind values or result content.
-- Redis (including async clients and pipelines): suppress command arguments,
-  keys and values. Redis command formatting can include cached content;
-  retain only a fixed command name and safe timing/status metadata.
+- Database and Redis clients are not instrumented. If they ever are, the
+  same rule holds: no SQL text, bind values, result content, Redis
+  arguments, keys or values.
 - FastAPI/httpx: suppress raw URL paths/query strings, credentials, request
   and response bodies and headers. Use route templates or reviewed fixed
   operation names, never user-supplied URLs as span names/attributes.
@@ -163,7 +162,12 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   health-probe defaults.
 - The FastAPI app is instrumented with `instrument_app` at construction:
   the class-patching `.instrument()` form only covers apps created after
-  the call, which would leave the API with no request spans.
+  the call, which would leave the API with no request spans. It emits one
+  server span per request: the ASGI per-message `send`/`receive` spans are
+  excluded. Each request starts from an empty trace context. Otherwise
+  asyncio can carry the previous request's context into the next request
+  on the same keep-alive connection (cpython#140947), and the instrumentor
+  would nest it under that request and ignore its `traceparent`.
 - `stage_dispatch` wraps the publish in a `PRODUCER` span (`<family>
   publish`, `messaging.system=postgresql`, `messaging.operation=publish`,
   `messaging.destination.name=<family>`) and injects `traceparent` while
@@ -215,11 +219,39 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   (`workflow.startup`, then outbound calls), with no unattributed time
   between the dispatch and the run.
 - `ScrubbingSpanExporter` enforces the export privacy boundary in-process
-  before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
-  returned document fields, HTTP query strings, **all span events**, and
+  before OTLP: raw URLs and query strings, captured headers, **all span
+  events**, and
   SDK-generated error descriptions never leave the process. A failing span
   keeps the ERROR status and the exception type; nothing else. Covered by
   `api/tests/unit/test_telemetry.py`.
+
+## Span budget
+
+Telemetry is meant to stay cheap enough to leave on. Measured on a
+rehearsal stack (mixed workflow load, concurrency 4, local OTLP sink,
+interleaved off/on phases), the first version, which also instrumented
+SQLAlchemy, asyncpg and Redis and kept the ASGI send/receive spans, exported
+about 45 spans per workflow execute. Across two measurement rounds it cut
+throughput 17-33% and added 31-38% to median request latency and 19-24% to
+CPU per request. Most of those spans carried nothing useful:
+
+- SQLAlchemy produced only a `connect` span per pool checkout. The async
+  engine is created through a function bound before instrumentation, so
+  statements were never traced.
+- asyncpg traced only `BEGIN`/`COMMIT`/`ROLLBACK`. SQLAlchemy runs
+  statements through prepared statements, which it does not wrap.
+- Redis traced each command individually.
+- ASGI emitted a span for every `send` and `receive` message.
+
+Without them a workflow execute exports about 10 spans: the request,
+dispatch, launch, start-up and run chain plus outbound calls. The measured
+cost fell to 5-11% of median latency, 3-8% of throughput and 6-13% of CPU
+per request across three rounds. About two thirds of that CPU is in the forked runs, which spend a
+few milliseconds each setting up a tracer and recording their spans.
+Tracing each SQL statement through SQLAlchemy instead adds about 45 spans
+per execute and cost 17% of throughput and 27% of median latency. Query cost
+and frequency come from `pg_stat_statements`. Add a client instrumentation
+only with a measurement showing its cost.
 
 ## Test seams
 

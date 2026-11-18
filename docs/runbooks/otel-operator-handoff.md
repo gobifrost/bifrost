@@ -8,9 +8,9 @@ you own collection, storage, retention, dashboards, and alerts.
 
 | Signal | Content | Notes |
 |---|---|---|
-| Traces | HTTP server spans (auto), DB/Redis/HTTP-client spans (auto), `run.<handler>` spans covering one dispatch (claim → routed or finished) with a `bifrost.queue.wait_s` attribute, a `workflow.run` span for each forked workflow run (opening with `workflow.startup`), and a `workflow.launch` span for each remote-launcher fork | No log bodies, no SQL text, no Redis args, no raw URL paths or queries: `http.target`/`http.url`/`url.full`/`url.path` are dropped at export; `http.route` (the template) remains |
+| Traces | HTTP server spans (auto, one per request), outbound HTTP-client spans (auto), `run.<handler>` spans covering one dispatch (claim → routed or finished) with a `bifrost.queue.wait_s` attribute, a `workflow.run` span for each forked workflow run (opening with `workflow.startup`), and a `workflow.launch` span for each remote-launcher fork | No database or Redis spans (query cost comes from `pg_stat_statements`), no log bodies, no raw URL paths or queries: `http.target`/`http.url`/`url.full`/`url.path` are dropped at export; `http.route` (the template) remains |
 | Error status | `ERROR` with the exception *type* only | Messages and stack traces never leave the process |
-| Span attributes | IDs only (`bifrost.execution.id`, `bifrost.workflow.id`, `bifrost.handler`, protocol/host/port/db metadata) | No user content, keys, tokens, or request/response bodies |
+| Span attributes | IDs only (`bifrost.execution.id`, `bifrost.workflow.id`, `bifrost.handler`, protocol/host/port metadata) | No user content, keys, tokens, or request/response bodies |
 | Logs | Unchanged plain text to your existing pipeline | Not exported, and no trace/span IDs are injected into records in v1: that needs a structured log format, which the design keeps out of scope |
 | Metrics | Request rate/duration (auto), runtime/system metrics, `bifrost.dispatch.started`, `bifrost.dispatch.duration`, `bifrost.dispatch.failed` | Dispatch metrics measure claim → hand-off, not workflow execution time (that lives in run records). No per-user/per-org cardinality beyond the handler name |
 
@@ -95,20 +95,16 @@ never filters.
    child.
 3. Trigger a failing run; confirm `workflow.run` has status `ERROR` with a
    bare exception-type description and no message, stack, or events.
-4. Confirm DB spans carry operation/host but no statement text, HTTP spans
-   carry route templates without query strings, and Redis spans carry the
-   command name without args.
+4. Confirm HTTP spans carry route templates without query strings, and
+   that an engine SDK call from a run nests under that run's
+   `workflow.run` rather than under an unrelated request.
 
 ## What we deliberately do not export
 
 - Exception messages, stack traces, or span events (rebuilt run spans
   never create them; the export scrubber strips them from automatic spans).
-- SQL text and parameters (`db.statement`, `db.query.text`,
-  `db.query.parameter.*`).
-- Redis command arguments (`db.statement`), `FT.SEARCH` queries
-  (`redis.search.query`), returned document fields
-  (`redis.search.xdoc_*`), and `FT.CREATE` schemas
-  (`redis.create_index.fields`). Index/command names and counts remain.
+- Database and Redis spans of any kind, so no SQL text, parameters or
+  cache contents.
 - Raw URLs entirely: `http.target`, `http.url`, `url.full`, `url.path`,
   `url.query`. Route templates (`http.route`) remain for grouping.
 - Captured request/response headers, if an operator enables header

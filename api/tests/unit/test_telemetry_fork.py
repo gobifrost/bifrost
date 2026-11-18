@@ -164,7 +164,7 @@ def test_child_buffers_spans_without_an_exporter(monkeypatch):
 
     with trace_api.get_tracer(__name__).start_as_current_span("child.http", context=_parent_context()) as span:
         span.set_attribute("bifrost.child", True)
-        span.set_attribute("db.statement", "SELECT token FROM sessions")
+        span.set_attribute("url.full", "https://host/oauth/token?code=secret")
     (wire,) = telemetry.take_child_spans()
     assert telemetry.take_child_spans() == []  # drained
     assert wire["name"] == "child.http" and wire["trace_id"] == _TRACE_ID
