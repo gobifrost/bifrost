@@ -317,8 +317,6 @@ async def test_a_deadlocked_link_counts_as_a_conflict_and_waits(setup, monkeypat
 
 @pytest.mark.asyncio
 async def test_the_oldest_grant_goes_first_across_connections(setup, monkeypatch):
-    import src.services.identity_provisioning.access_pass as access_pass
-
     session = setup["session"]
     other = IdentityProvider(
         organization_id=setup["connection"].organization_id,
@@ -338,7 +336,7 @@ async def test_the_oldest_grant_goes_first_across_connections(setup, monkeypatch
         await Provisioner(session, connection).replace_user(
             link, _record(link.user_name, name=renamed)
         )
-    monkeypatch.setattr(access_pass, "BATCH_LIMIT", 1)
+    monkeypatch.setattr("src.services.identity_provisioning.access_pass.BATCH_LIMIT", 1)
 
     await run_access_pass(session)
 

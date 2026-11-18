@@ -98,13 +98,15 @@ async def test_scim_user_and_group_lifecycle(e2e_client, platform_admin, db_sess
     unclaimed = {**entra_user, "userName": "pat@unclaimed.example", "externalId": "x",
                  "emails": [{"value": "pat@unclaimed.example", "primary": True}]}
     await _verify_domain_out_of_band(db_session, scim_connection["claim_id"])
-    assert e2e_client.post(f"{path}/Users", headers=scim, json=unclaimed).status_code == 400
+    refused = e2e_client.post(f"{path}/Users", headers=scim, json=unclaimed)
+    assert refused.status_code == 400
 
     created = e2e_client.post(f"{path}/Users", headers=scim, json=entra_user)
     body = _ok(created, 201)
     assert created.headers["location"].endswith(f"/Users/{body['id']}")
     assert body["active"] is True and body[ENTERPRISE]["department"] == "Support"
-    assert _ok(e2e_client.post(f"{path}/Users", headers=scim, json=entra_user), 409)["scimType"] == "uniqueness"
+    duplicate = e2e_client.post(f"{path}/Users", headers=scim, json=entra_user)
+    assert _ok(duplicate, 409)["scimType"] == "uniqueness"
 
     found = _ok(e2e_client.get(f"{path}/Users", headers=scim, params={"filter": f'userName eq "{email.upper()}"'}))
     assert [r["id"] for r in found["Resources"]] == [body["id"]]
@@ -155,7 +157,8 @@ async def test_scim_user_and_group_lifecycle(e2e_client, platform_admin, db_sess
         }))
         assert patched["active"] is False
 
-        assert e2e_client.delete(f"{path}/Users/{body['id']}", headers=new_scim).status_code == 204
+        deleted = e2e_client.delete(f"{path}/Users/{body['id']}", headers=new_scim)
+        assert deleted.status_code == 204
         db_session.expire_all()
         assert await db_session.get(User, user_id) is None
     finally:

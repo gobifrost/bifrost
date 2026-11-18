@@ -147,7 +147,7 @@ async def test_a_platform_admin_demotion_and_a_directory_deactivation_dont_deadl
             # would close a cycle and PostgreSQL would abort one side.
             await refuse_last_active_platform_admin_removal(directory, {user_id})
             await directory.commit()
-        await admin
+        await asyncio.gather(admin)
 
 
 @pytest.mark.asyncio
@@ -194,7 +194,7 @@ async def test_an_admin_and_a_directory_deactivating_one_user_dont_deadlock(
             # close a cycle and PostgreSQL would abort one side.
             await refuse_last_active_platform_admin_removal(directory, {user_id})
             await directory.commit()
-        await admin
+        await asyncio.gather(admin)
 
 
 async def _move(session, user_id, organization_id, *, bulk: bool) -> bool:
@@ -297,7 +297,7 @@ async def test_a_grant_waits_for_a_permission_edit_and_refuses_the_new_privilege
             grant = asyncio.create_task(apply_grant())
             assert await _waits(grant)
             await editor.commit()
-        await grant
+        await asyncio.gather(grant)
 
     async with async_session_factory() as session:
         assert (
@@ -435,6 +435,6 @@ async def test_a_mapping_waits_for_a_permission_edit_and_refuses_the_new_privile
             assert await _waits(mapping)
             await editor.commit()
         with pytest.raises(HTTPException) as raised:
-            await mapping
+            await asyncio.gather(mapping)
 
     assert raised.value.status_code == 422
