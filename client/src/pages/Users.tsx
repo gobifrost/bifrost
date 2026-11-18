@@ -76,7 +76,10 @@ import {
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
-import { IdentitySourceLabel } from "@/components/identity-providers/IdentityProviderBadges";
+import {
+	IdentitySourceLabel,
+	InactiveStatusBadge,
+} from "@/components/identity-providers/IdentityProviderBadges";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
@@ -119,7 +122,7 @@ function ProtectedBadge() {
 export function Users() {
 	const createUserButtonRef = useRef<HTMLButtonElement>(null);
 	const navigate = useNavigate();
-	const isNarrow = useMediaQuery("(max-width: 1023px)");
+	const isNarrow = useMediaQuery("(max-width: 1279px)");
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [showDisabled, setShowDisabled] = useState(false);
@@ -493,9 +496,7 @@ export function Users() {
 										</div>
 										<div className="mt-3 flex flex-wrap gap-2">
 											{!user.is_active ? (
-												<Badge variant="secondary">
-													Inactive
-												</Badge>
+												<InactiveStatusBadge user={user} />
 											) : (
 												<UserStatusBadge
 													status={
@@ -664,9 +665,6 @@ export function Users() {
 											/>
 										</button>
 									</DataTableHead>
-									<DataTableHead className="w-0 whitespace-nowrap">
-										Identity Source
-									</DataTableHead>
 									<DataTableHead
 										className="w-0 whitespace-nowrap"
 										aria-sort={
@@ -798,6 +796,13 @@ export function Users() {
 														</Tooltip>
 													)}
 												</div>
+												{user.identity_source && (
+													<div className="mt-0.5 text-xs text-muted-foreground">
+														<IdentitySourceLabel
+															user={user}
+														/>
+													</div>
+												)}
 											</DataTableCell>
 											<DataTableCell className="min-w-48 max-w-64 text-muted-foreground">
 												<UserEmailCell
@@ -806,9 +811,7 @@ export function Users() {
 											</DataTableCell>
 											<DataTableCell className="w-0 whitespace-nowrap">
 												{!user.is_active ? (
-													<Badge variant="secondary">
-														Inactive
-													</Badge>
+													<InactiveStatusBadge user={user} />
 												) : (
 													<UserStatusBadge
 														status={
@@ -817,9 +820,6 @@ export function Users() {
 														}
 													/>
 												)}
-											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap">
-												<IdentitySourceLabel user={user} />
 											</DataTableCell>
 											<DataTableCell className="w-0 whitespace-nowrap text-sm text-muted-foreground">
 												{user.created_at
@@ -845,7 +845,7 @@ export function Users() {
 							<DataTableFooter>
 								<DataTableRow>
 									<DataTableCell
-										colSpan={showSelection ? 9 : 8}
+										colSpan={showSelection ? 8 : 7}
 										className="p-0"
 									>
 										<ListPagination

@@ -579,8 +579,15 @@ async def identity_sources(
     session: AsyncSession, user_ids: list[UUID]
 ) -> dict[UUID, IdentitySource]:
     """``user_id -> IdentitySource`` for linked users."""
+    from src.services.identity_provisioning.access_pass import activating_user_ids
+
     if not user_ids:
         return {}
+    activating = set(
+        await session.scalars(
+            activating_user_ids().where(IdentityProviderUser.user_id.in_(user_ids))
+        )
+    )
     rows = await session.execute(
         select(
             IdentityProviderUser.user_id,
@@ -598,6 +605,7 @@ async def identity_sources(
             name=name,
             vendor=vendor,
             access_pending_since=pending_since,
+            activating=user_id in activating,
         )
         for user_id, idp_id, name, vendor, pending_since in rows.all()
     }

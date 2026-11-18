@@ -71,7 +71,9 @@ function Domains({ domains }: { domains: string[] }) {
  */
 export function IdentityProviders() {
 	const navigate = useNavigate();
-	const isNarrow = useMediaQuery("(max-width: 1023px)");
+	// The table needs about 950px, so it gives way to cards until the
+	// content area has that room (a 1280px window with the sidebar open).
+	const isNarrow = useMediaQuery("(max-width: 1279px)");
 	const authorization = useAuthorization();
 	const [search, setSearch] = useState("");
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
@@ -251,12 +253,7 @@ export function IdentityProviders() {
 								<DataTableHead className="min-w-48">
 									Name
 								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									Organization
-								</DataTableHead>
-								<DataTableHead className="w-0 whitespace-nowrap">
-									Provider
-								</DataTableHead>
+								<DataTableHead>Organization</DataTableHead>
 								<DataTableHead>Email Domains</DataTableHead>
 								<DataTableHead className="w-0 whitespace-nowrap">
 									Provisioning
@@ -288,12 +285,12 @@ export function IdentityProviders() {
 										>
 											{provider.name}
 										</Link>
+										<div className="text-xs text-muted-foreground">
+											{vendorLabel(provider.vendor)}
+										</div>
 									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
+									<DataTableCell>
 										{provider.organization_name}
-									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
-										{vendorLabel(provider.vendor)}
 									</DataTableCell>
 									<DataTableCell>
 										<Domains

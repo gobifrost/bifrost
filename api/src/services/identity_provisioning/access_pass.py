@@ -26,11 +26,17 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, exists, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database_retry import is_transaction_conflict
-from src.models.orm.identity_providers import IdentityProvider, IdentityProviderUser
+from src.models.orm.identity_providers import (
+    IdentityProvider,
+    IdentityProviderGroup,
+    IdentityProviderGroupMapping,
+    IdentityProviderGroupMember,
+    IdentityProviderUser,
+)
 from src.models.orm.organizations import Organization
 from src.models.orm.users import User
 from src.services.identity_provisioning.core import Provisioner
@@ -69,6 +75,34 @@ def _waiting(*columns: Any) -> Select[Any]:
             IdentityProviderUser.access_pending_since.is_not(None),
             IdentityProvider.is_enabled.is_(True),
             Organization.is_active.is_(True),
+        )
+    )
+
+
+def activating_user_ids() -> Select[Any]:
+    """Inactive users the next pass will activate: their link is active and
+    waiting, and their connection maps no groups or they're in a mapped one
+    (the pass's own ``desired_active``)."""
+    in_mapped_group = exists(
+        select(IdentityProviderGroupMember.group_id)
+        .join(
+            IdentityProviderGroupMapping,
+            IdentityProviderGroupMapping.group_id == IdentityProviderGroupMember.group_id,
+        )
+        .where(IdentityProviderGroupMember.identity_provider_user_id == IdentityProviderUser.id)
+    )
+    maps_groups = exists(
+        select(IdentityProviderGroupMapping.group_id)
+        .join(IdentityProviderGroup, IdentityProviderGroup.id == IdentityProviderGroupMapping.group_id)
+        .where(IdentityProviderGroup.identity_provider_id == IdentityProviderUser.identity_provider_id)
+    )
+    return (
+        _waiting(IdentityProviderUser.user_id)
+        .join(User, User.id == IdentityProviderUser.user_id)
+        .where(
+            IdentityProviderUser.active.is_(True),
+            User.is_active.is_(False),
+            or_(~maps_groups, in_mapped_group),
         )
     )
 

@@ -36,6 +36,29 @@ export function IdentitySourceLabel({
 	);
 }
 
+/**
+ * An inactive user's status: Activating while the access pass is about to
+ * turn on a new hire from an identity provider, Inactive otherwise.
+ */
+export function InactiveStatusBadge({
+	user,
+}: {
+	user: Pick<components["schemas"]["UserPublic"], "identity_source">;
+}) {
+	const source = user.identity_source;
+	return source?.activating ? (
+		<Badge
+			variant="info"
+			title={`${source.name} added this user; Bifrost activates them within about two minutes`}
+		>
+			<Clock aria-hidden="true" className="h-3.5 w-3.5" />
+			Activating
+		</Badge>
+	) : (
+		<Badge variant="secondary">Inactive</Badge>
+	);
+}
+
 /** Whether the connection accepts provisioning requests. */
 export function ProvisioningStatusBadge({ enabled }: { enabled: boolean }) {
 	return enabled ? (

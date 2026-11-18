@@ -21765,6 +21765,11 @@ export interface components {
             vendor: "entra" | "okta" | "jumpcloud" | "google" | "other";
             /** Access Pending Since */
             access_pending_since?: string | null;
+            /**
+             * Activating
+             * @default false
+             */
+            activating: boolean;
         };
         /** IdentityUpdate */
         IdentityUpdate: {

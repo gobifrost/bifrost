@@ -267,7 +267,8 @@ async def list_users(
 
     Returns ``(items, total)`` — the caller sets the ``X-Total-Count``
     header from ``total``. System users are excluded, inactive users are
-    excluded unless ``include_inactive`` is set, and each row carries its
+    excluded unless ``include_inactive`` is set (except those an identity
+    provider is activating), and each row carries its
     invite status. Defaults match the historical handler (legacy email
     order, unbounded when ``limit`` is None).
 
@@ -310,7 +311,13 @@ async def list_users(
         query = query.where(reach_filter)
 
     if not include_inactive:
-        query = query.where(UserORM.is_active.is_(True))
+        # A new hire an identity provider is activating is listed while
+        # the access pass applies it, so an admin sees them at once.
+        from src.services.identity_provisioning.access_pass import activating_user_ids
+
+        query = query.where(
+            or_(UserORM.is_active.is_(True), UserORM.id.in_(activating_user_ids()))
+        )
 
     if type:
         if type.lower() == "platform":

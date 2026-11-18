@@ -131,6 +131,7 @@ describe("identity providers service", () => {
 					identity_provider_id: "idp-1",
 					name: "Contoso Entra ID",
 					vendor: "entra",
+					activating: false,
 				},
 			}),
 		).toBe("Contoso Entra ID");

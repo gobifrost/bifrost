@@ -366,6 +366,35 @@ async def test_a_waiting_grant_shows_on_the_users_identity_source(setup):
 
 
 @pytest.mark.asyncio
+async def test_a_new_hire_waiting_for_activation_is_listed_as_activating(setup):
+    from shared.sdk_users import list_users
+    from tests.helpers.authorization import admin_caller
+
+    session = setup["session"]
+    group = await _mapped_group(setup)
+    provisioner = Provisioner(session, setup["connection"])
+    hire = await provisioner.create_user(_record(f"hire@{setup['domain']}"))
+    outsider = await provisioner.create_user(_record(f"outsider@{setup['domain']}"))
+    await provisioner.set_group_members(group, [hire.id])
+
+    async def listed():
+        items, _ = await list_users(session, admin_caller(), search=setup["domain"])
+        return {u.email.split("@")[0]: u for u in items}
+
+    users = await listed()
+    assert set(users) == {"hire"}
+    assert not users["hire"].is_active
+    source = users["hire"].identity_source
+    assert source is not None and source.activating
+
+    await run_access_pass(session)
+
+    source = (await listed())["hire"].identity_source
+    assert source is not None and not source.activating
+    assert (await _refreshed(session, outsider))[0].is_active is False
+
+
+@pytest.mark.asyncio
 async def test_a_disabled_connections_grants_wait(setup):
     session, connection = setup["session"], setup["connection"]
     group = await _mapped_group(setup)

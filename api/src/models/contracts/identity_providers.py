@@ -41,6 +41,8 @@ class IdentitySource(BaseModel):
     # Set while an activation, role grant or rename from the identity
     # provider waits for the access pass (applied within about two minutes).
     access_pending_since: datetime | None = None
+    # The user is inactive only until that pass activates them.
+    activating: bool = False
 
 
 class IdentityProviderTokenInfo(BaseModel):
