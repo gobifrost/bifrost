@@ -668,6 +668,17 @@ async def update_user(
         and db_user.id in await _platform_operator_holders(session, [db_user.id])
     ):
         raise UserServiceError(409, OPERATOR_MOVE_MESSAGE)
+    # Promotion moves the user to the provider organization.
+    destination = PROVIDER_ORG_ID if is_superuser else organization_id
+    if destination is not None and destination != db_user.organization_id:
+        from src.services.identity_providers import (
+            managed_user_move_message,
+            managing_connections,
+        )
+
+        managing = await managing_connections(session, [db_user.id])
+        if db_user.id in managing:
+            raise UserServiceError(409, managed_user_move_message(managing[db_user.id]))
     if is_superuser is False and db_user.organization_id is None and organization_id is None:
         from src.services.user_role_assignments import ADMIN_REMOVAL_MESSAGE
 
@@ -897,6 +908,15 @@ async def bulk_update_users(
         if request.operation == "move_org"
         else set()
     )
+    if request.operation == "move_org":
+        from src.services.identity_providers import (
+            managed_user_move_message,
+            managing_connections,
+        )
+
+        managing = await managing_connections(session, list(users_by_id))
+    else:
+        managing = {}
     actor_id = caller.principal.user_id
 
     current_roles: dict[UUID, set[UUID]] = {}
@@ -989,6 +1009,9 @@ async def bulk_update_users(
                 access_checks.note_power("userlifecycle.readwrite", target, subject=f"user:{uid}")
             if uid in operators and target != PROVIDER_ORG_ID:
                 fail(uid, OPERATOR_MOVE_MESSAGE)
+                continue
+            if uid in managing and target != u.organization_id:
+                fail(uid, managed_user_move_message(managing[uid]))
                 continue
             u.organization_id = target
             u.updated_at = datetime.now(timezone.utc)

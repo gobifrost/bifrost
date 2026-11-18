@@ -94,6 +94,50 @@ def test_patch_on_an_unknown_extension_is_kept_verbatim():
     assert scim.user_record(resource, unknown).attributes[CUSTOM] == {"costCenter": "43"}
 
 
+def test_a_replace_without_active_leaves_it_unsaid():
+    resource, unknown = scim.parse_user(
+        {"schemas": [scim.USER_SCHEMA], "userName": "pat@contoso.example"}
+    )
+
+    assert scim.user_record(resource, unknown).active is None
+
+
+def test_an_unsupported_verb_on_an_unknown_extension_changes_nothing():
+    link = _link(**{CUSTOM: {"costCenter": "42"}})
+
+    with pytest.raises(ScimError) as raised:
+        scim.apply_user_patch(
+            link, _patch({"op": "merge", "path": f"{CUSTOM}:costCenter", "value": "43"})
+        )
+
+    assert raised.value.status == 400
+    assert link.attributes[CUSTOM] == {"costCenter": "42"}
+
+
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"op": "replace", "path": f"{CUSTOM}:costCenter", "value": "43"},
+        {"op": "add", "value": {CUSTOM: {"costCenter": "43"}}},
+    ],
+)
+def test_a_patch_into_an_extension_that_is_not_an_object_is_invalid(operation):
+    with pytest.raises(ScimError) as raised:
+        scim.apply_user_patch(_link(**{CUSTOM: "not an object"}), _patch(operation))
+
+    assert raised.value.status == 400
+
+
+def test_a_patch_that_removes_the_user_name_is_invalid():
+    with pytest.raises(ScimError) as raised:
+        resource, unknown = scim.apply_user_patch(
+            _link(), _patch({"op": "remove", "path": "userName"})
+        )
+        scim.user_record(resource, unknown)
+
+    assert raised.value.status == 400
+
+
 def test_patch_cannot_change_the_id():
     with pytest.raises(ScimError) as raised:
         scim.apply_user_patch(_link(), _patch({"op": "replace", "path": "id", "value": "x"}))

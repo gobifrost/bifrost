@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Literal
+from typing import Literal, get_args
 from uuid import UUID
 
 from sqlalchemy import select
@@ -101,26 +101,25 @@ async def collect_expiry_notices(session: AsyncSession, now: datetime) -> list[E
     return notices
 
 
-def _titles(identity_provider_name: str) -> dict[Stage, str]:
-    return {
-        "expiring": f"SCIM Token Expiring: {identity_provider_name}",
-        "expired": f"SCIM Token Expired: {identity_provider_name}",
-    }
-
-
 def notification_title(notice: ExpiryNotice) -> str:
-    return _titles(notice.identity_provider_name)[notice.stage]
+    verb = "Expired" if notice.stage == "expired" else "Expiring"
+    return f"SCIM Token {verb}: {notice.identity_provider_name}"
 
 
-async def clear_expiry_notifications(identity_provider_name: str) -> None:
+def _notification_key(identity_provider_id: UUID, stage: Stage) -> dict[str, str]:
+    # Matched by connection id: connection names repeat across organizations.
+    return {"identity_provider_id": str(identity_provider_id), "token_stage": stage}
+
+
+async def clear_expiry_notifications(identity_provider_id: UUID) -> None:
     """Dismiss a connection's expiry warnings once a new token is issued."""
     from src.models.contracts.notifications import NotificationCategory
     from src.services.notification_service import get_notification_service
 
     service = get_notification_service()
-    for title in _titles(identity_provider_name).values():
-        existing = await service.find_admin_notification_by_title(
-            title=title, category=NotificationCategory.SYSTEM
+    for stage in get_args(Stage):
+        existing = await service.find_admin_notification_by_metadata(
+            _notification_key(identity_provider_id, stage), category=NotificationCategory.SYSTEM
         )
         if existing:
             await service.dismiss_notification(existing.id, user_id="system")
@@ -152,8 +151,9 @@ async def deliver_expiry_notices(notices: list[ExpiryNotice]) -> None:
                 stage=notice.stage,
             )
         title = notification_title(notice)
-        if await service.find_admin_notification_by_title(
-            title=title, category=NotificationCategory.SYSTEM
+        key = _notification_key(notice.identity_provider_id, notice.stage)
+        if await service.find_admin_notification_by_metadata(
+            key, category=NotificationCategory.SYSTEM
         ):
             continue
         when = notice.expires_at.strftime("%b %d, %Y")
@@ -172,7 +172,7 @@ async def deliver_expiry_notices(notices: list[ExpiryNotice]) -> None:
                     "action": "open_identity_provider",
                     "action_label": "Regenerate Token",
                     "action_url": f"/users/identity-providers/{notice.identity_provider_id}",
-                    "identity_provider_id": str(notice.identity_provider_id),
+                    **key,
                 },
             ),
             for_admins=True,

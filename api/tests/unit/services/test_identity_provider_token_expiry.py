@@ -2,6 +2,7 @@
 announced once."""
 
 from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -101,9 +102,9 @@ async def test_disabled_connections_are_skipped(db_session, connection):
     assert await _notices_for(db_session, connection) == []
 
 
-def _notice(*, announce: bool) -> ExpiryNotice:
+def _notice(*, announce: bool, identity_provider_id=None) -> ExpiryNotice:
     return ExpiryNotice(
-        identity_provider_id=uuid4(),
+        identity_provider_id=identity_provider_id or uuid4(),
         identity_provider_name="Contoso Entra",
         vendor="entra",
         organization_id=uuid4(),
@@ -115,38 +116,71 @@ def _notice(*, announce: bool) -> ExpiryNotice:
     )
 
 
+class _Notifications:
+    """The notification service's admin notifications, in memory."""
+
+    def __init__(self) -> None:
+        self.raised: dict[str, dict] = {}
+        self.dismissed: list[str] = []
+
+    async def find_admin_notification_by_metadata(self, metadata, category=None):
+        for notification_id, held in self.raised.items():
+            if all(held.get(key) == value for key, value in metadata.items()):
+                return SimpleNamespace(id=notification_id)
+        return None
+
+    async def create_notification(self, *, user_id, request, for_admins, initial_status):
+        self.raised[f"n{len(self.raised)}"] = request.metadata
+
+    async def dismiss_notification(self, notification_id, user_id):
+        self.dismissed.append(notification_id)
+        del self.raised[notification_id]
+
+
 @pytest.mark.asyncio
 async def test_delivery_announces_new_stages_and_keeps_one_notification():
-    service = AsyncMock()
-    service.find_admin_notification_by_title.side_effect = [None, object()]
+    service = _Notifications()
     emit = AsyncMock()
+    connection_id = uuid4()
     with (
         patch("src.services.notification_service.get_notification_service", return_value=service),
         patch("src.services.events.builtins.emit_identity_provider_token_expiry", emit),
     ):
-        await deliver_expiry_notices([_notice(announce=True), _notice(announce=False)])
+        await deliver_expiry_notices(
+            [
+                _notice(announce=True, identity_provider_id=connection_id),
+                _notice(announce=False, identity_provider_id=connection_id),
+            ]
+        )
 
     assert emit.await_count == 1
     assert emit.await_args.kwargs["stage"] == "expiring"
     # The second notice's notification already exists, so only one is raised.
-    assert service.create_notification.await_count == 1
-    metadata = service.create_notification.await_args.kwargs["request"].metadata
+    assert len(service.raised) == 1
+    (metadata,) = service.raised.values()
     assert metadata["action_url"].startswith("/users/identity-providers/")
 
 
 @pytest.mark.asyncio
-async def test_rotation_dismisses_outstanding_warnings():
+async def test_same_named_connections_keep_their_own_warnings():
     from src.services.identity_provisioning.expiry import clear_expiry_notifications
 
-    expired = AsyncMock()
-    expired.id = "n-expired"
-    service = AsyncMock()
-    service.find_admin_notification_by_title.side_effect = (
-        lambda title, category: expired if title.startswith("SCIM Token Expired") else None
-    )
-    with patch(
-        "src.services.notification_service.get_notification_service", return_value=service
+    service = _Notifications()
+    rotated, other = uuid4(), uuid4()
+    with (
+        patch("src.services.notification_service.get_notification_service", return_value=service),
+        patch("src.services.events.builtins.emit_identity_provider_token_expiry", AsyncMock()),
     ):
-        await clear_expiry_notifications("Contoso Entra")
+        # Two organizations name their connection the same.
+        await deliver_expiry_notices(
+            [
+                _notice(announce=True, identity_provider_id=rotated),
+                _notice(announce=True, identity_provider_id=other),
+            ]
+        )
+        assert len(service.raised) == 2
 
-    service.dismiss_notification.assert_awaited_once_with("n-expired", user_id="system")
+        await clear_expiry_notifications(rotated)
+
+    (remaining,) = service.raised.values()
+    assert remaining["identity_provider_id"] == str(other)

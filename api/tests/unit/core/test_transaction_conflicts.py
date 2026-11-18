@@ -118,3 +118,24 @@ async def test_a_scim_conflict_asks_the_identity_provider_to_retry():
     body = response.json()
     assert body["schemas"] == ["urn:ietf:params:scim:api:messages:2.0:Error"]
     assert body["status"] == "503"
+
+
+@pytest.mark.asyncio
+async def test_a_scim_create_that_loses_a_unique_race_is_a_uniqueness_conflict():
+    from src.routers.scim import _conflict, _duplicate, scim_error_response
+    from src.services.identity_provisioning.scim import ScimError
+
+    router = APIRouter(route_class=conflict_aware_route(_conflict, on_duplicate=_duplicate))
+
+    @router.post("/change")
+    async def change() -> None:
+        raise IntegrityError("INSERT", {}, asyncpg.exceptions.UniqueViolationError("dup"))
+
+    app = FastAPI()
+    app.include_router(router)
+    app.add_exception_handler(ScimError, lambda _request, exc: scim_error_response(exc))  # type: ignore[arg-type]
+
+    response = await _post(app)
+
+    assert response.status_code == 409
+    assert response.json()["scimType"] == "uniqueness"

@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from src.core.db_deps import DbSession
-from src.core.rate_limit import RateLimiter
+from src.core.rate_limit import RateLimiter, get_client_ip
 from src.core.transaction_conflicts import conflict_aware_route
 from src.models.orm.identity_providers import (
     IdentityProvider,
@@ -40,16 +40,24 @@ def _conflict() -> ScimError:
     )
 
 
+def _duplicate() -> ScimError:
+    # Another request created the same resource first.
+    return ScimError(409, "A resource with these unique attributes already exists", "uniqueness")
+
+
 router = APIRouter(
     prefix="/api/scim/v2/{identity_provider_id}",
     tags=["SCIM"],
     include_in_schema=False,
-    route_class=conflict_aware_route(_conflict),
+    route_class=conflict_aware_route(_conflict, on_duplicate=_duplicate),
 )
 
 # Generous: a large Entra or Okta cycle sends bursts of user and membership
-# changes. Applied per connection, before any database work.
+# changes. Applied per authenticated connection.
 _RATE_LIMIT = RateLimiter(max_requests=1200, window_seconds=60)
+# Requests with a bad token are limited per client, apart from the
+# connection's own quota, so they can't crowd out the identity provider.
+_AUTH_FAILURE_LIMIT = RateLimiter(max_requests=60, window_seconds=60)
 _MAX_BODY_BYTES = 1024 * 1024
 
 
@@ -80,17 +88,26 @@ async def scim_connection(
     try:
         connection_id = UUID(identity_provider_id)
     except ValueError:
-        raise ScimError(401, "Invalid or expired token") from None
+        connection_id = None
+    connection = (
+        await tokens.authenticate(db, connection_id, token.strip())
+        if connection_id is not None
+        else None
+    )
+    if connection is None or connection.source_type != "scim":
+        await _limit(_AUTH_FAILURE_LIMIT, "scim_auth_failure", get_client_ip(request))
+        raise ScimError(401, "Invalid or expired token")
+    await _limit(_RATE_LIMIT, "scim", str(connection.id))
+    return connection
+
+
+async def _limit(limiter: RateLimiter, endpoint: str, identifier: str) -> None:
     try:
-        await _RATE_LIMIT.check("scim", str(connection_id))
+        await limiter.check(endpoint, identifier)
     except HTTPException as exc:
         if exc.status_code == status.HTTP_429_TOO_MANY_REQUESTS:
             raise ScimError(429, "Too many requests") from None
         raise
-    connection = await tokens.authenticate(db, connection_id, token.strip())
-    if connection is None or connection.source_type != "scim":
-        raise ScimError(401, "Invalid or expired token")
-    return connection
 
 
 Connection = Annotated[IdentityProvider, Depends(scim_connection)]
@@ -108,12 +125,17 @@ async def _json_body(request: Request) -> Any:
         raise ScimError(413, "The request body is too large", "tooLarge")
     try:
         return json.loads(raw)
-    except ValueError:
+    # RecursionError: nesting deeper than the parser can follow.
+    except (ValueError, RecursionError):
         raise ScimError(400, "The request body is not valid JSON", "invalidSyntax") from None
 
 
+# Past any real directory; keeps the offset inside PostgreSQL's bigint.
+_MAX_START_INDEX = 2**31
+
+
 def _paging(start_index: int, count: int | None) -> tuple[int, int]:
-    start = max(start_index, 1)
+    start = min(max(start_index, 1), _MAX_START_INDEX)
     limit = scim.MAX_RESULTS if count is None else max(0, min(count, scim.MAX_RESULTS))
     return start, limit
 

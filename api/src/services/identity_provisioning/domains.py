@@ -144,12 +144,17 @@ async def verify_claim(session: AsyncSession, claim: OrganizationDomain) -> Orga
         await session.flush()
         return claim
     if claim.verified_at is None:
-        claim.verified_at = now
+        # Flush first: begin_nested flushes pending changes before its
+        # savepoint, and the claim must only be marked verified inside it.
+        await session.flush()
+        # Read before the savepoint: rolling it back expires the claim.
+        domain = claim.domain
         try:
             async with session.begin_nested():
+                claim.verified_at = now
                 await session.flush()
         except IntegrityError:
             raise DomainClaimError(
-                409, f"{claim.domain} is already verified by another organization"
+                409, f"{domain} is already verified by another organization"
             ) from None
     return claim

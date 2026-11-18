@@ -183,8 +183,12 @@ class IdentityProviderUser(Base):
         UniqueConstraint(
             "identity_provider_id", "external_id", name="uq_identity_provider_users_external_id"
         ),
-        UniqueConstraint(
-            "identity_provider_id", "user_name", name="uq_identity_provider_users_user_name"
+        # SCIM matches userName without regard to case, so uniqueness does too.
+        Index(
+            "uq_identity_provider_users_user_name_ci",
+            "identity_provider_id",
+            text("lower(user_name)"),
+            unique=True,
         ),
         Index(
             "ix_identity_provider_users_access_pending",

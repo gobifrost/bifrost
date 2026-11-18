@@ -141,9 +141,13 @@ def upgrade() -> None:
         sa.UniqueConstraint(
             "identity_provider_id", "external_id", name="uq_identity_provider_users_external_id"
         ),
-        sa.UniqueConstraint(
-            "identity_provider_id", "user_name", name="uq_identity_provider_users_user_name"
-        ),
+    )
+    # SCIM matches userName without regard to case, so uniqueness does too.
+    op.create_index(
+        "uq_identity_provider_users_user_name_ci",
+        "identity_provider_users",
+        ["identity_provider_id", sa.text("lower(user_name)")],
+        unique=True,
     )
 
     op.create_table(

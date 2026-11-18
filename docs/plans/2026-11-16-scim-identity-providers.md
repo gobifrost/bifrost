@@ -80,6 +80,8 @@ Out of scope for v1:
 | 10 | Provision / update / deprovision / group-membership changes emit platform events. |
 | 11 | External (portal) users: a per-connection **Provision as External users** setting, off by default. It applies to users the connection creates; an adopted user keeps their current setting. An External user (`User.is_external`) keeps the same org cascade but is not covered by `access_level="authenticated"` sharing; they see only what a role or an explicit grant gives them. |
 | 12 | The provisioning core is protocol-independent. Connections have `source_type` = `scim` \| `google_directory`. The UI is the same for both: groups seen, "N/N mapped", last sync, credential expiry. |
+| 13 | Privileged access is decided in Bifrost, never by a directory. A privileged user (`privileged_user_ids`, Platform Admin included) is not adopted; once a linked user becomes privileged, SCIM writes to them return `409` and the access pass leaves them alone. A role carrying privileged permissions can't be mapped, and is refused at grant time too (`identity_provider.role_grant_refused`) in case it gained them after it was mapped. |
+| 14 | A user stays in their connection's organization. Moving an IdP-managed user to another organization (directly, in bulk, or by promoting them to Platform Admin) returns `409`; remove them from the directory first. Otherwise the connection would control, and grant its mapped roles to, a user in another organization. |
 
 ## Data model
 

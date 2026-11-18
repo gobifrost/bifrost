@@ -247,3 +247,203 @@ async def test_deleting_a_user_who_signed_in_disables_and_unlinks(setup):
         )
         is None
     )
+
+
+async def _privileged_role(session) -> Role:
+    from src.models.orm.users import RolePermission
+
+    role = Role(name=f"Helpdesk Admin {uuid4().hex[:8]}", created_by="test")
+    session.add(role)
+    await session.flush()
+    session.add(RolePermission(role_id=role.id, permission="users.readwrite"))
+    await session.flush()
+    return role
+
+
+async def _make_privileged(session, user_id) -> None:
+    role = await _privileged_role(session)
+    session.add(UserRole(user_id=user_id, role_id=role.id, assigned_by="test"))
+    await session.flush()
+
+
+@pytest.mark.asyncio
+async def test_refuses_to_adopt_a_privileged_user(setup):
+    session = setup["session"]
+    email = f"admin@{setup['domain']}"
+    admin = User(email=email, organization_id=setup["organization"].id)
+    session.add(admin)
+    await session.flush()
+    await _make_privileged(session, admin.id)
+
+    with pytest.raises(ProvisioningError) as raised:
+        await Provisioner(session, setup["connection"]).create_user(_record(email))
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_a_user_who_becomes_privileged_is_left_to_bifrost(setup):
+    session, connection = setup["session"], setup["connection"]
+    provisioner = Provisioner(session, connection)
+    link = await provisioner.create_user(_record(f"promoted@{setup['domain']}"))
+    group = await provisioner.create_group(
+        GroupRecord(display_name="Techs", external_id="g1", attributes={}), [link.id]
+    )
+    await _map_and_apply(session, connection, group.id, [])
+    await _make_privileged(session, link.user_id)
+
+    with pytest.raises(ProvisioningError) as raised:
+        await provisioner.replace_user(link, _record(f"promoted@{setup['domain']}", active=False))
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+    with pytest.raises(ProvisioningError):
+        await provisioner.delete_user(link)
+
+    # Losing the mapped group would deactivate anyone else.
+    await provisioner.set_group_members(group, [])
+    assert (await _user(session, link)).is_active
+
+
+@pytest.mark.asyncio
+async def test_a_mapped_role_that_turns_privileged_is_not_granted(setup):
+    from src.models.orm.audit import AuditLog
+    from src.models.orm.users import RolePermission
+
+    session, connection, role = setup["session"], setup["connection"], setup["role"]
+    provisioner = Provisioner(session, connection)
+    first = await provisioner.create_user(_record(f"first@{setup['domain']}"))
+    group = await provisioner.create_group(
+        GroupRecord(display_name="Techs", external_id="g1", attributes={}), [first.id]
+    )
+    await _map_and_apply(session, connection, group.id, [role.id])
+    # The role gains a privileged permission after it was mapped.
+    session.add(RolePermission(role_id=role.id, permission="users.readwrite"))
+    await session.flush()
+
+    later = await provisioner.create_user(_record(f"later@{setup['domain']}"))
+    await provisioner.set_group_members(group, [first.id, later.id])
+    await Provisioner(session, connection).apply_pending([later.id])
+
+    assert (
+        await session.scalar(
+            select(UserRole).where(UserRole.user_id == later.user_id, UserRole.role_id == role.id)
+        )
+        is None
+    )
+    refusal = await session.scalar(
+        select(AuditLog).where(
+            AuditLog.action == "identity_provider.role_grant_refused",
+            AuditLog.resource_id == later.user_id,
+        )
+    )
+    assert refusal is not None
+
+
+@pytest.mark.asyncio
+async def test_emails_match_without_regard_to_case(setup):
+    session = setup["session"]
+    stored = f"Mixed.Case@{setup['domain']}"
+    session.add(User(email=stored, organization_id=setup["other"].id))
+    await session.flush()
+
+    # The same address in another org, spelled in lowercase, is still taken.
+    with pytest.raises(ProvisioningError) as raised:
+        await Provisioner(session, setup["connection"]).create_user(_record(stored.lower()))
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_user_names_are_unique_without_regard_to_case(setup):
+    session = setup["session"]
+    provisioner = Provisioner(session, setup["connection"])
+    await provisioner.create_user(_record(f"pat@{setup['domain']}"))
+    duplicate = UserRecord(
+        user_name=f"PAT@{setup['domain']}",
+        email=f"pat.other@{setup['domain']}",
+        external_id="ext-other",
+        display_name="Pat Other",
+        active=True,
+        attributes={},
+    )
+
+    with pytest.raises(ProvisioningError) as raised:
+        await provisioner.create_user(duplicate)
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_a_replace_that_omits_active_keeps_the_user_inactive(setup):
+    session = setup["session"]
+    provisioner = Provisioner(session, setup["connection"])
+    email = f"paused@{setup['domain']}"
+    link = await provisioner.create_user(_record(email, active=False))
+    record = _record(email)
+
+    await provisioner.replace_user(
+        link,
+        UserRecord(
+            user_name=record.user_name,
+            email=record.email,
+            external_id=record.external_id,
+            display_name=record.display_name,
+            active=None,
+            attributes=record.attributes,
+        ),
+    )
+    await Provisioner(session, setup["connection"]).apply_pending([link.id])
+
+    assert not link.active
+    assert not (await _user(session, link)).is_active
+
+
+@pytest.mark.asyncio
+async def test_a_managed_user_cannot_be_moved_to_another_org(setup):
+    from shared.sdk_users import UserServiceError, bulk_update_users, update_user
+    from src.models.contracts.users import BulkUserOperation
+    from tests.helpers.authorization import admin_caller
+
+    session = setup["session"]
+    link = await Provisioner(session, setup["connection"]).create_user(
+        _record(f"mover@{setup['domain']}")
+    )
+
+    with pytest.raises(UserServiceError) as raised:
+        await update_user(
+            session,
+            admin_caller(),
+            user_id=str(link.user_id),
+            fields={"organization_id"},
+            organization_id=setup["other"].id,
+        )
+    assert raised.value.status_code == 409
+    assert "Contoso Entra" in raised.value.detail
+
+    result = await bulk_update_users(
+        session,
+        admin_caller(),
+        BulkUserOperation(
+            user_ids=[link.user_id], operation="move_org", organization_id=setup["other"].id
+        ),
+    )
+    assert [failure.user_id for failure in result.failed] == [link.user_id]
+    assert (await _user(session, link)).organization_id == setup["organization"].id
+
+
+@pytest.mark.asyncio
+async def test_a_role_with_privileged_permissions_cannot_be_mapped(setup):
+    from fastapi import HTTPException
+
+    from src.services.identity_providers import set_group_mapping
+    from tests.helpers.authorization import admin_caller
+
+    session, connection = setup["session"], setup["connection"]
+    group = await Provisioner(session, connection).create_group(
+        GroupRecord(display_name="Admins", external_id="g-admins", attributes={}), []
+    )
+    role = await _privileged_role(session)
+
+    with pytest.raises(HTTPException) as raised:
+        await set_group_mapping(session, admin_caller(), connection.id, group.id, [role.id])
+
+    assert raised.value.status_code == 422

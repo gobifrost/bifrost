@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, useLocation } from "react-router-dom";
 
 import { renderWithProviders, screen } from "@/test-utils";
 import {
@@ -109,14 +109,26 @@ function provider(overrides: Partial<IdentityProvider> = {}): IdentityProvider {
 	};
 }
 
+/** Shows the current history entry's state, as a reload would see it. */
+function HistoryState() {
+	return (
+		<output aria-label="History state">
+			{JSON.stringify(useLocation().state)}
+		</output>
+	);
+}
+
 function renderPage(state?: unknown) {
 	return renderWithProviders(
-		<Routes>
-			<Route
-				path="/users/identity-providers/:identityProviderId"
-				element={<IdentityProviderDetail />}
-			/>
-		</Routes>,
+		<>
+			<Routes>
+				<Route
+					path="/users/identity-providers/:identityProviderId"
+					element={<IdentityProviderDetail />}
+				/>
+			</Routes>
+			<HistoryState />
+		</>,
 		{
 			initialEntries: [
 				{ pathname: "/users/identity-providers/idp-1", state },
@@ -171,6 +183,10 @@ describe("IdentityProviderDetail", () => {
 		});
 
 		expect(screen.getByText("bfidp_one_time")).toBeInTheDocument();
+		// A reload or back navigation can't show it again.
+		expect(screen.getByLabelText("History state")).toHaveTextContent(
+			"null",
+		);
 		await user.click(
 			screen.getByRole("button", { name: "Dismiss secret" }),
 		);

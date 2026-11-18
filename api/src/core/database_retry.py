@@ -95,6 +95,15 @@ def is_transaction_conflict(exc: BaseException) -> bool:
     return getattr(exc, "sqlstate", None) in _CONFLICT_SQLSTATES
 
 
+def is_unique_violation(exc: BaseException) -> bool:
+    """Whether a statement broke a unique constraint (unique_violation)."""
+    if isinstance(exc, DBAPIError):
+        if exc.orig is None:
+            return False
+        exc = exc.orig
+    return getattr(exc, "sqlstate", None) == "23505"
+
+
 def is_retryable_database_error(exc: BaseException) -> bool:
     """Whether running the same unit of work again can succeed.
 

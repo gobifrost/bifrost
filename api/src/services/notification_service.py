@@ -345,6 +345,34 @@ class NotificationService:
 
         return None
 
+    async def find_admin_notification_by_metadata(
+        self,
+        metadata: dict[str, str],
+        category: NotificationCategory | None = None,
+    ) -> NotificationPublic | None:
+        """Find an admin notification whose metadata holds every pair in
+        ``metadata``, for deduplicating by an id where titles can repeat."""
+        redis_client = await self._get_redis()
+        admin_ids: set[str] = await cast(
+            Awaitable[set[str]], redis_client.smembers(ADMIN_NOTIFICATIONS_KEY)
+        )
+
+        for notification_id in admin_ids:
+            data = await redis_client.get(f"{NOTIFICATION_KEY_PREFIX}{notification_id}")
+            if data is None:
+                continue
+            try:
+                notification = NotificationPublic.model_validate_json(data)
+            except Exception:
+                continue
+            held = notification.metadata or {}
+            if all(held.get(key) == value for key, value in metadata.items()) and (
+                category is None or notification.category == category
+            ):
+                return notification
+
+        return None
+
     # =========================================================================
     # Query Methods
     # =========================================================================

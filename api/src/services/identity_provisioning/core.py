@@ -7,7 +7,12 @@ Every command runs inside the caller's transaction. The rules it enforces:
   verified claim of its organization, and never touches a user whose home is
   another organization.
 - An existing user in the same organization is adopted by email; one in
-  another organization is a conflict.
+  another organization is a conflict. Emails and userNames match without
+  regard to case.
+- Privileged access is decided in Bifrost, never by a directory: a
+  privileged user is not adopted, changed or deleted (a conflict), the
+  access pass leaves one alone, and a role carrying privileged permissions
+  is never granted.
 - The identity provider owns name, email and active for linked users.
 - Roles come from group mappings. Provisioning only removes the role
   assignments it created (``UserRole.identity_provider_id``), so a manual
@@ -41,7 +46,7 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
 
-from sqlalchemy import delete, or_, select, text
+from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.builtin_roles import (
@@ -72,6 +77,11 @@ UNMAPPABLE_ROLE_IDS = frozenset(
     {*BASE_ROLE_IDS, PLATFORM_ADMIN_ROLE_ID, PLATFORM_OPERATOR_ROLE_ID, DECRYPTION_ROLE_ID}
 )
 
+PRIVILEGED_USER_MESSAGE = (
+    "This user holds privileged access, which is managed in Bifrost, not by an identity provider"
+)
+PRIVILEGED_ROLE_MESSAGE = "Roles with privileged permissions aren't granted by identity providers"
+
 
 class ProvisioningErrorKind(enum.Enum):
     CONFLICT = "conflict"
@@ -95,7 +105,9 @@ class UserRecord:
     email: str
     external_id: str | None
     display_name: str | None
-    active: bool
+    # None when the directory didn't say: a new user starts active, an
+    # existing one keeps what it had.
+    active: bool | None
     attributes: dict[str, Any]
 
 
@@ -236,17 +248,18 @@ class Provisioner:
         # Lock a user being adopted before deciding it may be.
         user = await self.session.scalar(
             select(User)
-            .where(User.email == email)
+            .where(func.lower(User.email) == email)
             .with_for_update()
             .execution_options(populate_existing=True)
         )
         created_user = user is None
+        link_active = record.active is not False
         if user is None:
             # Insert in the final state: a new user carries no token, so the
             # insert leaves the authority epoch alone where a later flip of
             # is_active would not. A new user has no groups yet, so once the
             # connection maps any group, the user waits for one.
-            active = record.active and not await self._mapped_group_roles()
+            active = link_active and not await self._mapped_group_roles()
             user = await self._new_user(email, record, active=active)
         else:
             await self._require_adoptable(user)
@@ -257,7 +270,7 @@ class Provisioner:
             external_id=record.external_id,
             user_name=record.user_name,
             display_name=record.display_name,
-            active=record.active,
+            active=link_active,
             attributes=record.attributes,
             created_user=created_user,
         )
@@ -278,11 +291,12 @@ class Provisioner:
         await self.hold_policy()
         await self._refuse_duplicate_link(record, exclude_link_id=link.id)
         user = await self._lock_user(link.user_id)
+        await self._refuse_privileged(user)
         email = normalize_email(record.email)
         if email != user.email:
             await self._require_claimed_domain(email)
             taken = await self.session.scalar(
-                select(User.id).where(User.email == email, User.id != user.id)
+                select(User.id).where(func.lower(User.email) == email, User.id != user.id)
             )
             if taken is not None:
                 raise ProvisioningError(
@@ -292,7 +306,8 @@ class Provisioner:
         link.external_id = record.external_id
         link.user_name = record.user_name
         link.display_name = record.display_name
-        link.active = record.active
+        if record.active is not None:
+            link.active = record.active
         link.attributes = record.attributes
         await self.session.flush()
         await self._reconcile_access([link.id], defer_grants=True)
@@ -303,6 +318,7 @@ class Provisioner:
     async def delete_user(self, link: IdentityProviderUser) -> None:
         await self.hold_policy()
         user = await self._lock_user(link.user_id)
+        await self._refuse_privileged(user)
         if link.created_user and user.last_login is None:
             from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 
@@ -510,9 +526,30 @@ class Provisioner:
         ).all():
             memberships.setdefault(link_id, set()).add(group_id)
 
+        privileged = await self._privileged(users.keys())
+
         now = datetime.now(timezone.utc)
         for link in sorted(links, key=lambda link: link.user_id):
             user = users[link.user_id]
+            if group is not None and group_changes and link.id in group_changes:
+                self.pending_events.append(
+                    (
+                        "user.groups_changed",
+                        {
+                            **self._user_event_body(user, link),
+                            "group": {
+                                "id": str(group.id),
+                                "display_name": group.display_name,
+                                "change": group_changes[link.id],
+                            },
+                        },
+                    )
+                )
+            if user.id in privileged:
+                # Membership is still recorded, but the directory decides
+                # nothing about a privileged user's access.
+                link.access_pending_since = None
+                continue
             mapped = memberships.get(link.id, set()) & mapped_roles.keys()
             desired_roles: set[UUID] = set()
             for group_id in mapped:
@@ -543,20 +580,6 @@ class Provisioner:
             await self.session.flush()
 
             self._mark_stale(user.id, change.roles_added | change.roles_removed)
-            if group is not None and group_changes and link.id in group_changes:
-                self.pending_events.append(
-                    (
-                        "user.groups_changed",
-                        {
-                            **self._user_event_body(user, link),
-                            "group": {
-                                "id": str(group.id),
-                                "display_name": group.display_name,
-                                "change": group_changes[link.id],
-                            },
-                        },
-                    )
-                )
             if change.activated or change.roles_added or change.roles_removed:
                 self.pending_events.append(
                     (
@@ -621,14 +644,23 @@ class Provisioner:
 
     async def _grant_roles(self, user: User, desired: set[UUID]) -> set[UUID]:
         from shared.account_guards import AccountGuardError
+        from src.services.authorization.privilege import is_privileged_principal
         from src.services.user_role_assignments import (
             RoleAssignmentError,
             default_boundaries,
             insert_assignment,
+            load_roles,
         )
 
         added: set[UUID] = set()
-        for role_id in sorted(await self._missing_roles(user, desired)):
+        missing = await self._missing_roles(user, desired)
+        # A mapped role checked at mapping time can gain privileged
+        # permissions later, so check again at every grant.
+        roles = await load_roles(self.session, missing)
+        for role_id in sorted(missing):
+            if role_id in roles and is_privileged_principal(roles[role_id].permissions):
+                await self._refuse_grant(user, role_id, PRIVILEGED_ROLE_MESSAGE)
+                continue
             try:
                 await insert_assignment(
                     self.session,
@@ -639,26 +671,28 @@ class Provisioner:
                     identity_provider_id=self.connection.id,
                 )
             except (RoleAssignmentError, AccountGuardError) as exc:
-                # A policy refusal, e.g. a privileged role mapped for an
-                # External user. Retrying can't change it, so skip the grant,
-                # keep provisioning the rest and record why; the next mapping
-                # or directory change tries again.
-                detail = exc.detail
-                logger.warning(
-                    "Identity provider %s skipped role %s for user %s: %s",
-                    self.connection.id,
-                    role_id,
-                    user.id,
-                    log_safe(detail),
-                )
-                await self._audit(
-                    "identity_provider.role_grant_refused",
-                    user,
-                    {"email": user.email, "role_id": str(role_id), "reason": detail},
-                )
+                # A policy refusal, e.g. a role an External user can't hold.
+                await self._refuse_grant(user, role_id, exc.detail)
                 continue
             added.add(role_id)
         return added
+
+    async def _refuse_grant(self, user: User, role_id: UUID, detail: str) -> None:
+        """Record a refused grant. Retrying can't change a policy refusal,
+        so provisioning skips it and carries on; the next mapping or
+        directory change tries again."""
+        logger.warning(
+            "Identity provider %s skipped role %s for user %s: %s",
+            self.connection.id,
+            role_id,
+            user.id,
+            log_safe(detail),
+        )
+        await self._audit(
+            "identity_provider.role_grant_refused",
+            user,
+            {"email": user.email, "role_id": str(role_id), "reason": detail},
+        )
 
     async def _remove_granted_roles(self, user_id: UUID, desired: set[UUID] | None) -> set[UUID]:
         """Delete assignments this connection made that are no longer wanted
@@ -756,6 +790,7 @@ class Provisioner:
             raise ProvisioningError(
                 ProvisioningErrorKind.CONFLICT, "This email belongs to a system account"
             )
+        await self._refuse_privileged(user)
         linked = await self.session.scalar(
             select(IdentityProviderUser.identity_provider_id).where(
                 IdentityProviderUser.user_id == user.id
@@ -767,10 +802,19 @@ class Provisioner:
                 "This user is already managed by an identity provider",
             )
 
+    async def _privileged(self, user_ids: Iterable[UUID]) -> frozenset[UUID]:
+        from src.services.authorization.enforce import privileged_user_ids
+
+        return await privileged_user_ids(self.session, list(user_ids))
+
+    async def _refuse_privileged(self, user: User) -> None:
+        if user.is_superuser or user.id in await self._privileged([user.id]):
+            raise ProvisioningError(ProvisioningErrorKind.CONFLICT, PRIVILEGED_USER_MESSAGE)
+
     async def _refuse_duplicate_link(
         self, record: UserRecord, *, exclude_link_id: UUID | None
     ) -> None:
-        clauses = [IdentityProviderUser.user_name == record.user_name]
+        clauses = [func.lower(IdentityProviderUser.user_name) == record.user_name.lower()]
         if record.external_id is not None:
             clauses.append(IdentityProviderUser.external_id == record.external_id)
         stmt = select(IdentityProviderUser.id).where(

@@ -191,6 +191,16 @@ def _patch_op_message(operations: list[dict[str, Any]]) -> dict[str, Any]:
     return {"schemas": [PATCH_SCHEMA], "Operations": operations}
 
 
+_PATCH_VERBS = frozenset({"add", "replace", "remove"})
+
+
+def _extension_object(unknown: dict[str, Any], schema: str) -> dict[str, Any]:
+    target = unknown.setdefault(schema, {})
+    if not isinstance(target, dict):
+        raise ScimError(400, f"The extension '{schema}' is not an object", "invalidValue")
+    return target
+
+
 def _apply_unknown_extension_ops(
     operations: list[dict[str, Any]], unknown: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -199,6 +209,10 @@ def _apply_unknown_extension_ops(
     remaining: list[dict[str, Any]] = []
     for op in operations:
         verb = str(op.get("op", "")).lower()
+        # Checked before any operation is applied: the model validates only
+        # the operations left for it.
+        if verb not in _PATCH_VERBS:
+            raise ScimError(400, f"Unsupported patch operation '{op.get('op')}'", "invalidSyntax")
         path = op.get("path")
         value = op.get("value")
         if isinstance(path, str) and path.startswith("urn:") and not any(
@@ -207,7 +221,7 @@ def _apply_unknown_extension_ops(
             schema, _, attribute = path.rpartition(":")
             if path in unknown or not schema:
                 schema, attribute = path, ""
-            target = unknown.setdefault(schema, {})
+            target = _extension_object(unknown, schema)
             if verb == "remove":
                 if attribute:
                     target.pop(attribute, None)
@@ -223,7 +237,7 @@ def _apply_unknown_extension_ops(
             for key, item in value.items():
                 if key.startswith("urn:") and key not in KNOWN_USER_SCHEMAS:
                     if isinstance(item, dict):
-                        unknown.setdefault(key, {}).update(item)
+                        _extension_object(unknown, key).update(item)
                 else:
                     known_value[key] = item
             if not known_value:
@@ -338,7 +352,7 @@ def _primary_email(resource: Any) -> str:
     )
     if chosen is not None:
         return str(chosen.value)
-    if "@" in resource.user_name:
+    if resource.user_name and "@" in resource.user_name:
         return resource.user_name
     raise ScimError(400, "The user needs an email address or an email userName", "invalidValue")
 
@@ -356,12 +370,14 @@ def _display_name(resource: Any) -> str | None:
 
 
 def user_record(resource: Any, unknown: dict[str, Any]) -> UserRecord:
+    if not resource.user_name:
+        raise ScimError(400, "userName is required", "invalidValue")
     return UserRecord(
         user_name=resource.user_name,
         email=_primary_email(resource),
         external_id=resource.external_id,
         display_name=_display_name(resource),
-        active=True if resource.active is None else bool(resource.active),
+        active=None if resource.active is None else bool(resource.active),
         attributes=_attributes(resource, unknown),
     )
 

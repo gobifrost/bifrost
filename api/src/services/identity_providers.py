@@ -49,8 +49,10 @@ from src.services.authorization.enforce import (
     require_operation,
     require_permission,
 )
+from src.services.authorization.privilege import is_privileged_principal
 from src.services.identity_provisioning import domains, tokens
 from src.services.identity_provisioning.core import UNMAPPABLE_ROLE_IDS, Provisioner
+from src.services.identity_provisioning.expiry import clear_expiry_notifications
 
 def scim_base_url(identity_provider_id: UUID) -> str:
     return f"{get_settings().public_url.rstrip('/')}/api/scim/v2/{identity_provider_id}"
@@ -371,9 +373,12 @@ async def delete_connection(
 
 async def rotate_token(
     session: AsyncSession, caller: Caller, identity_provider_id: UUID, lifetime_days: int
-) -> tuple[IdentityProviderTokenIssued, str]:
-    """Issue a new token; returns it with the connection's name, whose expiry
-    warnings the caller clears after committing."""
+) -> IdentityProviderTokenIssued:
+    """Issue a new token and dismiss the connection's expiry warnings.
+
+    The warnings are dismissed before the caller commits: if that fails,
+    nothing is saved and the old token still works. If the commit fails
+    afterwards, the next expiry check raises the warning again."""
     connection = await _connection(
         session, caller, identity_provider_id, operation="identityproviders.token.rotate"
     )
@@ -394,10 +399,10 @@ async def rotate_token(
     )
     info = _token_info(token)
     assert info is not None
-    issued = IdentityProviderTokenIssued(
+    await clear_expiry_notifications(connection.id)
+    return IdentityProviderTokenIssued(
         token=raw, info=info, previous_tokens_expire_at=previous_expiry
     )
-    return issued, connection.name
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +493,8 @@ async def _authorize_mapped_roles(
     missing = role_ids - roles.keys()
     if missing:
         raise HTTPException(422, f"Role {sorted(missing, key=str)[0]} not found")
+    if any(is_privileged_principal(role.permissions) for role in roles.values()):
+        raise HTTPException(422, "Roles with privileged permissions can't be mapped from a group")
     require_permission(caller, "roleassignments.readwrite", organization_id)
     reach = permitted_organizations(caller, "roleassignments.readwrite")
     boundaries = default_boundaries(organization_id)
@@ -512,11 +519,13 @@ async def set_group_mapping(
     connection = await _connection(
         session, caller, identity_provider_id, operation="identityproviders.groups.map"
     )
-    group = await _group(session, connection, group_id)
     wanted = set(role_ids)
     await _authorize_mapped_roles(session, caller, connection.organization_id, wanted)
     provisioner = Provisioner(session, connection)
+    # Read the group under the exclusive policy lock, which a group deletion
+    # also takes, so it can't vanish before the mapping is written.
     await provisioner.hold_policy(exclusive=True)
+    group = await _group(session, connection, group_id)
     mapping = await session.get(IdentityProviderGroupMapping, group.id)
     if mapping is None:
         session.add(
@@ -556,9 +565,9 @@ async def delete_group_mapping(
     connection = await _connection(
         session, caller, identity_provider_id, operation="identityproviders.groups.unmap"
     )
-    group = await _group(session, connection, group_id)
     provisioner = Provisioner(session, connection)
     await provisioner.hold_policy(exclusive=True)
+    group = await _group(session, connection, group_id)
     mapping = await session.get(IdentityProviderGroupMapping, group.id)
     if mapping is None:
         raise HTTPException(404, "This group is not mapped")
@@ -573,6 +582,30 @@ async def delete_group_mapping(
     )
     await provisioner.reconcile_all()
     return provisioner
+
+
+def managed_user_move_message(connection_name: str) -> str:
+    return (
+        f"This user is managed by the identity provider {connection_name}. "
+        "Remove them from the directory before moving them to another organization."
+    )
+
+
+async def managing_connections(session: AsyncSession, user_ids: list[UUID]) -> dict[UUID, str]:
+    """``user_id -> connection name`` for users an identity provider manages.
+
+    A linked user stays in their connection's organization: the connection
+    may only act on its own organization's users, so a move would hand it a
+    user (and grant its mapped roles) somewhere else.
+    """
+    if not user_ids:
+        return {}
+    rows = await session.execute(
+        select(IdentityProviderUser.user_id, IdentityProvider.name)
+        .join(IdentityProvider, IdentityProvider.id == IdentityProviderUser.identity_provider_id)
+        .where(IdentityProviderUser.user_id.in_(user_ids))
+    )
+    return {user_id: name for user_id, name in rows.all()}
 
 
 async def identity_sources(
@@ -595,8 +628,10 @@ async def identity_sources(
             IdentityProvider.name,
             IdentityProvider.vendor,
             IdentityProviderUser.access_pending_since,
+            IdentityProvider.is_enabled & Organization.is_active,
         )
         .join(IdentityProvider, IdentityProvider.id == IdentityProviderUser.identity_provider_id)
+        .join(Organization, Organization.id == IdentityProvider.organization_id)
         .where(IdentityProviderUser.user_id.in_(user_ids))
     )
     return {
@@ -604,9 +639,11 @@ async def identity_sources(
             identity_provider_id=idp_id,
             name=name,
             vendor=vendor,
-            access_pending_since=pending_since,
+            # Pending only while the pass will apply it: a disabled
+            # connection's or organization's changes wait for it to return.
+            access_pending_since=pending_since if applies else None,
             activating=user_id in activating,
         )
-        for user_id, idp_id, name, vendor, pending_since in rows.all()
+        for user_id, idp_id, name, vendor, pending_since, applies in rows.all()
     }
 

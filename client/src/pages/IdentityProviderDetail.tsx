@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { AlertCircle, ArrowLeft, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -100,11 +100,17 @@ export function IdentityProviderDetail() {
 				} | null
 			)?.issuedToken ?? null,
 		);
-	const dismissToken = () => {
-		setIssuedToken(null);
-		// Don't show the token again after a reload or back navigation.
-		navigate(location.pathname, { replace: true, state: null });
-	};
+	const hasTokenInHistory = Boolean(
+		(location.state as { issuedToken?: unknown } | null)?.issuedToken,
+	);
+	useEffect(() => {
+		// The token now lives only in this page's state: take it out of the
+		// history entry so a reload or back navigation can't show it again.
+		if (hasTokenInHistory) {
+			navigate(location.pathname, { replace: true, state: null });
+		}
+	}, [hasTokenInHistory, location.pathname, navigate]);
+	const dismissToken = () => setIssuedToken(null);
 
 	const provider = query.data;
 	if (query.isLoading) {
