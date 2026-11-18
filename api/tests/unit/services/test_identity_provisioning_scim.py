@@ -58,6 +58,14 @@ def test_entra_create_keeps_extensions_and_drops_the_password():
     assert "password" not in record.attributes
 
 
+def test_discovery_does_not_advertise_the_password_it_drops():
+    user = next(s for s in scim.schemas("https://bifrost.example") if s["id"] == scim.USER_SCHEMA)
+    names = {attribute["name"] for attribute in user["attributes"]}
+
+    assert "password" not in names
+    assert {"userName", "emails", "active"} <= names
+
+
 def test_user_without_email_or_email_username_is_refused():
     resource, unknown = scim.parse_user({"userName": "pat"})
 

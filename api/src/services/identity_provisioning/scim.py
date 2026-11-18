@@ -609,6 +609,13 @@ def schemas(base_url: str) -> list[dict[str, Any]]:
     result = []
     for model in (User, EnterpriseUser, Group):
         body = _dump(model.to_schema())
+        # Discovery lists only what Bifrost keeps; a password is dropped on
+        # arrival, and advertising it makes Entra's validator generate one.
+        body["attributes"] = [
+            attribute
+            for attribute in body["attributes"]
+            if attribute["name"] not in _NEVER_STORED
+        ]
         body["meta"] = {"resourceType": "Schema", "location": f"{base_url}/Schemas/{body['id']}"}
         result.append(body)
     return result
