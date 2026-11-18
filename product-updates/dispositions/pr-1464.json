@@ -6,10 +6,11 @@
   ],
   "reason": "New user-facing feature: SCIM provisioning and group-to-role mapping per organization.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1464",
-      "https://github.com/gobifrost/bifrost/issues/1463"
+      "https://github.com/gobifrost/bifrost/issues/1463",
+      "MTG-Thomas approved the highlight entry's exact text on 2026-11-18."
     ]
   }
 }
