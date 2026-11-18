@@ -1,0 +1,13 @@
+{
+  "key": "pr:1449",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine external capacity performance repair removes idle capability polling; no new feature or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1449",
+      "Current Product Updates authoring policy omits routine repairs and performance maintenance."
+    ]
+  }
+}

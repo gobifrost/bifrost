@@ -36,6 +36,10 @@ from src.services.work_dispatch import (
 logger = logging.getLogger(__name__)
 
 
+class _ProfileRefreshRequired(Exception):
+    """Unwind the admission transaction before refreshing the provider."""
+
+
 class ExternalWorkerPoolController(WorkerCapacityController):
     def __init__(self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile) -> None:
         super().__init__(settings, worker_form="external")
@@ -61,6 +65,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         )
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
+        if not self._profile_read:
+            raise _ProfileRefreshRequired
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
 
     def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
@@ -97,18 +103,14 @@ class ExternalWorkerPoolController(WorkerCapacityController):
     async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
         if self._profile_read:
             return await super().launch_for_demand(policy)
-        # An idle pass sized demand against the cached capabilities. If that
-        # copy is stale it may refuse a policy the provider now accepts, so
-        # read them and decide again. Anything reserved reads them before the
-        # first provider operation; a changed build fences those reservations.
+        # Plan with cached capabilities, but unwind the transaction at the
+        # first reservation. Provider I/O happens only after releasing the
+        # admission lock, then the normal planner rechecks demand and limits.
         try:
-            launched = await super().launch_for_demand(policy)
-        except CapacityProtocolError:
+            return await super().launch_for_demand(policy)
+        except (_ProfileRefreshRequired, CapacityProtocolError):
             await self._read_profile()
             return await super().launch_for_demand(policy)
-        if launched:
-            await self._read_profile()
-        return launched
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])

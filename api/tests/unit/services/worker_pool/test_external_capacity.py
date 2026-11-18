@@ -12,7 +12,7 @@ from uuid import UUID, uuid4
 import httpx
 import pytest
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
 from src.models.orm.execution_workers import ExecutionWorker
@@ -494,6 +494,39 @@ async def test_demand_reads_capabilities_before_the_first_provider_operation(db,
     assert len(capacity.provider.starts) == 1
 
 
+async def test_demand_refresh_releases_admission_lock_without_reserving(db, capacity, monkeypatch):
+    await _accept_pool_run()
+    read_profile = capacity.client.profile
+
+    async def inspect_then_read():
+        async with db.context() as session:
+            assert await session.scalar(
+                text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
+                {"key": claims.CAPACITY_LOCK},
+            )
+            assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
+        return await read_profile()
+
+    monkeypatch.setattr(capacity.client, "profile", inspect_then_read)
+    await capacity.pool.reconcile()
+    assert len(capacity.provider.starts) == 1
+
+
+async def test_first_demand_provider_outage_leaves_no_reservation(db, capacity, monkeypatch):
+    await _accept_pool_run()
+    read_profile = capacity.client.profile
+    monkeypatch.setattr(capacity.client, "profile", AsyncMock(side_effect=httpx.ConnectError("provider offline")))
+
+    with pytest.raises(httpx.ConnectError, match="provider offline"):
+        await capacity.pool.reconcile()
+
+    async with db.context() as session:
+        assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
+    monkeypatch.setattr(capacity.client, "profile", read_profile)
+    await capacity.pool.reconcile()
+    assert len(capacity.provider.starts) == 1
+
+
 async def test_held_resources_read_capabilities_every_pass(db, capacity):
     await _accept_pool_run()
     await capacity.pool.reconcile()
@@ -505,20 +538,46 @@ async def test_held_resources_read_capabilities_every_pass(db, capacity):
     assert _capability_reads(capacity.provider) == 2
 
 
-async def test_rollout_while_idle_fences_the_first_reservation(db, capacity):
+async def test_rollout_while_idle_reserves_current_build_without_stranded_cleanup(db, capacity):
     await capacity.pool.reconcile()
     capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
     await _accept_pool_run()
 
     await capacity.pool.reconcile()
 
-    assert capacity.provider.resources == {}
+    [resource] = capacity.provider.resources.values()
+    assert resource["worker_version"] == "next-worker"
+    assert capacity.provider.starts == [resource["worker_id"]]
     async with db.context() as session:
-        [old] = (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all()
-        assert (old.state, old.version, old.end_reason) == ("lost", "test-worker", "provider_version_changed")
+        [worker] = (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all()
+        assert (worker.state, worker.version, worker.end_reason) == ("starting", "next-worker", None)
+
+
+async def test_provider_shrink_while_idle_leaves_no_reservation_and_recovers(db, capacity):
+    await capacity.pool.reconcile()
+    original = capacity.provider.profile
+    capacity.provider.profile = original.model_copy(update={"memory_limit_bytes": GIB})
+    await _accept_pool_run()
+
+    with pytest.raises(CapacityProtocolError, match="fixed worker memory"):
+        await capacity.pool.reconcile()
+
+    async with db.context() as session:
+        assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
+    assert capacity.provider.resources == {}
+    capacity.provider.profile = original
+    await capacity.pool.reconcile()
+    assert len(capacity.provider.starts) == 1
+
+
+async def test_warm_minimum_refreshes_capabilities_before_reserving(db, capacity):
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
+    await _store_policy(db.sessions, replace(capacity.policy, warm_workers=1))
+    capacity.provider.requests.clear()
 
     await capacity.pool.reconcile()
 
+    assert capacity.provider.requests[0] == ("GET", "/v1/capabilities")
     [resource] = capacity.provider.resources.values()
     assert resource["worker_version"] == "next-worker"
     assert capacity.provider.starts == [resource["worker_id"]]
@@ -546,7 +605,8 @@ async def test_scope_change_while_idle_stops_before_any_provider_operation(db, c
         with pytest.raises(CapacityProtocolError, match="scope changed"):
             await capacity.pool.reconcile()
 
-    # The reservation stays in the original scope, unprepared, until an
-    # operator restores or drains the original provider, as before.
+    # A changed scope cannot create a reservation or reach worker endpoints.
+    async with db.context() as session:
+        assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
     assert capacity.provider.resources == {}
     assert {path for _method, path in capacity.provider.requests} == {"/v1/capabilities"}
