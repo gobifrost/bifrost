@@ -5,7 +5,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 import pytest_asyncio
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.identities import ensure_default_identity
@@ -68,6 +68,32 @@ async def test_an_org_identity_loads_with_its_kind_and_home(db_session: AsyncSes
     assert run_user.identity_kind == "org_default"
     assert run_user.home == org.id
     assert run_user.is_platform_admin is False
+
+
+async def test_a_run_user_reads_their_user_row_once(db_session: AsyncSession, async_engine) -> None:
+    """Identity and authorization context come from one read of the row."""
+    org = Organization(name=f"Explain Org {uuid4().hex[:8]}", created_by="explain-test")
+    db_session.add(org)
+    await db_session.flush()
+    await ensure_default_identity(db_session, org)
+    identity_id = (
+        await db_session.execute(
+            select(User.id).where(User.identity_kind == IdentityKind.ORG_DEFAULT, User.organization_id == org.id)
+        )
+    ).scalar_one()
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    event.listen(async_engine.sync_engine, "before_cursor_execute", record)
+    try:
+        run_user = await load_run_user(db_session, identity_id)
+    finally:
+        event.remove(async_engine.sync_engine, "before_cursor_execute", record)
+
+    assert run_user is not None and run_user.home == org.id
+    assert sum(" FROM users " in " ".join(s.split()) + " " for s in statements) == 1
 
 
 async def test_powers_follow_the_workflow_mode_and_grants(db_session: AsyncSession) -> None:

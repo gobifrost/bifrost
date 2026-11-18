@@ -509,6 +509,9 @@ class IssuedAccessToken:
     token: str
     expires_at: datetime
     claims: AccessTokenClaims
+    # The run's authority the claims were minted from, read in the same
+    # snapshot. A caller that needs it again reuses it instead of reloading.
+    authority: RuntimeAuthority
 
 
 @dataclass(frozen=True)
@@ -552,16 +555,15 @@ async def issue_access_token(subject: RuntimeSubject | HumanSubject) -> IssuedAc
         await db.connection(
             execution_options={"isolation_level": "REPEATABLE READ", "postgresql_readonly": True}
         )
-        claims = (
-            await _snapshot_human_claims(db, subject)
-            if isinstance(subject, HumanSubject)
-            else await _snapshot_claims(db, subject)
-        )
-    token = _encode_claims(claims)
-    expires_at = datetime.fromtimestamp(claims.exp, timezone.utc)
-    if isinstance(claims, HumanAccessTokenClaims):
-        return IssuedHumanAccessToken(token, expires_at, claims)
-    return IssuedAccessToken(token, expires_at, claims)
+        if isinstance(subject, HumanSubject):
+            human = await _snapshot_human_claims(db, subject)
+            return IssuedHumanAccessToken(
+                _encode_claims(human), datetime.fromtimestamp(human.exp, timezone.utc), human
+            )
+        claims, authority = await _snapshot_claims(db, subject)
+    return IssuedAccessToken(
+        _encode_claims(claims), datetime.fromtimestamp(claims.exp, timezone.utc), claims, authority
+    )
 
 
 async def _snapshot_human_claims(db: AsyncSession, subject: HumanSubject) -> HumanAccessTokenClaims:
@@ -653,7 +655,9 @@ async def redeem_run_refresh_token(payload: dict[str, Any]) -> IssuedAccessToken
     return await issue_access_token(RuntimeSubject(claims.credential_kind, claims.sub, claims.service_id))
 
 
-async def _snapshot_claims(db: AsyncSession, subject: RuntimeSubject) -> AccessTokenClaims:
+async def _snapshot_claims(
+    db: AsyncSession, subject: RuntimeSubject
+) -> tuple[AccessTokenClaims, RuntimeAuthority]:
     try:
         authority = await load_runtime_authority(
             db, subject.kind, subject.credential_id, service_id=subject.service_id
@@ -753,7 +757,7 @@ async def _snapshot_claims(db: AsyncSession, subject: RuntimeSubject) -> AccessT
     powers = authority.powers
     settings = get_settings()
     issued_at = _now()
-    return AccessTokenClaims(
+    claims = AccessTokenClaims(
         iss=settings.jwt_issuer,
         aud=settings.jwt_audience,
         iat=issued_at,
@@ -784,6 +788,7 @@ async def _snapshot_claims(db: AsyncSession, subject: RuntimeSubject) -> AccessT
             else ImpersonationClaims(by=authority.impersonated_by_user_id, sid=authority.impersonation_session_id)
         ),
     )
+    return claims, authority
 
 
 # --- Run credentials ---------------------------------------------------------------
@@ -795,13 +800,15 @@ class RunCredentials:
 
     ``refresh_token`` is None for the legacy format, whose refresh slot holds
     the access token itself; ``credential_version`` is what the run's row
-    records.
+    records. ``authority`` is the run's authority the claims were minted
+    from; None for the legacy format, which is signed without reading it.
     """
 
     access_token: str
     refresh_token: str | None
     expires_at: datetime
     credential_version: int | None
+    authority: RuntimeAuthority | None
 
 
 def credential_version_for(protocol: int) -> int | None:
@@ -821,10 +828,14 @@ async def issue_run_credentials(
     """
     if credential_version_for(protocol) is None:
         token, expires_at = _legacy_runtime_token(subject, lifetime_seconds=legacy_lifetime_seconds)
-        return RunCredentials(token, None, expires_at, None)
+        return RunCredentials(token, None, expires_at, None, None)
     issued = await issue_access_token(subject)
     return RunCredentials(
-        issued.token, issue_run_refresh_token(subject), issued.expires_at, CLAIMS_CREDENTIAL_VERSION
+        issued.token,
+        issue_run_refresh_token(subject),
+        issued.expires_at,
+        CLAIMS_CREDENTIAL_VERSION,
+        issued.authority,
     )
 
 
