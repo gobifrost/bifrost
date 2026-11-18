@@ -94,6 +94,18 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations, never Impersonate Users.",
         verbs={"impersonate": "Impersonate Users"},
     ),
+    "identityproviders": PermissionDomain(
+        title="Identity Providers",
+        area="Identity & Access",
+        description=(
+            "Identity provider connections that provision an organization's "
+            "users from an external directory (SCIM), their tokens, the "
+            "organization's verified email domains, and the mapping of "
+            "directory groups to roles. Mapping a group to a role also needs "
+            "Role Assignments for that role."
+        ),
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
+    ),
     "userlifecycle": PermissionDomain(
         title="User Lifecycle",
         area="Identity & Access",

@@ -370,6 +370,46 @@ SOLUTION_OPERATIONS = {
     ),
 }
 
+IDENTITY_PROVIDER_OPERATIONS = {
+    "identityproviders.domains.list": ("GET", "/api/identity-providers/domains", None, None, False),
+    "identityproviders.domains.create": ("POST", "/api/identity-providers/domains", None, None, False),
+    "identityproviders.domains.verify": (
+        "POST", "/api/identity-providers/domains/{claim_id}/verify", None, None, False,
+    ),
+    "identityproviders.domains.delete": (
+        "DELETE", "/api/identity-providers/domains/{claim_id}", None, None, False,
+    ),
+    "identityproviders.list": ("GET", "/api/identity-providers", None, None, False),
+    "identityproviders.create": ("POST", "/api/identity-providers", None, None, False),
+    "identityproviders.get": ("GET", "/api/identity-providers/{identity_provider_id}", None, None, False),
+    "identityproviders.update": (
+        "PATCH", "/api/identity-providers/{identity_provider_id}", None, None, False,
+    ),
+    "identityproviders.delete": (
+        "DELETE", "/api/identity-providers/{identity_provider_id}", None, None, False,
+    ),
+    "identityproviders.token.rotate": (
+        "POST", "/api/identity-providers/{identity_provider_id}/token", None, None, False,
+    ),
+    "identityproviders.groups.list": (
+        "GET", "/api/identity-providers/{identity_provider_id}/groups", None, None, False,
+    ),
+    "identityproviders.groups.map": (
+        "PUT",
+        "/api/identity-providers/{identity_provider_id}/groups/{group_id}/mapping",
+        None,
+        None,
+        False,
+    ),
+    "identityproviders.groups.unmap": (
+        "DELETE",
+        "/api/identity-providers/{identity_provider_id}/groups/{group_id}/mapping",
+        None,
+        None,
+        False,
+    ),
+}
+
 PRODUCT_UPDATES_OPERATIONS = {
     "productupdates.get": ("GET", "/api/product-updates", None, None, False),
     "productupdates.receipts.create": (
@@ -1202,6 +1242,7 @@ CANONICAL_OPERATIONS = {
     **PLATFORM_JOB_OPERATIONS,
     **SOLUTION_OPERATIONS,
     **PRODUCT_UPDATES_OPERATIONS,
+    **IDENTITY_PROVIDER_OPERATIONS,
     **ROLE_RESOURCE_ASSIGNMENT_OPERATIONS,
 }
 

@@ -182,6 +182,27 @@ IDENTITY_MANAGEMENT_MESSAGE = "Identities are managed from Identities"
 RESERVED_EMAIL_MESSAGE = "This email domain is reserved"
 
 
+async def _lock_user_row(session: AsyncSession, user: "UserORM") -> None:
+    """Lock the user and read it again, before deciding anything from it.
+
+    Taken before any guard locks a role, the order identity provisioning
+    uses (user, then roles), so the two can't deadlock. The reread means
+    authorization sees the user as a concurrent change (a move, say) left
+    them, not as first loaded.
+    """
+    from src.models import User as UserORM
+
+    locked = await session.scalar(
+        select(UserORM)
+        .where(UserORM.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
+    if locked is None:
+        # Deleted (by a directory, say) while this request waited.
+        raise UserServiceError(404, "User not found")
+
+
 def refuse_identity_management(user: "UserORM") -> None:
     """Identities aren't edited, deleted or bulk-changed as people."""
     from shared.identities import is_identity
@@ -235,11 +256,16 @@ async def _with_protection(session: AsyncSession, users: list) -> list["UserPubl
     from src.models import UserPublic
     from src.services.authorization.enforce import privileged_user_ids
 
-    privileged = await privileged_user_ids(session, [u.id for u in users])
+    from src.services.identity_providers import identity_sources
+
+    user_ids = [u.id for u in users]
+    privileged = await privileged_user_ids(session, user_ids)
+    sources = await identity_sources(session, user_ids)
     out: list[UserPublic] = []
     for u in users:
         public = UserPublic.model_validate(u)
         public.is_protected = u.id in privileged
+        public.identity_source = sources.get(u.id)
         out.append(public)
     return out
 
@@ -262,7 +288,8 @@ async def list_users(
 
     Returns ``(items, total)`` — the caller sets the ``X-Total-Count``
     header from ``total``. System users are excluded, inactive users are
-    excluded unless ``include_inactive`` is set, and each row carries its
+    excluded unless ``include_inactive`` is set (except those an identity
+    provider is activating), and each row carries its
     invite status. Defaults match the historical handler (legacy email
     order, unbounded when ``limit`` is None).
 
@@ -305,7 +332,13 @@ async def list_users(
         query = query.where(reach_filter)
 
     if not include_inactive:
-        query = query.where(UserORM.is_active.is_(True))
+        # A new hire an identity provider is activating is listed while
+        # the access pass applies it, so an admin sees them at once.
+        from src.services.identity_provisioning.access_pass import activating_user_ids
+
+        query = query.where(
+            or_(UserORM.is_active.is_(True), UserORM.id.in_(activating_user_ids()))
+        )
 
     if type:
         if type.lower() == "platform":
@@ -641,6 +674,7 @@ async def update_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be modified")
     refuse_identity_management(db_user)
+    await _lock_user_row(session, db_user)
     if email is not None:
         refuse_reserved_email(email)
     _authorize_update(
@@ -656,6 +690,24 @@ async def update_user(
         and db_user.id in await _platform_operator_holders(session, [db_user.id])
     ):
         raise UserServiceError(409, OPERATOR_MOVE_MESSAGE)
+    # Where the writes below leave the user: an explicit organization wins
+    # over promotion, which moves them to the provider organization.
+    destination = (
+        organization_id
+        if organization_id is not None
+        else PROVIDER_ORG_ID if is_superuser else db_user.organization_id
+    )
+    if destination != db_user.organization_id:
+        from src.services.identity_providers import (
+            managed_user_move_message,
+            managing_connections,
+        )
+
+        # Adoption links a user while holding the row lock taken above, so
+        # a link committed by then is seen and a later one sees the new org.
+        managing = await managing_connections(session, [db_user.id])
+        if db_user.id in managing:
+            raise UserServiceError(409, managed_user_move_message(managing[db_user.id]))
     if is_superuser is False and db_user.organization_id is None and organization_id is None:
         from src.services.user_role_assignments import ADMIN_REMOVAL_MESSAGE
 
@@ -785,6 +837,7 @@ async def delete_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be deleted")
     refuse_identity_management(db_user)
+    await _lock_user_row(session, db_user)
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
     require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]), db_user.organization_id)
 
@@ -877,7 +930,16 @@ async def bulk_update_users(
     succeeded: list[UUID] = []
     failed: list[BulkUserFailure] = []
 
-    rows = await session.execute(select(UserORM).where(UserORM.id.in_(request.user_ids)))
+    # Lock the users first, in id order: before any guard locks a role, as
+    # identity provisioning does, and before a move checks for a link, as
+    # adoption locks before linking.
+    rows = await session.execute(
+        select(UserORM)
+        .where(UserORM.id.in_(request.user_ids))
+        .order_by(UserORM.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     users_by_id = {u.id: u for u in rows.scalars().all()}
     held = await held_permissions_by_user(session, list(users_by_id))
     operators = (
@@ -885,6 +947,15 @@ async def bulk_update_users(
         if request.operation == "move_org"
         else set()
     )
+    if request.operation == "move_org":
+        from src.services.identity_providers import (
+            managed_user_move_message,
+            managing_connections,
+        )
+
+        managing = await managing_connections(session, list(users_by_id))
+    else:
+        managing = {}
     actor_id = caller.principal.user_id
 
     current_roles: dict[UUID, set[UUID]] = {}
@@ -977,6 +1048,9 @@ async def bulk_update_users(
                 access_checks.note_power("userlifecycle.readwrite", target, subject=f"user:{uid}")
             if uid in operators and target != PROVIDER_ORG_ID:
                 fail(uid, OPERATOR_MOVE_MESSAGE)
+                continue
+            if uid in managing and target != u.organization_id:
+                fail(uid, managed_user_move_message(managing[uid]))
                 continue
             u.organization_id = target
             u.updated_at = datetime.now(timezone.utc)

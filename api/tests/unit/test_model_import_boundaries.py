@@ -144,8 +144,10 @@ def test_contract_package_exports_are_lazy_and_resolve_public_symbols() -> None:
         "src.models.contracts.organizations",
     ]
     assert result["user_create_name"] == "UserCreate"
-    # users imports role_assignments for RoleUserSummary.boundaries.
+    # users imports role_assignments for RoleUserSummary.boundaries and
+    # identity_providers for UserPublic.identity_source.
     assert result["loaded_after_user"] == [
+        "src.models.contracts.identity_providers",
         "src.models.contracts.organizations",
         "src.models.contracts.role_assignments",
         "src.models.contracts.users",

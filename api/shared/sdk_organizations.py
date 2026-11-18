@@ -36,7 +36,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.log_safety import log_safe
@@ -352,6 +352,21 @@ async def delete_organization(
     org.is_active = False
     org.updated_at = datetime.now(timezone.utc)
 
+    # Release the organization's email-domain claims: a disabled organization
+    # must not keep another one from verifying a domain. Reactivating means
+    # verifying again, since control of the domain may have changed.
+    from src.models.orm.identity_providers import OrganizationDomain
+
+    released_domains = list(
+        (
+            await session.execute(
+                delete(OrganizationDomain)
+                .where(OrganizationDomain.organization_id == org_id)
+                .returning(OrganizationDomain.domain)
+            )
+        ).scalars()
+    )
+
     await session.flush()
 
     try:
@@ -367,6 +382,6 @@ async def delete_organization(
         "organization.delete",
         resource_type="organization",
         resource_id=org.id,
-        details={"name": deleted_name},
+        details={"name": deleted_name, "released_domains": released_domains},
     )
     return deleted_name

@@ -121,7 +121,7 @@ function matches(identity: Identity, search: string): boolean {
  */
 export function Identities() {
 	const navigate = useNavigate();
-	const isNarrow = useMediaQuery("(max-width: 1023px)");
+	const isNarrow = useMediaQuery("(max-width: 1279px)");
 	const authorization = useAuthorization();
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [search, setSearch] = useState("");

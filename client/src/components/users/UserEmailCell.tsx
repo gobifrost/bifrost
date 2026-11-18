@@ -42,7 +42,7 @@ export function UserEmailCell({
 			<Tooltip>
 				<TooltipTrigger asChild>
 					<span
-						className={`block min-w-0 flex-1 ${wrap ? "[overflow-wrap:anywhere]" : "truncate"}`}
+						className={`block min-w-0 flex-1 ${wrap ? "[overflow-wrap:anywhere]" : "truncate [contain:inline-size]"}`}
 					>
 						{email}
 					</span>

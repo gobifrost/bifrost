@@ -25,7 +25,7 @@ def test_every_observed_surface_is_classified_with_a_reason() -> None:
         "cli": 180,  # Includes solution git sources.
         "manifest": 16,
         "mcp": 101,  # Includes inline Execute Code.
-        "rest": 724,  # Includes App setup, four Solution-source routes, and bulk Organization tags.
+        "rest": 754,  # Includes App setup, four Solution-source routes, bulk Organization tags, and identity providers (13 admin + 17 SCIM).
         "sdk": 21,
     }
     for surface, rows in inventory["uncataloged"].items():

@@ -67,6 +67,16 @@ const Users = lazyWithReload(() =>
 const Identities = lazyWithReload(() =>
 	import("@/pages/Identities").then((m) => ({ default: m.Identities })),
 );
+const IdentityProviders = lazyWithReload(() =>
+	import("@/pages/IdentityProviders").then((m) => ({
+		default: m.IdentityProviders,
+	})),
+);
+const IdentityProviderDetail = lazyWithReload(() =>
+	import("@/pages/IdentityProviderDetail").then((m) => ({
+		default: m.IdentityProviderDetail,
+	})),
+);
 const UserAccessPage = lazyWithReload(() =>
 	import("@/pages/UserAccessPage").then((m) => ({
 		default: m.UserAccessPage,
@@ -587,6 +597,26 @@ const routeElements = (
 						requirePermission={{ permission: "users.read" }}
 					>
 						<Identities />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/identity-providers"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "identityproviders.read" }}
+					>
+						<IdentityProviders />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/identity-providers/:identityProviderId"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "identityproviders.read" }}
+					>
+						<IdentityProviderDetail />
 					</ProtectedRoute>
 				}
 			/>

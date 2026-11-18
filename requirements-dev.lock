@@ -987,7 +987,9 @@ distro==1.9.0 \
 dnspython==2.8.0 \
     --hash=sha256:01d9bbc4a2d76bf0db7c1f729812ded6d912bd318d3b1cf81d30c0f845dbf3af \
     --hash=sha256:181d3c6996452cb1189c4046c61599b84a5a86e099562ffde77d26984ff26d0f
-    # via email-validator
+    # via
+    #   bifrost-api (pyproject.toml)
+    #   email-validator
 docstring-parser==0.18.0 \
     --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
     --hash=sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b
@@ -995,7 +997,9 @@ docstring-parser==0.18.0 \
 email-validator==2.3.0 \
     --hash=sha256:80f13f623413e6b197ae73bb10bf4eb0908faf509ad8362c5edeb0be7fd450b4 \
     --hash=sha256:9fc05c37f2f6cf439ff414f8fc46d917929974a82244c20eb10231ba60c54426
-    # via bifrost-api (pyproject.toml)
+    # via
+    #   bifrost-api (pyproject.toml)
+    #   pydantic
 et-xmlfile==2.0.0 \
     --hash=sha256:7a91720bc756843502c3b7504c77b8fe44217c85c537d85037f0f536151b2caa \
     --hash=sha256:dab3f4764309081ce75662649be815c4c9081e88f0837825f90fd28317d4da54
@@ -1588,6 +1592,10 @@ keyring==25.7.0 \
     --hash=sha256:be4a0b195f149690c166e850609a477c532ddbfbaed96a404d4e43f8d5e2689f \
     --hash=sha256:fe01bd85eb3f8fb3dd0405defdeac9a5b4f6f0439edbb3149577f244a2e8245b
     # via bifrost-api (pyproject.toml)
+lark==1.3.1 \
+    --hash=sha256:b426a7a6d6d53189d318f2b6236ab5d6429eaf09259f1ca33eb716eed10d2905 \
+    --hash=sha256:c629b661023a014c37da873b4ff58a817398d12635d3bbb2c5a03be7fe5d1e12
+    # via scim2-models
 libcst==1.9.0 \
     --hash=sha256:02ee2dbdb5c218116f16a021350fc267a14be205b50d81c33f5d73857ab6fbf7 \
     --hash=sha256:03165a264653bb77f6a11b412ae09c08bdb0c25864f3b8d42b816ac64b9d4b9e \
@@ -2488,7 +2496,7 @@ pycparser==3.0 \
     --hash=sha256:600f49d217304a5902ac3c37e1281c9fe94e4d0489de643a9504c5cdfdfc6b29 \
     --hash=sha256:b727414169a36b7d524c1c3e31839a521725078d7b2ff038656844266160a992
     # via cffi
-pydantic==2.14.3 \
+pydantic[email]==2.14.3 \
     --hash=sha256:1054f237f4d4733e5a30e1e2333bd33a2004ab9ab1510bd053a9a31bb48e232d \
     --hash=sha256:3f7b347782ab7e4cf4c798496ae3a82787d9f21ec12676a9c564355eeef8daa8
     # via
@@ -2503,6 +2511,7 @@ pydantic==2.14.3 \
     #   pydantic-ai-slim
     #   pydantic-graph
     #   pydantic-settings
+    #   scim2-models
 pydantic-ai-harness==0.68.0 \
     --hash=sha256:b74d420a21e9cd3183eec83da63e86b8d86d53ad120fbe6e6255897819c03157 \
     --hash=sha256:be4a33b72694ce2f4975ce20801976c1c6e9ff58a9157facc93ae2fded654ee6
@@ -3257,6 +3266,21 @@ ruff==0.15.12 \
     --hash=sha256:f86f176e188e94d6bdbc09f09bfd9dc729059ad93d0e7390b5a73efe19f8861c \
     --hash=sha256:fb129f40f114f089ebe0ca56c0d251cf2061b17651d464bb6478dc01e69f11f5 \
     --hash=sha256:fe87510d000220aa1ed530d4448a7c696a0cae1213e5ec30e5874287b66557b5
+    # via bifrost-api (pyproject.toml)
+scim2-client==0.14.1 \
+    --hash=sha256:6f60caa7f3df6657a28885bd7b3dbbe5773ffb747bdc3cee0eaf35cb02452bc7 \
+    --hash=sha256:bf7c3f3cf9da7cb8e813eaf560cfeab8037f6c1b5ab81b56cf137d8f94d3b7cd
+    # via scim2-tester
+scim2-models==0.12.4 \
+    --hash=sha256:d219558358557a674e0a5b85f6d11cb2cd8cdf3182c4942df0956891be052e8e \
+    --hash=sha256:d3cfaafbe49d6daa61b63afe0f0536774e7543218eaa222164ccb95ecb8871aa
+    # via
+    #   bifrost-api (pyproject.toml)
+    #   scim2-client
+    #   scim2-tester
+scim2-tester==0.6.5 \
+    --hash=sha256:e31bf17eef9adda3dcb13932b055a0581b24ea129ce451831b25fe9bdd3ba2eb \
+    --hash=sha256:ee49ea896b63562cb466f913b66f35593428b38b691450ed10058245c83404c4
     # via bifrost-api (pyproject.toml)
 secretstorage==3.5.0 \
     --hash=sha256:0ce65888c0725fcb2c5bc0fdb8e5438eece02c523557ea40ce0703c266248137 \

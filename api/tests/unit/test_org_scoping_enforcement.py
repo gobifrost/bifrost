@@ -254,6 +254,11 @@ IDENTITY_MODELS: set[str] = {
     # A memory store is an owner boundary looked up by its user/organization
     # identity. It is never name-resolved through the org-to-global cascade.
     "MemoryStore",
+    # Identity provider connections and the organization's email-domain claims
+    # are looked up by id within their organization (or by verified domain),
+    # never resolved by name through the org-to-global cascade.
+    "IdentityProvider",
+    "OrganizationDomain",
 }
 
 
