@@ -265,9 +265,9 @@ connection.
 
 ## UI
 
-- Users view gains an **Identity Providers** tab. The list columns are Name,
-  Organization, Vendor, Verified Domains, Provisioning Status, Credential
-  Expiry, Users and Groups Mapped.
+- Users view gains an **Identity Providers** tab. The list columns are Name
+  (with the vendor beneath it), Organization, Email Domains, Provisioning,
+  Token Expiry, Users and Groups Mapped.
 - The detail page has:
   - an expiry banner (expired or within 14 days);
   - a provisioning card (status, Tenant URL with copy, token hint and expiry,
@@ -276,8 +276,10 @@ connection.
   - a group-mapping table (group → mapping status → roles; edit).
 - The edit dialog uses a left-hand section nav: General, Provisioning, Group
   Mapping.
-- The users list gains an Identity Source column in both the wide and narrow
-  layouts. Managed fields are locked on user detail.
+- The users list shows each user's identity source beneath their name, in
+  both the wide and narrow layouts. A new hire waiting for the access pass is
+  listed with an **Activating** status instead of Inactive. Managed fields are
+  locked on user detail.
 
 ## Phases
 
@@ -291,7 +293,7 @@ connection.
      headers, and the result goes in the docs. Proxy header trust stays out
      of scope: it isn't a standard, and every proxy does it differently.
 2. **UI:** list, detail and edit dialog, the domains card, the token reveal,
-   the mapping editor, and the Identity Source column; vitest plus one
+   the mapping editor, and the identity source label; vitest plus one
    Playwright happy path.
 3. **Credential expiry warnings (done):** an hourly scheduled task checks each
    enabled connection's current token. Superseded tokens are ignored, so the
