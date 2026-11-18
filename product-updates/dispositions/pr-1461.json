@@ -1,0 +1,14 @@
+{
+  "key": "pr:1461",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine generated-SDK error-reporting repair; existing modules remain unchanged until regenerated. No new feature or required customer upgrade action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1461",
+      "https://github.com/gobifrost/bifrost/issues/1458",
+      "Jack authorized the bounded repair and protected merge in the existing owner; routine repair omission follows docs/product-updates-authoring.md."
+    ]
+  }
+}
