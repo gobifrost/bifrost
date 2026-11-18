@@ -55,6 +55,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from shared.account_guards import share_lock_roles
 from shared.builtin_roles import (
     BASE_ROLE_IDS,
+    BUILTIN_ROLE_IDS,
     DECRYPTION_ROLE_ID,
     PLATFORM_ADMIN_ROLE_ID,
     PLATFORM_OPERATOR_ROLE_ID,
@@ -339,8 +340,11 @@ class Provisioner:
         await self.hold_policy()
         user = await self._lock_user(link.user_id)
         # Removing access is always the directory's call, privileged or not.
-        await self._revoke_only(user)
-        if link.created_user and user.last_login is None:
+        revoke_only = await self._revoke_only(user)
+        # Removing an account outright is for one nobody has used and that
+        # carries nothing Bifrost granted; a privileged one is unlinked and
+        # deactivated, through the account guards like any deactivation.
+        if link.created_user and user.last_login is None and not revoke_only:
             from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 
             body = self._user_event_body(user, link)
@@ -851,7 +855,14 @@ class Provisioner:
                 select(UserRole.role_id).where(UserRole.user_id.in_([u.id for u in users]))
             )
         )
-        await share_lock_roles(self.session, held | {u.base_role_id for u in users if u.base_role_id})
+        # Built-in roles are left out: their permissions can't be edited.
+        # One of them, Platform Admin, is locked for update by the last-admin
+        # guard a deactivation runs; a share lock taken here would have to be
+        # upgraded, and two deactivations at once would deadlock on it.
+        await share_lock_roles(
+            self.session,
+            (held | {u.base_role_id for u in users if u.base_role_id}) - BUILTIN_ROLE_IDS,
+        )
         privileged = await privileged_user_ids(self.session, [u.id for u in users])
         unmanaged: dict[UUID, str] = {}
         for user in users:

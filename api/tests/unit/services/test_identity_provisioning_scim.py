@@ -114,18 +114,21 @@ def test_an_unsupported_verb_on_an_unknown_extension_changes_nothing():
     assert link.attributes[CUSTOM] == {"costCenter": "42"}
 
 
-@pytest.mark.parametrize(
-    "operation",
-    [
-        {"op": "replace", "path": f"{CUSTOM}:costCenter", "value": "43"},
-        {"op": "add", "value": {CUSTOM: {"costCenter": "43"}}},
-    ],
-)
-def test_a_patch_into_an_extension_that_is_not_an_object_is_invalid(operation):
-    with pytest.raises(ScimError) as raised:
-        scim.apply_user_patch(_link(**{CUSTOM: "not an object"}), _patch(operation))
+def test_flattened_extension_attributes_are_filed_under_their_schema():
+    resource, unknown = scim.parse_user(
+        {
+            "schemas": [scim.USER_SCHEMA, ENTERPRISE],
+            "userName": "pat@contoso.example",
+            f"{ENTERPRISE}:department": "Support",
+            ENTERPRISE: {"employeeNumber": "42"},
+            f"{CUSTOM}:costCenter": "7",
+        }
+    )
+    record = scim.user_record(resource, unknown)
 
-    assert raised.value.status == 400
+    assert record.attributes[ENTERPRISE]["department"] == "Support"
+    assert record.attributes[ENTERPRISE]["employeeNumber"] == "42"
+    assert record.attributes[CUSTOM] == {"costCenter": "7"}
 
 
 @pytest.mark.parametrize(

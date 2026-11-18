@@ -100,6 +100,53 @@ async def _waits(task: asyncio.Task) -> bool:
     return not task.done()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bulk", [False, True])
+async def test_an_admin_and_a_directory_deactivating_one_user_dont_deadlock(
+    async_session_factory, committed, bulk
+):
+    from shared.account_guards import refuse_last_active_platform_admin_removal
+    from shared.sdk_users import bulk_update_users, update_user
+    from src.models.contracts.users import BulkUserOperation
+
+    async with async_session_factory() as session:
+        user = User(email=f"leaver@{committed['domain']}", organization_id=committed["organization_id"])
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+    async def deactivate() -> None:
+        async with async_session_factory() as session:
+            if bulk:
+                await bulk_update_users(
+                    session,
+                    admin_caller(),
+                    BulkUserOperation(user_ids=[user_id], operation="set_active", is_active=False),
+                )
+            else:
+                await update_user(
+                    session,
+                    admin_caller(),
+                    user_id=str(user_id),
+                    fields={"is_active"},
+                    is_active=False,
+                )
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as directory:
+            # What a directory deactivation does: lock the user, then run
+            # the last-admin guard, which locks Platform Admin for update.
+            await directory.execute(select(User.id).where(User.id == user_id).with_for_update())
+            admin = asyncio.create_task(deactivate())
+            assert await _waits(admin)
+            # Had the admin taken the role lock before the user, this would
+            # close a cycle and PostgreSQL would abort one side.
+            await refuse_last_active_platform_admin_removal(directory, {user_id})
+            await directory.commit()
+        await admin
+
+
 async def _move(session, user_id, organization_id, *, bulk: bool) -> bool:
     """Move the user as an administrator would; whether it was allowed."""
     from shared.sdk_users import UserServiceError, bulk_update_users, update_user

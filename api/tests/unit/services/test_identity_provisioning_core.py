@@ -308,6 +308,9 @@ async def test_a_user_who_becomes_privileged_can_only_lose_access(setup):
     assert not (await _user(session, link)).is_active
     assert link.access_pending_since is None
 
+    # A DELETE unlinks: the account was created by this connection and has
+    # never signed in, but it's privileged, so it isn't removed outright.
+    user_id = link.user_id
     await provisioner.delete_user(link)
     assert (
         await session.scalar(
@@ -315,6 +318,8 @@ async def test_a_user_who_becomes_privileged_can_only_lose_access(setup):
         )
         is None
     )
+    user = await session.get(User, user_id)
+    assert user is not None and not user.is_active
 
 
 @pytest.mark.asyncio

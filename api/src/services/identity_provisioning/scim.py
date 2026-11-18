@@ -122,14 +122,28 @@ def _from_scim_exception(exc: SCIMException) -> ScimError:
 def _split_unknown_extensions(
     body: dict[str, Any], known: frozenset[str]
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Separate extension objects Bifrost has no schema for."""
+    """Separate extension objects Bifrost has no schema for.
+
+    An attribute sent flattened, as ``"<schema URN>:<attribute>": value``
+    (Entra does this for custom extension attributes), is filed under its
+    schema like the nested form.
+    """
     kept: dict[str, Any] = {}
     unknown: dict[str, Any] = {}
     for key, value in body.items():
-        if key.startswith("urn:") and key not in known:
-            unknown[key] = _extension_value(key, value)
-        else:
+        if not key.startswith("urn:"):
             kept[key] = value
+        elif key in known:
+            # Merged with any of its attributes already filed flattened.
+            kept[key] = {**_extension_object(kept, key), **_extension_value(key, value)}
+        elif isinstance(value, dict):
+            _extension_object(unknown, key).update(value)
+        else:
+            schema, _, attribute = key.rpartition(":")
+            if not schema.startswith("urn:") or not attribute:
+                raise ScimError(400, f"A value for the extension '{key}' must be an object", "invalidValue")
+            target = kept if schema in known else unknown
+            _extension_object(target, schema)[attribute] = value
     if "schemas" in kept and isinstance(kept["schemas"], list):
         kept["schemas"] = [s for s in kept["schemas"] if s in known]
     return kept, unknown
