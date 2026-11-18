@@ -1,0 +1,14 @@
+{
+  "key": "pr:1462",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine GitHub disconnect transaction-lifetime repair restores expected behavior; no new feature, breaking contract, or customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1462",
+      "https://github.com/gobifrost/bifrost/issues/1459",
+      "Routine repair omitted under docs/product-updates-authoring.md Customer-Facing Selection."
+    ]
+  }
+}

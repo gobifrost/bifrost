@@ -1,0 +1,14 @@
+{
+  "key": "pr:1454",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Completes the SDK generation repair already classified in PR #1451; no separate announcement value or additional customer action.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1454",
+      "https://github.com/gobifrost/bifrost/pull/1451",
+      "Continuation of the approved #1452/#1453 SDK repair. Non-announcement disposition only; no release prose is authored."
+    ]
+  }
+}

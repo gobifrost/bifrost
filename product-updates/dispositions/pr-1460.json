@@ -1,0 +1,12 @@
+{
+  "key": "pr:1460",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine SDK generator correctness repair; no new feature or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1460"
+    ]
+  }
+}
