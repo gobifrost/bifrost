@@ -11,27 +11,24 @@ from src.services.identity_provisioning.scim import ScimError
 
 
 def _request(token: str) -> SimpleNamespace:
-    return SimpleNamespace(
-        headers={"authorization": f"Bearer {token}"},
-        client=SimpleNamespace(host="203.0.113.9"),
-    )
+    return SimpleNamespace(headers={"authorization": f"Bearer {token}"})
 
 
 @pytest.mark.asyncio
-async def test_a_bad_token_counts_against_the_client_not_the_connection():
+async def test_a_bad_token_counts_against_failures_not_the_connections_quota():
+    connection_id = str(uuid4())
     connection_quota, failure_quota = AsyncMock(), AsyncMock()
     with (
         patch.object(scim_router._RATE_LIMIT, "check", connection_quota),
         patch.object(scim_router._AUTH_FAILURE_LIMIT, "check", failure_quota),
         patch.object(scim_router.tokens, "authenticate", AsyncMock(return_value=None)),
-        patch.object(scim_router, "get_client_ip", return_value="203.0.113.9"),
     ):
         with pytest.raises(ScimError) as raised:
-            await scim_router.scim_connection(str(uuid4()), _request("bfidp_junk"), AsyncMock())
+            await scim_router.scim_connection(connection_id, _request("bfidp_junk"), AsyncMock())
 
     assert raised.value.status == 401
     connection_quota.assert_not_awaited()
-    failure_quota.assert_awaited_once_with("scim_auth_failure", "203.0.113.9")
+    failure_quota.assert_awaited_once_with("scim_auth_failure", connection_id)
 
 
 @pytest.mark.asyncio

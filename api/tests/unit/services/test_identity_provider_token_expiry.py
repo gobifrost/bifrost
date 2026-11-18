@@ -13,8 +13,9 @@ from src.models.orm.identity_providers import IdentityProvider, IdentityProvider
 from src.models.orm.organizations import Organization
 from src.services.identity_provisioning.expiry import (
     ExpiryNotice,
+    announce_expiry_events,
     collect_expiry_notices,
-    deliver_expiry_notices,
+    raise_expiry_notifications,
     token_stage,
 )
 
@@ -146,12 +147,12 @@ async def test_delivery_announces_new_stages_and_keeps_one_notification():
         patch("src.services.notification_service.get_notification_service", return_value=service),
         patch("src.services.events.builtins.emit_identity_provider_token_expiry", emit),
     ):
-        await deliver_expiry_notices(
-            [
-                _notice(announce=True, identity_provider_id=connection_id),
-                _notice(announce=False, identity_provider_id=connection_id),
-            ]
-        )
+        notices = [
+            _notice(announce=True, identity_provider_id=connection_id),
+            _notice(announce=False, identity_provider_id=connection_id),
+        ]
+        await raise_expiry_notifications(notices)
+        await announce_expiry_events(notices)
 
     assert emit.await_count == 1
     assert emit.await_args.kwargs["stage"] == "expiring"
@@ -172,7 +173,7 @@ async def test_same_named_connections_keep_their_own_warnings():
         patch("src.services.events.builtins.emit_identity_provider_token_expiry", AsyncMock()),
     ):
         # Two organizations name their connection the same.
-        await deliver_expiry_notices(
+        await raise_expiry_notifications(
             [
                 _notice(announce=True, identity_provider_id=rotated),
                 _notice(announce=True, identity_provider_id=other),

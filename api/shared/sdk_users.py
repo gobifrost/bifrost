@@ -668,14 +668,25 @@ async def update_user(
         and db_user.id in await _platform_operator_holders(session, [db_user.id])
     ):
         raise UserServiceError(409, OPERATOR_MOVE_MESSAGE)
-    # Promotion moves the user to the provider organization.
-    destination = PROVIDER_ORG_ID if is_superuser else organization_id
-    if destination is not None and destination != db_user.organization_id:
+    # Where the writes below leave the user: an explicit organization wins
+    # over promotion, which moves them to the provider organization.
+    destination = (
+        organization_id
+        if organization_id is not None
+        else PROVIDER_ORG_ID if is_superuser else db_user.organization_id
+    )
+    if destination != db_user.organization_id:
+        from src.models import User as UserORM
         from src.services.identity_providers import (
             managed_user_move_message,
             managing_connections,
         )
 
+        # Adoption links a user while holding this row lock, so a link
+        # committed by then is seen and a later one sees the new org.
+        await session.execute(
+            select(UserORM.id).where(UserORM.id == db_user.id).with_for_update()
+        )
         managing = await managing_connections(session, [db_user.id])
         if db_user.id in managing:
             raise UserServiceError(409, managed_user_move_message(managing[db_user.id]))
@@ -914,6 +925,14 @@ async def bulk_update_users(
             managing_connections,
         )
 
+        # Lock the users first, in id order, as adoption does before linking:
+        # a link committed by then is seen, and a later adoption sees the move.
+        await session.execute(
+            select(UserORM.id)
+            .where(UserORM.id.in_(list(users_by_id)))
+            .order_by(UserORM.id)
+            .with_for_update()
+        )
         managing = await managing_connections(session, list(users_by_id))
     else:
         managing = {}

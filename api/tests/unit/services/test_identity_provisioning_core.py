@@ -447,3 +447,81 @@ async def test_a_role_with_privileged_permissions_cannot_be_mapped(setup):
         await set_group_mapping(session, admin_caller(), connection.id, group.id, [role.id])
 
     assert raised.value.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_promotion_with_an_explicit_org_is_checked_at_that_org(setup):
+    from shared.sdk_users import UserServiceError, update_user
+    from tests.helpers.authorization import admin_caller
+
+    session = setup["session"]
+    link = await Provisioner(session, setup["connection"]).create_user(
+        _record(f"promoted@{setup['domain']}")
+    )
+
+    # The explicit organization wins over promotion's provider org.
+    with pytest.raises(UserServiceError) as raised:
+        await update_user(
+            session,
+            admin_caller(),
+            user_id=str(link.user_id),
+            fields={"is_superuser", "organization_id"},
+            is_superuser=True,
+            organization_id=setup["other"].id,
+        )
+
+    assert raised.value.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_refuses_to_guess_between_accounts_that_differ_in_case(setup):
+    session = setup["session"]
+    email = f"twin@{setup['domain']}"
+    session.add_all(
+        [
+            User(email=email, organization_id=setup["organization"].id),
+            User(email=email.upper(), organization_id=setup["organization"].id),
+        ]
+    )
+    await session.flush()
+
+    with pytest.raises(ProvisioningError) as raised:
+        await Provisioner(session, setup["connection"]).create_user(_record(email))
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+
+
+@pytest.mark.asyncio
+async def test_a_group_event_reports_the_user_as_the_change_leaves_them(setup):
+    session, connection = setup["session"], setup["connection"]
+    provisioner = Provisioner(session, connection)
+    link = await provisioner.create_user(_record(f"leaver@{setup['domain']}"))
+    group = await provisioner.create_group(
+        GroupRecord(display_name="Techs", external_id="g1", attributes={}), [link.id]
+    )
+    await _map_and_apply(session, connection, group.id, [])
+    provisioner.pending_events.clear()
+
+    await provisioner.set_group_members(group, [])
+
+    (event,) = [body for topic, body in provisioner.pending_events if topic == "user.groups_changed"]
+    assert event["group"]["change"] == "removed"
+    assert event["user"]["is_active"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_linked_user_outside_the_connections_org_is_left_alone(setup):
+    session = setup["session"]
+    provisioner = Provisioner(session, setup["connection"])
+    email = f"strayed@{setup['domain']}"
+    link = await provisioner.create_user(_record(email))
+    # Moves are refused; this guards the invariant if one happened anyway.
+    user = await _user(session, link)
+    user.organization_id = setup["other"].id
+    await session.flush()
+
+    with pytest.raises(ProvisioningError) as raised:
+        await provisioner.replace_user(link, _record(email, active=False))
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+    assert (await _user(session, link)).is_active

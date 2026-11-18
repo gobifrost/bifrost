@@ -18,7 +18,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import func, select
 
 from src.core.db_deps import DbSession
-from src.core.rate_limit import RateLimiter, get_client_ip
+from src.core.rate_limit import RateLimiter
 from src.core.transaction_conflicts import conflict_aware_route
 from src.models.orm.identity_providers import (
     IdentityProvider,
@@ -55,8 +55,9 @@ router = APIRouter(
 # Generous: a large Entra or Okta cycle sends bursts of user and membership
 # changes. Applied per authenticated connection.
 _RATE_LIMIT = RateLimiter(max_requests=1200, window_seconds=60)
-# Requests with a bad token are limited per client, apart from the
-# connection's own quota, so they can't crowd out the identity provider.
+# Requests with a bad token have their own quota per connection, so they
+# can't crowd out the identity provider's valid token. Keyed by the URL's
+# connection, not the client address: X-Forwarded-For is client-controlled.
 _AUTH_FAILURE_LIMIT = RateLimiter(max_requests=60, window_seconds=60)
 _MAX_BODY_BYTES = 1024 * 1024
 
@@ -95,7 +96,7 @@ async def scim_connection(
         else None
     )
     if connection is None or connection.source_type != "scim":
-        await _limit(_AUTH_FAILURE_LIMIT, "scim_auth_failure", get_client_ip(request))
+        await _limit(_AUTH_FAILURE_LIMIT, "scim_auth_failure", identity_provider_id)
         raise ScimError(401, "Invalid or expired token")
     await _limit(_RATE_LIMIT, "scim", str(connection.id))
     return connection
@@ -124,10 +125,29 @@ async def _json_body(request: Request) -> Any:
     if len(raw) > _MAX_BODY_BYTES:
         raise ScimError(413, "The request body is too large", "tooLarge")
     try:
-        return json.loads(raw)
+        body = json.loads(raw)
     # RecursionError: nesting deeper than the parser can follow.
     except (ValueError, RecursionError):
         raise ScimError(400, "The request body is not valid JSON", "invalidSyntax") from None
+    if _too_deep(body):
+        raise ScimError(400, "The request body is nested too deeply", "invalidSyntax")
+    return body
+
+
+# SCIM resources nest a few levels; the parsing and copying that follow
+# recurse, so refuse far deeper input here.
+_MAX_JSON_DEPTH = 32
+
+
+def _too_deep(value: Any) -> bool:
+    stack = [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if depth > _MAX_JSON_DEPTH:
+            return True
+        children = item.values() if isinstance(item, dict) else item if isinstance(item, list) else ()
+        stack.extend((child, depth + 1) for child in children)
+    return False
 
 
 # Past any real directory; keeps the offset inside PostgreSQL's bigint.

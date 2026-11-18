@@ -64,7 +64,7 @@ from src.models.orm.identity_providers import (
     IdentityProviderGroupRole,
     IdentityProviderUser,
 )
-from src.models.orm.users import User, UserRole
+from src.models.orm.users import Role, User, UserRole
 from src.services.audit_context import ActorContext
 from src.services.identity_provisioning.domains import email_domain, verified_domains
 
@@ -81,6 +81,7 @@ PRIVILEGED_USER_MESSAGE = (
     "This user holds privileged access, which is managed in Bifrost, not by an identity provider"
 )
 PRIVILEGED_ROLE_MESSAGE = "Roles with privileged permissions aren't granted by identity providers"
+OTHER_ORG_USER_MESSAGE = "This user no longer belongs to this connection's organization"
 
 
 class ProvisioningErrorKind(enum.Enum):
@@ -246,12 +247,24 @@ class Provisioner:
         await self._require_claimed_domain(email)
 
         # Lock a user being adopted before deciding it may be.
-        user = await self.session.scalar(
-            select(User)
-            .where(func.lower(User.email) == email)
-            .with_for_update()
-            .execution_options(populate_existing=True)
-        )
+        matches = (
+            await self.session.scalars(
+                select(User)
+                .where(func.lower(User.email) == email)
+                .order_by(User.id)
+                .with_for_update()
+                .execution_options(populate_existing=True)
+            )
+        ).all()
+        if len(matches) > 1:
+            # Accounts that differ only in letter case: adopting either
+            # would be a guess.
+            raise ProvisioningError(
+                ProvisioningErrorKind.CONFLICT,
+                "Several accounts share this email in different letter cases; "
+                "resolve them in Bifrost first",
+            )
+        user = matches[0] if matches else None
         created_user = user is None
         link_active = record.active is not False
         if user is None:
@@ -291,7 +304,7 @@ class Provisioner:
         await self.hold_policy()
         await self._refuse_duplicate_link(record, exclude_link_id=link.id)
         user = await self._lock_user(link.user_id)
-        await self._refuse_privileged(user)
+        await self._refuse_unmanaged(user)
         email = normalize_email(record.email)
         if email != user.email:
             await self._require_claimed_domain(email)
@@ -318,7 +331,7 @@ class Provisioner:
     async def delete_user(self, link: IdentityProviderUser) -> None:
         await self.hold_policy()
         user = await self._lock_user(link.user_id)
-        await self._refuse_privileged(user)
+        await self._refuse_unmanaged(user)
         if link.created_user and user.last_login is None:
             from shared.run_cancellation import cancel_unstarted_runs_for_deleted_user
 
@@ -526,11 +539,11 @@ class Provisioner:
         ).all():
             memberships.setdefault(link_id, set()).add(group_id)
 
-        privileged = await self._privileged(users.keys())
+        unmanaged = await self._unmanaged(users.values())
 
-        now = datetime.now(timezone.utc)
-        for link in sorted(links, key=lambda link: link.user_id):
-            user = users[link.user_id]
+        def queue_group_event(user: User, link: IdentityProviderUser) -> None:
+            # Built once the user's access is settled, so it reports the
+            # user as the change leaves them.
             if group is not None and group_changes and link.id in group_changes:
                 self.pending_events.append(
                     (
@@ -545,10 +558,15 @@ class Provisioner:
                         },
                     )
                 )
-            if user.id in privileged:
+
+        now = datetime.now(timezone.utc)
+        for link in sorted(links, key=lambda link: link.user_id):
+            user = users[link.user_id]
+            if user.id in unmanaged:
                 # Membership is still recorded, but the directory decides
-                # nothing about a privileged user's access.
+                # nothing about this user's access.
                 link.access_pending_since = None
+                queue_group_event(user, link)
                 continue
             mapped = memberships.get(link.id, set()) & mapped_roles.keys()
             desired_roles: set[UUID] = set()
@@ -580,6 +598,7 @@ class Provisioner:
             await self.session.flush()
 
             self._mark_stale(user.id, change.roles_added | change.roles_removed)
+            queue_group_event(user, link)
             if change.activated or change.roles_added or change.roles_removed:
                 self.pending_events.append(
                     (
@@ -655,7 +674,9 @@ class Provisioner:
         added: set[UUID] = set()
         missing = await self._missing_roles(user, desired)
         # A mapped role checked at mapping time can gain privileged
-        # permissions later, so check again at every grant.
+        # permissions later, so check again at every grant, under the lock
+        # a permission edit waits on.
+        await self._lock_roles_shared(missing)
         roles = await load_roles(self.session, missing)
         for role_id in sorted(missing):
             if role_id in roles and is_privileged_principal(roles[role_id].permissions):
@@ -790,7 +811,7 @@ class Provisioner:
             raise ProvisioningError(
                 ProvisioningErrorKind.CONFLICT, "This email belongs to a system account"
             )
-        await self._refuse_privileged(user)
+        await self._refuse_unmanaged(user)
         linked = await self.session.scalar(
             select(IdentityProviderUser.identity_provider_id).where(
                 IdentityProviderUser.user_id == user.id
@@ -802,14 +823,42 @@ class Provisioner:
                 "This user is already managed by an identity provider",
             )
 
-    async def _privileged(self, user_ids: Iterable[UUID]) -> frozenset[UUID]:
+    async def _lock_roles_shared(self, role_ids: Iterable[UUID]) -> None:
+        """Share-lock role rows before reading their permissions. A
+        permission edit locks its role for update first, so it waits for
+        this decision rather than changing the role under it."""
+        ids = set(role_ids)
+        if ids:
+            await self.session.execute(
+                select(Role.id).where(Role.id.in_(ids)).order_by(Role.id).with_for_update(read=True)
+            )
+
+    async def _unmanaged(self, users: Iterable[User]) -> dict[UUID, str]:
+        """``user_id -> reason`` for the locked ``users`` this connection must
+        leave alone: privileged ones, and any no longer in its organization
+        (moves are refused, so this only guards the invariant)."""
         from src.services.authorization.enforce import privileged_user_ids
 
-        return await privileged_user_ids(self.session, list(user_ids))
+        users = list(users)
+        held = set(
+            await self.session.scalars(
+                select(UserRole.role_id).where(UserRole.user_id.in_([u.id for u in users]))
+            )
+        )
+        await self._lock_roles_shared(held | {u.base_role_id for u in users if u.base_role_id})
+        privileged = await privileged_user_ids(self.session, [u.id for u in users])
+        unmanaged: dict[UUID, str] = {}
+        for user in users:
+            if user.organization_id != self.connection.organization_id:
+                unmanaged[user.id] = OTHER_ORG_USER_MESSAGE
+            elif user.is_superuser or user.id in privileged:
+                unmanaged[user.id] = PRIVILEGED_USER_MESSAGE
+        return unmanaged
 
-    async def _refuse_privileged(self, user: User) -> None:
-        if user.is_superuser or user.id in await self._privileged([user.id]):
-            raise ProvisioningError(ProvisioningErrorKind.CONFLICT, PRIVILEGED_USER_MESSAGE)
+    async def _refuse_unmanaged(self, user: User) -> None:
+        reason = (await self._unmanaged([user])).get(user.id)
+        if reason is not None:
+            raise ProvisioningError(ProvisioningErrorKind.CONFLICT, reason)
 
     async def _refuse_duplicate_link(
         self, record: UserRecord, *, exclude_link_id: UUID | None

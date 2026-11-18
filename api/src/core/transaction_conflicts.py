@@ -25,6 +25,21 @@ from src.core.database_retry import is_transaction_conflict, is_unique_violation
 logger = logging.getLogger(__name__)
 
 
+def _log(kind: str, request: Request, exc: Exception) -> None:
+    """Log what happened without the statement, its parameters or the key
+    values in PostgreSQL's message: those carry directory data."""
+    error = getattr(exc, "orig", None) or exc
+    cause = error.__cause__ or error
+    logger.warning(
+        "%s on %s %s; nothing was saved (sqlstate=%s, constraint=%s)",
+        kind,
+        request.method,
+        request.url.path,
+        getattr(error, "sqlstate", None),
+        getattr(cause, "constraint_name", None),
+    )
+
+
 def conflict_aware_route(
     on_conflict: Callable[[], Exception],
     *,
@@ -44,21 +59,11 @@ def conflict_aware_route(
                     return await handler(request)
                 except Exception as exc:
                     if on_duplicate is not None and is_unique_violation(exc):
-                        logger.warning(
-                            "Unique violation on %s %s; nothing was saved: %s",
-                            request.method,
-                            request.url.path,
-                            exc,
-                        )
+                        _log("Unique violation", request, exc)
                         raise on_duplicate() from None
                     if not is_transaction_conflict(exc):
                         raise
-                    logger.warning(
-                        "Transaction conflict on %s %s; nothing was saved: %s",
-                        request.method,
-                        request.url.path,
-                        exc,
-                    )
+                    _log("Transaction conflict", request, exc)
                     raise on_conflict() from None
 
             return route

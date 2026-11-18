@@ -53,6 +53,17 @@ async def current_token(
     )
 
 
+async def lock_tokens(session: AsyncSession, identity_provider_id: UUID) -> None:
+    """Serialize token changes for one connection on its row. Otherwise two
+    rotations at once each shorten only the tokens they can see, and both
+    new tokens keep their full lifetime."""
+    await session.execute(
+        select(IdentityProvider.id)
+        .where(IdentityProvider.id == identity_provider_id)
+        .with_for_update()
+    )
+
+
 async def issue_token(
     session: AsyncSession,
     connection: IdentityProvider,
@@ -63,12 +74,7 @@ async def issue_token(
     """Create a new token; earlier live tokens keep working for the overlap."""
     if lifetime_days not in ALLOWED_LIFETIME_DAYS:
         raise ValueError(f"lifetime_days must be one of {ALLOWED_LIFETIME_DAYS}")
-    # Rotations of one connection serialize here. Otherwise two at once
-    # each shorten only the tokens they can see, and both new tokens keep
-    # their full lifetime.
-    await session.execute(
-        select(IdentityProvider.id).where(IdentityProvider.id == connection.id).with_for_update()
-    )
+    await lock_tokens(session, connection.id)
     now = datetime.now(timezone.utc)
     overlap_end = now + ROTATION_OVERLAP
     await session.execute(

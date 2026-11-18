@@ -58,7 +58,19 @@ class ExpiryNotice:
 
 async def collect_expiry_notices(session: AsyncSession, now: datetime) -> list[ExpiryNotice]:
     """Each enabled connection whose current token needs attention. Marks
-    newly reached stages on the tokens; the caller commits, then delivers."""
+    newly reached stages on the tokens.
+
+    The caller raises the notifications, then commits, then announces the
+    events. The connection rows stay key-share locked until the commit, so
+    a rotation (which locks them for update) either lands before this reads
+    the tokens or waits until the warnings are up, then dismisses them.
+    """
+    await session.execute(
+        select(IdentityProvider.id)
+        .where(IdentityProvider.is_enabled.is_(True))
+        .order_by(IdentityProvider.id)
+        .with_for_update(key_share=True)
+    )
     rows = (
         await session.execute(
             select(IdentityProvider, IdentityProviderToken, Organization.name)
@@ -125,17 +137,11 @@ async def clear_expiry_notifications(identity_provider_id: UUID) -> None:
             await service.dismiss_notification(existing.id, user_id="system")
 
 
-async def deliver_expiry_notices(notices: list[ExpiryNotice]) -> None:
-    """Send events for new stages and keep admin notifications up."""
-    from src.models.contracts.notifications import (
-        NotificationCategory,
-        NotificationCreate,
-        NotificationStatus,
-    )
+async def announce_expiry_events(notices: list[ExpiryNotice]) -> None:
+    """Send an event for each newly reached stage, after the commit that
+    recorded it."""
     from src.services.events.builtins import emit_identity_provider_token_expiry
-    from src.services.notification_service import get_notification_service
 
-    service = get_notification_service()
     for notice in notices:
         if notice.announce:
             await emit_identity_provider_token_expiry(
@@ -150,6 +156,20 @@ async def deliver_expiry_notices(notices: list[ExpiryNotice]) -> None:
                 expires_at=notice.expires_at,
                 stage=notice.stage,
             )
+
+
+async def raise_expiry_notifications(notices: list[ExpiryNotice]) -> None:
+    """Keep one admin notification up per connection and stage (before the
+    commit; see :func:`collect_expiry_notices`)."""
+    from src.models.contracts.notifications import (
+        NotificationCategory,
+        NotificationCreate,
+        NotificationStatus,
+    )
+    from src.services.notification_service import get_notification_service
+
+    service = get_notification_service()
+    for notice in notices:
         title = notification_title(notice)
         key = _notification_key(notice.identity_provider_id, notice.stage)
         if await service.find_admin_notification_by_metadata(

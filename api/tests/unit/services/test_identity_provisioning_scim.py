@@ -128,6 +128,34 @@ def test_a_patch_into_an_extension_that_is_not_an_object_is_invalid(operation):
     assert raised.value.status == 400
 
 
+@pytest.mark.parametrize(
+    "operation",
+    [
+        {"op": "replace", "path": CUSTOM, "value": "not an object"},
+        {"op": "add", "value": {CUSTOM: "not an object"}},
+    ],
+)
+def test_a_whole_extension_value_must_be_an_object(operation):
+    with pytest.raises(ScimError) as raised:
+        scim.apply_user_patch(_link(**{CUSTOM: {"costCenter": "42"}}), _patch(operation))
+
+    assert raised.value.status == 400
+
+
+def test_a_body_nested_past_any_scim_resource_is_refused():
+    from src.routers.scim import _too_deep
+
+    shallow: dict = {"userName": "pat@contoso.example", "name": {"givenName": "Pat"}}
+    deep: dict = {}
+    level = deep
+    for _ in range(64):
+        level["x"] = {}
+        level = level["x"]
+
+    assert not _too_deep(shallow)
+    assert _too_deep(deep)
+
+
 def test_a_patch_that_removes_the_user_name_is_invalid():
     with pytest.raises(ScimError) as raised:
         resource, unknown = scim.apply_user_patch(

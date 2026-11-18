@@ -201,6 +201,12 @@ def _extension_object(unknown: dict[str, Any], schema: str) -> dict[str, Any]:
     return target
 
 
+def _extension_value(schema: str, value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ScimError(400, f"A value for the extension '{schema}' must be an object", "invalidValue")
+    return value
+
+
 def _apply_unknown_extension_ops(
     operations: list[dict[str, Any]], unknown: dict[str, Any]
 ) -> list[dict[str, Any]]:
@@ -229,15 +235,14 @@ def _apply_unknown_extension_ops(
                     unknown.pop(schema, None)
             elif attribute:
                 target[attribute] = value
-            elif isinstance(value, dict):
-                target.update(value)
+            else:
+                target.update(_extension_value(schema, value))
             continue
         if not path and isinstance(value, dict):
             known_value = {}
             for key, item in value.items():
                 if key.startswith("urn:") and key not in KNOWN_USER_SCHEMAS:
-                    if isinstance(item, dict):
-                        _extension_object(unknown, key).update(item)
+                    _extension_object(unknown, key).update(_extension_value(key, item))
                 else:
                     known_value[key] = item
             if not known_value:

@@ -1,0 +1,239 @@
+"""Identity provisioning against a concurrent transaction, with committed data.
+
+Each test holds a lock in one session, starts the competing change in
+another, checks that it waits, then lets the first commit and checks the
+second decides from the committed state.
+"""
+
+import asyncio
+from datetime import datetime, timezone
+from unittest.mock import AsyncMock, patch
+from uuid import uuid4
+
+import pytest
+import pytest_asyncio
+from sqlalchemy import delete, select
+
+from src.models.orm.identity_providers import (
+    IdentityProvider,
+    IdentityProviderGroupMapping,
+    IdentityProviderGroupRole,
+    IdentityProviderToken,
+    IdentityProviderUser,
+    OrganizationDomain,
+)
+from src.models.orm.organizations import Organization
+from src.models.orm.users import Role, RolePermission, User, UserRole
+from src.services.identity_provisioning.core import (
+    GroupRecord,
+    ProvisioningError,
+    ProvisioningErrorKind,
+    Provisioner,
+    UserRecord,
+)
+from tests.helpers.authorization import admin_caller
+
+# Long enough that a change which doesn't wait would have finished.
+_STILL_WAITING = 0.5
+
+
+def _record(email: str) -> UserRecord:
+    return UserRecord(
+        user_name=email,
+        email=email,
+        external_id=f"ext-{email}",
+        display_name="Pat Example",
+        active=True,
+        attributes={},
+    )
+
+
+@pytest_asyncio.fixture
+async def committed(async_session_factory):
+    suffix = uuid4().hex[:10]
+    domain = f"race-{suffix}.example"
+    async with async_session_factory() as session:
+        organization = Organization(name=f"Race {suffix}", created_by="test")
+        other = Organization(name=f"Elsewhere {suffix}", created_by="test")
+        session.add_all([organization, other])
+        await session.flush()
+        connection = IdentityProvider(
+            organization_id=organization.id,
+            name="Race Entra",
+            source_type="scim",
+            vendor="entra",
+            created_by="test",
+        )
+        role = Role(name=f"Race Tech {suffix}", created_by="test")
+        session.add_all(
+            [
+                connection,
+                role,
+                OrganizationDomain(
+                    organization_id=organization.id,
+                    domain=domain,
+                    verification_token="t",
+                    verified_at=datetime.now(timezone.utc),
+                    created_by="test",
+                ),
+            ]
+        )
+        await session.commit()
+    data = {
+        "domain": domain,
+        "organization_id": organization.id,
+        "other_id": other.id,
+        "connection_id": connection.id,
+        "role_id": role.id,
+    }
+    yield data
+    from src.models.orm.audit import AuditLog
+
+    organization_ids = [organization.id, other.id]
+    async with async_session_factory() as session:
+        await session.execute(delete(User).where(User.email.like(f"%@{domain}")))
+        await session.execute(delete(Role).where(Role.id == role.id))
+        await session.execute(delete(AuditLog).where(AuditLog.organization_id.in_(organization_ids)))
+        await session.execute(delete(Organization).where(Organization.id.in_(organization_ids)))
+        await session.commit()
+
+
+async def _waits(task: asyncio.Task) -> bool:
+    await asyncio.sleep(_STILL_WAITING)
+    return not task.done()
+
+
+@pytest.mark.asyncio
+async def test_adoption_after_a_committed_move_is_refused(async_session_factory, committed):
+    from shared.sdk_users import update_user
+
+    email = f"mover@{committed['domain']}"
+    async with async_session_factory() as session:
+        user = User(email=email, organization_id=committed["organization_id"])
+        session.add(user)
+        await session.commit()
+        user_id = user.id
+
+    async def adopt() -> None:
+        async with async_session_factory() as session:
+            connection = await session.get(IdentityProvider, committed["connection_id"])
+            assert connection is not None
+            await Provisioner(session, connection).create_user(_record(email))
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as mover:
+            await update_user(
+                mover,
+                admin_caller(),
+                user_id=str(user_id),
+                fields={"organization_id"},
+                organization_id=committed["other_id"],
+            )
+            adoption = asyncio.create_task(adopt())
+            assert await _waits(adoption)
+            await mover.commit()
+        with pytest.raises(ProvisioningError) as raised:
+            await adoption
+
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+    async with async_session_factory() as session:
+        assert (
+            await session.scalar(
+                select(IdentityProviderUser.id).where(IdentityProviderUser.user_id == user_id)
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_a_grant_waits_for_a_permission_edit_and_refuses_the_new_privilege(
+    async_session_factory, committed
+):
+    from shared.account_guards import _lock_roles
+
+    async with async_session_factory() as session:
+        connection = await session.get(IdentityProvider, committed["connection_id"])
+        assert connection is not None
+        provisioner = Provisioner(session, connection)
+        group = await provisioner.create_group(
+            GroupRecord(display_name="Techs", external_id="g-race", attributes={}), []
+        )
+        session.add(IdentityProviderGroupMapping(group_id=group.id, created_by="test"))
+        await session.flush()
+        session.add(IdentityProviderGroupRole(group_id=group.id, role_id=committed["role_id"]))
+        await session.flush()
+        link = await provisioner.create_user(_record(f"hire@{committed['domain']}"))
+        await provisioner.set_group_members(group, [link.id])
+        await session.commit()
+        link_id, user_id = link.id, link.user_id
+
+    async def apply_grant() -> None:
+        async with async_session_factory() as session:
+            connection = await session.get(IdentityProvider, committed["connection_id"])
+            assert connection is not None
+            await Provisioner(session, connection).apply_pending([link_id])
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as editor:
+            # What a permission edit does: lock the role, then change it.
+            await _lock_roles(editor, {committed["role_id"]})
+            editor.add(RolePermission(role_id=committed["role_id"], permission="users.readwrite"))
+            await editor.flush()
+            grant = asyncio.create_task(apply_grant())
+            assert await _waits(grant)
+            await editor.commit()
+        await grant
+
+    async with async_session_factory() as session:
+        assert (
+            await session.scalar(
+                select(UserRole.role_id).where(
+                    UserRole.user_id == user_id, UserRole.role_id == committed["role_id"]
+                )
+            )
+            is None
+        )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_rotations_leave_one_full_lifetime_token(
+    async_session_factory, committed
+):
+    from src.services.identity_providers import rotate_token
+
+    async def rotate(session):
+        with patch(
+            "src.services.identity_providers.clear_expiry_notifications", AsyncMock()
+        ):
+            return await rotate_token(session, admin_caller(), committed["connection_id"], 365)
+
+    async def second_rotation():
+        async with async_session_factory() as session:
+            issued = await rotate(session)
+            await session.commit()
+            return issued
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as session:
+            first = await rotate(session)
+            second_task = asyncio.create_task(second_rotation())
+            assert await _waits(second_task)
+            await session.commit()
+        second = await second_task
+
+    async with async_session_factory() as session:
+        tokens = {
+            token.token_hint: token
+            for token in await session.scalars(
+                select(IdentityProviderToken).where(
+                    IdentityProviderToken.identity_provider_id == committed["connection_id"]
+                )
+            )
+        }
+    # The second rotation shortened the first's token and reported it.
+    shortened = tokens[first.info.hint].expires_at
+    assert shortened < first.info.expires_at
+    assert second.previous_tokens_expire_at == shortened
+    assert tokens[second.info.hint].expires_at == second.info.expires_at

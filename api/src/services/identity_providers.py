@@ -51,7 +51,11 @@ from src.services.authorization.enforce import (
 )
 from src.services.authorization.privilege import is_privileged_principal
 from src.services.identity_provisioning import domains, tokens
-from src.services.identity_provisioning.core import UNMAPPABLE_ROLE_IDS, Provisioner
+from src.services.identity_provisioning.core import (
+    UNMAPPABLE_ROLE_IDS,
+    ProvisioningError,
+    Provisioner,
+)
 from src.services.identity_provisioning.expiry import clear_expiry_notifications
 
 def scim_base_url(identity_provider_id: UUID) -> str:
@@ -382,6 +386,9 @@ async def rotate_token(
     connection = await _connection(
         session, caller, identity_provider_id, operation="identityproviders.token.rotate"
     )
+    # Read the token being replaced under the lock issuing takes, so a
+    # concurrent rotation's token is the one reported.
+    await tokens.lock_tokens(session, connection.id)
     previous = await tokens.current_token(session, connection.id)
     raw, token = await tokens.issue_token(
         session, connection, lifetime_days=lifetime_days, created_by=caller.principal.email
@@ -507,6 +514,16 @@ async def _authorize_mapped_roles(
         raise HTTPException(exc.status_code, exc.detail) from None
 
 
+async def _reconcile_mapping_change(provisioner: Provisioner) -> None:
+    """Apply a mapping change to every linked user. An account guard can
+    refuse a resulting deactivation (the SSO recovery admin, say); that
+    refusal answers the mapping change with 409."""
+    try:
+        await provisioner.reconcile_all()
+    except ProvisioningError as exc:
+        raise HTTPException(409, exc.detail) from None
+
+
 async def set_group_mapping(
     session: AsyncSession,
     caller: Caller,
@@ -554,7 +571,7 @@ async def set_group_mapping(
             "role_ids": sorted(str(r) for r in wanted),
         },
     )
-    await provisioner.reconcile_all()
+    await _reconcile_mapping_change(provisioner)
     (response,) = [g for g in await list_groups(session, caller, connection.id) if g.id == group.id]
     return response, provisioner
 
@@ -580,7 +597,7 @@ async def delete_group_mapping(
         resource_id=connection.id,
         details={"group": group.display_name},
     )
-    await provisioner.reconcile_all()
+    await _reconcile_mapping_change(provisioner)
     return provisioner
 
 
