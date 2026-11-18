@@ -5,11 +5,11 @@
   "category": "fix",
   "summary": "Numeric table filters and sorting now compare numbers numerically, so large files are included correctly. Thanks to MTG-Thomas for the report and reproduction.",
   "review": {
-    "status": "draft",
+    "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/issues/1455",
       "https://github.com/gobifrost/bifrost/pull/1456",
-      "Exact prose approval requested in existing owner on November 17, 2026; pending."
+      "Chief relayed exact-text approval in this existing owner on November 17, 2026: approved wording verbatim; Development independently verified MTG-Thomas/Thomas Bray report and reproduction, not implementation authorship."
     ]
   }
 }
