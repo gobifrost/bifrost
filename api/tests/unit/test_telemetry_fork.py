@@ -152,6 +152,20 @@ def test_dependency_conflict_found_by_the_template_skips_http_instrumentation(mo
     assert telemetry._child_http_instrumentable is False
 
 
+def test_template_preparation_leaves_its_own_tracing_untouched(monkeypatch):
+    """The rehearsed run uses a private provider: the template exports
+    nothing, keeps its global provider and has no current span after."""
+    _fake_exporters(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
+    before = trace_api._TRACER_PROVIDER
+    telemetry.prepare_child_telemetry()
+    assert telemetry._child_resource is not None
+    assert trace_api._TRACER_PROVIDER is before
+    assert trace_api.get_current_span() is trace_api.INVALID_SPAN
+    assert _FakeSpanExporter.created == []
+    assert telemetry.take_child_spans() == []
+
+
 def test_child_buffers_spans_without_an_exporter(monkeypatch):
     _prepared_child(monkeypatch)
 

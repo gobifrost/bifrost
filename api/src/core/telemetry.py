@@ -348,10 +348,11 @@ _relay_processor: Any = None
 def prepare_child_telemetry() -> None:
     """Resolve, once in a template process, what its forked children need.
 
-    Loads the SDK and HTTPX instrumentor modules, builds the run resource and
-    runs the instrumentor's dependency check. Children inherit all of it
-    copy-on-write, so per-run set-up stays off the import and package-metadata
-    paths (tens of milliseconds per fork when left to the child).
+    Loads the SDK and HTTPX instrumentor modules, builds the run resource,
+    runs the instrumentor's dependency check and rehearses a run's tracing
+    once. Children inherit all of it copy-on-write, so per-run set-up stays
+    off the import and package-metadata paths (tens of milliseconds per fork
+    when left to the child) and off every first-use cost.
     Never raises, and a no-op when telemetry is disabled.
     """
     global _child_resource, _child_http_instrumentable
@@ -360,13 +361,12 @@ def prepare_child_telemetry() -> None:
     try:
         from opentelemetry.instrumentation.dependencies import get_dependency_conflicts
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        from opentelemetry.sdk.trace import TracerProvider  # noqa: F401 — loaded for children
-        from src.core.telemetry_sdk import _ChildSpanBuffer  # noqa: F401 — loaded for children
 
         conflict = get_dependency_conflicts(
             HTTPXClientInstrumentor().instrumentation_dependencies()
         )
         resource = _resource("run")
+        _rehearse_child_run(resource)
     except Exception as e:  # noqa: BLE001 — telemetry must never break a template
         logger.warning("OpenTelemetry child preparation failed, runs stay untraced: %s", e)
         return
@@ -374,6 +374,34 @@ def prepare_child_telemetry() -> None:
         logger.warning("HTTPX instrumentation unavailable: %s", conflict)
     _child_http_instrumentable = conflict is None
     _child_resource = resource
+
+
+def _rehearse_child_run(resource: Any) -> None:
+    """Trace one throwaway run in the template, as a child would.
+
+    A child's first tracer, span and buffered span each pay one-time costs
+    (the SDK's warning-filter patterns, attribute and context machinery,
+    the wire conversion). Paying them here instead saved about a quarter of
+    a child's telemetry CPU. The provider is private and discarded: the
+    template's global tracing and current context are left untouched.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+
+    from src.core.telemetry_sdk import _ChildSpanBuffer
+
+    # Always sampled: an unsampled rehearsal would skip the buffer and the
+    # wire conversion it exists to warm.
+    provider = TracerProvider(resource=resource, sampler=ALWAYS_ON)
+    buffer = _ChildSpanBuffer()
+    provider.add_span_processor(buffer)
+    tracer = provider.get_tracer(__name__)
+    with tracer.start_as_current_span(
+        "workflow.run", attributes={"bifrost.execution.id": "template"}
+    ):
+        tracer.start_span("workflow.startup", start_time=time.time_ns()).end()
+    buffer.take()
+    provider.shutdown()
 
 
 def init_telemetry_in_child() -> bool:
