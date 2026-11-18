@@ -25,7 +25,7 @@ vi.mock("./ws-client", () => ({
   },
 }));
 
-import { useTable } from "./use-table";
+import { compareRows, useTable } from "./use-table";
 import type { PlatformAuthBridge } from "./transport";
 
 type AuthGlobal = typeof globalThis & { __BIFROST_PLATFORM_AUTH_V1__?: PlatformAuthBridge };
@@ -978,13 +978,13 @@ describe("useTable", () => {
       expect(result.current.rows.map((r) => r.id)).toEqual(["n", "z", "c", "b", "a"]);
     });
 
-    it("compares numbers as text, matching the server's data->> ordering", async () => {
-      vi.stubGlobal("fetch", snapshot([{ id: "10", name: 10 }, { id: "9", name: 9 }]));
+    it("compares numbers numerically, matching server ordering", async () => {
+      vi.stubGlobal("fetch", snapshot([{ id: "9", name: 9 }, { id: "10", name: 10 }]));
       const { result } = await mount({ order_by: "name" });
 
       emit("insert", { id: "2", name: 2 });
 
-      expect(result.current.rows.map((r) => r.id)).toEqual(["10", "2", "9"]);
+      expect(result.current.rows.map((r) => r.id)).toEqual(["2", "9", "10"]);
     });
 
     it("appends when no order_by is set (server default created_at asc)", async () => {
@@ -1176,5 +1176,21 @@ describe("useTable", () => {
       expect(result.current.rows.map((r) => r.id)).toEqual(["b", "a"]);
       expect(result.current.total).toBe(5);
     });
+  });
+});
+
+
+describe("numeric mixed sort keys", () => {
+  it("keeps numbers numeric, other values textual, and nulls last ascending", () => {
+    const rows = [
+      { id: "missing" }, { id: "null", size: null },
+      { id: "bool", size: true }, { id: "text", size: "10000000" },
+      { id: "large", size: 10000000 }, { id: "small", size: 9714 },
+      { id: "negative", size: -2 }, { id: "decimal", size: 1.5 },
+    ];
+    expect([...rows].sort((a, b) => compareRows(a, b, "size")).map(r => r.id))
+      .toEqual(["negative", "decimal", "small", "large", "text", "bool", "missing", "null"]);
+    expect([...rows].sort((a, b) => compareRows(a, b, "size", "desc")).map(r => r.id))
+      .toEqual(["missing", "null", "bool", "text", "large", "small", "decimal", "negative"]);
   });
 });

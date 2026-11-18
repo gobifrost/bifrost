@@ -87,8 +87,8 @@ export interface UseTableQuery {
    */
   pageSize?: number;
   /**
-   * JSONB data field to sort by (server: `data->>order_by`, compared as
-   * text, `id` ascending as tiebreaker). When omitted the server orders by
+   * JSONB data field to sort by (numbers numerically before other values
+   * ascending; other values as text; `id` ascending as tiebreaker). When omitted the server orders by
    * the `created_at` column. Column names (`created_at`, `updated_at`,
    * `id`, ...) are NOT supported here — the server looks them up in the
    * JSONB `data`, where they are normally absent, so the result is
@@ -499,36 +499,26 @@ const COLUMN_FIELDS = new Set([
   "updated_at",
 ]);
 
-// Approximates the database's default `en_US.UTF-8` text collation (case
-// differences are secondary). It is not exact: ICU treats punctuation and
-// spaces as significant, while glibc's en_US ignores them at the first level
-// (e.g. text "-5" vs "10" order differently), and number text can differ
-// from Postgres `->>` output for exponent/decimal forms (1e21, 1.0). A
-// reconnect/invalidation snapshot replaces any drift with the server order.
+// Approximates PostgreSQL en_US text collation for nonnumeric values.
+// Reconnection snapshots replace any ICU/glibc collation drift.
 const collator = new Intl.Collator("en-US");
 
-/**
- * Client-side equivalent of the server's `data->>order_by` sort key:
- * strings as-is, numbers/booleans as their JSON text, objects/arrays as
- * JSON, missing/null as SQL NULL.
- */
-function sortKey(row: TableRow, field: string): string | null {
+/** Numeric keys retain their type; remaining non-null values use JSON text. */
+function sortKey(row: TableRow, field: string): string | number | null {
   // The server sorts column names by the (normally absent) JSONB key, i.e.
   // NULL for every row — treat them as NULL so placement falls through to
   // the `id` tiebreaker exactly like the server does.
   if (COLUMN_FIELDS.has(field)) return null;
   const v = row[field];
   if (v === null || v === undefined) return null;
-  if (typeof v === "string") return v;
-  if (typeof v === "number" || typeof v === "boolean") return String(v);
+  if (typeof v === "string" || typeof v === "number") return v;
+  if (typeof v === "boolean") return String(v);
   return JSON.stringify(v);
 }
 
 /**
- * Compare two rows the way `tables.query` orders them when `order_by` is
- * set: `ORDER BY data->>order_by [DESC], id`. Values compare as text (so
- * `10` sorts before `9`), NULLs sort last ascending / first descending
- * (Postgres default), and the `id` tiebreaker is always ascending.
+ * Numbers compare numerically before other values ascending. Other values
+ * compare as text, null/missing last ascending, id always ascending.
  */
 export function compareRows(
   a: TableRow,
@@ -542,6 +532,9 @@ export function compareRows(
   if (ka !== kb) {
     if (ka === null) c = 1;
     else if (kb === null) c = -1;
+    else if (typeof ka === "number" && typeof kb === "number") c = ka < kb ? -1 : 1;
+    else if (typeof ka === "number") c = -1;
+    else if (typeof kb === "number") c = 1;
     else c = collator.compare(ka, kb);
   }
   if (order_dir === "desc") c = -c;
@@ -614,7 +607,7 @@ function replaceAt(
  *     arrive if the filter still matches.
  *   - `delete`: remove from the window if present, decrement `total`.
  *
- * Client placement mirrors the server's text ordering (see `compareRows`);
+ * Client placement mirrors the server's numeric/text ordering (see `compareRows`);
  * a reconnect or `table_invalidated` snapshot replaces the window with the
  * authoritative order if they ever disagree.
  */
