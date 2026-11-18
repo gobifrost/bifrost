@@ -664,3 +664,24 @@ async def test_code_mode_cancellation_blocks_later_nested_effects() -> None:
         await runtime.run("Cancel the run.")
 
     assert effects == []
+
+
+@pytest.mark.asyncio
+async def test_code_mode_default_rejects_sleep_above_sandbox_budget() -> None:
+    """The harness must enforce Bifrost's ten-second sandbox limit after upgrades."""
+    seen: list[list[ModelMessage]] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        del info
+        seen.append(messages)
+        if len(seen) == 1:
+            return ModelResponse(parts=[ToolCallPart("run_code", {"code": "import time\ntime.sleep(11)"})])
+        return ModelResponse(parts=[TextPart("complete")])
+
+    runtime = Agent(FunctionModel(respond), capabilities=build_code_mode_capabilities(tools=[]))
+    await runtime.run("Try a sleep exceeding the sandbox budget.")
+
+    feedback = _retry_feedback(seen[1], "run_code")
+    assert feedback
+    assert "10" in str(feedback[0].content)
+    assert "sleep" in str(feedback[0].content).lower()

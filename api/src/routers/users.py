@@ -121,9 +121,10 @@ async def create_user(
 ) -> UserPublic:
     """Create a new user."""
     from shared.sdk_users import UserServiceError, create_user as create_user_service
+    from src.services.events.builtins import emit_user_created
 
     try:
-        return await create_user_service(
+        created = await create_user_service(
             db,
             await load_caller(db, user),
             email=request.email,
@@ -136,6 +137,16 @@ async def create_user(
         )
     except UserServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+    # Commit first so a subscribed workflow can read the new user.
+    await db.commit()
+    await emit_user_created(
+        created,
+        method="admin",
+        actor_user_id=user.user_id,
+        actor_email=user.email,
+        actor_name=user.name,
+    )
+    return created
 
 
 @router.patch(

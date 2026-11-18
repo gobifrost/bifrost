@@ -1,0 +1,13 @@
+{
+  "key": "pr:1444",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1444",
+      "https://github.com/gobifrost/bifrost/pull/1401"
+    ]
+  },
+  "reason": "Internal runtime maintenance returning the API image from a pre-release Python to stable 3.15; no customer-facing change."
+}

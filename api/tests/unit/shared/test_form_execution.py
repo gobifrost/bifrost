@@ -308,3 +308,39 @@ async def test_agent_submitting_a_form_keeps_agent_origin(monkeypatch):
         execution_id=str(uuid4()), organization_id=None, is_platform_admin=False,
     )
     assert (context.execution_origin, context.agent_id, context.is_agent) == ("agent", str(agent_id), True)
+
+
+@pytest.mark.asyncio
+async def test_runtime_projects_only_configured_optional_names(monkeypatch):
+    from shared import form_provider
+    from src.repositories import workflows
+
+    field = SimpleNamespace(name="username", data_provider_id=uuid4(),
+                            data_provider_inputs={"first": {}, "middle": {}, "unknown": {}})
+    provider = SimpleNamespace(is_active=True, type="data_provider", parameters_schema=[
+        {"name": "first", "required": True},
+        {"name": "middle", "required": False, "default_value": "private-default"},
+        {"name": "unmapped", "required": False},
+    ])
+    repo = SimpleNamespace(resolve=AsyncMock(return_value=provider))
+    repository = MagicMock(return_value=repo)
+    monkeypatch.setattr(workflows, "WorkflowRepository", repository)
+    allow_shared = AsyncMock(return_value=False)
+    monkeypatch.setattr("src.services.solution_scope.solution_allows_global", allow_shared)
+    form = SimpleNamespace(fields=[field], organization_id=uuid4(), solution_id=uuid4())
+    db = AsyncMock()
+    assert await form_provider.optional_form_provider_inputs(db, form, None) == {"username": ["middle"]}
+    repo.resolve.assert_awaited_once_with(str(field.data_provider_id), solution_scope=form.solution_id,
+                                        allow_shared_fallback=False)
+    repository.assert_called_once_with(db, org_id=form.organization_id, is_superuser=True)
+
+
+def test_provider_input_projection_preserves_defaults_and_explicit_values():
+    from shared.form_provider import _provider_inputs
+    field = SimpleNamespace(data_provider_inputs={
+        "middle": {"mode": "fieldRef"}, "enabled": {"mode": "expression"},
+        "count": {"mode": "expression"}, "nullable": {"mode": "expression"},
+    })
+    assert _provider_inputs(field, {"enabled": False, "count": 0, "nullable": None}) == {
+        "enabled": False, "count": 0, "nullable": None,
+    }

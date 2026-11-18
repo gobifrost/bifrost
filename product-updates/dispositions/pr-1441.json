@@ -1,0 +1,13 @@
+{
+  "key": "pr:1441",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Maintainer explicitly requested no Product Update for this focused form number-input validation fix.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1441",
+      "Jack explicitly requested no Product Update and authorized the PR through merge in the task conversation on 2026-11-16."
+    ]
+  }
+}

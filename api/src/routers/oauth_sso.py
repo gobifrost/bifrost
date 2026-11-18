@@ -27,6 +27,7 @@ from src.core.auth import CurrentActiveUser, get_current_user_from_db
 from src.core.db_deps import DbSession
 from src.models import User
 from src.config import get_settings
+from src.services.events.builtins import emit_user_signed_in
 from src.services.oauth_sso import OAuthError, OAuthService
 from src.services.user_provisioning import ensure_user_provisioned
 from shared.auth_cookies import set_auth_cookies
@@ -461,6 +462,8 @@ async def oauth_callback(
                 db=db,
                 email=user_info.email,
                 name=user_info.name,
+                created_via="sso_provisioning",
+                provider=user_info.provider,
             )
             user = result.user
 
@@ -488,7 +491,13 @@ async def oauth_callback(
         )
     refuse_identity_sign_in(user)
 
-    tokens = await issue_human_session(user.id)
+    session_tokens = await issue_human_session(user.id)
+    await emit_user_signed_in(
+        user,
+        method="sso",
+        provider=user_info.provider,
+        id_token_claims=tokens.id_token_claims,
+    )
 
     logger.info(
         f"OAuth login successful: {log_safe(user.email)}",
@@ -501,11 +510,11 @@ async def oauth_callback(
 
     # Set HttpOnly cookies for browser clients (XSS protection)
     # Also sets CSRF token cookie for subsequent requests
-    set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
+    set_auth_cookies(response, session_tokens.access_token, session_tokens.refresh_token)
 
     return OAuthTokenResponse(
-        access_token=tokens.access_token,
-        refresh_token=tokens.refresh_token,
+        access_token=session_tokens.access_token,
+        refresh_token=session_tokens.refresh_token,
     )
 
 

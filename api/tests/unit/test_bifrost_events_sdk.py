@@ -83,7 +83,7 @@ async def test_emit_no_scope_resolves_context_scope(mock_client, mock_response_o
          patch("bifrost.events.raise_for_status_with_detail"), \
          patch("bifrost.events.resolve_scope", return_value="resolved-scope") as mock_resolve:
         from bifrost.events import events
-        await events.emit("user.invited", {"user_id": "xyz"})
+        await events.emit("acme.user_synced", {"user_id": "xyz"})
 
     mock_resolve.assert_called_once_with(None)
 

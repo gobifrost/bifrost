@@ -164,6 +164,10 @@ async def test_sso_provisioning_refuses_identity_emails(db_session: AsyncSession
 
     identity = await _seeded_identity(db_session, IdentityKind.ORG_DEFAULT, PROVIDER_ORG_ID)
     with pytest.raises(ValueError):
-        await ensure_user_provisioned(db_session, identity.email.upper(), name="Claimed")
+        await ensure_user_provisioned(
+            db_session, identity.email.upper(), name="Claimed", created_via="sso_provisioning"
+        )
     with pytest.raises(ValueError):
-        await ensure_user_provisioned(db_session, f"new@{IDENTITY_EMAIL_DOMAIN}")
+        await ensure_user_provisioned(
+            db_session, f"new@{IDENTITY_EMAIL_DOMAIN}", created_via="sso_provisioning"
+        )

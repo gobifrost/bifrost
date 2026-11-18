@@ -59,6 +59,11 @@ from src.core.log_safety import log_safe
 from src.core.principal import UserPrincipal
 from src.core.rate_limit import auth_limiter, device_token_limiter, mfa_limiter, get_client_ip
 from src.services.audit import emit_audit
+from src.services.events.builtins import (
+    SignInMethod,
+    emit_user_created,
+    emit_user_signed_in,
+)
 from src.services.audit_context import ActorContext, current_actor
 from src.services.oauth_config_service import (
     PASSWORD_SSO_ONLY_DETAIL,
@@ -315,7 +320,7 @@ async def login(
 
     if not settings.mfa_enabled:
         # MFA disabled globally — issue tokens directly.
-        return await _generate_login_tokens(user, db, response)
+        return await _generate_login_tokens(user, db, response, sign_in_method="password")
 
     if not user.mfa_enabled or not mfa_status["enrolled_methods"]:
         # User has no MFA enrolled - require setup
@@ -344,7 +349,7 @@ async def login(
                 f"Trusted device login for user: {user.email}",
                 extra={"user_id": str(user.id)}
             )
-            return await _generate_login_tokens(user, db, response)
+            return await _generate_login_tokens(user, db, response, sign_in_method="password")
 
     # MFA verification required
     mfa_token = create_mfa_token(str(user.id), purpose="mfa_verify")
@@ -566,6 +571,7 @@ async def mfa_initial_verify(
     )
 
     tokens = await issue_human_session(user.id)
+    await emit_user_signed_in(user, method="password")
 
     # Set cookies for browser clients
     set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
@@ -682,10 +688,16 @@ async def verify_mfa_login(
         extra={"user_id": str(user.id)}
     )
 
-    return await _generate_login_tokens(user, db, response)
+    return await _generate_login_tokens(user, db, response, sign_in_method="password")
 
 
-async def _generate_login_tokens(user, db, response: Response | None = None) -> LoginResponse:
+async def _generate_login_tokens(
+    user,
+    db,
+    response: Response | None = None,
+    *,
+    sign_in_method: SignInMethod | None,
+) -> LoginResponse:
     """
     Generate login response with access and refresh tokens.
 
@@ -696,6 +708,9 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         user: User model
         db: Database session
         response: FastAPI Response object (optional, for setting cookies)
+        sign_in_method: How the user authenticated, published as
+            ``user.signed_in``. None for a device-code exchange, which an
+            already signed-in user authorized.
 
     Returns:
         LoginResponse with tokens
@@ -744,6 +759,8 @@ async def _generate_login_tokens(user, db, response: Response | None = None) -> 
         details={"email": user.email, "is_superuser": user.is_superuser},
         actor_override=login_actor,
     )
+    if sign_in_method is not None:
+        await emit_user_signed_in(user, method=sign_in_method)
 
     return LoginResponse(
         access_token=tokens.access_token,
@@ -1280,6 +1297,7 @@ async def register_user(
             db=db,
             email=user_data.email,
             name=user_data.name,
+            created_via="registration",
         )
     except ValueError as e:
         raise HTTPException(
@@ -1555,7 +1573,9 @@ async def exchange_device_token(
             return DeviceTokenErrorResponse(error="access_denied")
 
         # Generate tokens using existing helper
-        login_response = await _generate_login_tokens(user, db, response=None)
+        login_response = await _generate_login_tokens(
+            user, db, response=None, sign_in_method=None
+        )
 
         # Delete device code (one-time use)
         await r.delete(device_code_key(token_request.device_code))
@@ -1714,7 +1734,9 @@ async def setup_passkey_verify(
         extra={"user_id": str(user.id), "passkey_id": str(passkey.id)},
     )
 
+    await emit_user_created(user, method="registration")
     tokens = await issue_human_session(user.id)
+    await emit_user_signed_in(user, method="passkey")
 
     # Set cookies for browser clients
     set_auth_cookies(response, tokens.access_token, tokens.refresh_token)
@@ -1884,7 +1906,7 @@ async def register_from_invite_passkey_verify(
     except (InviteConsumeError, ValueError) as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-    login = await _generate_login_tokens(registered, db, response)
+    login = await _generate_login_tokens(registered, db, response, sign_in_method="passkey")
     return SetupPasskeyVerifyResponse(
         user_id=str(registered.id),
         email=registered.email,

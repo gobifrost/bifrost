@@ -68,7 +68,7 @@ class MethodInfo:
 
     name: str
     http_method: str
-    url_template: str
+    url_expression: str
     params: str
     return_type: str
     summary: str
@@ -376,6 +376,29 @@ def python_type_from_schema(
 # =============================================================================
 
 
+def _single_line(text: str | None) -> str | None:
+    """Collapse text to one line for a trailing ``#`` comment.
+
+    A newline ends a comment and leaves the remaining prose as invalid Python.
+    Docstring content is serialized by ``_py_string`` instead and keeps its
+    original text, including newlines.
+    """
+    if not text:
+        return None
+    collapsed = " ".join(str(text).split())
+    return collapsed or None
+
+
+def _py_string(text: str | None) -> str:
+    """Render text as a complete Python string literal.
+
+    Descriptions and summaries are wrapped in docstrings. Interpolating raw
+    text lets a trailing quote, backslash or escape sequence terminate the
+    literal, so the value is serialized rather than quoted by the template.
+    """
+    return repr(str(text or ""))
+
+
 def generate_model(
     name: str,
     schema: dict[str, Any],
@@ -415,7 +438,7 @@ def generate_model(
             original_name=prop_name,
             type=py_type if prop_name in required else f"Optional[{py_type}]",
             default=None if prop_name in required else "None",
-            comment=desc if desc else None,
+            comment=_single_line(desc),
         )
 
         if prop_name in required:
@@ -536,10 +559,11 @@ def extract_models_and_methods(
             method_names.add(method_name)
 
             # Build parameters
-            path_params = re.findall(r"\{([^}]{1,256})\}", path)
+            path_matches = list(re.finditer(r"\{([^{}]{1,256})\}", path))
+            path_params = list(dict.fromkeys(match[1] for match in path_matches))
             params = []
             for path_param in path_params:
-                params.append(f"{to_snake_case(path_param)}: str")
+                params.append(f"{sanitize_field_name(path_param)}: str")
 
             if http_method in ["post", "put", "patch"]:
                 params.append("data: Dict[str, Any] = None")
@@ -572,11 +596,16 @@ def extract_models_and_methods(
                     schema, components, inline_schemas, context_name
                 )
 
-            # Build URL template with snake_case params
-            url_template = path
-            for path_param in path_params:
-                snake_param = to_snake_case(path_param)
-                url_template = url_template.replace(f"{{{path_param}}}", f"{{{snake_param}}}")
+            # Serialize literal path segments; only generated parameter identifiers
+            # enter Python expressions. Braces in literals never become f-string code.
+            url_parts = ["self.base_url"]
+            offset = 0
+            for match in path_matches:
+                url_parts.append(repr(path[offset:match.start()]))
+                url_parts.append(f"'{{}}'.format({sanitize_field_name(match[1])})")
+                offset = match.end()
+            url_parts.append(repr(path[offset:]))
+            url_expression = " + ".join(url_parts)
 
             summary = operation.get("summary", f"{http_method.upper()} {path}")
 
@@ -584,7 +613,7 @@ def extract_models_and_methods(
                 MethodInfo(
                     name=method_name,
                     http_method=http_method,
-                    url_template=url_template,
+                    url_expression=url_expression,
                     params=params_str,
                     return_type=return_type,
                     summary=summary,
@@ -633,16 +662,27 @@ def generate_sdk(
         trim_blocks=True,
         lstrip_blocks=True,
     )
+    env.filters["pystr"] = _py_string
     template = env.get_template("sdk.py.j2")
 
     code = template.render(
-        title=title,
+        module_docstring=(
+            f"{title} - Python SDK\n\n"
+            "Auto-generated from OpenAPI spec with Bifrost integration support.\n"
+            f"Integration: {integration_name}\nAuth Type: {auth_type}\n"
+        ),
         class_name=class_name,
         integration_name=integration_name,
         auth_type=auth_type,
         models=models,
         methods=methods,
     )
+
+    try:
+        compile(code, "<generated-sdk>", "exec")
+    except (SyntaxError, ValueError):
+        # Do not expose source text, which may contain vendor or integration secrets.
+        raise ValueError("Generated SDK contains invalid Python syntax") from None
 
     return code, module_name
 

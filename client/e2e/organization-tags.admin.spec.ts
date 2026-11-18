@@ -168,5 +168,27 @@ test.describe("Organization tags", () => {
 		await expect(rows.filter({ hasText: NAMES.contoso })).toBeVisible();
 		await rows.last().scrollIntoViewIfNeeded();
 		await capture(page, "05-mappings-filter-by-tag");
+
+		// Search organization tags in the mapping list, then combine with status.
+		await page
+			.getByRole("combobox", { name: "Filter by tag: MSP", exact: true })
+			.click();
+		await page.getByRole("option", { name: "Clear Tag Filter" }).click();
+		await page.keyboard.press("Escape");
+		await page
+			.getByRole("searchbox", { name: "Search organization mappings" })
+			.fill("Connectivity");
+		await expect(rows.filter({ hasText: NAMES.litware })).toBeVisible();
+		await expect(rows.filter({ hasText: NAMES.northwind })).toBeHidden();
+		await page.getByRole("combobox", { name: "Mapping Status" }).click();
+		await page.getByRole("option", { name: /^Mapped\b/ }).click();
+		await expect(
+			page.getByText("No mappings match your search"),
+		).toBeVisible();
+		await page.getByRole("combobox", { name: "Mapping Status" }).click();
+		await page.getByRole("option", { name: /^Unmapped\b/ }).click();
+		await expect(rows.filter({ hasText: NAMES.litware })).toBeVisible();
+		await page.setViewportSize({ width: 390, height: 844 });
+		await capture(page, "06-mobile-mapping-filters");
 	});
 });

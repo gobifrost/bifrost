@@ -2,7 +2,7 @@
 directory state SCIM provisioning keeps in step.
 
 Revision ID: 20261116_identity_providers
-Revises: 20261116_organization_tags
+Revises: 20261117_integ_secret_encrypt
 """
 
 import sqlalchemy as sa
@@ -10,7 +10,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 
 revision = "20261116_identity_providers"
-down_revision = "20261116_organization_tags"
+down_revision = "20261117_integ_secret_encrypt"
 branch_labels = None
 depends_on = None
 

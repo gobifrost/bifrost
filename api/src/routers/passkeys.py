@@ -229,7 +229,7 @@ async def verify_authentication(
         logger.info(f"Passkey authentication successful for user {user.id}")
 
         # Generate and return JWT tokens (same as password login)
-        return await _generate_login_tokens(user, db, response)
+        return await _generate_login_tokens(user, db, response, sign_in_method="passkey")
 
     except ValueError as e:
         raise HTTPException(
