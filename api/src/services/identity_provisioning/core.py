@@ -452,20 +452,14 @@ class Provisioner:
             )
 
     async def delete_group(self, group: IdentityProviderGroup) -> None:
-        # Deleting a mapped group deletes its mapping: a policy change.
+        # Directory lifecycle changes cannot remove an administrator's access policy.
         await self.hold_policy(exclusive=True)
-        affected = await self.group_member_ids(group.id)
-        mapped = await self._mapped_group_roles()
-        if mapped.keys() == {group.id}:
-            # Deleting the last mapped group lifts the mapped-group
-            # requirement from every linked user, members or not.
-            affected = set(
-                await self.session.scalars(
-                    select(IdentityProviderUser.id).where(
-                        IdentityProviderUser.identity_provider_id == self.connection.id
-                    )
-                )
+        if group.id in await self._mapped_group_roles():
+            raise ProvisioningError(
+                ProvisioningErrorKind.CONFLICT,
+                "Unmap this group in Bifrost before deleting it",
             )
+        affected = await self.group_member_ids(group.id)
         await self.session.delete(group)
         await self.session.flush()
         await self._reconcile_access(affected, defer_grants=True)
@@ -614,6 +608,15 @@ class Provisioner:
                 link.access_pending_since = None
             await self.session.flush()
 
+            if change.roles_added or change.roles_removed:
+                await self._audit(
+                    "identity_provider.user_roles_changed",
+                    user,
+                    {
+                        "roles_added": sorted(str(r) for r in change.roles_added),
+                        "roles_removed": sorted(str(r) for r in change.roles_removed),
+                    },
+                )
             self._mark_stale(user.id, change.roles_added | change.roles_removed)
             queue_group_event(user, link)
             if change.activated or change.roles_added or change.roles_removed:

@@ -24,7 +24,13 @@ from src.models.orm.identity_providers import (
 from src.models.orm.organizations import Organization
 from src.models.orm.users import Role, User, UserRole
 from src.services.identity_provisioning.access_pass import run_access_pass
-from src.services.identity_provisioning.core import GroupRecord, Provisioner, UserRecord
+from src.services.identity_provisioning.core import (
+    GroupRecord,
+    Provisioner,
+    ProvisioningError,
+    ProvisioningErrorKind,
+    UserRecord,
+)
 
 _CLEAR_FLAG = text("SELECT set_config('bifrost.authz_epoch_bumped', '', true)")
 _EPOCH_UPDATES = text(
@@ -241,7 +247,7 @@ async def test_a_rename_waits_for_the_pass(setup):
 
 
 @pytest.mark.asyncio
-async def test_deleting_the_last_mapped_group_releases_users_outside_it(setup):
+async def test_deleting_a_mapped_group_preserves_the_access_requirement(setup):
     session = setup["session"]
     group = await _mapped_group(setup)
     provisioner = Provisioner(session, setup["connection"])
@@ -249,12 +255,15 @@ async def test_deleting_the_last_mapped_group_releases_users_outside_it(setup):
     outsider = await provisioner.create_user(_record(f"outsider@{setup['domain']}"))
     assert not (await _refreshed(session, outsider))[0].is_active
 
-    # Deleting a group changes policy: its own exclusive-lock transaction.
-    await Provisioner(session, setup["connection"]).delete_group(group)
+    with pytest.raises(ProvisioningError) as raised:
+        await Provisioner(session, setup["connection"]).delete_group(group)
+    assert raised.value.kind is ProvisioningErrorKind.CONFLICT
+    mapping = await session.get(IdentityProviderGroupMapping, group.id)
+    assert mapping is not None
     await run_access_pass(session)
 
     user, link = await _refreshed(session, outsider)
-    assert user.is_active and link.access_pending_since is None
+    assert not user.is_active and link.access_pending_since is None
 
 
 @pytest.mark.asyncio

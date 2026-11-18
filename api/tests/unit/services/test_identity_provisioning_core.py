@@ -185,8 +185,14 @@ async def test_a_manual_grant_of_a_mapped_role_survives_unmapping(setup):
     )
     await _map_and_apply(session, setup["connection"], group.id, [role.id])
 
-    # Deleting a group changes policy: its own exclusive-lock transaction.
-    await Provisioner(session, setup["connection"]).delete_group(group)
+    # An administrator explicitly unmaps before the directory deletes the group.
+    mapper = Provisioner(session, setup["connection"])
+    await mapper.hold_policy(exclusive=True)
+    mapping = await session.get(IdentityProviderGroupMapping, group.id)
+    await session.delete(mapping)
+    await session.flush()
+    await mapper.reconcile_all()
+    await mapper.delete_group(group)
 
     manual = await session.scalar(
         select(UserRole).where(UserRole.user_id == link.user_id, UserRole.role_id == role.id)
@@ -569,3 +575,44 @@ async def test_a_linked_user_outside_the_connections_org_is_left_alone(setup):
 
     assert raised.value.kind is ProvisioningErrorKind.CONFLICT
     assert (await _user(session, link)).is_active
+
+
+@pytest.mark.asyncio
+async def test_role_deltas_are_audited_for_an_already_active_user(setup):
+    from src.models.orm.audit import AuditLog
+
+    session, connection, role = setup["session"], setup["connection"], setup["role"]
+    provisioner = Provisioner(session, connection)
+    link = await provisioner.create_user(_record(f"roles@{setup['domain']}"))
+    # Membership in an access-only group keeps activity true throughout.
+    access = await provisioner.create_group(
+        GroupRecord(display_name="Access", external_id="access", attributes={}), [link.id]
+    )
+    await _map_and_apply(session, connection, access.id, [])
+    techs = await provisioner.create_group(
+        GroupRecord(display_name="Techs", external_id="techs", attributes={}), []
+    )
+    await _map_and_apply(session, connection, techs.id, [role.id])
+    await provisioner.set_group_members(techs, [link.id])
+    await provisioner.apply_pending([link.id])
+    await provisioner.set_group_members(techs, [])
+    user = await _user(session, link)
+    assert user.is_active
+
+    rows = (
+        await session.scalars(
+            select(AuditLog).where(
+                AuditLog.resource_id == link.user_id,
+                AuditLog.action == "identity_provider.user_roles_changed",
+            )
+        )
+    ).all()
+    assert len(rows) == 2
+    assert {
+        (tuple(row.details["roles_added"]), tuple(row.details["roles_removed"])) for row in rows
+    } == {((str(role.id),), ()), ((), (str(role.id),))}
+    for row in rows:
+        assert row.source == "identity_provider"
+        assert row.organization_id == connection.organization_id
+        assert row.user_id is None
+        assert row.details["identity_provider_id"] == str(connection.id)

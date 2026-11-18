@@ -135,6 +135,10 @@ async def test_scim_user_and_group_lifecycle(e2e_client, platform_admin, db_sess
         assert grant is not None
         assert str(grant.identity_provider_id) == scim_connection["connection"]["id"]
 
+        refused_delete = e2e_client.delete(f"{path}/Groups/{group['id']}", headers=scim)
+        assert refused_delete.status_code == 409, refused_delete.text
+        assert "Unmap" in refused_delete.json()["detail"]
+
         # Okta removes members with a value list rather than a path filter.
         removed = e2e_client.patch(f"{path}/Groups/{group['id']}", headers=scim, json={
             "schemas": [PATCH], "Operations": [{"op": "remove", "path": "members", "value": [{"value": body["id"]}]}],
