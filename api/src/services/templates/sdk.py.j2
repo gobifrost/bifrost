@@ -178,21 +178,18 @@ class _{{ class_name }}Client:
 {% endif %}
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            body = e.response.text[:1000] if e.response else "No response body"
+        except requests.exceptions.HTTPError:
             raise SDKError(
-                f"HTTP {e.response.status_code}: {body}",
-                status_code=e.response.status_code,
-                response_body=body,
-            )
+                f"HTTP {response.status_code}",
+                status_code=response.status_code,
+            ) from None
         try:
             result = response.json() if response.content else None
         except requests.exceptions.JSONDecodeError:
             raise SDKError(
-                f"Invalid JSON response (HTTP {response.status_code}): {response.text[:500]}",
+                f"Invalid JSON response (HTTP {response.status_code})",
                 status_code=response.status_code,
-                response_body=response.text[:1000],
-            )
+            ) from None
         return self._auto_convert(result)
 
 {% endfor %}
