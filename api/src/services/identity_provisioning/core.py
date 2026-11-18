@@ -868,7 +868,8 @@ class Provisioner:
         for user in users:
             if user.organization_id != self.connection.organization_id:
                 unmanaged[user.id] = OTHER_ORG_USER_MESSAGE
-            elif user.is_superuser or user.id in privileged:
+            # privileged_user_ids counts the Platform Admin role too.
+            elif user.id in privileged:
                 unmanaged[user.id] = PRIVILEGED_USER_MESSAGE
         return unmanaged
 
@@ -961,7 +962,6 @@ class Provisioner:
             name=record.display_name,
             hashed_password="",
             is_active=active,
-            is_superuser=False,
             is_external=self.connection.provision_as_external,
             # The identity provider vouches for the address; the person signs
             # in through SSO, which marks the account registered.

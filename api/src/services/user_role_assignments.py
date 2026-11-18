@@ -314,8 +314,21 @@ class AssignmentTarget:
         return is_privileged_principal(self.held)
 
 
-async def _load_target(session: AsyncSession, user_id: UUID) -> AssignmentTarget | None:
-    user = await session.get(User, user_id)
+async def _load_target(
+    session: AsyncSession, user_id: UUID, *, lock: bool = False
+) -> AssignmentTarget | None:
+    if lock:
+        # A write locks the user before any guard locks a role (the
+        # last-admin check locks Platform Admin), the order identity
+        # provisioning uses, so the two can't deadlock.
+        user = await session.scalar(
+            select(User)
+            .where(User.id == user_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    else:
+        user = await session.get(User, user_id)
     if user is None:
         return None
     held = await held_permissions_by_user(session, [user_id])
@@ -492,14 +505,15 @@ async def _response(
 
 
 async def require_assignment_target(
-    session: AsyncSession, caller: Caller, user_id: UUID, operation: str
+    session: AsyncSession, caller: Caller, user_id: UUID, operation: str, *, lock: bool = False
 ) -> AssignmentTarget:
     """The user ``operation`` is about, once ``caller`` may perform it at
-    their organization (404 when they do not exist)."""
+    their organization (404 when they do not exist). A write passes
+    ``lock`` to lock the user first."""
     # Reach anywhere first: a caller with none learns nothing about which
     # users exist.
     operation_reach(caller, operation)
-    target = await _load_target(session, user_id)
+    target = await _load_target(session, user_id, lock=lock)
     if target is None:
         raise RoleAssignmentError(404, "User not found")
     require_operation(caller, operation, org_target(target.user.organization_id))
@@ -545,7 +559,7 @@ async def replace_role_assignments(
     from src.core.cache import invalidate_role_users
     from src.services.audit import emit_audit
 
-    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION)
+    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION, lock=True)
     user = target.user
     if is_system_account(user.id):
         raise RoleAssignmentError(422, SYSTEM_ACCOUNT_ROLE_MESSAGE)
@@ -718,7 +732,7 @@ async def set_base_role_assignment(
     from shared.sdk_users import UserServiceError, set_user_base_role
     from src.services.audit import emit_audit
 
-    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION)
+    target = await require_assignment_target(session, caller, user_id, PUT_OPERATION, lock=True)
     user = target.user
     if user.id == caller.principal.user_id:
         raise RoleAssignmentError(400, "Cannot change your own roles via bulk action")

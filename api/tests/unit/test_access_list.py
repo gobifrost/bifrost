@@ -1959,7 +1959,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "shared.sdk_users.bulk_update_users": (1, "current_role_derivation"),
     "shared.sdk_users.create_user": (4, "current_role_derivation"),
     "shared.sdk_users.list_users": (2, "current_role_derivation"),
-    "shared.sdk_users.update_user": (8, "current_role_derivation"),
+    "shared.sdk_users.update_user": (9, "current_role_derivation"),
     "shared.sdk_workflow_execution.execute_sdk_workflow": (5, "current_role_derivation"),
     "shared.system_account_guard.is_system_account": (1, "actor_facts"),
     "shared.unattended_execution.create_unattended_context": (2, "actor_facts"),
@@ -2254,6 +2254,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
     "src.services.notification_service.NotificationService.find_admin_notification_by_title": (
         2,
         "De-duplicates an admin notification before creating one.",
+    ),
+    "src.services.notification_service.NotificationService.find_admin_notification_by_metadata": (
+        2,
+        "De-duplicates an admin notification by an id where titles repeat.",
     ),
     "src.services.notification_service.NotificationService.update_notification": (
         1,

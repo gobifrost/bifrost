@@ -192,12 +192,15 @@ async def _lock_user_row(session: AsyncSession, user: "UserORM") -> None:
     """
     from src.models import User as UserORM
 
-    await session.execute(
+    locked = await session.scalar(
         select(UserORM)
         .where(UserORM.id == user.id)
         .with_for_update()
         .execution_options(populate_existing=True)
     )
+    if locked is None:
+        # Deleted (by a directory, say) while this request waited.
+        raise UserServiceError(404, "User not found")
 
 
 def refuse_identity_management(user: "UserORM") -> None:

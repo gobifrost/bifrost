@@ -101,6 +101,56 @@ async def _waits(task: asyncio.Task) -> bool:
 
 
 @pytest.mark.asyncio
+async def test_a_platform_admin_demotion_and_a_directory_deactivation_dont_deadlock(
+    async_session_factory, committed
+):
+    from shared.account_guards import refuse_last_active_platform_admin_removal
+    from shared.builtin_roles import PLATFORM_ADMIN_ROLE_ID, USER_ROLE_ID
+    from src.models.contracts.role_assignments import UserRoleAssignmentsUpdate
+    from src.services.user_role_assignments import replace_role_assignments
+
+    async with async_session_factory() as session:
+        # Two Platform Admins, so removing one is allowed.
+        admins = [
+            User(
+                email=f"admin{i}@{committed['domain']}",
+                organization_id=committed["organization_id"],
+                is_superuser=True,
+            )
+            for i in range(2)
+        ]
+        session.add_all(admins)
+        await session.flush()
+        session.add_all(
+            UserRole(user_id=admin.id, role_id=PLATFORM_ADMIN_ROLE_ID, assigned_by="test")
+            for admin in admins
+        )
+        await session.commit()
+        user_id = admins[0].id
+
+    async def demote() -> None:
+        async with async_session_factory() as session:
+            await replace_role_assignments(
+                session,
+                admin_caller(),
+                user_id=user_id,
+                request=UserRoleAssignmentsUpdate(base_role_id=USER_ROLE_ID, additional=[]),
+            )
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as directory:
+            await directory.execute(select(User.id).where(User.id == user_id).with_for_update())
+            admin = asyncio.create_task(demote())
+            assert await _waits(admin)
+            # Had the demotion locked Platform Admin before the user, this
+            # would close a cycle and PostgreSQL would abort one side.
+            await refuse_last_active_platform_admin_removal(directory, {user_id})
+            await directory.commit()
+        await admin
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("bulk", [False, True])
 async def test_an_admin_and_a_directory_deactivating_one_user_dont_deadlock(
     async_session_factory, committed, bulk
