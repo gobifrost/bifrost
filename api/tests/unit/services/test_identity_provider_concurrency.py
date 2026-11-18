@@ -253,3 +253,91 @@ async def test_concurrent_rotations_leave_one_full_lifetime_token(
     assert shortened < first.info.expires_at
     assert second.previous_tokens_expire_at == shortened
     assert tokens[second.info.hint].expires_at == second.info.expires_at
+
+
+async def _pending_hires(async_session_factory, committed, count: int) -> list:
+    """Linked users waiting for the mapped role, on a connection that
+    provisions External users."""
+    async with async_session_factory() as session:
+        connection = await session.get(IdentityProvider, committed["connection_id"])
+        assert connection is not None
+        connection.provision_as_external = True
+        provisioner = Provisioner(session, connection)
+        group = await provisioner.create_group(
+            GroupRecord(display_name="Portal", external_id="g-portal", attributes={}), []
+        )
+        session.add(IdentityProviderGroupMapping(group_id=group.id, created_by="test"))
+        await session.flush()
+        session.add(IdentityProviderGroupRole(group_id=group.id, role_id=committed["role_id"]))
+        await session.flush()
+        links = [
+            await provisioner.create_user(_record(f"portal{i}@{committed['domain']}"))
+            for i in range(count)
+        ]
+        await provisioner.set_group_members(group, [link.id for link in links])
+        await session.commit()
+        return [link.id for link in links]
+
+
+@pytest.mark.asyncio
+async def test_grants_of_one_role_to_external_users_dont_wait_for_each_other(
+    async_session_factory, committed
+):
+    first, second = await _pending_hires(async_session_factory, committed, 2)
+
+    async def apply(link_id) -> None:
+        async with async_session_factory() as session:
+            connection = await session.get(IdentityProvider, committed["connection_id"])
+            assert connection is not None
+            await Provisioner(session, connection).apply_pending([link_id])
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as session:
+            connection = await session.get(IdentityProvider, committed["connection_id"])
+            assert connection is not None
+            await Provisioner(session, connection).apply_pending([first])
+            # Holding that grant open, a second grant of the same role goes
+            # through: both only share-lock the role, so neither can be left
+            # waiting to upgrade a lock the other shares.
+            await asyncio.wait_for(apply(second), timeout=_STILL_WAITING * 4)
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_mapping_waits_for_a_permission_edit_and_refuses_the_new_privilege(
+    async_session_factory, committed
+):
+    from fastapi import HTTPException
+
+    from shared.account_guards import _lock_roles
+    from src.services.identity_providers import set_group_mapping
+
+    async with async_session_factory() as session:
+        connection = await session.get(IdentityProvider, committed["connection_id"])
+        assert connection is not None
+        group = await Provisioner(session, connection).create_group(
+            GroupRecord(display_name="Admins", external_id="g-admins", attributes={}), []
+        )
+        await session.commit()
+        group_id = group.id
+
+    async def map_group() -> None:
+        async with async_session_factory() as session:
+            await set_group_mapping(
+                session, admin_caller(), committed["connection_id"], group_id, [committed["role_id"]]
+            )
+            await session.commit()
+
+    async with asyncio.timeout(30):
+        async with async_session_factory() as editor:
+            await _lock_roles(editor, {committed["role_id"]})
+            editor.add(RolePermission(role_id=committed["role_id"], permission="users.readwrite"))
+            await editor.flush()
+            mapping = asyncio.create_task(map_group())
+            assert await _waits(mapping)
+            await editor.commit()
+        with pytest.raises(HTTPException) as raised:
+            await mapping
+
+    assert raised.value.status_code == 422

@@ -500,8 +500,6 @@ async def _authorize_mapped_roles(
     missing = role_ids - roles.keys()
     if missing:
         raise HTTPException(422, f"Role {sorted(missing, key=str)[0]} not found")
-    if any(is_privileged_principal(role.permissions) for role in roles.values()):
-        raise HTTPException(422, "Roles with privileged permissions can't be mapped from a group")
     require_permission(caller, "roleassignments.readwrite", organization_id)
     reach = permitted_organizations(caller, "roleassignments.readwrite")
     boundaries = default_boundaries(organization_id)
@@ -524,6 +522,19 @@ async def _reconcile_mapping_change(provisioner: Provisioner) -> None:
         raise HTTPException(409, exc.detail) from None
 
 
+async def _refuse_privileged_roles(session: AsyncSession, role_ids: set[UUID]) -> None:
+    """Refuse mapping a role with privileged permissions. Decided under
+    share locks a permission edit waits on, held to the commit, so a role
+    can't turn privileged between this check and the mapping's save."""
+    from shared.account_guards import share_lock_roles
+    from src.services.user_role_assignments import load_roles
+
+    await share_lock_roles(session, role_ids)
+    roles = await load_roles(session, role_ids)
+    if any(is_privileged_principal(role.permissions) for role in roles.values()):
+        raise HTTPException(422, "Roles with privileged permissions can't be mapped from a group")
+
+
 async def set_group_mapping(
     session: AsyncSession,
     caller: Caller,
@@ -543,6 +554,7 @@ async def set_group_mapping(
     # also takes, so it can't vanish before the mapping is written.
     await provisioner.hold_policy(exclusive=True)
     group = await _group(session, connection, group_id)
+    await _refuse_privileged_roles(session, wanted)
     mapping = await session.get(IdentityProviderGroupMapping, group.id)
     if mapping is None:
         session.add(

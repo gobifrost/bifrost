@@ -52,6 +52,7 @@ from uuid import UUID
 from sqlalchemy import delete, func, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.account_guards import share_lock_roles
 from shared.builtin_roles import (
     BASE_ROLE_IDS,
     DECRYPTION_ROLE_ID,
@@ -67,7 +68,7 @@ from src.models.orm.identity_providers import (
     IdentityProviderGroupRole,
     IdentityProviderUser,
 )
-from src.models.orm.users import Role, User, UserRole
+from src.models.orm.users import User, UserRole
 from src.services.audit_context import ActorContext
 from src.services.identity_provisioning.domains import email_domain, verified_domains
 
@@ -688,7 +689,7 @@ class Provisioner:
         # A mapped role checked at mapping time can gain privileged
         # permissions later, so check again at every grant, under the lock
         # a permission edit waits on.
-        await self._lock_roles_shared(missing)
+        await share_lock_roles(self.session, missing)
         roles = await load_roles(self.session, missing)
         for role_id in sorted(missing):
             if role_id not in roles:
@@ -838,16 +839,6 @@ class Provisioner:
                 "This user is already managed by an identity provider",
             )
 
-    async def _lock_roles_shared(self, role_ids: Iterable[UUID]) -> None:
-        """Share-lock role rows before reading their permissions. A
-        permission edit locks its role for update first, so it waits for
-        this decision rather than changing the role under it."""
-        ids = set(role_ids)
-        if ids:
-            await self.session.execute(
-                select(Role.id).where(Role.id.in_(ids)).order_by(Role.id).with_for_update(read=True)
-            )
-
     async def _unmanaged(self, users: Iterable[User]) -> dict[UUID, str]:
         """``user_id -> reason`` for the locked ``users`` this connection must
         leave alone: privileged ones, and any no longer in its organization
@@ -860,7 +851,7 @@ class Provisioner:
                 select(UserRole.role_id).where(UserRole.user_id.in_([u.id for u in users]))
             )
         )
-        await self._lock_roles_shared(held | {u.base_role_id for u in users if u.base_role_id})
+        await share_lock_roles(self.session, held | {u.base_role_id for u in users if u.base_role_id})
         privileged = await privileged_user_ids(self.session, [u.id for u in users])
         unmanaged: dict[UUID, str] = {}
         for user in users:

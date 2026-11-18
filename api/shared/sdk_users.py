@@ -182,12 +182,22 @@ IDENTITY_MANAGEMENT_MESSAGE = "Identities are managed from Identities"
 RESERVED_EMAIL_MESSAGE = "This email domain is reserved"
 
 
-async def _lock_user_row(session: AsyncSession, user_id: UUID) -> None:
-    """Lock the user before any guard locks a role: identity provisioning
-    takes the same order (user, then roles), so the two can't deadlock."""
+async def _lock_user_row(session: AsyncSession, user: "UserORM") -> None:
+    """Lock the user and read it again, before deciding anything from it.
+
+    Taken before any guard locks a role, the order identity provisioning
+    uses (user, then roles), so the two can't deadlock. The reread means
+    authorization sees the user as a concurrent change (a move, say) left
+    them, not as first loaded.
+    """
     from src.models import User as UserORM
 
-    await session.execute(select(UserORM.id).where(UserORM.id == user_id).with_for_update())
+    await session.execute(
+        select(UserORM)
+        .where(UserORM.id == user.id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
 
 
 def refuse_identity_management(user: "UserORM") -> None:
@@ -661,7 +671,7 @@ async def update_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be modified")
     refuse_identity_management(db_user)
-    await _lock_user_row(session, db_user.id)
+    await _lock_user_row(session, db_user)
     if email is not None:
         refuse_reserved_email(email)
     _authorize_update(
@@ -824,7 +834,7 @@ async def delete_user(
     if db_user.is_system:
         raise UserServiceError(403, "System user cannot be deleted")
     refuse_identity_management(db_user)
-    await _lock_user_row(session, db_user.id)
+    await _lock_user_row(session, db_user)
     require_operation(caller, "users.delete", org_target(db_user.organization_id))
     require_unprotected(caller, db_user.id in await privileged_user_ids(session, [db_user.id]), db_user.organization_id)
 
@@ -925,6 +935,7 @@ async def bulk_update_users(
         .where(UserORM.id.in_(request.user_ids))
         .order_by(UserORM.id)
         .with_for_update()
+        .execution_options(populate_existing=True)
     )
     users_by_id = {u.id: u for u in rows.scalars().all()}
     held = await held_permissions_by_user(session, list(users_by_id))

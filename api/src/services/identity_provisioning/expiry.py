@@ -65,11 +65,15 @@ async def collect_expiry_notices(session: AsyncSession, now: datetime) -> list[E
     a rotation (which locks them for update) either lands before this reads
     the tokens or waits until the warnings are up, then dismisses them.
     """
-    await session.execute(
-        select(IdentityProvider.id)
-        .where(IdentityProvider.is_enabled.is_(True))
-        .order_by(IdentityProvider.id)
-        .with_for_update(key_share=True)
+    locked = list(
+        await session.scalars(
+            select(IdentityProvider.id)
+            .where(IdentityProvider.is_enabled.is_(True))
+            .order_by(IdentityProvider.id)
+            # FOR KEY SHARE: SCIM requests' last_request_at updates don't
+            # wait on it; only rotation's FOR UPDATE does.
+            .with_for_update(read=True, key_share=True)
+        )
     )
     rows = (
         await session.execute(
@@ -80,6 +84,8 @@ async def collect_expiry_notices(session: AsyncSession, now: datetime) -> list[E
             )
             .join(Organization, Organization.id == IdentityProvider.organization_id)
             .where(
+                # Only the connections locked above, enabled since or not.
+                IdentityProvider.id.in_(locked),
                 IdentityProvider.is_enabled.is_(True),
                 Organization.is_active.is_(True),
                 IdentityProviderToken.revoked_at.is_(None),

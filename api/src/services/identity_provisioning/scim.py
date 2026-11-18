@@ -127,7 +127,7 @@ def _split_unknown_extensions(
     unknown: dict[str, Any] = {}
     for key, value in body.items():
         if key.startswith("urn:") and key not in known:
-            unknown[key] = value
+            unknown[key] = _extension_value(key, value)
         else:
             kept[key] = value
     if "schemas" in kept and isinstance(kept["schemas"], list):
