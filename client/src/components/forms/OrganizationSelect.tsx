@@ -15,6 +15,7 @@ import {
 	UserRound,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { usePresentationStore } from "@/stores/presentationStore";
 import { Button } from "@/components/ui/button";
 import {
 	Command,
@@ -117,6 +118,7 @@ export function OrganizationSelect({
 	const getOrgName = useOrganizationName(choices);
 	const [open, setOpen] = useState(false);
 
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const selectedOrg = organizations?.find((org) => org.id === value);
 
 	const handleSelect = (selected: string) => {
@@ -161,7 +163,10 @@ export function OrganizationSelect({
 					) : (
 						<Building2 className="h-4 w-4 text-muted-foreground" />
 					)}
-					<span className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]">
+					<span
+						data-pii
+						className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]"
+					>
 						{selectedOrg.name}
 					</span>
 				</div>
@@ -173,7 +178,10 @@ export function OrganizationSelect({
 				return (
 					<div className="flex min-w-0 items-center gap-2">
 						<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
-						<span className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]">
+						<span
+							data-pii
+							className="min-w-0 whitespace-normal text-left [overflow-wrap:anywhere]"
+						>
 							{homeOrganizationName}
 						</span>
 					</div>
@@ -184,7 +192,9 @@ export function OrganizationSelect({
 					<Building2 className="h-4 w-4 shrink-0 text-muted-foreground" />
 					<span className="min-w-0 whitespace-normal text-left text-muted-foreground [overflow-wrap:anywhere]">
 						Organization unavailable
-						<span className="block font-mono text-xs">{value}</span>
+						<span data-pii className="block font-mono text-xs">
+							{value}
+						</span>
 					</span>
 				</div>
 			);
@@ -330,7 +340,7 @@ export function OrganizationSelect({
 
 						<CommandGroup heading="Organizations">
 							{organizations && organizations.length > 0 ? (
-								organizations.map((org) => {
+								organizations.map((org, index) => {
 									const keywords = [org.name];
 									if (org.domain) keywords.push(org.domain);
 									if (org.is_provider)
@@ -340,6 +350,11 @@ export function OrganizationSelect({
 											key={org.id}
 											value={org.id}
 											keywords={keywords}
+											aria-label={
+												presentationMode
+													? `Organization ${index + 1}`
+													: undefined
+											}
 											data-checked={value === org.id}
 											onSelect={() =>
 												handleSelect(org.id)
@@ -352,7 +367,9 @@ export function OrganizationSelect({
 											)}
 											<div className="flex min-w-0 flex-1 flex-col [overflow-wrap:anywhere]">
 												<span className="flex min-w-0 flex-wrap items-center gap-2">
-													{org.name}
+													<span data-pii>
+														{org.name}
+													</span>
 													{org.is_provider && (
 														<span className="text-xs font-medium text-muted-foreground">
 															Provider
@@ -361,7 +378,9 @@ export function OrganizationSelect({
 												</span>
 												{org.domain && (
 													<span className="text-xs text-muted-foreground">
-														@{org.domain}
+														<span data-pii>
+															@{org.domain}
+														</span>
 													</span>
 												)}
 											</div>

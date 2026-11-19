@@ -136,13 +136,13 @@ export function AppHeader({ appName, isPreview = false }: AppHeaderProps) {
 								className="min-h-11 gap-2 px-2"
 								aria-label="Account menu"
 							>
-								<Avatar className="h-6 w-6">
+								<Avatar data-pii data-pii-avatar className="h-6 w-6">
 									<AvatarImage src={avatarUrl || undefined} />
 									<AvatarFallback className="text-xs">
 										{getInitials()}
 									</AvatarFallback>
 								</Avatar>
-								<span className="hidden max-w-40 truncate md:inline-block">
+								<span data-pii className="hidden max-w-40 truncate md:inline-block">
 									{userName}
 								</span>
 								<ChevronDown className="hidden h-4 w-4 md:block" />

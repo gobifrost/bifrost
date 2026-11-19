@@ -776,3 +776,61 @@
 @media (prefers-reduced-motion: reduce) {
  .bf-running-orbit { animation: none; }
 }
+
+/* Presentation mode */
+:root[data-presentation-mode="on"] [data-pii]:not([data-pii="off"]) {
+	position: relative;
+	visibility: hidden !important;
+}
+
+:root[data-presentation-mode="on"] td:not([data-pii="off"], :has(a, button, input, select, textarea, summary, [tabindex], [contenteditable], [data-pii="off"])),
+:root[data-presentation-mode="on"] [data-pii-surface],
+:root[data-presentation-mode="on"] .monaco-editor,
+:root[data-presentation-mode="on"] [data-sonner-toast] :is([data-title], [data-description]) {
+	position: relative;
+	visibility: hidden !important;
+}
+
+/* Embedded documents and editor widgets can set their own visibility. */
+:root[data-presentation-mode="on"] :is([data-pii-surface], .monaco-editor) *,
+:root[data-presentation-mode="on"] [data-sonner-toast] :is([data-title], [data-description]) * {
+	visibility: hidden !important;
+}
+
+/* Placeholders stay in the value’s existing layout box. */
+:root[data-presentation-mode="on"] td:not([data-pii="off"], :has(a, button, input, select, textarea, summary, [tabindex], [contenteditable], [data-pii]))::after,
+:root[data-presentation-mode="on"] [data-pii]:not([data-pii="off"])::after,
+:root[data-presentation-mode="on"] [data-pii-surface]::after,
+:root[data-presentation-mode="on"] .monaco-editor::after,
+:root[data-presentation-mode="on"] [data-sonner-toast] :is([data-title], [data-description])::after {
+	content: "";
+	position: absolute;
+	inset-inline-start: 0;
+	inset-block-start: 50%;
+	transform: translateY(-50%);
+	inline-size: 5em;
+	max-inline-size: 100%;
+	block-size: 0.75em;
+	border-radius: 999px;
+	background: var(--presentation-mask, var(--muted-foreground));
+	forced-color-adjust: none;
+	visibility: visible;
+	pointer-events: none;
+}
+
+:root[data-presentation-mode="on"] td::after {
+	margin-inline-start: 0.5rem;
+}
+
+:root[data-presentation-mode="on"] [data-pii-avatar]::after {
+	inset: 0;
+	inline-size: 100%;
+	block-size: 100%;
+	transform: none;
+}
+
+@media (forced-colors: active) {
+	:root[data-presentation-mode="on"] {
+		--presentation-mask: GrayText;
+	}
+}

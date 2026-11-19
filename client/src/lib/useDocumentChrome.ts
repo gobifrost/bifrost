@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useEffect } from "react";
 
 interface FaviconState {
@@ -80,14 +81,22 @@ export function useDocumentChrome({
 	/** When false, the hook does nothing. */
 	enabled?: boolean;
 }): void {
+	const presentationMode = usePresentationStore((state) => state.enabled);
+	const hasTitle = enabled && !!title;
 	useEffect(() => {
-		if (!enabled || !title) return;
+		if (!hasTitle) return;
 		const prev = document.title;
-		document.title = title;
 		return () => {
-			document.title = prev;
+			document.title = usePresentationStore.getState().enabled
+				? "Bifrost"
+				: prev;
 		};
-	}, [enabled, title]);
+	}, [hasTitle]);
+
+	useEffect(() => {
+		if (enabled && title)
+			document.title = presentationMode ? "Bifrost" : title;
+	}, [enabled, title, presentationMode]);
 
 	useEffect(() => {
 		if (!enabled || !logo) return;

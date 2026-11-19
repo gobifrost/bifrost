@@ -15,7 +15,7 @@ import { formatRelativeTime } from "@/lib/utils";
 
 function Organization({ entry }: { entry: AuditLogEntry }) {
 	return (
-		<span className="[overflow-wrap:anywhere]">
+		<span className="[overflow-wrap:anywhere]" data-pii={entry.actor.organization_name != null || undefined}>
 			{entry.actor.organization_name ??
 				(entry.actor.organization_id ? "—" : "Global")}
 		</span>

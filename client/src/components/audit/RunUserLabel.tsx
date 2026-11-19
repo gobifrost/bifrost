@@ -18,12 +18,21 @@ function actorName(entry: AuditLogEntry): string {
  * event targeted. Anyone else shows by email or name.
  */
 export function RunUserLabel({ entry }: { entry: AuditLogEntry }) {
+	const actorLabel = (
+		<span
+			className="[overflow-wrap:anywhere]"
+			data-pii={!!(entry.actor.user_email || entry.actor.user_name) || undefined}
+		>
+			{actorName(entry)}
+		</span>
+	);
 	if (entry.actor.impersonated_by_user_id) {
 		return (
 			<span className="inline-flex min-w-0 flex-col [overflow-wrap:anywhere]">
-				<span>{actorName(entry)}</span>
+				{actorLabel}
 				<span className="text-xs text-muted-foreground">
-					Impersonated by {entry.actor.impersonated_by_email || entry.actor.impersonated_by_name || entry.actor.impersonated_by_user_id}
+					Impersonated by{" "}
+					<span data-pii>{entry.actor.impersonated_by_email || entry.actor.impersonated_by_name || entry.actor.impersonated_by_user_id}</span>
 				</span>
 			</span>
 		);
@@ -31,10 +40,7 @@ export function RunUserLabel({ entry }: { entry: AuditLogEntry }) {
 	const runUser = storedTrace(entry.details)?.steps.find(
 		(step) => step.key === "run_user",
 	);
-	if (!runUser?.facts.identity_kind)
-		return (
-			<span className="[overflow-wrap:anywhere]">{actorName(entry)}</span>
-		);
+	if (!runUser?.facts.identity_kind) return actorLabel;
 
 	const organization =
 		typeof runUser.facts.home_organization_id === "string"
@@ -43,7 +49,7 @@ export function RunUserLabel({ entry }: { entry: AuditLogEntry }) {
 	return (
 		<span className="inline-flex min-w-0 items-center gap-2">
 			<IdentityGlyph className="h-6 w-6 sm:h-6 sm:w-6 [&>svg:last-child]:size-3" />
-			<span className="min-w-0 [overflow-wrap:anywhere]">
+			<span className="min-w-0 [overflow-wrap:anywhere]" data-pii>
 				{[entry.actor.user_name || "Identity", organization]
 					.filter(Boolean)
 					.join(" · ")}

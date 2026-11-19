@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
 import { useReducedMotion } from "framer-motion";
@@ -47,6 +48,7 @@ interface QuickAccessProps {
  * Search and navigate to forms, workflows, and scripts
  */
 export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const navigate = useNavigate();
 	const authorization = useAuthorization();
 	const canUseEditor = authorization.canAt(
@@ -284,7 +286,9 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 						<div className="flex items-start gap-2">
 							<AlertTriangle className="mt-0.5 size-4 shrink-0" />
 							<div className="min-w-0 flex-1">
-								<p className="leading-6">{searchError}</p>
+								<p data-pii className="leading-6">
+									{searchError}
+								</p>
 								<p className="text-xs leading-5 text-muted-foreground">
 									Forms and workflows still appear. Retry to
 									search scripts again.
@@ -329,6 +333,11 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 					<CommandGroup>
 						{results.map((result, index) => (
 							<CommandItem
+								aria-label={
+									presentationMode
+										? `${result.type} ${index + 1}`
+										: undefined
+								}
 								key={`${result.type}-${result.name}-${index}`}
 								value={`${result.type}-${result.name}-${index}`}
 								onSelect={() => handleSelect(result)}
@@ -339,7 +348,10 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 								</div>
 								<div className="flex-1 min-w-0">
 									<div className="flex items-center gap-2">
-										<span className="font-medium text-sm leading-6 [overflow-wrap:anywhere]">
+										<span
+											data-pii
+											className="font-medium text-sm leading-6 [overflow-wrap:anywhere]"
+										>
 											{result.name}
 										</span>
 										<span className="text-xs leading-5 text-muted-foreground capitalize">
@@ -347,7 +359,10 @@ export function QuickAccess({ isOpen, onClose }: QuickAccessProps) {
 										</span>
 									</div>
 									{result.description && (
-										<p className="mt-1 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]">
+										<p
+											data-pii
+											className="mt-1 text-xs leading-5 text-muted-foreground [overflow-wrap:anywhere]"
+										>
 											{result.description}
 										</p>
 									)}

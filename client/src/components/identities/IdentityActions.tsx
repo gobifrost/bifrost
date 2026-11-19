@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useRef, useState } from "react";
 import { ExternalLink, MoreVertical, Pencil, Trash2 } from "lucide-react";
 import { toast } from "sonner";
@@ -50,7 +51,7 @@ export function canManageIdentity(
  */
 export function IdentityActions({
 	identity,
-	label = `${identity.name} actions`,
+	label,
 	onOpen,
 	onDeleted,
 }: {
@@ -61,6 +62,7 @@ export function IdentityActions({
 	onOpen?: () => void;
 	onDeleted?: () => void;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const authorization = useAuthorization();
 	const deleteIdentity = useDeleteIdentity();
 	const triggerRef = useRef<HTMLButtonElement>(null);
@@ -78,7 +80,12 @@ export function IdentityActions({
 						ref={triggerRef}
 						variant="ghost"
 						size="icon"
-						aria-label={label}
+						aria-label={
+							label ??
+							(presentationMode
+								? "Identity actions"
+								: `${identity.name} actions`)
+						}
 						className="h-11 w-11 shrink-0 lg:h-9 lg:w-9"
 					>
 						<MoreVertical className="h-4 w-4" />

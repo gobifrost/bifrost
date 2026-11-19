@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { OrganizationSsoExclusion } from "@/components/users/SsoExclusions";
 import {
 	useEffect,
@@ -164,6 +165,7 @@ function MutationRetryAlert({
 }
 
 export function Organizations() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const compactLayout = useMediaQuery("(max-width: 1023px)");
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -247,7 +249,9 @@ export function Organizations() {
 		canManage(org)
 			? undefined
 			: {
-					label: `Cannot select ${org.name}`,
+					label: presentationMode
+						? "Cannot select organization"
+						: `Cannot select ${org.name}`,
 					reason: "You can't edit this organization.",
 				};
 	const updateMutation = useUpdateOrganization({ toastOnError: false });
@@ -466,6 +470,11 @@ export function Organizations() {
 		return () => window.cancelAnimationFrame(frame);
 	}, [isEditDialogOpen, data, compactLayout]);
 
+	const orgLabel = (org: Organization) =>
+		presentationMode
+			? `Organization ${offset + pagedOrgs.indexOf(org) + 1}`
+			: org.name;
+
 	const renderOrganizationActions = (org: Organization) =>
 		canManage(org) && (
 			<DropdownMenu>
@@ -474,7 +483,7 @@ export function Organizations() {
 						variant="ghost"
 						size="icon"
 						className="h-11 w-11 lg:h-9 lg:w-9"
-						aria-label={`${org.name} actions`}
+						aria-label={`${orgLabel(org)} actions`}
 						onClick={(event) => {
 							editTriggerRef.current = event.currentTarget;
 						}}
@@ -486,7 +495,7 @@ export function Organizations() {
 					<DropdownMenuItem
 						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
 						onClick={() => handleEdit(org)}
-						aria-label={`Edit ${org.name}`}
+						aria-label={`Edit ${orgLabel(org)}`}
 					>
 						<Pencil />
 						Edit
@@ -496,7 +505,7 @@ export function Organizations() {
 						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
 						onClick={() => handleToggleActive(org)}
 						disabled={org.is_provider}
-						aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
+						aria-label={`${org.is_active ? "Disable" : "Enable"} ${orgLabel(org)}`}
 					>
 						<Power />
 						{org.is_active ? "Disable" : "Enable"}
@@ -518,13 +527,15 @@ export function Organizations() {
 					if (stopPropagation) event.stopPropagation();
 					handleEdit(org, event);
 				}}
-				aria-label={`Edit ${org.name}`}
+				aria-label={`Edit ${orgLabel(org)}`}
 				className={className}
 			>
-				{org.name}
+				<span data-pii>{org.name}</span>
 			</button>
 		) : (
-			<span className="[overflow-wrap:anywhere]">{org.name}</span>
+			<span data-pii className="[overflow-wrap:anywhere]">
+				{org.name}
+			</span>
 		);
 
 	return (
@@ -674,7 +685,7 @@ export function Organizations() {
 													<RowSelectCheckbox
 														selection={selection}
 														id={org.id}
-														label={`Select ${org.name}`}
+														label={`Select ${orgLabel(org)}`}
 														unselectable={unselectable(
 															org,
 														)}
@@ -692,6 +703,7 @@ export function Organizations() {
 												<div className="mt-1 flex flex-wrap gap-2">
 													{org.is_provider && (
 														<Badge
+															data-pii="off"
 															variant="outline"
 															className="border-[var(--bf-info)]/20 bg-[var(--bf-info)]/10 text-[var(--bf-info)] dark:bg-[var(--bf-info)]/15"
 														>
@@ -699,6 +711,7 @@ export function Organizations() {
 														</Badge>
 													)}
 													<Badge
+														data-pii="off"
 														variant="outline"
 														className={
 															org.is_active
@@ -733,7 +746,10 @@ export function Organizations() {
 													Email domain
 												</dt>
 												<dd className="mt-1 [overflow-wrap:anywhere]">
-													{org.domain || "Not set"}
+													<span data-pii>
+														{org.domain ||
+															"Not set"}
+													</span>
 												</dd>
 											</div>
 											<div>
@@ -741,7 +757,9 @@ export function Organizations() {
 													Organization ID
 												</dt>
 												<dd className="mt-1 font-mono text-xs [overflow-wrap:anywhere]">
-													{org.id}
+													<span data-pii>
+														{org.id}
+													</span>
 												</dd>
 											</div>
 											<div>
@@ -810,7 +828,7 @@ export function Organizations() {
 											<SelectionCell
 												selection={selection}
 												id={org.id}
-												label={`Select ${org.name}`}
+												label={`Select ${orgLabel(org)}`}
 												unselectable={unselectable(org)}
 											/>
 										)}
@@ -825,6 +843,7 @@ export function Organizations() {
 														)}
 														{org.is_provider && (
 															<Badge
+																data-pii="off"
 																variant="outline"
 																className="border-[var(--bf-info)]/20 bg-[var(--bf-info)]/10 text-[var(--bf-info)] dark:bg-[var(--bf-info)]/15"
 															>
@@ -833,7 +852,9 @@ export function Organizations() {
 														)}
 													</div>
 													<div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-														{org.id}
+														<span data-pii>
+															{org.id}
+														</span>
 													</div>
 												</div>
 											</div>
@@ -852,8 +873,12 @@ export function Organizations() {
 												</span>
 											)}
 										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap">
+										<DataTableCell
+											data-pii="off"
+											className="w-0 whitespace-nowrap"
+										>
 											<Badge
+												data-pii="off"
 												variant={
 													org.is_active
 														? "outline"
@@ -1105,7 +1130,10 @@ export function Organizations() {
 						<DialogTitle>Edit Organization</DialogTitle>
 						<DialogDescription>
 							Manage details, status, and instructions for{" "}
-							{selectedOrg?.name}.
+							{presentationMode
+								? "this organization"
+								: selectedOrg?.name}
+							.
 						</DialogDescription>
 					</DialogHeader>
 
@@ -1145,7 +1173,17 @@ export function Organizations() {
 										</Label>
 										<Input
 											id="edit-organization-name"
-											value={formData.name}
+											readOnly={presentationMode}
+											value={
+												presentationMode
+													? ""
+													: formData.name
+											}
+											placeholder={
+												presentationMode
+													? "••••••"
+													: undefined
+											}
 											onChange={(event) =>
 												setFormData({
 													...formData,
@@ -1161,14 +1199,23 @@ export function Organizations() {
 										</Label>
 										<Input
 											id="edit-organization-domain"
-											value={formData.domain}
+											readOnly={presentationMode}
+											value={
+												presentationMode
+													? ""
+													: formData.domain
+											}
 											onChange={(event) =>
 												setFormData({
 													...formData,
 													domain: event.target.value,
 												})
 											}
-											placeholder="acme.com"
+											placeholder={
+												presentationMode
+													? "••••••"
+													: "acme.com"
+											}
 										/>
 										<p className="text-xs text-muted-foreground">
 											Users with this email domain are
@@ -1300,9 +1347,12 @@ export function Organizations() {
 							Disable organization?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{selectedOrg?.name} will be removed from active
-							organization lists. You can re-enable it later by
-							showing inactive organizations.
+							{presentationMode
+								? "This organization"
+								: selectedOrg?.name}{" "}
+							will be removed from active organization lists. You
+							can re-enable it later by showing inactive
+							organizations.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{updateErrorMessage && (

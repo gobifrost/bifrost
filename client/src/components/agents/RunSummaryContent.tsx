@@ -114,6 +114,7 @@ export function RunSummaryContent({
 			>
 				<div className="flex min-w-0 flex-wrap items-center gap-2">
 					<div
+						data-pii-surface={!!run.asked || undefined}
 						className={cn(
 							"min-w-0 flex-[1_1_12rem] [overflow-wrap:anywhere] font-medium",
 							"text-sm leading-6",
@@ -140,6 +141,7 @@ export function RunSummaryContent({
 					{titleTrailing}
 				</div>
 				<div
+					data-pii-surface={!!bodyText || undefined}
 					className={cn(
 						"min-w-0 [overflow-wrap:anywhere] text-muted-foreground",
 						"text-sm leading-6",
