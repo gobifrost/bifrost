@@ -170,7 +170,11 @@ test("[FORM-BROWSE-01 desktop] admin searches and opens a seeded form", async ({
 		).toBeVisible({
 			timeout: 10000,
 		});
-		await expect(page.getByText("Summary", { exact: true })).toBeVisible();
+		await expect(
+			page
+				.locator('[data-field-card="summary"]')
+				.getByText("Summary *", { exact: true }),
+		).toBeVisible();
 
 		await page.goto("/forms");
 		await page.getByRole("button", { name: "Create Form" }).click();

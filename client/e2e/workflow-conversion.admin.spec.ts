@@ -60,6 +60,10 @@ test.describe("Workflow conversion", () => {
 	test("WORKFLOW-CONVERSION-01 analyzes, reviews, applies and reopens a synthetic workflow", async ({
 		page,
 	}, testInfo) => {
+		// Analyze and apply are two durable PlatformJob round trips; together
+		// they take about 19s in CI. The global 30s ceiling leaves no headroom
+		// for queueing, so this flow gets a measured budget, not a retry.
+		test.setTimeout(60_000);
 		await page.goto("/workflows");
 		await page
 			.getByPlaceholder("Search by name, description, or category...")

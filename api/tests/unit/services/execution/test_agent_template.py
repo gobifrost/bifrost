@@ -1,8 +1,8 @@
 """The agent template profile: warm agent runtime, one forked child per run.
 
 Real template processes (fork behavior can't be mocked). The forked child's
-``run_agent_message`` is replaced by a stub through a ``sitecustomize`` module
-on the template's ``PYTHONPATH``, so these tests exercise the fork protocol
+``run_agent_message`` is replaced by a stub in a test bootstrap script
+after interpreter initialization, so these tests exercise the fork protocol
 without a database or a model.
 """
 
@@ -49,14 +49,26 @@ _STUB = textwrap.dedent(
 
 
 @pytest.fixture
-def agent_template(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-    (tmp_path / "sitecustomize.py").write_text(_STUB)
-    monkeypatch.setenv(
-        "PYTHONPATH", os.pathsep.join(filter(None, [str(tmp_path), os.environ.get("PYTHONPATH")]))
+def agent_template(tmp_path: Path):
+    # Python 3.15 cannot initialize pydantic-core from sitecustomize while
+    # the interpreter is still starting. Install the stub from a normal script,
+    # then run the real template entry point with its original fd and profile.
+    bootstrap = tmp_path / "agent_template_bootstrap.py"
+    bootstrap.write_text(
+        _STUB + "\nimport runpy\nrunpy.run_module("
+        "'src.services.execution.template_process', run_name='__main__')\n"
     )
+    popen = subprocess.Popen
+
+    def start_template(argv, **kwargs):
+        assert argv[1:3] == ["-m", "src.services.execution.template_process"]
+        assert argv[-1] == "agent"
+        return popen([argv[0], str(bootstrap), *argv[3:]], **kwargs)
+
     template = TemplateProcess(profile="agent")
-    template.start()
     try:
+        with patch("src.services.execution.template_process.subprocess.Popen", side_effect=start_template):
+            template.start()
         yield template
     finally:
         template.shutdown()
