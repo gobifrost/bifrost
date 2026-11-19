@@ -130,6 +130,10 @@ async function deleteCreatedDocument(api: AuthedApi) {
 async function fillDocumentContent(page: Page, content: string) {
 	const editor = page.getByRole("textbox", { name: "Document content" });
 	await expect(editor).toBeVisible({ timeout: 10000 });
+	// #1465: the editor controls must not consume the whole writing area at
+	// the default 1280x720 viewport.
+	const box = await editor.boundingBox();
+	expect(box?.height ?? 0, "writing area height").toBeGreaterThanOrEqual(120);
 	await editor.click();
 	await page.keyboard.press(
 		process.platform === "darwin" ? "Meta+A" : "Control+A",

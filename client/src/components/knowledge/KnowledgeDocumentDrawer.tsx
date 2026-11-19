@@ -516,7 +516,7 @@ function KnowledgeDocumentSession({
 
 						{/* Editor */}
 						<div
-							className={`min-h-[380px] h-[50dvh] shrink-0 overflow-hidden rounded-[var(--bf-radius-control)] border border-border ${embedded ? "lg:min-h-40 lg:h-auto lg:flex-1 lg:shrink" : ""}`}
+							className={`min-h-[380px] h-[50dvh] shrink-0 overflow-hidden rounded-[var(--bf-radius-control)] border border-border ${embedded ? "lg:min-h-80 lg:h-auto lg:flex-1 lg:shrink" : ""}`}
 						>
 							<TiptapEditor
 								ariaLabel="Document content"
