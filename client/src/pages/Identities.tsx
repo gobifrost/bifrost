@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useMemo, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Plus, RefreshCw, Shield, Trash2, Workflow } from "lucide-react";
@@ -71,10 +72,12 @@ const PINNED_ACTIONS_CLASS_NAME =
 
 /** The base role, then each additional role, with where it applies. */
 function RoleChips({ identity }: { identity: Identity }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	return (
 		<ul className="flex min-w-0 flex-wrap gap-1.5">
 			<li>
 				<Badge
+					data-pii
 					variant="power"
 					title="Base role"
 					className="h-auto min-h-6 whitespace-normal"
@@ -85,15 +88,21 @@ function RoleChips({ identity }: { identity: Identity }) {
 			{identity.additional_roles.map((role) => (
 				<li key={role.role_id}>
 					<Badge
+						data-pii
 						variant="power"
-						title={`Applies in ${role.boundaries
-							.map((boundary) =>
-								placeLabel(
-									boundary.kind,
-									boundary.organization_name ?? "",
-								),
-							)
-							.join(", ")}`}
+						title={
+							presentationMode
+								? "Role scope"
+								: `Applies in ${role.boundaries
+										.map((boundary) =>
+											placeLabel(
+												boundary.kind,
+												boundary.organization_name ??
+													"",
+											),
+										)
+										.join(", ")}`
+						}
 						className="h-auto min-h-6 whitespace-normal"
 					>
 						{role.name}
@@ -120,6 +129,7 @@ function matches(identity: Identity, search: string): boolean {
  * Roles; Delete, custom identities only) and a ⋮ menu on each row.
  */
 export function Identities() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const navigate = useNavigate();
 	const isNarrow = useMediaQuery("(max-width: 1279px)");
 	const authorization = useAuthorization();
@@ -166,12 +176,16 @@ export function Identities() {
 	};
 	const closeBulk = () => setBulkMode(null);
 
+	const nameForControl = (identity: Identity) =>
+		presentationMode
+			? `Identity ${identities.indexOf(identity) + 1}`
+			: identityLabel(identity);
 	const selectLabel = (identity: Identity) =>
-		`Select ${identityLabel(identity)}`;
+		`Select ${nameForControl(identity)}`;
 	const renderActions = (identity: Identity) => (
 		<IdentityActions
 			identity={identity}
-			label={`${identityLabel(identity)} actions`}
+			label={`${nameForControl(identity)} actions`}
 			onOpen={() => open(identity)}
 		/>
 	);
@@ -298,9 +312,18 @@ export function Identities() {
 										<div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
 											<Link
 												to={`/users/${identity.id}`}
+												aria-label={
+													presentationMode
+														? nameForControl(
+																identity,
+															)
+														: undefined
+												}
 												className="inline-flex min-h-11 items-center font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
 											>
-												{identity.name}
+												<span data-pii>
+													{identity.name}
+												</span>
 											</Link>
 											<IdentityKindBadge
 												kind={identity.identity_kind}
@@ -399,12 +422,22 @@ export function Identities() {
 									<DataTableCell className="min-w-48 font-medium [overflow-wrap:anywhere]">
 										<Link
 											to={`/users/${identity.id}`}
+											aria-label={
+												presentationMode
+													? nameForControl(identity)
+													: undefined
+											}
 											className="hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
 										>
-											{identity.name}
+											<span data-pii>
+												{identity.name}
+											</span>
 										</Link>
 									</DataTableCell>
-									<DataTableCell className="w-0 whitespace-nowrap">
+									<DataTableCell
+										data-pii="off"
+										className="w-0 whitespace-nowrap"
+									>
 										<IdentityKindBadge
 											kind={identity.identity_kind}
 										/>

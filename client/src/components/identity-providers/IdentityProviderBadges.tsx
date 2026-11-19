@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { CheckCircle2, CircleSlash, Clock, XCircle } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
@@ -19,14 +20,22 @@ export function IdentitySourceLabel({
 }: {
 	user: Pick<components["schemas"]["UserPublic"], "identity_source">;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const source = user.identity_source;
 	return (
 		<span className="inline-flex flex-wrap items-center gap-2">
-			{identitySourceLabel(user)}
+			<span data-pii={!!source || undefined}>
+				{identitySourceLabel(user)}
+			</span>
 			{source?.access_pending_since ? (
 				<Badge
 					variant="secondary"
-					title={`Changes from ${source.name} apply within about two minutes`}
+					data-pii="off"
+					title={
+						presentationMode
+							? "Changes apply within about two minutes"
+							: `Changes from ${source.name} apply within about two minutes`
+					}
 				>
 					<Clock aria-hidden="true" className="h-3.5 w-3.5" />
 					Access Pending
@@ -45,11 +54,16 @@ export function InactiveStatusBadge({
 }: {
 	user: Pick<components["schemas"]["UserPublic"], "identity_source">;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const source = user.identity_source;
 	return source?.activating ? (
 		<Badge
 			variant="info"
-			title={`${source.name} added this user; Bifrost activates them within about two minutes`}
+			title={
+				presentationMode
+					? "Bifrost activates this user within about two minutes"
+					: `${source.name} added this user; Bifrost activates them within about two minutes`
+			}
 		>
 			<Clock aria-hidden="true" className="h-3.5 w-3.5" />
 			Activating

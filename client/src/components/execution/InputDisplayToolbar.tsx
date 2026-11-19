@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useRef, useState } from "react";
 import { Check, Copy, Eye, TreeDeciduous } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -18,6 +19,7 @@ export function InputDisplayToolbar({
 	description,
 	onViewChange,
 }: InputDisplayToolbarProps) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [result, setResult] = useState<{
 		input: typeof inputData;
 		status: "idle" | "pending" | "copied" | "error";
@@ -54,7 +56,9 @@ export function InputDisplayToolbar({
 						type="button"
 						variant="ghost"
 						className="min-h-11 sm:min-h-8 h-auto px-2 py-1 text-sm whitespace-normal"
-						disabled={result.status === "pending"}
+						disabled={
+							presentationMode || result.status === "pending"
+						}
 						onClick={copy}
 					>
 						{copyState === "copied" ? (

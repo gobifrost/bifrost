@@ -1,3 +1,5 @@
+import { usePresentationStore } from "@/stores/presentationStore";
+import { readFileSync } from "node:fs";
 import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { useState } from "react";
@@ -186,6 +188,55 @@ beforeEach(() => {
 });
 
 describe("Organizations", () => {
+	it("masks seeded organization values while keeping the portalled edit menu usable", async () => {
+		const root = document.documentElement;
+		const maskRules = document.createElement("style");
+		const styles = readFileSync("src/index.css", "utf8");
+		maskRules.textContent = styles.slice(
+			styles.indexOf("/* Presentation mode */"),
+		);
+		document.head.append(maskRules);
+		try {
+			const user = userEvent.setup();
+			const { container } = render(<Organizations />);
+			const name = screen.getByText("Acme");
+			expect(name).toBeVisible();
+
+			act(() => usePresentationStore.getState().setEnabled(true));
+			root.dataset.presentationMode = "on";
+			expect(name).not.toBeVisible();
+			expect(
+				screen.getByRole("columnheader", { name: /name/i }),
+			).toBeVisible();
+
+			const row = name.closest("tr")!;
+			await user.click(
+				within(row).getByRole("button", {
+					name: /^Organization \d+ actions$/,
+				}),
+			);
+			const edit = screen.getByRole("menuitem", {
+				name: /^Edit Organization \d+$/,
+			});
+			expect(container).not.toContainElement(edit);
+			await user.click(edit);
+
+			const field = screen.getByRole("textbox", {
+				name: "Organization Name",
+			});
+			expect(field).toHaveValue("");
+			expect(field).toHaveAttribute("readonly");
+			act(() => usePresentationStore.getState().setEnabled(false));
+			delete root.dataset.presentationMode;
+			expect(field).toHaveValue("Acme");
+		} finally {
+			act(() => usePresentationStore.getState().setEnabled(false));
+			delete root.dataset.presentationMode;
+			maskRules.remove();
+			usePresentationStore.persist.clearStorage();
+		}
+	});
+
 	it("places organization sign-in settings after basic details for admins", async () => {
 		authz.isPlatformAdmin = true;
 		const user = userEvent.setup();

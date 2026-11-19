@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useRef, type ReactNode } from "react";
 import { Link, Navigate, useNavigate, useParams } from "react-router-dom";
 import { motion, useReducedMotion } from "framer-motion";
@@ -207,7 +208,11 @@ function PersonHeader({
 				{identityKind ? (
 					<IdentityGlyph />
 				) : (
-					<Avatar className="h-12 w-12 sm:h-14 sm:w-14">
+					<Avatar
+						data-pii
+						data-pii-avatar
+						className="h-12 w-12 sm:h-14 sm:w-14"
+					>
 						<AvatarFallback className="font-display text-base font-semibold text-foreground sm:text-lg">
 							{initials(user)}
 						</AvatarFallback>
@@ -216,7 +221,7 @@ function PersonHeader({
 				<div className="min-w-0 flex-1 space-y-3">
 					<div className="space-y-1">
 						<h1 className="flex flex-wrap items-center gap-2 font-display text-2xl font-semibold tracking-tight [overflow-wrap:anywhere] sm:text-3xl">
-							{user.name || user.email}
+							<span data-pii>{user.name || user.email}</span>
 							{identityKind &&
 								identityOrganization !== undefined && (
 									<IdentityOrganizationChip
@@ -235,7 +240,7 @@ function PersonHeader({
 						</h1>
 						{!identityKind && (
 							<p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
-								<span className="[overflow-wrap:anywhere]">
+								<span data-pii className="[overflow-wrap:anywhere]">
 									{user.email}
 								</span>
 								{homeOrganization && (
@@ -244,7 +249,7 @@ function PersonHeader({
 											aria-hidden="true"
 											className="size-3.5"
 										/>
-										{homeOrganization}
+										<span data-pii>{homeOrganization}</span>
 									</span>
 								)}
 							</p>
@@ -361,6 +366,7 @@ function TestAccessSheet({
  * identity has no profile, so its page is the access content alone.
  */
 export function UserAccessPage() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const { userId, tab } = useParams<{ userId: string; tab?: string }>();
 	const navigate = useNavigate();
 	const authorization = useAuthorization();
@@ -526,7 +532,11 @@ export function UserAccessPage() {
 							<ImpersonateUserButton user={person} />
 							{/* The Profile tab is the profile editor, so no Edit Profile. */}
 							<UserActionsMenu
-								label={`${person.name || person.email} actions`}
+								label={
+									presentationMode
+										? "User actions"
+										: `${person.name || person.email} actions`
+								}
 								triggerRef={actionsButtonRef}
 								{...accountActions.menuPropsFor(person)}
 							/>
