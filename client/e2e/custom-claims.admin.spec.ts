@@ -83,13 +83,16 @@ async function createOrgSuperuser(
 	await assertOk(mfaSetupRes, "set up org superuser MFA");
 	const totpSecret = (await mfaSetupRes.json()).secret;
 
+	const mfaSetupCounter = Math.floor(Date.now() / 30000);
 	const mfaVerifyRes = await fetch(`${API_URL}/auth/mfa/verify`, {
 		method: "POST",
 		headers: {
 			Authorization: `Bearer ${mfaToken}`,
 			"Content-Type": "application/json",
 		},
-		body: JSON.stringify({ code: generateTOTP(totpSecret) }),
+		body: JSON.stringify({
+			code: generateTOTP(totpSecret, mfaSetupCounter * 30000),
+		}),
 	});
 	await assertOk(mfaVerifyRes, "verify org superuser MFA");
 	const tokens = await mfaVerifyRes.json();
@@ -124,6 +127,8 @@ async function createOrgSuperuser(
 		password: user.password,
 		name: user.name,
 		totpSecret,
+		recoveryCodes: tokens.recovery_codes,
+		mfaSetupCounter,
 		userId: registerData.id,
 		organizationId: credentials.org1.id,
 		accessToken: tokens.access_token,
