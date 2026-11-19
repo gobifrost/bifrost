@@ -1,0 +1,13 @@
+{
+  "key": "pr:1472",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Repair stale nightly regression tests only; no customer-facing product change.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1472",
+      "https://github.com/gobifrost/bifrost/blob/main/docs/product-updates-authoring.md"
+    ]
+  }
+}
