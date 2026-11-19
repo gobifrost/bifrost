@@ -1,13 +1,14 @@
 {
   "key": "pr:1471",
-  "classification": "other",
-  "entry_ids": [],
-  "summary": "Presentation mode masks names and table values on screen for demos.",
+  "classification": "highlight",
+  "entry_ids": [
+    "1e76e294-4419-49f9-9884-5c7e4f570c30"
+  ],
   "review": {
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1471",
-      "https://github.com/gobifrost/bifrost/issues/1470"
+      "Copy review of entry 1e76e294-4419-49f9-9884-5c7e4f570c30 against docs/product-updates-authoring.md: concrete title, visual-only caveat, verified /organizations link."
     ]
   }
 }
