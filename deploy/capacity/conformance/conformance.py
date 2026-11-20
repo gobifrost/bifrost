@@ -350,6 +350,7 @@ def main() -> int:
         uid_prepared = doc["resource_uid"]
         status, _body = suite.c.start(prepared, "not-the-uid")
         assert status == 409, f"status {status}"
+        assert suite.launches(prepared, uid_prepared) == [], "wrong UID launched a process"
 
     @suite.case("start: bound UID reaches a live state")
     def _() -> None:

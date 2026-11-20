@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Prove complete conformance passes and broken/incomplete evidence cannot.
 
-Exercise normal and uncertain-only duplicate-launch negatives, missing hooks,
-and unsupported hooks. All providers are disposable loopback SDK fakes; this
+Exercise normal/uncertain duplicate starts, rejected-request side effects,
+missing hooks, and unsupported hooks. All providers are disposable loopback SDK fakes; this
 checks the gate, not real-cloud runtime qualification.
 """
 
@@ -113,6 +113,17 @@ class BrokenEngine(CapacityEngine):
 
 
 
+class WrongUidLaunchEngine(CapacityEngine):
+    """Negative control: launch before checking the supplied resource UID."""
+
+    def start(self, worker_id: str, body: dict) -> dict:
+        row = self.ledger.read(worker_id)
+        if (row is not None and row.get("state") == "prepared"
+                and body.get("resource_uid") != row["resource_uid"]):
+            super().start(worker_id, {"resource_uid": row["resource_uid"]})
+        return super().start(worker_id, body)
+
+
 class UncertainReplayEngine(CapacityEngine):
     """Negative control: ordinary replay is safe, uncertain replay double-starts."""
 
@@ -220,8 +231,9 @@ def run_suite(base_url: str, control_url: str, label: str, output: Path,
 def main() -> int:
     failures: list[str] = []
     uncertainty = "uncertainty: lost start reply survives restart without duplicate or resurrection"
+    wrong_uid = "start: wrong UID rejected, nothing launched"
     mandatory = {
-        uncertainty, "start: exactly one physical launch",
+        wrong_uid, uncertainty, "start: exactly one physical launch",
         "start: replay does not launch a second incarnation",
         "durability: prepared reservation survives provider restart",
         "durability: tombstone survives provider restart",
@@ -231,6 +243,7 @@ def main() -> int:
         ("correct", FakeAdapter, CapacityEngine, "supported"),
         ("duplicate-launch", BrokenAdapter, BrokenEngine, "supported"),
         ("uncertain-duplicate", BrokenAdapter, UncertainReplayEngine, "supported"),
+        ("wrong-uid-launch", FakeAdapter, WrongUidLaunchEngine, "supported"),
         ("no-hook", FakeAdapter, CapacityEngine, "none"),
         ("unsupported-hook", FakeAdapter, CapacityEngine, "unsupported"),
     ]
@@ -257,6 +270,9 @@ def main() -> int:
                 if label == "correct":
                     if code != 0 or report["skipped"] or report["failed"] or report["passed"] != len(cases):
                         failures.append("correct provider was not completely qualified")
+                elif label == "wrong-uid-launch":
+                    if code != 1 or cases.get(wrong_uid, {}).get("status") != "FAIL":
+                        failures.append("wrong-uid-launch: rejected request side effect incorrectly qualified")
                 elif label in {"duplicate-launch", "uncertain-duplicate"}:
                     target = uncertainty if label == "uncertain-duplicate" else "start: replay does not launch a second incarnation"
                     if code != 1 or cases.get(target, {}).get("status") != "FAIL":
@@ -274,7 +290,7 @@ def main() -> int:
         for item in failures:
             print(f"FAIL: {item}")
         return 1
-    print("PASS: full evidence accepted; duplicate starts rejected; missing hooks incomplete")
+    print("PASS: full evidence accepted; rejected-request launches and duplicates rejected; missing hooks incomplete")
     return 0
 
 
