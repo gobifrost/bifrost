@@ -1267,6 +1267,12 @@ class RemoteControlHost:
                     connection.token, signed.incarnation_id, signed.resource_uid,
                 )
             hello = verify_hello(control_key, signed)
+            # This image implements the implicit Linux process contract only.
+            # Never silently discard an explicit profile and grant PID/fork
+            # semantics to an unsupported runtime. No alternate profile is admitted.
+            if (initial.get("runtime_profile") is not None
+                    or initial.get("hello", {}).get("runtime_profile") is not None):
+                raise AuthenticationError("Explicit physical runtime profiles are unsupported")
             if hello.form == "external" and hello.execution_lane != "normal":
                 raise AuthenticationError("External capacity workers only support the Normal lane")
             if (hello.form == "external" or kubernetes_compute) and initial.get("version") != get_version():
