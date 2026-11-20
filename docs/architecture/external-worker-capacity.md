@@ -92,10 +92,14 @@ history. Confirmed rows stop generating provider lookups and DELETE calls.
 The nullable migration lets existing terminal rows converge through the same
 readback path; it changes no provider protocol or Kubernetes cleanup cutoff.
 Do not prune unconfirmed worker rows while their physical resources may exist.
-Absence for an unbound incarnation is not confirmation: another controller may
-still finish a delayed prepare. Keep that row eligible so its eventual resource
-is deleted without starting. If preparation never completes, the unbound record
-remains pending rather than inventing a deletion receipt from a time cutoff.
+For an unbound lost or retired incarnation, a fresh successful GET confirming
+absence is followed by idempotent prepare and exact-UID deletion. Prepare does
+not start a process. The persisted deleted tombstone fences earlier delayed
+prepares, including ones that outlive the client's request timeout. Only that
+validated deletion confirms finality; provider errors leave cleanup eligible.
+Confirmed rows stop holding the pool active, restoring idle silence without a
+time-based absence assumption. The outage and idle regression reported by
+Thomas Bray is retained alongside delayed-prepare fencing coverage.
 
 ## Launcher Admission and Recovery
 

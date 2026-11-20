@@ -42,7 +42,6 @@ from src.services.work_dispatch import (
 
 logger = logging.getLogger(__name__)
 
-
 class ExternalWorkerPoolController(WorkerCapacityController):
     def __init__(
         self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile,

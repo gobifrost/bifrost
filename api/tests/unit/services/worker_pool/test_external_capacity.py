@@ -688,6 +688,40 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
         assert worker.capacity_resource_deleted_at is not None
 
 
+@pytest.mark.parametrize("terminal_state", ["lost", "retired"])
+async def test_unbound_cleanup_seals_resource_before_finality_and_then_becomes_idle(db, capacity, monkeypatch, terminal_state):
+    ended_at = controller._now()
+    async with db.context() as session:
+        worker = ExecutionWorker(
+            form="external", capacity_scope=capacity.provider.profile.scope,
+            state=terminal_state, ended_at=ended_at, version=capacity.provider.profile.worker_version,
+        )
+        session.add(worker)
+        await session.flush()
+        worker_id = worker.id
+    monkeypatch.setattr(capacity.pool, "launch_for_demand", AsyncMock(return_value=[]))
+    monkeypatch.setattr(capacity.pool, "replace_outdated", AsyncMock())
+    get = capacity.client.get
+    monkeypatch.setattr(capacity.client, "get", AsyncMock(side_effect=httpx.ReadTimeout("provider unavailable")))
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).capacity_resource_deleted_at is None
+
+    monkeypatch.setattr(capacity.client, "get", get)
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.capacity_resource_deleted_at is not None
+        resource = capacity.provider.resources[str(worker_id)]
+        assert worker.capacity_resource_uid == resource["resource_uid"]
+        assert resource["state"] == "deleted"
+        assert worker.state == terminal_state
+        assert capacity.provider.starts == []
+    capacity.provider.requests.clear()
+    await capacity.pool.reconcile()
+    assert capacity.provider.requests == []
+
+
 async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db, capacity):
     from src.services import work_dispatch
     from tests.unit.services.worker_pool.test_worker_pool import MIB, _claim, _report_budget, _set_request

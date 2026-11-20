@@ -428,7 +428,7 @@ def _pure_public_constructor_contracts() -> tuple[
     source_files = (
         sdk_root / "__init__.py",
         sdk_root / "models.py",
-        api_root / "src" / "sdk" / "errors.py",
+        sdk_root / "_errors.py",
     )
     raw_sources = tuple(source.read_bytes() for source in source_files)
     digest = hashlib.sha256()
