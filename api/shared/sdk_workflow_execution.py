@@ -256,10 +256,11 @@ async def resolve_sdk_workflow_for_execution(
 ) -> ResolvedSdkWorkflow:
     """Resolve and authorize a Workflow using the same gate as ``/execute``.
 
-    The resolver intentionally owns the original-user scope, resource sharing,
-    Solution, and ``workflows.execute`` decisions. Callers that only need
-    launchable metadata, such as rerun parameter loading, must use this rather
-    than the broader Workflow read endpoints.
+    The resolver intentionally owns original-user scope, resource sharing,
+    Solution, and the execution permission decision: ``workflows.execute``
+    for workflows or platform-wide ``code.execute`` for inline code. Callers
+    that only need launchable metadata, such as rerun parameter loading, must
+    use this rather than the broader Workflow read endpoints.
     """
     from src.repositories import AccessDeniedError, WorkflowRepository
     from src.services.solution_scope import (
@@ -405,9 +406,12 @@ async def resolve_sdk_workflow_for_execution(
                 403, "Execution organization is outside the caller's organization reach"
             )
         try:
-            require_named_permission(caller, "workflows.execute", execution_org_id)
             if request.code:
-                require_named_permission(caller, "repository.readwrite", execution_org_id)
+                # Inline code is a platform capability. It does not change
+                # the resolved execution organization or grant SDK powers.
+                require_named_permission(caller, "code.execute", None)
+            else:
+                require_named_permission(caller, "workflows.execute", execution_org_id)
         except PermissionDenied as exc:
             raise SdkWorkflowExecutionError(exc.status_code, exc.detail) from None
 
@@ -458,10 +462,11 @@ async def execute_sdk_workflow(
 ) -> WorkflowExecutionResponse:
     """Execute a workflow, data provider, or inline script.
 
-    Preserves the historical ``POST /api/workflows/execute`` behavior
-    exactly: org-scoped lookup, Solution own-install scope with inbound
+    Reuses the ``POST /api/workflows/execute`` behavior: org-scoped lookup,
+    Solution own-install scope with inbound
     denial (404 without shared fallback), UUID vs portable-ref role checks,
-    admin-only inline code and ``org_id`` override, ``run_as`` decided by
+    platform-wide ``code.execute`` admission for inline code, existing ``org_id``
+    resolution, ``run_as`` decided by
     ``impersonation.acting_target`` (it changes the acting user only), execution-org
     priority (explicit override > workflow org > caller org),
     ``delay_seconds`` normalization, scheduled
@@ -555,7 +560,7 @@ async def execute_sdk_workflow(
 
     access_checks.note("child_run", execution_org_id)
     access_checks.note_launch(
-        "workflows.execute",
+        "code.execute" if request.code else "workflows.execute",
         execution_org_id,
         lookup_org_id,
         subject="inline_code" if workflow is None else f"workflow:{workflow.id}",

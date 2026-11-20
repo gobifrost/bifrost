@@ -296,6 +296,14 @@ test.describe("Access Checks on a recorded check", () => {
 		await expect(drawer).toBeHidden();
 		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1")
 			await page.setViewportSize({ width: 1280, height: 720 });
+		const presentationToggle = page.getByRole("button", { name: "Presentation Mode" });
+		await presentationToggle.click();
+		await page.getByRole("button", { name: "Open 1 Recorded Check" }).click();
+		await expect(reachStep("Then")).toContainText("This organization is outside their reach.");
+		await expect(drawer.getByText(identityName, { exact: false })).toBeHidden();
+		await page.keyboard.press("Escape");
+		await expect(drawer).toBeHidden();
+		await presentationToggle.click();
 		await page.getByRole("tab", { name: "Activity", exact: true }).click();
 		await expect(page).toHaveURL(/\/audit$/);
 	});

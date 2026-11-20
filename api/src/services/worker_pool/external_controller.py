@@ -23,7 +23,7 @@ from src.models.orm.platform_jobs import PlatformJob
 from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
-    RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
+    CapacityProfileRefreshRequired, LIVE_STATES, RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.demand import EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
@@ -56,6 +56,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         self.hybrid = hybrid
         self.rules = rules or CloudflareCapacityRules()
         self.cleanup_states = ("lost", "retired")
+        # Whether this pass has read the provider's capabilities.
+        self._profile_read = False
 
     def _memory_environment(self, generation: int) -> dict[str, Any]:
         return {**super()._memory_environment(generation), "scope": self.profile.scope}
@@ -77,6 +79,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         )
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
+        if not self._profile_read:
+            raise CapacityProfileRefreshRequired(self.refresh_profile)
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
 
     def _planner_execution_handlers(self) -> tuple[str, ...]:
@@ -108,17 +112,39 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         )
 
     async def reconcile(self) -> None:
-        await self.refresh_profile()
+        # Capabilities change only when the provider is redeployed. While this
+        # provider holds no resource and no demand needs one, a pass sends it
+        # nothing, so a provider that scales on request traffic can stop.
+        # Every other pass reads them first, exactly as before.
+        self._profile_read = False
+        async with get_db_context() as db:
+            held = await db.scalar(select(ExecutionWorker.id).where(
+                self._managed_scope(), ExecutionWorker.state.in_(LIVE_STATES) | self._cleanup_scope(),
+            ).limit(1))
+        if held is not None:
+            await self.refresh_profile()
         await super().reconcile()
 
     async def refresh_profile(self) -> None:
-        """Refresh the active provider declaration before a planning pass."""
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
         if current.worker_version != self.version:
             raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.profile = current
+        self._profile_read = True
+
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
+        if self._profile_read:
+            return await super().launch_for_demand(policy)
+        # Plan with cached capabilities, but unwind the transaction at the
+        # first reservation. Provider I/O happens only after releasing the
+        # admission lock, then the normal planner rechecks demand and limits.
+        try:
+            return await super().launch_for_demand(policy)
+        except (CapacityProfileRefreshRequired, CapacityProtocolError):
+            await self.refresh_profile()
+            return await super().launch_for_demand(policy)
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])

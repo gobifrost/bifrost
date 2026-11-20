@@ -29,7 +29,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -488,7 +488,30 @@ class WorkerCapacityController(ABC):
         return (await plan_capacity_launches(policy, (self,)))[self]
 
 
+class CapacityProfileRefreshRequired(Exception):
+    """Unwind admission before refreshing the provider used by this plan."""
+
+    def __init__(self, refresh: Callable[[], Awaitable[None]]) -> None:
+        super().__init__("Provider profile requires refresh")
+        self.refresh = refresh
+
+
 async def plan_capacity_launches(
+    policy: KubernetesPolicy, providers: Collection[WorkerCapacityController],
+) -> dict[WorkerCapacityController, list[UUID]]:
+    """Refresh demanded providers outside the shared reservation transaction."""
+    refreshed: set[Callable[[], Awaitable[None]]] = set()
+    while True:
+        try:
+            return await _plan_capacity_launches(policy, providers)
+        except CapacityProfileRefreshRequired as required:
+            if required.refresh in refreshed:
+                raise
+            refreshed.add(required.refresh)
+            await required.refresh()
+
+
+async def _plan_capacity_launches(
     policy: KubernetesPolicy, providers: Collection[WorkerCapacityController],
 ) -> dict[WorkerCapacityController, list[UUID]]:
     """Reserve Normal capacity for several physical providers in one transaction.

@@ -67,6 +67,15 @@ def register_exception_handlers(app: FastAPI) -> None:
             ).model_dump(),
         )
 
+    from src.services.identity_provisioning.scim import ScimError
+
+    @app.exception_handler(ScimError)
+    async def scim_error_handler(request: Request, exc: ScimError) -> JSONResponse:
+        """SCIM endpoints answer with RFC 7644 Error bodies."""
+        from src.routers.scim import scim_error_response
+
+        return scim_error_response(exc)
+
     @app.exception_handler(RequestValidationError)
     async def request_validation_handler(
         request: Request, exc: RequestValidationError

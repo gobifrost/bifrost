@@ -438,7 +438,9 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # provider resource identifiers from the CLI-visible response.
     # Other Jobs is an additive Cloudflare overflow rule with a default;
     # existing CLI requests and minimum version remain compatible.
-    "26eb8382eeb360d6deee4ca08f300a7b5fffbdfbb3d8e2de276cf23d2644c23b"
+    "594b3524348d5df92e48f09323f21e85daef7b8697f11fd5d9f12a53e49ccb76"
+    # Inline-code permission clarification only changes an existing field description.
+    # CLI shapes and MIN_CLI_VERSION remain unchanged.
 )
 
 

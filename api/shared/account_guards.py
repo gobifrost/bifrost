@@ -87,7 +87,7 @@ async def assert_user_can_be_external(session: AsyncSession, user_id: UUID) -> N
             )
         ).scalars(),
     }
-    await _lock_roles(session, role_ids)
+    await share_lock_roles(session, role_ids)
     if await _roles_are_privileged(session, role_ids):
         raise AccountGuardError(EXTERNAL_PRIVILEGED_ROLE_MESSAGE)
 
@@ -108,7 +108,7 @@ async def assert_role_assignment_allowed_for_user(
     )
     if not is_external:
         return
-    await _lock_roles(session, {role_id})
+    await share_lock_roles(session, {role_id})
     if await _roles_are_privileged(session, {role_id}):
         raise AccountGuardError(EXTERNAL_PRIVILEGED_ROLE_MESSAGE)
 
@@ -142,6 +142,24 @@ async def _lock_roles(session: AsyncSession, role_ids: Iterable[UUID]) -> None:
             .where(RoleORM.id.in_(ids))
             .order_by(RoleORM.id)
             .with_for_update()
+        )
+
+
+async def share_lock_roles(session: AsyncSession, role_ids: Iterable[UUID]) -> None:
+    """Share-lock roles to read their permissions. A permission edit locks
+    its role for update (:func:`assert_role_permissions_allowed`), so it
+    waits for the reader; readers don't wait for each other, and a reader
+    never needs to upgrade, which two readers of one role would deadlock on.
+    """
+    from src.models import Role as RoleORM
+
+    ids = set(role_ids)
+    if ids:
+        await session.execute(
+            select(RoleORM.id)
+            .where(RoleORM.id.in_(ids))
+            .order_by(RoleORM.id)
+            .with_for_update(read=True)
         )
 
 

@@ -125,7 +125,8 @@ class organizations:
 
         Args:
             org_id: Organization ID
-            **updates: Fields to update (name, domain, is_active)
+            **updates: Fields to update (name, domain, is_active, tags).
+                ``tags`` replaces the organization's full tag list.
 
         Returns:
             Organization: Updated organization object
@@ -148,6 +149,8 @@ class organizations:
             update_payload["domain"] = updates["domain"]
         if "is_active" in updates:
             update_payload["is_active"] = updates["is_active"]
+        if "tags" in updates:
+            update_payload["tags"] = updates["tags"]
 
         response = await client.engine_request(
             "PATCH",

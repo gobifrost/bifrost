@@ -50,7 +50,11 @@ import { ConfigOverridesTab } from "@/components/integrations/ConfigOverridesTab
 import { useIntegrationEntities } from "@/hooks/useIntegrationEntities";
 import { useAutoMatch } from "@/hooks/useAutoMatch";
 import { GenerateSDKDialog } from "@/components/integrations/GenerateSDKDialog";
-import { IntegrationOverview } from "@/components/integrations/IntegrationOverview";
+import {
+	IntegrationOAuthAlert,
+	IntegrationStatusChips,
+	type IntegrationOverviewProps,
+} from "@/components/integrations/IntegrationOverview";
 import {
 	IntegrationMappingsTab,
 	type OrgWithMapping,
@@ -251,10 +255,11 @@ export function IntegrationDetail() {
 		if (isLoadingOrgs || isLoadingIntegration) {
 			return [];
 		}
-		return organizations.map((org: { id: string; name: string }) => {
-			const existingMapping = mappings.find(
-				(m) => m.organization_id === org.id,
-			);
+		const mappingByOrg = new Map(
+			mappings.map((mapping) => [mapping.organization_id, mapping]),
+		);
+		return organizations.map((org) => {
+			const existingMapping = mappingByOrg.get(org.id);
 
 			const formData: MappingFormData = existingMapping
 				? {
@@ -276,6 +281,7 @@ export function IntegrationDetail() {
 			return {
 				id: org.id,
 				name: org.name,
+				tags: org.tags,
 				mapping: existingMapping,
 				formData,
 			};
@@ -863,6 +869,24 @@ export function IntegrationDetail() {
 		);
 	}
 
+	const overviewProps: IntegrationOverviewProps = {
+		integration,
+		oauthConfig,
+		isOAuthConnected,
+		isOAuthExpired,
+		isOAuthExpiringSoon,
+		canUseAuthCodeFlow,
+		onOpenDefaultsDialog: handleOpenDefaultsDialog,
+		onOAuthConnect: handleIntegrationOAuthConnect,
+		onOAuthRefresh: handleIntegrationOAuthRefresh,
+		onEditOAuthConfig: () => setEditingOAuthConfig(true),
+		onDeleteOAuthConfig: () => setDeleteOAuthDialogOpen(true),
+		onCreateOAuthConfig: () => setOAuthConfigDialogOpen(true),
+		isAuthorizePending: authorizeMutation.isPending,
+		isRefreshPending: refreshMutation.isPending,
+		canManageDefinitions,
+	};
+
 	return (
 		<PageWorkspace>
 			<IntegrationPageHeader
@@ -886,10 +910,12 @@ export function IntegrationDetail() {
 				hasSetupNotes={Boolean(integration.notes)}
 				showSetupNotes={showSetupNotes}
 				onToggleSetupNotes={() => setShowSetupNotes((value) => !value)}
+				onAddSetupNotes={() => setNotesDialogOpen(true)}
 				canTestConnection={
 					canTestAt(null) || testableOrganizations.length > 0
 				}
 				canManageDefinitions={canManageDefinitions}
+				status={<IntegrationStatusChips {...overviewProps} />}
 			/>
 			<PageScrollArea className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (
@@ -917,24 +943,7 @@ export function IntegrationDetail() {
 					canEdit={canManageDefinitions && showSetupNotes}
 					onEdit={() => setNotesDialogOpen(true)}
 				>
-				{/* Config Defaults & OAuth Status */}
-				<IntegrationOverview
-					integration={integration}
-					oauthConfig={oauthConfig}
-					isOAuthConnected={isOAuthConnected}
-					isOAuthExpired={isOAuthExpired}
-					isOAuthExpiringSoon={isOAuthExpiringSoon}
-					canUseAuthCodeFlow={canUseAuthCodeFlow}
-					onOpenDefaultsDialog={handleOpenDefaultsDialog}
-					onOAuthConnect={handleIntegrationOAuthConnect}
-					onOAuthRefresh={handleIntegrationOAuthRefresh}
-					onEditOAuthConfig={() => setEditingOAuthConfig(true)}
-					onDeleteOAuthConfig={() => setDeleteOAuthDialogOpen(true)}
-					onCreateOAuthConfig={() => setOAuthConfigDialogOpen(true)}
-					isAuthorizePending={authorizeMutation.isPending}
-					isRefreshPending={refreshMutation.isPending}
-					canManageDefinitions={canManageDefinitions}
-				/>
+				<IntegrationOAuthAlert {...overviewProps} />
 
 				{/* Tabs for Mappings and Config Overrides */}
 				<Tabs
@@ -942,6 +951,7 @@ export function IntegrationDetail() {
 					className="flex min-h-0 flex-col gap-4"
 				>
 					<TabsList
+						variant="line"
 						aria-label="Integration views"
 						className="grid grid-cols-2 w-full group-data-horizontal/tabs:h-auto sm:w-fit"
 					>

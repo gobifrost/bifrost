@@ -310,8 +310,12 @@ describe("TiptapEditor", () => {
 		const user = userEvent.setup();
 		render(<TiptapEditor content="Hello" ariaLabel="Notes" />);
 		await ready();
-		await user.tab();
-		expect(screen.getByRole("radio", { name: "Visual" })).toHaveFocus();
+		// The mode switch follows the formatting buttons in the toolbar row.
+		const visual = screen.getByRole("radio", { name: "Visual" });
+		for (let i = 0; i < 20 && document.activeElement !== visual; i++) {
+			await user.tab();
+		}
+		expect(visual).toHaveFocus();
 		await user.keyboard("{ArrowRight}");
 		await waitFor(() =>
 			expect(
@@ -323,6 +327,8 @@ describe("TiptapEditor", () => {
 			"aria-checked",
 			"true",
 		);
+		// Switching modes hides the formatting buttons without moving focus.
+		expect(screen.getByRole("radio", { name: "Markdown" })).toHaveFocus();
 	});
 
 	it("keeps initial read-only rendering free of editing controls and change events", async () => {

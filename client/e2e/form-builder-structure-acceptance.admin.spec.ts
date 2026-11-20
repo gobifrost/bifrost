@@ -40,6 +40,14 @@ type PersistedForm = {
 			type?: string;
 			required?: boolean;
 		}>;
+		layout?: {
+			sections?: Array<{
+				rows?: Array<{
+					field?: string | null;
+					columns?: Array<{ field?: string | null }>;
+				}>;
+			}>;
+		} | null;
 	} | null;
 };
 
@@ -214,12 +222,16 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 		).toBeVisible({
 			timeout: 10_000,
 		});
-		await expect(
-			page.getByText("First Value", { exact: true }),
-		).toBeVisible();
-		await expect(
-			page.getByText("Second Value", { exact: true }),
-		).toBeVisible();
+		const firstValueCard = page.locator(
+			'[data-field-card="first_value"]',
+		);
+		const secondValueCard = page.locator(
+			'[data-field-card="second_value"]',
+		);
+		await expect(firstValueCard).toBeVisible();
+		await expect(firstValueCard).toContainText("First Value");
+		await expect(secondValueCard).toBeVisible();
+		await expect(secondValueCard).toContainText("Second Value");
 
 		await page.getByTitle("Edit Info").click();
 		const infoDialog = page.getByRole("dialog", {
@@ -237,8 +249,9 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 			page.getByText(targetWorkflowId, { exact: true }),
 		).toBeVisible();
 
-		await page.getByRole("button", { name: "Move Second Value" }).click();
-		await page.getByRole("menuitem", { name: "Move up" }).click();
+		await page
+			.getByRole("button", { name: "Move Second Value up" })
+			.click();
 		await expect(
 			page.getByText("Second Value moved to position 1 of 2."),
 		).toBeAttached();
@@ -247,20 +260,26 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 
 		let persisted = await readForm(api, formId);
 		expect(persisted.workflow_id).toBe(targetWorkflowId);
-		expect(persisted.form_schema?.fields).toEqual([
-			expect.objectContaining({
-				name: "second_value",
-				label: "Second Value",
-				type: "text",
-				required: true,
-			}),
-			expect.objectContaining({
-				name: "first_value",
-				label: "First Value",
-				type: "text",
-				required: true,
-			}),
-		]);
+		const persistedOrder = persisted.form_schema?.layout?.sections
+			?.flatMap((section) => section.rows ?? [])
+			.map((row) => row.field ?? row.columns?.[0]?.field ?? null);
+		expect(persistedOrder).toEqual(["second_value", "first_value"]);
+		expect(persisted.form_schema?.fields).toEqual(
+			expect.arrayContaining([
+				expect.objectContaining({
+					name: "second_value",
+					label: "Second Value",
+					type: "text",
+					required: true,
+				}),
+				expect.objectContaining({
+					name: "first_value",
+					label: "First Value",
+					type: "text",
+					required: true,
+				}),
+			]),
+		);
 
 		await page.goto(`/forms/${formId}/edit`);
 		await expect(
@@ -271,13 +290,15 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 		await expect(
 			page.getByText(targetWorkflowId, { exact: true }),
 		).toBeVisible();
-		const fieldMoveButtons = page.getByRole("button", { name: /^Move / });
-		await expect(fieldMoveButtons).toHaveCount(2);
-		await expect(fieldMoveButtons.first()).toHaveAccessibleName(
-			"Move Second Value",
+		const fieldMoveUpButtons = page.getByRole("button", {
+			name: /^Move .+ up$/,
+		});
+		await expect(fieldMoveUpButtons).toHaveCount(2);
+		await expect(fieldMoveUpButtons.first()).toHaveAccessibleName(
+			"Move Second Value up",
 		);
-		await expect(fieldMoveButtons.nth(1)).toHaveAccessibleName(
-			"Move First Value",
+		await expect(fieldMoveUpButtons.nth(1)).toHaveAccessibleName(
+			"Move First Value up",
 		);
 
 		await page.getByRole("button", { name: "Delete First Value" }).click();
@@ -289,12 +310,9 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 			.getByRole("button", { name: "Remove Field" })
 			.click();
 		await expect(removeDialog).toHaveCount(0);
-		await expect(
-			page.getByText("First Value", { exact: true }),
-		).toHaveCount(0);
-		await expect(
-			page.getByText("Second Value", { exact: true }),
-		).toBeVisible();
+		await expect(firstValueCard).toHaveCount(0);
+		await expect(secondValueCard).toBeVisible();
+		await expect(secondValueCard).toContainText("Second Value");
 
 		await saveBuilderForm(api, page, formId);
 
@@ -318,12 +336,9 @@ test("[FORM-BUILDER-STRUCTURE-01 desktop] designer rebinds workflow, reorders fi
 		await expect(
 			page.getByText(targetWorkflowId, { exact: true }),
 		).toBeVisible();
-		await expect(
-			page.getByText("Second Value", { exact: true }),
-		).toBeVisible();
-		await expect(
-			page.getByText("First Value", { exact: true }),
-		).toHaveCount(0);
+		await expect(secondValueCard).toBeVisible();
+		await expect(secondValueCard).toContainText("Second Value");
+		await expect(firstValueCard).toHaveCount(0);
 
 		await page.goto("/forms");
 		await expect(

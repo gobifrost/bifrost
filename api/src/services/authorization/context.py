@@ -128,7 +128,26 @@ async def build_authorization_context(
         )
     ).one()
     home_organization_id, base_role_id, is_external = user_row
+    return await authorization_context_for_user_row(
+        db,
+        user_id,
+        home_organization_id=home_organization_id,
+        base_role_id=base_role_id,
+        is_external=is_external,
+    )
 
+
+async def authorization_context_for_user_row(
+    db: AsyncSession,
+    user_id: UUID,
+    *,
+    home_organization_id: UUID | None,
+    base_role_id: UUID,
+    is_external: bool,
+) -> AuthorizationContext:
+    """The context for a user whose row the caller already read: two
+    queries (role boundaries, then the permissions of the base role and
+    bounded roles)."""
     boundary_rows = (
         await db.execute(
             select(UserRoleBoundary.role_id, UserRoleBoundary.kind, UserRoleBoundary.organization_id)

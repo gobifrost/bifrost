@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useEffect, useRef, useState, type RefObject } from "react";
 import { AlertCircle, Loader2 } from "lucide-react";
 import { toast } from "sonner";
@@ -27,6 +28,7 @@ function RenameIdentityDialogContent({
 	onOpenChange: (open: boolean) => void;
 	returnFocusRef: RefObject<HTMLElement | null>;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const returnFocus = useDialogReturnFocus(returnFocusRef, true);
 	const rename = useRenameIdentity();
 	const [name, setName] = useState(identity.name);
@@ -86,14 +88,18 @@ function RenameIdentityDialogContent({
 						className="outline-none"
 					>
 						<AlertCircle className="h-4 w-4" />
-						<AlertDescription>{error}</AlertDescription>
+						<AlertDescription>
+							<span data-pii>{error}</span>
+						</AlertDescription>
 					</Alert>
 				)}
 				<div className="space-y-2">
 					<Label htmlFor="rename-identity-name">Name</Label>
 					<Input
 						id="rename-identity-name"
-						value={name}
+						value={presentationMode ? "" : name}
+						readOnly={presentationMode}
+						placeholder={presentationMode ? "••••••" : undefined}
 						onChange={(event) => setName(event.target.value)}
 						maxLength={255}
 						required

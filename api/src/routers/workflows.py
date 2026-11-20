@@ -484,7 +484,7 @@ async def get_workflow_usage_stats(
     "/execute",
     response_model=WorkflowExecutionResponse,
     summary="Execute a workflow, data provider, or script",
-    description="Execute a workflow or data provider by ID. For data providers, returns options list in result field. Requires platform admin, API key, or access via form/app/integration.",
+    description="Execute a workflow or data provider by ID. For data providers, returns options list in result field. Inline code requires the Platform-wide Execute Code permission.",
 **operation_route("workflows.execute"))
 async def execute_workflow(
     request: WorkflowExecutionRequest,
@@ -495,7 +495,7 @@ async def execute_workflow(
     """Execute a workflow, data provider, or inline script.
 
     Authorization:
-    - Inline code execution requires platform admin
+    - Inline code execution requires the Platform-wide Execute Code permission
     - Workflow/data provider execution requires one of:
       - Platform admin
       - User has access to a form using this workflow

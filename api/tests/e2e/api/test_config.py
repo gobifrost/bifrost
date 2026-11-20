@@ -401,6 +401,50 @@ class TestConfigPartialUpdate:
         finally:
             _delete_config(e2e_client, platform_admin.headers, config_id)
 
+    def test_changing_type_to_secret_encrypts_the_stored_value(
+        self, e2e_client, platform_admin, secrets_reader_platform_admin
+    ):
+        """A type-only change to secret encrypts the value already stored."""
+        key = f"e2e_retype_secret_{uuid4().hex[:8]}"
+        plaintext = f"was-plain-{uuid4().hex}"
+        created = _create_config(e2e_client, platform_admin.headers, key, plaintext, "string")
+        try:
+            response = e2e_client.put(
+                f"/api/config/{created['id']}",
+                headers=platform_admin.headers,
+                json={"type": "secret"},
+            )
+            assert response.status_code == 200, response.text
+            assert response.json()["value"] == "[SECRET]"
+            assert plaintext not in response.text
+            assert _sdk_config_value(e2e_client, platform_admin.headers, key) == plaintext
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
+    def test_changing_type_from_secret_requires_a_new_value(self, e2e_client, platform_admin):
+        """Leaving secret without a new value would reveal the secret; it is refused."""
+        key = f"e2e_unsecret_{uuid4().hex[:8]}"
+        secret = f"keep-hidden-{uuid4().hex}"
+        created = _create_config(e2e_client, platform_admin.headers, key, secret, "secret")
+        try:
+            refused = e2e_client.put(
+                f"/api/config/{created['id']}",
+                headers=platform_admin.headers,
+                json={"type": "string"},
+            )
+            assert refused.status_code == 400, refused.text
+            assert secret not in refused.text
+
+            replaced = e2e_client.put(
+                f"/api/config/{created['id']}",
+                headers=platform_admin.headers,
+                json={"type": "string", "value": "public"},
+            )
+            assert replaced.status_code == 200, replaced.text
+            assert replaced.json()["value"] == "public"
+        finally:
+            _delete_config(e2e_client, platform_admin.headers, created["id"])
+
     def test_update_non_secret_still_requires_value_concept(self, e2e_client, platform_admin):
         """Non-secret configs can be partially updated too (only provided fields change)."""
         created = _create_config(

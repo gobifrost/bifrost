@@ -16,7 +16,8 @@ each bucket's ``description`` for exactly what it covers.
 The actions are ``read`` and ``readwrite`` on every resource, plus
 ``readbasic`` (the everyday view of items shared with the holder) on a
 resource whose ``basic`` is set, plus each verb the resource declares in
-``verbs`` (``workflows.execute``, ``apps.publish``, ``solutions.deploy``).
+``verbs`` (``workflows.execute``, ``code.execute``, ``apps.publish``,
+``solutions.deploy``).
 
 The optional ``.all`` suffix follows ``read`` or ``readwrite`` on a resource
 whose ``private`` is set, and means other people's private items of that
@@ -93,6 +94,18 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role. The Platform Operator role gets user support at Managed organizations, never Impersonate Users.",
         verbs={"impersonate": "Impersonate Users"},
     ),
+    "identityproviders": PermissionDomain(
+        title="Identity Providers",
+        area="Identity & Access",
+        description=(
+            "Identity provider connections that provision an organization's "
+            "users from an external directory (SCIM), their tokens, the "
+            "organization's verified email domains, and the mapping of "
+            "directory groups to roles. Mapping a group to a role also needs "
+            "Role Assignments for that role."
+        ),
+        who_should_hold="Platform admins. Others only through an admin-assigned role at a specific boundary; never the User base role.",
+    ),
     "userlifecycle": PermissionDomain(
         title="User Lifecycle",
         area="Identity & Access",
@@ -165,6 +178,24 @@ PERMISSION_DOMAINS: dict[str, PermissionDomain] = {
         ),
         who_should_hold="Write: platform admins, or an admin-assigned role at a specific boundary; never the User base role. Read: members, where the object is shared with them. Run Workflows: members, and the Platform Operator role at Managed organizations.",
         verbs={"execute": "Run Workflows"},
+    ),
+    "code": PermissionDomain(
+        title="Code",
+        area="Automation",
+        description=(
+            "Running trusted inline CPython on the execution worker. Treat "
+            "Execute Code as platform-administrator-level trust: the worker "
+            "does not provide a security sandbox for untrusted code. SDK "
+            "requests retain their existing permissions and organization "
+            "checks; those checks do not contain arbitrary Python."
+        ),
+        who_should_hold=(
+            "Platform admins, or explicitly trusted platform code authors "
+            "through an admin-assigned role at the Platform boundary. "
+            "Delegation requires platform-administrator-level trust; never "
+            "grant to the User or Platform Operator built-in role."
+        ),
+        verbs={"execute": "Execute Code"},
     ),
     "policyrules": PermissionDomain(
         title="Policy Rules",
@@ -494,6 +525,7 @@ PRIVILEGED_PERMISSIONS: frozenset[str] = frozenset(
         "platform.readwrite",
         "repository.read",
         "repository.readwrite",
+        "code.execute",
         "claims.readwrite",
         "filepolicies.readwrite",
         "tables.readwrite",
@@ -535,5 +567,5 @@ class PermissionCatalogEntry(BaseModel):
     # per_organization: only checked at an organization; platform_wide: only
     # at Global; varies: both, or no route checks it yet.
     scope: Literal["per_organization", "platform_wide", "varies"]
-    # True once any route of the domain is decided by the evaluator.
+    # True when an operation enforces a named permission through the evaluator.
     enforced: bool

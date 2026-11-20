@@ -9,6 +9,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_serializer, model_validator
 
 from src.models.contracts.role_assignments import RoleBoundaryPublic
+from src.models.contracts.identity_providers import IdentitySource
 
 if TYPE_CHECKING:
     pass
@@ -136,6 +137,13 @@ class UserPublic(UserBase):
         description=(
             "The user holds privileged access somewhere (or is a Platform "
             "Admin), so only a Platform Admin can change them."
+        ),
+    )
+    identity_source: IdentitySource | None = Field(
+        default=None,
+        description=(
+            "The identity provider connection that manages this user; null "
+            "for a Native user."
         ),
     )
 

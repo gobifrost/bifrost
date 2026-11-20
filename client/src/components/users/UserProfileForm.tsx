@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { UserSsoExclusion } from "./SsoExclusions";
 import { UserLookupNotice } from "./UserLookupNotice";
 import { useState, useEffect, useRef } from "react";
@@ -91,6 +92,7 @@ export function UserProfileForm({
 	onCancel?: () => void;
 	onBusyChange?: (busy: boolean) => void;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [displayName, setDisplayName] = useState(user.name || "");
 	const [isActive, setIsActive] = useState(user.is_active);
 	const [isExternal, setIsExternal] = useState(user.is_external);
@@ -264,7 +266,8 @@ export function UserProfileForm({
 					<Input
 						id="email-display"
 						type="email"
-						value={user.email}
+						value={presentationMode ? "" : user.email}
+						placeholder={presentationMode ? "••••••" : undefined}
 						disabled
 						className="bg-muted"
 					/>
@@ -278,8 +281,9 @@ export function UserProfileForm({
 					<Input
 						id="displayName"
 						type="text"
-						placeholder="John Doe"
-						value={displayName}
+						placeholder={presentationMode ? "••••••" : "John Doe"}
+						readOnly={presentationMode}
+						value={presentationMode ? "" : displayName}
 						onChange={(e) => setDisplayName(e.target.value)}
 						disabled={!canEditName}
 						aria-describedby={
@@ -342,12 +346,14 @@ export function UserProfileForm({
 									orgsLoading || organizationQuery.isError
 								}
 								options={destinationOrganizations.map(
-									(org: Organization) => ({
+									(org: Organization, index) => ({
 										value: org.id,
-										label: org.is_provider
-											? `${org.name} (Provider)`
-											: org.name,
-										...(org.domain
+										label: presentationMode
+											? `Organization ${index + 1}`
+											: org.is_provider
+												? `${org.name} (Provider)`
+												: org.name,
+										...(!presentationMode && org.domain
 											? {
 													description: `@${org.domain}`,
 												}
@@ -367,7 +373,10 @@ export function UserProfileForm({
 						<>
 							<Input
 								id="organization"
-								value={currentOrgName}
+								value={presentationMode ? "" : currentOrgName}
+								placeholder={
+									presentationMode ? "••••••" : undefined
+								}
 								disabled
 								className="bg-muted"
 							/>

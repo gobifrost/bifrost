@@ -673,10 +673,8 @@ async def test_a_row_without_run_as_is_published_as_before(db_session):
 
 
 @pytest.mark.asyncio
-async def test_an_initiator_deleted_during_the_recheck_fails_that_row_only(db_session):
-    from sqlalchemy.exc import NoResultFound
-
-    from src.services.authorization import explain
+async def test_an_initiator_deleted_before_the_recheck_fails_that_row_only(db_session):
+    from src.services.authorization import impersonation
 
     initiator, colleague, _role = await _impersonation(db_session)
     other_initiator, other_colleague, _other_role = await _impersonation(db_session)
@@ -685,15 +683,15 @@ async def test_an_initiator_deleted_during_the_recheck_fails_that_row_only(db_se
     plain = _new_scheduled(datetime.now(timezone.utc) - timedelta(seconds=1))
     db_session.add_all([orphaned, permitted, plain])
     await db_session.commit()
-    real_context = explain.build_authorization_context
+    real_load = impersonation.load_run_user
 
     async def deleted_meanwhile(db, user_id):
-        # The initiator is found, then gone by the time their roles are read.
+        # The initiator's row is gone by the time the recheck reads it.
         if user_id == initiator.id:
-            raise NoResultFound()
-        return await real_context(db, user_id)
+            return None
+        return await real_load(db, user_id)
 
-    with patch.object(explain, "build_authorization_context", deleted_meanwhile):
+    with patch.object(impersonation, "load_run_user", deleted_meanwhile):
         pub = await _promote(db_session)
 
     published = _published(pub)

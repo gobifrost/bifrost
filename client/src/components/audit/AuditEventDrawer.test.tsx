@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { within } from "@testing-library/react";
 
+import { usePresentationStore } from "@/stores/presentationStore";
 import { renderWithProviders, screen } from "@/test-utils";
 import type { TraceNames } from "@/lib/access-trace";
 import type { AuditLogEntry } from "@/hooks/useAuditLog";
@@ -126,6 +127,23 @@ function renderDrawer(entry: AuditLogEntry) {
 		<AuditEventDrawer entry={entry} open onOpenChange={vi.fn()} />,
 	);
 }
+
+it("omits organization names from both access trace explanations in Presentation Mode", async () => {
+	usePresentationStore.getState().setEnabled(true);
+	explain.data = { event: accessCheck, then, now, now_unavailable: null, changed: true };
+	try {
+		const { user } = renderDrawer(accessCheck);
+		const historical = screen.getByRole("list", { name: "Then" });
+		expect(historical).toHaveTextContent("This organization is their home organization.");
+		expect(historical).not.toHaveTextContent("Contoso");
+		await user.click(screen.getByRole("button", { name: "Test Again Now" }));
+		const current = screen.getByRole("list", { name: "Now" });
+		expect(current).toHaveTextContent("This organization is outside their reach.");
+		expect(current).not.toHaveTextContent("Fabrikam");
+	} finally {
+		usePresentationStore.getState().setEnabled(false);
+	}
+});
 
 function field(label: string) {
 	const term = within(screen.getByRole("dialog")).getByText(label, {

@@ -93,6 +93,18 @@ async def test_invalid_input_is_refused_before_delivery(db_session, monkeypatch,
     durable.assert_not_awaited()
 
 
+@pytest.mark.parametrize("topic", ["user.signed_in", "user.invited", "integration.refresh_failed"])
+async def test_built_in_topics_are_reserved_for_bifrost(db_session, monkeypatch, topic):
+    caller, _org = await _caller(db_session, actor_flag=True)
+    durable = AsyncMock(side_effect=AssertionError("custom code emitted a built-in topic"))
+    monkeypatch.setattr("src.services.events.emit_event", durable)
+    with pytest.raises(EventEmissionError) as error:
+        await emit_topic_event(caller, EmitEventRequest(topic=topic, data={}))
+    assert error.value.status_code == 400
+    assert "built-in Bifrost event" in error.value.detail
+    durable.assert_not_awaited()
+
+
 async def test_typed_service_keeps_own_org_confinement(db_session, monkeypatch):
     caller, org = await _caller(db_session, runtime_kind="service_attempt")
     durable = AsyncMock(return_value=(uuid4(), 0))

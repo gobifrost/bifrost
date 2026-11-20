@@ -118,7 +118,7 @@ async def test_historic_unattended_pending_run_uses_its_durable_identity_not_pen
         name="Scheduled Identity",
         is_platform_admin=False,
     )
-    issued = RunCredentials("access", None, datetime.now(timezone.utc), 2)
+    issued = RunCredentials("access", None, datetime.now(timezone.utc), 2, None)
     with (
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
@@ -363,9 +363,18 @@ async def test_a_run_that_moved_on_is_discarded_and_wakes_its_sync_caller() -> N
     ids=["claims route", "legacy launcher"],
 )
 async def test_credentials_are_minted_for_the_route_chosen_first(
-    route: CredentialRoute, credential_version: int | None, refresh_token: str | None
+    route: CredentialRoute,
+    credential_version: int | None,
+    refresh_token: str | None,
+    current_runtime_authority,
 ) -> None:
-    issued = RunCredentials("access", refresh_token, datetime.now(timezone.utc), credential_version)
+    authority, load = current_runtime_authority
+    # Claims are minted from the run's authority; a legacy token is signed
+    # without reading it.
+    minted_from = authority if credential_version is not None else None
+    issued = RunCredentials(
+        "access", refresh_token, datetime.now(timezone.utc), credential_version, minted_from
+    )
     with (
         patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
         patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
@@ -391,6 +400,8 @@ async def test_credentials_are_minted_for_the_route_chosen_first(
     assert routed["context"]["original_user_id"] == RUN_USER_ID
     assert routed["context"]["engine_token"] == "access"
     assert routed["context"].get("engine_refresh_token") == refresh_token
+    # The authority the claims were minted from is not read a second time.
+    assert load.await_count == (0 if minted_from is not None else 1)
     refresh.assert_called_once_with()
 
 
@@ -407,9 +418,10 @@ def current_runtime_authority():
         agent_id=UUID("00000000-0000-0000-0000-0000000000bb"),
         run_user=SimpleNamespace(user_id=RUN_USER_ID, is_platform_admin=False),
     )
+    load = AsyncMock(return_value=authority)
     with (
         patch(f"{MODULE}.get_db_context", database),
-        patch("src.services.authorization.runtime.load_runtime_authority", new=AsyncMock(return_value=authority)),
+        patch("src.services.authorization.runtime.load_runtime_authority", new=load),
         patch("src.services.authorization.runtime.load_execution_provenance", new=AsyncMock(return_value=ExecutionProvenance("agent", authority.agent_id))),
     ):
-        yield
+        yield authority, load

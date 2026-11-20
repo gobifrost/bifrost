@@ -20,6 +20,7 @@ class Organization(BaseModel):
     name: str
     domain: str | None = None
     is_active: bool = True
+    tags: list[str] = Field(default_factory=list)
     created_by: str = "system"
     created_at: datetime | None = None
     updated_at: datetime | None = None

@@ -35,6 +35,8 @@ export interface BifrostAppBootstrap {
 	solutionId?: string | null;
 	/** Ask the platform to log out. */
 	onLogout: () => void;
+	// Shortcut: same-DOM apps inherit data-presentation-mode from the root.
+	// Defer an SDK context value until the SDK can expose live updates.
 	/** Platform theme at mount time. */
 	theme: "light" | "dark";
 }

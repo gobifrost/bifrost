@@ -1,0 +1,16 @@
+{
+  "key": "pr:1451",
+  "classification": "other",
+  "entry_ids": [],
+  "category": "fix",
+  "summary": "Fix SDK generation so a vendor OpenAPI description or operation summary cannot produce a module that fails to import.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1451",
+      "Independent model review (gpt-6.1-sol) ran three read-only rounds against base 7be95b942c055a0ba0e52981a845435598a9cdec and approved the artifact at hashes e18a87b2/c8bb38cf/442af4d8. Round 1 rejected the first approach because quote-swapping does not escape trailing quotes, backslashes or escape sequences, and because operation summaries reach a second docstring sink. Round 2 found that the model-docstring branch was not covered by the tests. Both were fixed and re-reviewed.",
+      "The change is internal to SDK generation: existing integrations produce the same public surface, and no customer action, configuration change or upgrade step is required.",
+      "Published by the PR author on 2026-11-17 under the user's authorization; this disposition records that review, not a maintainer approval."
+    ]
+  }
+}

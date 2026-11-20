@@ -80,13 +80,16 @@ vi.mock("@/components/integrations/IntegrationPageHeader", () => ({
 		canTestConnection,
 		canExport,
 		onExport,
+		status,
 	}: {
 		canManageDefinitions: boolean;
 		canTestConnection: boolean;
 		canExport: boolean;
 		onExport: () => void;
+		status?: React.ReactNode;
 	}) => (
 		<div>
+			{status}
 			{canTestConnection && (
 				<button type="button">Test Connection</button>
 			)}
@@ -100,7 +103,8 @@ vi.mock("@/components/integrations/IntegrationPageHeader", () => ({
 }));
 
 vi.mock("@/components/integrations/IntegrationOverview", () => ({
-	IntegrationOverview: ({
+	IntegrationOAuthAlert: () => null,
+	IntegrationStatusChips: ({
 		canManageDefinitions,
 	}: {
 		canManageDefinitions: boolean;

@@ -5,7 +5,6 @@
 import { useState, useCallback } from "react";
 import {
 	computeAutoMatches,
-	type MatchMode,
 	type MatchSuggestion,
 	type MatchResult,
 } from "@/lib/matching";
@@ -32,41 +31,37 @@ export function useAutoMatch({
 	/**
 	 * Run auto-match for all unmapped organizations
 	 */
-	const runAutoMatch = useCallback(
-		(mode: MatchMode) => {
-			setIsMatching(true);
+	const runAutoMatch = useCallback(() => {
+		setIsMatching(true);
 
-			try {
-				// Get existing mapped org IDs and entity IDs
-				const existingMappedOrgIds = new Set(
-					existingMappings.map((m) => m.organization_id),
-				);
-				const existingMappedEntityIds = new Set(
-					existingMappings.map((m) => m.entity_id),
-				);
+		try {
+			// Get existing mapped org IDs and entity IDs
+			const existingMappedOrgIds = new Set(
+				existingMappings.map((m) => m.organization_id),
+			);
+			const existingMappedEntityIds = new Set(
+				existingMappings.map((m) => m.entity_id),
+			);
 
-				const result = computeAutoMatches(
-					organizations,
-					entities,
-					existingMappedOrgIds,
-					existingMappedEntityIds,
-					mode,
-				);
+			const result = computeAutoMatches(
+				organizations,
+				entities,
+				existingMappedOrgIds,
+				existingMappedEntityIds,
+			);
 
-				// Convert suggestions array to Map for O(1) lookups
-				const suggestionsMap = new Map<string, MatchSuggestion>();
-				result.suggestions.forEach((suggestion) => {
-					suggestionsMap.set(suggestion.organizationId, suggestion);
-				});
+			// Convert suggestions array to Map for O(1) lookups
+			const suggestionsMap = new Map<string, MatchSuggestion>();
+			result.suggestions.forEach((suggestion) => {
+				suggestionsMap.set(suggestion.organizationId, suggestion);
+			});
 
-				setSuggestions(suggestionsMap);
-				setMatchStats(result.stats);
-			} finally {
-				setIsMatching(false);
-			}
-		},
-		[organizations, entities, existingMappings],
-	);
+			setSuggestions(suggestionsMap);
+			setMatchStats(result.stats);
+		} finally {
+			setIsMatching(false);
+		}
+	}, [organizations, entities, existingMappings]);
 
 	/**
 	 * Accept a suggestion and return it

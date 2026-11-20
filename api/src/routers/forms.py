@@ -758,6 +758,11 @@ async def get_form_runtime(
 
     runtime_model = FormRuntimeDefinition if ctx.user.embed else AuthenticatedFormRuntimeDefinition
     runtime = runtime_model.model_validate(form)
+    from shared.form_provider import optional_form_provider_inputs
+
+    optional_inputs = await optional_form_provider_inputs(db, form, org_id or ctx.org_id)
+    for field in runtime.form_schema.fields:
+        field.optional_provider_inputs = optional_inputs.get(field.name, [])
     return runtime.model_copy(
         update={
             "captcha_required": bool(

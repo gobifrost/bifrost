@@ -682,7 +682,14 @@ async def _require_assignment_target(
     from src.services.authorization.privilege import is_privileged_principal
     from src.services.user_role_assignments import RoleAssignmentError, check_role_change
 
-    user = await session.get(UserORM, user_id)
+    # Lock the user before any guard locks a role, the order identity
+    # provisioning uses, so the two can't deadlock.
+    user = await session.scalar(
+        select(UserORM)
+        .where(UserORM.id == user_id)
+        .with_for_update()
+        .execution_options(populate_existing=True)
+    )
     if user is None:
         return None
     require_operation(caller, operation, org_target(user.organization_id))

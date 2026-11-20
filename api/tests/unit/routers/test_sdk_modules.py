@@ -25,7 +25,9 @@ def resolver_generation():
         yield
 
 
-def _runtime_user(*, workflow_id: UUID | None, full: bool = True) -> UserPrincipal:
+def _runtime_user(
+    *, workflow_id: UUID | None, full: bool = True, permissions: frozenset[str] | None = None,
+) -> UserPrincipal:
     """A concrete typed credential, without legacy claim or sentinel authority."""
     run_user_id = uuid4()
     actor_id = uuid4()
@@ -34,7 +36,7 @@ def _runtime_user(*, workflow_id: UUID | None, full: bool = True) -> UserPrincip
         home_organization_id=None,
         base_role_id=uuid4(),
         is_external=False,
-        base_permissions=frozenset({"*"}) if full else frozenset(),
+        base_permissions=permissions if permissions is not None else (frozenset({"*"}) if full else frozenset()),
     )
     principal = UserPrincipal(
         user_id=actor_id,
@@ -129,22 +131,29 @@ async def test_agent_runtime_cannot_load_workflow_source():
     assert exc.value.status_code == 403
 
 
-async def test_inline_runtime_loads_workspace_source_only_with_global_repository_permission():
+@pytest.mark.parametrize("permissions", [
+    frozenset({"repository.read"}), frozenset({"repository.read", "repository.readwrite"}),
+])
+async def test_inline_runtime_loads_workspace_source_only_with_global_repository_permission(permissions):
     from shared.sdk_modules import module_scope_for_principal
 
     scope = await module_scope_for_principal(
-        MagicMock(), _runtime_user(workflow_id=None), solution_id=SOLUTION_A, global_repo_access=False,
+        MagicMock(), _runtime_user(workflow_id=None, permissions=permissions),
+        solution_id=SOLUTION_A, global_repo_access=False,
     )
 
     assert scope == ModuleSourceScope(solution_id=None, global_repo_access=True)
 
 
-async def test_inline_runtime_cannot_spoof_workspace_source_permission():
+@pytest.mark.parametrize("permissions", [
+    frozenset(), frozenset({"code.execute"}), frozenset({"repository.readwrite"}),
+])
+async def test_inline_runtime_cannot_spoof_workspace_source_permission(permissions):
     from shared.sdk_modules import module_scope_for_principal
 
     with pytest.raises(ModuleSourceError, match="Workspace source access") as exc:
         await module_scope_for_principal(
-            MagicMock(), _runtime_user(workflow_id=None, full=False),
+            MagicMock(), _runtime_user(workflow_id=None, permissions=permissions),
             solution_id=SOLUTION_A, global_repo_access=True,
         )
     assert exc.value.status_code == 403

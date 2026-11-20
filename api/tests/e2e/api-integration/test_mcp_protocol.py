@@ -47,7 +47,7 @@ class TestMCPProtocol:
                     "bifrost_workflow_list",
                     "list_integrations",
                     "bifrost_form_list",
-                    "get_docs",
+                    "bifrost_get_docs",
                     "search_knowledge",
                 ],
             },
@@ -193,6 +193,8 @@ class TestMCPProtocol:
             "bifrost_search_memory",
             "bifrost_save_memory",
             "bifrost_remove_memory",
+            "bifrost_execute_code",
+            "bifrost_get_docs",
         }
 
     def test_mcp_non_admin_allowed(self, org1_user):

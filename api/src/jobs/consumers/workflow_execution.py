@@ -1064,9 +1064,13 @@ class WorkflowExecutionConsumer:
             origin_agent_id = None
             original_user_id = None
             original_user_is_platform_admin = False
+            # Claims credentials were minted from the run's authority in one
+            # snapshot; reuse it. A legacy token is signed without reading it.
+            authority = credentials.authority
             try:
                 async with get_db_context() as db:
-                    authority = await load_runtime_authority(db, "workflow_execution", UUID(execution_id))
+                    if authority is None:
+                        authority = await load_runtime_authority(db, "workflow_execution", UUID(execution_id))
                     provenance = await load_execution_provenance(db, authority)
                 origin = provenance.origin
                 origin_agent_id = None if provenance.agent_id is None else str(provenance.agent_id)

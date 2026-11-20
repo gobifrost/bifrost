@@ -57,9 +57,11 @@ function EditUserDialogContent({
 							)}
 						</DialogTitle>
 						<DialogDescription className="mt-1.5 text-sm leading-5 [overflow-wrap:anywhere]">
-							{user.name
-								? `${user.name} · ${user.email}`
-								: user.email}
+							<span data-pii>
+								{user.name
+									? `${user.name} · ${user.email}`
+									: user.email}
+							</span>
 						</DialogDescription>
 					</div>
 					<Button

@@ -88,6 +88,8 @@ class InlineEffect(StrEnum):
     # The handler refuses callers without scope bypass (superuser or
     # provider-org member).
     DENY_UNLESS_BYPASS = "deny_unless_bypass"
+    # A named permission is enforced inside a shared service or MCP adapter.
+    DENY_UNLESS_PERMISSION = "deny_unless_permission"
     # Everyone signed in reaches it; superusers additionally act beyond
     # their own organization or see everything.
     WIDENS_FOR_SUPERUSER = "widens_for_superuser"

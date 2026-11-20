@@ -238,6 +238,7 @@ export function RunReviewPanel({
 					compact={compact}
 				>
 					<div
+						data-pii-surface={!!run.asked || undefined}
 						className={cn(
 							"rounded-md bg-muted/50 ring-1 ring-foreground/5 px-3 py-2 break-words",
 							compact ? "text-xs" : "text-sm",
@@ -265,6 +266,7 @@ export function RunReviewPanel({
 						compact={compact}
 					>
 						<div
+							data-pii-surface
 							className={cn(
 								"rounded-md bg-muted/50 ring-1 ring-foreground/5 px-3 py-2",
 								compact ? "text-xs" : "text-sm",
@@ -327,6 +329,7 @@ export function RunReviewPanel({
 						compact={compact}
 					>
 						<div
+							data-pii-surface
 							className={cn(
 								"rounded-md bg-muted/50 ring-1 ring-foreground/5 px-3 py-2 break-words",
 								compact ? "text-xs" : "text-sm",
@@ -582,6 +585,7 @@ function RawDisclosure({ label, value, compact }: RawDisclosureProps) {
 			{open ? (
 				<div
 					id={contentId}
+					data-pii-surface
 					className={cn(
 						"max-h-[240px] overflow-auto border-t bg-muted px-3 py-2 whitespace-pre-wrap break-words",
 						compact ? "text-[11px]" : "text-xs",

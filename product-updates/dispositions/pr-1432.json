@@ -1,0 +1,13 @@
+{
+  "key": "pr:1432",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1432",
+      "Jack November 16 instruction for issue #1428 work: No product update."
+    ]
+  },
+  "reason": "Jack explicitly requested no Product Update for #1428 work; this integration overview compaction came from his review of PR1431."
+}

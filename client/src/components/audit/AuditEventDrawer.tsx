@@ -17,6 +17,7 @@ import { useAuditExplain, type AuditLogEntry } from "@/hooks/useAuditLog";
 import { isNotFoundError } from "@/hooks/useExecutions";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useTraceNames } from "@/hooks/useTraceNames";
+import { usePresentationStore } from "@/stores/presentationStore";
 import {
 	changeSentence,
 	changedStepKeys,
@@ -76,8 +77,9 @@ function Summary({ entry }: { entry: AuditLogEntry }) {
 		return (
 			<dl className="grid grid-cols-2 gap-x-6 gap-y-3 text-sm sm:gap-x-8">
 				<Field label="Organization" compact>
-					{entry.actor.organization_name ??
-						(entry.actor.organization_id ? "—" : "Global")}
+					{entry.actor.organization_name != null ? (
+						<span data-pii>{entry.actor.organization_name}</span>
+					) : entry.actor.organization_id ? "—" : "Global"}
 				</Field>
 				<Field label="Actor" compact>
 					<RunUserLabel entry={entry} />
@@ -136,8 +138,9 @@ function Summary({ entry }: { entry: AuditLogEntry }) {
 				<RunUserLabel entry={entry} />
 			</Field>
 			<Field label="Organization">
-				{entry.actor.organization_name ??
-					(entry.actor.organization_id ? "—" : "Global")}
+				{entry.actor.organization_name != null ? (
+					<span data-pii>{entry.actor.organization_name}</span>
+				) : entry.actor.organization_id ? "—" : "Global"}
 			</Field>
 			<Field label="Resource">{resource}</Field>
 		</dl>
@@ -158,7 +161,7 @@ function Details({ details }: { details: Record<string, unknown> }) {
 						key={key}
 						label={stepTitle(key.replaceAll("_", " "))}
 					>
-						<span className="whitespace-pre-wrap font-mono text-xs">
+						<span className="whitespace-pre-wrap font-mono text-xs" data-pii>
 							{detailValue(value)}
 						</span>
 					</Field>
@@ -305,6 +308,7 @@ export function AuditEventDrawer({
 	const wide = useMediaQuery("(min-width: 640px)");
 	const isCheck = entry?.action === ACCESS_CHECK;
 	const enforced = isCheck && storedTrace(entry?.details)?.enforced === true;
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const { names } = useTraceNames(
 		isCheck ? (entry?.actor.user_id ?? undefined) : undefined,
 	);
@@ -351,7 +355,7 @@ export function AuditEventDrawer({
 								<AccessCheckTrace
 									key={entry.id}
 									entry={entry}
-									names={names}
+									names={presentationMode ? { ...names, organization: () => undefined } : names}
 								/>
 							) : (
 								entry.details && (

@@ -1,0 +1,20 @@
+{
+  "key": "pr:1442",
+  "classification": "highlight",
+  "entry_ids": [
+    "18396c09-c3ff-4939-b608-7e930de0085c"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1442"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1442",
+      "Jack approved the exact Product Update wording, the action-required notice for reserved built-in topics, and the merge on 2026-11-16.",
+      "Independent review of the diff found no blockers after the built-in-topic forgery path was closed by reserving curated topics."
+    ]
+  }
+}
