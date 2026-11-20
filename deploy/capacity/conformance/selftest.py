@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Self-test: the conformance suite must PASS a correct provider and FAIL a broken one.
+"""Prove complete conformance passes and broken/incomplete evidence cannot.
 
-This is the gate from issue #1400. A suite that cannot fail is worthless, so the
-harness deliberately serves two providers:
-
-  good    — one physical launch per incarnation, replay-safe, durable ledger
-  broken  — re-launches on replay (the sequential duplicate launch failure)
-
-Expected: the suite exits 0 against `good` and exits non-zero against `broken`,
-with the duplicate-launch case among the failures.
-
-Run: python selftest.py
+Exercise normal and uncertain-only duplicate-launch negatives, missing hooks,
+and unsupported hooks. All providers are disposable loopback SDK fakes; this
+checks the gate, not real-cloud runtime qualification.
 """
 
 from __future__ import annotations
@@ -63,16 +56,21 @@ class FakeAdapter(CapacityAdapter):
     def prepare(self, ctx: Context, spec: dict) -> dict:
         return {"started": False}
 
+    def _record_launch(self, ctx: Context) -> None:
+        self.launches.setdefault(ctx.worker_id, [f"launch-{len(self.launches)}"])
+        self.live[ctx.worker_id] = True
+
     def start(self, ctx: Context, handle: dict) -> Observation:
         self._maybe_fault()
         with self.lock:
-            if ctx.worker_id not in self.launches:
-                self.launches[ctx.worker_id] = [f"launch-{len(self.launches)}"]
-            self.live[ctx.worker_id] = True
+            self._record_launch(ctx)
+        if self.pending_fault == "start-response":
+            self.pending_fault = None
+            raise RuntimeError("accepted start response lost")
         return Observation("starting", {**handle, "started": True})
 
     def observe(self, ctx: Context, handle: dict) -> Observation:
-        if not handle.get("started"):
+        if not handle.get("started") and not self.launches.get(ctx.worker_id):
             return Observation("prepared", handle)
         with self.lock:
             live = self.live.get(ctx.worker_id, False)
@@ -87,13 +85,10 @@ class FakeAdapter(CapacityAdapter):
 class BrokenAdapter(FakeAdapter):
     """Re-launches on every start call — must be rejected by the suite."""
 
-    def start(self, ctx: Context, handle: dict) -> Observation:
-        with self.lock:
-            self.launches.setdefault(ctx.worker_id, []).append(
-                f"launch-{ctx.worker_id[:8]}-{len(self.launches[ctx.worker_id])}"
-            )
-            self.live[ctx.worker_id] = True
-        return Observation("starting", {**handle, "started": True})
+    def _record_launch(self, ctx: Context) -> None:
+        launches = self.launches.setdefault(ctx.worker_id, [])
+        launches.append(f"launch-{ctx.worker_id[:8]}-{len(launches)}")
+        self.live[ctx.worker_id] = True
 
 
 class BrokenEngine(CapacityEngine):
@@ -117,13 +112,25 @@ class BrokenEngine(CapacityEngine):
         return resource_doc(self.cfg, worker_id, row, row["state"])
 
 
+
+class UncertainReplayEngine(CapacityEngine):
+    """Negative control: ordinary replay is safe, uncertain replay double-starts."""
+
+    def start(self, worker_id: str, body: dict) -> dict:
+        row = self.ledger.read(worker_id)
+        if row is not None and row.get("intent") == "start":
+            row["intent"] = None
+            self.ledger.write(worker_id, row)
+        return super().start(worker_id, body)
+
+
 def free_port() -> int:
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
         return int(sock.getsockname()[1])
 
 
-def build_admin(adapter: FakeAdapter, scope: str) -> ThreadingHTTPServer:
+def build_admin(adapter: FakeAdapter, scope: str, provider: ThreadingHTTPServer) -> ThreadingHTTPServer:
     class Admin(BaseHTTPRequestHandler):
         def log_message(self, *_args) -> None:  # silence
             return
@@ -146,9 +153,10 @@ def build_admin(adapter: FakeAdapter, scope: str) -> ThreadingHTTPServer:
                                 "running": sum(1 for v in adapter.live.values() if v)})
                 return
             if parsed.path == "/restart":
-                # Simulated restart: adapter memory is lost, the ledger is not.
-                with adapter.lock:
-                    adapter.live.clear()
+                # Rebuild control state from its ledger, preserving physical
+                # launches. This is offline restart proof, not cloud hosting.
+                engine = provider.engine
+                provider.engine = type(engine)(engine.cfg, adapter, Ledger(engine.ledger.path))
                 self._json({"ok": True})
                 return
             if parsed.path == "/stop":
@@ -191,69 +199,82 @@ def serve_provider(
     return server, cfg
 
 
-def run_suite(base_url: str, control_url: str, label: str) -> int:
+def run_suite(base_url: str, control_url: str, label: str, output: Path,
+              hook_command: str | None) -> tuple[int, dict]:
     env = dict(os.environ, CONTROL_URL=control_url)
     cmd = [
         sys.executable, str(HERE / "conformance.py"),
-        "--base-url", base_url,
-        "--token", TOKEN,
-        "--scope", SCOPE,
-        "--hook-command", f"{sys.executable} {HERE / 'hooks' / 'control_http.py'}",
+        "--base-url", base_url, "--token", TOKEN, "--scope", SCOPE,
+        "--json-out", str(output),
     ]
+    if hook_command is not None:
+        cmd.extend(["--hook-command", hook_command])
     print(f"\n===== conformance against {label} =====", flush=True)
-    proc = subprocess.run(" ".join(f'"{c}"' if " " in c else c for c in cmd),
-                          shell=True, env=env, capture_output=True, text=True, timeout=600)
+    proc = subprocess.run(cmd, env=env, capture_output=True, text=True, timeout=600)
     print(proc.stdout, flush=True)
     if proc.stderr:
         print(proc.stderr, file=sys.stderr, flush=True)
-    return proc.returncode
+    return proc.returncode, json.loads(output.read_text())
 
 
 def main() -> int:
     failures: list[str] = []
+    uncertainty = "uncertainty: lost start reply survives restart without duplicate or resurrection"
+    mandatory = {
+        uncertainty, "start: exactly one physical launch",
+        "start: replay does not launch a second incarnation",
+        "durability: prepared reservation survives provider restart",
+        "durability: tombstone survives provider restart",
+        "durability: stopped incarnation never restarts",
+    }
+    variants = [
+        ("correct", FakeAdapter, CapacityEngine, "supported"),
+        ("duplicate-launch", BrokenAdapter, BrokenEngine, "supported"),
+        ("uncertain-duplicate", BrokenAdapter, UncertainReplayEngine, "supported"),
+        ("no-hook", FakeAdapter, CapacityEngine, "none"),
+        ("unsupported-hook", FakeAdapter, CapacityEngine, "unsupported"),
+    ]
     with tempfile.TemporaryDirectory() as tmp:
-        # -- good provider ------------------------------------------------
-        good = FakeAdapter()
-        provider, cfg = serve_provider(good, str(Path(tmp) / "good-ledger.json"))
-        admin = build_admin(good, SCOPE)
-        threading.Thread(target=provider.serve_forever, daemon=True).start()
-        threading.Thread(target=admin.serve_forever, daemon=True).start()
-        time.sleep(0.5)
-        code = run_suite(
-            f"http://127.0.0.1:{cfg.port}",
-            f"http://127.0.0.1:{admin.server_address[1]}",
-            "correct provider",
-        )
-        if code != 0:
-            failures.append("correct provider was rejected")
-        provider.shutdown()
-        admin.shutdown()
-
-        # -- broken provider ---------------------------------------------
-        broken = BrokenAdapter()
-        provider, cfg = serve_provider(
-            broken, str(Path(tmp) / "broken-ledger.json"), engine_cls=BrokenEngine
-        )
-        admin = build_admin(broken, SCOPE)
-        threading.Thread(target=provider.serve_forever, daemon=True).start()
-        threading.Thread(target=admin.serve_forever, daemon=True).start()
-        time.sleep(0.5)
-        code = run_suite(
-            f"http://127.0.0.1:{cfg.port}",
-            f"http://127.0.0.1:{admin.server_address[1]}",
-            "provider that double-launches",
-        )
-        if code == 0:
-            failures.append("broken provider passed conformance")
-        provider.shutdown()
-        admin.shutdown()
-
+        unsupported = Path(tmp) / "unsupported.py"
+        unsupported.write_text("raise SystemExit(3)\n")
+        for label, adapter_type, engine_type, hook_mode in variants:
+            adapter = adapter_type()
+            provider, cfg = serve_provider(adapter, str(Path(tmp) / f"{label}-ledger.json"), engine_type)
+            admin = build_admin(adapter, SCOPE, provider)
+            threads = [threading.Thread(target=s.serve_forever, daemon=True) for s in (provider, admin)]
+            for thread in threads:
+                thread.start()
+            hook = (f"{sys.executable} {HERE / 'hooks' / 'control_http.py'}"
+                    if hook_mode == "supported" else
+                    f"{sys.executable} {unsupported}" if hook_mode == "unsupported" else None)
+            try:
+                code, report = run_suite(f"http://127.0.0.1:{cfg.port}",
+                    f"http://127.0.0.1:{admin.server_address[1]}", label,
+                    Path(tmp) / f"{label}.json", hook)
+                cases = {case["name"]: case for case in report["cases"]}
+                if not mandatory.issubset(cases):
+                    failures.append(f"{label}: required cases omitted")
+                if label == "correct":
+                    if code != 0 or report["skipped"] or report["failed"] or report["passed"] != len(cases):
+                        failures.append("correct provider was not completely qualified")
+                elif label in {"duplicate-launch", "uncertain-duplicate"}:
+                    target = uncertainty if label == "uncertain-duplicate" else "start: replay does not launch a second incarnation"
+                    if code != 1 or cases.get(target, {}).get("status") != "FAIL":
+                        failures.append(f"{label}: broken lifecycle was not rejected by its case")
+                elif code != 2 or not report["skipped"]:
+                    failures.append(f"{label}: missing evidence incorrectly qualified")
+            finally:
+                for server in (provider, admin):
+                    server.shutdown()
+                    server.server_close()
+                for thread in threads:
+                    thread.join()
     print("\n===== selftest result =====")
     if failures:
         for item in failures:
             print(f"FAIL: {item}")
         return 1
-    print("PASS: suite accepts a correct provider and rejects a duplicate-launching one")
+    print("PASS: full evidence accepted; duplicate starts rejected; missing hooks incomplete")
     return 0
 
 
