@@ -127,7 +127,8 @@ class _ControlTrace:
                 return inventory
 
 
-async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path: Path, async_session_factory) -> None:
+@pytest.mark.parametrize("orphan_reaping", [False, True], ids=["reconnect", "orphan-reaping"])
+async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path: Path, async_session_factory, orphan_reaping: bool) -> None:
     """Keep one real preflight stage through a fenced normal-launcher reconnect."""
     from websockets.asyncio.server import serve
 
@@ -161,6 +162,7 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
     old_bridge = None
     new_bridge = None
     worker_id = None
+    ruff_pid = None
     claim = ClaimedPlatformJob(UUID(binding["job_id"]), UUID(binding["lease_token"]), 60, .95, 1, "workspace.git")
 
     async def acquire(hello, owner):
@@ -173,7 +175,7 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
         return SimpleNamespace(lease=lease)
 
     async def scenario(socket: Any) -> None:
-        nonlocal old_bridge, new_bridge, worker_id
+        nonlocal old_bridge, new_bridge, worker_id, ruff_pid
         if trace.initial_stage_pid is None:
             hello = await trace.hello(socket, 1)
             assert hello.hello_sequence == 1
@@ -223,6 +225,23 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
             trace.initial_stage_pid = pid
             # The stage starts a new session.  Pausing its owned process group
             # gives the reconnect a deterministic in-flight physical child.
+            if orphan_reaping:
+                async def ruff_running():
+                    pending = [pid]
+                    while pending:
+                        parent = pending.pop()
+                        children = Path(f"/proc/{parent}/task/{parent}/children")
+                        if not children.exists():
+                            continue
+                        for child in map(int, children.read_text().split()):
+                            try:
+                                if Path(os.readlink(f"/proc/{child}/exe")).name == "ruff":
+                                    return child
+                            except FileNotFoundError:
+                                continue
+                            pending.append(child)
+                    return None
+                ruff_pid = await _wait_for(ruff_running, timeout=10, description="real Ruff child")
             os.killpg(pid, signal.SIGSTOP)
             async with control_authorization(old_bridge, claim):
                 status = await trace.command(socket, 1, "file_compute_status",
@@ -255,33 +274,34 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
         pid = stage.get("pid")
         assert isinstance(pid, int) and pid == trace.initial_stage_pid
         trace.replacement_stage_pid = pid
-        os.killpg(pid, signal.SIGCONT)
+        if not orphan_reaping:
+            os.killpg(pid, signal.SIGCONT)
 
-        async def succeeded() -> dict[str, Any] | None:
-            status = await trace.command(
-                socket,
-                2,
-                "file_compute_status",
-                {**binding, "operation": workspace_preflight_compute.OPERATION},
-            )
-            return status if status.get("state") == "succeeded" else None
+            async def succeeded() -> dict[str, Any] | None:
+                status = await trace.command(
+                    socket,
+                    2,
+                    "file_compute_status",
+                    {**binding, "operation": workspace_preflight_compute.OPERATION},
+                )
+                return status if status.get("state") == "succeeded" else None
 
-        completed = await _wait_for(
-            succeeded, timeout=30, description="resumed workspace preflight result"
-        )
-        manifest = completed.get("result_manifest")
-        assert isinstance(manifest, dict)
-        trace.result_manifest = manifest
-        for index in range(int(manifest["chunk_count"])):
-            result = await trace.command(
-                socket,
-                2,
-                "file_compute_result_chunk",
-                {**binding, "operation": workspace_preflight_compute.OPERATION, "index": index},
+            completed = await _wait_for(
+                succeeded, timeout=30, description="resumed workspace preflight result"
             )
-            chunk = result.get("chunk")
-            assert isinstance(chunk, dict)
-            trace.result_chunks.append(chunk)
+            manifest = completed.get("result_manifest")
+            assert isinstance(manifest, dict)
+            trace.result_manifest = manifest
+            for index in range(int(manifest["chunk_count"])):
+                result = await trace.command(
+                    socket,
+                    2,
+                    "file_compute_result_chunk",
+                    {**binding, "operation": workspace_preflight_compute.OPERATION, "index": index},
+                )
+                chunk = result.get("chunk")
+                assert isinstance(chunk, dict)
+                trace.result_chunks.append(chunk)
         async with control_authorization(new_bridge, claim):
             released = await trace.command(
                 socket,
@@ -289,6 +309,9 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
                 "file_compute_release",
                 {**binding, "operation": workspace_preflight_compute.OPERATION},
             )
+        if orphan_reaping:
+            assert ruff_pid is not None
+            assert not Path(f"/proc/{ruff_pid}").exists(), "Launcher retained an orphaned Ruff zombie"
         assert released["released"] is True
         await trace.command(socket, 2, "retired", {})
         finished.set_result(None)
@@ -316,8 +339,17 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
                 "BIFROST_WORKER_INCARNATION_ID": str(uuid4()),
                 "BIFROST_WORKER_RESOURCE_UID": f"local-runtime-{uuid4()}",
             }
+            command = [sys.executable, "-m", "src.worker.remote.launcher"]
+            if orphan_reaping:
+                # Unprivileged kernel orphan-adoption semantics of PID 1;
+                # production launcher, handlers and subprocesses remain real.
+                command = [sys.executable, "-c", (
+                    "import ctypes,runpy; "
+                    "assert ctypes.CDLL(None,use_errno=True).prctl(36,1,0,0,0)==0; "
+                    "runpy.run_module('src.worker.remote.launcher',run_name='__main__')"
+                )]
             process = subprocess.Popen(
-                [sys.executable, "-m", "src.worker.remote.launcher"],
+                command,
                 env=environment,
                 stdout=subprocess.DEVNULL,
                 stderr=log,
@@ -330,20 +362,21 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
         assert trace.replacement_generation == 2
         assert trace.replacement_stage_pid == trace.initial_stage_pid
         assert trace.inventory_after_reconnect is not None
-        assert trace.result_manifest is not None and trace.result_chunks
-        from shared.worker_transfer import FileTransferChunk, FileTransferReceiver, FileTransferManifest
+        if not orphan_reaping:
+            assert trace.result_manifest is not None and trace.result_chunks
+            from shared.worker_transfer import FileTransferChunk, FileTransferReceiver, FileTransferManifest
 
-        manifest = FileTransferManifest.from_dict(
-            trace.result_manifest, max_total_size=workspace_preflight_compute.MAX_RESULT_BYTES
-        )
-        with FileTransferReceiver(manifest) as receiver:
-            for chunk in trace.result_chunks:
-                receiver.add_chunk(FileTransferChunk.from_dict(chunk))
-            with receiver.finish() as received:
-                result = workspace_preflight_compute.decode_results(
-                    received, digest=transfer.manifest.sha256, paths={"runtime_case.py"}
-                )
-        assert any(issue.category == "lint" and issue.path == "runtime_case.py" for issue in result)
+            manifest = FileTransferManifest.from_dict(
+                trace.result_manifest, max_total_size=workspace_preflight_compute.MAX_RESULT_BYTES
+            )
+            with FileTransferReceiver(manifest) as receiver:
+                for chunk in trace.result_chunks:
+                    receiver.add_chunk(FileTransferChunk.from_dict(chunk))
+                with receiver.finish() as received:
+                    result = workspace_preflight_compute.decode_results(
+                        received, digest=transfer.manifest.sha256, paths={"runtime_case.py"}
+                    )
+            assert any(issue.category == "lint" and issue.path == "runtime_case.py" for issue in result)
     finally:
         transfer.close()
         if process is not None and process.poll() is None:

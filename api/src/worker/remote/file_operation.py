@@ -161,16 +161,28 @@ async def spawn_child(*args: Any, **kwargs: Any) -> _Process:
 
 
 async def kill_process_group(process: _Process) -> None:
-    if process.returncode is not None or process.pid is None:
+    if process.pid is None:
         return
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        await asyncio.wait_for(process.wait(), 5)
-    except TimeoutError:
+    if process.returncode is None:
         with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        await process.wait()
+            os.killpg(process.pid, signal.SIGTERM)
+        try:
+            await asyncio.wait_for(process.wait(), 5)
+        except TimeoutError:
+            with contextlib.suppress(ProcessLookupError):
+                os.killpg(process.pid, signal.SIGKILL)
+            await process.wait()
+    # The primary subprocess has already been reaped by asyncio. When this
+    # launcher is PID 1 (or a subreaper), terminated recipe grandchildren are
+    # adopted here. Reap only this operation's new-session process group;
+    # waitpid(-1) would steal exit statuses from templates and other jobs.
+    while True:
+        try:
+            reaped, _status = os.waitpid(-process.pid, os.WNOHANG)
+        except ChildProcessError:
+            break
+        if reaped == 0:
+            break
 
 
 class NamedFileOperationStages:
