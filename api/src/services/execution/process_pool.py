@@ -2117,6 +2117,11 @@ class ProcessPoolManager:
         outcomes through on_service_result and free a service slot instead.
         """
         self._unregister_result_reader(handle)
+        # A traced child returns its spans with the result; export them from
+        # this long-lived process and keep them out of result handling.
+        from src.core.telemetry import CHILD_SPANS_KEY, relay_child_spans
+
+        relay_child_spans(result.pop(CHILD_SPANS_KEY, None))
 
         if handle.service is not None:
             await self._handle_service_result(handle, result)

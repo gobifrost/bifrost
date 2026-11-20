@@ -44,7 +44,7 @@ env var is absent.
 4. **Two hand-written span kinds, both run boundaries**: workflow-run and
    agent-run server spans (`trace.get_tracer(__name__)` per module,
    `start_as_current_span`). Attributes are IDs only
-   (`run.id`, `org.id`, `handler`) — never user content, keys, or tokens,
+   (`bifrost.execution.id`, `bifrost.workflow.id`, `handler`) — never user content, keys, or tokens,
    with the export privacy boundary below. `log_safe` escapes control
    characters and truncates; it is not secret redaction.
 5. **Propagation rides the dispatch payload.** `stage_dispatch` stores a
@@ -124,6 +124,9 @@ Operator resource attributes must also be documented as exported data.
 - FastAPI/httpx: suppress raw URL paths/query strings, credentials, request
   and response bodies and headers. Use route templates or reviewed fixed
   operation names, never user-supplied URLs as span names/attributes.
+  Implemented by dropping `http.target`, `http.url`, `url.full`, `url.path`,
+  `url.query` and any `http.*.header.*` attribute at export; `http.route`
+  (the template) is retained.
 - Exceptions: suppress messages, stack/source text and exception events that
   may carry user data; report fixed error categories and status only. Check
   automatic error status descriptions as well as attributes and events.
@@ -148,6 +151,75 @@ request (auto span) → enqueue: persist traceparent in WorkDispatch.message
   → spans + metrics → OTLP/HTTP → operator collector → Tempo/Mimir
 logs (unchanged path) → Loki, now carrying trace_id/span_id
 ```
+
+## Implementation status (v1)
+
+- `src/core/telemetry.py` initializes providers only when
+  `OTEL_EXPORTER_OTLP_ENDPOINT` is set; otherwise every helper is a no-op.
+  The API and launcher get distinct service identities
+  (`bifrost-api`/`bifrost-worker`/`bifrost-run`) and
+  `bifrost.process.role`; `OTEL_TRACES_SAMPLER`/`_ARG` are honoured, and
+  `OTEL_PYTHON_FASTAPI_EXCLUDED_URLS` (anchored regexes) overrides the
+  health-probe defaults.
+- The FastAPI app is instrumented with `instrument_app` at construction:
+  the class-patching `.instrument()` form only covers apps created after
+  the call, which would leave the API with no request spans.
+- `stage_dispatch` wraps the publish in a `PRODUCER` span (`<family>
+  publish`, `messaging.system=postgresql`, `messaging.operation=publish`,
+  `messaging.destination.name=<family>`) and injects `traceparent` while
+  that span is current. `PoolWorker._run_claim` opens a `CONSUMER` span
+  (`<handler> process`, `messaging.operation=process`,
+  `messaging.message.id=<dispatch_id>`) parented to the extracted context,
+  and the `run.<handler>` span is its child. One trace therefore reads
+  request → publish → process → run. Covered by
+  `api/tests/unit/test_otel_messaging.py`.
+- Each template process resolves its children's telemetry set-up once,
+  before it forks (`prepare_child_telemetry`): it loads the SDK and HTTPX
+  instrumentor modules, builds the run resource and runs the instrumentor's
+  dependency check. Children inherit that copy-on-write. Left to each
+  child, the imports and package-metadata reads cost roughly 45-100 ms per
+  run; prepared, child set-up measured about 6 ms. Without preparation a
+  child stays untraced.
+- Execution children re-initialize tracing after `os.fork` and export
+  nothing themselves. `init_telemetry_in_child` discards the inherited
+  providers (fork carries memory but no threads, so an inherited batch
+  queue would never drain) and installs a provider whose only processor is
+  a bounded in-memory buffer (512 spans), plus the HTTP-client
+  instrumentor. There is no metric reader, so runtime metrics stay with the
+  owning process. Spans are scrubbed as they end.
+- The workflow consumer stamps the active dispatch span's `traceparent`
+  into the execution context it routes, so local and remote children
+  receive it with their work item. The child wraps module load and
+  execution in a `workflow.run` span (`bifrost.execution.id`,
+  `bifrost.workflow.id`) parented on that context, and marks it `ERROR`
+  with the exception type only when the run reports failure. Its outbound
+  HTTP and engine SDK calls nest beneath it. A child's first run starts at
+  its telemetry set-up, just after fork, and opens with a
+  `workflow.startup` span covering the time before the work began.
+- A remote launcher wraps the fork command in a `workflow.launch` span
+  parented on the same context: receipt, any wait for the template, the
+  fork and the hand-off to the child. A failure is marked `ERROR` with its
+  type only. Locally the pool forks inside `run.workflow.execute`, so no
+  separate span is needed there.
+- The child returns its finished spans with the run result
+  (`_otel_spans`). The process that reads the result (the pool, or the
+  remote launcher before anything crosses the route socket) strips them
+  and hands them to its own long-lived `BatchSpanProcessor`. A one-shot
+  child therefore opens no collector connection and never waits on an exit
+  flush, so a slow or unreachable collector cannot hold a run process.
+  Agent children return their spans the same way. Covered by
+  `api/tests/unit/test_telemetry_fork.py`, the pool and launcher result
+  tests, and the consumer routing test.
+  One trace therefore reads request → publish → process →
+  `run.workflow.execute` → (`workflow.launch`) → `workflow.run`
+  (`workflow.startup`, then outbound calls), with no unattributed time
+  between the dispatch and the run.
+- `ScrubbingSpanExporter` enforces the export privacy boundary in-process
+  before OTLP: SQL text and parameters, Redis `FT.SEARCH` queries and
+  returned document fields, HTTP query strings, **all span events**, and
+  SDK-generated error descriptions never leave the process. A failing span
+  keeps the ERROR status and the exception type; nothing else. Covered by
+  `api/tests/unit/test_telemetry.py`.
 
 ## Test seams
 
