@@ -21,6 +21,45 @@ _ADMIN_ACTOR = {
     "name": "Admin User",
 }
 
+_IDENTITY_PROVIDER = {
+    "id": "550e8400-e29b-41d4-a716-446655440050",
+    "name": "Contoso Entra ID",
+    "vendor": "entra",
+}
+
+_IDENTITY_PROVIDER_ACTOR = {
+    "type": "identity_provider",
+    "id": _IDENTITY_PROVIDER["id"],
+    "email": None,
+    "name": _IDENTITY_PROVIDER["name"],
+}
+
+_PROVISIONED_USER = {
+    "id": "550e8400-e29b-41d4-a716-446655440051",
+    "email": "alice@contoso.com",
+    "name": "Alice Example",
+    "is_active": True,
+    "external_id": "6f1c2d3e-0000-4000-8000-000000000001",
+    "attributes": {
+        "userName": "alice@contoso.com",
+        "urn:ietf:params:scim:schemas:extension:enterprise:2.0:User": {"department": "Support"},
+    },
+}
+
+_USER_ACTOR = {
+    "type": "user",
+    "id": "550e8400-e29b-41d4-a716-446655440030",
+    "email": "alice@example.com",
+    "name": "Alice",
+}
+
+_EVENT_USER = {
+    "id": "550e8400-e29b-41d4-a716-446655440030",
+    "email": "alice@example.com",
+    "name": "Alice",
+    "organization_id": "550e8400-e29b-41d4-a716-446655440010",
+}
+
 _BASE_BODY = {
     "schema_version": 1,
     "occurred_at": "2026-05-28T12:34:56Z",
@@ -53,6 +92,156 @@ CURATED_TOPICS = [
                 "registration_url": "https://app.example.com/accept-invite?token=...",
                 "expires_at": "2026-05-29T12:34:56Z",
                 "reason": "created",
+            },
+        ),
+    },
+    {
+        "topic": "user.provisioned",
+        "description": "Fired when an identity provider creates a user or adopts an existing one.",
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            adopted=False,
+        ),
+    },
+    {
+        "topic": "user.updated",
+        "description": "Fired when an identity provider changes a user it manages.",
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+        ),
+    },
+    {
+        "topic": "user.deprovisioned",
+        "description": (
+            "Fired when an identity provider deactivates or deletes a user, or the "
+            "user loses their last mapped group."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user={**_PROVISIONED_USER, "is_active": False},
+            deprovision={"reason": "inactive", "account_removed": False},
+        ),
+    },
+    {
+        "topic": "user.groups_changed",
+        "description": (
+            "Fired when an identity provider adds a user to a group or removes them. "
+            "The access that follows is reported by user.access_changed."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            group={
+                "id": "550e8400-e29b-41d4-a716-446655440052",
+                "display_name": "Support Techs",
+                "change": "added",
+            },
+        ),
+    },
+    {
+        "topic": "user.access_changed",
+        "description": (
+            "Fired when identity provisioning activates a user or grants or removes "
+            "mapped roles. Removals apply at once; activations and grants are applied "
+            "in batches within about two minutes of the identity provider's change."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_IDENTITY_PROVIDER_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            user=_PROVISIONED_USER,
+            access={
+                "activated": True,
+                "roles_added": ["550e8400-e29b-41d4-a716-446655440053"],
+                "roles_removed": [],
+            },
+        ),
+    },
+    {
+        "topic": "identity_provider.token_expiry",
+        "description": (
+            "Fired once when an identity provider connection's token comes within "
+            "14 days of expiry, and once more when it expires. Provisioning stops "
+            "until the token is regenerated and updated in the identity provider."
+        ),
+        "category": "Users",
+        "emitted_by": "Identity provisioning",
+        "example_body": _body(
+            actor=_SYSTEM_ACTOR,
+            identity_provider=_IDENTITY_PROVIDER,
+            token={
+                "hint": "x7Qa",
+                "expires_at": "2026-06-11T12:34:56Z",
+                "stage": "expiring",
+            },
+        ),
+    },
+    {
+        "topic": "user.created",
+        "description": (
+            "Fired after a user account is created: by an administrator (admin), on a first SSO "
+            "sign-in that provisions the account (sso_provisioning, with the provider), by "
+            "self-registration (registration), or by the configured default-user bootstrap "
+            "(bootstrap). Accepting an invite completes an existing account and does not fire it. "
+            "Delivered asynchronously; it never blocks account creation."
+        ),
+        "category": "Users",
+        "emitted_by": "Bifrost platform",
+        "example_body": _body(
+            actor=_USER_ACTOR,
+            user=_EVENT_USER,
+            creation={"method": "sso_provisioning", "provider": "microsoft"},
+        ),
+    },
+    {
+        "topic": "user.signed_in",
+        "description": (
+            "Fired after Bifrost signs a user in with a password (including MFA), a passkey, or "
+            "SSO (microsoft, google, oidc). SSO events include the identity provider's verified "
+            "id_token claims, minus token-binding values (nonce, at_hash, c_hash, s_hash), token and "
+            "IdP session ids (jti, origin_jti, sid, session_state) and Microsoft's opaque aio/uti/rh; access, refresh and id tokens and "
+            "unverified userinfo are never included. identity.groups carries the groups claim when "
+            "it is a list. When Entra sends _claim_names/hasgroups instead (groups overage), "
+            "identity.groups_overage is true and the workflow must read the user's groups from "
+            "Microsoft Graph. Map roles on the tenant (tid or iss) plus group object ID, never a group "
+            "name alone. Delivered asynchronously: a workflow can update roles or deactivate the "
+            "user, but cannot block the sign-in that fired it. CLI device and MCP client "
+            "authorizations by an already signed-in user do not fire it."
+        ),
+        "category": "Users",
+        "emitted_by": "Bifrost platform",
+        "example_body": _body(
+            actor=_USER_ACTOR,
+            user=_EVENT_USER,
+            sign_in={"method": "sso", "provider": "microsoft"},
+            identity={
+                "claims": {
+                    "iss": "https://login.microsoftonline.com/7f3c0d5e-1b2a-4c3d-9e8f-0a1b2c3d4e5f/v2.0",
+                    "sub": "AAAAAAAAAAAAAAAAAAAAAIkzqFVrSaSaFHy782bbtaQ",
+                    "aud": "6731de76-14a6-49ae-97bc-6eba6914391e",
+                    "tid": "7f3c0d5e-1b2a-4c3d-9e8f-0a1b2c3d4e5f",
+                    "oid": "00000000-0000-0000-66f3-3332eca7ea81",
+                    "preferred_username": "alice@example.com",
+                    "name": "Alice",
+                    "groups": ["5d8f3c1e-2b4a-4c6d-8e9f-1a2b3c4d5e6f"],
+                },
+                "groups": ["5d8f3c1e-2b4a-4c6d-8e9f-1a2b3c4d5e6f"],
+                "groups_overage": False,
             },
         ),
     },
@@ -322,3 +511,7 @@ CURATED_TOPICS = [
         ),
     },
 ]
+
+# Topics only Bifrost emits. Custom emission (REST, SDK, workflows) refuses
+# them so a subscriber can trust that one of these events came from Bifrost.
+RESERVED_TOPICS = frozenset(entry["topic"] for entry in CURATED_TOPICS)

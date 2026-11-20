@@ -200,6 +200,20 @@ The header must remain self-contained: no Tailwind, shadcn, or `@/` imports.
 It carries its own minimal inline styling so it works in local dev, deployed
 apps, and apps that do not include the main Bifrost client CSS.
 
+## Presentation Mode
+
+Deployed V2 Apps mounted in the platform DOM inherit Presentation Mode. Add
+`data-pii` to the smallest element containing a sensitive value, such as
+`<span data-pii>{customerName}</span>`. Give controls a safe accessible name
+and keep the annotation on the value inside the control so it remains usable.
+Plain table cells are masked by default. Annotate sensitive values inside cells
+that also contain controls. Use `data-pii="off"` on a cell or badge
+with demo-safe content, such as a fixed status label.
+
+The platform root has `data-presentation-mode="on"` while the feature is enabled.
+Content rendered inside a separate frame or drawn onto a canvas needs its own
+masking. Presentation Mode is visual masking for demos.
+
 ## Branding and organizations
 
 Both hooks run inside `BifrostProvider` and use its API URL, authentication,

@@ -1,0 +1,13 @@
+{
+  "key": "pr:1429",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1429",
+      "Jack November 16 native reply to the Product Updates approval question: No product update."
+    ]
+  },
+  "reason": "Jack explicitly requested no Product Update for the scoped #1428 mapping pagination/status-filter repair; this latest instruction supersedes the earlier sentence approval."
+}

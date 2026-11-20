@@ -136,7 +136,7 @@ class TestMCPAgentGateway:
                 "system_prompt": prompt,
                 "channels": ["chat"],
                 "tool_ids": [workflow_id],
-                "system_tools": ["get_docs"],
+                "system_tools": ["bifrost_get_docs"],
                 "delegated_agent_ids": [delegated_agent_id],
             },
         )
@@ -205,7 +205,7 @@ class TestMCPAgentGateway:
             "tools/list",
             {},
         )["result"]["tools"]
-        assert {tool["name"] for tool in default_tools} == GATEWAY_TOOLS
+        assert {tool["name"] for tool in default_tools} == GATEWAY_TOOLS | {"bifrost_execute_code", "bifrost_get_docs"}
         execute_schema = next(
             tool["inputSchema"]
             for tool in default_tools
@@ -346,7 +346,7 @@ class TestMCPAgentGateway:
         found = _call_gateway(
             self.token,
             "bifrost_search_capabilities",
-            {"query": self.agent_name, "discovery_scope": "all"},
+            {"query": self.agent_name, "discovery_scope": "all", "limit": 1},
         )
         found_agent = next(
             agent for agent in found["agents"] if agent["id"] == self.agent_id
@@ -402,7 +402,7 @@ class TestMCPAgentGateway:
         system_tool = next(
             tool
             for tool in system_search["agents"][0]["matching_tools"]
-            if tool["source"] == "system" and tool["name"] == "get_docs"
+            if tool["source"] == "system" and tool["name"] == "bifrost_get_docs"
         )
 
         schema = _call_gateway(

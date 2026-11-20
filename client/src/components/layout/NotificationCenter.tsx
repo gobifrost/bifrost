@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import {
 	useState,
 	useCallback,
@@ -166,16 +167,20 @@ function NotificationFrame({
 	action?: ReactNode;
 	children: ReactNode;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	return (
 		<article
-			aria-label={title}
+			aria-label={presentationMode ? "Notification" : title}
 			className="min-w-0 space-y-3 border-b p-[var(--bf-surface-pad)] last:border-b-0"
 		>
 			<div className="flex items-start gap-3">
 				<div aria-hidden="true" className="mt-2 shrink-0">
 					{icon}
 				</div>
-				<h4 className="min-w-0 flex-1 pt-2 text-sm font-semibold leading-5 [overflow-wrap:anywhere]">
+				<h4
+					data-pii
+					className="min-w-0 flex-1 pt-2 text-sm font-semibold leading-5 [overflow-wrap:anywhere]"
+				>
 					{title}
 				</h4>
 				{action}
@@ -198,6 +203,7 @@ function ProgressNotificationItem({
 	onAction: (notification: Notification) => Promise<void>;
 	onOpenFile: (filePath: string, lineNumber?: number) => Promise<void>;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [isActionLoading, setIsActionLoading] = useState(false);
 	const Icon = categoryIcons[notification.category] || Cog;
 	const statusConfig = notificationStatusConfig[notification.status];
@@ -258,7 +264,11 @@ function ProgressNotificationItem({
 						type="button"
 						variant="ghost"
 						size="icon-lg"
-						aria-label={`Dismiss ${notification.title}`}
+						aria-label={
+							presentationMode
+								? "Dismiss notification"
+								: `Dismiss ${notification.title}`
+						}
 						onClick={onDismiss}
 					>
 						<X aria-hidden="true" className="size-4" />
@@ -276,21 +286,24 @@ function ProgressNotificationItem({
 			}
 		>
 			{notification.description && (
-				<p className="text-muted-foreground">
+				<p data-pii className="text-muted-foreground">
 					{notification.description}
 				</p>
 			)}
 			{notification.error && (
-				<p className="text-destructive">{notification.error}</p>
+				<p data-pii className="text-destructive">
+					{notification.error}
+				</p>
 			)}
 			{hasFileLink && (
 				<button
 					type="button"
 					onClick={() => void onOpenFile(filePath, lineNumber)}
+					aria-label={presentationMode ? "Open file" : undefined}
 					className="flex min-h-11 w-full items-center gap-2 rounded-[var(--bf-radius-control)] text-left text-xs text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
 				>
 					<FileCode aria-hidden="true" className="size-4 shrink-0" />
-					<span className="min-w-0 [overflow-wrap:anywhere]">
+					<span data-pii className="min-w-0 [overflow-wrap:anywhere]">
 						{filePath}
 					</span>
 				</button>
@@ -298,7 +311,11 @@ function ProgressNotificationItem({
 			{isActive && notification.percent !== null && (
 				<Progress
 					value={notification.percent}
-					aria-label={`${notification.title} progress`}
+					aria-label={
+						presentationMode
+							? "Notification progress"
+							: `${notification.title} progress`
+					}
 					className="h-1.5"
 				/>
 			)}
@@ -317,7 +334,7 @@ function ProgressNotificationItem({
 					) : (
 						<Play aria-hidden="true" className="size-4" />
 					)}
-					{actionLabel}
+					{presentationMode ? "Run" : actionLabel}
 				</Button>
 			)}
 			<p className="text-xs text-muted-foreground">
@@ -334,6 +351,7 @@ function AlertNotificationItem({
 	alert: OneOffNotification;
 	onDismiss: () => void;
 }) {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const config = alertStatusConfig[alert.status];
 	const Icon = config.icon;
 
@@ -346,14 +364,20 @@ function AlertNotificationItem({
 					type="button"
 					variant="ghost"
 					size="icon-lg"
-					aria-label={`Dismiss ${alert.title}`}
+					aria-label={
+						presentationMode
+							? "Dismiss notification"
+							: `Dismiss ${alert.title}`
+					}
 					onClick={onDismiss}
 				>
 					<X aria-hidden="true" className="size-4" />
 				</Button>
 			}
 		>
-			<p className="text-muted-foreground">{alert.body}</p>
+			<p data-pii className="text-muted-foreground">
+				{alert.body}
+			</p>
 			<p className="text-xs text-muted-foreground">
 				{new Date(alert.createdAt).toLocaleString()}
 			</p>

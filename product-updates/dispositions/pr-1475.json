@@ -1,0 +1,12 @@
+{
+  "key": "pr:1475",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal external-worker cleanup bookkeeping repair; no standalone announcement value.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1475"
+    ]
+  }
+}

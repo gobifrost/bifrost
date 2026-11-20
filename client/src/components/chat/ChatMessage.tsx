@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 /**
  * ChatMessage Component
  *
@@ -115,6 +116,7 @@ function SafeChatLink({
 
 function MessageActions({ message }: { message: MessagePublic }) {
 	const [copied, setCopied] = useState(false);
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [copyError, setCopyError] = useState(false);
 	const [copying, setCopying] = useState(false);
 	const active = useRef(true);
@@ -153,7 +155,7 @@ function MessageActions({ message }: { message: MessagePublic }) {
 						if (timer.current) clearTimeout(timer.current);
 						if (success) timer.current = setTimeout(() => setCopied(false), 1500);
 					}}
-					disabled={copying}
+					disabled={copying || presentationMode}
 					aria-label={copied ? "Copied message" : "Copy message"}
 				>
 					{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
@@ -179,7 +181,10 @@ function ChatMessageView({
 	if (isUser) {
 		return (
 			<div className="group flex flex-col items-end justify-end py-2 px-4">
-				<div className="max-w-full overflow-x-auto break-words rounded-[var(--bf-radius-feature)] bg-primary px-4 py-3 text-primary-foreground sm:max-w-[80%]">
+				<div
+					data-pii-surface
+					className="max-w-full overflow-x-auto break-words rounded-[var(--bf-radius-feature)] bg-primary px-4 py-3 text-primary-foreground sm:max-w-[80%]"
+				>
 					<ChatAttachmentList
 						conversationId={message.conversation_id}
 						attachments={message.attachments ?? []}
@@ -268,7 +273,10 @@ function ChatMessageView({
 		>
 			<div className="max-w-4xl">
 				{/* Markdown Content */}
-				<div className="prose prose-slate dark:prose-invert max-w-none break-words prose-p:my-2 prose-p:leading-7 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent">
+				<div
+					data-pii-surface
+					className="prose prose-slate dark:prose-invert max-w-none break-words prose-p:my-2 prose-p:leading-7 prose-headings:font-semibold prose-h1:text-xl prose-h2:text-lg prose-h3:text-base prose-ul:my-2 prose-ol:my-2 prose-li:my-0.5 prose-pre:my-2 prose-pre:p-0 prose-pre:bg-transparent"
+				>
 					<ReactMarkdown
 						remarkPlugins={[remarkGfm]}
 						rehypePlugins={[rehypeRaw]}

@@ -63,7 +63,7 @@ def _click_leaf_paths(
     return paths
 
 
-_DOCUMENTATION_MCP_TOOL_IDS = frozenset({"get_docs"})
+_DOCUMENTATION_MCP_TOOL_IDS = frozenset({"bifrost_get_docs"})
 
 
 def _rest_disposition(method: str, path: str) -> dict[str, str]:
@@ -97,6 +97,15 @@ def _rest_disposition(method: str, path: str) -> dict[str, str]:
             "reason": (
                 "Ends a browser authentication impersonation session; "
                 "owns no entity state."
+            ),
+        }
+    if path.startswith("/api/scim/v2/{identity_provider_id}/"):
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": (
+                "SCIM 2.0 wire protocol an external identity provider calls with "
+                "a connection token; writes go through the identity provisioning "
+                "core, administered by the identityproviders operations."
             ),
         }
     if (method, path) == ("POST", "/api/solutions/{solution_id}/dev-context"):

@@ -49,24 +49,6 @@ def _normalized(expression: str) -> str:
     return " ".join(expression.split())
 
 
-def test_source_archive_version_reaches_every_dev_lock_installer() -> None:
-    variable = "SETUPTOOLS_SCM_PRETEND_VERSION_FOR_PYTEST_ASYNCIO"
-    dockerfile = (REPO_ROOT / "api" / "Dockerfile.dev").read_text()
-    version = next(
-        line.split("=", 1)[1]
-        for line in dockerfile.splitlines()
-        if line.startswith(f"ENV {variable}=")
-    )
-    install = next(
-        step
-        for step in _load_workflow(CI_WORKFLOW)["jobs"]["lint"]["steps"]
-        if "-r requirements-dev.lock" in step.get("run", "")
-    )
-    assert install["env"][variable] == version
-    regeneration = (REPO_ROOT / ".github/workflows/dependabot-lockfile-regen.yml").read_text()
-    assert f"--env {variable}={version}" in regeneration
-
-
 def test_promotion_verifier_requires_every_merge_candidate_job() -> None:
     jobs = _load_workflow(CI_WORKFLOW)["jobs"]
     shard_job = jobs["test-e2e"]

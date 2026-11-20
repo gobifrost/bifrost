@@ -92,10 +92,17 @@ history. Confirmed rows stop generating provider lookups and DELETE calls.
 The nullable migration lets existing terminal rows converge through the same
 readback path; it changes no provider protocol or Kubernetes cleanup cutoff.
 Do not prune unconfirmed worker rows while their physical resources may exist.
-Absence for an unbound incarnation is not confirmation: another controller may
-still finish a delayed prepare. Keep that row eligible so its eventual resource
-is deleted without starting. If preparation never completes, the unbound record
-remains pending rather than inventing a deletion receipt from a time cutoff.
+For an unbound lost incarnation, absence becomes final only after a 60-second
+grace period from `ended_at` and a fresh successful GET confirming absence.
+This exceeds the 10-second prepare client timeout plus a reconcile sweep.
+During the grace period, another controller may finish a delayed prepare; its
+resource is deleted without starting because a lost row cannot bind.
+Provider errors never confirm absence, even after the grace period. Bound
+resources retain unbounded cleanup retries, and unbound retired rows retain
+their existing cleanup behavior. Providers must settle preparation within this
+window: a provider-side mutation completing after finality could leave an
+orphaned prepared resource. The client timeout alone does not cancel remote work.
+Confirmed absent lost rows stop holding the pool active, restoring idle silence.
 
 ## Launcher Admission and Recovery
 

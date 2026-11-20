@@ -707,7 +707,8 @@ async def test_document_prefix_statement_uses_c_collation_and_literal_pattern(
     assert "tenant%_A/folder\\caf\u00e9/002" in compiled.params.values()
     assert "tenant%_A/folder\\caf\u00e9/missing" in compiled.params.values()
     assert "target" in compiled.params.values()
-    assert "10" in compiled.params.values()
+    # Numeric range operands retain their numeric type (issue #1455).
+    assert 10 in compiled.params.values()
     assert "allow" in compiled.params.values()
     assert all(
         value != "tenant/%/_A//folder\\caf\u00e9//%"

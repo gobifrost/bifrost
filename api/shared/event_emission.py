@@ -67,6 +67,7 @@ async def emit_topic_event(
         resolve_solution_ref,
         resolve_trustworthy_caller,
     )
+    from src.services.events.registry import RESERVED_TOPICS
     from src.services.events.validation import validate_topic
 
     try:
@@ -83,6 +84,12 @@ async def emit_topic_event(
         validate_topic(request.topic)
     except ValueError as exc:
         raise EventEmissionError(400, str(exc)) from exc
+    if request.topic in RESERVED_TOPICS:
+        raise EventEmissionError(
+            400,
+            f"'{request.topic}' is a built-in Bifrost event and only Bifrost can emit it. "
+            "Emit your own topic name instead.",
+        )
 
     if service_caller:
         # Services emit org-scoped only, into their own org: the token's

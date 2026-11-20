@@ -28,8 +28,6 @@ dependencies = [
     # =========================================================================
     # Web Framework
     # =========================================================================
-    # Upstream CPython 3.16 build fix: python-cffi/cffi#287 (not yet released).
-    "cffi @ https://codeload.github.com/python-cffi/cffi/tar.gz/1285f4647de0d96dba770725af033255760035b9",
     "fastapi",
     "uvicorn[standard]",
     "python-multipart>=0.0.26",  # Form data handling (CVE fixes through 0.0.26)
@@ -45,7 +43,7 @@ dependencies = [
     # =========================================================================
     # Message Queue (RabbitMQ)
     # =========================================================================
-    "aio-pika==9.6.2",  # Legacy broker recovery; aiormq 7 uses asyncio APIs removed in Python 3.16.
+    "aio-pika>=9.6,<11",  # Recovers work an earlier release left in RabbitMQ (src/services/legacy_broker_drain.py)
 
     # =========================================================================
     # Cache & Sessions (Redis)
@@ -62,6 +60,10 @@ dependencies = [
     "webauthn>=2.7.1",  # WebAuthn/Passkeys support
     "authlib>=1.9.5",  # OIDC relying party: JWKS + id_token claim validation
     "altcha>=2.1.0",  # Self-hosted proof-of-work protection for public forms
+    # SCIM 2.0 (RFC 7643/7644) resource, PatchOp and filter models for the
+    # identity-provider provisioning endpoint. Pre-1.0: pinned to a minor line.
+    "scim2-models>=0.12.4,<0.13",
+    "dnspython>=2.8.0",  # DNS TXT verification of organization domain claims
 
     # =========================================================================
     # Configuration
@@ -133,9 +135,9 @@ dependencies = [
     # =========================================================================
     # Exact pins are intentional: the Harness API is still pre-1.0 and is the
     # execution boundary for every Bifrost agent surface.
-    "pydantic-ai-slim[openai,anthropic,google,retries]==2.67.0",
-    "pydantic-ai-harness==0.67.0",
-    "pydantic-monty==1.5.0",  # Local language sandbox for Automatic CodeMode
+    "pydantic-ai-slim[openai,anthropic,google,retries]==2.68.0",
+    "pydantic-ai-harness==0.68.0",
+    "pydantic-monty==1.6.0",  # Local language sandbox for Automatic CodeMode
 
     # =========================================================================
     # MCP (Model Context Protocol)
@@ -188,8 +190,7 @@ dev = [
     # Testing (test-runner image + CI lint; pytest-env is currently
     # declared-but-unconfigured, kept for the suite that expects it)
     "pytest",
-    # Upstream Python 3.16 policy removal fix: pytest-dev/pytest-asyncio#1593.
-    "pytest-asyncio @ https://codeload.github.com/pytest-dev/pytest-asyncio/tar.gz/47bbcba3cce21f2a77826d9ca56147b99004166b",
+    "pytest-asyncio",
     "pytest-cov",
     "pytest-env",
     "pytest-timeout",  # Per-test timeout protection (catches infinite hangs)
@@ -202,4 +203,6 @@ dev = [
     # still declares watchdog for laptop installs.
     "debugpy",  # Remote debugging (VS Code attach)
     "watchdog",  # File watching for hot reload (watchmedo command)
+    # RFC 7643/7644 compliance checks against the SCIM endpoint (e2e suite)
+    "scim2-tester>=0.6.4,<0.7",
 ]

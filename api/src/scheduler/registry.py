@@ -62,6 +62,21 @@ SCHEDULED_TASKS: tuple[ScheduledTaskDefinition, ...] = (
         callback="src.jobs.schedulers.metrics_refresh:refresh_metrics_snapshot",
         trigger_args={"minutes": 60}, run_at_startup=True,
     ),
+    # Hourly because admin notifications are Redis-backed with a one-hour
+    # life: each run re-raises a warning that lapsed while it still applies.
+    ScheduledTaskDefinition(
+        "identity_provider_token_expiry", "Warn About Expiring Identity Provider Tokens", "Hourly",
+        callback="src.jobs.schedulers.identity_provider_token_expiry:check_identity_provider_token_expiry",
+        trigger_args={"minutes": 60}, run_at_startup=True,
+    ),
+    # Every role or activation change retires every access token on the
+    # instance; provisioning grants wait for this pass so a sync burst
+    # changes the authority epoch at most once a run.
+    ScheduledTaskDefinition(
+        "identity_provider_access_pass", "Apply Identity Provider Access Changes", "Every 2 minutes",
+        callback="src.jobs.schedulers.identity_provider_access_pass:run_identity_provider_access_pass",
+        trigger_args={"minutes": 2}, run_at_startup=True,
+    ),
     ScheduledTaskDefinition(
         "knowledge_storage_refresh", "Refresh Knowledge Storage Metrics", "Daily at 02:00 UTC",
         callback="src.jobs.schedulers.knowledge_storage_refresh:refresh_knowledge_storage_daily",

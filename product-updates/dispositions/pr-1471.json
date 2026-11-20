@@ -1,0 +1,14 @@
+{
+  "key": "pr:1471",
+  "classification": "highlight",
+  "entry_ids": [
+    "1e76e294-4419-49f9-9884-5c7e4f570c30"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1471",
+      "Jack Musick approved the exact title, body, and link wording in the private #1470 owner conversation on 2026-11-19."
+    ]
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "key": "pr:1433",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1433",
+      "https://github.com/gobifrost/bifrost/blob/0a6f8d4e947345f7a1ace43040790604d5a85843/docs/product-updates-authoring.md",
+      "https://nodejs.org/en/blog/release/v26.13.1",
+      "Reviewed Node security patch scope: internal App compiler, bundler and SDK build subprocesses; npm remains checksum-pinned at 11.21.1. No Node server listener or customer configuration contract is changed."
+    ]
+  },
+  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://nodejs.org/en/blog/release/v26.13.1"
+  }
+}

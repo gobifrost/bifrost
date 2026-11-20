@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
+import { usePresentationStore } from "@/stores/presentationStore";
 import { renderWithProviders, screen } from "@/test-utils";
 
 const auth = vi.hoisted(() => ({
@@ -17,6 +18,18 @@ vi.mock("sonner", () => ({ toast }));
 import { ImpersonationBanner } from "./ImpersonationBanner";
 
 describe("ImpersonationBanner", () => {
+	it("preserves the session warning and exit control while hiding the identity", () => {
+		usePresentationStore.getState().setEnabled(true);
+		try {
+			renderWithProviders(<ImpersonationBanner />);
+			expect(screen.getByRole("status")).toHaveTextContent("Impersonating a user");
+			expect(screen.queryByText(/Avery Example|avery@example.test/)).toBeNull();
+			expect(screen.getByRole("button", { name: "Exit" })).toBeEnabled();
+		} finally {
+			usePresentationStore.getState().setEnabled(false);
+		}
+	});
+
 	it("names the impersonated person and prevents duplicate exit requests", async () => {
 		let resolveExit!: () => void;
 		auth.endImpersonation.mockReset().mockImplementation(

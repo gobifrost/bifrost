@@ -20,7 +20,7 @@ from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
-    RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
+    LIVE_STATES, RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.demand import APP_COMPILE_CAPABILITY, EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
@@ -39,6 +39,13 @@ from src.services.work_dispatch import (
 
 logger = logging.getLogger(__name__)
 
+# Exceeds the 10-second prepare client timeout plus a full reconcile sweep.
+UNBOUND_LOSS_CLEANUP_GRACE = timedelta(seconds=60)
+
+
+class _ProfileRefreshRequired(Exception):
+    """Unwind the admission transaction before refreshing the provider."""
+
 
 class ExternalWorkerPoolController(WorkerCapacityController):
     def __init__(self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile) -> None:
@@ -48,6 +55,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         self.client = client
         self.profile = profile
         self.cleanup_states = ("lost", "retired")
+        # Whether this pass has read the provider's capabilities.
+        self._profile_read = False
 
     def _memory_environment(self, generation: int) -> dict[str, Any]:
         return {**super()._memory_environment(generation), "scope": self.profile.scope}
@@ -69,6 +78,8 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         )
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
+        if not self._profile_read:
+            raise _ProfileRefreshRequired
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
 
     def _planner_execution_handlers(self) -> tuple[str, ...]:
@@ -99,13 +110,39 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         return super()._sizing(policy, workers)
 
     async def reconcile(self) -> None:
+        # Capabilities change only when the provider is redeployed. While this
+        # provider holds no resource and no demand needs one, a pass sends it
+        # nothing, so a provider that scales on request traffic can stop.
+        # Every other pass reads them first, exactly as before.
+        self._profile_read = False
+        async with get_db_context() as db:
+            held = await db.scalar(select(ExecutionWorker.id).where(
+                self._managed_scope(), ExecutionWorker.state.in_(LIVE_STATES) | self._cleanup_scope(),
+            ).limit(1))
+        if held is not None:
+            await self._read_profile()
+        await super().reconcile()
+
+    async def _read_profile(self) -> None:
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
         if current.worker_version != self.version:
             raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.profile = current
-        await super().reconcile()
+        self._profile_read = True
+
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
+        if self._profile_read:
+            return await super().launch_for_demand(policy)
+        # Plan with cached capabilities, but unwind the transaction at the
+        # first reservation. Provider I/O happens only after releasing the
+        # admission lock, then the normal planner rechecks demand and limits.
+        try:
+            return await super().launch_for_demand(policy)
+        except (_ProfileRefreshRequired, CapacityProtocolError):
+            await self._read_profile()
+            return await super().launch_for_demand(policy)
 
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
         self._sizing(policy, [])
@@ -121,6 +158,7 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             version = worker.version
             created_at = worker.created_at
             deleted_at = worker.capacity_resource_deleted_at
+            ended_at = worker.ended_at
         if state == "reserved" and version != self.profile.worker_version:
             # A provider rollout cannot relabel an already reserved incarnation.
             # Fence it before cleanup; queued demand may reserve a fresh UUID.
@@ -133,9 +171,10 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             raise CapacityProtocolError("Provider resource UID changed for an existing incarnation")
         if state in self.cleanup_states:
             if resource is None and uid is None:
-                # Another controller may still prepare this unbound incarnation.
-                # Absence does not fence that delayed mutation; retain cleanup.
-                return
+                # Allow in-flight preparation to settle before treating a fresh
+                # absence as final. Provider errors never reach this branch.
+                if state != "lost" or ended_at is None or _now() - ended_at < UNBOUND_LOSS_CLEANUP_GRACE:
+                    return
             if resource is not None and resource.state != "deleted":
                 await self.client.remove(worker_id, self.profile.scope, resource.resource_uid)
             # GET absence/a deleted tombstone or a validated DELETE response confirms

@@ -84,6 +84,7 @@ if TYPE_CHECKING:
         OrganizationCreate,
         OrganizationUpdate,
         OrganizationPublic,
+        OrganizationTagsBulkUpdate,
         CreateUserRequest,
         UpdateUserRequest,
         UserBase,

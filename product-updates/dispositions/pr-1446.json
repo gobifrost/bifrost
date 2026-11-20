@@ -1,0 +1,13 @@
+{
+  "key": "pr:1446",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Bug fix; Jack explicitly directed that bug fixes do not receive Product Updates.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1446",
+      "Native Jack instruction in the #1346 owner, November 17, 2026: \u201cWe do not do product updates for bug fixes.\u201d"
+    ]
+  }
+}

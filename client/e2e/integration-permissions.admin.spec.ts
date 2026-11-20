@@ -212,12 +212,16 @@ test.describe("Integration permissions", () => {
 			await expect(
 				page.getByRole("button", { name: "Edit", exact: true }),
 			).toHaveCount(0);
+			await page
+				.getByRole("button", { name: "Defaults", exact: true })
+				.click();
 			await expect(
 				page.getByRole("button", {
 					name: "Configure default values",
 					exact: true,
 				}),
 			).toHaveCount(0);
+			await page.keyboard.press("Escape");
 
 			await page
 				.getByRole("button", { name: "Test Connection", exact: true })

@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 /** Renders report HTML in an opaque-origin frame so report CSS and scripts
  * cannot modify the surrounding application. Rich report scripts can run
  * inside the frame; forms, popups and top navigation remain sandboxed. */
@@ -202,6 +203,7 @@ export function SafeHTMLRenderer({
 		return "<!doctype html>" + doc.documentElement.outerHTML;
 	})();
 
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const openInNewWindow = () => {
 		setPopupError(false);
 		const newWindow = window.open("", "_blank");
@@ -227,6 +229,7 @@ export function SafeHTMLRenderer({
 					variant="outline"
 					className="min-h-11"
 					onClick={openInNewWindow}
+					disabled={presentationMode}
 					title="Open in new window"
 				>
 					<ExternalLink className="h-4 w-4" />
@@ -234,8 +237,24 @@ export function SafeHTMLRenderer({
 				</Button>
 			</div>
 
-			{popupError && <p role="alert" className="rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm">The new window was blocked. Allow popups for this site and try again, or continue reading below.</p>}
-			<iframe title={title} sandbox="allow-scripts" referrerPolicy="no-referrer" srcDoc={documentHTML} className="block h-[min(70vh,700px)] w-full min-w-0 rounded-[var(--bf-radius-surface)] border bg-white" />
+			{popupError && (
+				<p
+					role="alert"
+					className="rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm"
+				>
+					The new window was blocked. Allow popups for this site and
+					try again, or continue reading below.
+				</p>
+			)}
+			<div data-pii-surface>
+				<iframe
+					title={title}
+					sandbox="allow-scripts"
+					referrerPolicy="no-referrer"
+					srcDoc={documentHTML}
+					className="block h-[min(70vh,700px)] w-full min-w-0 rounded-[var(--bf-radius-surface)] border bg-white"
+				/>
+			</div>
 		</div>
 	);
 }

@@ -66,7 +66,7 @@ async def test_mapping_list_applies_permission_reach_before_mapping_response(
         "IntegrationsRepository",
         lambda *_args: SimpleNamespace(
             get_integration_by_id=AsyncMock(return_value=object()),
-            list_mappings_for_integration=list_mappings,
+            list_mappings=list_mappings,
         ),
     )
 
@@ -79,7 +79,7 @@ async def test_mapping_list_applies_permission_reach_before_mapping_response(
 
     assert response.items == []
     assert response.total == 0
-    list_mappings.assert_awaited_once_with(integration_id, reach)
+    list_mappings.assert_awaited_once_with(integration_id, reach=reach)
 
 
 @pytest.mark.asyncio

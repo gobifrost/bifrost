@@ -4,15 +4,12 @@
 
 import Fuse from "fuse.js";
 
-export type MatchMode = "exact" | "fuzzy" | "ai";
-
 export interface MatchSuggestion {
 	organizationId: string;
 	organizationName: string;
 	entityId: string;
 	entityName: string;
 	score: number; // 0-100
-	matchType: MatchMode;
 }
 
 export interface MatchResult {
@@ -91,12 +88,13 @@ export function fuzzyMatch(
 }
 
 /**
- * Compute auto-match suggestions for all unmapped organizations
+ * Compute auto-match suggestions for all unmapped organizations.
+ * An exact (case-insensitive) name match scores 100; otherwise the closest
+ * fuzzy match is suggested with its confidence, for the user to confirm.
  * @param orgs - List of organizations to match
  * @param entities - List of available entities from data provider
  * @param existingMappedOrgIds - Set of organization IDs that already have mappings
  * @param existingMappedEntityIds - Set of entity IDs that are already mapped (to avoid duplicates)
- * @param mode - Match mode: exact, fuzzy, or ai
  * @returns Match results with suggestions and stats
  */
 export function computeAutoMatches(
@@ -104,7 +102,6 @@ export function computeAutoMatches(
 	entities: Array<{ value: string; label: string }>,
 	existingMappedOrgIds: Set<string>,
 	existingMappedEntityIds: Set<string>,
-	mode: MatchMode,
 ): MatchResult {
 	const suggestions: MatchSuggestion[] = [];
 	const unmatchedOrgIds: string[] = [];
@@ -116,20 +113,12 @@ export function computeAutoMatches(
 	);
 
 	for (const org of unmappedOrgs) {
-		let matchResult: {
+		const matchResult: {
 			entityId: string;
 			entityName: string;
 			score?: number;
-		} | null = null;
-
-		if (mode === "exact") {
-			matchResult = exactMatch(org.name, entities);
-		} else if (mode === "fuzzy") {
-			matchResult = fuzzyMatch(org.name, entities);
-		} else if (mode === "ai") {
-			// AI mode not implemented yet
-			continue;
-		}
+		} | null =
+			exactMatch(org.name, entities) ?? fuzzyMatch(org.name, entities);
 
 		// If we found a match and the entity isn't already used
 		if (matchResult && !usedEntityIds.has(matchResult.entityId)) {
@@ -142,7 +131,6 @@ export function computeAutoMatches(
 				entityId: matchResult.entityId,
 				entityName: matchResult.entityName,
 				score,
-				matchType: mode,
 			});
 
 			// Mark this entity as used for subsequent iterations

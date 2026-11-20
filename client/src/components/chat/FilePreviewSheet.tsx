@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useEffect, useState, useRef } from "react";
 import {
 	ChevronLeft,
@@ -142,6 +143,7 @@ function AuthenticatedBinaryPreview({
 				</div>
 			) : (
 				<iframe
+					data-pii-surface
 					title={attachment.filename}
 					src={blobUrl}
 					onLoad={() => setLoaded(true)}
@@ -195,16 +197,23 @@ function AuthenticatedTextPreview({
 	if (content === null) return <LoadingPreview />;
 	if (richPreview) {
 		return (
-			<iframe
-				title={attachment.filename}
-				sandbox=""
-				srcDoc={content}
-				className="h-full min-h-[70vh] w-full bg-white"
-			/>
+			<div data-pii-surface className="min-w-0 flex-1">
+				<iframe
+					title={attachment.filename}
+					sandbox=""
+					srcDoc={content}
+					className="h-full min-h-[70vh] w-full bg-white"
+				/>
+			</div>
 		);
 	}
 	return (
-		<pre tabIndex={0} aria-label="File contents" className="min-h-0 min-w-0 flex-1 overflow-auto whitespace-pre-wrap p-5 font-mono text-sm leading-6 [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring">
+		<pre
+			data-pii-surface
+			tabIndex={0}
+			aria-label="File contents"
+			className="min-h-0 min-w-0 flex-1 overflow-auto whitespace-pre-wrap p-5 font-mono text-sm leading-6 [overflow-wrap:anywhere] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+		>
 			{content}
 		</pre>
 	);
@@ -248,6 +257,7 @@ export function FilePreviewSheet({
 				isVideoAttachment(attachment.content_type)),
 	);
 
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const download = async () => {
 		if (!attachment || downloading) return;
 		const generation = ++downloadGeneration.current;
@@ -285,8 +295,14 @@ export function FilePreviewSheet({
 							<DialogHeader className="shrink-0 border-b px-4 pb-3 pt-[max(0.75rem,env(safe-area-inset-top))] pr-14 text-left sm:px-5 sm:py-4 sm:pr-14">
 								<div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
 									<div className="min-w-0 flex-1">
-										<DialogTitle className="[overflow-wrap:anywhere]">{attachment.filename}</DialogTitle>
-										<DialogDescription>{formatBytes(attachment.size_bytes)}</DialogDescription>
+										<DialogTitle className="[overflow-wrap:anywhere]">
+											{presentationMode
+												? "File Preview"
+												: attachment.filename}
+										</DialogTitle>
+										<DialogDescription>
+											{formatBytes(attachment.size_bytes)}
+										</DialogDescription>
 									</div>
 									<div className="flex flex-wrap min-h-11 w-full shrink-0 items-center justify-between gap-1 sm:min-h-0 sm:w-auto sm:justify-start">
 										{canNavigate && (
@@ -308,8 +324,15 @@ export function FilePreviewSheet({
 								</div>
 							{downloadError?.id === attachment.id && <p role="alert" className="text-sm text-destructive [overflow-wrap:anywhere]">{downloadError.message}</p>}
 							</DialogHeader>
-							<div className="flex min-h-0 flex-1 bg-black/90">
-								<AuthenticatedBinaryPreview key={attachment.id} url={previewUrl} attachment={attachment} />
+							<div
+								data-pii-surface
+								className="flex min-h-0 flex-1 bg-black/90"
+							>
+								<AuthenticatedBinaryPreview
+									key={attachment.id}
+									url={previewUrl}
+									attachment={attachment}
+								/>
 							</div>
 						</>
 					)}
@@ -327,7 +350,9 @@ export function FilePreviewSheet({
 							<div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between sm:gap-4">
 								<div className="min-w-0 flex-1">
 									<SheetTitle className="[overflow-wrap:anywhere]">
-										{attachment.filename}
+										{presentationMode
+											? "File Preview"
+											: attachment.filename}
 									</SheetTitle>
 									<SheetDescription>
 										{formatBytes(attachment.size_bytes)}

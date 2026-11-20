@@ -82,6 +82,20 @@ def test_enforced_only_when_an_entry_is_decided_by_the_evaluator() -> None:
     assert catalog["forms"].enforced is False
 
 
+def test_inline_named_permission_is_reported_as_enforced():
+    entry = AccessEntry(
+        mcp_tool="bifrost_execute_code", access_class=AccessClass.PERMISSION,
+        current_gate=CurrentGate.AUTHENTICATED,
+        inline_effect=InlineEffect.DENY_UNLESS_PERMISSION,
+        permission="code.execute", boundary="platform",
+        reason="Inline-code submission enforces Execute Code in the shared service.",
+    )
+    catalog = _by_domain([entry])
+    assert catalog["code"].enforced is True
+    assert catalog["code"].scope == "platform_wide"
+    assert catalog["code"].names["code.execute"] == "Execute Code"
+
+
 def test_actions_union_entries_and_privileged_only_actions() -> None:
     catalog = _by_domain(
         [

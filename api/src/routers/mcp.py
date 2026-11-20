@@ -302,8 +302,8 @@ async def mcp_status(
     Get MCP server status and available tools for the current user.
 
     This is a REST endpoint (not MCP protocol) for debugging and discovery.
-    Returns the stable gateway tools plus the number of agents the caller
-    can discover through them.
+    Returns the gateway and permission-enabled tools plus the number of
+    agents the caller can discover through them.
     """
     from src.services.mcp_server.tools.gateway import GATEWAY_TOOL_NAMES
 
@@ -319,7 +319,10 @@ async def mcp_status(
 
     gateway = _gateway_service(current_user)
     accessible_agents_count = await gateway.accessible_agent_count()
-    gateway_tools = sorted(GATEWAY_TOOL_NAMES)
+    from src.services.mcp_server.tool_access import MCPToolAccessService
+
+    direct_tools = await MCPToolAccessService(db).get_default_tools(await load_caller(db, current_user))
+    gateway_tools = sorted(set(GATEWAY_TOOL_NAMES) | {tool.id for tool in direct_tools})
 
     return {
         "status": "available",

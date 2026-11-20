@@ -9,6 +9,23 @@ logger = logging.getLogger(__name__)
 
 _TEMPLATE_PATH = Path(__file__).parent.parent / "templates" / "llms.txt.md"
 
+PYTHON_SDK_MODULES = (
+    "agents", "ai", "artifacts", "config", "events", "executions", "files",
+    "forms", "integrations", "knowledge", "organizations", "roles", "tables",
+    "users", "workflows",
+)
+
+
+def generate_sdk_module_docs(module_name: str) -> str:
+    """Generate one public SDK facade's reference for bounded model context."""
+    if module_name not in PYTHON_SDK_MODULES:
+        raise ValueError(f"Unknown Python SDK module: {module_name}")
+    import bifrost
+
+    from src.services.mcp_server.tools.sdk import _generate_module_docs
+
+    return _generate_module_docs(module_name, getattr(bifrost, module_name))
+
 
 def _generate_sdk_tokens() -> dict[str, str]:
     """Generate all SDK-related tokens from actual source code."""
@@ -17,28 +34,9 @@ def _generate_sdk_tokens() -> dict[str, str]:
             _generate_decorator_docs,
             _generate_context_docs,
             _generate_error_docs,
-            _generate_module_docs,
             _generate_models_docs,
         )
-        from bifrost import (
-            agents, ai, config, executions, files, forms,
-            integrations, knowledge, organizations,
-            roles, tables, users, workflows,
-        )
-
-        modules = [
-            ("agents", agents), ("ai", ai), ("config", config),
-            ("executions", executions), ("files", files), ("forms", forms),
-            ("integrations", integrations), ("knowledge", knowledge),
-            ("organizations", organizations), ("roles", roles),
-            ("tables", tables), ("users", users), ("workflows", workflows),
-        ]
-
-        module_lines = []
-        for name, module in modules:
-            doc = _generate_module_docs(name, module)
-            if doc:
-                module_lines.append(doc)
+        module_lines = [generate_sdk_module_docs(name) for name in PYTHON_SDK_MODULES]
 
         return {
             "decorator_docs": _generate_decorator_docs(),

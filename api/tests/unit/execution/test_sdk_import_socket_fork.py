@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import os
 import time
 from uuid import uuid4
@@ -56,13 +57,14 @@ async def _fresh_shared_redis():
 
 
 def _context_for(
-    function_name: str, file_path: str, engine_token: str, execution_id: str
+    function_name: str, file_path: str, engine_token: str, execution_id: str, content_hash: str
 ) -> dict:
     return {
         "execution_id": execution_id,
         "name": function_name,
         "function_name": function_name,
         "file_path": file_path,
+        "content_hash": content_hash,
         "parameters": {},
         "caller": {
             "user_id": "00000000-0000-0000-0000-000000000001",
@@ -175,7 +177,8 @@ class TestForkedColdImportOverSocket:
         await db_session.commit()
 
         await _seed_s3_only(dep_path, f"VALUE = 'socket-{tag}'\n")
-        await _seed_s3_only(entry_path, _entry_source(function_name, dep_module))
+        entry_source = _entry_source(function_name, dep_module)
+        await _seed_s3_only(entry_path, entry_source)
 
         # Hard-disable HTTP for every forked child of this test: any module
         # fetch or SDK call that reaches HTTP fails with connection-refused,
@@ -191,7 +194,10 @@ class TestForkedColdImportOverSocket:
             timeout_seconds=120,
         )
         await create_live_execution(async_session_factory, engine_execution_id)
-        context = _context_for(function_name, entry_path, engine_token, execution_id)
+        context = _context_for(
+            function_name, entry_path, engine_token, execution_id,
+            hashlib.sha256(entry_source.encode("utf-8")).hexdigest(),
+        )
 
         server = WorkerSdkHttpServer()
         await server.start()

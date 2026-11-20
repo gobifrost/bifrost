@@ -1,0 +1,15 @@
+{
+  "key": "pr:1474",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine SDK typing fix; no customer action, configuration change or upgrade step is required.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1474",
+      "https://github.com/gobifrost/bifrost/issues/1473",
+      "Independent model review (gpt-6.2-sol) ran three read-only rounds and approved the change at 0edd6ffa1 (content identical to 4a5937f73). Round 1 rejected an importlib-based approach that changed the runtime fallback for missing names. Round 2 found that the platform's own error types regressed, which led to moving the error classes to a single source in bifrost/_errors.py. Both were fixed and re-reviewed.",
+      "Published by the PR author on 2026-11-19 under the user's authorization; this disposition records that review, not a maintainer approval."
+    ]
+  }
+}

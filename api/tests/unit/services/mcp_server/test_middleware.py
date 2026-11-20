@@ -148,12 +148,82 @@ class TestOnListTools:
         assert [tool.name for tool in result] == ["bifrost_search_capabilities"]
         mock_db_context.assert_not_called()
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("permitted", [False, True])
+    async def test_code_tool_is_permission_enabled_on_default_mcp(self, mock_tool, mock_access_token, permitted):
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        middleware = ToolFilterMiddleware()
+        with (
+            patch("src.services.mcp_server.middleware.get_access_token", return_value=mock_access_token()),
+            patch("src.services.mcp_server.middleware._get_agent_id_from_scope", return_value=None),
+            patch.object(middleware, "_default_system_tool_ids", new=AsyncMock(
+                return_value={"bifrost_execute_code"} if permitted else set(),
+            )),
+        ):
+            result = await middleware.filter_tools([
+                mock_tool("bifrost_get_execution"), mock_tool("bifrost_execute_code"),
+                mock_tool("bifrost_workflow_execute"),
+            ])
+
+        assert {tool.name for tool in result} == (
+            {"bifrost_get_execution", "bifrost_execute_code"} if permitted else {"bifrost_get_execution"}
+        )
+
+    @pytest.mark.asyncio
+    async def test_code_discovery_fails_closed_without_hiding_gateway(self, mock_tool, mock_access_token):
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        middleware = ToolFilterMiddleware()
+        with (
+            patch("src.services.mcp_server.middleware.get_access_token", return_value=mock_access_token()),
+            patch("src.services.mcp_server.middleware._get_agent_id_from_scope", return_value=None),
+            patch.object(middleware, "_default_system_tool_ids", new=AsyncMock(side_effect=RuntimeError("DB unavailable"))),
+        ):
+            result = await middleware.filter_tools([
+                mock_tool("bifrost_get_execution"), mock_tool("bifrost_execute_code"),
+            ])
+        assert [tool.name for tool in result] == ["bifrost_get_execution"]
+
 
 # ==================== on_call_tool Tests ====================
 
 
 class TestOnCallTool:
     """Tests for ToolFilterMiddleware.on_call_tool()."""
+
+    @pytest.mark.asyncio
+    async def test_code_call_rechecks_permission_after_discovery(self, mock_tool, mock_access_token):
+        from mcp.server.mcpserver.exceptions import ToolError
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        middleware = ToolFilterMiddleware()
+        with (
+            patch("src.services.mcp_server.middleware.get_access_token", return_value=mock_access_token()),
+            patch("src.services.mcp_server.middleware._get_agent_id_from_scope", return_value=None),
+            patch.object(middleware, "_default_system_tool_ids", new=AsyncMock(side_effect=[
+                {"bifrost_execute_code"}, set(),
+            ])),
+        ):
+            tools = await middleware.filter_tools([mock_tool("bifrost_execute_code")])
+            assert [tool.name for tool in tools] == ["bifrost_execute_code"]
+            with pytest.raises(ToolError, match="Access denied"):
+                await middleware.authorize_tool_call("bifrost_execute_code")
+
+    @pytest.mark.asyncio
+    async def test_permitted_code_call_reaches_dispatch(self, mock_context, mock_access_token):
+        from src.services.mcp_server.middleware import ToolFilterMiddleware
+
+        middleware = ToolFilterMiddleware()
+        mock_context.message.name = "bifrost_execute_code"
+        dispatch = AsyncMock(return_value="queued")
+        with (
+            patch("src.services.mcp_server.middleware.get_access_token", return_value=mock_access_token()),
+            patch("src.services.mcp_server.middleware._get_agent_id_from_scope", return_value=None),
+            patch.object(middleware, "_default_system_tool_ids", new=AsyncMock(return_value={"bifrost_execute_code"})),
+        ):
+            assert await middleware.on_call_tool(mock_context, dispatch) == "queued"
+        dispatch.assert_awaited_once_with(mock_context)
 
     @pytest.mark.asyncio
     async def test_raises_error_when_no_auth(self, mock_context):

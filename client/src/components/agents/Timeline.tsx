@@ -1469,7 +1469,7 @@ function TimelineRow({
 function DetailBlock({ detail }: { detail: DetailRender }) {
 	if (detail.kind === "json") {
 		return (
-			<div className="min-w-0">
+			<div data-pii-surface className="min-w-0">
 				<VariablesTreeView data={asVariableRecord(detail.value)} />
 			</div>
 		);
@@ -1477,12 +1477,16 @@ function DetailBlock({ detail }: { detail: DetailRender }) {
 	const parsed = tryParseJson(detail.value);
 	if (parsed !== UNPARSEABLE) {
 		return (
-			<div className="min-w-0">
+			<div data-pii-surface className="min-w-0">
 				<VariablesTreeView data={asVariableRecord(parsed)} />
 			</div>
 		);
 	}
-	return <MarkdownContent content={detail.value} />;
+	return (
+		<div data-pii-surface>
+			<MarkdownContent content={detail.value} />
+		</div>
+	);
 }
 
 function asVariableRecord(value: unknown): Record<string, unknown> {

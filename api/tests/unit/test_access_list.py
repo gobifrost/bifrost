@@ -1943,7 +1943,10 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "bifrost.solution_dev.function_host.set_dev_execution_context": (2, "actor_facts"),
     "shared.claims.preresolve._load_source_policies": (1, "internal_authorized_resource"),
     "shared.event_emission.emit_topic_event": (1, "current_role_derivation"),
-    "shared.form_provider.execute_form_field_provider": (3, "internal_authorized_resource"),
+    # Both form routes authorize the persisted form before this provider lookup;
+    # callers cannot select a provider outside that form's configured fields.
+    "shared.form_provider._resolve_provider": (1, "internal_authorized_resource"),
+    "shared.form_provider.execute_form_field_provider": (2, "internal_authorized_resource"),
     "shared.form_execution.create_form_execution_context": (1, "actor_facts"),
     "shared.form_publication._resolve_form_workflow": (1, "internal_authorized_resource"),
     "shared.sdk_agent_runs.enqueue_sdk_agent_run": (2, "actor_facts"),
@@ -1956,7 +1959,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "shared.sdk_users.bulk_update_users": (1, "current_role_derivation"),
     "shared.sdk_users.create_user": (4, "current_role_derivation"),
     "shared.sdk_users.list_users": (2, "current_role_derivation"),
-    "shared.sdk_users.update_user": (8, "current_role_derivation"),
+    "shared.sdk_users.update_user": (9, "current_role_derivation"),
     "shared.sdk_workflow_execution.execute_sdk_workflow": (5, "current_role_derivation"),
     "shared.system_account_guard.is_system_account": (1, "actor_facts"),
     "shared.unattended_execution.create_unattended_context": (2, "actor_facts"),
@@ -2252,6 +2255,10 @@ _REDIS_PLAIN_READS: dict[str, tuple[int, str]] = {
         2,
         "De-duplicates an admin notification before creating one.",
     ),
+    "src.services.notification_service.NotificationService.find_admin_notification_by_metadata": (
+        2,
+        "De-duplicates an admin notification by an id where titles repeat.",
+    ),
     "src.services.notification_service.NotificationService.update_notification": (
         1,
         "Rewrites a notification's status for its writer.",
@@ -2399,8 +2406,8 @@ _LAUNCH_ENTRIES: dict[tuple[str, str] | str, frozenset[str]] = {
     ("POST", "/api/sdk/ai/complete"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/ai/stream"): frozenset({"ai.execute"}),
     ("POST", "/api/sdk/artifacts/image"): frozenset({"ai.execute"}),
-    ("POST", "/api/workflows/execute"): frozenset({"workflows.execute"}),
-    "bifrost_workflow_execute": frozenset({"workflows.execute"}),
+    ("POST", "/api/workflows/execute"): frozenset({"workflows.execute", "code.execute"}),
+    "bifrost_workflow_execute": frozenset({"workflows.execute", "code.execute"}),
 }
 
 
