@@ -1,0 +1,37 @@
+{
+  "source_sha": "7b1601c4a6ae99ac289cbe98dbd126f54daa141a",
+  "worker_version": "v2.0.0-122-g7b1601c4a",
+  "image_digest": "sha256:cc9f4a66f4c264d843db6c54581437acadbab0c0ca1807c10a268c60a475faf7",
+  "qualification": "failed before physical process startup; no native-agent success claim",
+  "run_id": "e1a2dd71-7de5-421f-9a6a-e24b93dad7cd",
+  "run_disposition": "cancelled after qualification deadline while queued",
+  "worker_id": "315186a8-e755-4b33-b5f5-213a961bfd2c",
+  "worker_end_reason": "provider_resource_stopped",
+  "provider_observation": {
+    "error": "There is no container instance that can be provided to this Durable Object, try again later",
+    "image_pull_ms": 65546,
+    "vm_boot_ms": 6148,
+    "container_started_event_observed": false,
+    "note": "Dashboard snapshot absence is not a durable historical proof of zero process starts."
+  },
+  "usage_rows_retained": 0,
+  "cleanup": {
+    "application_id": "a033c51e-4b42-407f-b4fb-6c2bbe3c8fb1",
+    "application_deleted_at_utc": "2026-11-14T23:43:24.634637+00:00",
+    "canonical_resource_deletion_confirmed": true,
+    "worker_durable_objects_and_registry_image_cleanup_outstanding": true,
+    "debug_stack_retained_for_repair_qualification": true
+  },
+  "evidence": [
+    "/tmp/bifrost-1400-spike/cloudflare-phase4/instances-start-failure.json",
+    "/tmp/bifrost-1400-spike/cloudflare-phase4/startup-provider-logs.json",
+    "/tmp/bifrost-1400-spike/cloudflare-phase4/failure-canonical-readback.json",
+    "/tmp/bifrost-1400-spike/cloudflare-phase4/startup-probe-cancel.json"
+  ],
+  "limitations": [
+    "Native-cost serialization repair has not yet passed Cloudflare end to end.",
+    "Image distribution and VM boot are provider preparation times, not accepted-job execution latency.",
+    "Provider start intent cannot by itself distinguish an unavailable runtime from a process that exited.",
+    "No reliability, native-agent success, restart recovery, or billing-total claim."
+  ]
+}

@@ -1,0 +1,42 @@
+{
+  "source_sha": "b8434800c",
+  "image_digest": "sha256:d820099acd71d4fae604791c4272ab718897f6b762e9630450507a439ac72fcb",
+  "qualification": "failed; no Cloudflare agent-execution success claim",
+  "agent_run": {
+    "id": "606b5cbb-2cc7-4ff2-845e-583cbaf56ecd",
+    "provider": "openrouter",
+    "model": "anthropic/claude-haiku-4.5",
+    "status": "failed",
+    "failure": "Agent compute child frame is not JSON serializable",
+    "failure_boundary": "after provider response and API-side usage persistence"
+  },
+  "provider_reported_usage": {
+    "input_tokens": 242,
+    "output_tokens": 91,
+    "provider_reported_usd": "0.000697",
+    "api_usage_row_retained": true
+  },
+  "follow_up": {
+    "root_repair": "RunUsage Decimal serialization fixed separately on spike branch in ad7af1a42",
+    "repair_qualified_by_this_receipt": false
+  },
+  "cleanup": {
+    "application_id": "a03cf15b-8692-4b4c-9dbf-998d8b52a31d",
+    "application_deleted": true,
+    "debug_stack_down": true,
+    "worker_durable_object_and_image_cleanup_outstanding": true
+  },
+  "evidence": {
+    "private_redacted_receipts": [
+      "/tmp/bifrost-1400-spike/cloudflare-phase3/simple-0-failed.json",
+      "/tmp/bifrost-1400-spike/cloudflare-phase3/failure-canonical-readback.json",
+      "/tmp/bifrost-1400-spike/cloudflare-phase3/instances-after-failure.json"
+    ]
+  },
+  "limitations": [
+    "One failed run is not an end-to-end agent qualification, reliability result, or retry result.",
+    "The provider-reported usage row is not an invoice, billed-total, or exact-cost claim.",
+    "This receipt does not establish successful Cloudflare execution or qualify the subsequent spike-branch serialization repair.",
+    "Worker script, Durable Object, and registry-image cleanup remained outstanding at capture time."
+  ]
+}
