@@ -137,10 +137,10 @@ class TestEngineTokenRedactionLive:
         assert sum("stdout-boundary" in row["message"] for row in logs) == 1
         assert sum("stderr-boundary" in row["message"] for row in logs) == 1
         detail = e2e_client.get(
-            f"/api/executions/{result['execution_id']}", headers=org1_user.headers,
+            f"/api/executions/{result['execution_id']}", headers=platform_admin.headers,
         )
         assert detail.status_code == 200
-        assert detail.json()["id"] == result["execution_id"]
+        assert detail.json()["execution_id"] == result["execution_id"]
         assert detail.json()["peak_memory_bytes"] > 0
         assert detail.json()["cpu_total_seconds"] is not None
         assert detail.json()["cpu_total_seconds"] >= 0
