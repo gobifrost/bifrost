@@ -4,7 +4,7 @@ Covers ``shared.sdk_workflow_execution`` — the single implementation behind
 ``workflows.execute()`` (``POST /api/workflows/execute``) and
 ``workflows.cancel()`` (``POST /api/workflows/executions/{id}/cancel``):
 
-- auth decisions: inline-code admin gate, org_id admin gate, run_as
+- auth decisions: inline-code Execute Code permission, org_id scope gate, run_as
   decided by ``authorize_run_as``, Solution inbound denial, cross-org and
   role denials,
 - execution-org priority (explicit override > workflow org > caller org),
@@ -305,7 +305,7 @@ def _patch_authorize_run_as(*, returns: RunAsTarget | None = None, raises: RunAs
 
 @pytest.mark.asyncio
 class TestExecuteAuthDecisions:
-    async def test_inline_code_requires_workspace_write_and_workflow_execute(self, db_session):
+    async def test_inline_code_requires_execute_code_permission(self, db_session):
         org = await _seed_org(db_session)
         principal = _user(org.id)
         req = _request(code="Y29kZQ==", input_data={})
@@ -315,7 +315,56 @@ class TestExecuteAuthDecisions:
             )
         assert exc_info.value.status_code == 403
 
-    async def test_inline_code_runs_for_a_caller_with_both_named_permissions(self, db_session):
+    async def test_inline_code_runs_with_only_platform_execute_code_permission(self, db_session):
+        from src.services.authorization.context import AuthorizationContext
+        from src.services.authorization.enforce import Caller
+
+        org = await _seed_org(db_session)
+        principal = _user(org.id)
+        caller = Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=org.id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset({"code.execute"}),
+                        (Boundary(BoundaryKind.PLATFORM),),
+                    ),
+                ),
+            ),
+        )
+        patches = _patch_dispatch()
+        mocks = _start_patches(patches)
+        try:
+            with (
+                patch(
+                    "src.services.authorization.enforce.load_caller",
+                    AsyncMock(return_value=caller),
+                ),
+                patch("shared.sdk_workflow_execution.access_checks.note_launch") as note_launch,
+            ):
+                await execute_sdk_workflow(
+                    db_session,
+                    principal,
+                    _request(code="Y29kZQ==", input_data={}),
+                    caller_org_id=org.id,
+                )
+        finally:
+            _stop_patches(patches)
+        mocks[1].assert_awaited_once()
+        assert mocks[1].call_args.kwargs["context"].org_id == str(org.id)
+        note_launch.assert_called_once_with(
+            "code.execute", org.id, org.id, subject="inline_code"
+        )
+
+    async def test_inline_code_rejects_workflow_and_repository_permissions_without_execute_code(
+        self, db_session
+    ):
         from src.services.authorization.context import AuthorizationContext
         from src.services.authorization.enforce import Caller
 
@@ -331,16 +380,65 @@ class TestExecuteAuthDecisions:
                 base_permissions=frozenset({"workflows.execute", "repository.readwrite"}),
             ),
         )
-        patches = _patch_dispatch()
-        mocks = _start_patches(patches)
-        try:
-            with patch("src.services.authorization.enforce.load_caller", AsyncMock(return_value=caller)):
-                await execute_sdk_workflow(
-                    db_session, principal, _request(code="Y29kZQ==", input_data={}), caller_org_id=org.id
-                )
-        finally:
-            _stop_patches(patches)
-        mocks[1].assert_awaited_once()
+
+        with (
+            patch(
+                "src.services.authorization.enforce.load_caller",
+                AsyncMock(return_value=caller),
+            ),
+            pytest.raises(SdkWorkflowExecutionError) as exc_info,
+        ):
+            await execute_sdk_workflow(
+                db_session,
+                principal,
+                _request(code="Y29kZQ==", input_data={}),
+                caller_org_id=org.id,
+            )
+
+        assert exc_info.value.status_code == 403
+
+    async def test_normal_workflow_requires_workflows_execute_not_execute_code(
+        self, db_session
+    ):
+        from src.services.authorization.context import AuthorizationContext
+        from src.services.authorization.enforce import Caller
+
+        org = await _seed_org(db_session)
+        principal = _user(org.id)
+        workflow = await _seed_workflow(db_session, f"wf-{uuid4().hex[:8]}")
+        caller = Caller(
+            principal,
+            AuthorizationContext(
+                user_id=principal.user_id,
+                home_organization_id=org.id,
+                base_role_id=uuid4(),
+                is_external=False,
+                base_permissions=frozenset(),
+                role_grants=(
+                    RoleGrant(
+                        uuid4(),
+                        frozenset({"code.execute"}),
+                        (Boundary(BoundaryKind.PLATFORM),),
+                    ),
+                ),
+            ),
+        )
+
+        with (
+            patch(
+                "src.services.authorization.enforce.load_caller",
+                AsyncMock(return_value=caller),
+            ),
+            pytest.raises(SdkWorkflowExecutionError) as exc_info,
+        ):
+            await execute_sdk_workflow(
+                db_session,
+                principal,
+                _request(workflow_id=str(workflow.id), input_data={}),
+                caller_org_id=org.id,
+            )
+
+        assert exc_info.value.status_code == 403
 
     async def test_missing_workflow_and_code_is_400(self, db_session):
         from src.models import WorkflowExecutionRequest

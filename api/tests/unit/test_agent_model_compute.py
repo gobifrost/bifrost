@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import subprocess
+import sys
+import textwrap
 from collections.abc import AsyncIterator, Mapping
 
 import pytest
@@ -107,6 +110,48 @@ def test_profile_bootstrap_round_trips_full_resolved_profile() -> None:
     assert b"json_schema_transformer" in payload
     assert b"provider_url" not in payload
 
+
+
+def test_codec_import_defers_provider_sdk_until_template_prewarm() -> None:
+    """A fresh API codec stays light; physical templates still account for SDK RSS."""
+    subprocess.run(
+        [sys.executable, "-c", textwrap.dedent("""
+            import sys
+            from shared.agent_model_compute import (
+                deserialize_model_profile, preload_model_profile_transformers,
+                serialize_model_profile,
+            )
+            from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
+            from pydantic_ai.profiles import DEFAULT_PROFILE
+            profile = dict(DEFAULT_PROFILE, json_schema_transformer=InlineDefsJsonSchemaTransformer)
+            assert deserialize_model_profile(serialize_model_profile(profile)) == profile
+            assert "anthropic" not in sys.modules
+            assert "pydantic_ai.providers.anthropic" not in sys.modules
+            preload_model_profile_transformers()
+            from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
+            profile["json_schema_transformer"] = AnthropicJsonSchemaTransformer
+            assert deserialize_model_profile(serialize_model_profile(profile)) == profile
+            assert "anthropic" in sys.modules
+        """)],
+        check=True,
+        timeout=30,
+    )
+
+
+def test_profile_transformer_rejects_spoofed_class_identity() -> None:
+    spoof = type(
+        InlineDefsJsonSchemaTransformer.__name__, (),
+        {"__module__": InlineDefsJsonSchemaTransformer.__module__},
+    )
+    with pytest.raises(ModelWireError, match="unsupported schema transformer"):
+        serialize_model_profile({**DEFAULT_PROFILE, "json_schema_transformer": spoof})
+
+
+def test_profile_transformer_rejects_unlisted_import_path() -> None:
+    wire = json.loads(serialize_model_profile(DEFAULT_PROFILE))
+    wire["profile"]["json_schema_transformer"] = "os:system"
+    with pytest.raises(ModelWireError, match="unsupported schema transformer"):
+        deserialize_model_profile(json.dumps(wire).encode())
 
 def test_wire_scrubs_only_typed_routing_fields_not_tool_content() -> None:
     """Provider metadata is private; user tool data may legitimately use its names."""

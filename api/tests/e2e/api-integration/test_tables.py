@@ -947,3 +947,50 @@ class TestTableCascadeDelete:
         result = await db_session.execute(stmt)
         remaining = result.scalars().all()
         assert len(remaining) == 0
+
+
+@pytest.mark.asyncio
+async def test_numeric_ranges_and_order(db_session, test_org, test_user_email):
+    from src.models.contracts.tables import DocumentQuery
+    from src.models.contracts.tables import TableCreate
+    table = await TableRepository(db_session, test_org.id).create_table(
+        TableCreate(name=f"numeric_{uuid4().hex}"), created_by=test_user_email)
+    repo = DocumentRepository(db_session, table)
+    for value in [10_000_000, 9714, 831721, 1048576, -2, 1.5, "10000000", True, None, {}, []]:
+        await repo.insert({"size": value}, created_by=test_user_email)
+    await repo.insert({}, created_by=test_user_email)
+    for op, expected in [("gte", [1048576, 10000000]), ("gt", [10000000]),
+                         ("lt", [-2, 1.5, 9714, 831721]),
+                         ("lte", [-2, 1.5, 9714, 831721, 1048576])]:
+        docs, total = await repo.query(DocumentQuery(where={"size": {op: 1048576}}, order_by="size"))
+        assert [d.data["size"] for d in docs] == expected
+        assert total == len(expected)
+    docs, _ = await repo.query(DocumentQuery(where={"size": {"gte": 0}}, order_by="size", order_dir="desc"))
+    assert [d.data["size"] for d in docs] == [10000000, 1048576, 831721, 9714, 1.5]
+    docs, _ = await repo.query(DocumentQuery(order_by="size"))
+    assert [d.data["size"] for d in docs[:6]] == [-2, 1.5, 9714, 831721, 1048576, 10000000]
+
+
+@pytest.mark.asyncio
+async def test_reported_file_sizes(db_session, test_org, test_user_email):
+    from src.models.contracts.tables import DocumentQuery, TableCreate
+    table = await TableRepository(db_session, test_org.id).create_table(
+        TableCreate(name=f"files_{uuid4().hex}"), created_by=test_user_email)
+    repo = DocumentRepository(db_session, table)
+    for size in [10000000, 9714, 831721]:
+        await repo.insert({"size": size}, created_by=test_user_email)
+    docs, _ = await repo.query(DocumentQuery(order_by="size", order_dir="desc"))
+    assert [d.data["size"] for d in docs] == [10000000, 831721, 9714]
+
+
+@pytest.mark.asyncio
+async def test_string_timestamp_ranges(db_session, test_org, test_user_email):
+    from src.models.contracts.tables import DocumentQuery, TableCreate
+    table = await TableRepository(db_session, test_org.id).create_table(
+        TableCreate(name=f"dates_{uuid4().hex}"), created_by=test_user_email)
+    repo = DocumentRepository(db_session, table)
+    for date in ["2026-01-01", "2026-02-01", "2026-03-01"]:
+        await repo.insert({"date": date}, created_by=test_user_email)
+    docs, _ = await repo.query(DocumentQuery(
+        where={"date": {"gte": "2026-02-01", "lt": "2026-03-01"}}, order_by="date"))
+    assert [d.data["date"] for d in docs] == ["2026-02-01"]

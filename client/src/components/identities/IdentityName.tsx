@@ -21,6 +21,7 @@ export function IdentityOrganizationChip({
 		<Badge
 			variant={isGlobal ? "secondary" : "outline"}
 			aria-label="Organization"
+			data-pii="off"
 			data-global={isGlobal || undefined}
 			className={cn(
 				"max-w-full font-normal",
@@ -28,7 +29,10 @@ export function IdentityOrganizationChip({
 			)}
 		>
 			<Icon aria-hidden="true" />
-			<span className="min-w-0 truncate">
+			<span
+				data-pii={!isGlobal || undefined}
+				className="min-w-0 truncate"
+			>
 				{identityOrganization({ organization_name: organizationName })}
 			</span>
 		</Badge>
@@ -48,7 +52,10 @@ export function IdentityName({
 	return (
 		<span className="inline-flex min-w-0 max-w-full flex-wrap items-center gap-2">
 			<IdentityGlyph className="h-6 w-6 sm:h-6 sm:w-6 [&>svg:last-child]:size-3" />
-			<span className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
+			<span
+				data-pii
+				className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]"
+			>
 				{identity.name}
 			</span>
 			<IdentityOrganizationChip

@@ -1706,6 +1706,206 @@ class TestIntegrationConfigSecrets:
             e2e_client.delete(f"{base}/mappings/{mapping['id']}", headers=platform_admin.headers)
 
 
+    def test_sdk_upsert_mapping_stores_secret_encrypted_and_masks_reads(
+        self,
+        e2e_client,
+        platform_admin,
+        integration_with_secret_schema,
+        org1,
+        sdk_secret_reader,
+        async_session_factory,
+    ):
+        """SDK ``upsert_mapping`` saves through the encrypting path on create
+        and update; callers without ``secrets.read`` see the placeholder."""
+        integration = integration_with_secret_schema
+        created_secret = f"sdk-create-{uuid4().hex}"
+        rotated_secret = f"sdk-rotate-{uuid4().hex}"
+
+        def upsert(secret: str):
+            response = e2e_client.post(
+                "/api/sdk/integrations/upsert_mapping",
+                headers=platform_admin.headers,
+                json={
+                    "name": integration["name"],
+                    "scope": str(org1["id"]),
+                    "entity_id": "sdk-secret",
+                    "config": {"api_key": secret},
+                },
+            )
+            assert response.status_code == 200, response.text
+            return response
+
+        created = upsert(created_secret)
+        try:
+            # Platform Admin lacks secrets.read: the echo is masked.
+            assert created.json()["config"]["api_key"] == "[SECRET]"
+            assert created_secret not in created.text
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            assert row.config_type.value == "secret"
+            assert row.value["value"] != created_secret
+
+            rotated = upsert(rotated_secret)
+            assert rotated_secret not in rotated.text
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            assert row.config_type.value == "secret"
+            assert row.value["value"] != rotated_secret
+
+            masked = _sdk_get(e2e_client, platform_admin.headers, name=integration["name"], org_id=org1["id"])
+            assert masked.status_code == 200, masked.text
+            assert masked.json()["config"]["api_key"] == "[SECRET]"
+
+            revealed = _sdk_get(e2e_client, sdk_secret_reader, name=integration["name"], org_id=org1["id"])
+            assert revealed.status_code == 200, revealed.text
+            assert revealed.json()["config"]["api_key"] == rotated_secret
+        finally:
+            e2e_client.post(
+                "/api/sdk/integrations/delete_mapping",
+                headers=platform_admin.headers,
+                json={"name": integration["name"], "scope": str(org1["id"])},
+            )
+
+    def test_changing_a_field_to_secret_encrypts_saved_values(
+        self,
+        e2e_client,
+        platform_admin,
+        org1,
+        sdk_secret_reader,
+        async_session_factory,
+    ):
+        """Retyping a schema field to secret encrypts values already saved;
+        retyping it back is refused while a secret value is stored."""
+        name = f"e2e_retype_{uuid4().hex[:8]}"
+        created = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": name, "config_schema": [{"key": "api_key", "type": "string"}]},
+        )
+        assert created.status_code == 201, created.text
+        integration = created.json()
+        base = f"/api/integrations/{integration['id']}"
+        default_value = f"retype-default-{uuid4().hex}"
+        org_value = f"retype-org-{uuid4().hex}"
+        try:
+            e2e_client.put(
+                f"{base}/config",
+                headers=platform_admin.headers,
+                json={"config": {"api_key": default_value}},
+            )
+            mapping = e2e_client.post(
+                f"{base}/mappings",
+                headers=platform_admin.headers,
+                json={
+                    "organization_id": str(org1["id"]),
+                    "entity_id": "retype",
+                    "config": {"api_key": org_value},
+                },
+            )
+            assert mapping.status_code == 201, mapping.text
+
+            retyped = e2e_client.put(
+                base,
+                headers=platform_admin.headers,
+                json={"config_schema": [{"key": "api_key", "type": "secret"}]},
+            )
+            assert retyped.status_code == 200, retyped.text
+
+            rows = asyncio.run(_stored_configs(async_session_factory, integration["id"], "api_key"))
+            assert len(rows) == 2
+            for row in rows:
+                assert row.config_type.value == "secret"
+                assert row.value["value"] not in (default_value, org_value)
+
+            detail = e2e_client.get(base, headers=platform_admin.headers)
+            assert default_value not in detail.text and org_value not in detail.text
+            sdk = _sdk_get(e2e_client, sdk_secret_reader, name=name, org_id=org1["id"])
+            assert sdk.json()["config"]["api_key"] == org_value
+
+            back = e2e_client.put(
+                base,
+                headers=platform_admin.headers,
+                json={"config_schema": [{"key": "api_key", "type": "string"}]},
+            )
+            assert back.status_code == 400, back.text
+            assert default_value not in back.text and org_value not in back.text
+        finally:
+            e2e_client.delete(base, headers=platform_admin.headers)
+
+
+    def test_generic_config_writes_keep_integration_rows_consistent(
+        self,
+        e2e_client,
+        platform_admin,
+        integration_with_secret_schema,
+        org1,
+        async_session_factory,
+    ):
+        """``PUT /api/config/{id}`` cannot give an integration value a type other
+        than its schema field's, and SDK ``configs.set`` of the same key writes a
+        separate plain config instead of the integration's row."""
+        integration = integration_with_secret_schema
+        base = f"/api/integrations/{integration['id']}"
+        secret = f"integration-secret-{uuid4().hex}"
+        mapping = e2e_client.post(
+            f"{base}/mappings",
+            headers=platform_admin.headers,
+            json={
+                "organization_id": str(org1["id"]),
+                "entity_id": "generic-write",
+                "config": {"api_key": secret},
+            },
+        )
+        assert mapping.status_code == 201, mapping.text
+        try:
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            stored = row.value["value"]
+
+            retype = e2e_client.put(
+                f"/api/config/{row.id}",
+                headers=platform_admin.headers,
+                json={"type": "string", "value": "now-plain"},
+            )
+            assert retype.status_code == 400, retype.text
+
+            sdk_set = e2e_client.post(
+                "/api/sdk/config/set",
+                headers=platform_admin.headers,
+                json={"key": "api_key", "value": "plain-config", "scope": str(org1["id"])},
+            )
+            assert sdk_set.status_code == 204, sdk_set.text
+
+            (row,) = asyncio.run(
+                _stored_configs(async_session_factory, integration["id"], "api_key", org1["id"])
+            )
+            assert row.config_type.value == "secret"
+            assert row.value["value"] == stored
+        finally:
+            e2e_client.delete(
+                f"{base}/mappings/{mapping.json()['id']}", headers=platform_admin.headers
+            )
+            e2e_client.post(
+                "/api/sdk/config/delete",
+                headers=platform_admin.headers,
+                json={"key": "api_key", "scope": str(org1["id"])},
+            )
+
+
+async def _stored_configs(session_factory, integration_id: str, key: str, org_id=None):
+    """The stored config rows for one integration key (org row only when given)."""
+    async with session_factory() as session:
+        query = select(Config).where(
+            Config.integration_id == UUID(integration_id), Config.key == key
+        )
+        if org_id is not None:
+            query = query.where(Config.organization_id == UUID(str(org_id)))
+        return list((await session.execute(query)).scalars().all())
+
+
 @pytest.mark.e2e
 class TestIntegrationsAuthorization:
     """Test authorization for integrations endpoints."""

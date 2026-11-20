@@ -68,6 +68,8 @@ class TestSchedulerDiagnostics:
             "usage_reporting",
             "logo_thumbnail_backfill",
             "execution_worker_cleanup",
+            "identity_provider_token_expiry",
+            "identity_provider_access_pass",
         }
         assert set(tasks) == expected
         assert tasks["usage_reporting"]["execution_mode"] == "leader"

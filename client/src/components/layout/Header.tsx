@@ -1,14 +1,22 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { AccountMenuContent } from "./AccountMenuContent";
 import { Suspense } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	ChevronDown,
+	Eye,
+	EyeOff,
 	Menu,
 	PanelLeftClose,
 	PanelLeft,
 	Terminal,
 	Search,
 } from "lucide-react";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
@@ -49,6 +57,8 @@ export function Header({
 	isSidebarCollapsed = false,
 }: HeaderProps = {}) {
 	const navigate = useNavigate();
+	const presentationMode = usePresentationStore((state) => state.enabled);
+	const togglePresentation = usePresentationStore((state) => state.toggle);
 	const compactHeader = useMediaQuery("(max-width: 1279px)");
 	const mobileHeader = useMediaQuery("(max-width: 639px)");
 	const { user, logout } = useAuth();
@@ -167,6 +177,28 @@ export function Header({
 						<NotificationCenter triggerClassName="size-11" />
 					</div>
 
+					<Tooltip>
+						<TooltipTrigger asChild>
+							<Button
+								variant="ghost"
+								size="icon-lg"
+								className="sm:mr-2"
+								aria-label="Presentation Mode"
+								aria-pressed={presentationMode}
+								onClick={togglePresentation}
+							>
+								{presentationMode ? (
+									<EyeOff aria-hidden="true" />
+								) : (
+									<Eye aria-hidden="true" />
+								)}
+							</Button>
+						</TooltipTrigger>
+						<TooltipContent>
+							visual masking for demos, not access control
+						</TooltipContent>
+					</Tooltip>
+
 					{/* Theme Toggle */}
 					<div className="sm:mr-2">
 						<ThemeToggle className="size-11" />
@@ -183,13 +215,20 @@ export function Header({
 							className="min-h-11 min-w-11 shrink-0 gap-2 px-2 sm:px-4"
 							aria-label="Account menu"
 						>
-							<Avatar className="h-6 w-6">
+							<Avatar
+								data-pii
+								data-pii-avatar
+								className="h-6 w-6"
+							>
 								<AvatarImage src={avatarUrl || undefined} />
 								<AvatarFallback className="text-xs">
 									{getInitials()}
 								</AvatarFallback>
 							</Avatar>
-							<span className="hidden max-w-48 truncate xl:inline-block">
+							<span
+								data-pii
+								className="hidden max-w-48 truncate xl:inline-block"
+							>
 								{userName}
 							</span>
 							<ChevronDown className="hidden h-4 w-4 sm:block" />

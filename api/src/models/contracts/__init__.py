@@ -37,6 +37,7 @@ if TYPE_CHECKING:
         OrganizationBase,
         OrganizationCreate,
         OrganizationPublic,
+        OrganizationTagsBulkUpdate,
         OrganizationUpdate,
         UpdateOrganizationRequest,
     )

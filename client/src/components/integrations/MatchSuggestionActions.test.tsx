@@ -1,30 +1,29 @@
 /**
- * Component tests for MatchSuggestionBadge.
+ * Component tests for MatchSuggestionActions.
  *
  * Covers the label/score rendering and accept/reject click wiring.
  */
 
 import { describe, it, expect, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
-import { MatchSuggestionBadge } from "./MatchSuggestionBadge";
+import { MatchSuggestionActions } from "./MatchSuggestionActions";
 
 function renderBadge(
 	suggestionOverrides: Partial<
-		Parameters<typeof MatchSuggestionBadge>[0]["suggestion"]
+		Parameters<typeof MatchSuggestionActions>[0]["suggestion"]
 	> = {},
 	disabled = false,
 ) {
 	const onAccept = vi.fn();
 	const onReject = vi.fn();
 	const utils = renderWithProviders(
-		<MatchSuggestionBadge
+		<MatchSuggestionActions
 			suggestion={{
 				organizationId: "org-1",
 				organizationName: "Acme",
 				entityId: "ent-1",
 				entityName: "Acme Corp",
 				score: 92,
-				matchType: "exact",
 				...suggestionOverrides,
 			}}
 			onAccept={onAccept}
@@ -35,11 +34,15 @@ function renderBadge(
 	return { ...utils, onAccept, onReject };
 }
 
-describe("MatchSuggestionBadge", () => {
-	it("renders the entity name and confidence score", () => {
+describe("MatchSuggestionActions", () => {
+	it("renders the confidence score and names the entity in its actions", () => {
 		renderBadge();
-		expect(screen.getByText("Acme Corp")).toBeInTheDocument();
-		expect(screen.getByText(/\(92%\)/)).toBeInTheDocument();
+		expect(screen.getByText("92%")).toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "Accept suggestion Acme Corp",
+			}),
+		).toBeInTheDocument();
 	});
 
 	it("calls onAccept when the accept button is clicked", async () => {

@@ -434,7 +434,8 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # job declarations were removed; worker Hello remains the capability source.
     # Optional PlatformJob executor attribution is additive, so existing CLI/SDK
     # command shapes and MIN_CLI_VERSION remain unchanged.
-    "688f250606ec618065858bd06d3fd882bbd0a559a1be9c9bc354fc5bf2186b27"
+    # Merged inline-code permission clarification is description-only.
+    "0c88f0b767556c60d7cc84709a64433b66e33133a08f6af14e256f7ee382bd04"
 )
 
 

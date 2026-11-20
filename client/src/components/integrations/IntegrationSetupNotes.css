@@ -13,10 +13,6 @@
 	border-radius: var(--bf-radius-surface);
 	background: var(--card);
 }
-.integration-setup-notes-empty {
-	display: flex;
-	justify-content: flex-end;
-}
 .integration-setup-notes-content {
 	max-height: min(60dvh, 42rem);
 	overflow: auto;

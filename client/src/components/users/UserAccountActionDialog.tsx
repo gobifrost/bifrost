@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import {
 	useEffect,
 	useRef,
@@ -118,6 +119,7 @@ export function UserAccountActionDialog({
 	const busy = useRef(false);
 	const errorRef = useRef<HTMLDivElement>(null);
 	const returnFocus = useDialogReturnFocus(returnFocusRef, true);
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const copy = COPY[mode];
 	useEffect(() => {
 		if (error) {
@@ -161,7 +163,13 @@ export function UserAccountActionDialog({
 				<AlertDialogHeader>
 					<AlertDialogTitle>{copy.title}</AlertDialogTitle>
 					<AlertDialogDescription className="[overflow-wrap:anywhere]">
-						{copy.description(name)}
+						{copy.description(
+							presentationMode
+								? mode === "delete-identity"
+									? "this identity"
+									: "this user"
+								: name,
+						)}
 					</AlertDialogDescription>
 				</AlertDialogHeader>
 				{error && (

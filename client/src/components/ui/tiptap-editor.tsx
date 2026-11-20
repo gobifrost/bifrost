@@ -140,6 +140,31 @@ export function TiptapEditor({
 		);
 	}, [editor, readOnly, mode, visualProtected]);
 
+	const modeSwitch = (
+		<ToggleGroup
+			type="single"
+			variant="segmented"
+			size="sm"
+			value={mode}
+			onValueChange={(value) => value && setMode(value)}
+			aria-label="Editor mode"
+			className="ml-auto gap-0.5 rounded-[var(--bf-radius-control)] bg-muted p-0.5"
+		>
+			<ToggleGroupItem
+				value="visual"
+				className="min-h-11 text-xs sm:min-h-0"
+			>
+				Visual
+			</ToggleGroupItem>
+			<ToggleGroupItem
+				value="markdown"
+				className="min-h-11 text-xs sm:min-h-0"
+			>
+				Markdown
+			</ToggleGroupItem>
+		</ToggleGroup>
+	);
+
 	if (!editor) {
 		return (
 			<div className="min-h-[200px] animate-pulse motion-reduce:animate-none rounded-[var(--bf-radius-surface)] border border-border/70 bg-muted/50" />
@@ -155,29 +180,12 @@ export function TiptapEditor({
 		>
 			{!readOnly && (
 				<div className="shrink-0">
-					<ToggleGroup
-						type="single"
-						value={mode}
-						onValueChange={(value) => value && setMode(value)}
-						aria-label="Editor mode"
-						className="justify-start border-b border-border/70 bg-muted/30 p-2"
+					<TiptapToolbar
+						editor={editor}
+						formatting={mode === "visual" && !visualProtected}
 					>
-						<ToggleGroupItem
-							value="visual"
-							className="min-h-11 px-3"
-						>
-							Visual
-						</ToggleGroupItem>
-						<ToggleGroupItem
-							value="markdown"
-							className="min-h-11 px-3"
-						>
-							Markdown
-						</ToggleGroupItem>
-					</ToggleGroup>
-					{mode === "visual" && !visualProtected && (
-						<TiptapToolbar editor={editor} />
-					)}
+						{modeSwitch}
+					</TiptapToolbar>
 					{mode === "visual" && visualProtected && (
 						<p
 							id={noticeId}
@@ -191,7 +199,7 @@ export function TiptapEditor({
 					)}
 				</div>
 			)}
-			<div className="min-h-0 overflow-y-auto">
+			<div className="min-h-0 flex-1 overflow-y-auto">
 				{mode === "markdown" ? (
 					<Textarea
 						id={id}
@@ -214,7 +222,10 @@ export function TiptapEditor({
 						)}
 					/>
 				) : (
-					<EditorContent editor={editor} />
+					<EditorContent
+						editor={editor}
+						className="h-full [&_.tiptap]:h-full"
+					/>
 				)}
 			</div>
 		</div>

@@ -5,10 +5,12 @@ import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { useAuth } from "@/contexts/AuthContext";
 import { getErrorMessage } from "@/lib/api-error";
+import { usePresentationStore } from "@/stores/presentationStore";
 
 /** Persistent, compact warning that the browser is using a support session. */
 export function ImpersonationBanner() {
 	const { isImpersonating, user, endImpersonation } = useAuth();
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [isEnding, setIsEnding] = useState(false);
 	if (!isImpersonating) return null;
 
@@ -22,9 +24,10 @@ export function ImpersonationBanner() {
 				<ShieldAlert aria-hidden="true" className="size-4 shrink-0 text-[var(--bf-warning)]" />
 				<span className="flex min-w-0 items-baseline gap-1.5 truncate">
 					<span className="truncate">
-						Impersonating {user?.name || user?.email || "user"}
+						Impersonating{" "}
+						{presentationMode ? "a user" : user?.name || user?.email || "user"}
 					</span>
-					{user?.name && user.email ? (
+					{!presentationMode && user?.name && user.email ? (
 						<span className="hidden truncate text-xs text-muted-foreground sm:inline">
 							{user.email}
 						</span>

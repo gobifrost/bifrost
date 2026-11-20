@@ -1,0 +1,20 @@
+{
+  "key": "pr:1422",
+  "classification": "highlight",
+  "entry_ids": [
+    "3e2e4a31-6793-404c-948e-0921d4c755bc"
+  ],
+  "action_required": true,
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1422"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1422",
+      "Jack approved the exact canonical Product Update and Agent Prompt on 2026-11-15 and authorized merge; the notice covers the custom-role permission transition.",
+      "Astra and Opus scope reviews support shipping privileged trusted-code execution with the documented administrator-level trust requirement."
+    ]
+  }
+}

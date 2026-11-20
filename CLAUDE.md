@@ -228,7 +228,7 @@ Entity mutations have three parallel surfaces: **CLI** (`bifrost <entity> ...`),
 
 ## Product Updates
 
-For a user-visible change, classify the PR in its canonical disposition file, `product-updates/dispositions/pr-<number>.json`, and author approved entry prose in the shared `product-updates/` source. The PR template is a proposal, not the durable decision. Read [`docs/product-updates-authoring.md`](docs/product-updates-authoring.md) before editing entries, preparing a release, or validating Product Updates; it defines draft versus approved content, source/credit evidence, and deterministic release-body preparation.
+Classify every PR in its canonical disposition file, `product-updates/dispositions/pr-<number>.json`. Product Updates announce new user-facing features or breaking changes. Routine bug fixes, hardening, and maintenance use `omit` with a reason; they need no announcement prose or prose-approval request. Read [`docs/product-updates-authoring.md`](docs/product-updates-authoring.md) before selecting or authoring an announcement, preparing a release, or validating Product Updates. Eligible announcement prose requires exact-text approval. The PR template is a proposal, not the durable decision.
 
 ## Project Structure
 

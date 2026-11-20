@@ -27,7 +27,8 @@ class ToolFilterMiddleware:
     """
     MCPServer middleware for gateway and agent-scoped tool surfaces.
 
-    The unscoped ``/mcp`` endpoint exposes only the stable gateway tools.
+    The unscoped ``/mcp`` endpoint exposes the stable gateway tools and
+    permission-enabled inline code execution.
     The ``/mcp/{agent_id}`` endpoint preserves the native per-agent tool
     surface and its existing authorization checks.
 
@@ -61,6 +62,17 @@ class ToolFilterMiddleware:
             SimpleNamespace(message=SimpleNamespace(name=tool_name)), authorized
         )
 
+    async def _default_system_tool_ids(self) -> set[str]:
+        from src.core.database import get_db_context
+        from src.services.mcp_server.authorization import load_mcp_caller
+        from src.services.mcp_server.server import _get_context_from_token
+        from src.services.mcp_server.tool_access import MCPToolAccessService
+
+        async with get_db_context() as db:
+            caller = await load_mcp_caller(db, _get_context_from_token())
+            tools = await MCPToolAccessService(db).get_default_tools(caller)
+        return {tool.id for tool in tools}
+
     async def on_list_tools(
         self, context, call_next
     ) -> list:
@@ -87,8 +99,16 @@ class ToolFilterMiddleware:
 
         agent_id = _get_agent_id_from_scope()
         if agent_id is None:
+            from src.services.mcp_server.tool_access import DEFAULT_SYSTEM_TOOL_IDS
+
+            allowed_ids = set(GATEWAY_TOOL_NAMES)
+            if any(tool.name in DEFAULT_SYSTEM_TOOL_IDS for tool in all_tools):
+                try:
+                    allowed_ids.update(await self._default_system_tool_ids())
+                except Exception:
+                    logger.exception("MCP tools/list: Unable to resolve permission-enabled tools")
             filtered_tools = [
-                tool for tool in all_tools if tool.name in GATEWAY_TOOL_NAMES
+                tool for tool in all_tools if tool.name in allowed_ids
             ]
             logger.info(
                 "MCP tools/list: Unscoped gateway returned %s tools for user %s",
@@ -173,6 +193,16 @@ class ToolFilterMiddleware:
         agent_id = _get_agent_id_from_scope()
         if agent_id is None:
             if tool_name not in GATEWAY_TOOL_NAMES:
+                from src.services.mcp_server.tool_access import DEFAULT_SYSTEM_TOOL_IDS
+
+                if tool_name in DEFAULT_SYSTEM_TOOL_IDS:
+                    try:
+                        allowed_ids = await self._default_system_tool_ids()
+                    except Exception as exc:
+                        raise ToolError("Authorization check failed") from exc
+                    if tool_name not in allowed_ids:
+                        raise ToolError(f"Access denied: You don't have permission to use '{tool_name}'")
+                    return await call_next(context)
                 logger.warning(
                     "MCP tools/call: Unscoped endpoint denied hidden tool '%s' "
                     "for user %s",

@@ -144,8 +144,10 @@ def test_contract_package_exports_are_lazy_and_resolve_public_symbols() -> None:
         "src.models.contracts.organizations",
     ]
     assert result["user_create_name"] == "UserCreate"
-    # users imports role_assignments for RoleUserSummary.boundaries.
+    # users imports role_assignments for RoleUserSummary.boundaries and
+    # identity_providers for UserPublic.identity_source.
     assert result["loaded_after_user"] == [
+        "src.models.contracts.identity_providers",
         "src.models.contracts.organizations",
         "src.models.contracts.role_assignments",
         "src.models.contracts.users",
@@ -179,7 +181,7 @@ def test_contract_all_resolves_every_public_export_and_alias() -> None:
         """
     )
 
-    assert result["count"] == 487
+    assert result["count"] == 488
     assert result["failed"] == []
     assert result["sdk_alias"] is True
     assert result["authenticated_form_alias"] is True
@@ -211,7 +213,7 @@ def test_root_model_all_preserves_public_exports_and_resolves_every_symbol() -> 
         """
     )
 
-    assert result["count"] == 545
+    assert result["count"] == 546
     assert result["failed"] == []
     assert result["contract_tail_matches"] is True
     assert result["authenticated_form_alias"] is True

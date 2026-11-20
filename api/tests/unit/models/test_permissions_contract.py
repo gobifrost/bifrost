@@ -8,7 +8,14 @@ from datetime import datetime, timezone
 import pytest
 from pydantic import ValidationError
 
+from shared.builtin_roles import PLATFORM_OPERATOR_PERMISSIONS, USER_BASE_PERMISSIONS
 from src.models import GrantPermissionsRequest, PermissionsData, UserPermission
+from src.models.contracts.permissions import (
+    PRIVILEGED_PERMISSIONS,
+    WILDCARD_EXCLUDED_PERMISSIONS,
+    parse_permission,
+    permission_display_name,
+)
 from src.models.contracts.users import User
 
 
@@ -123,4 +130,20 @@ class TestUserResponse:
         required_fields = {"display_name", "created_at"}
         missing_fields = {e["loc"][0] for e in errors if e["type"] == "missing"}
         assert required_fields.issubset(missing_fields)
+
+
+class TestExecuteCodePermission:
+    def test_execute_code_is_a_privileged_platform_wildcard_permission(self):
+        parsed = parse_permission("code.execute")
+
+        assert (parsed.domain, parsed.action, parsed.extended) == (
+            "code",
+            "execute",
+            False,
+        )
+        assert permission_display_name("code.execute") == "Execute Code"
+        assert "code.execute" in PRIVILEGED_PERMISSIONS
+        assert "code.execute" not in WILDCARD_EXCLUDED_PERMISSIONS
+        assert "code.execute" not in USER_BASE_PERMISSIONS
+        assert "code.execute" not in PLATFORM_OPERATOR_PERMISSIONS
 

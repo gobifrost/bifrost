@@ -1,0 +1,13 @@
+{
+  "key": "pr:1468",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine bug fix: restores the Knowledge editor writing area regressed by #1390 and tidies the editor mode switch; no new feature.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1468",
+      "Product review: routine bug fix, omit per CLAUDE.md Product Updates; Jack authorized the merge on 2026-11-18."
+    ]
+  }
+}

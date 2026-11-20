@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Combobox, type ComboboxOption } from "@/components/ui/combobox";
 import { AlertCircle, RotateCw } from "lucide-react";
 import type { DataProviderOption } from "@/services/dataProviders";
+import { cn } from "@/lib/utils";
 
 interface EntitySelectorProps {
 	entities: DataProviderOption[];
@@ -19,6 +20,8 @@ interface EntitySelectorProps {
 	isLoading?: boolean;
 	isError?: boolean;
 	onRetry?: () => void;
+	"aria-label"?: string;
+	className?: string;
 }
 
 export function EntitySelector({
@@ -30,6 +33,8 @@ export function EntitySelector({
 	isLoading = false,
 	isError = false,
 	onRetry,
+	"aria-label": ariaLabel,
+	className,
 }: EntitySelectorProps) {
 	// Show loading skeleton
 	if (isLoading) {
@@ -37,7 +42,7 @@ export function EntitySelector({
 			<Skeleton
 				role="status"
 				aria-label="Loading entities"
-				className="min-h-11 w-full"
+				className="h-9 w-full"
 			/>
 		);
 	}
@@ -79,7 +84,8 @@ export function EntitySelector({
 				searchPlaceholder="Search entities..."
 				emptyText="All entities are assigned to other organizations."
 				disabled={disabled}
-				className="min-h-11 text-sm"
+				aria-label={ariaLabel}
+				className={cn("h-9 sm:h-9 text-sm", className)}
 			/>
 		);
 	}
@@ -111,7 +117,8 @@ export function EntitySelector({
 			// Optional: choosing the mapped entity again unmaps it.
 			allowClear
 			disabled={disabled}
-			className="min-h-11 text-sm"
+			aria-label={ariaLabel}
+			className={cn("h-9 sm:h-9 text-sm", className)}
 		/>
 	);
 }

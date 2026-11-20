@@ -70,6 +70,16 @@ from src.models.orm.custom_claims import CustomClaim
 from src.models.orm.tables import Document, Table
 from src.models.orm.users import Role, RolePermission, User, UserRole, UserRoleBoundary
 from src.models.orm.user_invites import UserInvite
+from src.models.orm.identity_providers import (
+    IdentityProvider,
+    IdentityProviderGroup,
+    IdentityProviderGroupMapping,
+    IdentityProviderGroupMember,
+    IdentityProviderGroupRole,
+    IdentityProviderToken,
+    IdentityProviderUser,
+    OrganizationDomain,
+)
 from src.models.orm.workflow_operation_usage import WorkflowOperationUsage
 from src.models.orm.workflow_permissions import WorkflowPermissionGrant
 from src.models.orm.workflow_roles import WorkflowRole
@@ -127,6 +137,14 @@ __all__ = [
     "UserRole",
     "UserRoleBoundary",
     "UserInvite",
+    "IdentityProvider",
+    "IdentityProviderGroup",
+    "IdentityProviderGroupMapping",
+    "IdentityProviderGroupMember",
+    "IdentityProviderGroupRole",
+    "IdentityProviderToken",
+    "IdentityProviderUser",
+    "OrganizationDomain",
     "HumanAuthSession",
     "ProductUpdateReceipt",
     # Agent Runs

@@ -1,0 +1,13 @@
+{
+  "key": "pr:1427",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal service-supervisor lease timing correction; no new customer-facing capability, API, configuration, or upgrade action. Reporter credit and verified behavior are retained in the PR.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1427",
+      "Maintainer-requested classification and delivery. The reported issue is a lifecycle correctness defect; no attacker-controlled authorization bypass or cross-tenant impact is established. Focused PostgreSQL regression, supervisor, authorization, and fencing tests pass."
+    ]
+  }
+}

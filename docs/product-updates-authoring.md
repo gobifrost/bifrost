@@ -32,12 +32,18 @@ because each installation has its own URL; it never invents a deployment URL.
 
 ## Customer-Facing Selection
 
-Feature headlines are for new capabilities and meaningful functionality people can
-use. Do not promote internal plumbing, catalog vendor names, routine dependencies,
-or maintenance inventories to feature notes. Use `Fixed` for repairs and
-`Security` for hardening; the app presents these as separate compact bullet lists.
-Smaller `other` dispositions use `category: fix` or `category: hardening` and a short
-customer-facing summary. Omitted PRs stay in the coverage ledger with a reason.
+Product Updates announce new user-facing features or breaking changes. Select
+`omit` with a concrete reason for routine bug fixes, hardening, dependencies,
+catalog changes, containers, CI, and other maintenance, even when a repair
+changes behavior users can observe. These dispositions need no announcement
+prose or exact-text approval request. For example, repairing numeric table
+filters restores expected behavior; it adds no feature or breaking contract.
+
+Use `highlight` or `other` only for an eligible feature or breaking change.
+Existing Fixed/Security categories remain supported for historical content;
+they do not make routine repairs eligible for a new announcement. Separately
+required security disclosures retain their release-review requirements.
+Omitted PRs stay in the coverage ledger with a reason.
 
 A required release notice can set `in_app: false` to keep detailed release-review
 material out of the app feed. This does not omit its source, remove its release
@@ -124,13 +130,13 @@ names the whole ledger. A key that cannot round-trip through its file name, a fi
 whose key does not match its name, any other entry in `dispositions/`, or an
 `items` field in the header fails validation.
 
-- `highlight` points to one or more entry UUIDs in `entries/`. Use a highlight
-  for a capability, important correction, upgrade warning, or security notice
-  people should see in the product or release notes.
-- `other` records a concise, user-readable change without a full entry.
-- `omit` requires a concrete reason. Use it only when there is no announcement
-  value, such as internal CI work. Routine dependency, catalog, container, and CI updates are normally
-  omitted from customer notes; security-impacting updates still require explicit review.
+- `highlight` points to one or more entry UUIDs in `entries/` for an eligible
+  user-facing feature or breaking change.
+- `other` records an eligible feature or breaking change concisely without a
+  full entry.
+- `omit` records the reason a PR is outside that announcement scope. Routine
+  repairs and maintenance belong here; being user-visible alone is insufficient.
+  Security-impacting updates still retain any required security review.
 
 An entry may be drafted before its PR exists. Add its actual PR number and
 verified author/source metadata after the PR opens, then validate it before
@@ -138,7 +144,7 @@ merge. Do not guess a future PR number or contributor identity.
 
 Use one UUID for a feature spanning several PRs and list every required source
 in its eligibility data. Editorial fixes retain that UUID and increase its
-revision. A new capability or materially different corrective announcement
+revision. A new feature or materially different breaking-change announcement
 gets a new UUID. One primary area and type are required; `highlight`, `other`,
 and `omit` are visibility decisions, not areas or types.
 

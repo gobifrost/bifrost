@@ -79,7 +79,9 @@ test.describe.serial("Per-mapping OAuth", () => {
 		await openMappings(page);
 		const mappingsPanel = page.getByRole("tabpanel", { name: "Mappings" });
 		await expect(
-			mappingsPanel.getByText("Organization Mappings"),
+			mappingsPanel.getByRole("region", {
+				name: "Organization Mappings",
+			}),
 		).toBeVisible();
 		await expect(
 			mappingsPanel.getByRole("searchbox", {
@@ -91,9 +93,7 @@ test.describe.serial("Per-mapping OAuth", () => {
 		const orgRow = page.getByRole("listitem").filter({
 			has: page.getByRole("heading", { name: organizationName }),
 		});
-		await orgRow
-			.getByRole("button", { name: /mapping actions/i })
-			.click();
+		await orgRow.getByRole("button", { name: /mapping actions/i }).click();
 		await expect(
 			page.getByRole("menuitem", { name: "Connect", exact: true }),
 		).toBeVisible();

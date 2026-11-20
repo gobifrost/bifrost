@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { usePresentationStore } from "@/stores/presentationStore";
 import { Link, useSearchParams } from "react-router-dom";
 import {
 	AlertCircle,
@@ -295,7 +296,7 @@ function CheckList({
 									Organization
 								</dt>
 								<dd className="mt-1 [overflow-wrap:anywhere]">
-									{organization(entry)}
+									<span data-pii={entry.actor.organization_name != null || undefined}>{organization(entry)}</span>
 								</dd>
 							</div>
 							<div>
@@ -366,7 +367,7 @@ function CheckList({
 							)
 						}
 					>
-						<DataTableCell>{organization(entry)}</DataTableCell>
+						<DataTableCell><span data-pii={entry.actor.organization_name != null || undefined}>{organization(entry)}</span></DataTableCell>
 						<DataTableCell className="whitespace-nowrap">
 							<OpenButton
 								onOpen={(opener) => onOpen(entry, opener)}
@@ -539,6 +540,7 @@ function GroupChecks({
  * decides what the caller may read.
  */
 export function AccessChecksPage() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const [params, setParams] = useSearchParams();
 	const current = grouping(params.get("group_by"));
 	const groupBy = current.value;
@@ -569,7 +571,7 @@ export function AccessChecksPage() {
 		if (groupBy === "resource_type")
 			return key === null ? "No Resource Type" : checkKindTitle(key);
 		if (key === null) return "Global";
-		return sample?.actor.organization_name ?? organizationName(key) ?? key;
+		return presentationMode ? "Organization" : sample?.actor.organization_name ?? organizationName(key) ?? key;
 	};
 
 	const show = (next: Record<string, string>) => {

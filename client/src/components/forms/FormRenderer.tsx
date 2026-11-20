@@ -339,11 +339,14 @@ function FormRendererInner({
 							if (
 								config.field_name &&
 								fieldValues[config.field_name] !== undefined &&
+								fieldValues[config.field_name] !== null &&
 								fieldValues[config.field_name] !== ""
 							) {
 								inputValues[key] =
 									fieldValues[config.field_name];
-							} else {
+							} else if (
+								!field.optional_provider_inputs?.includes(key)
+							) {
 								hasAllRequired = false;
 							}
 							break;
@@ -365,9 +368,17 @@ function FormRendererInner({
 										`return ${config.expression}`,
 									);
 									const result = evalFunc(evalContext);
-									if (result && result !== "") {
+									if (
+										result !== null &&
+										result !== undefined &&
+										result !== ""
+									) {
 										inputValues[key] = result;
-									} else {
+									} else if (
+										!field.optional_provider_inputs?.includes(
+											key,
+										)
+									) {
 										hasAllRequired = false;
 									}
 								} catch {
@@ -1502,6 +1513,7 @@ function FormRendererInner({
 										? "number"
 										: "text"
 							}
+							step={field.type === "number" ? "any" : undefined}
 							placeholder={field.placeholder ?? undefined}
 							{...register(field.name)}
 							onBlur={handleFieldBlur}

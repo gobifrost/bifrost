@@ -1,0 +1,13 @@
+{
+  "key": "pr:1469",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine dispatch performance repair removes repeated authority and user-row reads; no new feature or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1469",
+      "Current Product Updates authoring policy omits routine repairs and performance maintenance."
+    ]
+  }
+}

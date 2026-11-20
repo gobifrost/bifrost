@@ -337,7 +337,10 @@ export function PrettyInputDisplay({
 					}
 					onViewChange={setView}
 				/>
-				<div className="min-w-0 rounded-[var(--bf-radius-surface)] border border-border bg-muted/40 p-2 sm:p-3">
+				<div
+					data-pii-surface
+					className="min-w-0 rounded-[var(--bf-radius-surface)] border border-border bg-muted/40 p-2 sm:p-3"
+				>
 					<VariablesTreeView
 						data={inputData as Record<string, unknown>}
 					/>
@@ -385,18 +388,20 @@ export function PrettyInputDisplay({
 		return (
 			<div className="min-w-0 space-y-2">
 				{toggleBar}
-				{shape === "object-table" ? (
-					<MiniTable
-						items={inputData as Array<Record<string, unknown>>}
-						className="rounded-lg bg-muted/50 ring-foreground/5"
-					/>
-				) : shape === "scalar-array" ? (
-					<div className="rounded-lg ring-1 ring-foreground/5 bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
-						<ValueContent value={inputData} depth={0} />
-					</div>
-				) : (
-					<JsonValuePreview value={inputData} />
-				)}
+				<div data-pii-surface>
+					{shape === "object-table" ? (
+						<MiniTable
+							items={inputData as Array<Record<string, unknown>>}
+							className="rounded-lg bg-muted/50 ring-foreground/5"
+						/>
+					) : shape === "scalar-array" ? (
+						<div className="rounded-lg ring-1 ring-foreground/5 bg-muted/50 px-3 py-2.5 text-sm text-muted-foreground">
+							<ValueContent value={inputData} depth={0} />
+						</div>
+					) : (
+						<JsonValuePreview value={inputData} />
+					)}
+				</div>
 			</div>
 		);
 	}
@@ -405,7 +410,10 @@ export function PrettyInputDisplay({
 		<div className="min-w-0 space-y-2">
 			{toggleBar}
 
-			<div className="@container min-w-0 divide-y divide-border rounded-[var(--bf-radius-surface)] border border-border bg-muted/40">
+			<div
+				data-pii-surface
+				className="@container min-w-0 divide-y divide-border rounded-[var(--bf-radius-surface)] border border-border bg-muted/40"
+			>
 				{entries.map(([key, value]) => {
 					const friendlyLabel = snakeCaseToTitleCase(key);
 					const badge = badgeFor(value);

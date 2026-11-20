@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { Suspense, useEffect } from "react";
 import {
 	Route,
@@ -66,6 +67,16 @@ const Users = lazyWithReload(() =>
 );
 const Identities = lazyWithReload(() =>
 	import("@/pages/Identities").then((m) => ({ default: m.Identities })),
+);
+const IdentityProviders = lazyWithReload(() =>
+	import("@/pages/IdentityProviders").then((m) => ({
+		default: m.IdentityProviders,
+	})),
+);
+const IdentityProviderDetail = lazyWithReload(() =>
+	import("@/pages/IdentityProviderDetail").then((m) => ({
+		default: m.IdentityProviderDetail,
+	})),
 );
 const UserAccessPage = lazyWithReload(() =>
 	import("@/pages/UserAccessPage").then((m) => ({
@@ -265,6 +276,10 @@ export function AppFrame() {
 	const { brandingLoaded } = useOrgScope();
 	const applicationName = useApplicationName();
 	const location = useLocation();
+	const presentationMode = usePresentationStore((state) => state.enabled);
+	const enableFromSearch = usePresentationStore(
+		(state) => state.enableFromSearch,
+	);
 	const isQuickAccessOpen = useQuickAccessStore((state) => state.isOpen);
 	const openQuickAccess = useQuickAccessStore(
 		(state) => state.openQuickAccess,
@@ -287,6 +302,16 @@ export function AppFrame() {
 		}
 	});
 
+	useEffect(() => {
+		enableFromSearch(location.search);
+	}, [enableFromSearch, location.search]);
+
+	useEffect(() => {
+		const root = document.documentElement;
+		if (presentationMode) root.dataset.presentationMode = "on";
+		else delete root.dataset.presentationMode;
+	}, [presentationMode]);
+
 	// Base browser-tab title. index.html ships the default literal for first
 	// paint; once branding resolves, reflect the (possibly custom) product name.
 	// The app-runner and app-preview routes drive their own
@@ -300,8 +325,8 @@ export function AppFrame() {
 		matchPath("/apps/:applicationId/edit/*", location.pathname) === null;
 	useEffect(() => {
 		if (isAppRunnerRoute) return;
-		document.title = applicationName;
-	}, [applicationName, isAppRunnerRoute]);
+		document.title = presentationMode ? "Bifrost" : applicationName;
+	}, [applicationName, isAppRunnerRoute, presentationMode]);
 
 	// Wait for branding colors to load before rendering
 	// Logo component handles its own skeleton loading state
@@ -587,6 +612,26 @@ const routeElements = (
 						requirePermission={{ permission: "users.read" }}
 					>
 						<Identities />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/identity-providers"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "identityproviders.read" }}
+					>
+						<IdentityProviders />
+					</ProtectedRoute>
+				}
+			/>
+			<Route
+				path="users/identity-providers/:identityProviderId"
+				element={
+					<ProtectedRoute
+						requirePermission={{ permission: "identityproviders.read" }}
+					>
+						<IdentityProviderDetail />
 					</ProtectedRoute>
 				}
 			/>

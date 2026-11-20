@@ -16,7 +16,7 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import HTTPException, status
-from sqlalchemy import String, bindparam, cast, false, func, literal_column, select
+from sqlalchemy import Numeric, String, bindparam, case, cast, false, func, literal_column, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql import ColumnElement
 
@@ -160,22 +160,21 @@ def _build_document_filters(base_query: Any, where: dict[str, Any]) -> Any:
                 elif op == "ends_with":
                     escaped = _escape_like(str(op_value))
                     base_query = base_query.where(json_field.astext.ilike(f"%{escaped}"))
-                elif op == "gt":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) > str(op_value)
-                    )
-                elif op == "gte":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) >= str(op_value)
-                    )
-                elif op == "lt":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) < str(op_value)
-                    )
-                elif op == "lte":
-                    base_query = base_query.where(
-                        cast(json_field.astext, String) <= str(op_value)
-                    )
+                elif op in ("gt", "gte", "lt", "lte"):
+                    if isinstance(op_value, (int, float)) and not isinstance(op_value, bool):
+                        # CASE protects the cast regardless of planner predicate ordering.
+                        lhs = case(
+                            (func.jsonb_typeof(json_field) == "number",
+                             cast(json_field.astext, Numeric)),
+                            else_=None,
+                        )
+                        rhs = op_value
+                    else:
+                        lhs = json_field.astext
+                        rhs = str(op_value)
+                    comparison = {"gt": lhs.__gt__, "gte": lhs.__ge__,
+                                  "lt": lhs.__lt__, "lte": lhs.__le__}[op]
+                    base_query = base_query.where(comparison(rhs))
                 elif op in ("in", "in_"):
                     if isinstance(op_value, list):
                         def _jsonb_text(v: Any) -> str:
@@ -421,11 +420,17 @@ class DocumentRepository:
         if document_id_pagination:
             base_query = base_query.order_by(document_id_order_expr)
         elif query_params.order_by:
-            # Order by JSONB field
-            order_expr = Document.data[query_params.order_by].astext
+            # Numbers precede other non-null values ascending; other values
+            # retain text collation. Null/missing remain last ascending.
+            field = Document.data[query_params.order_by]
+            numeric = func.jsonb_typeof(field) == "number"
+            rank = case((numeric, 0), else_=1)
+            number = case((numeric, cast(field.astext, Numeric)), else_=None)
+            text = case((numeric, None), else_=field.astext)
+            keys = [rank, number, text]
             if query_params.order_dir == "desc":
-                order_expr = order_expr.desc()
-            base_query = base_query.order_by(order_expr, Document.id)
+                keys = [key.desc() for key in keys]
+            base_query = base_query.order_by(*keys, Document.id)
         else:
             # Default ordering by created_at
             if query_params.order_dir == "desc":

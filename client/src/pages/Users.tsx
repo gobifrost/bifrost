@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import {
@@ -76,6 +77,10 @@ import {
 } from "@/components/users/BulkUserDialogs";
 import { orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
+import {
+	IdentitySourceLabel,
+	InactiveStatusBadge,
+} from "@/components/identity-providers/IdentityProviderBadges";
 import { ListPagination } from "@/components/pagination/ListPagination";
 import type { components, components as v1 } from "@/lib/v1";
 type User = components["schemas"]["UserPublic"];
@@ -106,7 +111,11 @@ function ProtectedBadge() {
 	return (
 		<Tooltip>
 			<TooltipTrigger asChild>
-				<Badge variant="warning" className="shrink-0 text-xs">
+				<Badge
+					data-pii="off"
+					variant="warning"
+					className="shrink-0 text-xs"
+				>
 					Protected
 				</Badge>
 			</TooltipTrigger>
@@ -116,9 +125,10 @@ function ProtectedBadge() {
 }
 
 export function Users() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const createUserButtonRef = useRef<HTMLButtonElement>(null);
 	const navigate = useNavigate();
-	const isNarrow = useMediaQuery("(max-width: 1023px)");
+	const isNarrow = useMediaQuery("(max-width: 1279px)");
 	const [isCreateOpen, setIsCreateOpen] = useState(false);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [showDisabled, setShowDisabled] = useState(false);
@@ -268,9 +278,14 @@ export function Users() {
 				}
 			: undefined;
 
+	const userLabel = (user: User) =>
+		presentationMode
+			? `User ${offset + users.indexOf(user) + 1}`
+			: user.name || user.email;
+
 	const renderUserActions = (user: User) => (
 		<UserActionsMenu
-			label={`${user.name || user.email} actions`}
+			label={`${userLabel(user)} actions`}
 			{...accountActions.menuPropsFor(user)}
 			onEditProfile={
 				profileAbilities(user, isSelf(user), authorization).canSave
@@ -464,7 +479,7 @@ export function Users() {
 													<RowSelectCheckbox
 														selection={selection}
 														id={user.id}
-														label={`Select ${user.name || user.email}`}
+														label={`Select ${userLabel(user)}`}
 														unselectable={unselectable(
 															user,
 														)}
@@ -474,12 +489,20 @@ export function Users() {
 											<div className="min-w-0 flex-1">
 												<button
 													type="button"
+													aria-label={
+														presentationMode
+															? userLabel(user)
+															: undefined
+													}
 													onClick={() =>
 														handleOpenUser(user)
 													}
 													className="min-h-11 text-left font-medium [overflow-wrap:anywhere] hover:text-primary focus-visible:outline-2 focus-visible:outline-ring"
 												>
-													{user.name || user.email}
+													<span data-pii>
+														{user.name ||
+															user.email}
+													</span>
 												</button>
 											</div>
 											{renderUserActions(user)}
@@ -492,9 +515,7 @@ export function Users() {
 										</div>
 										<div className="mt-3 flex flex-wrap gap-2">
 											{!user.is_active ? (
-												<Badge variant="secondary">
-													Inactive
-												</Badge>
+												<InactiveStatusBadge user={user} />
 											) : (
 												<UserStatusBadge
 													status={
@@ -523,11 +544,13 @@ export function Users() {
 													Organization
 												</dt>
 												<dd className="mt-1 [overflow-wrap:anywhere]">
-													{
-														getOrgInfo(
-															user.organization_id,
-														).name
-													}
+													<span data-pii>
+														{
+															getOrgInfo(
+																user.organization_id,
+															).name
+														}
+													</span>
 													{getOrgInfo(
 														user.organization_id,
 													).isProvider && (
@@ -535,6 +558,14 @@ export function Users() {
 															Provider
 														</span>
 													)}
+												</dd>
+											</div>
+											<div className="col-span-2">
+												<dt className="text-xs text-muted-foreground">
+													Identity Source
+												</dt>
+												<dd className="mt-1 [overflow-wrap:anywhere]">
+													<IdentitySourceLabel user={user} />
 												</dd>
 											</div>
 											<div>
@@ -724,7 +755,7 @@ export function Users() {
 												<SelectionCell
 													selection={selection}
 													id={user.id}
-													label={`Select ${user.name || user.email}`}
+													label={`Select ${userLabel(user)}`}
 													unselectable={unselectable(
 														user,
 													)}
@@ -737,14 +768,20 @@ export function Users() {
 													) : (
 														<Building2 className="h-3.5 w-3.5 text-muted-foreground" />
 													)}
-													<span className="truncate">
+													<span
+														data-pii
+														className="truncate"
+													>
 														{orgInfo.name}
 													</span>
 												</span>
 											</DataTableCell>
 											<DataTableCell className="min-w-48 max-w-64">
 												<div className="flex min-w-0 items-center gap-1.5">
-													<span className="min-w-0 font-medium [overflow-wrap:anywhere]">
+													<span
+														data-pii
+														className="min-w-0 font-medium [overflow-wrap:anywhere]"
+													>
 														{user.name ||
 															user.email}
 													</span>
@@ -786,17 +823,25 @@ export function Users() {
 														</Tooltip>
 													)}
 												</div>
+												{user.identity_source && (
+													<div className="mt-0.5 text-xs text-muted-foreground">
+														<IdentitySourceLabel
+															user={user}
+														/>
+													</div>
+												)}
 											</DataTableCell>
 											<DataTableCell className="min-w-48 max-w-64 text-muted-foreground">
 												<UserEmailCell
 													email={user.email}
 												/>
 											</DataTableCell>
-											<DataTableCell className="w-0 whitespace-nowrap">
+											<DataTableCell
+												data-pii="off"
+												className="w-0 whitespace-nowrap"
+											>
 												{!user.is_active ? (
-													<Badge variant="secondary">
-														Inactive
-													</Badge>
+													<InactiveStatusBadge user={user} />
 												) : (
 													<UserStatusBadge
 														status={

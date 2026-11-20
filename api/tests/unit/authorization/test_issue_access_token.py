@@ -14,9 +14,11 @@ from src.models.orm.users import UserRole, UserRoleBoundary
 from src.services.authorization import tokens
 from src.services.authorization.authz import AuthorityStateMissing, read_epoch
 from src.services.authorization.tokens import (
+    CLAIMS_CREDENTIAL_PROTOCOL,
     RuntimeSubject,
     TokenSubjectUnavailable,
     issue_access_token,
+    issue_run_credentials,
     issue_run_refresh_token,
     parse_run_refresh_claims,
     parse_runtime_claims,
@@ -46,6 +48,33 @@ async def test_a_token_carries_the_committed_facts_and_epoch(async_engine: Async
         ]
         async with AsyncSession(async_engine) as session:
             assert int(issued.claims.av) == await read_epoch(session)
+
+
+async def test_run_credentials_carry_the_authority_their_claims_were_minted_from(
+    async_engine: AsyncEngine,
+) -> None:
+    """A dispatcher reuses this instead of loading the run's authority again;
+    a legacy token is signed without reading it, so it carries none."""
+    async with committed_world(async_engine) as world:
+        organization = await world.organization()
+        user = await world.person(organization)
+        workflow = await world.workflow(organization)
+        execution = await world.execution(run_user=user, workflow=workflow, organization=organization)
+        await world.session.commit()
+        subject = RuntimeSubject("workflow_execution", execution.id)
+
+        claims = await issue_run_credentials(
+            subject, protocol=CLAIMS_CREDENTIAL_PROTOCOL, legacy_lifetime_seconds=60
+        )
+        legacy = await issue_run_credentials(
+            subject, protocol=CLAIMS_CREDENTIAL_PROTOCOL - 1, legacy_lifetime_seconds=60
+        )
+
+        assert claims.authority is not None
+        assert claims.authority.credential_id == execution.id
+        assert claims.authority.run_user.user_id == user.id
+        assert claims.authority.workflow_id == workflow.id
+        assert legacy.authority is None
 
 
 async def test_the_minter_never_sees_or_disturbs_the_callers_transaction(

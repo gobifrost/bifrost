@@ -144,7 +144,11 @@ test("[FORM-03 desktop] designer adds and persists a configured form field", asy
 		).toBeVisible({
 			timeout: 10000,
 		});
-		await expect(page.getByText("Title", { exact: true })).toBeVisible();
+		await expect(
+			page
+				.locator('[data-field-card="title"]')
+				.getByText("Title *", { exact: true }),
+		).toBeVisible();
 
 		await page.getByRole("button", { name: "Add Field" }).click();
 		const dialog = page.getByRole("dialog", { name: "Add Field" });
@@ -167,7 +171,11 @@ test("[FORM-03 desktop] designer adds and persists a configured form field", asy
 		await expect(
 			page.getByText(ADDED_FIELD_NAME, { exact: true }),
 		).toBeVisible();
-		await expect(page.getByText("textarea", { exact: true })).toBeVisible();
+		await expect(
+			page
+				.locator(`[data-field-card="${ADDED_FIELD_NAME}"]`)
+				.getByText("Text Area", { exact: true }),
+		).toBeVisible();
 
 		const saveResponse = page.waitForResponse(
 			(response) =>

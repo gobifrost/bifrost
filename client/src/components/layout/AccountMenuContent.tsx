@@ -33,13 +33,22 @@ export function AccountMenuContent({
 		>
 			<DropdownMenuLabel className="p-3">
 				<div className="flex items-start gap-3">
-					<Avatar className="size-10 shrink-0">
+					<Avatar
+						data-pii
+						data-pii-avatar
+						className="size-10 shrink-0"
+					>
 						<AvatarImage src={avatarUrl || undefined} />
 						<AvatarFallback>{initials}</AvatarFallback>
 					</Avatar>
 					<div className="min-w-0 space-y-1 [overflow-wrap:anywhere]">
-						<p className="text-sm font-medium">{name}</p>
-						<p className="text-xs font-normal text-muted-foreground">
+						<p data-pii className="text-sm font-medium">
+							{name}
+						</p>
+						<p
+							data-pii
+							className="text-xs font-normal text-muted-foreground"
+						>
 							{email}
 						</p>
 					</div>

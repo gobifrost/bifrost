@@ -3,8 +3,9 @@
  *
  * Locks in the mappings-tab scroll model: the tab's sticky toolbar must stay
  * reachable while the mapping list scrolls with the page, the list itself must
- * not own a second vertical scrollbar, and the row layout must not overflow
- * horizontally at tablet widths.
+ * not own a second vertical scrollbar, rows keep status under the name with
+ * the entity control beside the trailing menu, and the layout must not
+ * overflow horizontally at tablet widths.
  */
 
 import { test, expect } from "./fixtures/api-fixture";
@@ -89,8 +90,14 @@ test.describe("Integration mapping layout", () => {
 	}) => {
 		await page.setViewportSize({ width: 1440, height: 800 });
 		await openMappings(page, integrationId);
+		// The list pages at 25 rows and the stack has other organizations;
+		// narrow to this spec's 24 so they all render on one page.
+		await page
+			.getByRole("searchbox", { name: "Search organization mappings" })
+			.fill(UNIQUE);
 
 		const list = page.getByRole("list", { name: "Organization mappings" });
+		await expect(list.getByRole("listitem")).toHaveCount(ORG_COUNT);
 		await expect(
 			mappingRow(page, `Layout Org ${ORG_COUNT - 1} ${UNIQUE}`),
 		).toBeAttached();
@@ -147,7 +154,7 @@ test.describe("Integration mapping layout", () => {
 		});
 
 		await expect(
-			page.getByText("Organization Mappings", { exact: true }),
+			page.getByRole("combobox", { name: "Mapping Status" }),
 		).toBeInViewport();
 		await expect(
 			page.getByRole("searchbox", {
@@ -157,13 +164,16 @@ test.describe("Integration mapping layout", () => {
 		await expect(list.getByRole("listitem").last()).toBeInViewport();
 	});
 
-	test("[MAPPING-LAYOUT-02] row status aligns with the entity control and actions sit at the trailing edge", async ({
+	test("[MAPPING-LAYOUT-02] status sits under the name and the entity control meets the trailing actions", async ({
 		page,
 	}) => {
 		await page.setViewportSize({ width: 1440, height: 800 });
 		await openMappings(page, integrationId);
 
 		const row = mappingRow(page, `Layout Org 00 ${UNIQUE}`);
+		const name = row.getByRole("heading", {
+			name: `Layout Org 00 ${UNIQUE}`,
+		});
 		const entity = row.getByLabel("External entity ID");
 		const badge = row.getByText("Mapped", { exact: true });
 		const actions = row.getByRole("button", {
@@ -171,21 +181,38 @@ test.describe("Integration mapping layout", () => {
 		});
 
 		await expect(entity).toBeVisible();
-		const [entityBox, badgeBox, actionBox, rowBox] = await Promise.all([
-			entity.boundingBox(),
-			badge.boundingBox(),
-			actions.boundingBox(),
-			row.boundingBox(),
-		]);
-		for (const box of [entityBox, badgeBox, actionBox, rowBox]) {
+		const [nameBox, entityBox, badgeBox, actionBox, rowBox] =
+			await Promise.all([
+				name.boundingBox(),
+				entity.boundingBox(),
+				badge.boundingBox(),
+				actions.boundingBox(),
+				row.boundingBox(),
+			]);
+		for (const box of [nameBox, entityBox, badgeBox, actionBox, rowBox]) {
 			expect(box).not.toBeNull();
 		}
+		const rowPaddingRight = await row.evaluate((el) =>
+			Number.parseFloat(getComputedStyle(el).paddingRight),
+		);
 
-		const entityCenter = entityBox!.y + entityBox!.height / 2;
-		const badgeCenter = badgeBox!.y + badgeBox!.height / 2;
-		expect(Math.abs(entityCenter - badgeCenter)).toBeLessThanOrEqual(1);
+		// Status is a details line directly under the organization name.
+		expect(badgeBox!.y).toBeGreaterThanOrEqual(
+			nameBox!.y + nameBox!.height - 1,
+		);
+		expect(badgeBox!.x).toBeLessThan(entityBox!.x);
+		// Outside review, the entity control runs up to the row menu, which
+		// sits at the row's trailing edge.
 		expect(
-			Math.round(rowBox!.x + rowBox!.width - (actionBox!.x + actionBox!.width)),
+			actionBox!.x - (entityBox!.x + entityBox!.width),
+		).toBeLessThanOrEqual(24);
+		expect(
+			Math.abs(
+				rowBox!.x +
+					rowBox!.width -
+					rowPaddingRight -
+					(actionBox!.x + actionBox!.width),
+			),
 		).toBeLessThanOrEqual(1);
 
 		// Row actions (including Configure) live in the trailing menu.
@@ -238,7 +265,9 @@ test.describe("Integration mapping layout", () => {
 
 		const owners = await page.evaluate(() => {
 			const found: string[] = [];
-			for (const el of document.querySelectorAll("main, [data-page-scroll]")) {
+			for (const el of document.querySelectorAll(
+				"main, [data-page-scroll]",
+			)) {
 				const style = getComputedStyle(el);
 				if (
 					style.overflowY === "auto" &&

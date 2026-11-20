@@ -67,6 +67,15 @@ test("impersonates every regular tab, reloads apps, and exits everywhere", async
 		await expect(page).toHaveURL(/\/apps$/);
 		await expect(page.getByRole("status").filter({ hasText: "Impersonating" })).toContainText(email);
 		await expect(operatorTab.getByRole("status").filter({ hasText: "Impersonating" })).toContainText(email);
+		const presentationToggle = page.getByRole("button", { name: "Presentation Mode" });
+		const banner = page.getByRole("status", { name: "Impersonation session" });
+		await presentationToggle.click();
+		await expect(banner).toContainText("Impersonating a user");
+		await expect(banner).not.toContainText(email);
+		await expect(banner).not.toContainText("Impersonation Demo");
+		await expect(banner.getByRole("button", { name: "Exit", exact: true })).toBeVisible();
+		await presentationToggle.click();
+		await expect(banner).toContainText(email);
 		await expect(operatorTab.getByText(`Signed in as ${email}`, { exact: true })).toBeVisible();
 		newTab = await context.newPage();
 		await newTab.goto(`/apps/${slug}`);

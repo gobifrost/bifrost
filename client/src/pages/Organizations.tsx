@@ -1,3 +1,4 @@
+import { usePresentationStore } from "@/stores/presentationStore";
 import { OrganizationSsoExclusion } from "@/components/users/SsoExclusions";
 import {
 	useEffect,
@@ -16,6 +17,8 @@ import {
 	Power,
 	RefreshCw,
 	Settings,
+	Tag,
+	TagsIcon,
 } from "lucide-react";
 
 import { SearchBox } from "@/components/search/SearchBox";
@@ -76,6 +79,30 @@ import {
 } from "@/hooks/useOrganizations";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useSearch } from "@/hooks/useSearch";
+import { useUserSelection } from "@/hooks/useUserSelection";
+import {
+	BulkActionBar,
+	BulkActionButton,
+} from "@/components/users/BulkActionBar";
+import {
+	RecordListBar,
+	RecordSelectAll,
+	RecordSelectTarget,
+	RowSelectCheckbox,
+	SelectionCell,
+	SelectionHead,
+} from "@/components/users/SelectableTable";
+import {
+	BulkTagDialog,
+	OrganizationTagList,
+	TagFilter,
+	type BulkTagMode,
+} from "@/components/organizations/OrganizationTags";
+import { TagsInput } from "@/components/ui/tags-input";
+import {
+	collectOrganizationTags,
+	matchesTagFilter,
+} from "@/lib/organization-tags";
 import type { components } from "@/lib/v1";
 import { RequiredInstructionsSettings } from "@/pages/settings/RequiredInstructionsSettings";
 import { ListPagination } from "@/components/pagination/ListPagination";
@@ -88,6 +115,7 @@ interface OrganizationFormData {
 	name: string;
 	domain: string;
 	isActive: boolean;
+	tags: string[];
 }
 
 interface MutationRetryAlertProps {
@@ -102,6 +130,7 @@ const EMPTY_FORM: OrganizationFormData = {
 	name: "",
 	domain: "",
 	isActive: true,
+	tags: [],
 };
 
 function MutationRetryAlert({
@@ -136,6 +165,7 @@ function MutationRetryAlert({
 }
 
 export function Organizations() {
+	const presentationMode = usePresentationStore((state) => state.enabled);
 	const compactLayout = useMediaQuery("(max-width: 1023px)");
 	const [isCreateDialogOpen, setIsCreateDialogOpen] = useState(false);
 	const [isEditDialogOpen, setIsEditDialogOpen] = useState(false);
@@ -145,6 +175,8 @@ export function Organizations() {
 	const [formData, setFormData] = useState<OrganizationFormData>(EMPTY_FORM);
 	const [searchTerm, setSearchTerm] = useState("");
 	const [showInactive, setShowInactive] = useState(false);
+	const [tagFilter, setTagFilter] = useState<string[]>([]);
+	const [bulkTagMode, setBulkTagMode] = useState<BulkTagMode | null>(null);
 	const [offset, setOffset] = useState(0);
 
 	const { data, isLoading, isFetching, error, refetch } = useOrganizations({
@@ -154,7 +186,18 @@ export function Organizations() {
 	const visibleOrganizations = showInactive
 		? organizations
 		: organizations.filter((org) => org.is_active);
-	const filteredOrgs = useSearch(visibleOrganizations, searchTerm, [
+	const knownTags = useMemo(
+		() => collectOrganizationTags(visibleOrganizations),
+		[visibleOrganizations],
+	);
+	const taggedOrganizations = useMemo(
+		() =>
+			visibleOrganizations.filter((org) =>
+				matchesTagFilter(org, tagFilter),
+			),
+		[visibleOrganizations, tagFilter],
+	);
+	const filteredOrgs = useSearch(taggedOrganizations, searchTerm, [
 		"name",
 		"domain",
 		"id",
@@ -185,6 +228,32 @@ export function Organizations() {
 			id: org.id,
 		});
 	const showActions = pagedOrgs.some(canManage);
+	// Selection spans every filtered page so a tag can be applied to a whole
+	// filtered set; organizations the caller cannot manage are not selectable.
+	const unmanageableIds = useMemo(
+		() =>
+			filteredOrgs
+				.filter(
+					(org) =>
+						!authorization.canAt("organizations.readwrite", {
+							kind: "org",
+							id: org.id,
+						}),
+				)
+				.map((org) => org.id),
+		[filteredOrgs, authorization],
+	);
+	const selection = useUserSelection(filteredOrgs, unmanageableIds);
+	const showSelection = unmanageableIds.length < filteredOrgs.length;
+	const unselectable = (org: Organization) =>
+		canManage(org)
+			? undefined
+			: {
+					label: presentationMode
+						? "Cannot select organization"
+						: `Cannot select ${org.name}`,
+					reason: "You can't edit this organization.",
+				};
 	const updateMutation = useUpdateOrganization({ toastOnError: false });
 
 	const resetSelection = () => {
@@ -227,6 +296,7 @@ export function Organizations() {
 			name: org.name,
 			domain: org.domain || "",
 			isActive: org.is_active,
+			tags: org.tags ?? [],
 		});
 		setActiveEditTab(tab);
 		setIsEditDialogOpen(true);
@@ -268,6 +338,7 @@ export function Organizations() {
 					name: formData.name.trim(),
 					domain: formData.domain.trim(),
 					is_active: formData.isActive,
+					tags: formData.tags,
 				},
 			});
 			pendingFocusOrgIdRef.current = selectedOrg.id;
@@ -399,6 +470,11 @@ export function Organizations() {
 		return () => window.cancelAnimationFrame(frame);
 	}, [isEditDialogOpen, data, compactLayout]);
 
+	const orgLabel = (org: Organization) =>
+		presentationMode
+			? `Organization ${offset + pagedOrgs.indexOf(org) + 1}`
+			: org.name;
+
 	const renderOrganizationActions = (org: Organization) =>
 		canManage(org) && (
 			<DropdownMenu>
@@ -407,7 +483,7 @@ export function Organizations() {
 						variant="ghost"
 						size="icon"
 						className="h-11 w-11 lg:h-9 lg:w-9"
-						aria-label={`${org.name} actions`}
+						aria-label={`${orgLabel(org)} actions`}
 						onClick={(event) => {
 							editTriggerRef.current = event.currentTarget;
 						}}
@@ -419,7 +495,7 @@ export function Organizations() {
 					<DropdownMenuItem
 						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
 						onClick={() => handleEdit(org)}
-						aria-label={`Edit ${org.name}`}
+						aria-label={`Edit ${orgLabel(org)}`}
 					>
 						<Pencil />
 						Edit
@@ -429,7 +505,7 @@ export function Organizations() {
 						className="min-h-11 whitespace-nowrap px-3 lg:min-h-9"
 						onClick={() => handleToggleActive(org)}
 						disabled={org.is_provider}
-						aria-label={`${org.is_active ? "Disable" : "Enable"} ${org.name}`}
+						aria-label={`${org.is_active ? "Disable" : "Enable"} ${orgLabel(org)}`}
 					>
 						<Power />
 						{org.is_active ? "Disable" : "Enable"}
@@ -451,13 +527,15 @@ export function Organizations() {
 					if (stopPropagation) event.stopPropagation();
 					handleEdit(org, event);
 				}}
-				aria-label={`Edit ${org.name}`}
+				aria-label={`Edit ${orgLabel(org)}`}
 				className={className}
 			>
-				{org.name}
+				<span data-pii>{org.name}</span>
 			</button>
 		) : (
-			<span className="[overflow-wrap:anywhere]">{org.name}</span>
+			<span data-pii className="[overflow-wrap:anywhere]">
+				{org.name}
+			</span>
 		);
 
 	return (
@@ -519,6 +597,15 @@ export function Organizations() {
 					aria-label="Search organizations"
 					className="w-full sm:flex-1"
 				/>
+				<TagFilter
+					tags={knownTags}
+					value={tagFilter}
+					onChange={(value) => {
+						setTagFilter(value);
+						setOffset(0);
+					}}
+					className="w-full sm:w-auto sm:max-w-64"
+				/>
 				<div className="flex items-center gap-2 sm:ml-auto">
 					<Switch
 						id="show-inactive-organizations"
@@ -575,6 +662,16 @@ export function Organizations() {
 				) : error && !data ? null : filteredOrgs.length > 0 ? (
 					compactLayout ? (
 						<div className="rounded-[var(--bf-radius-surface)] border bg-card">
+							{showSelection && (
+								<RecordListBar>
+									<RecordSelectAll
+										selection={selection}
+										label={`Select all ${filteredOrgs.length} organizations`}
+									>
+										Select All
+									</RecordSelectAll>
+								</RecordListBar>
+							)}
 							<ul aria-label="Organizations" className="divide-y">
 								{pagedOrgs.map((org) => (
 									<li
@@ -583,6 +680,18 @@ export function Organizations() {
 										data-org-id={org.id}
 									>
 										<div className="flex items-start gap-3">
+											{showSelection && (
+												<RecordSelectTarget>
+													<RowSelectCheckbox
+														selection={selection}
+														id={org.id}
+														label={`Select ${orgLabel(org)}`}
+														unselectable={unselectable(
+															org,
+														)}
+													/>
+												</RecordSelectTarget>
+											)}
 											<div className="min-w-0 flex-1">
 												<h2 className="text-base font-semibold">
 													{renderName(
@@ -594,6 +703,7 @@ export function Organizations() {
 												<div className="mt-1 flex flex-wrap gap-2">
 													{org.is_provider && (
 														<Badge
+															data-pii="off"
 															variant="outline"
 															className="border-[var(--bf-info)]/20 bg-[var(--bf-info)]/10 text-[var(--bf-info)] dark:bg-[var(--bf-info)]/15"
 														>
@@ -601,6 +711,7 @@ export function Organizations() {
 														</Badge>
 													)}
 													<Badge
+														data-pii="off"
 														variant="outline"
 														className={
 															org.is_active
@@ -617,12 +728,28 @@ export function Organizations() {
 											{renderOrganizationActions(org)}
 										</div>
 										<dl className="grid gap-3 text-sm">
+											{(org.tags?.length ?? 0) > 0 && (
+												<div>
+													<dt className="text-xs text-muted-foreground">
+														Tags
+													</dt>
+													<dd className="mt-1">
+														<OrganizationTagList
+															tags={org.tags}
+															max={6}
+														/>
+													</dd>
+												</div>
+											)}
 											<div>
 												<dt className="text-xs text-muted-foreground">
 													Email domain
 												</dt>
 												<dd className="mt-1 [overflow-wrap:anywhere]">
-													{org.domain || "Not set"}
+													<span data-pii>
+														{org.domain ||
+															"Not set"}
+													</span>
 												</dd>
 											</div>
 											<div>
@@ -630,7 +757,9 @@ export function Organizations() {
 													Organization ID
 												</dt>
 												<dd className="mt-1 font-mono text-xs [overflow-wrap:anywhere]">
-													{org.id}
+													<span data-pii>
+														{org.id}
+													</span>
 												</dd>
 											</div>
 											<div>
@@ -661,8 +790,15 @@ export function Organizations() {
 						<DataTable className="max-h-full">
 							<DataTableHeader>
 								<DataTableRow>
+									{showSelection && (
+										<SelectionHead
+											selection={selection}
+											label={`Select all ${filteredOrgs.length} organizations`}
+										/>
+									)}
 									<DataTableHead>Name</DataTableHead>
 									<DataTableHead>Domain</DataTableHead>
+									<DataTableHead>Tags</DataTableHead>
 									<DataTableHead className="w-0 whitespace-nowrap">
 										Status
 									</DataTableHead>
@@ -688,6 +824,14 @@ export function Organizations() {
 										className="group/row"
 										data-org-id={org.id}
 									>
+										{showSelection && (
+											<SelectionCell
+												selection={selection}
+												id={org.id}
+												label={`Select ${orgLabel(org)}`}
+												unselectable={unselectable(org)}
+											/>
+										)}
 										<DataTableCell>
 											<div className="flex items-start gap-2">
 												<div className="min-w-0">
@@ -699,6 +843,7 @@ export function Organizations() {
 														)}
 														{org.is_provider && (
 															<Badge
+																data-pii="off"
 																variant="outline"
 																className="border-[var(--bf-info)]/20 bg-[var(--bf-info)]/10 text-[var(--bf-info)] dark:bg-[var(--bf-info)]/15"
 															>
@@ -707,7 +852,9 @@ export function Organizations() {
 														)}
 													</div>
 													<div className="mt-1 truncate font-mono text-xs text-muted-foreground">
-														{org.id}
+														<span data-pii>
+															{org.id}
+														</span>
 													</div>
 												</div>
 											</div>
@@ -715,8 +862,23 @@ export function Organizations() {
 										<DataTableCell className="text-sm text-muted-foreground">
 											{org.domain || "—"}
 										</DataTableCell>
-										<DataTableCell className="w-0 whitespace-nowrap">
+										<DataTableCell className="min-w-32 max-w-72">
+											{(org.tags?.length ?? 0) > 0 ? (
+												<OrganizationTagList
+													tags={org.tags}
+												/>
+											) : (
+												<span className="text-sm text-muted-foreground">
+													—
+												</span>
+											)}
+										</DataTableCell>
+										<DataTableCell
+											data-pii="off"
+											className="w-0 whitespace-nowrap"
+										>
 											<Badge
+												data-pii="off"
 												variant={
 													org.is_active
 														? "outline"
@@ -756,7 +918,11 @@ export function Organizations() {
 							<DataTableFooter>
 								<DataTableRow>
 									<DataTableCell
-										colSpan={showActions ? 5 : 4}
+										colSpan={
+											5 +
+											(showActions ? 1 : 0) +
+											(showSelection ? 1 : 0)
+										}
 										className="p-0"
 									>
 										<ListPagination
@@ -775,15 +941,15 @@ export function Organizations() {
 					<div className="flex flex-col items-center justify-center py-12 text-center">
 						<Building2 className="h-12 w-12 text-muted-foreground" />
 						<h3 className="mt-4 text-lg font-semibold">
-							{searchTerm
-								? "No organizations match your search"
+							{searchTerm || tagFilter.length > 0
+								? "No organizations match your filters"
 								: showInactive
 									? "No organizations found"
 									: "No active organizations found"}
 						</h3>
 						<p className="mt-2 text-sm text-muted-foreground">
-							{searchTerm
-								? "Try adjusting your search or clearing the filter."
+							{searchTerm || tagFilter.length > 0
+								? "Try adjusting your search or clearing the filters."
 								: !canCreate
 									? "Organizations you have access to appear here."
 									: showInactive
@@ -799,6 +965,38 @@ export function Organizations() {
 					</div>
 				)}
 			</PageScrollArea>
+
+			<BulkActionBar
+				count={selection.count}
+				label="Bulk organization actions"
+				onClear={selection.clear}
+			>
+				<BulkActionButton
+					icon={Tag}
+					onClick={() => setBulkTagMode("add")}
+				>
+					Add Tags
+				</BulkActionButton>
+				<BulkActionButton
+					icon={TagsIcon}
+					onClick={() => setBulkTagMode("remove")}
+				>
+					Remove Tags
+				</BulkActionButton>
+			</BulkActionBar>
+
+			<BulkTagDialog
+				mode={bulkTagMode}
+				organizations={selection.selectedItems}
+				knownTags={knownTags}
+				onOpenChange={(open) => {
+					if (!open) setBulkTagMode(null);
+				}}
+				onSuccess={() => {
+					setBulkTagMode(null);
+					selection.clear();
+				}}
+			/>
 
 			<Dialog
 				open={isCreateDialogOpen}
@@ -932,7 +1130,10 @@ export function Organizations() {
 						<DialogTitle>Edit Organization</DialogTitle>
 						<DialogDescription>
 							Manage details, status, and instructions for{" "}
-							{selectedOrg?.name}.
+							{presentationMode
+								? "this organization"
+								: selectedOrg?.name}
+							.
 						</DialogDescription>
 					</DialogHeader>
 
@@ -972,7 +1173,17 @@ export function Organizations() {
 										</Label>
 										<Input
 											id="edit-organization-name"
-											value={formData.name}
+											readOnly={presentationMode}
+											value={
+												presentationMode
+													? ""
+													: formData.name
+											}
+											placeholder={
+												presentationMode
+													? "••••••"
+													: undefined
+											}
 											onChange={(event) =>
 												setFormData({
 													...formData,
@@ -988,19 +1199,49 @@ export function Organizations() {
 										</Label>
 										<Input
 											id="edit-organization-domain"
-											value={formData.domain}
+											readOnly={presentationMode}
+											value={
+												presentationMode
+													? ""
+													: formData.domain
+											}
 											onChange={(event) =>
 												setFormData({
 													...formData,
 													domain: event.target.value,
 												})
 											}
-											placeholder="acme.com"
+											placeholder={
+												presentationMode
+													? "••••••"
+													: "acme.com"
+											}
 										/>
 										<p className="text-xs text-muted-foreground">
 											Users with this email domain are
 											automatically provisioned to this
 											organization.
+										</p>
+									</div>
+									<div className="space-y-2">
+										<Label htmlFor="edit-organization-tags">
+											Tags
+										</Label>
+										<TagsInput
+											id="edit-organization-tags"
+											value={formData.tags}
+											onChange={(tags) =>
+												setFormData({
+													...formData,
+													tags,
+												})
+											}
+											placeholder="Type a tag and press Enter..."
+											aria-label="Organization tags"
+										/>
+										<p className="text-xs text-muted-foreground">
+											Group organizations for filtering,
+											such as MSP or Licence.
 										</p>
 									</div>
 
@@ -1106,9 +1347,12 @@ export function Organizations() {
 							Disable organization?
 						</AlertDialogTitle>
 						<AlertDialogDescription>
-							{selectedOrg?.name} will be removed from active
-							organization lists. You can re-enable it later by
-							showing inactive organizations.
+							{presentationMode
+								? "This organization"
+								: selectedOrg?.name}{" "}
+							will be removed from active organization lists. You
+							can re-enable it later by showing inactive
+							organizations.
 						</AlertDialogDescription>
 					</AlertDialogHeader>
 					{updateErrorMessage && (

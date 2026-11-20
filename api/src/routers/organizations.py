@@ -12,13 +12,19 @@ from fastapi import APIRouter, HTTPException, Query, status
 
 from src.core.auth import CurrentActiveUser
 from src.core.db_deps import DbSession
-from src.models import OrganizationCreate, OrganizationPublic, OrganizationUpdate
+from src.models import (
+    OrganizationCreate,
+    OrganizationPublic,
+    OrganizationTagsBulkUpdate,
+    OrganizationUpdate,
+)
 from src.services.authorization.enforce import (
     GLOBAL,
     authorize_operation,
     load_caller,
     operation_reach,
     org_target,
+    require_operation,
 )
 from src.services.operation_catalog import operation_route
 
@@ -78,7 +84,42 @@ async def create_organization(
             domain=request.domain,
             is_active=request.is_active,
             settings=request.settings,
+            tags=request.tags,
             actor_email=user.email,
+        )
+    except OrganizationServiceError as e:
+        raise HTTPException(status_code=e.status_code, detail=e.detail) from None
+
+
+@router.patch(
+    "/tags",
+    response_model=list[OrganizationPublic],
+    summary="Bulk add or remove organization tags",
+    description=(
+        "Add and/or remove tags on several organizations in one transaction. "
+        "Every organization must be updatable by the caller, or nothing changes."
+    ),
+**operation_route("organizations.tags.bulk_update"))
+async def bulk_update_organization_tags(
+    request: OrganizationTagsBulkUpdate,
+    user: CurrentActiveUser,
+    db: DbSession,
+) -> list[OrganizationPublic]:
+    """Add and remove tags across the requested organizations."""
+    caller = await load_caller(db, user)
+    for org_id in request.organization_ids:
+        require_operation(caller, "organizations.tags.bulk_update", org_target(org_id))
+    from shared.sdk_organizations import (
+        OrganizationServiceError,
+        bulk_update_organization_tags as bulk_update_organization_tags_service,
+    )
+
+    try:
+        return await bulk_update_organization_tags_service(
+            db,
+            organization_ids=request.organization_ids,
+            add=request.add,
+            remove=request.remove,
         )
     except OrganizationServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None
@@ -135,6 +176,7 @@ async def update_organization(
             domain=request.domain,
             is_active=request.is_active,
             settings=request.settings,
+            tags=request.tags,
         )
     except OrganizationServiceError as e:
         raise HTTPException(status_code=e.status_code, detail=e.detail) from None

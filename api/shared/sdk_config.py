@@ -16,7 +16,6 @@ worker-local results are identical by construction.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from datetime import datetime, timezone
@@ -263,42 +262,44 @@ async def set_sdk_config_value(
     actor_email = caller.principal.email
     from src.models import Config as ConfigModel
 
+    from src.services.config_values import new_config_row, unwrap, write_config_value
+
     now = datetime.now(timezone.utc)
 
     if is_secret:
-        from src.core.security import encrypt_secret
         from src.models.enums import ConfigType as ConfigTypeEnum
 
-        config_type = ConfigTypeEnum.SECRET
-        stored_value = await asyncio.to_thread(encrypt_secret, str(value))
+        config_type, new_value = ConfigTypeEnum.SECRET, str(value)
     else:
-        config_type, stored_value = _classify_set_value(value)
+        config_type, new_value = _classify_set_value(value)
 
-    config_value = {"value": stored_value}
-
+    # Plain config keys only: integration config values belong to their
+    # integration and are set through its mappings and defaults.
     stmt = select(ConfigModel).where(
         ConfigModel.key == key,
         ConfigModel.organization_id == org_id,
+        ConfigModel.integration_id.is_(None),
     )
     result = await session.execute(stmt)
     existing = result.scalar_one_or_none()
 
     if existing:
-        existing.value = config_value
-        existing.config_type = config_type
+        await write_config_value(session, existing, config_type=config_type, value=new_value)
         existing.updated_at = now
         existing.updated_by = actor_email
+        row = existing
     else:
-        config = ConfigModel(
+        row = await new_config_row(
+            session,
             key=key,
-            value=config_value,
             config_type=config_type,
+            value=new_value,
             organization_id=org_id,
             created_at=now,
             updated_at=now,
             updated_by=actor_email,
         )
-        session.add(config)
+    stored_value = unwrap(row.value)
 
     await session.commit()
 
@@ -388,6 +389,7 @@ async def delete_sdk_config_value(
     stmt = select(ConfigModel).where(
         ConfigModel.key == key,
         ConfigModel.organization_id == org_id,
+        ConfigModel.integration_id.is_(None),
     )
     result = await session.execute(stmt)
     config = result.scalar_one_or_none()

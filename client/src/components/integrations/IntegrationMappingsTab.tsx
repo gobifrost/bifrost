@@ -1,6 +1,5 @@
 import {
 	CheckCircle2,
-	Plus,
 	Link as LinkIcon,
 	Settings,
 	Unlink,
@@ -9,6 +8,8 @@ import {
 	Loader2,
 	Search,
 	X,
+	Check,
+	Wand2,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { RecordActionsMenu } from "@/components/common/RecordActionsMenu";
@@ -17,22 +18,35 @@ import {
 	DropdownMenuSeparator,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
+import { PaginationFooter } from "@/components/pagination/PaginationFooter";
+import { cn } from "@/lib/utils";
 import { Input } from "@/components/ui/input";
 import { ManualEntityIdInput } from "./ManualEntityIdInput";
-import {
-	Card,
-	CardContent,
-	CardDescription,
-	CardHeader,
-	CardTitle,
-} from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { type IntegrationMapping } from "@/services/integrations";
-import { AutoMatchControls } from "@/components/integrations/AutoMatchControls";
+import { ListToolbar } from "@/components/layout/ListToolbar";
+import { WorkspacePrimaryAction } from "@/components/layout/WorkspacePrimaryAction";
+import {
+	Select,
+	SelectContent,
+	SelectItem,
+	SelectTrigger,
+	SelectValue,
+} from "@/components/ui/select";
 import { EntitySelector } from "@/components/integrations/EntitySelector";
-import { MatchSuggestionBadge } from "@/components/integrations/MatchSuggestionBadge";
-import type { MatchMode, MatchSuggestion, MatchResult } from "@/lib/matching";
+import {
+	isHighConfidence,
+	MatchSuggestionActions,
+} from "@/components/integrations/MatchSuggestionActions";
+import type { MatchSuggestion, MatchResult } from "@/lib/matching";
 import { isExpired } from "@/lib/client-types";
+import {
+	OrganizationTagList,
+	TagFilter,
+} from "@/components/organizations/OrganizationTags";
+import {
+	collectOrganizationTags,
+	matchesTagFilter,
+} from "@/lib/organization-tags";
 
 interface MappingFormData {
 	organization_id: string;
@@ -45,6 +59,7 @@ interface MappingFormData {
 export interface OrgWithMapping {
 	id: string;
 	name: string;
+	tags?: string[] | null;
 	mapping?: IntegrationMapping;
 	formData: MappingFormData;
 }
@@ -59,6 +74,8 @@ interface Entity {
 	value: string;
 	label: string;
 }
+
+type MappingStatus = "all" | "mapped" | "unmapped" | "suggested";
 
 export type MappingAction = "connect" | "disconnect" | "refresh";
 
@@ -82,7 +99,7 @@ export interface IntegrationMappingsTabProps {
 	matchStats: MatchResult["stats"] | null;
 	isMatching: boolean;
 	isDeletePending: boolean;
-	onRunAutoMatch: (mode: MatchMode) => void;
+	onRunAutoMatch: () => void;
 	onAcceptAllSuggestions: () => void;
 	onClearSuggestions: () => void;
 	onAcceptSuggestion: (orgId: string) => void;
@@ -146,19 +163,69 @@ export function IntegrationMappingsTab({
 
 	const isActionPending = pendingMappingAction !== null;
 	const [mappingSearch, setMappingSearch] = useState("");
+	const [mappingStatus, setMappingStatus] = useState<MappingStatus>("all");
+	const [tagFilter, setTagFilter] = useState<string[]>([]);
+	const knownTags = useMemo(
+		() => collectOrganizationTags(orgsWithMappings),
+		[orgsWithMappings],
+	);
+	const [offset, setOffset] = useState(0);
+	const pageSize = 25;
+	const usedEntityIds = useMemo(
+		() =>
+			new Set(
+				orgsWithMappings
+					.map((org) => org.formData.entity_id)
+					.filter(Boolean),
+			),
+		[orgsWithMappings],
+	);
+	const unusedEntities = useMemo(
+		() => entities.filter((entity) => !usedEntityIds.has(entity.value)),
+		[entities, usedEntityIds],
+	);
 	const entityLabelByValue = useMemo(
 		() => new Map(entities.map((entity) => [entity.value, entity.label])),
 		[entities],
 	);
 	const normalizedSearch = mappingSearch.trim().toLocaleLowerCase();
-	const filteredOrgs = useMemo(() => {
-		if (!normalizedSearch) return orgsWithMappings;
-
+	const hasFilters =
+		normalizedSearch.length > 0 ||
+		(mappingStatus !== "all" && mappingStatus !== "suggested") ||
+		tagFilter.length > 0;
+	const clearFilters = () => {
+		setMappingSearch("");
+		setMappingStatus("all");
+		setTagFilter([]);
+		setOffset(0);
+	};
+	const suggestionCount = autoMatchSuggestions.size;
+	// Running auto-match opens the Suggested view; it closes when review ends.
+	const [seenSuggestionCount, setSeenSuggestionCount] =
+		useState(suggestionCount);
+	if (seenSuggestionCount !== suggestionCount) {
+		setSeenSuggestionCount(suggestionCount);
+		if (seenSuggestionCount === 0 && suggestionCount > 0) {
+			setMappingStatus("suggested");
+			setOffset(0);
+		} else if (suggestionCount === 0 && mappingStatus === "suggested") {
+			setMappingStatus("all");
+			setOffset(0);
+		}
+	}
+	const activeStatus: MappingStatus =
+		mappingStatus === "suggested" && suggestionCount === 0
+			? "all"
+			: mappingStatus;
+	const searchedOrgs = useMemo(() => {
 		return orgsWithMappings.filter((org) => {
+			if (!matchesTagFilter(org, tagFilter)) return false;
+			if (!normalizedSearch) return true;
 			const entityId =
 				org.formData.entity_id || org.mapping?.entity_id || "";
 			const searchable = [
 				org.name,
+				...(org.tags ?? []),
 				org.formData.entity_name,
 				org.mapping?.entity_name,
 				entityId,
@@ -170,247 +237,329 @@ export function IntegrationMappingsTab({
 
 			return searchable.includes(normalizedSearch);
 		});
-	}, [entityLabelByValue, normalizedSearch, orgsWithMappings]);
+	}, [entityLabelByValue, normalizedSearch, orgsWithMappings, tagFilter]);
+	const statusCounts = useMemo(
+		() => ({
+			all: searchedOrgs.length,
+			mapped: searchedOrgs.filter((org) => org.mapping).length,
+			unmapped: searchedOrgs.filter((org) => !org.mapping).length,
+			suggested: searchedOrgs.filter((org) =>
+				autoMatchSuggestions.has(org.id),
+			).length,
+		}),
+		[searchedOrgs, autoMatchSuggestions],
+	);
+	const filteredOrgs = useMemo(
+		() =>
+			searchedOrgs.filter((org) => {
+				if (activeStatus === "mapped") return Boolean(org.mapping);
+				if (activeStatus === "unmapped") return !org.mapping;
+				if (activeStatus === "suggested")
+					return autoMatchSuggestions.has(org.id);
+				return true;
+			}),
+		[searchedOrgs, activeStatus, autoMatchSuggestions],
+	);
+	const pageOffset = Math.min(
+		offset,
+		Math.max(0, Math.ceil(filteredOrgs.length / pageSize) - 1) * pageSize,
+	);
+	const pageOrgs = useMemo(
+		() => filteredOrgs.slice(pageOffset, pageOffset + pageSize),
+		[filteredOrgs, pageOffset],
+	);
+	const availableEntitiesByOrg = useMemo(
+		() =>
+			new Map(
+				pageOrgs.map((org) => [
+					org.id,
+					org.formData.entity_id
+						? entities.filter(
+								(entity) =>
+									entity.value === org.formData.entity_id ||
+									!usedEntityIds.has(entity.value),
+							)
+						: unusedEntities,
+				]),
+			),
+		[pageOrgs, entities, usedEntityIds, unusedEntities],
+	);
+
+	const showAutoMatch =
+		hasDataProvider && canManageAllMappings && orgsWithMappings.length > 0;
+	const totalPages = Math.max(1, Math.ceil(filteredOrgs.length / pageSize));
+	const countLabel =
+		normalizedSearch || filteredOrgs.length !== orgsWithMappings.length
+			? `${filteredOrgs.length} of ${orgsWithMappings.length} mappings`
+			: `${orgsWithMappings.length} mappings`;
+	const statusOptions: { value: MappingStatus; label: string }[] = [
+		{ value: "all", label: "All Mappings" },
+		{ value: "mapped", label: "Mapped" },
+		{ value: "unmapped", label: "Unmapped" },
+		...(suggestionCount > 0
+			? [{ value: "suggested" as const, label: "Suggested" }]
+			: []),
+	];
+	const entityControlsDisabled =
+		isLoadingEntities || Boolean(isEntitiesError) || isFetchingEntities;
 
 	return (
-		<Card className="overflow-clip border-t-0">
+		<section
+			aria-label="Organization Mappings"
+			className="overflow-clip rounded-[var(--bf-radius-feature)] border border-border/70 bg-card"
+		>
 			{/*
-			 * Sticky so the tab's title, auto-match controls, and search stay
-			 * reachable once the page has scrolled the overview away. `overflow-clip`
-			 * on the Card keeps the rounded corners clipping children while still
-			 * allowing this to stick (unlike `overflow-hidden`, clip does not create
-			 * a scroll container). The bar is pulled up over the Card's own top
-			 * padding and carries the Card's top border itself, so the edge is
-			 * never cut off when pinned.
+			 * Sticky so status, search, and auto-match stay reachable while the
+			 * page scrolls. `overflow-clip` keeps the rounded corners without
+			 * creating a scroll container that would defeat sticking.
 			 */}
-			<div className="sticky top-0 z-20 -mt-(--card-spacing) flex flex-col gap-3 border-y border-border/70 bg-card pb-3 pt-(--card-spacing)">
-				<CardHeader className="flex flex-col gap-3 space-y-0 lg:flex-row lg:items-start lg:justify-between">
-					<div className="min-w-0">
-						<CardTitle>Organization Mappings</CardTitle>
-						<CardDescription>
-							Configure how each organization maps to external
-							entities
-						</CardDescription>
-					</div>
-					{/* Auto-Match Controls in header */}
-					{hasDataProvider &&
-						canManageAllMappings &&
-						orgsWithMappings.length > 0 && (
-							<AutoMatchControls
-								onRunAutoMatch={onRunAutoMatch}
-								onAcceptAll={onAcceptAllSuggestions}
-								onClear={onClearSuggestions}
-								matchStats={matchStats}
-								hasSuggestions={autoMatchSuggestions.size > 0}
-								isMatching={isMatching}
-								disabled={
-									isLoadingEntities ||
-									isEntitiesError ||
-									isFetchingEntities
-								}
-							/>
-						)}
-				</CardHeader>
-				{orgsWithMappings.length > 0 && (
-					<div className="px-(--card-spacing)">
-						<MappingListToolbar
-							value={mappingSearch}
-							totalCount={orgsWithMappings.length}
-							filteredCount={filteredOrgs.length}
-							onChange={setMappingSearch}
-							onClear={() => setMappingSearch("")}
-						/>
-					</div>
-				)}
-			</div>
-			<CardContent>
-				{isEntitiesError && (
-					<div
-						role="alert"
-						className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-[var(--bf-radius-control)] bg-[var(--bf-warning-soft)] p-3 text-sm text-[var(--bf-warning)]"
-					>
-						<p>
-							Unable to load external entities. Retry to select or
-							match organizations.
-						</p>
-						{onRetryEntities && (
-							<Button
-								type="button"
-								variant="outline"
-								className="min-h-11"
-								disabled={isFetchingEntities}
-								onClick={onRetryEntities}
+			{orgsWithMappings.length > 0 && (
+				<div className="sticky top-0 z-20 bg-card">
+					<ListToolbar className="gap-0 border-b border-border/70 bg-muted/20 p-0">
+						<div className="w-full shrink-0 border-b border-border/70 sm:w-44 sm:self-stretch xl:w-56 sm:border-b-0 sm:border-r">
+							<Select
+								value={activeStatus}
+								onValueChange={(value) => {
+									setMappingStatus(value as MappingStatus);
+									setOffset(0);
+								}}
 							>
-								{isFetchingEntities
-									? "Retrying…"
-									: "Retry entities"}
-							</Button>
-						)}
-					</div>
-				)}
-				{orgsWithMappings.length === 0 ? (
-					<div className="flex flex-col items-center justify-center py-12 text-center">
-						<LinkIcon className="h-12 w-12 text-muted-foreground" />
-						<h3 className="mt-4 text-lg font-semibold">
-							No organizations available
-						</h3>
-						<p className="mt-2 text-sm text-muted-foreground">
-							Create organizations first to set up mappings
-						</p>
-					</div>
-				) : (
-					<>
-						{!hasDataProvider && (
-							<div className="mb-4 rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/30 p-3 text-sm text-muted-foreground">
-								<p>
-									No data provider is configured, so
-									auto-match is unavailable for this
-									integration. Enter entity IDs manually and
-									use Configure for organization-specific
-									settings.
-								</p>
+								<SelectTrigger
+									aria-label="Mapping Status"
+									className="h-full min-h-12 w-full rounded-none border-0 bg-transparent px-4 py-2 shadow-none hover:bg-muted/50 focus-visible:ring-inset"
+								>
+									<SelectValue />
+								</SelectTrigger>
+								<SelectContent>
+									{statusOptions.map((option) => (
+										<SelectItem
+											key={option.value}
+											value={option.value}
+										>
+											{option.label}
+											<span className="text-xs tabular-nums text-muted-foreground">
+												{statusCounts[option.value]}
+											</span>
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+						</div>
+						<div className="flex min-w-0 flex-1 flex-wrap items-center">
+							<div className="relative min-w-0 w-full max-sm:m-3 max-sm:w-[calc(100%-1.5rem)] sm:min-w-40 sm:flex-1">
+								<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+								<Input
+									type="search"
+									value={mappingSearch}
+									onChange={(event) => {
+										setMappingSearch(event.target.value);
+										setOffset(0);
+									}}
+									aria-label="Search organization mappings"
+									placeholder="Search names, IDs, or tags..."
+									className="h-10 pl-9 pr-10 sm:h-12 sm:rounded-none sm:border-0 sm:bg-transparent sm:shadow-none sm:focus-visible:ring-inset md:h-12"
+								/>
+								{mappingSearch.trim().length > 0 && (
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className="absolute right-1 top-1/2 size-8 -translate-y-1/2"
+										aria-label="Clear mapping search"
+										onClick={() => {
+											setMappingSearch("");
+											setOffset(0);
+										}}
+									>
+										<X className="size-4" />
+									</Button>
+								)}
 							</div>
-						)}
-						{filteredOrgs.length === 0 ? (
-							<div className="flex flex-col items-center justify-center rounded-[var(--bf-radius-control)] border border-dashed border-border/70 px-4 py-10 text-center">
-								<h3 className="text-base font-semibold">
-									No mappings match your search
-								</h3>
-								<p className="mt-2 text-sm text-muted-foreground">
-									Try another organization or external entity
-									name.
-								</p>
+							<div className="flex min-w-0 items-stretch self-stretch max-sm:w-full max-sm:border-t max-sm:border-border/70 sm:ml-auto sm:border-l sm:border-border/70">
+								<TagFilter
+									tags={knownTags}
+									value={tagFilter}
+									onChange={(value) => {
+										setTagFilter(value);
+										setOffset(0);
+									}}
+									className="h-auto min-h-12 flex-1 rounded-none border-0 bg-transparent px-4 shadow-none hover:bg-muted/50 focus-visible:ring-inset sm:w-36 sm:flex-none lg:min-h-12 xl:w-44"
+								/>
+								{showAutoMatch && (
+									<WorkspacePrimaryAction
+										onClick={() => onRunAutoMatch()}
+										disabled={
+											entityControlsDisabled || isMatching
+										}
+									>
+										<Wand2 className="size-4" />
+										{isMatching
+											? "Matching..."
+											: "Auto-Match"}
+									</WorkspacePrimaryAction>
+								)}
+							</div>
+						</div>
+					</ListToolbar>
+				</div>
+			)}
+			{!hasDataProvider && orgsWithMappings.length > 0 && (
+				<p className="border-b border-border/70 px-4 py-2 text-sm text-muted-foreground">
+					Auto-match is unavailable without a data provider. Enter
+					entity IDs manually.
+				</p>
+			)}
+			{isEntitiesError && (
+				<div
+					role="alert"
+					className="flex flex-wrap items-center justify-between gap-3 border-b border-border/70 bg-[var(--bf-warning-soft)] px-4 py-2 text-sm text-[var(--bf-warning)]"
+				>
+					<p>
+						Unable to load external entities. Retry to select or
+						match organizations.
+					</p>
+					{onRetryEntities && (
+						<Button
+							type="button"
+							variant="outline"
+							size="sm"
+							className="h-9"
+							disabled={isFetchingEntities}
+							onClick={onRetryEntities}
+						>
+							{isFetchingEntities
+								? "Retrying…"
+								: "Retry entities"}
+						</Button>
+					)}
+				</div>
+			)}
+			{activeStatus === "suggested" && (
+				<div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 bg-muted/20 px-4 py-2">
+					<p className="min-w-0 basis-full text-sm sm:basis-0 sm:flex-1">
+						<Wand2 className="mr-2 inline size-4 text-primary" />
+						{suggestionCount === 1
+							? "1 suggested match."
+							: `${suggestionCount} suggested matches.`}{" "}
+						<span className="text-muted-foreground">
+							Accept or reject each row, or accept them all.
+						</span>
+					</p>
+					<div className="flex items-center gap-2">
+						<Button
+							type="button"
+							variant="ghost"
+							size="sm"
+							className="h-9"
+							onClick={onClearSuggestions}
+							disabled={entityControlsDisabled}
+						>
+							Clear
+						</Button>
+						<Button
+							type="button"
+							size="sm"
+							className="h-9"
+							onClick={onAcceptAllSuggestions}
+							disabled={entityControlsDisabled}
+						>
+							<Check className="size-4" />
+							Accept All ({matchStats?.matched ?? suggestionCount}
+							)
+						</Button>
+					</div>
+				</div>
+			)}
+			{orgsWithMappings.length === 0 ? (
+				<div className="flex flex-col items-center justify-center px-4 py-12 text-center">
+					<LinkIcon className="h-12 w-12 text-muted-foreground" />
+					<h3 className="mt-4 text-lg font-semibold">
+						No organizations available
+					</h3>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Create organizations first to set up mappings
+					</p>
+				</div>
+			) : filteredOrgs.length === 0 ? (
+				<div className="px-4 py-10 text-center">
+					<h3 className="text-base font-semibold">
+						No mappings match your search
+					</h3>
+					<p className="mt-2 text-sm text-muted-foreground">
+						Try another organization, external entity, or tag.
+					</p>
+				</div>
+			) : (
+				<ul
+					className="divide-y divide-border/70"
+					aria-label="Organization mappings"
+				>
+					{pageOrgs.map((org) => (
+						<IntegrationMappingRecord
+							key={org.id}
+							org={org}
+							availableEntities={availableEntitiesByOrg.get(
+								org.id,
+							)!}
+							hasNonDefaultConfig={hasNonDefaultConfig(org)}
+							hasDataProvider={hasDataProvider}
+							autoMatchSuggestions={autoMatchSuggestions}
+							onAcceptSuggestion={onAcceptSuggestion}
+							onRejectSuggestion={onRejectSuggestion}
+							onUpdateOrgMapping={onUpdateOrgMapping}
+							isLoadingEntities={isLoadingEntities}
+							isEntitiesError={isEntitiesError}
+							hasOAuth={hasOAuth}
+							onRefreshMapping={onRefreshMapping}
+							onConnectMapping={onConnectMapping}
+							onOpenConfigDialog={onOpenConfigDialog}
+							onDisconnectMapping={onDisconnectMapping}
+							onDeleteMapping={onDeleteMapping}
+							isDeletePending={isDeletePending}
+							pendingMappingAction={pendingMappingAction}
+							isActionPending={isActionPending}
+							canManage={canManageMapping(org.id)}
+							reviewing={suggestionCount > 0}
+						/>
+					))}
+				</ul>
+			)}
+			{orgsWithMappings.length > 0 && (
+				<PaginationFooter
+					aria-label="Mapping pagination"
+					className="border-t border-border/70 px-4 !py-2"
+					summary={
+						<span className="flex flex-wrap items-center gap-x-3 gap-y-1">
+							<span>{countLabel}</span>
+							{totalPages > 1 && (
+								<span>
+									Page {pageOffset / pageSize + 1} of{" "}
+									{totalPages}
+								</span>
+							)}
+							{hasFilters && (
 								<Button
 									type="button"
-									variant="outline"
-									className="mt-4 min-h-11"
-									onClick={() => setMappingSearch("")}
+									variant="ghost"
+									size="sm"
+									className="h-8"
+									onClick={clearFilters}
 								>
-									Clear search
+									Clear Filters
 								</Button>
-							</div>
-						) : (
-							<ul
-								className="divide-y"
-								aria-label="Organization mappings"
-							>
-								{filteredOrgs.map((org) => {
-									// Filter out entities already mapped to other orgs
-									const usedEntityIds = orgsWithMappings
-										.filter(
-											(o) =>
-												o.id !== org.id &&
-												o.formData.entity_id,
-										)
-										.map((o) => o.formData.entity_id);
-									const availableEntities = entities.filter(
-										(e) =>
-											e.value ===
-												org.formData.entity_id ||
-											!usedEntityIds.includes(e.value),
-									);
-
-									return (
-										<IntegrationMappingRecord
-											key={org.id}
-											org={org}
-											availableEntities={
-												availableEntities
-											}
-											hasNonDefaultConfig={hasNonDefaultConfig(
-												org,
-											)}
-											hasDataProvider={hasDataProvider}
-											autoMatchSuggestions={
-												autoMatchSuggestions
-											}
-											onAcceptSuggestion={
-												onAcceptSuggestion
-											}
-											onRejectSuggestion={
-												onRejectSuggestion
-											}
-											onUpdateOrgMapping={
-												onUpdateOrgMapping
-											}
-											isLoadingEntities={
-												isLoadingEntities
-											}
-											isEntitiesError={isEntitiesError}
-											hasOAuth={hasOAuth}
-											onRefreshMapping={onRefreshMapping}
-											onConnectMapping={onConnectMapping}
-											onOpenConfigDialog={
-												onOpenConfigDialog
-											}
-											onDisconnectMapping={
-												onDisconnectMapping
-											}
-											onDeleteMapping={onDeleteMapping}
-											isDeletePending={isDeletePending}
-											pendingMappingAction={
-												pendingMappingAction
-											}
-											isActionPending={isActionPending}
-											canManage={canManageMapping(org.id)}
-										/>
-									);
-								})}
-							</ul>
-						)}
-					</>
-				)}
-			</CardContent>
-		</Card>
-	);
-}
-
-function MappingListToolbar({
-	value,
-	totalCount,
-	filteredCount,
-	onChange,
-	onClear,
-}: {
-	value: string;
-	totalCount: number;
-	filteredCount: number;
-	onChange: (value: string) => void;
-	onClear: () => void;
-}) {
-	const hasSearch = value.trim().length > 0;
-
-	return (
-		<div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-			<div className="relative min-w-0 sm:max-w-sm sm:flex-1">
-				<Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-				<Input
-					type="search"
-					value={value}
-					onChange={(event) => onChange(event.target.value)}
-					aria-label="Search organization mappings"
-					placeholder="Search mappings..."
-					className="pl-9 pr-10"
+							)}
+						</span>
+					}
+					showControls={totalPages > 1}
+					previousDisabled={pageOffset === 0}
+					nextDisabled={pageOffset / pageSize + 1 >= totalPages}
+					onPrevious={() =>
+						setOffset(Math.max(0, pageOffset - pageSize))
+					}
+					onNext={() => setOffset(pageOffset + pageSize)}
 				/>
-				{hasSearch && (
-					<Button
-						type="button"
-						variant="ghost"
-						size="icon"
-						className="absolute right-1 top-1/2 size-9 -translate-y-1/2"
-						aria-label="Clear mapping search"
-						onClick={onClear}
-					>
-						<X className="size-4" />
-					</Button>
-				)}
-			</div>
-			<p className="text-sm text-muted-foreground">
-				{hasSearch
-					? `${filteredCount} of ${totalCount} mappings`
-					: `${totalCount} mappings`}
-			</p>
-		</div>
+			)}
+		</section>
 	);
 }
 
@@ -482,6 +631,7 @@ function IntegrationMappingRecord({
 	pendingMappingAction,
 	isActionPending,
 	canManage,
+	reviewing,
 }: Pick<
 	IntegrationMappingsTabProps,
 	| "hasDataProvider"
@@ -505,6 +655,7 @@ function IntegrationMappingRecord({
 	hasNonDefaultConfig: boolean;
 	isActionPending: boolean;
 	canManage: boolean;
+	reviewing: boolean;
 }) {
 	const connectionState = getConnectionState(org);
 	const isConnectPending =
@@ -518,29 +669,155 @@ function IntegrationMappingRecord({
 		pendingMappingAction.action === "refresh";
 	const isRowLocked = !canManage || isActionPending || isDeletePending;
 
+	const suggestion = autoMatchSuggestions.get(org.id);
+
 	return (
 		/*
-		 * `relative` is load-bearing: the `lg:sr-only` field labels below are
-		 * `position: absolute`, and without a positioned ancestor they resolve
-		 * their containing block to the initial containing block. They would then
-		 * escape the tab's scroll clipping and inflate the document, producing a
-		 * phantom page scroll past the app shell.
+		 * Name and a details line on the left; the entity picker, review
+		 * actions, and menu sit in fixed slots on the right so they align on
+		 * every row. Phones stack the picker under the name.
 		 */
-		<li className="relative grid min-w-0 gap-3 py-4 first:pt-0 last:pb-0 lg:grid-cols-[minmax(7rem,0.8fr)_minmax(10rem,1.4fr)_minmax(6rem,0.55fr)_minmax(8rem,0.85fr)_auto] lg:items-center">
-			<section className="min-w-0 space-y-1">
-				<h3 className="min-w-0 font-medium [overflow-wrap:anywhere]">
+		<li
+			className={cn(
+				"grid min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-x-4 gap-y-2 px-4 py-3",
+				reviewing
+					? "lg:grid-cols-[minmax(10rem,1fr)_minmax(14rem,1fr)_7rem_2.25rem]"
+					: "lg:grid-cols-[minmax(10rem,1fr)_minmax(14rem,1fr)_2.25rem]",
+			)}
+		>
+			<div className="min-w-0">
+				<h3 className="min-w-0 text-sm font-medium [overflow-wrap:anywhere]">
 					{org.name}
 				</h3>
-				{!canManage && (
-					<Badge variant="outline" className="text-xs">
-						Read Only
-					</Badge>
+				<div className="mt-0.5 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
+					{suggestion ? (
+						<span className="font-medium text-primary">
+							Suggested Match
+						</span>
+					) : org.mapping ? (
+						<span className="inline-flex items-center gap-1 font-medium text-[var(--bf-success)]">
+							<CheckCircle2 className="size-3" />
+							<span>Mapped</span>
+						</span>
+					) : org.formData.entity_id ? (
+						<span className="font-medium text-foreground">New</span>
+					) : (
+						<span>Not Mapped</span>
+					)}
+					{hasOAuth && (
+						<>
+							<span aria-hidden="true">·</span>
+							{connectionState === "connected" ? (
+								<span>
+									<span className="font-medium text-[var(--bf-success)]">
+										Connected
+									</span>{" "}
+									{formatTimeUntil(
+										org.mapping?.connection_expires_at ??
+											null,
+									).toLocaleLowerCase()}
+								</span>
+							) : connectionState === "failed" ? (
+								<span className="text-destructive [overflow-wrap:anywhere]">
+									<span className="font-medium">Failed</span>
+									{org.mapping?.connection_message && (
+										<>: {org.mapping.connection_message}</>
+									)}
+								</span>
+							) : connectionState === "expired" ? (
+								<span className="text-destructive">
+									<span className="font-medium">Expired</span>{" "}
+									- reconnect required
+								</span>
+							) : (
+								<span>Not connected</span>
+							)}
+						</>
+					)}
+					{!canManage && (
+						<>
+							<span aria-hidden="true">·</span>
+							<span>Read Only</span>
+						</>
+					)}
+				</div>
+				<OrganizationTagList tags={org.tags} className="mt-1.5" />
+			</div>
+			<div className="col-start-2 row-start-1 flex justify-end lg:order-last lg:col-start-auto lg:row-start-auto">
+				{canManage && (
+					<RecordActionsMenu
+						label={`Mapping actions for ${org.name}`}
+					>
+						<DropdownMenuItem
+							disabled={isRowLocked}
+							onSelect={() => onOpenConfigDialog(org.id)}
+						>
+							<Settings className="size-4" /> Configure
+							{hasNonDefaultConfig && (
+								<span
+									className="ml-auto size-2 shrink-0 rounded-full bg-primary"
+									aria-label="Custom configuration"
+								/>
+							)}
+						</DropdownMenuItem>
+						{hasOAuth && connectionState !== "connected" && (
+							<DropdownMenuItem
+								disabled={isRowLocked || isConnectPending}
+								onSelect={() => onConnectMapping(org)}
+							>
+								{isConnectPending ? (
+									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								) : (
+									<LinkIcon className="size-4" />
+								)}
+								{isConnectPending
+									? getConnectionActionPendingLabel(
+											connectionState,
+										)
+									: getConnectionActionLabel(connectionState)}
+							</DropdownMenuItem>
+						)}
+						{hasOAuth && connectionState === "connected" && (
+							<DropdownMenuItem
+								disabled={isRowLocked || isRefreshPending}
+								onSelect={() => onRefreshMapping(org)}
+							>
+								{isRefreshPending ? (
+									<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
+								) : (
+									<RefreshCw className="size-4" />
+								)}
+								{isRefreshPending
+									? "Refreshing…"
+									: "Refresh token"}
+							</DropdownMenuItem>
+						)}
+						{org.mapping?.oauth_token_id && (
+							<DropdownMenuItem
+								disabled={isRowLocked || isDisconnectPending}
+								onSelect={() => onDisconnectMapping(org)}
+							>
+								<PlugZap className="size-4" />
+								{isDisconnectPending
+									? "Disconnecting…"
+									: "Disconnect"}
+							</DropdownMenuItem>
+						)}
+						<DropdownMenuSeparator />
+						<DropdownMenuItem
+							variant="destructive"
+							disabled={!org.mapping || isRowLocked}
+							onSelect={() => onDeleteMapping(org)}
+						>
+							<Unlink className="size-4" /> Unlink
+						</DropdownMenuItem>
+					</RecordActionsMenu>
 				)}
-			</section>
-			<fieldset disabled={isRowLocked} className="min-w-0 space-y-1">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
-					External entity
-				</h4>
+			</div>
+			<fieldset
+				disabled={isRowLocked}
+				className="col-span-2 min-w-0 lg:col-span-1"
+			>
 				{!hasDataProvider ? (
 					<ManualEntityIdInput
 						orgId={org.id}
@@ -548,174 +825,47 @@ function IntegrationMappingRecord({
 						onCommit={onUpdateOrgMapping}
 						disabled={!canManage}
 					/>
-				) : autoMatchSuggestions.has(org.id) ? (
-					<MatchSuggestionBadge
-						suggestion={autoMatchSuggestions.get(org.id)!}
-						onAccept={() => onAcceptSuggestion(org.id)}
-						onReject={() => onRejectSuggestion(org.id)}
-						disabled={!canManage}
-					/>
 				) : (
 					<EntitySelector
+						aria-label={`External entity for ${org.name}`}
 						entities={availableEntities}
-						value={org.formData.entity_id}
-						onChange={(value, label) =>
-							onUpdateOrgMapping(org.id, value, label)
-						}
+						value={suggestion?.entityId ?? org.formData.entity_id}
+						onChange={(value, label) => {
+							if (suggestion) {
+								onRejectSuggestion(org.id);
+								if (!value) return;
+							}
+							onUpdateOrgMapping(org.id, value, label);
+						}}
 						isLoading={isLoadingEntities}
 						isError={isEntitiesError}
 						disabled={!canManage}
 						placeholder="Select entity..."
+						className={cn(
+							suggestion &&
+								(isHighConfidence(suggestion)
+									? "border-[var(--bf-success)]/50 bg-[var(--bf-success-soft)]"
+									: "border-[var(--bf-warning)]/50 bg-[var(--bf-warning-soft)]"),
+						)}
 					/>
 				)}
 			</fieldset>
-			<section className="flex min-w-0 items-center">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
-					Mapping status
-				</h4>
-				{org.mapping ? (
-					<Badge
-						variant="default"
-						className="shrink-0 border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]"
-					>
-						<CheckCircle2 className="h-3 w-3 mr-1" />
-						Mapped
-					</Badge>
-				) : org.formData.entity_id ? (
-					<Badge variant="secondary" className="shrink-0">
-						<Plus className="h-3 w-3 mr-1" />
-						New
-					</Badge>
-				) : (
-					<Badge variant="outline" className="shrink-0">
-						Not Mapped
-					</Badge>
-				)}
-			</section>
-			<section className="flex min-w-0 flex-col items-start gap-1">
-				<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
-					Connection
-				</h4>
-				{!hasOAuth ? (
-					<span className="text-xs text-muted-foreground">
-						OAuth not configured
-					</span>
-				) : connectionState === "connected" ? (
-					<div className="flex flex-wrap items-center gap-2">
-						<Badge className="shrink-0 border-[var(--bf-success)]/20 bg-[var(--bf-success-soft)] text-[var(--bf-success)]">
-							Connected
-						</Badge>
-						<span className="text-xs text-muted-foreground">
-							{formatTimeUntil(
-								org.mapping?.connection_expires_at ?? null,
-							)}
-						</span>
-					</div>
-				) : connectionState === "failed" ? (
-					<>
-						<Badge variant="destructive" className="shrink-0">
-							Failed
-						</Badge>
-						{org.mapping?.connection_message && (
-							<p className="text-sm text-destructive [overflow-wrap:anywhere]">
-								{org.mapping.connection_message}
-							</p>
-						)}
-					</>
-				) : connectionState === "expired" ? (
-					<>
-						<Badge variant="destructive" className="shrink-0">
-							Expired
-						</Badge>
-						<p className="text-sm text-destructive">
-							Token expired - reconnect required
-						</p>
-					</>
-				) : (
-					<span className="text-xs text-muted-foreground">
-						Not connected
-					</span>
-				)}
-			</section>
-			{canManage && (
-				<section className="min-w-0 space-y-1 lg:justify-self-end">
-					<h4 className="text-[11px] font-medium uppercase tracking-normal text-muted-foreground lg:sr-only">
-						Actions
-					</h4>
-					<div className="flex flex-wrap gap-2 lg:justify-end">
-						<RecordActionsMenu
-							label={`Mapping actions for ${org.name}`}
-						>
-							<DropdownMenuItem
-								disabled={isRowLocked}
-								onSelect={() => onOpenConfigDialog(org.id)}
-							>
-								<Settings className="size-4" /> Configure
-								{hasNonDefaultConfig && (
-									<span
-										className="ml-auto size-2 shrink-0 rounded-full bg-primary"
-										aria-label="Custom configuration"
-									/>
-								)}
-							</DropdownMenuItem>
-							{hasOAuth && connectionState !== "connected" && (
-								<DropdownMenuItem
-									disabled={isRowLocked || isConnectPending}
-									onSelect={() => onConnectMapping(org)}
-								>
-									{isConnectPending ? (
-										<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-									) : (
-										<LinkIcon className="size-4" />
-									)}
-									{isConnectPending
-										? getConnectionActionPendingLabel(
-												connectionState,
-											)
-										: getConnectionActionLabel(
-												connectionState,
-											)}
-								</DropdownMenuItem>
-							)}
-							{hasOAuth && connectionState === "connected" && (
-								<DropdownMenuItem
-									disabled={isRowLocked || isRefreshPending}
-									onSelect={() => onRefreshMapping(org)}
-								>
-									{isRefreshPending ? (
-										<Loader2 className="size-4 animate-spin motion-reduce:animate-none" />
-									) : (
-										<RefreshCw className="size-4" />
-									)}
-									{isRefreshPending
-										? "Refreshing…"
-										: "Refresh token"}
-								</DropdownMenuItem>
-							)}
-							{org.mapping?.oauth_token_id && (
-								<DropdownMenuItem
-									disabled={
-										isRowLocked || isDisconnectPending
-									}
-									onSelect={() => onDisconnectMapping(org)}
-								>
-									<PlugZap className="size-4" />
-									{isDisconnectPending
-										? "Disconnecting…"
-										: "Disconnect"}
-								</DropdownMenuItem>
-							)}
-							<DropdownMenuSeparator />
-							<DropdownMenuItem
-								variant="destructive"
-								disabled={!org.mapping || isRowLocked}
-								onSelect={() => onDeleteMapping(org)}
-							>
-								<Unlink className="size-4" /> Unlink
-							</DropdownMenuItem>
-						</RecordActionsMenu>
-					</div>
-				</section>
+			{reviewing && (
+				<div
+					className={cn(
+						"col-span-2 lg:col-span-1",
+						!suggestion && "hidden lg:block",
+					)}
+				>
+					{suggestion && (
+						<MatchSuggestionActions
+							suggestion={suggestion}
+							onAccept={() => onAcceptSuggestion(org.id)}
+							onReject={() => onRejectSuggestion(org.id)}
+							disabled={isRowLocked}
+						/>
+					)}
+				</div>
 			)}
 		</li>
 	);

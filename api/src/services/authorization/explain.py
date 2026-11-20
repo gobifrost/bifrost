@@ -17,7 +17,6 @@ from typing import Any, Literal
 from uuid import UUID
 
 from sqlalchemy import select
-from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from shared.access_checks import ALL_ORGS, NoteTarget
@@ -33,7 +32,7 @@ from src.models.orm.workflows import Workflow
 from src.services.authorization.context import (
     AuthorizationContext,
     BoundaryKind,
-    build_authorization_context,
+    authorization_context_for_user_row,
 )
 from src.services.authorization.enforce import privileged_user_ids
 from src.services.authorization.evaluator import HOME, GLOBAL, Target, cross_org, decide
@@ -450,16 +449,26 @@ def check_secret(run_user: RunUser, powers: Powers | None, target: UUID | None, 
 async def load_run_user(db: AsyncSession, user_id: UUID) -> RunUser | None:
     """The run user's authorization context; None when the user no longer exists."""
     row = (
-        await db.execute(select(User.identity_kind, User.is_active).where(User.id == user_id))
+        await db.execute(
+            select(
+                User.identity_kind,
+                User.is_active,
+                User.organization_id,
+                User.base_role_id,
+                User.is_external,
+            ).where(User.id == user_id)
+        )
     ).one_or_none()
     if row is None:
         return None
-    try:
-        ctx = await build_authorization_context(db, user_id)
-    except NoResultFound:
-        # Deleted between the two reads.
-        return None
-    kind, is_active = row
+    kind, is_active, home_organization_id, base_role_id, is_external = row
+    ctx = await authorization_context_for_user_row(
+        db,
+        user_id,
+        home_organization_id=home_organization_id,
+        base_role_id=base_role_id,
+        is_external=is_external,
+    )
     return RunUser(user_id=user_id, ctx=ctx, identity_kind=None if kind is None else str(kind), is_active=is_active)
 
 

@@ -1,0 +1,14 @@
+{
+  "key": "pr:1456",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine numeric table-query repair restores expected behavior; no new user-facing feature or breaking contract. Also corrects announcement-selection guidance.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1456",
+      "https://github.com/gobifrost/bifrost/issues/1455",
+      "Jack clarified in the existing owner that Product Updates are for user-facing features or breaking changes, and requested this PR correct the guidance that recommended a routine-fix announcement. This supersedes prior approval of the fix note."
+    ]
+  }
+}

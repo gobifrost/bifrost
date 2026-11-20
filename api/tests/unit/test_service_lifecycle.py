@@ -104,6 +104,33 @@ async def _default_identity_id(db_session, organization_id):
     )
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("operation", ["heartbeat_attempt", "mark_attempt_ready", "complete_attempt"])
+async def test_owner_rejects_lease_expired_during_remote_fence(db_session, monkeypatch, operation):
+    from src.worker.remote import fencing
+
+    start = datetime(2026, 10, 28, tzinfo=timezone.utc)
+    await _ensure(db_session)
+    attempt = await service_lifecycle.claim_eligible_service(
+        db_session, worker_id="owner", fits_bytes=AMPLE, now=start,
+    )
+    assert attempt is not None
+    clock = start
+    monkeypatch.setattr(service_lifecycle, "_now", lambda: clock)
+
+    async def delayed_fence(db):
+        nonlocal clock
+        clock = start + timedelta(seconds=61)
+        return True
+
+    monkeypatch.setattr(fencing, "fence_remote_owner", delayed_fence)
+    kwargs = {"reason": "clean_return"} if operation == "complete_attempt" else {}
+    with pytest.raises(StaleLeaseError):
+        await getattr(service_lifecycle, operation)(
+            db_session, attempt_id=attempt.id, lease_token=attempt.lease_token, **kwargs,
+        )
+
+
 # --- Definitions ---
 
 

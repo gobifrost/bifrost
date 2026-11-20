@@ -1,10 +1,4 @@
-"""
-{{ title }} - Python SDK
-
-Auto-generated from OpenAPI spec with Bifrost integration support.
-Integration: {{ integration_name }}
-Auth Type: {{ auth_type }}
-"""
+{{ module_docstring | pystr }}
 
 from __future__ import annotations
 
@@ -68,7 +62,7 @@ class SDKError(Exception):
 @dataclass
 class {{ model.name }}:
 {% if model.description %}
-    """{{ model.description }}"""
+    {{ model.description | pystr }}
 {% endif %}
 {% if not model.fields %}
     pass
@@ -84,7 +78,7 @@ class {{ model.name }}:
             return None
         return cls(**{
 {% for field in model.fields %}
-            '{{ field.name }}': data.get('{{ field.original_name }}'),
+            '{{ field.name }}': data.get({{ field.original_name | pystr }}),
 {% endfor %}
         })
 {% endif %}
@@ -175,8 +169,8 @@ class _{{ class_name }}Client:
 
 {% for method in methods %}
     def {{ method.name }}(self, {{ method.params }}) -> {{ method.return_type }}:
-        """{{ method.summary }}"""
-        url = f"{self.base_url}{{ method.url_template }}"
+        {{ method.summary | pystr }}
+        url = {{ method.url_expression }}
 {% if method.http_method in ['post', 'put', 'patch'] %}
         response = self._request_with_retry("{{ method.http_method | upper }}", url, json=data, params=kwargs)
 {% else %}
@@ -184,21 +178,18 @@ class _{{ class_name }}Client:
 {% endif %}
         try:
             response.raise_for_status()
-        except requests.exceptions.HTTPError as e:
-            body = e.response.text[:1000] if e.response else "No response body"
+        except requests.exceptions.HTTPError:
             raise SDKError(
-                f"HTTP {e.response.status_code}: {body}",
-                status_code=e.response.status_code,
-                response_body=body,
-            )
+                f"HTTP {response.status_code}",
+                status_code=response.status_code,
+            ) from None
         try:
             result = response.json() if response.content else None
         except requests.exceptions.JSONDecodeError:
             raise SDKError(
-                f"Invalid JSON response (HTTP {response.status_code}): {response.text[:500]}",
+                f"Invalid JSON response (HTTP {response.status_code})",
                 status_code=response.status_code,
-                response_body=response.text[:1000],
-            )
+            ) from None
         return self._auto_convert(result)
 
 {% endfor %}
@@ -218,7 +209,7 @@ class _LazyClient:
     updates select a new current-thread client immediately.
     """
 
-    _integration_name: str = "{{ integration_name }}"
+    _integration_name: str = {{ integration_name | pystr }}
     _auth_type: str = "{{ auth_type }}"
 
     def __init__(self):

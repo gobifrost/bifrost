@@ -839,10 +839,19 @@ class tables:
         - IN lists: {"category": {"in_": ["a", "b"]}}
         - NULL checks: {"deleted_at": {"is_null": True}}
 
+        Numeric range operands match only JSON numbers; string range operands
+        retain text comparison (including ISO timestamp strings). Field filters
+        and ordering may scan/sort the table's documents without a matching
+        index; document_id_prefix can bound candidate IDs, but a small limit
+        alone does not bound scan cost. Prefix reads use document-ID ordering
+        and cannot combine with order_by. Authorization still scopes visible rows.
+
         Args:
             table: Table name or UUID.
             where: Filter conditions with optional operators.
-            order_by: Field name to order by (JSONB field).
+            order_by: JSONB field to order by. Numbers sort numerically before
+                other values ascending; other values use text ordering.
+                Null/missing values sort last ascending, first descending.
             order_dir: "asc" or "desc".
             limit: Maximum documents to return (default 100).
             offset: Number of documents to skip.

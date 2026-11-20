@@ -40,6 +40,8 @@ class events:
         Args:
             topic: Lowercase string, dot-separated (e.g. "acme.deal_won").
                    Validated server-side: ^[a-z0-9_.]+$, must contain a dot.
+                   Built-in Bifrost topics (e.g. "user.signed_in") are
+                   reserved and refused.
             data: JSON-serializable payload. Available to subscribers via
                   context.event.data.
             scope: Organization scope override. Omit to use the execution

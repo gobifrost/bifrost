@@ -8,13 +8,16 @@ module intentionally contains no HTTP, database, ORM, or provider imports.
 
 from __future__ import annotations
 
+import importlib
 import json
+import sys
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
+from functools import lru_cache
 from typing import Any, cast
 
 from pydantic import TypeAdapter, ValidationError
@@ -97,8 +100,6 @@ _PROFILE_BOOL_FIELDS = frozenset(
     }
 )
 _PROFILE_OPTIONAL_INT_FIELDS = frozenset({"context_window", "tool_call_id_length"})
-_PROFILE_TRANSFORMERS: dict[str, type[object]]
-_PROFILE_TRANSFORMER_IDS: dict[type[object], str]
 _NATIVE_TOOL_IDS: dict[type[object], str] = {
     tool: f"{tool.__module__}:{tool.__qualname__}" for tool in SUPPORTED_NATIVE_TOOLS
 }
@@ -107,40 +108,45 @@ _NATIVE_TOOLS_BY_ID = {
 }
 
 
-def _profile_transformers() -> tuple[dict[str, type[object]], dict[type[object], str]]:
-    """Return the stable transformer allowlist supported by PydanticAI 2.67."""
-
-    from pydantic_ai._json_schema import InlineDefsJsonSchemaTransformer
-    from pydantic_ai.profiles.google import (
-        GoogleJsonSchemaTransformer,
-        GoogleOpenAPISchemaTransformer,
-    )
-    from pydantic_ai.profiles.openai import (
-        OpenAIJsonSchemaTransformer,
-        _GptOssInlineDefsJsonSchemaTransformer,
-        _GptOssJsonSchemaTransformer,
-        _OpenAIGuardedJsonSchemaTransformer,
-        _OpenAIJsonSchemaTransformer,
-    )
-    from pydantic_ai.providers.anthropic import AnthropicJsonSchemaTransformer
-
-    identifiers: dict[str, type[object]] = {
-        "inline-defs": InlineDefsJsonSchemaTransformer,
-        "google": GoogleJsonSchemaTransformer,
-        "google-openapi": GoogleOpenAPISchemaTransformer,
-        "openai": OpenAIJsonSchemaTransformer,
-        "openai-gpt-oss-inline-defs": _GptOssInlineDefsJsonSchemaTransformer,
-        "openai-gpt-oss": _GptOssJsonSchemaTransformer,
-        "openai-guarded": _OpenAIGuardedJsonSchemaTransformer,
-        "openai-internal": _OpenAIJsonSchemaTransformer,
-        "anthropic": AnthropicJsonSchemaTransformer,
-    }
-    return identifiers, {
-        transformer: identifier for identifier, transformer in identifiers.items()
-    }
+# Constant wire IDs, never caller-supplied import paths. Keep provider SDKs out
+# of API codec imports; physical templates explicitly preload them before ready.
+_PROFILE_TRANSFORMER_PATHS = {
+    "inline-defs": ("pydantic_ai._json_schema", "InlineDefsJsonSchemaTransformer"),
+    "google": ("pydantic_ai.profiles.google", "GoogleJsonSchemaTransformer"),
+    "google-openapi": ("pydantic_ai.profiles.google", "GoogleOpenAPISchemaTransformer"),
+    "openai": ("pydantic_ai.profiles.openai", "OpenAIJsonSchemaTransformer"),
+    "openai-gpt-oss-inline-defs": (
+        "pydantic_ai.profiles.openai", "_GptOssInlineDefsJsonSchemaTransformer"
+    ),
+    "openai-gpt-oss": ("pydantic_ai.profiles.openai", "_GptOssJsonSchemaTransformer"),
+    "openai-guarded": ("pydantic_ai.profiles.openai", "_OpenAIGuardedJsonSchemaTransformer"),
+    "openai-internal": ("pydantic_ai.profiles.openai", "_OpenAIJsonSchemaTransformer"),
+    "anthropic": ("pydantic_ai.providers.anthropic", "AnthropicJsonSchemaTransformer"),
+}
 
 
-_PROFILE_TRANSFORMERS, _PROFILE_TRANSFORMER_IDS = _profile_transformers()
+def _profile_transformer_id(transformer: object) -> str | None:
+    # Identity against loaded SDK classes prevents a class spoofing trusted
+    # __module__/__qualname__ strings. Reverse order retains prior alias precedence.
+    for identifier, (module_name, attribute) in reversed(
+        _PROFILE_TRANSFORMER_PATHS.items()
+    ):
+        module = sys.modules.get(module_name)
+        if module is not None and getattr(module, attribute, None) is transformer:
+            return identifier
+    return None
+
+
+@lru_cache(maxsize=len(_PROFILE_TRANSFORMER_PATHS))
+def _profile_transformer(identifier: str) -> type[object]:
+    module_name, attribute = _PROFILE_TRANSFORMER_PATHS[identifier]
+    return cast(type[object], getattr(importlib.import_module(module_name), attribute))
+
+
+def preload_model_profile_transformers() -> None:
+    """Warm every supported transformer before a physical template is measured."""
+    for identifier in _PROFILE_TRANSFORMER_PATHS:
+        _profile_transformer(identifier)
 
 
 class ModelWireError(ValueError):
@@ -180,7 +186,7 @@ def serialize_model_profile(profile: ModelProfile) -> bytes:
     transformer = resolved["json_schema_transformer"]
     if transformer is None:
         transformer_id: str | None = None
-    elif transformer_id := _PROFILE_TRANSFORMER_IDS.get(transformer):
+    elif transformer_id := _profile_transformer_id(transformer):
         pass
     else:
         raise ModelWireError("model profile uses an unsupported schema transformer")
@@ -268,7 +274,7 @@ def deserialize_model_profile(payload: bytes) -> ModelProfile:
                 f"model profile field {field} must be a non-negative integer"
             )
     transformer_id = profile["json_schema_transformer"]
-    if transformer_id is not None and transformer_id not in _PROFILE_TRANSFORMERS:
+    if transformer_id is not None and transformer_id not in _PROFILE_TRANSFORMER_PATHS:
         raise ModelWireError("model profile has an unsupported schema transformer")
     native_tool_ids = profile["supported_native_tools"]
     if not isinstance(native_tool_ids, list) or not all(
@@ -299,7 +305,9 @@ def deserialize_model_profile(payload: bytes) -> ModelProfile:
     ):
         raise ModelWireError("model profile has invalid thinking tags")
     decoded = dict(profile)
-    decoded["json_schema_transformer"] = _PROFILE_TRANSFORMERS.get(transformer_id)
+    decoded["json_schema_transformer"] = (
+        _profile_transformer(transformer_id) if transformer_id is not None else None
+    )
     decoded["supported_native_tools"] = frozenset(
         _NATIVE_TOOLS_BY_ID[identifier] for identifier in native_tool_ids
     )
