@@ -128,41 +128,28 @@ from .models import (
 from ._execution_context import ExecutionContext
 from ._service_runtime import attach_service_runtime as _attach_service_runtime
 
+import typing as _typing
+
+# Type checkers analyse the platform imports below as the standalone SDK, which
+# has no `src` package. An unresolvable `from src... import` would hand these
+# names to the module __getattr__, typing them as the lazy `ai` class.
+
 # Import decorators - try platform module first, fall back to local SDK version
-try:
-    from src.sdk.decorators import workflow, data_provider, tool, service
-except ImportError:
-    # CLI/standalone mode - use local decorators
+if _typing.TYPE_CHECKING:
     from .decorators import workflow, data_provider, tool, service
-    _ = WorkflowMetadata  # noqa: F401 - re-exported from .models above
+else:
+    try:
+        from src.sdk.decorators import workflow, data_provider, tool, service
+    except ImportError:
+        # CLI/standalone mode - use local decorators
+        from .decorators import workflow, data_provider, tool, service
+        _ = WorkflowMetadata  # noqa: F401 - re-exported from .models above
 
 # Import context proxy for accessing ExecutionContext without parameter
 from ._context import context
 
-# SDK Errors - try platform module first, fall back to local definitions
-try:
-    from src.sdk.errors import UserError, WorkflowError, ValidationError, IntegrationError, ConfigurationError  # type: ignore[assignment]
-except ImportError:
-    # CLI/standalone mode - define minimal error classes
-    class UserError(Exception):  # type: ignore[no-redef]
-        """User-facing error with formatted message."""
-        pass
-
-    class WorkflowError(Exception):  # type: ignore[no-redef]
-        """Workflow execution error."""
-        pass
-
-    class ValidationError(Exception):  # type: ignore[no-redef]
-        """Validation error."""
-        pass
-
-    class IntegrationError(Exception):  # type: ignore[no-redef]
-        """Integration error."""
-        pass
-
-    class ConfigurationError(Exception):  # type: ignore[no-redef]
-        """Configuration error."""
-        pass
+# SDK Errors - shared with the platform, which re-exports them from src.sdk.errors
+from ._errors import UserError, WorkflowError, ValidationError, IntegrationError, ConfigurationError
 
 # Enums - try platform module first, fall back to local definitions
 # NOTE: We load src/models/enums.py directly via spec_from_file_location instead of
@@ -230,7 +217,12 @@ except (ImportError, ModuleNotFoundError, OSError):
 # Lazy-load the ai module on first access.
 # bifrost.ai imports openai + anthropic (~1,078 modules, ~100MB) which are only
 # needed if a workflow calls ai.complete(). Lazy loading means lightweight
-# workflows never pay this cost.
+# workflows never pay this cost. Type checkers see the class __getattr__
+# returns, not the bifrost.ai submodule of the same name.
+if _typing.TYPE_CHECKING:
+    from .ai import ai
+
+
 def __getattr__(name: str):
     if name == "ai":
         from .ai import ai
