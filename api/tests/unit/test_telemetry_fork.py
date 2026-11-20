@@ -85,7 +85,6 @@ def _isolate_global_state(monkeypatch):
     )
     for name, value in (
         ("_initialized", False),
-        ("_child_initialized", False),
         ("_meter", None),
         ("_run_started", None),
         ("_run_duration", None),
@@ -323,9 +322,13 @@ def test_launch_span_parents_on_the_dispatch_and_marks_failure(monkeypatch):
 
     with telemetry.launch_span("exec-1", {"workflow_id": "wf-1", **carrier}):
         pass
-    with pytest.raises(MemoryError):
+    raised = None
+    try:
         with telemetry.launch_span("exec-2", {}):
             raise MemoryError("Launcher memory pressure rejects fork")
+    except MemoryError as error:
+        raised = str(error)
+    assert raised == "Launcher memory pressure rejects fork"
 
     ok, failed = sink.get_finished_spans()
     assert ok.name == "workflow.launch" and ok.parent.span_id == _SPAN_ID

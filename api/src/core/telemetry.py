@@ -99,7 +99,6 @@ _DEFAULT_EXCLUDED_URLS = (
 )
 
 _initialized = False
-_child_initialized = False
 
 
 def is_enabled() -> bool:
@@ -381,8 +380,8 @@ def init_telemetry_in_child() -> bool:
 
     Idempotent, never raises, and a no-op when telemetry is disabled.
     """
-    global _child_initialized, _initialized, _child_buffer, _child_started_ns
-    if _child_initialized:
+    global _initialized, _child_buffer, _child_started_ns
+    if _child_buffer is not None:
         return True
     if not is_enabled() or _child_resource is None:
         return False
@@ -407,7 +406,6 @@ def init_telemetry_in_child() -> bool:
         return False
     _child_buffer = buffer
     _child_started_ns = started_ns
-    _child_initialized = True
     _initialized = True
     logger.debug("OpenTelemetry enabled in forked child (pid=%s)", os.getpid())
     return True

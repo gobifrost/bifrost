@@ -71,7 +71,6 @@ def test_disabled_process_preserves_work_without_telemetry(endpoint, external_pr
         assert telemetry._run_started is None
         assert telemetry._child_buffer is None
         assert not telemetry._initialized
-        assert not telemetry._child_initialized
         assert not any(name.startswith("opentelemetry.instrumentation.") or name.startswith("opentelemetry.exporter.") for name in sys.modules)
         if spans is None:
             assert not any(name == "opentelemetry.sdk" or name.startswith("opentelemetry.sdk.") for name in sys.modules)
