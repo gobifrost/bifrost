@@ -40,8 +40,7 @@ and therefore enable initialization. Configure it before starting the process;
 changing it does not uninstall an already initialized SDK.
 
 Disabled startup configures no providers, automatic instrumentation, exporter
-threads or connections, and does not change the log format. SDK types are
-still imported once per process and take resident memory; dispatch/run helpers
+threads or connections, and does not change the log format. SDK, exporter and instrumentor code stays unloaded; dispatch/run helpers
 return without recording spans or propagating context, including when another
 library has independently installed an OpenTelemetry provider.
 

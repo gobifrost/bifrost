@@ -16,12 +16,13 @@ pytest.importorskip("opentelemetry")
 
 from src.core import telemetry
 from src.core.telemetry import (
-    ScrubbingSpanExporter,
     extract_context,
     inject_traceparent,
     is_enabled,
     run_span,
 )
+
+from src.core.telemetry_sdk import ScrubbingSpanExporter
 
 _provider = None
 

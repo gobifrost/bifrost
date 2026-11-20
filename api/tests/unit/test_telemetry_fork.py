@@ -159,7 +159,9 @@ def test_child_buffers_spans_without_an_exporter(monkeypatch):
     # No exporter, thread or collector connection in the one-shot child.
     assert _FakeSpanExporter.created == []
     (processor,) = trace_api.get_tracer_provider()._active_span_processor._span_processors
-    assert isinstance(processor, telemetry._ChildSpanBuffer)
+    from src.core.telemetry_sdk import _ChildSpanBuffer
+
+    assert isinstance(processor, _ChildSpanBuffer)
 
     with trace_api.get_tracer(__name__).start_as_current_span("child.http", context=_parent_context()) as span:
         span.set_attribute("bifrost.child", True)
