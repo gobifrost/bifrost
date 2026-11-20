@@ -8,9 +8,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import json
 import logging
 import time
+from collections.abc import Awaitable
 from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
@@ -597,6 +599,11 @@ class PackageProxy(PackageInstallConsumer):
             logging.getLogger(__name__).warning("Failed to update packages in Redis: %s", exc)
 
 
+def _preload_agent_orchestration() -> None:
+    importlib.import_module("src.worker.remote.agent_orchestration")
+    importlib.import_module("src.worker.remote.summary_orchestration")
+
+
 class ApiExecutor(PoolWorker):
     """One admitted remote worker: workflows, agent runs, services and
     platform jobs, each in a launcher child."""
@@ -627,7 +634,18 @@ class ApiExecutor(PoolWorker):
 
     async def _start_executor(self) -> None:
         """Keep the canonical heartbeat alive while the launcher bootstraps."""
-        await self.bridge.inventory_ready.wait()
+        preparations: list[Awaitable[Any]] = [self.bridge.inventory_ready.wait()]
+        if self.bridge.agents is None and any(
+            capability in self.bridge.compute_capabilities
+            for capability in (("agent.loop", 1), ("summary.compute", 1))
+        ):
+            # Preload during physical bootstrap, without freezing API requests.
+            # Admission still waits for both the real inventory and the import.
+            preparations.append(asyncio.to_thread(_preload_agent_orchestration))
+        outcomes = await asyncio.gather(*preparations, return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, (Exception, asyncio.CancelledError)):
+                raise outcome
         from src.services.execution.process_pool import _notify_requirements_failures
         from src.services.execution.requirements_setup_result import RequirementsInstallResult
 
