@@ -757,19 +757,18 @@ async def test_held_resources_read_capabilities_every_pass(db, capacity):
     assert _capability_reads(capacity.provider) == 2
 
 
-async def test_rollout_while_idle_reserves_current_build_without_stranded_cleanup(db, capacity):
+async def test_rollout_while_idle_refuses_an_incompatible_build_without_reserving(db, capacity):
     await capacity.pool.reconcile()
     capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
     await _accept_pool_run()
 
-    await capacity.pool.reconcile()
+    with pytest.raises(CapacityProtocolError, match="must match the running API build"):
+        await capacity.pool.reconcile()
 
-    [resource] = capacity.provider.resources.values()
-    assert resource["worker_version"] == "next-worker"
-    assert capacity.provider.starts == [resource["worker_id"]]
+    assert capacity.provider.resources == {}
+    assert capacity.provider.starts == []
     async with db.context() as session:
-        [worker] = (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all()
-        assert (worker.state, worker.version, worker.end_reason) == ("starting", "next-worker", None)
+        assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
 
 
 async def test_provider_shrink_while_idle_leaves_no_reservation_and_recovers(db, capacity):
@@ -790,7 +789,6 @@ async def test_provider_shrink_while_idle_leaves_no_reservation_and_recovers(db,
 
 
 async def test_warm_minimum_refreshes_capabilities_before_reserving(db, capacity):
-    capacity.provider.profile = capacity.provider.profile.model_copy(update={"worker_version": "next-worker"})
     await _store_policy(db.sessions, replace(capacity.policy, warm_workers=1))
     capacity.provider.requests.clear()
 
@@ -798,7 +796,7 @@ async def test_warm_minimum_refreshes_capabilities_before_reserving(db, capacity
 
     assert capacity.provider.requests[0] == ("GET", "/v1/capabilities")
     [resource] = capacity.provider.resources.values()
-    assert resource["worker_version"] == "next-worker"
+    assert resource["worker_version"] == capacity.provider.profile.worker_version
     assert capacity.provider.starts == [resource["worker_id"]]
 
 
