@@ -189,6 +189,11 @@ class Adapter(CapacityAdapter):
 
     def release(self, ctx: Context, handle: dict) -> Observation:
         task_arns = [handle["task_arn"]] if handle.get("task_arn") else self.ecs.owned_tasks(self.cluster, ctx.worker_id)
+        if not task_arns and ctx.start_requested:
+            # RunTask may have succeeded before its response was lost and
+            # ListTasks can lag. Retain the definition and retry observation;
+            # do not invent deletion or issue another physical launch.
+            return Observation("starting", dict(handle))
         released_handle = dict(handle)
         for task_arn in task_arns:
             self.ecs.stop_task(self.cluster, task_arn)

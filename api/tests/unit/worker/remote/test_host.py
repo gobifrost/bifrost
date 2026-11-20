@@ -40,6 +40,34 @@ def startup_requirements(monkeypatch):
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("placement,profile", [
+    ("frame", "workerd-v1"), ("hello", "workerd-v1"), ("hello", "linux-process-v1"),
+])
+async def test_explicit_runtime_profiles_fail_closed_before_admission(placement, profile):
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="owned-profile-fixture", form="static",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+    )
+    signed = sign_hello("test-profile-key", hello).to_dict()
+    frame = {"event": "hello", "hello": signed}
+    if placement == "frame":
+        frame["runtime_profile"] = profile
+    else:
+        signed["runtime_profile"] = profile
+    socket = AsyncMock()
+    socket.receive_text.return_value = json.dumps(frame)
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(secret_key="test-profile-key")),
+        patch("src.worker.remote.host.get_liveness_db_context", side_effect=AssertionError("profile reached admission")) as db,
+    ):
+        with pytest.raises(AuthenticationError, match="runtime profiles are unsupported"):
+            await RemoteControlHost().connect(socket)
+    db.assert_not_called()
+    socket.close.assert_awaited_once_with(code=1008)
+
+
+@pytest.mark.asyncio
 async def test_external_fast_path_hello_is_refused_before_admission() -> None:
     hello = Hello(
         launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,

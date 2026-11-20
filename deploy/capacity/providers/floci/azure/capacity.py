@@ -138,6 +138,7 @@ class Adapter(CapacityAdapter):
         observed_handle = {**handle, "group": group}
         if found is None:
             return Observation("stopped" if handle.get("started") else "prepared", observed_handle)
+        observed_handle["started"] = True
         props = found.get("properties") or {}
         if props.get("provisioningState") == "Failed":
             return Observation("stopped", observed_handle)
@@ -150,9 +151,15 @@ class Adapter(CapacityAdapter):
 
     def release(self, ctx: Context, handle: dict) -> Observation:
         group = handle.get("group") or group_for(ctx.worker_id)
+        released_handle = {**handle, "group": group}
+        if ctx.start_requested and not handle.get("started"):
+            # A lost create reply plus a transient GET miss cannot prove that
+            # the accepted group will never appear. Keep cleanup pending.
+            if self.aci.group(group) is None:
+                return Observation("starting", released_handle)
+            released_handle["started"] = True
         self.aci.delete_group(group)
         found = self.aci.group(group)
-        released_handle = {**handle, "group": group}
         if found is None:
             return Observation("deleted", released_handle)
         props = found.get("properties") or {}
