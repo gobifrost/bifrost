@@ -425,6 +425,8 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
     assert capacity.provider.starts == []
     monkeypatch.setattr(restarted, "launch_for_demand", AsyncMock(return_value=[]))
     monkeypatch.setattr(restarted, "replace_outdated", AsyncMock())
+    later = controller._now() + external_controller.UNBOUND_LOSS_CLEANUP_GRACE
+    monkeypatch.setattr(external_controller, "_now", lambda: later)
     await restarted.reconcile()
 
     assert capacity.provider.resources[str(worker_id)]["state"] == "deleted"
@@ -432,6 +434,48 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.state == "lost"
         assert worker.capacity_resource_deleted_at is not None
+
+
+@pytest.mark.parametrize("terminal_state", ["lost", "retired"])
+async def test_unbound_absence_finality_is_limited_to_lost_rows(db, capacity, monkeypatch, terminal_state):
+    ended_at = controller._now()
+    async with db.context() as session:
+        worker = ExecutionWorker(
+            form="external", capacity_scope=capacity.provider.profile.scope,
+            state=terminal_state, ended_at=ended_at, version=capacity.provider.profile.worker_version,
+        )
+        session.add(worker)
+        await session.flush()
+        worker_id = worker.id
+    monkeypatch.setattr(capacity.pool, "launch_for_demand", AsyncMock(return_value=[]))
+    monkeypatch.setattr(capacity.pool, "replace_outdated", AsyncMock())
+    grace = external_controller.UNBOUND_LOSS_CLEANUP_GRACE
+    assert grace > timedelta(seconds=10 + controller.SWEEP_SECONDS)
+    later = ended_at + grace - timedelta(microseconds=1)
+    monkeypatch.setattr(external_controller, "_now", lambda: later)
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).capacity_resource_deleted_at is None
+
+    later = ended_at + grace
+    get = capacity.client.get
+    monkeypatch.setattr(capacity.client, "get", AsyncMock(side_effect=httpx.ReadTimeout("provider unavailable")))
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        assert (await session.get(ExecutionWorker, worker_id)).capacity_resource_deleted_at is None
+
+    monkeypatch.setattr(capacity.client, "get", get)
+    await capacity.pool.reconcile()
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker.capacity_resource_deleted_at == (later if terminal_state == "lost" else None)
+        assert worker.capacity_resource_uid is None
+    capacity.provider.requests.clear()
+    await capacity.pool.reconcile()
+    if terminal_state == "lost":
+        assert capacity.provider.requests == []
+    else:
+        assert capacity.provider.requests
 
 
 async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db, capacity):
