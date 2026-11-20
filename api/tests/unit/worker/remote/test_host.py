@@ -1087,3 +1087,46 @@ async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_for
     backend = run.await_args.kwargs["backend"]
     assert isinstance(backend, ApiAppBuildBackend)
     assert backend.bridge is executor.bridge
+
+
+@pytest.mark.asyncio
+async def test_agent_import_keeps_the_api_loop_responsive_before_admission(monkeypatch):
+    import threading
+    from src.worker.remote import host
+    from src.worker.pool_main import PoolWorker
+
+    entered, release, preloaded = threading.Event(), threading.Event(), threading.Event()
+
+    def cold_import():
+        entered.set()
+        assert release.wait(2), "API loop could not release the import"
+        preloaded.set()
+
+    executor = object.__new__(host.ApiExecutor)
+    from src.services.execution.requirements_setup_result import RequirementsInstallResult
+    inventory_ready = asyncio.Event()
+    executor.bridge = SimpleNamespace(
+        agents=None, compute_capabilities=(("agent.loop", 1),), inventory_ready=inventory_ready,
+        requirements=RequirementsInstallResult().to_json_dict(),
+    )
+    started = AsyncMock()
+    monkeypatch.setattr(host, "_preload_agent_orchestration", cold_import)
+    monkeypatch.setattr(PoolWorker, "_start_executor", started)
+    pending = asyncio.create_task(executor._start_executor())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        responsive = asyncio.Event()
+        asyncio.get_running_loop().call_soon(responsive.set)
+        await asyncio.wait_for(responsive.wait(), 2)
+        started.assert_not_awaited()
+        release.set()
+        assert await asyncio.to_thread(preloaded.wait, 2)
+        started.assert_not_awaited()
+        inventory_ready.set()
+        await asyncio.wait_for(pending, 2)
+        started.assert_awaited_once()
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)

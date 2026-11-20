@@ -1475,7 +1475,18 @@ async def _run_launcher(
                             candidate.socket = socket
                         # ``agent.loop.v1`` is advertised only after the
                         # physical pure-compute template is genuinely ready.
-                        await candidate.start_agent_compute_template()
+                        # Both profiles preload platform dependencies; the
+                        # legacy agent profile does not consume workspace
+                        # requirements. Warm it alongside pure compute so
+                        # enrollment does not serialize their cold imports.
+                        warmups = [candidate.start_agent_compute_template()]
+                        if candidate.agent_template is not None:
+                            warmups.append(asyncio.to_thread(candidate.agent_template.start))
+                        outcomes = await asyncio.gather(*warmups, return_exceptions=True)
+                        for outcome in outcomes:
+                            if isinstance(outcome, (Exception, asyncio.CancelledError)):
+                                candidate.failed = True
+                                raise outcome
                         # Enroll before the potentially minute-long requirements
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the
@@ -1518,7 +1529,8 @@ async def _run_launcher(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if launcher is not None and launcher.failed:
+                current = launcher if launcher is not None else candidate
+                if current is not None and current.failed:
                     message = "Remote launcher initialization or supervision failed"
                     level = logging.ERROR
                 else:
@@ -1529,13 +1541,14 @@ async def _run_launcher(
                     logger.log(level, "%s (%s)", message, type(exc).__name__)
                 else:
                     logger.log(level, message, exc_info=True)
-                if stopping.is_set() or (launcher is not None and launcher.failed):
+                if stopping.is_set() or (current is not None and current.failed):
                     break
                 await asyncio.sleep(1)
     finally:
-        if launcher is not None:
-            await _shutdown_launcher(launcher, drain_task, stopping)
-    return 1 if launcher is not None and launcher.failed else 0
+        cleanup = launcher if launcher is not None else candidate
+        if cleanup is not None:
+            await _shutdown_launcher(cleanup, drain_task, stopping)
+    return 1 if cleanup is not None and cleanup.failed else 0
 
 
 async def main() -> int:
