@@ -35,6 +35,9 @@ from src.services.work_dispatch import (
 
 logger = logging.getLogger(__name__)
 
+# Exceeds the 10-second prepare client timeout plus a full reconcile sweep.
+UNBOUND_LOSS_CLEANUP_GRACE = timedelta(seconds=60)
+
 
 class _ProfileRefreshRequired(Exception):
     """Unwind the admission transaction before refreshing the provider."""
@@ -126,6 +129,7 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             version = worker.version
             created_at = worker.created_at
             deleted_at = worker.capacity_resource_deleted_at
+            ended_at = worker.ended_at
         if state == "reserved" and version != self.profile.worker_version:
             # A provider rollout cannot relabel an already reserved incarnation.
             # Fence it before cleanup; queued demand may reserve a fresh UUID.
@@ -138,9 +142,10 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             raise CapacityProtocolError("Provider resource UID changed for an existing incarnation")
         if state in self.cleanup_states:
             if resource is None and uid is None:
-                # Another controller may still prepare this unbound incarnation.
-                # Absence does not fence that delayed mutation; retain cleanup.
-                return
+                # Allow in-flight preparation to settle before treating a fresh
+                # absence as final. Provider errors never reach this branch.
+                if state != "lost" or ended_at is None or _now() - ended_at < UNBOUND_LOSS_CLEANUP_GRACE:
+                    return
             if resource is not None and resource.state != "deleted":
                 await self.client.remove(worker_id, self.profile.scope, resource.resource_uid)
             # GET absence/a deleted tombstone or a validated DELETE response confirms
