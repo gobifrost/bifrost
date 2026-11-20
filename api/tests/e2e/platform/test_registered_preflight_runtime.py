@@ -7,11 +7,13 @@ over a real loopback WebSocket, and drives only the registered
 file-operation process group, severs the first control transport, accepts the
 launcher's replacement session, then resumes and releases the same stage.
 
-No database worker rows, policy/configuration, or other worker capabilities are
-changed.  The loopback peer verifies the production signed hello and exercises
+Only owned disposable worker/job rows are created for the real PostgreSQL
+owner-acquisition and command-fencing checks; other workers and configuration
+are unchanged.  The loopback peer verifies the production signed hello and exercises
 real control framing, but it is not an API process; this test therefore proves
-launcher transport/session fencing and physical stage survival, not API
-database-owner takeover or ``control_authorization`` lease fencing.
+launcher transport/session fencing and physical stage survival, not a full
+API-process takeover. The production owner-acquisition and
+``control_authorization`` functions run against the real disposable database.
 """
 
 from __future__ import annotations
@@ -26,7 +28,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
+from uuid import UUID, uuid4
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
+import hashlib
 
 import pytest
 
@@ -122,9 +127,17 @@ class _ControlTrace:
                 return inventory
 
 
-async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path: Path) -> None:
+async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path: Path, async_session_factory) -> None:
     """Keep one real preflight stage through a fenced normal-launcher reconnect."""
     from websockets.asyncio.server import serve
+
+    from sqlalchemy import delete, update, func, text
+    from src.models.orm.execution_workers import ExecutionWorker
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.jobs.platform.base import PlatformJobCancelled
+    from src.jobs.schedulers.platform_jobs import ClaimedPlatformJob
+    from src.worker.remote.file_compute_host import control_authorization
+    from src.worker.remote.ownership import acquire_remote_owner
 
     secret = f"runtime-harness-{uuid4()}"
     binding = {
@@ -145,11 +158,35 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
     process: subprocess.Popen[bytes] | None = None
 
     finished = asyncio.get_running_loop().create_future()
+    old_bridge = None
+    new_bridge = None
+    worker_id = None
+    claim = ClaimedPlatformJob(UUID(binding["job_id"]), UUID(binding["lease_token"]), 60, .95, 1, "workspace.git")
+
+    async def acquire(hello, owner):
+        lease = await acquire_remote_owner(
+            worker_id=hello.incarnation_id, owner_id=owner, launcher_id=hello.launcher_id,
+            nonce_digest=hashlib.sha256(hello.nonce.encode()).hexdigest(),
+            hello_sequence=hello.hello_sequence, lease_seconds=60,
+        )
+        assert lease is not None
+        return SimpleNamespace(lease=lease)
 
     async def scenario(socket: Any) -> None:
+        nonlocal old_bridge, new_bridge, worker_id
         if trace.initial_stage_pid is None:
             hello = await trace.hello(socket, 1)
             assert hello.hello_sequence == 1
+            worker_id = hello.incarnation_id
+            async with async_session_factory() as db:
+                db.add(ExecutionWorker(id=worker_id, form="external", state="ready", resource_class="standard"))
+                db.add(PlatformJob(id=claim.id, job_type="workspace.git", payload={}, status="running",
+                    lease_token=claim.lease_token, lease_expires_at=datetime.now(timezone.utc)+timedelta(minutes=5),
+                    title="Owned runtime fence fixture", requested_by_user_id=str(uuid4()),
+                    requested_by_email="fixture@example.test", requested_by_name="Fixture"))
+                await db.commit()
+            old_bridge = await acquire(hello, uuid4())
+            assert old_bridge.lease.session_generation == 1
             await trace.inventory(socket, 1)
             from src.config import Settings
             from src.worker.remote.remote_pool import DANGEROUS_MEMORY_RATIO
@@ -187,11 +224,26 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
             # The stage starts a new session.  Pausing its owned process group
             # gives the reconnect a deterministic in-flight physical child.
             os.killpg(pid, signal.SIGSTOP)
+            async with control_authorization(old_bridge, claim):
+                status = await trace.command(socket, 1, "file_compute_status",
+                    {**binding, "operation": workspace_preflight_compute.OPERATION})
+                assert status["pid"] == pid
             await socket.close()
             return
 
         hello = await trace.hello(socket, 2)
         assert hello.hello_sequence == 2
+        assert hello.incarnation_id == worker_id
+        async with async_session_factory() as db:
+            await db.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(
+                remote_owner_lease_expires_at=func.now()-text("INTERVAL '1 second'")))
+            await db.commit()
+        new_bridge = await acquire(hello, uuid4())
+        assert new_bridge.lease.session_generation == 2
+        assert new_bridge.lease.owner_id != old_bridge.lease.owner_id
+        with pytest.raises(PlatformJobCancelled):
+            async with control_authorization(old_bridge, claim):
+                raise AssertionError("Stale owner entered the physical command boundary")
         trace.replacement_generation = 2
         inventory = await trace.inventory(socket, 2)
         trace.inventory_after_reconnect = inventory
@@ -230,12 +282,13 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
             chunk = result.get("chunk")
             assert isinstance(chunk, dict)
             trace.result_chunks.append(chunk)
-        released = await trace.command(
-            socket,
-            2,
-            "file_compute_release",
-            {**binding, "operation": workspace_preflight_compute.OPERATION},
-        )
+        async with control_authorization(new_bridge, claim):
+            released = await trace.command(
+                socket,
+                2,
+                "file_compute_release",
+                {**binding, "operation": workspace_preflight_compute.OPERATION},
+            )
         assert released["released"] is True
         await trace.command(socket, 2, "retired", {})
         finished.set_result(None)
@@ -302,3 +355,8 @@ async def test_registered_preflight_survives_normal_launcher_reconnect(tmp_path:
             process.terminate()
             await asyncio.to_thread(process.wait, 20)
         log.close()
+        if worker_id is not None:
+            async with async_session_factory() as db:
+                await db.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+                await db.execute(delete(PlatformJob).where(PlatformJob.id == claim.id))
+                await db.commit()
