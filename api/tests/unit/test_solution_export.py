@@ -498,3 +498,13 @@ def test_export_round_trips_integration_static_choices() -> None:
     assert result.connection_schemas[0]["template"]["config_schema"][0]["options"] == [
         "us", "eu", "apac",
     ]
+
+
+def test_file_backed_workspace_serialization_preserves_existing_export_bytes(tmp_path):
+    from src.services.solutions.export import write_workspace_zip
+
+    bundle = _bundle()
+    for compression in (zipfile.ZIP_STORED, zipfile.ZIP_DEFLATED):
+        path = tmp_path / f"source-{compression}.zip"
+        write_workspace_zip(bundle, path, compression=compression)
+        assert path.read_bytes() == build_workspace_zip(bundle, compression=compression)

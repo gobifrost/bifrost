@@ -8,7 +8,7 @@ from uuid import uuid4
 import pytest
 
 from shared.app_build_errors import AppBuildMemoryError
-from src.jobs.platform.base import PlatformJobFailure
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.jobs.platform.solution_git_sync import (
     SOLUTION_GIT_SYNC_DEFINITION,
     SolutionGitSyncPayload,
@@ -45,8 +45,53 @@ async def test_solution_git_sync_runs_the_existing_single_writer_and_clears_upda
         update_available_version="2.0.0",
     )
     db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
-    context = SimpleNamespace(report=AsyncMock(), log=AsyncMock())
-    sync = AsyncMock()
+    context = SimpleNamespace(
+        report=AsyncMock(),
+        log=AsyncMock(),
+        authorize_effect=AsyncMock(return_value=True),
+    )
+    db_closed = False
+
+    @asynccontextmanager
+    async def fake_db_context():
+        nonlocal db_closed
+        try:
+            yield db
+        finally:
+            db_closed = True
+
+    async def assert_initial_session_closed(sync_context, solution_id):
+        assert db_closed
+        assert sync_context is context
+        assert solution_id == solution.id
+        return True
+
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_git_sync.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.services.solutions.git_sync.sync", assert_initial_session_closed
+    )
+
+    result = await run_solution_git_sync(
+        context, SolutionGitSyncPayload(solution_id=solution.id)
+    )
+
+    assert result == {"solution_id": str(solution.id), "status": "synced"}
+    assert solution.update_available_version is None
+    db.commit.assert_awaited_once()
+    assert context.report.await_args_list[-1].kwargs == {"percent": 100}
+
+
+@pytest.mark.asyncio
+async def test_solution_git_sync_preserves_job_cancellation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    solution = Solution(
+        id=uuid4(), slug="managed-git", name="Managed Git",
+        git_connected=True, git_repo_url="https://example.test/managed-git.git",
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
 
     @asynccontextmanager
     async def fake_db_context():
@@ -56,18 +101,15 @@ async def test_solution_git_sync_runs_the_existing_single_writer_and_clears_upda
         "src.jobs.platform.solution_git_sync.get_db_context", fake_db_context
     )
     monkeypatch.setattr(
-        "src.services.solutions.git_sync.sync", sync
+        "src.services.solutions.git_sync.sync",
+        AsyncMock(side_effect=PlatformJobCancelled()),
     )
 
-    result = await run_solution_git_sync(
-        context, SolutionGitSyncPayload(solution_id=solution.id)
-    )
-
-    assert result == {"solution_id": str(solution.id), "status": "synced"}
-    sync.assert_awaited_once_with(db, solution)
-    assert solution.update_available_version is None
-    db.commit.assert_awaited_once()
-    assert context.report.await_args_list[-1].kwargs == {"percent": 100}
+    with pytest.raises(PlatformJobCancelled):
+        await run_solution_git_sync(
+            SimpleNamespace(report=AsyncMock(), log=AsyncMock()),
+            SolutionGitSyncPayload(solution_id=solution.id),
+        )
 
 
 @pytest.mark.asyncio

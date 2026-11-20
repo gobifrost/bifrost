@@ -40,6 +40,7 @@ from src.jobs.schedulers.platform_jobs import (
     claim_platform_job,
 )
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import load_kubernetes_policy
 from src.services.memory_requests import MIB
 from src.services.platform_jobs import publish_platform_job_update
@@ -133,6 +134,13 @@ class KubernetesBuildController:
             ))).all()
         for job in returned:
             await publish_platform_job_update(job)
+        async with get_db_context() as db:
+            orphan_ids = (await db.scalars(select(ExecutionWorker.isolated_platform_job_id).where(
+                ExecutionWorker.form == "job", ExecutionWorker.kubernetes_namespace == self.client.namespace,
+                ExecutionWorker.isolated_platform_job_id.is_not(None),
+                ExecutionWorker.end_reason.is_distinct_from("isolated_resource_deleted"),
+            ))).all()
+        ids = list(dict.fromkeys([*ids, *(job_id for job_id in orphan_ids if job_id is not None)]))
         for job_id in ids:
             await self.reconcile_job(job_id)
         if not policy.isolated_jobs_enabled:
@@ -159,6 +167,13 @@ class KubernetesBuildController:
         return bool(ids) or claim is not None
 
     async def reconcile_job(self, job_id: UUID) -> None:
+        from src.jobs.platform.kubernetes_compute import cleanup_compute_workers, sync_compute_worker
+
+        await sync_compute_worker(job_id)
+        await self._reconcile_job(job_id)
+        await cleanup_compute_workers(job_id, self.client)
+
+    async def _reconcile_job(self, job_id: UUID) -> None:
         changed: PlatformJob | None = None
         loss: tuple[UUID, str, str] | None = None
         # Kubernetes stopped the pod at its memory limit.
@@ -184,6 +199,10 @@ class KubernetesBuildController:
                 if row.kubernetes_job_uid:
                     pods = await self.client.list_pods(row.kubernetes_job_uid)
                     if not _pods_stopped(pods):
+                        metadata = get_platform_job_metadata(row.job_type)
+                        if (metadata is not None and metadata.required_compute_capabilities
+                                and remote is not None):
+                            await self.client.delete_job(name, row.kubernetes_job_uid)
                         return
                     if remote is not None:
                         await self.client.delete_job(name, row.kubernetes_job_uid)

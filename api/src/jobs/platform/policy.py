@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
+EXTERNAL_ISOLATED_BACKEND = "external_isolated"
+
 
 @dataclass(frozen=True)
 class PlatformJobPolicy:

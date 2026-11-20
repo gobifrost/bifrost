@@ -47,6 +47,27 @@ from src.services.audit_context import ActorContext, clear_actor, set_actor
 from src.services import platform_jobs as service
 
 
+@pytest.fixture(autouse=True)
+async def clean_owned_job_rows(db_session: AsyncSession):
+    """A rollback cannot remove fixture rows committed by service methods."""
+    from sqlalchemy import delete, event
+
+    owned_ids = set()
+
+    def remember_jobs(session, _flush_context):
+        owned_ids.update(row.id for row in session.new if isinstance(row, PlatformJob))
+
+    event.listen(db_session.sync_session, "after_flush", remember_jobs)
+    try:
+        yield
+    finally:
+        event.remove(db_session.sync_session, "after_flush", remember_jobs)
+        await db_session.rollback()
+        if owned_ids:
+            await db_session.execute(delete(PlatformJob).where(PlatformJob.id.in_(owned_ids)))
+            await db_session.commit()
+
+
 async def _isolate_jobs(db_session: AsyncSession) -> None:
     """Turn isolated jobs on in Settings -> Kubernetes (rolled back with the session)."""
     from src.services.kubernetes_execution import KubernetesExecutionService
@@ -643,28 +664,47 @@ async def test_application_publish_preserves_bundle_oom_guidance(
 ) -> None:
     app_id = uuid4()
 
+    db_open = False
+
     @asynccontextmanager
     async def fake_db_context():
-        yield SimpleNamespace(
-            get=AsyncMock(
-                return_value=SimpleNamespace(id=app_id, organization_id=None)
+        nonlocal db_open
+        db_open = True
+        try:
+            yield SimpleNamespace(
+                get=AsyncMock(
+                    return_value=SimpleNamespace(id=app_id, organization_id=None)
+                ),
+                commit=AsyncMock(),
             )
-        )
+        finally:
+            db_open = False
 
     class Repository:
         def __init__(self, *_args, **_kwargs) -> None:
             pass
 
-        async def publish(self, *_args, **_kwargs):
-            raise ValueError(
-                "Bundle build failed during publish: " + app_build_memory_message()
+        async def prepare_publish(self, *_args, **_kwargs):
+            return SimpleNamespace(
+                application_id=app_id,
+                source_files={"pages/index.tsx": b"export default () => null"},
+                dependencies={},
+                organization_id=None,
             )
+
+    async def failed_compute(*_args, **_kwargs):
+        assert db_open is False
+        raise ValueError("Bundle build failed during publish: " + app_build_memory_message())
 
     monkeypatch.setattr(
         "src.jobs.platform.application_publish.get_db_context", fake_db_context
     )
     monkeypatch.setattr(
         "src.jobs.platform.application_publish.ApplicationRepository", Repository
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.application_publish.build_snapshot_using_file_compute",
+        failed_compute,
     )
 
     with pytest.raises(PlatformJobFailure) as failure:
@@ -674,6 +714,8 @@ async def test_application_publish_preserves_bundle_oom_guidance(
                 requested_by_email="dev@example.test",
                 requested_by_name="Dev",
                 report=AsyncMock(),
+                file_compute=AsyncMock(),
+                authorize_effect=AsyncMock(return_value=True),
             ),
             ApplicationPublishPayload(application_id=app_id),
         )
@@ -683,6 +725,68 @@ async def test_application_publish_preserves_bundle_oom_guidance(
     assert failure.value.message == (
         "Bundle build failed during publish: " + app_build_memory_message()
     )
+
+
+@pytest.mark.asyncio
+async def test_publish_reports_progress_outside_its_fenced_transactions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Progress uses another DB session and cannot run under our job lock."""
+    app_id = uuid4()
+    db_open = False
+    snapshot = SimpleNamespace(
+        application_id=app_id, organization_id=None,
+        source_files={"pages/index.tsx": b"export default () => null"},
+        dependencies={},
+    )
+
+    @asynccontextmanager
+    async def db_context():
+        nonlocal db_open
+        assert not db_open
+        db_open = True
+        try:
+            yield SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(id=app_id, organization_id=None)),
+                commit=AsyncMock(),
+            )
+        finally:
+            db_open = False
+
+    async def report(*_args, **_kwargs):
+        assert not db_open, "Progress would wait on the held job fencing lock"
+
+    async def compute(*_args, **_kwargs):
+        assert not db_open
+        return SimpleNamespace(success=True), {"entry.js": b"export {}"}
+
+    class Repository:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def prepare_publish(self, *_args):
+            return snapshot
+
+        async def promote_publish_snapshot(self, *_args, **_kwargs):
+            assert db_open
+            return SimpleNamespace(
+                published_at=datetime.now(timezone.utc),
+                published_snapshot={"entry.js": ""},
+            )
+
+    monkeypatch.setattr("src.jobs.platform.application_publish.get_db_context", db_context)
+    monkeypatch.setattr("src.jobs.platform.application_publish.ApplicationRepository", Repository)
+    monkeypatch.setattr("src.jobs.platform.application_publish.build_snapshot_using_file_compute", compute)
+    monkeypatch.setattr("src.jobs.platform.application_publish.publish_app_published", AsyncMock())
+    result = await run_application_publish(
+        SimpleNamespace(
+            requested_by_user_id=str(uuid4()), requested_by_name="Dev",
+            report=report, file_compute=AsyncMock(),
+            authorize_effect=AsyncMock(return_value=True),
+        ),
+        ApplicationPublishPayload(application_id=app_id),
+    )
+    assert result["files_published"] == 1
 
 
 @pytest.mark.asyncio

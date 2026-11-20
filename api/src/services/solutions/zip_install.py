@@ -21,24 +21,37 @@ git-sync module already imports these collectors). Reuse, not replication.
 
 from __future__ import annotations
 
-import asyncio
 import io
 import logging
 import os
 import tempfile
 import zipfile
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 if TYPE_CHECKING:
     from src.services.solutions.secrets_blob import SolutionContent
+    from src.jobs.platform.base import PlatformJobContext
+    from src.services.solutions.deploy import PreparedSolutionAppBuilds
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.solution_archive import (
+    MAX_SOLUTION_ARCHIVE_BYTES as MAX_SOLUTION_ARCHIVE_BYTES,
+    MAX_SOLUTION_BACKUP_ARCHIVE_BYTES as MAX_SOLUTION_BACKUP_ARCHIVE_BYTES,
+    PAYLOAD_PREFIX as _PAYLOAD_PREFIX,
+    PreviewResult,
+    extract_workspace as _extract_workspace,
+    parse_workspace as _parse_workspace,
+    safe_extract as _safe_extract,
+    safe_extract_path as _safe_extract_path,
+    validate_archive_size as _validate_archive_size,
+    validate_payload_integrity as _validate_payload_integrity,
+)
 from src.models.contracts.solutions import (
     SolutionConfigSchemaChange,
     SolutionConfigSchemaState,
@@ -122,242 +135,6 @@ class InactiveInstallExists(Exception):
             "Pass reactivate=true to reactivate it, or delete the existing install first."
         )
 
-
-
-@dataclass
-class PreviewResult:
-    """What a zip would create — parse-only, nothing persisted."""
-
-    slug: str | None = None
-    name: str | None = None
-    scope: str | None = None
-    version: str | None = None
-    # Descriptor ``logo:`` path (workspace-relative); read by _build_bundle.
-    logo: str | None = None
-    workflows: list[dict[str, Any]] = field(default_factory=list)
-    tables: list[dict[str, Any]] = field(default_factory=list)
-    apps: list[dict[str, Any]] = field(default_factory=list)
-    forms: list[dict[str, Any]] = field(default_factory=list)
-    agents: list[dict[str, Any]] = field(default_factory=list)
-    claims: list[dict[str, Any]] = field(default_factory=list)
-    config_schemas: list[dict[str, Any]] = field(default_factory=list)
-    file_locations: list[str] = field(default_factory=list)
-    # Solution-tier file policies read from .bifrost/file-policies.yaml. Each is a
-    # ManifestFilePolicy-shaped {id, location, path, policies} dict; deploy
-    # re-stamps solution_id and upserts by (solution_id, location, path).
-    file_policies: list[dict[str, Any]] = field(default_factory=list)
-    # Connection declarations read from .bifrost/connections.yaml (Task 14b).
-    # Each: {integration_name, template, position}. Install pre-creates an empty
-    # integration shell and persists a SolutionConnectionSchema row from each.
-    connection_schemas: list[dict[str, Any]] = field(default_factory=list)
-    # Event/schedule triggers read from .bifrost/events.yaml. Each is a
-    # ManifestEventSource-shaped dict (source + schedule/webhook + subscriptions).
-    events: list[dict[str, Any]] = field(default_factory=list)
-    # Long-form README markdown read from the repo-root README.md (Task 6).
-    readme: str | None = None
-    # True when the zip contains .bifrost/secrets.enc (a full-backup export).
-    # The install endpoint requires a password to decrypt it; the preview surface
-    # this so the UI can prompt for the password BEFORE the install POST.
-    requires_password: bool = False
-
-
-MAX_SOLUTION_ARCHIVE_BYTES = 512 * 1024 * 1024
-MAX_SOLUTION_ARCHIVE_ENTRIES = 10_000
-MAX_SOLUTION_ENTRY_BYTES = 128 * 1024 * 1024
-MAX_SOLUTION_UNCOMPRESSED_BYTES = 1024 * 1024 * 1024
-MAX_SOLUTION_COMPRESSION_RATIO = 100
-# Backup payloads stay inside the archive and are decrypted one chunk at a time.
-# These budgets do not increase the source/metadata extraction limits above.
-MAX_SOLUTION_BACKUP_ARCHIVE_BYTES = 32 * 1024 * 1024 * 1024
-MAX_SOLUTION_BACKUP_ENTRY_BYTES = 32 * 1024 * 1024 * 1024
-MAX_SOLUTION_BACKUP_UNCOMPRESSED_BYTES = 64 * 1024 * 1024 * 1024
-_PAYLOAD_PREFIX = ".bifrost/file-payloads/"
-_DUPLICATE_COMPARE_CHUNK_BYTES = 64 * 1024
-
-
-def _zip_members_match(
-    z: zipfile.ZipFile, first: zipfile.ZipInfo, duplicate: zipfile.ZipInfo
-) -> bool:
-    """Compare duplicate members without buffering their full contents."""
-    if first.file_size != duplicate.file_size:
-        return False
-    with z.open(first) as first_file, z.open(duplicate) as duplicate_file:
-        while True:
-            first_chunk = first_file.read(_DUPLICATE_COMPARE_CHUNK_BYTES)
-            duplicate_chunk = duplicate_file.read(_DUPLICATE_COMPARE_CHUNK_BYTES)
-            if first_chunk != duplicate_chunk:
-                return False
-            if not first_chunk:
-                return True
-
-
-def _validate_zip_members(z: zipfile.ZipFile) -> list[zipfile.ZipInfo]:
-    """Validate archive budgets and return one canonical member per path.
-
-    Legacy exports may contain duplicate paths. They are accepted only when
-    their uncompressed bytes match, so all readers observe one logical file.
-    Budget checks deliberately account for every physical member before any
-    duplicate bytes are read.
-    """
-    infos = z.infolist()
-    if len(infos) > MAX_SOLUTION_ARCHIVE_ENTRIES:
-        raise ValueError("Solution archive has too many entries")
-    backup = any(info.filename == ".bifrost/secrets.enc" for info in infos)
-    total = 0
-    source_total = 0
-    for info in infos:
-        payload = backup and info.filename.startswith(_PAYLOAD_PREFIX)
-        entry_limit = MAX_SOLUTION_BACKUP_ENTRY_BYTES if payload else MAX_SOLUTION_ENTRY_BYTES
-        if info.file_size > entry_limit:
-            raise ValueError(f"Solution archive entry is too large: {info.filename}")
-        if info.compress_size and info.file_size / info.compress_size > MAX_SOLUTION_COMPRESSION_RATIO:
-            raise ValueError(f"Solution archive compression ratio is unsafe: {info.filename}")
-        total += info.file_size
-        if not payload:
-            source_total += info.file_size
-        if (
-            source_total > MAX_SOLUTION_UNCOMPRESSED_BYTES
-            or total > MAX_SOLUTION_BACKUP_UNCOMPRESSED_BYTES
-        ):
-            raise ValueError("Solution archive expands beyond the allowed size")
-
-    canonical: dict[str, zipfile.ZipInfo] = {}
-    for info in infos:
-        first = canonical.get(info.filename)
-        if first is None:
-            canonical[info.filename] = info
-        elif not _zip_members_match(z, first, info):
-            raise ValueError(f"Solution archive has a conflicting duplicate member: {info.filename}")
-    return list(canonical.values())
-
-
-def _validate_archive_size(z: zipfile.ZipFile, size: int) -> None:
-    limit = (
-        MAX_SOLUTION_BACKUP_ARCHIVE_BYTES
-        if ".bifrost/secrets.enc" in z.namelist()
-        else MAX_SOLUTION_ARCHIVE_BYTES
-    )
-    if size > limit:
-        raise ValueError("Solution archive exceeds the compressed upload limit")
-
-
-def _extract_workspace(z: zipfile.ZipFile, dest: str) -> None:
-    """Validate every member, then extract source/metadata without payload copies."""
-    members = _validate_zip_members(z)
-    dest_real = os.path.realpath(dest)
-    for member in z.namelist():
-        target = os.path.realpath(os.path.join(dest, member))
-        if not (target == dest_real or target.startswith(dest_real + os.sep)):
-            raise ValueError(f"unsafe path in zip: {member}")
-    for info in members:
-        if not info.filename.startswith(_PAYLOAD_PREFIX):
-            z.extract(info, dest)
-
-
-async def _validate_payload_integrity(z: zipfile.ZipFile) -> None:
-    """Check skipped members' ZIP checksums before installation can write.
-
-    Read bounded chunks without extracting another encrypted copy. Yield between
-    chunks so the install job remains cancellable while scanning a large backup.
-    """
-    for info in z.infolist():
-        if info.filename.startswith(_PAYLOAD_PREFIX):
-            with z.open(info) as source:
-                while source.read(8 * 1024 * 1024):
-                    await asyncio.sleep(0)
-
-
-def _safe_extract(data: bytes, dest: str) -> None:
-    """Extract bounded workspace content; runtime payloads remain in the ZIP."""
-    with zipfile.ZipFile(io.BytesIO(data)) as z:
-        _validate_archive_size(z, len(data))
-        _extract_workspace(z, dest)
-
-
-def _safe_extract_path(zip_path: Path, dest: str) -> None:
-    """Extract bounded workspace content from a disk-backed archive."""
-    if zip_path.stat().st_size > MAX_SOLUTION_BACKUP_ARCHIVE_BYTES:
-        raise ValueError("Solution archive exceeds the compressed upload limit")
-    with zipfile.ZipFile(zip_path) as z:
-        _validate_archive_size(z, zip_path.stat().st_size)
-        _extract_workspace(z, dest)
-
-
-def _parse_workspace(workspace: Path) -> PreviewResult:
-    """Parse a Solution workspace dir into a :class:`PreviewResult` (no DB/S3)."""
-    # Imported lazily so a malformed/zip-slip zip fails before any CLI import.
-    from bifrost.commands.solution import (
-        _collect_agents,
-        _collect_apps,
-        _collect_claims,
-        _collect_config_schemas,
-        _collect_connection_schemas,
-        _collect_events,
-        _collect_file_locations,
-        _collect_file_policies,
-        _collect_forms,
-        _collect_python_files,
-        _collect_tables,
-        _collect_workflows,
-    )
-    from bifrost.solution_definition import read_solution_definition
-
-    slug: str | None = None
-    name: str | None = None
-    # The descriptor carries no install scope anymore — install kind is the
-    # installer's deploy-time choice (organization_id), not a descriptor field.
-    # Kept as a None preview field for response-shape stability.
-    scope: str | None = None
-    version: str | None = None
-    logo: str | None = None
-    definition = read_solution_definition(workspace)
-    # Use the canonical published-source selection during no-write preview so
-    # helper modules outside the workflow manifest receive the same acceptance
-    # check as a deploy bundle. The returned map is rebuilt later for deploy;
-    # PreviewResult deliberately carries only metadata.
-    _collect_python_files(workspace, definition=definition)
-    if definition.descriptor is not None:
-        descriptor = definition.descriptor
-        slug, name = descriptor.slug, descriptor.name
-        version = descriptor.version
-        logo = descriptor.logo
-
-    _ws = os.path.realpath(workspace)
-    _secrets = os.path.realpath(os.path.join(_ws, ".bifrost", "secrets.enc"))
-    requires_password = _secrets.startswith(_ws + os.sep) and os.path.exists(_secrets)
-
-    return PreviewResult(
-        slug=slug,
-        name=name,
-        scope=scope,
-        version=version,
-        logo=logo,
-        workflows=_collect_workflows(workspace, definition=definition),
-        tables=_collect_tables(workspace, definition=definition),
-        apps=_collect_apps(workspace, definition=definition),
-        forms=_collect_forms(workspace, definition=definition),
-        agents=_collect_agents(workspace, definition=definition),
-        claims=_collect_claims(workspace, definition=definition),
-        config_schemas=_collect_config_schemas(workspace, definition=definition),
-        file_locations=_collect_file_locations(workspace, definition=definition),
-        file_policies=_collect_file_policies(workspace, definition=definition),
-        connection_schemas=_collect_connection_schemas(workspace, definition=definition),
-        events=_collect_events(workspace, definition=definition),
-        readme=_read_readme(workspace),
-        requires_password=requires_password,
-    )
-
-
-def _read_readme(workspace: Path) -> str | None:
-    """Read the repo-root ``README.md`` as UTF-8 markdown, or None if absent."""
-    root = os.path.realpath(workspace)
-    target = os.path.realpath(os.path.join(root, "README.md"))
-    if not target.startswith(root + os.sep):
-        return None
-    path = Path(target)
-    if not path.is_file():
-        return None
-    return path.read_text(encoding="utf-8")
 
 
 def preview_zip(data: bytes) -> PreviewResult:
@@ -545,6 +322,7 @@ async def _resolve_or_create_solution(
     name: str,
     organization_id: UUID | None,
     reactivate: bool = False,
+    expected_solution_id: UUID | None = None,
 ) -> Solution:
     """Find the install for ``(slug, organization_id)`` or create a fresh one.
 
@@ -561,6 +339,8 @@ async def _resolve_or_create_solution(
     """
     existing = await find_install(db, slug=slug, organization_id=organization_id)
     if existing is not None:
+        if expected_solution_id is not None and existing.id != expected_solution_id:
+            raise ValueError("Solution install target changed while the archive was prepared")
         if existing.status == "inactive":
             if not reactivate:
                 raise InactiveInstallExists(existing.id, existing.slug)
@@ -569,7 +349,7 @@ async def _resolve_or_create_solution(
             await db.flush()
         return existing
 
-    row = Solution(slug=slug, name=name, organization_id=organization_id)
+    row = Solution(id=expected_solution_id, slug=slug, name=name, organization_id=organization_id)
     db.add(row)
     await db.flush()
     return row
@@ -727,22 +507,38 @@ async def _install_workspace(
     replace_data: bool,
     reactivate: bool,
     payload_archive: zipfile.ZipFile | None = None,
+    prepared_preview: PreviewResult | None = None,
+    expected_solution_id: UUID | None = None,
+    prepared_app_builds: PreparedSolutionAppBuilds | None = None,
+    prepared_bundle: SolutionBundle | None = None,
+    source_artifact: bytes | None = None,
+    lock_already_held: bool = False,
+    context: PlatformJobContext | None = None,
 ) -> Solution:
     from src.services.solutions.write_lock import solution_write_lock
 
-    preview = _parse_workspace(workspace)
+    preview = prepared_preview or _parse_workspace(workspace)
     if not preview.slug or not preview.name:
         raise ValueError(
             "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
         )
 
+    async def authorize() -> None:
+        if context is not None and not await context.authorize_effect(db):
+            from src.jobs.platform.base import PlatformJobCancelled
+            raise PlatformJobCancelled()
+
+    await authorize()
     solution = await _resolve_or_create_solution(
         db,
         slug=preview.slug,
         name=preview.name,
         organization_id=organization_id,
         reactivate=reactivate,
+        expected_solution_id=expected_solution_id,
     )
+    if expected_solution_id is not None and solution.id != expected_solution_id:
+        raise ValueError("Solution install target changed while the archive was prepared")
 
     # One-writer invariant: a git-connected install is written ONLY by
     # auto-pull (sync). Refuse a zip install into it, exactly as
@@ -756,7 +552,10 @@ async def _install_workspace(
 
     # Build the bundle while the temp dir still exists (it reads Python +
     # app source fully into memory, so finalize_s3 is safe after teardown).
-    bundle = _build_bundle(solution, preview, workspace)
+    bundle = prepared_bundle or _build_bundle(solution, preview, workspace)
+    if bundle.solution.id != solution.id or bundle.solution.organization_id != solution.organization_id:
+        raise ValueError("Prepared Solution bundle target changed")
+    bundle.solution = solution
 
     # Module-closure gate: every ``modules.X`` import in the bundle must
     # resolve to a file in the bundle. Run BEFORE the write lock / any DB or
@@ -775,7 +574,7 @@ async def _install_workspace(
         )
         raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
-    async with solution_write_lock(solution.id):
+    async def apply() -> None:
         # Decrypt + collision-check BEFORE deploy so a bad password or
         # collision refuses the entire import atomically — nothing lands.
         content = None
@@ -811,11 +610,16 @@ async def _install_workspace(
                 replace_data=replace_data,
             )
 
-        deployer = SolutionDeployer(db)
-        result = await deployer.deploy(bundle, force=force)
+        deployer = SolutionDeployer(db, publication_authorization=context.authorize_effect if context else None)
+        await authorize()
+        result = await deployer.deploy(
+            bundle, force=force, prepared_app_builds=prepared_app_builds,
+            source_artifact=source_artifact,
+        )
         await db.commit()
         # S3 only after the DB is durable; still inside the lock so finalize
         # can't race another writer.
+        await authorize()
         await result.finalize_s3()
         await db.commit()  # source search index rows written by finalize
 
@@ -823,6 +627,7 @@ async def _install_workspace(
         # values atomically with the deploy. A missing required value does
         # NOT block (warn-not-block) — we only set what was provided.
         if config_values:
+            await authorize()
             await _apply_config_values(
                 db,
                 solution=solution,
@@ -834,6 +639,7 @@ async def _install_workspace(
         # Apply the decrypted content from the secrets blob (config values
         # only — table data apply is Phase 4).
         if content is not None:
+            await authorize()
             await _apply_content(
                 db,
                 solution=solution,
@@ -859,6 +665,7 @@ async def _install_workspace(
             content is not None and bool(content.config_values)
         )
         if applied_config:
+            await authorize()
             from src.core.cache import invalidate_all_config
 
             await invalidate_all_config(
@@ -873,10 +680,16 @@ async def _install_workspace(
         # with required declarations must be marked incomplete).
         from src.services.solutions.setup_status import compute_setup_status
 
+        await authorize()
         status_now = await compute_setup_status(db, solution)
         solution.setup_complete = status_now.setup_complete
         await db.commit()
 
+    if lock_already_held:
+        await apply()
+    else:
+        async with solution_write_lock(solution.id):
+            await apply()
     await db.refresh(solution)
     return solution
 
@@ -928,13 +741,21 @@ async def _deploy_workspace_to_solution(
     workspace: Path,
     *,
     force: bool,
+    prepared_preview: PreviewResult | None = None,
+    prepared_app_builds: PreparedSolutionAppBuilds | None = None,
+    prepared_bundle: SolutionBundle | None = None,
+    source_artifact: bytes | None = None,
+    context: PlatformJobContext | None = None,
 ) -> DeployResult:
-    preview = _parse_workspace(workspace)
+    preview = prepared_preview or _parse_workspace(workspace)
     if not preview.slug or not preview.name:
         raise ValueError(
             "zip is not a Solution workspace (missing bifrost.solution.yaml slug/name)"
         )
-    bundle = _build_bundle(solution, preview, workspace)
+    bundle = prepared_bundle or _build_bundle(solution, preview, workspace)
+    if bundle.solution.id != solution.id or bundle.solution.organization_id != solution.organization_id:
+        raise ValueError("Prepared Solution bundle target changed")
+    bundle.solution = solution
 
     from src.services.solutions.dependency_walker import check_install_needs
 
@@ -948,7 +769,10 @@ async def _deploy_workspace_to_solution(
         )
         raise UnmetDependency(f"Solution has unmet dependencies: {items}")
 
-    return await SolutionDeployer(db).deploy(bundle, force=force)
+    return await SolutionDeployer(db, publication_authorization=context.authorize_effect if context else None).deploy(
+        bundle, force=force, prepared_app_builds=prepared_app_builds,
+        source_artifact=source_artifact,
+    )
 
 
 async def _assert_no_unforced_collisions(

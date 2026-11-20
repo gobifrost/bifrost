@@ -67,8 +67,9 @@ async def test_importer_requires_one_decision_for_every_conflict(tmp_path) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("destination_already_promoted", [False, True])
 async def test_promote_selected_files_streams_source_through_file_index(
-    tmp_path, monkeypatch
+    tmp_path, monkeypatch, destination_already_promoted
 ) -> None:
     from bifrost.manifest import Manifest
     from src.models.contracts.solutions import WorkspaceBundleItem, WorkspaceBundlePreview
@@ -98,7 +99,7 @@ async def test_promote_selected_files_streams_source_through_file_index(
     index = FileIndex()
     class Repo:
         async def content_hash(self, _path):  # noqa: ANN001, ANN201
-            return None
+            return plan.file_hashes["modules/customer.py"] if destination_already_promoted else None
 
     monkeypatch.setattr(
         "src.services.solutions.workspace_bundle_import.RepoStorage", Repo

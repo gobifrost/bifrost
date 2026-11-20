@@ -68,3 +68,22 @@ def test_public_job_response_exposes_status_progress_download_and_artifact_field
     assert job.failure_message is None
     assert job.artifact_size_bytes == 12345
     assert job.artifact_sha256 == "a" * 64
+
+
+def test_failed_canonical_job_does_not_leave_projection_running():
+    from types import SimpleNamespace
+    from datetime import datetime, timezone
+    from uuid import uuid4
+    from src.models.orm.solution_export_jobs import SolutionExportJob
+    from src.services.solutions.export_jobs import public_job
+
+    now = datetime.now(timezone.utc)
+    row = SolutionExportJob(
+        id=uuid4(), solution_id=uuid4(), status="running", progress_percent=5,
+        contains_secrets=False, created_at=now, updated_at=now,
+    )
+    canonical = SimpleNamespace(status="failed", error_message="Runner lost", completed_at=now)
+    result = public_job(row, canonical)
+    assert result.status == "failed" and result.progress_percent == 100
+    assert result.download_url is None
+    assert row.status == "running"

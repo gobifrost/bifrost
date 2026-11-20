@@ -21,6 +21,8 @@ async def run_workspace_reimport(
 ) -> dict:
     from src.services.github_sync import GitHubSyncService, WorkspaceSourceMissing
 
+    if context.file_compute is None:
+        raise PlatformJobFailure("file_compute_required", "Workspace reimport requires API-owned preview compute.")
     await context.report("Reimporting workspace entities", percent=5)
     async with get_db_context() as db:
         service = GitHubSyncService(
@@ -29,7 +31,7 @@ async def run_workspace_reimport(
             settings=get_settings(),
         )
         try:
-            result = await service.reimport_from_repo()
+            result = await service.reimport_from_repo(context=context)
         except WorkspaceSourceMissing as exc:
             raise PlatformJobFailure("workspace_source_missing", str(exc)) from exc
     await context.report("Workspace reimport complete", percent=100)

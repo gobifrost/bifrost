@@ -75,8 +75,6 @@ async def fail_platform_jobs_that_never_fit(
     executor has reported), and queued isolated jobs not yet placed that
     are larger than ``largest_pod``, the budget of a pod at Largest worker
     (when isolated jobs are on)."""
-    from src.services.platform_jobs import EXPORT_TOO_LARGE, fail_linked_solution_export
-
     unfit: list[tuple[PlatformJob, int]] = []
     if largest is not None:
         unfit += [
@@ -111,19 +109,23 @@ async def fail_platform_jobs_that_never_fit(
             ).all()
         ]
     for job, capacity in unfit:
-        logger.warning("Platform job failed: no executor can hold it", extra={"job_id": str(job.id)})
-        now = datetime.now(timezone.utc)
-        job.status = "failed"
-        job.phase = "Failed"
-        job.error_code = TOO_LARGE
-        job.error_message = too_large_message(job.memory_required_bytes, capacity)
-        job.error_retryable = False
-        job.completed_at = now
-        job.revision += 1
-        await fail_linked_solution_export(
-            db, job, completed_at=now, failure_message=EXPORT_TOO_LARGE
-        )
+        await fail_unfit_platform_job(db, job, capacity)
     return [job for job, _ in unfit]
+
+
+async def fail_unfit_platform_job(db: AsyncSession, job: PlatformJob, capacity: int) -> None:
+    """Settle an already-locked queued job using the canonical unfit outcome."""
+    from src.services.platform_jobs import EXPORT_TOO_LARGE, fail_linked_solution_export
+
+    logger.warning("Platform job failed: no executor can hold it", extra={"job_id": str(job.id)})
+    now = datetime.now(timezone.utc)
+    job.status, job.phase = "failed", "Failed"
+    job.error_code = TOO_LARGE
+    job.error_message = too_large_message(job.memory_required_bytes, capacity)
+    job.error_retryable = False
+    job.completed_at = now
+    job.revision += 1
+    await fail_linked_solution_export(db, job, completed_at=now, failure_message=EXPORT_TOO_LARGE)
 
 
 async def block_services_that_never_fit(db: AsyncSession, largest: int) -> None:

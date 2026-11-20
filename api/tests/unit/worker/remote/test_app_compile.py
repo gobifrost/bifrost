@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import json
+from dataclasses import replace
 from pathlib import Path
 from uuid import uuid4
 
@@ -11,10 +12,12 @@ import pytest
 
 from shared import app_build_compute as codec
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
+from shared.worker_transfer import FileTransfer
 from src.worker.remote import app_compile
+from src.worker.remote.file_operation import NamedFileOperationStages
 
 
-def _payload(transfer: codec.AppBuildTransfer) -> dict[str, object]:
+def _payload(transfer: FileTransfer) -> dict[str, object]:
     return {
         "stage_id": str(uuid4()),
         "job_id": str(uuid4()),
@@ -38,6 +41,16 @@ def _inputs() -> AppBuildInputs:
         },
         environment={},
     )
+
+
+def _stages(**kwargs) -> tuple[app_compile.AppCompileStages, NamedFileOperationStages]:
+    engine = NamedFileOperationStages(
+        operations={
+            app_compile.APP_COMPILE_OPERATION: app_compile.app_compile_operation()
+        },
+        **kwargs,
+    )
+    return app_compile.AppCompileStages(engine), engine
 
 
 class _FakeProcess:
@@ -126,7 +139,7 @@ async def test_prepare_chunk_start_is_idempotent_and_retains_finished_stage(
     async def terminal_notification(binding: dict[str, str]) -> None:
         terminal_states.append(stages.status(binding)["state"])
 
-    stages = app_compile.AppCompileStages(
+    stages, engine = _stages(
         temp_dir=tmp_path,
         spawn=spawn,
         terminal_notification=terminal_notification,
@@ -138,7 +151,7 @@ async def test_prepare_chunk_start_is_idempotent_and_retains_finished_stage(
             stages.add_chunk({**payload, "chunk": chunk.to_dict()})
         started = await stages.start(payload)
         assert started["state"] == "running"
-        task = stages._stages[payload["stage_id"]].task
+        task = engine._stages[payload["stage_id"]].task
         assert task is not None
         await task
         assert terminal_states == ["succeeded"]
@@ -149,9 +162,9 @@ async def test_prepare_chunk_start_is_idempotent_and_retains_finished_stage(
         )
         assert status["state"] == "succeeded"
         assert status["result_manifest"] == result.manifest.to_dict()
-        assert stages.inventory()[0]["stage_id"] == payload["stage_id"]
-        assert stages.inventory()[0]["input_sha256"] == transfer.manifest.sha256
-        stage = stages._stages[payload["stage_id"]]
+        assert engine.inventory()[0]["stage_id"] == payload["stage_id"]
+        assert engine.inventory()[0]["input_sha256"] == transfer.manifest.sha256
+        stage = engine._stages[payload["stage_id"]]
         chunk = stages.result_chunk(
             {key: payload[key] for key in ("stage_id", "job_id", "lease_token")}
             | {"index": 0}
@@ -162,7 +175,7 @@ async def test_prepare_chunk_start_is_idempotent_and_retains_finished_stage(
         )
     finally:
         transfer.close()
-        await stages.shutdown()
+        await engine.shutdown()
         result.close()
 
 
@@ -172,7 +185,7 @@ async def test_prepared_status_resumes_offset_and_refuses_duplicate_or_conflicti
 ) -> None:
     transfer = codec.encode_app_build_inputs(_inputs(), chunk_size=11)
     payload = _payload(transfer)
-    stages = app_compile.AppCompileStages(temp_dir=tmp_path)
+    stages, engine = _stages(temp_dir=tmp_path)
     try:
         stages.prepare(payload)
         chunks = list(transfer.iter_chunks())
@@ -189,7 +202,7 @@ async def test_prepared_status_resumes_offset_and_refuses_duplicate_or_conflicti
             stages.prepare(bad)
     finally:
         transfer.close()
-        await stages.shutdown()
+        await engine.shutdown()
 
 
 @pytest.mark.asyncio
@@ -207,7 +220,7 @@ async def test_start_refuses_a_corrupt_input_digest_without_launching(
         launches += 1
         raise AssertionError("corrupt input must not spawn")
 
-    stages = app_compile.AppCompileStages(temp_dir=tmp_path, spawn=spawn)
+    stages, engine = _stages(temp_dir=tmp_path, spawn=spawn)
     try:
         stages.prepare(payload)
         for chunk in transfer.iter_chunks():
@@ -218,7 +231,7 @@ async def test_start_refuses_a_corrupt_input_digest_without_launching(
         assert launches == 0
     finally:
         transfer.close()
-        await stages.shutdown()
+        await engine.shutdown()
 
 
 @pytest.mark.asyncio
@@ -241,19 +254,19 @@ async def test_release_kills_process_cleans_files_and_tombstones_stage(
         killed.append(process)
         process.killed = True
 
-    stages = app_compile.AppCompileStages(temp_dir=tmp_path, spawn=spawn, kill=kill)
+    stages, engine = _stages(temp_dir=tmp_path, spawn=spawn, kill=kill)
     try:
         stages.prepare(payload)
         for chunk in transfer.iter_chunks():
             stages.add_chunk({**payload, "chunk": chunk.to_dict()})
         await stages.start(payload)
-        stage_dir = stages._stages[payload["stage_id"]].directory
+        stage_dir = engine._stages[payload["stage_id"]].directory
         binding = {key: payload[key] for key in ("stage_id", "job_id", "lease_token")}
         with pytest.raises(ValueError, match="existing binding"):
             await stages.release({**binding, "lease_token": str(uuid4())})
-        assert payload["stage_id"] in stages._stages
+        assert payload["stage_id"] in engine._stages
         assert stage_dir.exists()
-        assert stages._stages[payload["stage_id"]].process is not None
+        assert engine._stages[payload["stage_id"]].process is not None
         with pytest.raises(ConnectionError, match="physical stop failed"):
             await stages.release(binding)
         assert stages.status(binding)["state"] != "unknown"
@@ -273,7 +286,7 @@ async def test_release_kills_process_cleans_files_and_tombstones_stage(
         )
     finally:
         transfer.close()
-        await stages.shutdown()
+        await engine.shutdown()
 
 
 @pytest.mark.asyncio
@@ -283,7 +296,7 @@ async def test_status_unknown_is_safe_readback_and_released_stays_fenced(
     transfer = codec.encode_app_build_inputs(_inputs())
     payload = _payload(transfer)
     binding = {key: payload[key] for key in ("stage_id", "job_id", "lease_token")}
-    stages = app_compile.AppCompileStages(temp_dir=tmp_path)
+    stages, engine = _stages(temp_dir=tmp_path)
     try:
         assert stages.status(binding) == {
             **binding,
@@ -301,7 +314,7 @@ async def test_status_unknown_is_safe_readback_and_released_stays_fenced(
             stages.status({**binding, "lease_token": str(uuid4())})
     finally:
         transfer.close()
-        await stages.shutdown()
+        await engine.shutdown()
 
 
 def test_child_rebuilds_recipe_using_scrubbed_local_environment(
@@ -320,15 +333,20 @@ def test_child_rebuilds_recipe_using_scrubbed_local_environment(
         }
 
         monkeypatch.setattr(app_compile, "package_tool_env", lambda: expected_environment)
-        monkeypatch.setattr(
-            app_compile, "build_recipe", lambda sdk, *, variant, environment: recipe
-        )
-
         def fake_compile(inputs):
             seen["environment"], seen["recipe"] = inputs.environment, inputs.recipe
             return AppBuildResult({"index.html": b"done"}, "identity")
 
-        monkeypatch.setattr(app_compile, "compile_app", fake_compile)
+        dependencies = app_compile._compiler_dependencies()
+        monkeypatch.setattr(
+            app_compile,
+            "_compiler_dependencies",
+            lambda: replace(
+                dependencies,
+                build_recipe=lambda sdk, *, variant, environment: recipe,
+                compile_app=fake_compile,
+            ),
+        )
         receipt = app_compile._compile_instruction(
             {
                 "input_path": str(transfer.path),

@@ -397,3 +397,23 @@ async def test_expired_setup_credentials_require_admitted_execution_and_unchange
             await app.pending_config(db, setup_id, "actor", None, executing=executing)
         assert error.value.status_code == (409 if executing else 410)
         provider.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('changed', ['stage', 'repository'])
+async def test_activation_rechecks_setup_after_taking_its_row_lock(monkeypatch, pending_setup, changed):
+    setup_id, payload = pending_setup
+    candidate = app._selected_config(setup_id, payload, 'actor', None)
+    candidate.setup_executing = True
+    if changed == 'stage':
+        payload['stage'] = 'authorization'
+    else:
+        payload['repository']['id'] += 1
+    monkeypatch.setattr(app, '_row', AsyncMock(return_value=(SimpleNamespace(), payload)))
+    monkeypatch.setattr(app, 'lock_github_config', AsyncMock())
+    save = AsyncMock()
+    monkeypatch.setattr('src.services.github_config.save_app_github_config', save)
+    with pytest.raises(HTTPException) as error:
+        await app.activate(None, candidate, 'main', 'fixture@example.test', commit=False)
+    assert error.value.status_code == 409
+    save.assert_not_awaited()

@@ -1,9 +1,13 @@
 import { createElement, type ReactNode } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { renderHook, waitFor } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { authFetch } from "@/lib/api-client";
-import { useWorkerMetrics, type WorkerMetricsResponse } from "./workers";
+import {
+	getWorkers,
+	useWorkerMetrics,
+	type WorkerMetricsResponse,
+} from "./workers";
 
 vi.mock("@/lib/api-client", () => ({ authFetch: vi.fn() }));
 
@@ -41,4 +45,21 @@ it("retains exact time buckets and unknown memory values from the metrics endpoi
 	expect(result.current.data).toEqual(payload);
 	unmount();
 	client.clear();
+});
+
+describe("workers service", () => {
+	it("requests canonical worker incarnations only when requested", async () => {
+		const response = { pools: [], total: 0, capacity_overview: null };
+		vi.mocked(authFetch).mockReset();
+		vi.mocked(authFetch).mockResolvedValueOnce(
+			new Response(JSON.stringify(response), { status: 200 }),
+		);
+
+		await expect(getWorkers({ includeIncarnations: true })).resolves.toEqual(
+			response,
+		);
+		expect(authFetch).toHaveBeenCalledWith(
+			"/api/platform/workers?include_incarnations=true",
+		);
+	});
 });

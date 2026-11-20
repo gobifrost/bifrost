@@ -1,13 +1,14 @@
-"""Live disposable-runner coverage for non-build PlatformJob handlers.
+"""Live PlatformJob coverage for API-owned and physical non-build handlers.
 
 Each case queues work through ``enqueue_platform_job`` and observes it through
-the live API.  The thin API worker claims the job, hands it over the bridge,
-and starts the physical runner process.  The cases deliberately seed one
-observable unit of work instead of accepting an empty successful sweep.
+the live API. API-owned handlers run in the API control host without a physical
+worker attribution; executor-owned handlers retain the existing bridge and
+physical runner path. The cases deliberately seed one observable unit of work
+instead of accepting an empty successful sweep.
 
-Cost: eight PlatformJob runner children.  ``agent.summary_backfill`` also
-hands one real summary dispatch to the test worker, which is the cross-process
-contract unique to that parent job.
+Cost: API-owned cases consume no runner children. ``agent.summary_backfill``
+also hands one real summary dispatch to the test worker, which is the
+cross-process contract unique to that parent job.
 """
 
 from __future__ import annotations
@@ -148,6 +149,8 @@ async def test_artifact_retention_cleanup_runs_real_handler_and_deletes_seeded_a
         assert job["result"] == {"enabled": True, "retention_days": 1, "deleted_count": 1, "failed_count": 0}
         async with async_session_factory() as db:
             assert await db.get(Artifact, artifact_id) is None
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
         assert not await _object_exists(key)
     finally:
         async with async_session_factory() as db:
@@ -279,6 +282,8 @@ async def test_run_retention_runs_real_handler_and_deletes_seeded_event(
         assert job["result"] is not None and job["result"]["events_deleted"] == 1
         async with async_session_factory() as db:
             assert await db.get(Event, event_id) is None
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
     finally:
         async with async_session_factory() as db:
             if previous is not None:
@@ -299,7 +304,7 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
     destination_key = resolve_s3_key("docs", scope, destination)
     job_id: UUID | None = None
     try:
-        await _put_s3(source_key, b"physical runner move")
+        await _put_s3(source_key, b"server-side move")
         user_id = platform_admin.user_id
         payload = FileMovePayload(
             location="docs", scope=scope, requested_by_user_id=user_id, policy_user_id=user_id,
@@ -311,7 +316,10 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
         assert job["result"]["results"] == [{"source": source, "destination": destination, "path": None,
                                             "renamed": False, "adopted": False, "status_code": 200, "error": None}]
         assert not await _object_exists(source_key)
-        assert await FileObjectStorage(get_settings()).read_uploaded_file(destination_key) == b"physical runner move"
+        assert await FileObjectStorage(get_settings()).read_uploaded_file(destination_key) == b"server-side move"
+        async with async_session_factory() as db:
+            platform_job = await db.get(PlatformJob, job_id)
+            assert platform_job is not None and platform_job.executor_worker_id is None
     finally:
         await _delete_s3(source_key)
         await _delete_s3(destination_key)
@@ -325,30 +333,52 @@ async def test_files_move_runs_real_handler_and_moves_seeded_object(
 async def test_workspace_reimport_runs_real_handler_and_indexes_seeded_source(
     async_session_factory, e2e_client, platform_admin,
 ):
-    workflow_id = uuid4()
+    from src.models.orm.applications import Application
+    from src.services.app_storage import AppStorageService
+
+    workflow_id, app_id, missing_id = uuid4(), uuid4(), uuid4()
     suffix = uuid4().hex[:8]
     path = f"workflows/thin_reimport_{suffix}.py"
     source = f"def thin_reimport_{suffix}():\n    return 'indexed'\n"
+    app_path = f"apps/reimport_{suffix}"
+    app_source_path = f"{app_path}/pages/index.tsx"
+    app_source = b"export default function Page() { return <div>Reimport Preview</div>; }"
     job_id: UUID | None = None
     try:
         await RepoStorage().write(path, source.encode())
+        await RepoStorage().write(app_source_path, app_source)
         async with async_session_factory() as db:
             db.add(Workflow(id=workflow_id, name=f"thin-reimport-{suffix}", function_name=f"thin_reimport_{suffix}",
                             path=path, type="workflow", access_level="authenticated", is_active=True))
+            db.add(Workflow(id=missing_id, name=f"missing-reimport-{suffix}", function_name="missing",
+                path=f"workflows/missing_reimport_{suffix}.py", type="workflow", is_active=True))
+            db.add(Application(id=app_id, name=f"reimport-{suffix}", slug=f"reimport-{suffix}", repo_path=app_path))
             await db.commit()
         job_id = await _enqueue(
             async_session_factory, platform_admin, WORKSPACE_REIMPORT_DEFINITION, WorkspaceReimportPayload(), label="workspace-reimport"
         )
         job = wait_for_job(e2e_client, platform_admin.headers, job_id, "workspace.reimport")
         assert job["result"] is not None and "entities_imported" in job["result"]
+        assert str(missing_id) in {item["entity_id"] for item in job["result"]["pending_deletes"]}
         async with async_session_factory() as db:
+            assert await db.get(Workflow, missing_id) is not None
             indexed = await db.get(FileIndex, path)
             assert indexed is not None and indexed.content == source
+            attempt = await db.get(PlatformJob, job_id)
+            assert attempt.executor_worker_id is not None
+            assert attempt.executor_compute_capability == "app.preview.compile.v1"
+        preview = await AppStorageService().read_file(str(app_id), "preview", "pages/index.tsx")
+        assert preview is not None and b"Reimport Preview" in preview
+        assert b"<div>" not in preview
     finally:
         await RepoStorage().delete(path)
+        await RepoStorage().delete(app_source_path)
+        await _delete_s3(f"_apps/{app_id}/preview/pages/index.tsx")
         async with async_session_factory() as db:
             await db.execute(delete(FileIndex).where(FileIndex.path == path))
-            await db.execute(delete(Workflow).where(Workflow.id == workflow_id))
+            await db.execute(delete(Workflow).where(Workflow.id.in_((workflow_id, missing_id))))
+            await db.execute(delete(Application).where(Application.id == app_id))
+            await db.execute(delete(FileIndex).where(FileIndex.path == app_source_path))
             await db.commit()
         if job_id is not None:
             await _delete_job(async_session_factory, job_id)

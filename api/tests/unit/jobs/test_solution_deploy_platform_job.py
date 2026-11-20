@@ -4,7 +4,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.jobs.platform.base import PlatformJobFailure
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.jobs.platform.solution_deploy import (
     SolutionDeployPayload,
     run_solution_deploy,
@@ -34,8 +34,7 @@ async def test_platform_job_reports_deploy_phases_beyond_staged_input(
     projection = SolutionDeployJob(
         id=deploy_job_id,
         install_id=install_id,
-        status="succeeded",
-        result={"solution_id": str(install_id)},
+        status="queued",
     )
 
     class FakeDB:
@@ -49,6 +48,7 @@ async def test_platform_job_reports_deploy_phases_beyond_staged_input(
         yield FakeDB()
 
     context = AsyncMock()
+    context.authorize_effect = AsyncMock(return_value=True)
     monkeypatch.setattr(
         "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.copy_to_path",
         AsyncMock(return_value=1),
@@ -64,6 +64,8 @@ async def test_platform_job_reports_deploy_phases_beyond_staged_input(
     async def complete_deploy(*_args, progress_callback, **_kwargs):
         await progress_callback("Reconciling Solution resources", 20)
         await progress_callback("Finalizing Solution artifacts", 90)
+        projection.status = "succeeded"
+        projection.result = {"solution_id": str(install_id)}
 
     monkeypatch.setattr("src.routers.solutions._run_deploy_job", complete_deploy)
 
@@ -85,6 +87,104 @@ async def test_platform_job_reports_deploy_phases_beyond_staged_input(
         call("Finalizing Solution artifacts", percent=90),
         call("Solution deploy complete", percent=100),
     ]
+
+
+@pytest.mark.asyncio
+async def test_platform_job_replays_persisted_success_without_loading_staged_input(
+    monkeypatch,
+):
+    deploy_job_id = uuid4()
+    result = {"solution_id": str(uuid4())}
+    projection = SolutionDeployJob(
+        id=deploy_job_id, install_id=uuid4(), status="succeeded", result=result
+    )
+
+    class FakeDB:
+        async def get(self, model, row_id):  # noqa: ANN001, ANN201
+            assert model is SolutionDeployJob
+            assert row_id == deploy_job_id
+            return projection
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield FakeDB()
+
+    context = AsyncMock()
+    context.authorize_effect = AsyncMock(return_value=True)
+    copy = AsyncMock()
+    delete = AsyncMock()
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.copy_to_path", copy
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.delete", delete
+    )
+
+    assert await run_solution_deploy(
+        context,
+        SolutionDeployPayload(
+            deploy_job_id=deploy_job_id,
+            kind="deploy",
+            install_id=projection.install_id,
+            input_sha256="a" * 64,
+            options={},
+        ),
+    ) == result
+    copy.assert_not_awaited()
+    delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_platform_job_cancellation_retains_staged_input(monkeypatch):
+    deploy_job_id = uuid4()
+    projection = SolutionDeployJob(
+        id=deploy_job_id, install_id=uuid4(), status="queued"
+    )
+
+    class FakeDB:
+        async def get(self, model, row_id):  # noqa: ANN001, ANN201
+            assert model is SolutionDeployJob
+            assert row_id == deploy_job_id
+            return projection
+
+    @asynccontextmanager
+    async def fake_db_context():
+        yield FakeDB()
+
+    context = AsyncMock()
+    context.authorize_effect = AsyncMock(return_value=True)
+    copy = AsyncMock(return_value=1)
+    delete = AsyncMock()
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.get_db_context", fake_db_context
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.copy_to_path", copy
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.solution_deploy.SolutionDeployJobStorage.delete", delete
+    )
+    monkeypatch.setattr(
+        "src.routers.solutions._run_deploy_job",
+        AsyncMock(side_effect=PlatformJobCancelled),
+    )
+
+    with pytest.raises(PlatformJobCancelled):
+        await run_solution_deploy(
+            context,
+            SolutionDeployPayload(
+                deploy_job_id=deploy_job_id,
+                kind="deploy",
+                install_id=projection.install_id,
+                input_sha256="a" * 64,
+                options={},
+            ),
+        )
+    copy.assert_awaited_once()
+    delete.assert_not_awaited()
 
 
 @pytest.mark.asyncio

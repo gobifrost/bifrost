@@ -460,6 +460,7 @@ services:
       - ./api/product-updates.bundle.json:/app/product-updates.bundle.json:ro
       - ./api/bifrost:/app/bifrost:ro
       - ./api/scripts:/app/scripts:ro  # Scripts for migration utilities
+      - thin-provider-tls:/fixture-tls:ro
       - ./api/tests:/app/tests:ro
       - ./api/alembic:/app/alembic:ro
       - ./api/alembic.ini:/app/alembic.ini:ro

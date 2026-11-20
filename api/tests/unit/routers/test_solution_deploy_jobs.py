@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 from uuid import uuid4
 
@@ -15,6 +16,10 @@ from src.routers.solutions import (
     _run_deploy_job,
     _run_install_job,
 )
+
+
+def _authorized_context() -> SimpleNamespace:
+    return SimpleNamespace(authorize_effect=AsyncMock(return_value=True))
 
 
 @pytest.mark.asyncio
@@ -115,17 +120,14 @@ async def test_run_deploy_job_does_not_start_after_job_is_terminal(
         yield FakeDB()
 
     from src.core import database
-    from src.services.solutions import zip_install
-
-    deploy = AsyncMock()
     monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(zip_install, "deploy_zip_to_solution_path", deploy)
     zip_path = tmp_path / "deploy.zip"
     zip_path.write_bytes(b"not used")
 
-    await _run_deploy_job(job.id, uuid4(), zip_path, force=False)
+    await _run_deploy_job(
+        job.id, uuid4(), zip_path, context=_authorized_context(), force=False
+    )
 
-    deploy.assert_not_awaited()
     assert not zip_path.exists()
 
 
@@ -160,24 +162,22 @@ async def test_queued_manual_deploy_rechecks_git_connection_inside_write_lock(
     async def fake_db_context():
         yield FakeDB()
 
-    @asynccontextmanager
-    async def fake_write_lock(_solution_id):  # noqa: ANN001
-        yield
-
     from src.core import database
-    from src.services.solutions import zip_install
-    from src.services.solutions import write_lock
+    from src.services.solutions import compute_pipeline
 
-    deploy = AsyncMock()
+    @asynccontextmanager
+    async def fake_prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        yield SimpleNamespace()
+
     monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(write_lock, "solution_write_lock", fake_write_lock)
-    monkeypatch.setattr(zip_install, "deploy_zip_to_solution_path", deploy)
+    monkeypatch.setattr(compute_pipeline, "prepare_solution_deployment", fake_prepare)
     zip_path = tmp_path / "deploy.zip"
     zip_path.write_bytes(b"not used")
 
-    await _run_deploy_job(job.id, solution.id, zip_path, force=False)
+    await _run_deploy_job(
+        job.id, solution.id, zip_path, context=_authorized_context(), force=False
+    )
 
-    deploy.assert_not_awaited()
     assert job.status == "failed"
     assert "git-connected" in (job.error or "").lower()
 
@@ -204,24 +204,22 @@ async def test_run_deploy_job_preserves_build_memory_failure(tmp_path, monkeypat
     async def fake_db_context():
         yield FakeDB()
 
-    @asynccontextmanager
-    async def fake_write_lock(_solution_id):  # noqa: ANN001
-        yield
-
     from src.core import database
-    from src.services.solutions import write_lock, zip_install
+    from src.services.solutions import compute_pipeline
+
+    @asynccontextmanager
+    async def fail_prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AppBuildMemoryError()
+        yield  # pragma: no cover
 
     monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(write_lock, "solution_write_lock", fake_write_lock)
-    monkeypatch.setattr(
-        zip_install,
-        "deploy_zip_to_solution_path",
-        AsyncMock(side_effect=AppBuildMemoryError()),
-    )
+    monkeypatch.setattr(compute_pipeline, "prepare_solution_deployment", fail_prepare)
     zip_path = tmp_path / "deploy.zip"
     zip_path.write_bytes(b"not used")
 
-    await _run_deploy_job(job.id, solution.id, zip_path, force=False)
+    await _run_deploy_job(
+        job.id, solution.id, zip_path, context=_authorized_context(), force=False
+    )
 
     assert job.status == "failed"
     assert job.error == str(AppBuildMemoryError())
@@ -242,20 +240,22 @@ async def test_run_install_job_preserves_build_memory_failure(tmp_path, monkeypa
         yield FakeDB()
 
     from src.core import database
-    from src.services.solutions import zip_install
+    from src.services.solutions import compute_pipeline
+
+    @asynccontextmanager
+    async def fail_prepare(*_args, **_kwargs):  # noqa: ANN002, ANN003
+        raise AppBuildMemoryError()
+        yield  # pragma: no cover
 
     monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(
-        zip_install,
-        "install_zip_path",
-        AsyncMock(side_effect=AppBuildMemoryError()),
-    )
+    monkeypatch.setattr(compute_pipeline, "prepare_solution_deployment", fail_prepare)
     zip_path = tmp_path / "install.zip"
     zip_path.write_bytes(b"not used")
 
     await _run_install_job(
         job.id,
         zip_path,
+        context=_authorized_context(),
         organization_id=None,
         config_values={},
         deployer_email="admin@example.test",
@@ -311,17 +311,18 @@ async def test_run_deploy_job_deletes_orphan_in_same_transaction_as_failed_statu
     async def fake_write_lock(_solution_id):  # noqa: ANN001
         yield
 
-    async def _fail_deploy(*args, **kwargs):  # noqa: ANN002, ANN003
+    @asynccontextmanager
+    async def _fail_prepare(*args, **kwargs):  # noqa: ANN002, ANN003
         from src.services.solutions.zip_install import UnmetDependency
 
         raise UnmetDependency("missing dependency X")
+        yield  # pragma: no cover
 
     from src.core import database
-    from src.services.solutions import write_lock, zip_install
+    from src.services.solutions import compute_pipeline
 
     monkeypatch.setattr(database, "get_db_context", fake_db_context)
-    monkeypatch.setattr(write_lock, "solution_write_lock", fake_write_lock)
-    monkeypatch.setattr(zip_install, "deploy_zip_to_solution_path", _fail_deploy)
+    monkeypatch.setattr(compute_pipeline, "prepare_solution_deployment", _fail_prepare)
     zip_path = tmp_path / "deploy.zip"
     zip_path.write_bytes(b"not used")
 
@@ -329,6 +330,7 @@ async def test_run_deploy_job_deletes_orphan_in_same_transaction_as_failed_statu
         job.id,
         sol.id,
         zip_path,
+        context=_authorized_context(),
         force=True,
         allow_connected_install=True,
         delete_install_on_failure=True,

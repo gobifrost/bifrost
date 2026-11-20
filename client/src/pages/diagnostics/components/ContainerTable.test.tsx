@@ -3,8 +3,11 @@ import userEvent from "@testing-library/user-event";
 import { it, expect, vi } from "vitest";
 vi.mock("./MemoryChart", () => ({ CONTAINER_COLORS: ["var(--primary)"] }));
 vi.mock("./ForkTable", () => ({
-	ForkTable: ({ workerId }: { workerId: string }) => (
-		<div>Processes for {workerId}</div>
+	ForkTable: ({ workerId, actionsEnabled }: { workerId: string; actionsEnabled?: boolean }) => (
+		<div>
+			Processes for {workerId}
+			<button type="button" disabled={actionsEnabled === false}>Recycle All</button>
+		</div>
 	),
 }));
 import { ContainerTable } from "./ContainerTable";
@@ -57,4 +60,37 @@ it("explains missing process details instead of an inert expanded row", async ()
 			"Process details are not available for this container.",
 		),
 	).toBeVisible();
+});
+
+it("shows canonical lifecycle history and disables process controls before readiness", async () => {
+	render(
+		<ContainerTable
+			pools={[
+				{
+					...pool,
+					incarnation: {
+						worker_id: "fixture-worker",
+						form: "external",
+						state: "starting",
+						execution_lane: "normal",
+						version: "2026.11",
+						capacity_scope: "cloudflare:primary",
+						created_at: "2026-11-14T12:00:00Z",
+						ready_at: null,
+						ended_at: null,
+						end_reason: null,
+						memory_budget_bytes: null,
+						memory_reserved_bytes: 0,
+						cleanup_confirmed: false,
+					},
+				}
+			]}
+			workerIds={[pool.worker_id]}
+		/>,
+	);
+	expect(screen.getByText("external · normal")).toBeVisible();
+	expect(screen.getByText("cloudflare:primary")).toBeVisible();
+
+	await userEvent.setup().click(screen.getByText("View processes"));
+	expect(screen.getByRole("button", { name: "Recycle All" })).toBeDisabled();
 });

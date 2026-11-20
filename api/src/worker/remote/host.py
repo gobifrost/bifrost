@@ -13,11 +13,12 @@ import json
 import logging
 import time
 from collections.abc import Awaitable
+from dataclasses import dataclass
 from typing import Any
 from uuid import UUID, uuid4
 
 from shared.worker_control_auth import external_worker_control_key
-from shared.worker_compute import APP_COMPILE_CAPABILITY
+from shared.version import get_version
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
@@ -28,8 +29,10 @@ from src.config import get_settings
 from src.core.database import get_db_context, get_liveness_db_context
 from src.core.requirements_cache import get_requirements
 from src.jobs.consumers.package_install import PackageInstallConsumer
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
+from src.jobs.platform.base import PlatformJobCancelled
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
-from src.jobs.platform.catalog import executor_platform_job_types
+from src.jobs.platform.catalog import executor_platform_job_types, get_platform_job_metadata
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.services.memory_requests import MemoryBudget
@@ -40,10 +43,12 @@ from src.services.worker_pool.claims import (
     register_static_worker,
     report_worker_handlers,
 )
+from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
-from src.worker.remote.app_compile_host import (
-    APP_COMPILE_JOB_TYPES, ApiAppBuildBackend, reconcile_app_compiles,
+from src.worker.remote.file_compute_host import (
+    FILE_COMPUTE_JOB_TYPES, ApiFileComputeBackend, operation_for_job_type, control_authorization,
+    reconcile_file_computes,
 )
 from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
@@ -90,16 +95,37 @@ def _reply_timeout(action: str) -> float:
     return COMMAND_REPLY_SECONDS
 
 
+@dataclass(frozen=True)
+class IsolatedPlatformJobReservation:
+    job_id: UUID
+    attempt: int
+    backend: str = EXTERNAL_ISOLATED_BACKEND
+
+
 async def _external_reserved_capabilities(
-    incarnation_id: UUID,
-) -> tuple[frozenset[str], frozenset[str]]:
-    """Load the immutable capability declaration for an external worker."""
+    incarnation_id: UUID, *, form: str = "external",
+) -> tuple[frozenset[str], frozenset[str], IsolatedPlatformJobReservation | None]:
+    """Load immutable compute grants for a managed capacity reservation."""
 
     async with get_liveness_db_context() as db:
         worker = await db.get(ExecutionWorker, incarnation_id)
-    if worker is None or worker.form != "external":
+    if worker is None or worker.form != form:
         raise AuthenticationError("external launcher has no reserved worker profile")
-    return frozenset(worker.supported_handlers), frozenset(worker.supported_compute)
+    isolated = None
+    if worker.isolated_platform_job_id is not None:
+        if (
+            worker.resource_class != "isolated"
+            or worker.isolated_platform_job_attempt is None
+            or worker.isolated_platform_job_attempt < 1
+            or worker.supported_handlers
+            or not worker.supported_compute
+        ):
+            raise AuthenticationError("external isolated reservation is invalid")
+        isolated = IsolatedPlatformJobReservation(
+            worker.isolated_platform_job_id, worker.isolated_platform_job_attempt,
+            "kubernetes" if form == "job" else EXTERNAL_ISOLATED_BACKEND,
+        )
+    return frozenset(worker.supported_handlers), frozenset(worker.supported_compute), isolated
 
 
 class RemoteProcess:
@@ -121,9 +147,11 @@ class RemoteProcess:
 class Bridge:
     """Ephemeral command transport; PostgreSQL remains the durable authority."""
     def __init__(
-        self, socket: WebSocket, hello: dict[str, Any], lease: RemoteOwnerLease
+        self, socket: WebSocket, hello: dict[str, Any], lease: RemoteOwnerLease,
+        *, isolated_job: IsolatedPlatformJobReservation | None = None,
     ) -> None:
         self.socket = socket
+        self.isolated_job = isolated_job
         self.connected = True
         self.current = int(hello["current"])
         self.limit = int(hello["limit"])
@@ -150,7 +178,7 @@ class Bridge:
         self.reconciliation_ready = asyncio.Event()
         self.transport_changed = asyncio.Event()
         self.compute_changed = asyncio.Event()
-        self.app_compilers: dict[str, Any] = {}
+        self.file_computes: dict[str, Any] = {}
         self.agent_compute_runtimes: dict[str, Any] = {}
         self._deferred_terminal: list[dict[str, Any]] = []
         self.lease = lease
@@ -211,6 +239,11 @@ class Bridge:
             self.pending.pop(request_id, None)
             if not future.done():
                 future.cancel()
+            elif not future.cancelled():
+                # Disconnect can fail the reply while send/authorization is
+                # unwinding, before this caller ever awaits it. Observe that
+                # completed reply as well as removing it from the pending map.
+                future.exception()
 
     async def acknowledge(self, event_id: str) -> None:
         """Release a launcher-retained terminal result after canonical delivery."""
@@ -356,7 +389,7 @@ class Bridge:
                 self.requirements = requirements
             self.inventory = inventory
             self.inventory_ready.set()
-        elif event.get("event") == "app_compile_state":
+        elif event.get("event") in {"app_compile_state", "file_compute_state"}:
             if not isinstance(event.get("stage_id"), str):
                 raise ProtocolError("App compile notification requires a stage UUID")
             UUID(event["stage_id"])
@@ -632,7 +665,10 @@ class ApiExecutor(PoolWorker):
         from src.worker.remote.remote_pool import ThinRemoteProcessPool
         from src.jobs.consumers.workflow_execution import WorkflowExecutionConsumer
 
-        self.bridge.pool = ThinRemoteProcessPool(self.bridge, worker_id=str(self.incarnation_id))
+        self.bridge.pool = ThinRemoteProcessPool(
+            self.bridge, worker_id=str(self.incarnation_id),
+            workflow_packages=self.bridge.isolated_job is None,
+        )
         from src.services.execution.requirements_setup_result import RequirementsInstallResult
         self.bridge.pool._apply_requirements_status(
             RequirementsInstallResult.from_json_dict(self.bridge.requirements)
@@ -641,6 +677,14 @@ class ApiExecutor(PoolWorker):
 
     def _make_package_consumer(self) -> PackageProxy:
         return PackageProxy(self.bridge)
+
+    async def _package_loop(self) -> None:
+        if self.bridge.isolated_job is None:
+            await super()._package_loop()
+
+    async def _start_service_claim_loop(self) -> None:
+        if self.bridge.isolated_job is None:
+            await super()._start_service_claim_loop()
 
     def _make_agent_consumer(self) -> RemoteAgentConsumer:
         if self.bridge.agents is None:
@@ -679,27 +723,79 @@ class ApiExecutor(PoolWorker):
         return self.bridge.reconciliation_ready.is_set()
 
     async def _execute_platform_job(self, claim: Any) -> bool:
+        operation = operation_for_job_type(claim.job_type)
+        metadata = get_platform_job_metadata(claim.job_type)
+        supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
+        if (self.bridge.isolated_job is not None or (
+            metadata is not None and metadata.required_compute_capabilities
+        )) and (
+            operation is None or metadata is None
+            or not metadata.required_compute_capabilities.issubset(supported)
+        ):
+            raise RuntimeError("An isolated worker requires registered API-owned file computation")
         backend = (
-            ApiAppBuildBackend(self.bridge)
-            if claim.job_type in APP_COMPILE_JOB_TYPES
-            and APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+            ApiFileComputeBackend(self.bridge)
+            if operation is not None
+            and metadata is not None
+            and metadata.required_compute_capabilities.issubset(supported)
             else self.bridge
         )
         return await run_claimed_platform_job(claim, backend=backend)
 
+    async def _run_platform_job(self, claim: Any) -> None:
+        try:
+            await super()._run_platform_job(claim)
+        finally:
+            if self.bridge.isolated_job is not None:
+                # The runner returns only after physical stage cleanup was
+                # observed. This one-job resource then drains instead of
+                # borrowing another attempt or ordinary work.
+                self.request_stop()
+
     @property
     def supports_platform_jobs(self) -> bool:
         return super().supports_platform_jobs and (
-            self.bridge.supports_platform_jobs or APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+            self.bridge.supports_platform_jobs
+            or any(
+                (metadata := get_platform_job_metadata(job_type)) is not None
+                and metadata.required_compute_capabilities.issubset({
+                    f"{name}.v{version}" for name, version in self.bridge.compute_capabilities
+                })
+                for job_type in FILE_COMPUTE_JOB_TYPES
+            )
         )
 
     async def _claim_platform_job(self, fits_bytes: int) -> Any:
         job_types = executor_platform_job_types()
-        if not self.bridge.supports_platform_jobs:
-            job_types = job_types.intersection(APP_COMPILE_JOB_TYPES)
+        supported = {f"{name}.v{version}" for name, version in self.bridge.compute_capabilities}
+        job_types = frozenset(
+            job_type for job_type in job_types
+            if (metadata := get_platform_job_metadata(job_type)) is not None
+            and (
+                (job_type in FILE_COMPUTE_JOB_TYPES
+                 and metadata.required_compute_capabilities.issubset(supported))
+                or (not metadata.required_compute_capabilities and self.bridge.supports_platform_jobs)
+            )
+        )
+        if self.bridge.isolated_job is not None:
+            if self.bridge.isolated_job.backend == "kubernetes":
+                from src.jobs.platform.kubernetes_compute import adopt_compute_claim
+
+                return await adopt_compute_claim(
+                    self.incarnation_id, self.bridge.isolated_job.job_id,
+                    self.bridge.isolated_job.attempt, fits_bytes=fits_bytes,
+                    memory_sample=self.bridge.memory(), job_types=job_types,
+                )
+            return await claim_platform_job(
+                backend=EXTERNAL_ISOLATED_BACKEND, fits_bytes=fits_bytes,
+                memory_sample=self.bridge.memory(), job_types=job_types,
+                executor_worker_id=self.incarnation_id,
+                job_id=self.bridge.isolated_job.job_id,
+                expected_attempt=self.bridge.isolated_job.attempt,
+            )
         return await claim_platform_job(
             backend="local", fits_bytes=fits_bytes, memory_sample=self.bridge.memory(),
-            job_types=job_types,
+            job_types=job_types, executor_worker_id=self.incarnation_id,
         )
 
     async def _prepare_admission(self) -> None:
@@ -754,7 +850,7 @@ class ApiExecutor(PoolWorker):
             self.bridge.reject_missing_platform_routes(self.bridge.inventory)
             if self.bridge.agents is not None:
                 await self.bridge.agents.reject_missing(self.bridge.inventory)
-            await reconcile_app_compiles(self.bridge)
+            await reconcile_file_computes(self.bridge)
             if (self.bridge.inventory.get("agent_compute_stages", []) != []
                     or self.bridge.agent_compute_runtimes):
                 from src.worker.remote.agent_orchestration import reconcile_agent_computes
@@ -879,19 +975,19 @@ class ApiExecutor(PoolWorker):
             return
         if not owns:
             return
+        if self.bridge.connected:
+            try:
+                # A terminal worker cannot own or renew an execution session.
+                # Finish the physical retirement handshake while this drained
+                # owner is still active, then persist the terminal transition.
+                await self.bridge.request(
+                    "retired", {}, authorization=control_authorization(self.bridge),
+                )
+            except PlatformJobCancelled:
+                return
+            except ConnectionError:
+                pass
         await super()._retire()
-        if not self.bridge.connected:
-            return
-        try:
-            still_owns = await owns_remote_session(self.bridge.lease)
-        except Exception:
-            logging.getLogger(__name__).warning(
-                "Remote owner fence read failed; skipping retired notice", exc_info=True
-            )
-            return
-        if still_owns:
-            with contextlib.suppress(ConnectionError):
-                await self.bridge.request("retired", {})
 
 
 class RemoteSession:
@@ -1104,10 +1200,11 @@ class RemoteSession:
 class RemoteControlHost:
     async def _welcome(self, socket: WebSocket, bridge: Bridge, lease: RemoteOwnerLease) -> None:
         """Send startup inputs through the existing bounded control transport."""
-        cached = await get_requirements()
+        cached = await get_requirements() if bridge.isolated_job is None else None
         async with bridge.lock:
             await socket.send_text(json.dumps({
                 "event": "welcome", "session_generation": lease.session_generation,
+                "api_version": get_version(),
             }))
             startup = ControlEnvelope(
                 session_generation=lease.session_generation, sequence=bridge._sequence + 1,
@@ -1149,11 +1246,25 @@ class RemoteControlHost:
             signed = SignedHello.from_dict(initial.get("hello", {}))
             settings = get_settings()
             control_key = settings.secret_key
+            kubernetes_compute = False
+            if signed.form == "job":
+                from src.jobs.platform.kubernetes_compute import compute_control_key
+
+                scoped_key = await compute_control_key(signed.incarnation_id, settings.secret_key)
+                if scoped_key is not None:
+                    control_key = scoped_key
+                    kubernetes_compute = True
             if signed.form == "external":
-                if signed.resource_uid is None or not settings.worker_capacity_token:
+                if signed.resource_uid is None:
+                    raise AuthenticationError("External worker control is not configured")
+                # Resolve the installation connection in a short-lived DB session
+                # before authenticating the provider-owned launcher.
+                async with get_liveness_db_context() as db:
+                    connection = await load_capacity_provider_connection(db, settings)
+                if connection is None:
                     raise AuthenticationError("External worker control is not configured")
                 control_key = external_worker_control_key(
-                    settings.worker_capacity_token.get_secret_value(), signed.incarnation_id, signed.resource_uid,
+                    connection.token, signed.incarnation_id, signed.resource_uid,
                 )
             hello = verify_hello(control_key, signed)
             # This image implements the implicit Linux process contract only.
@@ -1164,6 +1275,8 @@ class RemoteControlHost:
                 raise AuthenticationError("Explicit physical runtime profiles are unsupported")
             if hello.form == "external" and hello.execution_lane != "normal":
                 raise AuthenticationError("External capacity workers only support the Normal lane")
+            if (hello.form == "external" or kubernetes_compute) and initial.get("version") != get_version():
+                raise AuthenticationError("External worker build must match the connected API build")
             sample = initial.get("sample")
             if not isinstance(sample, dict):
                 raise ProtocolError("hello sample is required")
@@ -1189,9 +1302,10 @@ class RemoteControlHost:
             await socket.close(code=1008)
             raise
 
-        if hello.form == "external":
-            reserved_handlers, reserved_compute = await _external_reserved_capabilities(
-                hello.incarnation_id
+        isolated_job = None
+        if hello.form == "external" or kubernetes_compute:
+            reserved_handlers, reserved_compute, isolated_job = await _external_reserved_capabilities(
+                hello.incarnation_id, form=hello.form,
             )
             bootstrap["handlers"] = [
                 handler
@@ -1203,6 +1317,13 @@ class RemoteControlHost:
                 for capability in bootstrap["compute_capabilities"]
                 if f"{capability[0]}.v{capability[1]}" in reserved_compute
             ]
+            if isolated_job is not None:
+                bootstrap["supports_platform_jobs"] = False
+                if not reserved_compute.issubset({
+                    f"{name}.v{version}" for name, version in bootstrap["compute_capabilities"]
+                }):
+                    raise AuthenticationError("Isolated worker lacks required image computation")
+
 
         # Authentication precedes canonical admission. Reconnects naturally
         # get None here because their pod was already admitted.
@@ -1302,7 +1423,7 @@ class RemoteControlHost:
             existing.bridge.replace_socket(socket, lease)
             await self._welcome(socket, existing.bridge, lease)
             return existing, FragmentAssembler()
-        bridge = Bridge(socket, bootstrap, lease)
+        bridge = Bridge(socket, bootstrap, lease, isolated_job=isolated_job)
         worker = ApiExecutor(bridge, lease.worker_id, remote_static=hello.form == "static")
         await self._welcome(socket, bridge, lease)
         session = RemoteSession(

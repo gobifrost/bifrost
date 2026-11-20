@@ -29,9 +29,14 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+import base64
+import binascii
+import hashlib
+import json
 import logging
 from time import perf_counter
 from typing import TYPE_CHECKING, Any
+from types import MappingProxyType
 from uuid import UUID, uuid4, uuid5
 
 from pydantic import ValidationError
@@ -65,6 +70,7 @@ from shared.logo_processing import ProcessedLogo, process_logo
 logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
+    from src.jobs.platform.base import AppBuildCompute, AppBuildAuthorization
     from src.services.application_sdk_status import CurrentApplicationSdkMetadata
 
 
@@ -222,6 +228,28 @@ def _is_downgrade(new: str | None, current: str | None) -> bool:
         return False
 
 
+def validate_solution_bundle(bundle: "SolutionBundle", *, force: bool) -> None:
+    """Reject known-invalid source before compilation and again before apply."""
+    from src.services.solutions.dependency_walker import check_install_needs
+
+    _validate_bundle_python_files(bundle.python_files)
+    needs = check_install_needs(
+        bundle.python_files,
+        allow_outbound_access=bool(bundle.solution.allow_outbound_access),
+    )
+    if needs:
+        items = ", ".join(f"{need.ref} ({need.detail})" if need.detail else need.ref for need in needs)
+        raise SolutionDeployConflict(f"Solution has unmet dependencies: {items}")
+    if not force and _is_downgrade(bundle.version, bundle.solution.version):
+        raise SolutionDowngradeBlocked(
+            f"bundle version {bundle.version} is older than installed "
+            f"{bundle.solution.version}; re-run with force to downgrade"
+        )
+    name_errors = preflight_workflows(bundle.workflows)
+    if name_errors:
+        raise SolutionWorkflowNameMismatch("\n".join(name_errors))
+
+
 class SolutionFinalizeIncomplete(Exception):
     """Deploy committed but a post-commit S3 finalize step failed even after
     retries (a real storage outage). The deploy is full-replace + idempotent, so
@@ -244,12 +272,15 @@ async def _retry_idempotent(
     full-replace). Logs each retry so the blip is observable.
     """
     import asyncio
+    from src.jobs.platform.base import PlatformJobCancelled
 
     last: Exception | None = None
     for attempt in range(1, _FINALIZE_RETRIES + 1):
         try:
             await op()
             return
+        except PlatformJobCancelled:
+            raise
         except Exception as exc:  # noqa: BLE001 - storage is the only failure here
             last = exc
             if attempt < _FINALIZE_RETRIES:
@@ -291,6 +322,196 @@ class CompiledSolutionAppDeployment:
     source_built: bool = False
     build_identity: str | None = None
     reused: bool = False
+
+
+@dataclass(frozen=True)
+class SolutionAppBuildSpec:
+    """Immutable, source-authorized input for one physical app build."""
+
+    app_id: UUID
+    solution_id: UUID
+    organization_id: UUID | None
+    expected_old_deployment_id: UUID | None
+    source_files: Mapping[str, bytes]
+    prebuilt_dist: Mapping[str, bytes] | None
+    dependencies: Mapping[str, str]
+    build_recipe: object
+    reuse_deployment_id: str | None
+    slug: str | None
+    prebuilt_sdk_metadata: object
+    fingerprint: str
+
+    @property
+    def source_built(self) -> bool:
+        return self.prebuilt_dist is None
+
+
+@dataclass(frozen=True)
+class SolutionAppBuildPlan:
+    """Read-only snapshot that may cross the API/physical-build boundary."""
+
+    solution_id: UUID
+    organization_id: UUID | None
+    apps: tuple[SolutionAppBuildSpec, ...]
+    fingerprint: str
+
+
+@dataclass(frozen=True)
+class PreparedSolutionAppBuildReceipt:
+    """Verified remote/prebuilt result tied to one frozen build spec."""
+
+    app_id: UUID
+    solution_id: UUID
+    expected_old_deployment_id: UUID | None
+    input_fingerprint: str
+    deployment_id: UUID
+    dist: Mapping[str, bytes]
+    build_identity: str | None
+    sdk_metadata: "CurrentApplicationSdkMetadata | None"
+    source_built: bool
+    reused: bool = False
+
+
+@dataclass(frozen=True)
+class PreparedSolutionAppBuilds:
+    """All receipts returned from compiling a :class:`SolutionAppBuildPlan`."""
+
+    plan: SolutionAppBuildPlan
+    receipts: tuple[PreparedSolutionAppBuildReceipt, ...]
+
+
+def _app_build_fingerprint(
+    *,
+    app_id: UUID,
+    solution_id: UUID,
+    organization_id: UUID | None,
+    expected_old_deployment_id: UUID | None,
+    source_files: Mapping[str, bytes],
+    prebuilt_dist: Mapping[str, bytes] | None,
+    dependencies: Mapping[str, str],
+    build_recipe: object,
+    slug: str | None,
+    reuse_deployment_id: str | None,
+    prebuilt_sdk_metadata: object,
+) -> str:
+    """Hash every field that may affect compilation or later activation."""
+    document = {
+        "app_id": str(app_id),
+        "solution_id": str(solution_id),
+        "organization_id": str(organization_id) if organization_id else None,
+        "expected_old_deployment_id": (
+            str(expected_old_deployment_id) if expected_old_deployment_id else None
+        ),
+        "source_files": {
+            path: hashlib.sha256(data).hexdigest() for path, data in sorted(source_files.items())
+        },
+        "prebuilt_dist": (
+            {path: hashlib.sha256(data).hexdigest() for path, data in sorted(prebuilt_dist.items())}
+            if prebuilt_dist is not None else None
+        ),
+        "dependencies": dict(sorted(dependencies.items())),
+        "build_recipe": build_recipe,
+        "slug": slug,
+        "reuse_deployment_id": reuse_deployment_id,
+        "prebuilt_sdk_metadata": prebuilt_sdk_metadata,
+    }
+    try:
+        encoded = json.dumps(document, sort_keys=True, separators=(",", ":")).encode()
+    except (TypeError, ValueError) as exc:
+        raise SolutionDeployConflict("Solution app build inputs are not serializable.") from exc
+    return hashlib.sha256(encoded).hexdigest()
+
+
+async def compile_solution_app_builds(
+    plan: SolutionAppBuildPlan,
+    compute: "AppBuildCompute",
+) -> PreparedSolutionAppBuilds:
+    """Compile frozen source only through the supplied physical stage.
+
+    This function intentionally owns no session and performs no DB mutation.
+    Reuse reads immutable provenance from storage; source compilation has no
+    local npm/Vite fallback.
+    """
+    import asyncio
+
+    from src.services.application_sdk_status import current_sdk_metadata
+    from src.services.solutions.app_build import SolutionAppBuilder
+
+    builder = SolutionAppBuilder()
+    current_metadata: CurrentApplicationSdkMetadata | None = None
+    receipts: list[PreparedSolutionAppBuildReceipt] = []
+    for spec in plan.apps:
+        identity = None
+        if spec.source_files and isinstance(spec.build_recipe, dict):
+            identity = await asyncio.to_thread(
+                builder.attested_identity,
+                spec.app_id,
+                dict(spec.source_files),
+                dict(spec.dependencies),
+                spec.build_recipe,
+                package_name=spec.slug or "bifrost-app",
+            )
+        elif spec.source_built:
+            identity = await asyncio.to_thread(
+                builder.source_identity, spec.app_id, dict(spec.source_files), dict(spec.dependencies)
+            )
+        hint = spec.reuse_deployment_id
+        if hint and (str(spec.expected_old_deployment_id) != hint or identity is None):
+            raise SolutionDeployConflict("App build reuse became stale; re-run the deploy.")
+        if (
+            spec.expected_old_deployment_id is not None
+            and identity is not None
+            and await builder.can_reuse(spec.app_id, spec.expected_old_deployment_id, identity)
+        ):
+            receipts.append(PreparedSolutionAppBuildReceipt(
+                app_id=spec.app_id, solution_id=spec.solution_id,
+                expected_old_deployment_id=spec.expected_old_deployment_id,
+                input_fingerprint=spec.fingerprint, deployment_id=spec.expected_old_deployment_id,
+                dist=MappingProxyType({}), build_identity=identity, sdk_metadata=None,
+                source_built=spec.source_built, reused=True,
+            ))
+            continue
+        if hint:
+            raise SolutionDeployConflict("App build reuse artifacts changed; re-run the deploy.")
+        if spec.source_built:
+            inputs = await asyncio.to_thread(
+                builder._compile_inputs_for_remote,
+                spec.app_id,
+                dict(spec.source_files),
+                dict(spec.dependencies),
+                require_lockfile=False,
+            )
+            result = await compute(inputs)
+            # The shared AppBuildFileCompute adapter has verified identity
+            # against the actual physical recipe and these exact inputs. The
+            # API host has a different environment hash even with the same
+            # image; recomputing against its recipe would reject valid builds.
+            if (
+                len(result.build_identity) != 64
+                or any(char not in "0123456789abcdef" for char in result.build_identity)
+            ):
+                raise SolutionDeployConflict("Solution app build receipt does not match a valid build identity.")
+            if not result.artifacts or "index.html" not in result.artifacts:
+                raise SolutionDeployConflict("Solution app build produced no index.html artifact.")
+            if current_metadata is None:
+                current_metadata = await asyncio.to_thread(current_sdk_metadata)
+            dist = result.artifacts
+            build_identity = result.build_identity
+            sdk_metadata = current_metadata
+        else:
+            dist = dict(spec.prebuilt_dist or {})
+            if not dist or "index.html" not in dist:
+                raise SolutionDeployConflict("Solution prebuilt app has no index.html artifact.")
+            build_identity = identity
+            sdk_metadata = _prebuilt_sdk_metadata(spec.prebuilt_sdk_metadata)
+        receipts.append(PreparedSolutionAppBuildReceipt(
+            app_id=spec.app_id, solution_id=spec.solution_id,
+            expected_old_deployment_id=spec.expected_old_deployment_id,
+            input_fingerprint=spec.fingerprint, deployment_id=uuid4(),
+            dist=MappingProxyType(dict(dist)), build_identity=build_identity,
+            sdk_metadata=sdk_metadata, source_built=spec.source_built,
+        ))
+    return PreparedSolutionAppBuilds(plan=plan, receipts=tuple(receipts))
 
 
 def _prebuilt_sdk_metadata(value: object) -> "CurrentApplicationSdkMetadata | None":
@@ -415,8 +636,9 @@ class SolutionBundle:
 class SolutionDeployer:
     """Applies a SolutionBundle to storage + DB as a scoped full replace."""
 
-    def __init__(self, db: AsyncSession):
+    def __init__(self, db: AsyncSession, *, publication_authorization: AppBuildAuthorization | None = None):
         self.db = db
+        self._publication_authorization = publication_authorization
         self._instrumentation = _deploy_instrumentation.get()
         # Accumulates role names auto-created during this deploy (see
         # _resolve_roles). Surfaced on DeployResult.roles_created.
@@ -427,8 +649,11 @@ class SolutionDeployer:
         bundle: SolutionBundle,
         force: bool = False,
         file_mode: str = "replace",
+        *,
+        prepared_app_builds: PreparedSolutionAppBuilds | None = None,
+        source_artifact: bytes | None = None,
     ) -> DeployResult:
-        """Full-replace this install from ``bundle`` — DB phase + app COMPILE.
+        """Apply an install with verified App receipts and defer publication.
 
         ``file_mode`` controls how bundle file sidecars are written on deploy:
           ``"replace"`` (default) — always overwrite; ``"skip"`` — preserve an
@@ -436,19 +661,18 @@ class SolutionDeployer:
           NEVER deleted regardless of ``file_mode`` (O1 no-mirror: unlike
           entities, dropped files survive across redeployments).
 
-        Everything that can fail on bad input runs BEFORE the caller's commit, so
-        a failure rolls the deploy back with ZERO durable side effects:
-          - DB upserts + scoped reconcile (ownership/FK/unique/content), and
-          - **app dist compilation** (npm install + vite build) — the
-            failure-prone step — done here, IN MEMORY, no S3 write yet.
-        Only the cheap, durable-after-commit work is deferred onto
-        ``DeployResult.finalize_s3``: write Python source, UPLOAD the
-        already-compiled dists, sweep stale dist artifacts. The caller commits
-        first, then awaits ``finalize_s3``. So neither a failed commit (Codex
-        P1-c) NOR a failed build (Codex R4) leaves DB ahead of S3 — a build error
-        raises here, before commit; finalize is just retryable PUTs.
+        Source builds finish outside this transaction. Their receipts must
+        still match the current App ownership, source inputs and deployment
+        pointers. Validation and scoped reconciliation happen before commit;
+        no compiler or object-storage publication runs during that phase.
+        The caller commits, then invokes ``DeployResult.finalize_s3`` to
+        publish the already-compiled artifacts and canonical runtime source.
         """
-        _validate_bundle_python_files(bundle.python_files)
+        import asyncio
+
+        if bundle.apps and prepared_app_builds is None:
+            raise SolutionDeployConflict("Solution app builds must be prepared before applying resources.")
+        await asyncio.to_thread(validate_solution_bundle, bundle, force=force)
 
         solution = bundle.solution
         sid = solution.id
@@ -459,36 +683,8 @@ class SolutionDeployer:
         # remapping, then store it only after the DB commit in finalize_s3.
         from src.services.solutions.export import build_workspace_zip
 
-        source_artifact = build_workspace_zip(bundle)
-
-        # ── Module-closure backstop — before ANY writes ──────────────────────
-        # Primary gate is in zip_install (returns a clean 422). This backstop
-        # covers the OTHER deploy callers (the direct /deploy endpoint and
-        # git-sync auto-pull): a bundle whose ``modules.X`` import isn't shipped
-        # would otherwise install and fail at runtime with ModuleNotFoundError.
-        # Raised as SolutionDeployConflict so it rolls back with no side effects.
-        from src.services.solutions.dependency_walker import check_install_needs
-
-        needs = check_install_needs(
-            bundle.python_files,
-            allow_outbound_access=bool(bundle.solution.allow_outbound_access),
-        )
-        if needs:
-            items = ", ".join(
-                f"{n.ref} ({n.detail})" if n.detail else n.ref for n in needs
-            )
-            raise SolutionDeployConflict(
-                f"Solution has unmet dependencies: {items}"
-            )
-
-        # ── Downgrade gate (Task 20) — before ANY writes ─────────────────────
-        # An older bundle (both versions PEP 440-ordered) is refused unless
-        # forced. Unparseable/absent versions are unordered and never block.
-        if not force and _is_downgrade(bundle.version, solution.version):
-            raise SolutionDowngradeBlocked(
-                f"bundle version {bundle.version} is older than installed "
-                f"{solution.version}; re-run with force to downgrade"
-            )
+        if source_artifact is None:
+            source_artifact = await asyncio.to_thread(build_workspace_zip, bundle)
 
         # ── Per-install identity remap (criteria 9/10) ───────────────────────
         # Rewrite every entity id to uuid5(install, manifest_id) and translate
@@ -501,14 +697,6 @@ class SolutionDeployer:
         # a byte-identical bundle installs independently into N scopes (and a
         # redeploy is stable).
         rb = await self._remapped_bundle(bundle)
-
-        # ── Workflow-name preflight (before ANY writes) ─────────────────────
-        # A bundle whose manifest entry name diverges from its decorated
-        # @workflow(name=...) would deploy a Workflow.name the execution engine
-        # can't resolve. Catch it up front with actionable guidance.
-        name_errors = preflight_workflows(rb.workflows)
-        if name_errors:
-            raise SolutionWorkflowNameMismatch("\n".join(name_errors))
 
         # ── DB-only phase (validates + reconciles; rolls back cleanly) ───────
         await self._upsert_workflows(solution, rb.workflows, rb.python_files)
@@ -579,10 +767,13 @@ class SolutionDeployer:
         # => cleared), same lifecycle as the logo above.
         self._apply_readme(solution, bundle)
 
-        # ── COMPILE app dists to memory NOW (pre-commit) — a vite/npm failure
-        #    raises here and rolls back the whole deploy, no S3 touched. ───────
-        await self._report_phase("Compiling Solution applications", 45)
-        compiled = await self._compile_app_dists(builds)
+        # Validate the physical build receipts before committing any resource.
+        await self._report_phase("Applying Solution applications", 45)
+        compiled = (
+            self._verified_prepared_app_builds(solution, builds, prepared_app_builds)
+            if prepared_app_builds is not None
+            else []
+        )
 
         # ── S3 phase, DEFERRED until after the caller's commit (cheap PUTs) ───
         # Every step is FULL-REPLACE (idempotent), so a transient storage blip is
@@ -592,29 +783,33 @@ class SolutionDeployer:
         # install runnable. Only an outage that survives all retries raises
         # SolutionFinalizeIncomplete — and even then a later deploy/sync heals it.
         async def _finalize_s3() -> None:
+            async def publish(op: Callable[[], Awaitable[None]]) -> None:
+                await self._authorize_publication(self.db)
+                await op()
+
             await self._report_phase("Storing Solution source artifact", 70)
             await self._timed(
                 "source_artifact_s3",
                 lambda: _retry_idempotent(
                     "store source artifact", sid,
-                    lambda: self._write_source_artifact(sid, source_artifact),
+                    lambda: publish(lambda: self._write_source_artifact(sid, source_artifact)),
                 ),
             )
             await self._report_phase("Publishing Solution runtime source", 75)
             await _retry_idempotent(
                 "write python source", sid,
-                lambda: self._write_python(sid, rb.python_files),
+                lambda: publish(lambda: self._write_python(sid, rb.python_files)),
             )
             await self._report_phase("Uploading Solution application artifacts", 90)
             await _retry_idempotent(
                 "upload app dists", sid,
-                lambda: self._upload_compiled_dists(compiled),
+                lambda: publish(lambda: self._upload_compiled_dists(compiled)),
             )
             await self._timed(
                 "stale_app_artifacts_s3",
                 lambda: _retry_idempotent(
                     "sweep stale dist", sid,
-                    lambda: self._delete_stale_app_dist(stale_app_dist),
+                    lambda: publish(lambda: self._delete_stale_app_dist(stale_app_dist)),
                 ),
             )
             # ── Bundle file sidecars (O1: no mirror-delete) ───────────────────
@@ -628,9 +823,9 @@ class SolutionDeployer:
                     "bundle_files_s3",
                     lambda: _retry_idempotent(
                         "write bundle file sidecars", sid,
-                        lambda: self._write_bundle_files(
+                        lambda: publish(lambda: self._write_bundle_files(
                             sid, bundle.solution_files, file_mode
-                        ),
+                        )),
                     ),
                 )
 
@@ -653,6 +848,76 @@ class SolutionDeployer:
             roles_created=sorted(self._created_roles),
             finalize_s3=_finalize_s3,
         )
+
+    def _verified_prepared_app_builds(
+        self,
+        solution: Solution,
+        builds: list[dict[str, Any]],
+        prepared: PreparedSolutionAppBuilds,
+    ) -> list[CompiledSolutionAppDeployment]:
+        """Reject a remote receipt if this fresh DB apply no longer matches it."""
+        if (
+            prepared.plan.solution_id != solution.id
+            or prepared.plan.organization_id != solution.organization_id
+            or len(prepared.plan.apps) != len(builds)
+            or len(prepared.receipts) != len(builds)
+        ):
+            raise SolutionDeployConflict("Solution app build plan became stale; re-run the deploy.")
+        current = {
+            spec.app_id: spec
+            for spec in (
+                self._app_build_spec(solution, build, build["expected_old_deployment_id"])
+                for build in builds
+            )
+        }
+        planned = {spec.app_id: spec for spec in prepared.plan.apps}
+        receipts = {receipt.app_id: receipt for receipt in prepared.receipts}
+        if len(current) != len(planned) or len(current) != len(receipts):
+            raise SolutionDeployConflict("Solution app build receipt is incomplete or duplicated.")
+        compiled: list[CompiledSolutionAppDeployment] = []
+        for app_id, spec in current.items():
+            planned_spec = planned.get(app_id)
+            receipt = receipts.get(app_id)
+            if (
+                planned_spec is None
+                or receipt is None
+                or planned_spec.fingerprint != spec.fingerprint
+                or receipt.input_fingerprint != spec.fingerprint
+                or receipt.solution_id != solution.id
+                or receipt.expected_old_deployment_id != spec.expected_old_deployment_id
+                or receipt.source_built != spec.source_built
+            ):
+                raise SolutionDeployConflict("Solution app build receipt became stale; re-run the deploy.")
+            if receipt.reused:
+                if (
+                    receipt.deployment_id != spec.expected_old_deployment_id
+                    or receipt.dist
+                    or receipt.build_identity is None
+                ):
+                    raise SolutionDeployConflict("Solution app reuse receipt is invalid.")
+            elif (
+                receipt.deployment_id == spec.expected_old_deployment_id
+                or not receipt.dist
+                or "index.html" not in receipt.dist
+                or any(not isinstance(path, str) or not isinstance(data, bytes)
+                       for path, data in receipt.dist.items())
+            ):
+                raise SolutionDeployConflict("Solution app build receipt is invalid.")
+            compiled.append(CompiledSolutionAppDeployment(
+                app_id=app_id,
+                solution_id=solution.id,
+                deployment_id=receipt.deployment_id,
+                expected_old_deployment_id=spec.expected_old_deployment_id,
+                superseded_deployment_id=(
+                    None if receipt.reused else spec.expected_old_deployment_id
+                ),
+                dist=dict(receipt.dist),
+                sdk_metadata=receipt.sdk_metadata,
+                source_built=receipt.source_built,
+                build_identity=receipt.build_identity,
+                reused=receipt.reused,
+            ))
+        return compiled
 
     async def _report_phase(self, phase: str, percent: float) -> None:
         if self._instrumentation is not None:
@@ -794,6 +1059,181 @@ class SolutionDeployer:
             version=bundle.version,
             readme=bundle.readme,
         )
+
+    @staticmethod
+    def _app_build_spec(
+        solution: Solution,
+        mapp: Mapping[str, Any],
+        expected_old_deployment_id: UUID | None,
+    ) -> SolutionAppBuildSpec:
+        """Normalize one manifest app into the exact immutable build input."""
+        try:
+            app_id = UUID(str(mapp["id"]))
+        except (KeyError, TypeError, ValueError) as exc:
+            raise SolutionDeployConflict("Solution app has an invalid id.") from exc
+        if mapp.get("app_model", "inline_v1") != "standalone_v2":
+            raise SolutionDeployConflict(
+                f"app '{mapp.get('slug')}' has app_model="
+                f"'{mapp.get('app_model', 'inline_v1')}'; Solution apps must be standalone_v2 "
+                "(scaffold with `bifrost solution scaffold-app`). inline_v1 apps are not supported "
+                "in a Solution bundle."
+            )
+
+        def source_files(values: object, binary: object) -> dict[str, bytes]:
+            if not isinstance(values, Mapping) or not isinstance(binary, Mapping):
+                raise SolutionDeployConflict("Solution app source must be a file mapping.")
+            out: dict[str, bytes] = {}
+            for path, value in values.items():
+                if not isinstance(path, str) or not isinstance(value, (str, bytes)):
+                    raise SolutionDeployConflict("Solution app source contains an invalid file.")
+                out[path] = value.encode("utf-8") if isinstance(value, str) else value
+            for path, value in binary.items():
+                if not isinstance(path, str) or not isinstance(value, str):
+                    raise SolutionDeployConflict("Solution app binary source contains an invalid file.")
+                try:
+                    out[path] = base64.b64decode(value, validate=True)
+                except (ValueError, binascii.Error) as exc:
+                    raise SolutionDeployConflict("Solution app binary source is not valid base64.") from exc
+            return out
+
+        def prebuilt_files(text_files: object, binary_files: object) -> dict[str, bytes] | None:
+            if not text_files and not binary_files:
+                return None
+            if not isinstance(text_files or {}, Mapping) or not isinstance(binary_files or {}, Mapping):
+                raise SolutionDeployConflict("Solution prebuilt app output must be a file mapping.")
+            out: dict[str, bytes] = {}
+            for path, value in (text_files or {}).items():
+                if not isinstance(path, str) or not isinstance(value, (str, bytes)):
+                    raise SolutionDeployConflict("Solution prebuilt output contains an invalid file.")
+                out[path] = value.encode("utf-8") if isinstance(value, str) else value
+            for path, value in (binary_files or {}).items():
+                if not isinstance(path, str) or not isinstance(value, str):
+                    raise SolutionDeployConflict("Solution prebuilt binary output contains an invalid file.")
+                try:
+                    out[path] = base64.b64decode(value, validate=True)
+                except (ValueError, binascii.Error) as exc:
+                    raise SolutionDeployConflict("Solution prebuilt binary output is not valid base64.") from exc
+            return out
+
+        raw_dependencies = mapp.get("dependencies") or {}
+        if not isinstance(raw_dependencies, Mapping) or any(
+            not isinstance(name, str) or not isinstance(version, str)
+            for name, version in raw_dependencies.items()
+        ):
+            raise SolutionDeployConflict("Solution app dependencies must be string mappings.")
+        source = source_files(
+            mapp.get("src_files", mapp.get("src")) or {},
+            mapp.get("bin_files", mapp.get("bin")) or {},
+        )
+        prebuilt = prebuilt_files(
+            mapp.get("dist_files", mapp.get("dist")),
+            mapp.get("bin_dist_files", mapp.get("bin_dist")),
+        )
+        dependencies = dict(raw_dependencies)
+        slug = mapp.get("slug")
+        if slug is not None and not isinstance(slug, str):
+            raise SolutionDeployConflict("Solution app slug must be a string.")
+        reuse = mapp.get("reuse_deployment_id")
+        if reuse is not None and not isinstance(reuse, str):
+            raise SolutionDeployConflict("Solution app reuse deployment id must be a string.")
+        recipe = mapp.get("build_recipe")
+        sdk_metadata = mapp.get("prebuilt_sdk_metadata")
+        fingerprint = _app_build_fingerprint(
+            app_id=app_id,
+            solution_id=solution.id,
+            organization_id=solution.organization_id,
+            expected_old_deployment_id=expected_old_deployment_id,
+            source_files=source,
+            prebuilt_dist=prebuilt,
+            dependencies=dependencies,
+            build_recipe=recipe,
+            slug=slug,
+            reuse_deployment_id=reuse,
+            prebuilt_sdk_metadata=sdk_metadata,
+        )
+        return SolutionAppBuildSpec(
+            app_id=app_id,
+            solution_id=solution.id,
+            organization_id=solution.organization_id,
+            expected_old_deployment_id=expected_old_deployment_id,
+            source_files=MappingProxyType(source),
+            prebuilt_dist=MappingProxyType(prebuilt) if prebuilt is not None else None,
+            dependencies=MappingProxyType(dependencies),
+            build_recipe=recipe,
+            reuse_deployment_id=reuse,
+            slug=slug,
+            prebuilt_sdk_metadata=sdk_metadata,
+            fingerprint=fingerprint,
+        )
+
+    async def prepare_app_builds(self, bundle: "SolutionBundle") -> SolutionAppBuildPlan:
+        """Read app ownership/pointers and freeze physical-build inputs.
+
+        This deliberately performs no upserts, advisory writes, S3 effects, or
+        compilation. A caller may close its DB transaction before passing the
+        result to :func:`compile_solution_app_builds`.
+        """
+        _validate_bundle_python_files(bundle.python_files)
+        rb = await self._remapped_bundle(bundle)
+        specs: list[SolutionAppBuildSpec] = []
+        for mapp in rb.apps:
+            app_id = UUID(str(mapp["id"]))
+            row = (
+                await self.db.execute(
+                    select(Application.solution_id, Application.active_deployment_id)
+                    .where(Application.id == app_id)
+                )
+            ).first()
+            if row is not None and row[0] != bundle.solution.id:
+                owner = row[0]
+                raise SolutionDeployConflict(
+                    f"app {app_id} is already owned by "
+                    f"{'_repo/' if owner is None else f'solution {owner}'}; "
+                    "a bundle may not reuse another owner's entity id"
+                )
+            specs.append(self._app_build_spec(
+                bundle.solution, mapp, row[1] if row is not None else None
+            ))
+        fingerprint = hashlib.sha256(
+            json.dumps(
+                {
+                    "solution_id": str(bundle.solution.id),
+                    "organization_id": (
+                        str(bundle.solution.organization_id)
+                        if bundle.solution.organization_id else None
+                    ),
+                    "apps": [spec.fingerprint for spec in specs],
+                },
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode()
+        ).hexdigest()
+        return SolutionAppBuildPlan(
+            solution_id=bundle.solution.id,
+            organization_id=bundle.solution.organization_id,
+            apps=tuple(specs),
+            fingerprint=fingerprint,
+        )
+
+    @staticmethod
+    def _legacy_build_dict(spec: SolutionAppBuildSpec) -> dict[str, Any]:
+        """Adapt one frozen spec to the retained in-process compiler path."""
+        return {
+            "id": str(spec.app_id),
+            "app_model": "standalone_v2",
+            "app_id": spec.app_id,
+            "solution_id": spec.solution_id,
+            "expected_old_deployment_id": spec.expected_old_deployment_id,
+            "src": dict(spec.source_files),
+            "bin": {},
+            "dist": dict(spec.prebuilt_dist) if spec.prebuilt_dist is not None else None,
+            "bin_dist": None,
+            "prebuilt_sdk_metadata": spec.prebuilt_sdk_metadata,
+            "dependencies": dict(spec.dependencies),
+            "build_recipe": spec.build_recipe,
+            "reuse_deployment_id": spec.reuse_deployment_id,
+            "slug": spec.slug,
+        }
 
     @staticmethod
     def _remap_form_field_providers(
@@ -1413,131 +1853,22 @@ class SolutionDeployer:
 
             # Every Solution app is standalone_v2 (guarded above) and is built to
             # dist/, served from _apps/{id}/.
-            builds.append({
-                "app_id": app_id,
-                "solution_id": sid,
-                "expected_old_deployment_id": row[2] if row is not None else None,
-                "src": mapp.get("src_files") or {},
-                # Non-text assets (png/fonts/public/) carried as base64 by the
-                # CLI/git collectors — decoded into the build input (P2-j/R4).
-                "bin": mapp.get("bin_files") or {},
-                # Prebuilt fast-path: UTF-8 dist text + non-UTF-8 dist binaries
-                # (base64). Kept separate so the binaries are base64-decoded, not
-                # UTF-8-encoded (which would corrupt them).
-                "dist": mapp.get("dist_files"),
-                "bin_dist": mapp.get("bin_dist_files"),
-                # The CLI adds this transport-only value only after reading the
-                # SDK package npm installed for its local Vite build. A generic
-                # prebuilt bundle lacks it and therefore remains SDK-unknown.
-                "prebuilt_sdk_metadata": mapp.get("prebuilt_sdk_metadata"),
-                "dependencies": mapp.get("dependencies") or {},
-                "build_recipe": mapp.get("build_recipe"),
-                "reuse_deployment_id": mapp.get("reuse_deployment_id"),
-                "slug": mapp.get("slug"),
-            })
+            builds.append(self._legacy_build_dict(self._app_build_spec(
+                solution, mapp, row[2] if row is not None else None
+            )))
         return builds
 
-    async def _compile_app_dists(
-        self, builds: list[dict[str, Any]]
-    ) -> list[CompiledSolutionAppDeployment]:
-        """PRE-COMMIT: compile each app's dist to memory (npm install + vite
-        build, or a shipped prebuilt dist). This is the failure-prone step — a
-        build error raises HERE, before the deploy commits, so the whole deploy
-        rolls back with no S3 side effects (Codex R4 atomicity). No S3 writes.
-
-        Returns ``[(app_id, dist_bytes), ...]`` for the post-commit upload.
-        """
-        import asyncio
-        import base64 as _b64
-
-        from src.services.application_sdk_status import current_sdk_metadata
-        from src.services.solutions.app_build import SolutionAppBuilder
-
-        if not builds:
-            return []
-        builder = SolutionAppBuilder()
-        current_metadata = None
-        out: list[CompiledSolutionAppDeployment] = []
-        for b in builds:
-            prebuilt = b["dist"]
-            bin_prebuilt = b.get("bin_dist")
-            prebuilt_bytes: dict[str, bytes] | None = None
-            if prebuilt or bin_prebuilt:
-                prebuilt_bytes = {}
-                # UTF-8 dist text → raw bytes.
-                for k, v in (prebuilt or {}).items():
-                    prebuilt_bytes[k] = v.encode("utf-8") if isinstance(v, str) else v
-                # Non-UTF-8 dist assets travel as base64 — decode to the original
-                # bytes so images/fonts/wasm round-trip byte-for-byte (a plain
-                # .encode("utf-8") on the base64 string would write the base64
-                # TEXT to S3, corrupting the asset).
-                for k, v in (bin_prebuilt or {}).items():
-                    prebuilt_bytes[k] = _b64.b64decode(v) if isinstance(v, str) else v
-            src_bytes = {
-                k: v.encode("utf-8") if isinstance(v, str) else v
-                for k, v in b["src"].items()
-            }
-            for rel, b64 in (b.get("bin") or {}).items():
-                src_bytes[rel] = _b64.b64decode(b64)
-            source_built = prebuilt_bytes is None
-            hint = b.get("reuse_deployment_id")
-            identity = None
-            if src_bytes and b.get("build_recipe"):
-                identity = await asyncio.to_thread(
-                    builder.attested_identity, b["app_id"], src_bytes, b["dependencies"], b["build_recipe"],
-                    package_name=b.get("slug") or "bifrost-app",
-                )
-            elif source_built:
-                identity = await asyncio.to_thread(builder.source_identity, b["app_id"], src_bytes, b["dependencies"])
-            old = b["expected_old_deployment_id"]
-            if hint and (str(old) != hint or identity is None):
-                raise SolutionDeployConflict("App build reuse became stale; re-run the deploy.")
-            if old is not None and identity is not None and await builder.can_reuse(b["app_id"], old, identity):
-                out.append(CompiledSolutionAppDeployment(
-                    app_id=b["app_id"], solution_id=b["solution_id"],
-                    deployment_id=old, expected_old_deployment_id=old,
-                    superseded_deployment_id=None, dist={}, build_identity=identity, reused=True,
-                ))
-                continue
-            if hint:
-                raise SolutionDeployConflict("App build reuse artifacts changed; re-run the deploy.")
-            sdk_metadata = None
-            # compile_dist is subprocess-bound (npm/vite) → run off the loop.
-            dist = await asyncio.to_thread(
-                builder.compile_dist,
-                b["app_id"],
-                src_bytes,
-                b["dependencies"],
-                prebuilt_bytes,
-            )
-            deployment_id = uuid4()
-            expected_old = b["expected_old_deployment_id"]
-            if source_built and current_metadata is None:
-                current_metadata = await asyncio.to_thread(current_sdk_metadata)
-            if source_built:
-                sdk_metadata = current_metadata
-            else:
-                sdk_metadata = _prebuilt_sdk_metadata(b.get("prebuilt_sdk_metadata"))
-            out.append(
-                CompiledSolutionAppDeployment(
-                    app_id=b["app_id"],
-                    solution_id=b["solution_id"],
-                    deployment_id=deployment_id,
-                    expected_old_deployment_id=expected_old,
-                    superseded_deployment_id=expected_old,
-                    dist=dist,
-                    sdk_metadata=sdk_metadata,
-                    source_built=source_built,
-                    build_identity=(builder.last_build_identity if source_built else identity),
-                )
-            )
-        return out
+    async def _authorize_publication(self, db: AsyncSession) -> None:
+        if self._publication_authorization is not None and not await self._publication_authorization(db):
+            from src.jobs.platform.base import PlatformJobCancelled
+            raise PlatformJobCancelled
 
     async def _upload_compiled_dists(
         self, compiled: list[CompiledSolutionAppDeployment]
     ) -> None:
         """POST-COMMIT: upload immutable dists, then atomically activate them."""
         from src.services.solutions.app_build import SolutionAppBuilder
+        from src.jobs.platform.base import PlatformJobCancelled
 
         if not compiled:
             return
@@ -1574,7 +1905,13 @@ class SolutionDeployer:
         await self._report_phase("Activating Solution applications", 95)
         activation_started_at = perf_counter()
         try:
+            if self._publication_authorization is not None:
+                # Activation owns a fresh owner->job->App transaction. Release
+                # the parent's locks so that transaction cannot deadlock on us.
+                await self.db.commit()
             await self._activate_compiled_dists(compiled)
+        except PlatformJobCancelled:
+            raise
         except Exception:
             for item in compiled:
                 if item.reused:
@@ -1594,6 +1931,7 @@ class SolutionDeployer:
                 await self._instrumentation.record_timing(
                     "app_finalization_db", perf_counter() - activation_started_at
                 )
+        await self._authorize_publication(self.db)
         for item in compiled:
             old = item.superseded_deployment_id
             if old is not None and old != item.deployment_id:
@@ -1617,6 +1955,7 @@ class SolutionDeployer:
         rebuild advanced the pointer since the DB reconciliation phase.
         """
         async with _solution_app_activation_db_context() as db:
+            await self._authorize_publication(db)
             app_ids = [item.app_id for item in compiled]
             rows = (
                 await db.execute(

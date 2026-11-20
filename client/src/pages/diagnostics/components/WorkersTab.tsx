@@ -6,7 +6,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
 	usePools,
 	useQueueStatus,
-	type ProcessInfo,
 	type PoolSummary,
 } from "@/services/workers";
 import { getErrorMessage } from "@/lib/api-error";
@@ -21,7 +20,7 @@ export function WorkersTab() {
 		isLoading: poolsLoading,
 		error: poolsError,
 		refetch: refetchPools,
-	} = usePools();
+	} = usePools({ includeIncarnations: true });
 
 	const {
 		data: queueData,
@@ -52,7 +51,15 @@ export function WorkersTab() {
 	const pools = useMemo(() => {
 		const byId = new Map<string, PoolSummary | (typeof wsPools)[number]>();
 		for (const p of poolsData?.pools ?? []) byId.set(p.worker_id, p);
-		for (const p of wsPools) byId.set(p.worker_id, p);
+		for (const p of wsPools) {
+			const canonical = byId.get(p.worker_id);
+			byId.set(
+				p.worker_id,
+				canonical && "incarnation" in canonical
+					? { ...canonical, ...p, incarnation: canonical.incarnation }
+					: p,
+			);
+		}
 		return [...byId.values()];
 	}, [poolsData, wsPools]);
 	const queueItems = queueData?.items || [];
@@ -70,9 +77,7 @@ export function WorkersTab() {
 		for (const pool of pools) {
 			if ("processes" in pool && Array.isArray(pool.processes)) {
 				totalForks += pool.processes.length;
-				totalBusy += pool.processes.filter(
-					(p: ProcessInfo) => p.state === "busy",
-				).length;
+				totalBusy += pool.processes.filter((p) => p.state === "busy").length;
 			} else {
 				const summary = pool as PoolSummary;
 				totalForks += summary.pool_size ?? 0;

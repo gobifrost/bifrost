@@ -68,23 +68,39 @@ cancellation, timeout, and memory-admission paths. The physical launcher is a
 small standard-library supervisor: it owns its process templates and child
 processes, reports their inventory and cgroup telemetry, and carries out
 commands from the API. The supervisor does not own durable claim loops. Its
-handler children retain their required database, Redis, and repository access.
+legacy handler children retain their required database, Redis, and repository access.
+Capability-scoped API-only compute children do not receive that authority: for
+`app.compile.v2`, `agent.loop.v1`, and `summary.compute.v1`, the API owns
+authorization, model-provider requests, effects, database and storage access.
+The physical child receives only the inputs and scoped API/control access
+needed for its pure computation. Unsupported PlatformJobs retain their existing
+executor requirements; this is not a general migration of every job type.
 
-The remote-control host also claims one API-owned maintenance job at a time:
-OAuth refresh, webhook renewal, Solution update checks, model-catalog refresh,
-and workspace file-index reconciliation. These jobs use the same durable row,
-claim lease, runner subprocess, cancellation, retry, progress, and notification
-paths as physical-worker jobs, but do not require a physical launcher. They are
-bounded by the API cgroup's ordinary headroom before claim, so a scale-to-zero
-worker pool still maintains its control-plane state. The index reconciliation
-can be long-running total I/O but is memory-bounded and cancellable through the
-shared runner. Operators should monitor API I/O contention as deployments grow;
-the current policy intentionally prefers a single serialized maintenance job
-over a parallel maintenance worker or a second job framework.
+The remote-control host runs explicitly API-owned PlatformJobs in the canonical
+runner, without a physical-worker attribution: OAuth refresh, webhook renewal,
+Solution update checks, model-catalog refresh, workspace file-index
+reconciliation, summary-backfill parent orchestration, Cloudflare capacity
+setup, artifact and run retention, server-side file moves, embedding reindex,
+and chat or SDK video-provider requests. They retain the same durable row,
+claim lease, cancellation, retry, progress, and notification paths as
+physical-worker jobs. API admission has four task slots: three admit any
+API-owned job, while one stays available to the control set so long user I/O
+cannot block cloud setup or OAuth. Every admission serializes its short
+claim-and-reservation transaction and deducts the aggregate claimed memory
+from API cgroup headroom; the reserved control slot never overrides that memory
+limit. This keeps the control plane available with a scale-to-zero worker pool
+without adding a queue, status contract, or maintenance framework. The index
+reconciliation can be long-running total I/O but is memory-bounded and
+cancellable through the shared runner. Summary-backfill parents stage at most
+5,000 existing run IDs then defer; model inference remains physical summary
+work. Operators should monitor API I/O contention as deployments grow.
 
-Agent runs, `agent.summarize`, and `agent.summarize_backfill` execute in separate
-children of the physical launcher's agent template. No summary executor runs in
-the API. Their memory reservations share that launcher's measured budget with
+Agent runs, `agent.summarize`, and `agent.summarize_backfill` use separate
+children of the physical launcher's agent template. With `agent.loop.v1` and
+`summary.compute.v1`, the API retains canonical orchestration and runs model
+requests and persistence; the physical child runs the pure agent loop or
+summary computation. Legacy handlers retain their existing execution path.
+Physical memory reservations share the launcher's measured budget with
 workflows, services, and PlatformJobs. Each worker admits one live summary and
 one backfill summary at a time; backfills therefore cannot occupy the live
 summary slot. Additional capable launchers add capacity for both handlers.
@@ -127,6 +143,14 @@ keeps its children alive while a successor API replica authenticates and adopts
 its inventory. Losing a WebSocket therefore does not itself fail or kill
 children. A connected launcher can instead be asked to drain through the
 canonical control path.
+
+Retaining physical children across a control-WebSocket reconnect does not imply
+resuming API-owned orchestration after API-process loss. App, agent, and summary
+compute orchestration currently lives in API memory. A successor stops any
+untracked physical stage before settling its exact durable claim; it does not
+automatically rehydrate the orchestration. Any subsequent retry follows that
+job or dispatch's explicit policy. This limitation must be included in provider
+qualification and rolling-upgrade expectations.
 
 One API replica also holds the fenced `scheduler-triggers` database lease. Only
 that trigger leader runs APScheduler. On-demand work is persisted directly to
@@ -219,6 +243,24 @@ manual retry. Compilation, memory protection, placement, progress, cancellation,
 and notifications all use the ordinary PlatformJob paths. The default remains
 off during initial testing; see [Application SDK updates](../runbooks/application-sdk-update.md).
 
+### Reviewed workspace bundle imports
+
+`workspace.bundle_import` uses the shared `solution.archive.inspect.v1` worker
+operation. The API restores the digest-pinned preview archive and verifies the
+returned source and metadata; requester, organization and durable job binding
+remain API checks. Entered config values, credential access, entity changes,
+file promotion, manifest regeneration and staging cleanup stay in the API.
+No database scope spans physical inspection.
+
+The canonical job checkpoint commits in the same transaction as entity changes.
+Resolver progress is buffered during that transaction and published afterwards,
+so it cannot deadlock on its own job-row fence. File finalization has a separate
+owner/job fence and records a completion receipt before staging is deleted.
+A retry can return that receipt without reloading a deleted preview. Partial
+file promotion accepts only the reviewed destination hash or bytes already
+matching the approved incoming source, preserving idempotent index/cache repair.
+No legacy privileged-runner path is used when archive compute is unavailable.
+
 ### Isolated build execution (Kubernetes)
 
 Platform jobs execute on an admitted physical launcher by default. When a
@@ -240,14 +282,33 @@ so isolated builds do not occupy physical-launcher capacity; launchers keep
 serving maintenance jobs and non-build PlatformJobs while the build pod runs in
 its own cgroup.
 
-An isolated pod runs the same launcher entrypoint. It copies the API pod's
-namespace, image, and `envFrom` (or the optional `BIFROST_KUBERNETES_JOB_*`
-identity) and mounts no service-account token. Its Kubernetes Job and Pod UID
-are supplied automatically to the launcher enrollment. It is sized by the
-worker rule (`api/src/services/worker_pool/sizing.py`): a standard pod requests
-the worker memory request with a limit of Worker Memory; a job whose learned
-requirement exceeds that pod's budget gets a sized pod (request = limit, up to
-Largest Worker); a larger requirement fails visibly.
+For jobs with registered file-compute capabilities, an isolated pod runs the
+normal worker launcher (`src.worker.main`) in compute-only mode. It uses the
+configured worker image, namespace and tokenless service account, but receives
+no inherited `envFrom`, API signing key, database, Redis or storage credentials.
+Its control key is derived in the API for that exact worker incarnation and
+PlatformJob attempt. The API restricts enrollment to the matching build, Job
+UID and first Pod UID, intersects the image's compute capabilities with the
+code-owned reservation, and grants no workflow or legacy PlatformJob handlers.
+The pod starts no workflow/package/agent templates or package-management helper.
+
+The controller still preclaims and sizes the job using the existing worker
+rule (`api/src/services/worker_pool/sizing.py`). Once the launcher is ready,
+the remote API owner adopts that exact preclaim once, without incrementing its
+attempt or claiming other work. It runs the canonical handler with the shared
+`ApiFileComputeBackend`; capture, credentials, encryption, authorization and
+durable publication stay in the API. The one-job worker drains after stage
+cleanup. The build controller owns UID-bound physical deletion, including
+attempts cancelled before enrollment or left behind by an API owner outage.
+The reusable-worker controller does not adopt these isolated resources.
+
+A standard pod requests the worker memory request with a limit of Worker
+Memory; a job whose learned requirement exceeds that pod's budget gets a sized
+pod (request = limit, up to Largest Worker); a larger requirement fails visibly.
+Unconverted job types retain their existing runner requirements. Converted
+handlers are refused by the legacy Kubernetes runner; it is not an alternate
+execution path for them. This shared prerequisite is not qualification of every
+job type, an actual Kubernetes cluster, Cloudflare, or performance.
 
 Remote launch is fenced by durable Kubernetes identity:
 
@@ -491,7 +552,8 @@ application environment is production.
 | Retained worker/scheduler launcher entrypoints | `api/src/worker/main.py`, `api/src/scheduler/main.py` |
 | Token-gated legacy Kubernetes controller host | `api/src/scheduler/kubernetes_host.py` |
 | Isolated child runner | `api/src/jobs/platform/runner.py` |
-| Kubernetes build runner | `api/src/jobs/platform/kubernetes_runner.py` |
+| Legacy Kubernetes build runner (unconverted jobs) | `api/src/jobs/platform/kubernetes_runner.py` |
+| Kubernetes API-owned compute admission | `api/src/jobs/platform/kubernetes_compute.py` |
 | Kubernetes Job client and manifest builder | `api/src/jobs/platform/kubernetes_client.py` |
 | Kubernetes build controller | `api/src/jobs/schedulers/kubernetes_jobs.py` |
 | Lease recovery, claiming, and resource enforcement | `api/src/jobs/schedulers/platform_jobs.py` |
@@ -502,3 +564,133 @@ application environment is production.
 | Diagnostics API | `api/src/routers/scheduler_diagnostics.py` |
 | Diagnostics UI | `client/src/pages/diagnostics/components/SchedulerTab.tsx` |
 | Browser WebSocket transport | `client/src/services/websocket.ts` |
+
+### Workspace reimport compute
+
+`workspace.reimport` retains the existing isolated workspace checkout and
+non-destructive manifest import in the API. Database effects, workflow indexing,
+preview object/cache changes and the checkout’s final workspace upload use the
+current owner/job fence. The database transaction closes before preview compute.
+The existing per-file TypeScript compiler runs as `app.preview.compile.v1` on the
+normal launcher with a bounded source-only transfer and no platform credentials.
+The API checks the input digest, exact result paths and artifact limits before
+publishing previews. App stages run sequentially under the same canonical job
+claim; other Git preview consumers retain their existing request-scoped path.
+No new capacity-provider declarations or operator settings are required.
+
+### Workflow permission cutover ownership
+
+`workflow.permissions.cutover` runs in the existing bounded API executor and is
+excluded from physical worker demand. It retains the reviewed analysis,
+acknowledgement, current source/consent fingerprints and active-inventory gates.
+The final transaction takes the canonical owner/job fence before the workflow
+registry lock, reauthorizes the administrator after source review, then commits
+the inherited default and audit record together. Large source summaries run off
+the API event loop. Cutover is a non-control API task, so its potentially long
+review does not occupy the reserved maintenance control slot. Apply also consumes prepared source graphs through the shared compute path below.
+
+### Workflow permission source graph compute
+
+`workflow.permissions.analyze` uses `workflow.graph.analyze.v1` on the normal
+launcher. The API captures source, resolves each requested dependency through
+its existing Solution/repository scope, and retains permission mappings,
+authorization, authority/consent reads, report/cache writes and publication.
+No database scope spans a physical graph stage. The API rechecks workflow
+metadata, Solution outbound scope, administrator authority and owner/job fences
+before committing a report and its cursor checkpoint together.
+
+Worker stages parse source and traverse the existing conservative static graph;
+they never import workspace code, read storage or receive platform credentials.
+Dependency requests are limited to captured source identities. Each source is
+parsed once per preparation, and later stages reuse compact summaries without
+retransmitting raw source. Shared transfer byte limits bound each round; the
+analyzer's dependency/graph limits remain conservative findings. Results bind to
+the exact input digest and captured dependency hashes, with evidence constrained
+to captured source. Source summaries are cached only for actual dependencies.
+All permission proposals still require the established explicit review/apply
+path. Apply revalidates prepared graphs before its API-owned mutation
+transaction as described below; API cutover retains its current source review
+behavior. Analyzer loading remains lazy outside actual analysis work.
+
+### Reviewed permission apply
+
+`workflow.permissions.apply` uses the same source-graph operation as analysis.
+The API rejects blocked, stale or unacknowledged selections before computation,
+retains a Solution writer lock across preparation/apply, and holds no DB scope
+during physical graph stages. The final transaction acquires owner/job fencing
+before workflow/report locks, reloads administrator authority and the reviewed
+selection, and locks Solution scope/consent before deriving permission changes.
+It rechecks source hashes and every captured resolver answer, including negative
+answers, so a newly appeared dependency cannot silently alter a reviewed graph.
+Missing source marks the report stale without changing grants.
+
+SDK/usage/authority/consent mapping, restricted-mode updates, grants, Solution
+approval, audit records and report refresh remain API-owned. Their completion
+cursor commits in the same transaction. Progress runs only after commit and
+lock release. Persisted applied-selection receipts continue to prevent replay
+of older completed selections when a runner lost its checkpoint.
+
+### Retained workspace Git publication fencing
+
+The `workspace.git` handler supplies its current job-attempt authorization to
+`GitHubSyncService` and the shared `GitRepoManager`. Retained Git state prepares
+and verifies its immutable checkpoint without holding a job-row lock. The
+conditional state-pointer write and local receipt acknowledgement use a short
+owner/job-fenced publication scope. No-op receipt acknowledgement also requires
+the current attempt. Deleting a superseded checkpoint requires a fresh fence.
+
+If authorization fails before the pointer write starts, only that uniquely
+created unpublished checkpoint is removed; the old pointer and receipt remain.
+An attempted or ambiguous PUT retains both checkpoints for recovery, preserving
+the existing conditional-version semantics. Git operation wrappers propagate
+canonical cancellation instead of converting it into generic failure results.
+Direct request-scoped callers retain their existing request authorization.
+
+The sync import stages and verifies an immutable source checkpoint before taking
+the job mutation fence. Entity changes, file indexing and the retry-plan receipt
+commit in one API database transaction. Import progress is buffered until that
+transaction releases its locks. A lost commit acknowledgement is resolved from
+the canonical job receipt; an unknown outcome preserves the receipt and source
+checkpoint rather than risking a repeated import or deleting its recovery data.
+Cancellation and designated failures preserve the locked canonical receipt.
+
+After sync publication and previews finish, a same-job completion receipt commits
+before private checkpoint cleanup. Recovery can finish cleanup and return the
+saved result without reimporting or requiring Git credentials. Connect activation
+uses the same publication cursor, then commits its connection and activation
+receipt together. Recovery skips the expired preview and completed Git effects;
+remaining owned-checkpoint and temporary setup-token cleanup is fenced. Direct
+request callers retain ownership of their outer transaction when import
+validation fails.
+
+Workspace Git orchestration still runs in the API. Its existing compute-capable
+worker admission now supplies source-only `workspace.preflight.v1` and
+`app.preview.compile.v1` stages under the same canonical claim, rather than an
+API-only maintenance slot. Credentials, clone/fetch/push, imports, publication,
+and connect activation remain API-owned; no Git handler runs in a physical
+child. Payload version 5 fences older handlers that could run the source stages
+locally. Versions 1–4 keep their exact queued schemas on the new path.
+
+Python syntax, decorator and Ruff checks share one analyzer between short direct
+requests and registered worker computation. The API captures a bounded Python
+snapshot plus Ruff settings and `requires-python`; unrelated project metadata,
+Git state, env files and Bifrost manifests stay out of that transfer. Ruff
+extensions must resolve within the captured workspace, including through source
+aliases; malformed TOML is rejected at capture. Diagnostics bind to the input
+digest and source paths. The API retains manifest/definition/reference checks,
+health warnings and final import validation, and rejects source changes during
+preflight. Job-owned read transactions close before CPU stages; pending SQL
+mutations refuse compute instead of being implicitly committed. Preview uses
+the existing sequential per-file compile path and fenced API publication.
+Preflight scratch and result staging live inside the owned stage directory;
+shared release removes nested leftovers after stopping its child, while
+preserving neighboring paths. Ruff caching is disabled for this disposable tree.
+
+Clone, fetch and push run off the event loop, with short owner/job/connection
+checks before and after I/O. A canceled task joins its in-flight Git call before
+checkout cleanup. These fences cannot undo an already accepted remote push;
+stalled-network stopping and cleanup latency remain unqualified.
+
+This is local integration evidence, not full migration acceptance. Actual
+current-candidate runtime/fault, Cloudflare/scaling, cost and controlled
+before/after performance qualification remain open.

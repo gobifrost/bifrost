@@ -16,6 +16,7 @@ from src.jobs.platform.base import (
 )
 from src.models.orm.applications import Application
 from src.repositories.applications import ApplicationRepository
+from src.services.app_bundler import build_snapshot_using_file_compute
 
 APPLICATION_PUBLISH_JOB_TYPE = "application.publish"
 logger = logging.getLogger(__name__)
@@ -26,74 +27,61 @@ class ApplicationPublishPayload(BaseModel):
     message: str | None = None
 
 
-def _publish_percent(
-    phase: str,
-    current: int,
-    total: int | None,
-) -> float:
-    if phase == "building current source":
-        return 5
-    if phase == "promoting current bundle":
-        if not total:
-            return 10
-        return min(95, 10 + round(85 * current / total))
-    if phase == "recording published version":
-        return 98
-    return 0
-
-
 async def run_application_publish(
     context: PlatformJobContext,
     raw_payload: BaseModel,
 ) -> dict[str, object]:
     payload = ApplicationPublishPayload.model_validate(raw_payload)
+    if context.file_compute is None:
+        raise PlatformJobFailure(
+            "file_compute_unavailable",
+            "Application publishing requires an App bundle compute worker.",
+        )
     try:
+        await context.report("Building current source", percent=5)
         async with get_db_context() as db:
+            if not await context.authorize_effect(db):
+                from src.jobs.platform.base import PlatformJobCancelled
+
+                raise PlatformJobCancelled
             application = await db.get(Application, payload.application_id)
             if application is None:
-                raise PlatformJobFailure(
-                    "application_not_found",
-                    "Application no longer exists.",
-                )
-
+                raise PlatformJobFailure("application_not_found", "Application no longer exists.")
             repo = ApplicationRepository(
-                db,
-                application.organization_id,
-                user_id=context.requested_by_user_id,
+                db, application.organization_id, user_id=context.requested_by_user_id,
                 is_superuser=True,
             )
-            last_phase: str | None = None
-            last_reported = -1
+            snapshot = await repo.prepare_publish(application.id)
+            await db.commit()
+        if snapshot is None:
+            raise PlatformJobFailure("application_not_found", "Application no longer exists.")
 
-            async def report(
-                phase: str,
-                current: int,
-                total: int | None,
-            ) -> None:
-                nonlocal last_phase, last_reported
-                report_step = max(1, (total or 1) // 100)
-                should_report = (
-                    phase != last_phase
-                    or current == 0
-                    or (total is not None and current == total)
-                    or current - last_reported >= report_step
-                )
-                if not should_report:
-                    return
-                await context.report(
-                    phase,
-                    current,
-                    total,
-                    _publish_percent(phase, current, total),
-                )
-                last_phase = phase
-                last_reported = current
+        # The database context above is intentionally closed before the
+        # CPU-bound transfer. The worker sees exactly this API snapshot.
+        bundle_result, artifacts = await build_snapshot_using_file_compute(
+            str(snapshot.application_id),
+            snapshot.source_files,
+            snapshot.dependencies,
+            context.file_compute,
+        )
+        if not bundle_result.success:
+            first_err = (bundle_result.errors or [None])[0]
+            raise ValueError(
+                "Bundle build failed during publish: "
+                f"{first_err.text if first_err else 'unknown error'}"
+            )
 
-            published = await repo.publish(
-                application.id,
-                context.requested_by_email,
-                payload.message,
-                progress_callback=report,
+        await context.report("Promoting current bundle", percent=80)
+        async with get_db_context() as db:
+            repo = ApplicationRepository(
+                db, snapshot.organization_id, user_id=context.requested_by_user_id,
+                is_superuser=True,
+            )
+            published = await repo.promote_publish_snapshot(
+                snapshot,
+                bundle_result,
+                artifacts,
+                effect_authorization=context.authorize_effect,
             )
             if published is None:
                 raise PlatformJobFailure(
@@ -109,6 +97,7 @@ async def run_application_publish(
             files_published = len(published.published_snapshot or {})
             await db.commit()
 
+        await context.report("Published App", percent=100)
         result: dict[str, object] = {
             "application_id": str(payload.application_id),
             "published_at": published_at,

@@ -1,0 +1,13 @@
+{
+  "key": "pr:1476",
+  "classification": "other",
+  "entry_ids": [],
+  "reason": "Cloudflare setup and the shared job migration are pending end-to-end provider qualification; the grouped feature announcement and any upgrade notice remain unapproved.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1476",
+      "Local runtime/performance/UI correctness is recorded; actual Cloudflare provisioning, fault/scaling and cost qualification remain open. Exact announcement prose is not approved. Thomas Bray retains contributor credit."
+    ]
+  }
+}

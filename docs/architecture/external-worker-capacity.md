@@ -70,8 +70,15 @@ The `/v1/` resource paths remain unchanged. Capability envelopes use
 `protocol_version: 1` and describe hardware only. The API derives the expected
 handlers and API-only compute stages from one shared contract for its own
 version-matched worker image; an adapter never declares job types or privileged
-platform-job support. Only the catalog's existing eligible API-only compute
-jobs participate in external demand; generic privileged PlatformJobs do not.
+platform-job support. The shared catalog maps each physical compute stage to eligible job types for
+external demand. API-only maintenance/control handlers need no worker; the
+current migration does not rely on generic privileged platform-job runners.
+
+The runtime contract is the matching Linux image. Explicit `runtime_profile`
+metadata in either the hello frame or identity document is refused before
+admission; the current protocol does not negotiate alternate runtime profiles
+or opaque invocation handles. Omitted metadata preserves existing Linux signed
+bytes and process semantics.
 
 The provider reports its worker build, which must match the running API before
 policy can be saved; the controller also validates it against the immutable
@@ -92,17 +99,14 @@ history. Confirmed rows stop generating provider lookups and DELETE calls.
 The nullable migration lets existing terminal rows converge through the same
 readback path; it changes no provider protocol or Kubernetes cleanup cutoff.
 Do not prune unconfirmed worker rows while their physical resources may exist.
-For an unbound lost incarnation, absence becomes final only after a 60-second
-grace period from `ended_at` and a fresh successful GET confirming absence.
-This exceeds the 10-second prepare client timeout plus a reconcile sweep.
-During the grace period, another controller may finish a delayed prepare; its
-resource is deleted without starting because a lost row cannot bind.
-Provider errors never confirm absence, even after the grace period. Bound
-resources retain unbounded cleanup retries, and unbound retired rows retain
-their existing cleanup behavior. Providers must settle preparation within this
-window: a provider-side mutation completing after finality could leave an
-orphaned prepared resource. The client timeout alone does not cancel remote work.
-Confirmed absent lost rows stop holding the pool active, restoring idle silence.
+For an unbound lost or retired incarnation, a fresh successful GET confirming
+absence is followed by idempotent prepare and exact-UID deletion. Prepare does
+not start a process. The persisted deleted tombstone fences earlier delayed
+prepares, including ones that outlive the client's request timeout. Only that
+validated deletion confirms finality; provider errors leave cleanup eligible.
+Confirmed rows stop holding the pool active, restoring idle silence without a
+time-based absence assumption. The outage and idle regression reported by
+Thomas Bray is retained alongside delayed-prepare fencing coverage.
 
 ## Launcher Admission and Recovery
 

@@ -13,6 +13,7 @@ from src.jobs.platform.catalog import get_platform_job_metadata
 from src.jobs.platform.policy import PlatformJobPolicy
 
 if TYPE_CHECKING:
+    from shared.file_compute import FileCompute
     from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
     from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,12 +30,14 @@ class PlatformJobFailure(Exception):
         *,
         retryable: bool = False,
         result: dict[str, Any] | None = None,
+        preserve_checkpoint: bool = False,
     ) -> None:
         super().__init__(message)
         self.code = code
         self.message = message
         self.retryable = retryable
         self.result = result
+        self.preserve_checkpoint = preserve_checkpoint
 
 
 class PlatformJobRequiresAction(Exception):
@@ -47,7 +50,7 @@ class PlatformJobRequiresAction(Exception):
 
 
 class PlatformJobCancelled(Exception):
-    pass
+    preserve_checkpoint: bool = False
 
 
 class PlatformJobDeferred(Exception):
@@ -75,9 +78,10 @@ class PlatformJobContext:
     app_build_compute: AppBuildCompute | None = field(
         default=None, repr=False, compare=False
     )
+    file_compute: "FileCompute | None" = field(default=None, repr=False, compare=False)
 
     async def authorize_effect(self, db: "AsyncSession") -> bool:
-        """Fence an App activation to this still-running job attempt.
+        """Fence a durable effect to this still-running job attempt.
 
         The remote-worker owner is locked first, then this PlatformJob lease,
         so the caller can take the App row lock only after both remain current.
@@ -131,6 +135,25 @@ class PlatformJobContext:
             message=message,
             platform_job_id=self.job_id,
         )
+
+    async def checkpoint_in_transaction(
+        self, db: "AsyncSession", result: dict[str, Any], *, phase: str,
+    ) -> None:
+        """Save a checkpoint atomically with the caller's database effects.
+
+        The caller commits this transaction and publishes progress afterwards;
+        no nested job-row transaction may run while its fence is held.
+        """
+        from src.models.orm.platform_jobs import PlatformJob
+
+        if not await self.authorize_effect(db):
+            raise PlatformJobCancelled
+        job = await db.get(PlatformJob, self.job_id)
+        if job is None:
+            raise PlatformJobCancelled
+        job.result = result
+        job.phase = phase[:200]
+        job.revision += 1
 
     async def save_checkpoint(
         self,

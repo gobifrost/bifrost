@@ -8,6 +8,8 @@ A runner that lost its lease therefore can never delete anything.
 
 from __future__ import annotations
 
+import asyncio
+from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import Any
 from uuid import UUID
@@ -16,6 +18,7 @@ from sqlalchemy import delete, func, literal_column, select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
+from shared.audit_archive_limits import BATCH_BYTES, BATCH_ROWS
 from src.core.database import get_db_context
 from src.models.contracts.audit_retention import AuditRetentionInfo, AuditRetentionSettings
 from src.models.orm import AuditArchiveSegment, AuditLog, Organization, PlatformJob, User
@@ -28,14 +31,15 @@ from src.services.audit_retention.format import (
 )
 from src.services.audit_retention.settings import AuditRetentionSettingsService
 from src.services.audit_retention.store import AuditArchiveStore
-from src.services.platform_job_lease import hold_lease
-
-BATCH_ROWS = 5000
-BATCH_BYTES = 64 * 1024 * 1024
+from src.services.platform_job_lease import LeaseLost, hold_lease
+from src.worker.remote.fencing import fence_remote_owner
 
 
 class DeleteMismatch(Exception):
     """The delete removed a different number of rows than the segment holds."""
+
+
+EffectAuthorizer = Callable[[AsyncSession], Awaitable[bool]]
 
 
 def snapshot_query():
@@ -122,9 +126,10 @@ async def commit_segment(
     *,
     job_id: UUID,
     lease_token: UUID,
+    authorize_effect: EffectAuthorizer | None = None,
 ) -> None:
-    """Catalog a verified segment and delete its rows, under the job's lease."""
-    await hold_lease(db, job_id, lease_token)
+    """Catalog a verified segment and delete its rows under its fenced attempt."""
+    await _authorize_effect(db, job_id, lease_token, authorize_effect)
     first, last = segment.rows[0], segment.rows[-1]
     db.add(
         AuditArchiveSegment(
@@ -154,12 +159,25 @@ async def archive_segment(
     *,
     job_id: UUID,
     lease_token: UUID,
+    authorize_effect: EffectAuthorizer | None = None,
 ) -> None:
     """Upload, read back and verify a segment, then commit it in its own transaction."""
     await store.put(segment.key, segment.body)
-    verify_segment(await store.get(segment.key), sha256=segment.sha256, ids=segment.ids)
+    blob = await store.get(segment.key)
+    await asyncio.to_thread(
+        verify_segment,
+        blob,
+        sha256=segment.sha256,
+        expected_rows=segment.rows,
+    )
     async with get_db_context() as db:
-        await commit_segment(db, segment, job_id=job_id, lease_token=lease_token)
+        await commit_segment(
+            db,
+            segment,
+            job_id=job_id,
+            lease_token=lease_token,
+            authorize_effect=authorize_effect,
+        )
 
 
 async def expire_segments(
@@ -168,6 +186,7 @@ async def expire_segments(
     expiry: datetime,
     job_id: UUID,
     lease_token: UUID,
+    authorize_effect: EffectAuthorizer | None = None,
     limit: int = 100,
 ) -> tuple[int, int]:
     """Delete segments whose newest event is older than ``expiry``; returns (segments, rows).
@@ -180,7 +199,7 @@ async def expire_segments(
     segments = rows = 0
     while True:
         async with get_db_context() as db:
-            await hold_lease(db, job_id, lease_token)
+            await _authorize_effect(db, job_id, lease_token, authorize_effect)
             page = (
                 await db.execute(
                     select(AuditArchiveSegment.id)
@@ -202,6 +221,28 @@ async def expire_segments(
                 await store.delete(key)
         segments += len(removed)
         rows += sum(count for _, count in removed)
+
+
+async def _authorize_effect(
+    db: AsyncSession,
+    job_id: UUID,
+    lease_token: UUID,
+    authorize_effect: EffectAuthorizer | None,
+) -> None:
+    """Acquire remote-owner then exact-job fencing for a destructive commit.
+
+    Legacy direct callers retain the same lease semantics, but a remote owner
+    context is still checked so an API-owner handoff cannot let its stale task
+    delete rows.  The platform handler supplies ``context.authorize_effect``
+    to use the shared worker-before-job lock ordering directly.
+    """
+    if authorize_effect is not None:
+        if not await authorize_effect(db):
+            raise LeaseLost(str(job_id))
+        return
+    if not await fence_remote_owner(db):
+        raise LeaseLost(str(job_id))
+    await hold_lease(db, job_id, lease_token)
 
 
 async def plan_expiry(db: AsyncSession, *, expiry: datetime | None) -> dict[str, Any]:

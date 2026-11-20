@@ -15,6 +15,7 @@ from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
     PlatformJobFailure,
+    PlatformJobCancelled,
     define_platform_job,
 )
 from src.models.orm.solution_deploy_jobs import SolutionDeployJob
@@ -70,6 +71,12 @@ async def run_solution_deploy(
     await context.report("Loading staged Solution input", percent=2)
     reporter = _SolutionDeployReporter(context, last_percent=2)
     try:
+        # A persisted publication receipt survives API death between publication
+        # and canonical job completion; do not require a deleted staged input again.
+        async with get_db_context() as db:
+            projection = await db.get(SolutionDeployJob, payload.deploy_job_id)
+            if projection is not None and projection.status == "succeeded":
+                return projection.result or {}
         with tempfile.TemporaryDirectory(prefix="bifrost-solution-job-") as tmp:
             zip_path = Path(tmp) / "input.zip"
             await storage.copy_to_path(
@@ -86,6 +93,7 @@ async def run_solution_deploy(
                     payload.deploy_job_id,
                     payload.install_id,
                     zip_path,
+                    context=context,
                     force=bool(payload.options.get("force", False)),
                     # A from-repo install is created git-connected by the same
                     # request that enqueues this first deploy; without the
@@ -107,6 +115,7 @@ async def run_solution_deploy(
                     organization_id=UUID(raw_org_id) if raw_org_id else None,
                     config_values=payload.options.get("config_values", {}),
                     deployer_email=str(payload.options["deployer_email"]),
+                    context=context,
                     force=bool(payload.options.get("force", False)),
                     password=payload.options.get("password"),
                     replace_secrets=bool(payload.options.get("replace_secrets", False)),
@@ -141,8 +150,17 @@ async def run_solution_deploy(
         )
         return result
     finally:
+        # Cancellation or runner loss must leave the input for the next attempt.
+        # Only a definitive business projection permits attempt-fenced cleanup.
         try:
-            await storage.delete()
+            async with get_db_context() as db:
+                if not await context.authorize_effect(db):
+                    raise PlatformJobCancelled
+                projection = await db.get(SolutionDeployJob, payload.deploy_job_id)
+                if projection is not None and projection.status in {"succeeded", "failed"}:
+                    await storage.delete()
+        except PlatformJobCancelled:
+            pass
         except Exception:
             logger.warning(
                 "Failed to delete staged Solution input for job %s",

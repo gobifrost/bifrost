@@ -32,8 +32,12 @@ class Settings(BaseSettings):
 
     worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
     worker_capacity_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
+    worker_capacity_image: str | None = Field(
+        default=None,
+        description="Optional digest-pinned worker image for this exact API build; otherwise use its published Bifrost image",
+    )
 
-    @field_validator("worker_capacity_url", "worker_capacity_token", mode="before")
+    @field_validator("worker_capacity_url", "worker_capacity_token", "worker_capacity_image", mode="before")
     @classmethod
     def optional_capacity_setting(cls, value: object) -> object:
         """Compose emits empty values for optional deployment settings."""

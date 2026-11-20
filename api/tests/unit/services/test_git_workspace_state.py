@@ -79,7 +79,12 @@ def handoff(tmp_path, monkeypatch):
     async def delete(key):
         shutil.rmtree(snapshots / key)
 
+    @asynccontextmanager
+    async def publication():
+        yield
+
     manager = SimpleNamespace(
+        authorized_publication=publication,
         _settings=SimpleNamespace(s3_bucket="fixture"),
         _mirror=SimpleNamespace(follows_symlinks=True),
         checkpoint_workspace=AsyncMock(side_effect=create),
@@ -319,4 +324,74 @@ async def test_quoted_stale_pointer_cannot_replace_concurrent_state_or_delete_ch
         await state.persist(root, previous, stale)
     assert caught.value.status_code == 412
     assert pointer.raw == saved and pointer.etag == '"concurrent-writer"'
+    state.manager.delete_workspace_checkpoint.assert_not_awaited()
+
+
+async def test_owner_loss_after_checkpoint_readback_cannot_publish_or_acknowledge(handoff):
+    from src.jobs.platform.base import PlatformJobCancelled
+    state, root, snapshots, pointer = handoff
+    await state.persist(root, None, None)
+    previous, etag = await state.read()
+    old_pointer, old_receipt = pointer.raw, state._receipt_path(root).read_bytes()
+    (root/'file.txt').write_text('second')
+    denied = False
+    restore = state.manager.restore_workspace_checkpoint.side_effect
+    async def readback(*args):
+        nonlocal denied
+        await restore(*args)
+        denied = True
+    @asynccontextmanager
+    async def publication():
+        assert denied
+        raise PlatformJobCancelled
+        yield
+    state.manager.restore_workspace_checkpoint.side_effect = readback
+    state.manager.authorized_publication = publication
+    with pytest.raises(PlatformJobCancelled):
+        await state.persist(root, previous, etag)
+    assert pointer.raw == old_pointer and pointer.etag == etag
+    assert state._receipt_path(root).read_bytes() == old_receipt
+    assert [p.name for p in snapshots.iterdir()] == [previous.checkpoint]
+    state.manager.delete_workspace_checkpoint.assert_awaited_once()
+    assert state.manager.delete_workspace_checkpoint.await_args.args[0] != previous.checkpoint
+
+
+async def test_noop_receipt_acknowledgement_requires_current_attempt(handoff):
+    from src.jobs.platform.base import PlatformJobCancelled
+    state, root, snapshots, pointer = handoff
+    await state.persist(root, None, None)
+    previous, etag = await state.read()
+    receipt = state._receipt_path(root).read_bytes()
+    @asynccontextmanager
+    async def publication():
+        raise PlatformJobCancelled
+        yield
+    state.manager.authorized_publication = publication
+    with pytest.raises(PlatformJobCancelled):
+        await state.persist(root, previous, etag)
+    assert state._receipt_path(root).read_bytes() == receipt
+    assert pointer.etag == etag and len(list(snapshots.iterdir())) == 1
+
+
+async def test_loss_after_pointer_commit_retains_both_checkpoints_for_recovery(handoff):
+    from src.jobs.platform.base import PlatformJobCancelled
+    state, root, snapshots, pointer = handoff
+    await state.persist(root, None, None)
+    previous, etag = await state.read()
+    (root/'file.txt').write_text('second')
+    calls = 0
+    @asynccontextmanager
+    async def publication():
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise PlatformJobCancelled
+        yield
+    state.manager.authorized_publication = publication
+    with pytest.raises(PlatformJobCancelled):
+        await state.persist(root, previous, etag)
+    current, witness = await state.read()
+    assert current.checkpoint != previous.checkpoint and witness != etag
+    assert state._receipt(root)['etag'] == witness
+    assert len(list(snapshots.iterdir())) == 2
     state.manager.delete_workspace_checkpoint.assert_not_awaited()

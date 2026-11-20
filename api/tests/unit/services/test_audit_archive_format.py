@@ -1,6 +1,7 @@
 import gzip
 import hashlib
 import json
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID
@@ -11,6 +12,7 @@ from src.services.audit_retention.format import (
     ArchiveRow,
     ArchiveVerifyError,
     build_segments,
+    decode_segment,
     encode_rows,
     line_size,
     segment_key,
@@ -63,30 +65,70 @@ def test_lines_are_sorted_compact_and_carry_schema() -> None:
 
 def test_verify_round_trips_rows() -> None:
     segment = build_segments([_row(1), _row(2)])[0]
-    assert verify_segment(segment.body, sha256=segment.sha256, ids=segment.ids) == list(segment.rows)
+    assert verify_segment(segment.body, sha256=segment.sha256, expected_rows=segment.rows) == list(segment.rows)
 
 
 @pytest.mark.parametrize("mutate", ["sha", "ids", "count", "gzip"])
 def test_verify_rejects_any_mismatch(mutate: str) -> None:
     segment = build_segments([_row(1), _row(2)])[0]
-    blob, sha, ids = segment.body, segment.sha256, list(segment.ids)
+    blob, sha, expected_rows = segment.body, segment.sha256, list(segment.rows)
     if mutate == "sha":
         sha = "0" * 64
     elif mutate == "ids":
-        ids = [UUID(int=2), UUID(int=1)]
+        expected_rows.reverse()
     elif mutate == "count":
-        ids = ids[:1]
+        expected_rows = expected_rows[:1]
     else:
         blob = blob[:-4]
         sha = hashlib.sha256(blob).hexdigest()  # checksum matches; content is truncated
     with pytest.raises(ArchiveVerifyError):
-        verify_segment(blob, sha256=sha, ids=ids)
+        verify_segment(blob, sha256=sha, expected_rows=expected_rows)
+
+
+@pytest.mark.parametrize(
+    "changed_row",
+    [
+        lambda row: replace(row, details={"enforced": True}),
+        lambda row: replace(row, actor_email="other@example.com"),
+        lambda row: replace(row, organization_id=UUID(int=9)),
+        lambda row: replace(row, created_at=row.created_at + timedelta(microseconds=1)),
+        lambda row: replace(row, action="access.other"),
+    ],
+    ids=["details", "actor", "organization", "time", "content"],
+)
+def test_verify_rejects_changed_canonical_rows_with_matching_checksum(changed_row) -> None:
+    segment = build_segments([replace(_row(1), actor_email="owner@example.com")])[0]
+    altered = encode_rows([changed_row(segment.rows[0])])
+
+    with pytest.raises(ArchiveVerifyError, match="expected canonical rows"):
+        verify_segment(
+            altered,
+            sha256=hashlib.sha256(altered).hexdigest(),
+            expected_rows=segment.rows,
+        )
+
+
+def test_verify_rejects_compressible_output_larger_than_expected_rows() -> None:
+    row = _row(1)
+    line = row.to_line()
+    line["details"] = {"padding": "x" * 1_000_000}
+    expanded = (json.dumps(line, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode()
+    body = gzip.compress(expanded, compresslevel=6, mtime=0)
+    assert len(body) < len(expanded)
+
+    with pytest.raises(ArchiveVerifyError, match="expected expanded size"):
+        verify_segment(
+            body,
+            sha256=hashlib.sha256(body).hexdigest(),
+            expected_rows=[row],
+        )
 
 
 def test_unicode_line_separators_in_details_survive_verify() -> None:
     row = _row(1, details={"text": "a\u2028b\u2029c\u0085d"})
     segment = build_segments([row])[0]
-    assert verify_segment(segment.body, sha256=segment.sha256, ids=segment.ids) == [row]
+    assert decode_segment(segment.body) == [row]
+    assert verify_segment(segment.body, sha256=segment.sha256, expected_rows=segment.rows) == [row]
 
 
 def _good_line() -> dict[str, Any]:
@@ -108,7 +150,7 @@ def _good_line() -> dict[str, Any]:
 )
 def test_verify_rejects_malformed_content_with_matching_checksum(body: bytes) -> None:
     with pytest.raises(ArchiveVerifyError):
-        verify_segment(body, sha256=hashlib.sha256(body).hexdigest(), ids=[UUID(int=1)])
+        verify_segment(body, sha256=hashlib.sha256(body).hexdigest(), expected_rows=[_row(1)])
 
 
 def test_every_field_round_trips_and_non_utc_rows_land_on_their_utc_day() -> None:
@@ -131,7 +173,7 @@ def test_every_field_round_trips_and_non_utc_rows_land_on_their_utc_day() -> Non
     assert [s.day for s in segments] == [date(2026, 1, 3)]
     segment = segments[0]
     assert segment.ids == (UUID(int=5), UUID(int=1))
-    assert verify_segment(segment.body, sha256=segment.sha256, ids=segment.ids) == [bare, full]
+    assert verify_segment(segment.body, sha256=segment.sha256, expected_rows=segment.rows) == [bare, full]
 
 
 def test_old_archive_line_without_impersonation_fields_remains_readable() -> None:

@@ -35,9 +35,10 @@ async def write_encrypted_payload_member(
     """
     import base64
     import os
+    from shared.file_compute import run_owned_file_io
 
     salt = os.urandom(16)
-    key = _derive_fernet_key(password, salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
+    key = await run_owned_file_io(_derive_fernet_key, password, salt, n=_SCRYPT_N, r=_SCRYPT_R, p=_SCRYPT_P)
     fernet = Fernet(key)
     header = {
         "format": _PAYLOAD_FORMAT,
@@ -53,10 +54,11 @@ async def write_encrypted_payload_member(
     # uses compression. Recover Base64 overhead while encrypting in chunks.
     info.compress_type = ZIP_DEFLATED
     with zf.open(info, "w", force_zip64=True) as out:
-        out.write(json.dumps(header, separators=(",", ":")).encode() + b"\n")
+        await run_owned_file_io(out.write, json.dumps(header, separators=(",", ":")).encode() + b"\n")
         async for chunk in chunks:
             if chunk:
-                out.write(fernet.encrypt(chunk) + b"\n")
+                token = await run_owned_file_io(fernet.encrypt, chunk)
+                await run_owned_file_io(out.write, token + b"\n")
 
 
 def write_encrypted_payload_member_from_bytes(

@@ -29,7 +29,7 @@ import json
 import logging
 import time
 from abc import ABC, abstractmethod
-from collections.abc import Collection
+from collections.abc import Awaitable, Callable, Collection
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta, timezone
 from typing import Any
@@ -38,9 +38,11 @@ from uuid import UUID, uuid4
 from sqlalchemy import and_, func, literal, select, text, update
 
 from shared.version import get_version
+from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 from src.config import Settings, get_settings
 from src.core.database import get_db_context
-from src.jobs.platform.catalog import executor_platform_job_types
+from src.jobs.platform.catalog import executor_platform_job_types, get_platform_job_metadata
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.jobs.platform.kubernetes_client import (
     KubernetesConfigurationError,
     KubernetesJobClient,
@@ -63,7 +65,7 @@ from src.services.work_dispatch import (
     wait_for_next_pass,
 )
 from src.services.worker_pool.claims import CAPACITY_LOCK, REMOTE_WORKER_HANDLER_NAMES
-from src.services.worker_pool.demand import pending_local_platform_job_ids
+from src.services.worker_pool.demand import pending_capacity_platform_job_ids
 from src.services.worker_pool.manifest import (
     SAFE_TO_EVICT,
     WorkerJobSpec,
@@ -131,6 +133,11 @@ class LiveControllers:
         )
 
 
+def _worker_can_claim_workflows(worker: ExecutionWorker) -> bool:
+    """Whether a worker is a physical workflow-capacity participant."""
+    return "workflow.execute" in worker.supported_handlers
+
+
 class WorkerCapacityController(ABC):
     """Shared reservation, demand, rotation and lifecycle policy."""
 
@@ -180,19 +187,19 @@ class WorkerCapacityController(ABC):
 
     def _planner_compute_capabilities(self) -> tuple[str, ...]:
         """Semantic compute grants a newly reserved worker can truthfully offer."""
-        return ()
+        return WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
 
     def _planner_platform_job_types(self) -> frozenset[str]:
         """Local platform types this provider may provision."""
         return executor_platform_job_types()
 
-    def _platform_request_capability(self) -> str | None:
-        """The semantic compute capability for this provider's eligible jobs."""
-        return None
-
     def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
         """Keep privileged worker behavior unchanged for existing consumers."""
-        return "workflow.execute" in worker.supported_handlers
+        return _worker_can_claim_workflows(worker)
+
+    def _max_managed_workers(self, policy: KubernetesPolicy) -> int:
+        """The provider's share of the canonical managed-worker ceiling."""
+        return policy.max_workers
 
     @abstractmethod
     async def reconcile_worker(self, worker_id: UUID, policy: KubernetesPolicy) -> None:
@@ -209,6 +216,20 @@ class WorkerCapacityController(ABC):
         self.live = await _publish_live(self.id, self.version, self._live_scope())
         async with get_db_context() as db:
             policy = await load_kubernetes_policy(db)
+        launched = await self.launch_for_demand(policy)
+        await self.reconcile_lifecycle(policy, launched)
+
+    async def reconcile_lifecycle(
+        self, policy: KubernetesPolicy, launched: Collection[UUID] = ()
+    ) -> None:
+        """Reconcile this provider's resources after shared planning committed.
+
+        Provider I/O intentionally happens after the planner's short database
+        transaction.  The legacy one-provider ``reconcile`` above delegates
+        here; a mixed-provider coordinator supplies its own reservations.
+        """
+        self.live = await _publish_live(self.id, self.version, self._live_scope())
+        async with get_db_context() as db:
             ids = (
                 await db.scalars(
                     select(ExecutionWorker.id).where(
@@ -222,10 +243,6 @@ class WorkerCapacityController(ABC):
         for worker_id in set(self._evictable) - set(ids):
             self._evictable.pop(worker_id, None)
             self._idle_since.pop(worker_id, None)
-        # Refresh capacity under its lock before any provider I/O can stall.
-        # New rows are included in this pass; provider losses free their slots
-        # for the next bounded reconciliation pass.
-        launched = await self.launch_for_demand(policy)
         for worker_id in dict.fromkeys([*ids, *launched]):
             await self._reconcile_one(worker_id, policy)
         await self.replace_outdated(policy)
@@ -306,360 +323,6 @@ class WorkerCapacityController(ABC):
             seconds=self.settings.pool_max_lifetime_seconds - lead_seconds
         ) <= now
 
-    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
-        """Reserve incarnations for waiting work, sized by memory, within ceilings.
-
-        Waiting requests (dispatches, pending services, and eligible local
-        platform jobs) are placed oldest first into the free budget of
-        executors that can claim (a Job that has not reported its budget
-        counts as the one expected). What does not fit goes into new
-        standard Jobs, or a Job sized for one request a standard Job cannot
-        hold. Actual claims always wait for measured fit. Idle insufficient
-        workers can yield the warm minimum; Jobs never exceed Max workers.
-        """
-        async with get_db_context() as db:
-            locked = (
-                await db.execute(
-                    text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"),
-                    {"key": CAPACITY_LOCK},
-                )
-            ).scalar_one()
-            if not locked:
-                return []
-            planned_handlers = self._planner_execution_handlers()
-            planned_compute_capabilities = self._planner_compute_capabilities()
-            platform_job_ids = await pending_local_platform_job_ids(
-                db, policy, _now(), eligible_job_types=self._planner_platform_job_types(),
-            )
-            waiting_sources = [
-                select(
-                    WorkDispatch.id.label("id"),
-                    WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
-                    WorkDispatch.created_at.label("created_at"),
-                    WorkDispatch.handler.label("handler"),
-                    literal(None).label("compute_capability"),
-                ).where(
-                    WorkDispatch.assigned_worker_id.is_(None),
-                    WorkDispatch.execution_lane == "normal",
-                    WorkDispatch.handler.in_(planned_handlers),
-                )
-            ]
-            if platform_job_ids:
-                waiting_sources.append(
-                    select(
-                        PlatformJob.id,
-                        PlatformJob.memory_required_bytes,
-                        PlatformJob.created_at,
-                        literal(None),
-                        literal(self._platform_request_capability()),
-                    ).where(
-                        PlatformJob.id.in_(platform_job_ids),
-                        PlatformJob.status == "queued",
-                        PlatformJob.execution_backend == "local",
-                        PlatformJob.available_at <= _now(),
-                    )
-                )
-            if "workflow.execute" in planned_handlers:
-                waiting_sources.append(
-                    pending_service_statement(_now()).with_only_columns(
-                        ServiceDefinition.id,
-                        workflow_request_sql(Workflow),
-                        ServiceDefinition.updated_at,
-                        literal("workflow.execute"),
-                        literal(None),
-                    )
-                )
-            waiting = (
-                await db.execute(
-                    waiting_sources[0].union_all(*waiting_sources[1:]).order_by(text("created_at"))
-                )
-            ).all()
-            workers = (
-                await db.execute(
-                    select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES)).with_for_update()
-                )
-            ).scalars().all()
-            generation = int(await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0)
-            environment = self._memory_environment(generation)
-            history = (await db.scalars(select(ExecutionWorker).where(
-                self._managed_scope(),
-                ExecutionWorker.state.in_((*LIVE_STATES, "retired")),
-                ExecutionWorker.memory_calibration["environment"] == environment,
-                ExecutionWorker.memory_calibration["measurement"].is_not(None),
-            ).distinct(ExecutionWorker.memory_limit_bytes).order_by(
-                ExecutionWorker.memory_limit_bytes, ExecutionWorker.created_at.desc(),
-            ))).all()
-            measurements = [sample for worker in history
-                            if (sample := measured_budget(worker, environment)) is not None]
-            sizing = self._sizing(policy, [])
-            if measurements:
-                sizing = replace(sizing, baseline_bytes=max(sample.baseline_bytes for sample in measurements))
-            standard_reports = [sample.budget_bytes for sample in measurements
-                                if sample.limit_bytes == sizing.standard_limit_bytes]
-            largest_reports = [sample.budget_bytes for sample in measurements
-                               if sample.limit_bytes == sizing.largest_limit_bytes]
-            confirmed_largest = largest_reports[-1] if largest_reports else None
-            # Publication and decisions share one ordered snapshot. Predictions
-            # choose resources; only a measured largest size can reject work.
-            await _publish_launchable(confirmed_largest, generation)
-
-            requests = {row.id: row.memory_request_bytes for row in waiting}
-            request_handlers = {row.id: row.handler for row in waiting}
-            free: list[FreeBudget] = []
-            covered: set[UUID] = set()
-            for worker in workers:
-                if (
-                    worker.form in MANAGED_WORKER_FORMS
-                    and not self._owns_managed_worker(worker)
-                ):
-                    continue
-                if (
-                    worker.execution_lane != "normal"
-                    or not self._worker_contributes_to_planner(worker)
-                ):
-                    continue
-                worker_handlers = frozenset(worker.supported_handlers)
-                worker_compute = frozenset(worker.supported_compute)
-                if worker.state == "draining" or worker.memory_pressured:
-                    continue
-                # A worker launched for one dispatch holds it until it claims it.
-                held = 0
-                handler_slots = dict(HANDLER_CONCURRENCY_LIMITS)
-                if worker.state not in ("reserved", "starting"):
-                    if worker.active_handler_counts is None:
-                        handler_slots = {handler: 0 for handler in handler_slots}
-                    else:
-                        handler_slots = {
-                            handler: max(0, limit - worker.active_handler_counts.get(handler, 0))
-                            for handler, limit in HANDLER_CONCURRENCY_LIMITS
-                        }
-                if worker.reserved_for_dispatch_id in requests:
-                    covered.add(worker.reserved_for_dispatch_id)
-                    held = requests[worker.reserved_for_dispatch_id]
-                    held_handler = request_handlers[worker.reserved_for_dispatch_id]
-                    if held_handler in handler_slots:
-                        handler_slots[held_handler] = max(0, handler_slots[held_handler] - 1)
-                # A Job admitted but still starting its pool has not measured
-                # its budget yet; until it reports, count the one expected.
-                # A static executor counts only once ready and measured.
-                if worker.form in MANAGED_WORKER_FORMS and (
-                    worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
-                ):
-                    budget = sizing.budget_bytes(launch_limit(worker, sizing.standard_limit_bytes))
-                    free.append(FreeBudget(max(0, budget - held), worker_handlers, worker_compute, handler_slots))
-                elif worker.state == "ready" and worker.memory_budget_bytes is not None:
-                    free.append(FreeBudget(
-                        max(0, worker.memory_budget_bytes - worker.memory_reserved_bytes - held),
-                        worker_handlers, worker_compute, handler_slots,
-                    ))
-            plan = _plan_launches(
-                [
-                    Request(row.id, row.memory_request_bytes, row.handler, row.compute_capability)
-                    for row in waiting
-                    if row.id not in covered
-                ],
-                free,
-                standard_budget=standard_reports[-1] if standard_reports else sizing.standard_budget_bytes,
-                largest_budget=confirmed_largest if confirmed_largest is not None else sizing.largest_budget_bytes,
-                new_handlers=planned_handlers,
-                new_compute_capabilities=planned_compute_capabilities,
-                cold=not measurements, probe_largest=confirmed_largest is None,
-            )
-            jobs = sum(1 for worker in workers if worker.form in MANAGED_WORKER_FORMS)
-            now = _now()
-            # Only standard Jobs make up the warm minimum; a sized Job exists
-            # for its large work and drains once idle. A standard Job near its
-            # self-managed lifetime is excluded here so its handoff can start
-            # before it stops claiming. An outdated Job still claims until it
-            # drains, so replacements stay within Max workers.
-            undrained = sum(
-                1
-                for worker in workers
-                if worker.form in MANAGED_WORKER_FORMS
-                and self._owns_managed_worker(worker)
-                and worker.execution_lane == "normal"
-                and worker.resource_class == "standard"
-                and worker.state != "draining"
-                and not self.live.outdated(worker)
-                and not self._lifetime_handoff_imminent(worker, now)
-            )
-            warm = max(0, policy.warm_workers - undrained - plan.standard - len(plan.sized))
-            room = max(0, policy.max_workers - jobs)
-            # Fast Path capacity is a fixed exclusive reservation, not an
-            # elastic overflow lane. It intentionally ignores background
-            # demand and therefore cannot be borrowed by it.
-            fast_path_undrained = sum(
-                1
-                for worker in workers
-                if worker.form in MANAGED_WORKER_FORMS
-                and self._owns_managed_worker(worker)
-                and worker.execution_lane == "fast_path"
-                and worker.resource_class == "standard"
-                and worker.state != "draining"
-                and not self.live.outdated(worker)
-                and not self._lifetime_handoff_imminent(worker, now)
-            )
-            fast_path_warm = max(0, policy.reserved_fast_path_workers - fast_path_undrained)
-            # Keep the reservation's slots out of the Normal planner. Without
-            # this, a Normal burst arriving in the same pass could consume the
-            # final slots before the Fast Path floor is reserved.
-            normal_room = max(0, room - fast_path_warm)
-            # First initialization is singular; it may be sized by the hint,
-            # but an uncertain prediction can never veto that initial attempt.
-            if not measurements and any(
-                (worker.state in ("reserved", "starting") or
-                 (worker.state == "ready" and worker.memory_budget_bytes is None))
-                and worker.memory_calibration
-                and worker.memory_calibration.get("environment") == environment
-                for worker in workers
-                if worker.form in MANAGED_WORKER_FORMS
-                and self._owns_managed_worker(worker)
-            ):
-                return []
-            # Pace failures per resource size without disabling recovery. An
-            # unmeasured size gets only one probe at a time, even after another
-            # size has already calibrated the environment.
-            failed_limits = set((await db.scalars(select(ExecutionWorker.memory_limit_bytes).where(
-                self._managed_scope(), ExecutionWorker.state == "lost",
-                ExecutionWorker.memory_budget_bytes.is_(None),
-                ExecutionWorker.version == self.version,
-                ExecutionWorker.memory_calibration["environment"] == environment,
-                ExecutionWorker.ended_at > _now() - timedelta(seconds=self.settings.pool_start_timeout_seconds),
-            ))).all())
-            known_limits = {sample.limit_bytes for sample in measurements}
-            probing_limits = {
-                worker.memory_limit_bytes for worker in workers
-                if worker.form in MANAGED_WORKER_FORMS and worker.memory_budget_bytes is None
-                and self._owns_managed_worker(worker)
-                and worker.memory_calibration
-                and worker.memory_calibration.get("environment") == environment
-                and worker.memory_limit_bytes not in known_limits
-            }
-            blocked_limits = failed_limits | probing_limits
-            plan = LaunchPlan(
-                standard=0 if sizing.standard_limit_bytes in blocked_limits else plan.standard,
-                sized=[(identity, request) for identity, request in plan.sized
-                       if (sizing.pod_limit_bytes(request) or sizing.largest_limit_bytes) not in blocked_limits],
-            )
-            if sizing.standard_limit_bytes in blocked_limits:
-                warm = 0
-            if room == 0 and fast_path_warm:
-                # A Settings transition can reserve slots that were already
-                # occupied by Normal workers. Drain only idle Normal workers
-                # above the new Normal cap; active work is never preempted and
-                # Fast Path capacity reports degraded until a slot is freed.
-                normal_cap = policy.max_workers - policy.reserved_fast_path_workers
-                normal_live = [
-                    worker for worker in workers
-                    if worker.form in MANAGED_WORKER_FORMS
-                    and self._owns_managed_worker(worker)
-                    and worker.execution_lane == "normal"
-                    and worker.state != "draining"
-                ]
-                excess = max(0, len(normal_live) - normal_cap)
-                if excess:
-                    owned = set((await db.scalars(select(ExecutionWorker.id).where(
-                        self._managed_scope(), ExecutionWorker.state == "ready"
-                    ))).all())
-                    candidates = [
-                        worker for worker in normal_live
-                        if worker.id in owned and worker.state == "ready"
-                        # Draining is non-preemptive: current work keeps
-                        # running, but this excess Normal worker cannot claim
-                        # another dispatch while the reservation converges.
-                        and not worker.reserved_for_dispatch_id
-                    ]
-                    for worker in candidates[:excess]:
-                        await db.execute(update(ExecutionWorker).where(
-                            ExecutionWorker.id == worker.id, ExecutionWorker.state == "ready",
-                            ExecutionWorker.reserved_for_dispatch_id.is_(None),
-                        ).values(state="draining", end_reason="fast_path_reservation"))
-                    await db.commit()
-                    return []
-            if room == 0 and (plan.sized or plan.standard):
-                # An idle undersized worker may yield the warm minimum, but it
-                # still occupies its slot until the canonical owner retires it.
-                owned = set((await db.scalars(select(ExecutionWorker.id).where(self._managed_scope(), ExecutionWorker.state == "ready"))).all())
-                ready = [worker for worker in workers
-                         if worker.id in owned and worker.state == "ready"
-                         and worker.active_runs == 0 and worker.memory_reserved_bytes == 0
-                         and worker.active_handler_counts is not None
-                         and not any(worker.active_handler_counts.values())
-                         and not worker.reserved_for_dispatch_id
-                         and worker.memory_budget_bytes is not None]
-                needed = [row for row in waiting if row.id not in covered]
-                for worker in ready:
-                    if not any(row.memory_request_bytes > worker.memory_budget_bytes
-                               and (row.handler is None or row.handler in worker.supported_handlers)
-                               and (row.compute_capability is None
-                                    or row.compute_capability in worker.supported_compute)
-                               for row in needed):
-                        continue
-                    await db.execute(update(ExecutionWorker).where(
-                        ExecutionWorker.id == worker.id, ExecutionWorker.state == "ready",
-                        ExecutionWorker.active_runs == 0, ExecutionWorker.memory_reserved_bytes == 0,
-                    ).values(state="draining", end_reason="capacity_replacement"))
-                    break
-                await db.commit()
-                return []
-            launched: list[UUID] = []
-            for _dispatch_id, request in plan.sized:
-                if len(launched) >= normal_room:
-                    break
-                limit = sizing.pod_limit_bytes(request) or sizing.largest_limit_bytes
-                if limit in probing_limits:
-                    continue
-                if limit not in known_limits:
-                    probing_limits.add(limit)
-                launched.append(
-                    self._reserve(
-                        db,
-                        resource_class="standard" if limit == sizing.standard_limit_bytes else "sized",
-                        memory_limit_bytes=limit,
-                        # New workers claim through measured fit, including
-                        # sized workers whose actual overhead differs.
-                        environment=environment,
-                    )
-                )
-            standard_launches = plan.standard + warm
-            if sizing.standard_limit_bytes not in known_limits:
-                standard_launches = min(1, standard_launches)
-            for _ in range(standard_launches):
-                if len(launched) >= normal_room:
-                    break
-                launched.append(
-                    self._reserve(
-                        db,
-                        resource_class="standard",
-                        memory_limit_bytes=sizing.standard_limit_bytes,
-                        environment=environment,
-                    )
-                )
-            for _ in range(fast_path_warm):
-                if len(launched) >= room:
-                    break
-                launched.append(
-                    self._reserve(
-                        db,
-                        resource_class="standard",
-                        memory_limit_bytes=sizing.standard_limit_bytes,
-                        environment=environment,
-                        execution_lane="fast_path",
-                    )
-                )
-            await db.commit()
-        if launched:
-            logger.info(
-                "Launching reusable workers",
-                extra={
-                    "count": len(launched),
-                    "waiting": len(waiting),
-                    "sized": len(plan.sized),
-                    "free_mib": sum(budget.bytes for budget in free) // 2**20,
-                },
-            )
-        return launched
-
     async def replace_outdated(self, policy: KubernetesPolicy) -> list[UUID]:
         """Drain only old ready Jobs whose removal keeps the warm minimum.
 
@@ -683,6 +346,7 @@ class WorkerCapacityController(ABC):
                     select(ExecutionWorker).where(
                         self._managed_scope(),
                         ExecutionWorker.state.in_(LIVE_STATES),
+                        ExecutionWorker.isolated_platform_job_id.is_(None),
                     )
                 )
             ).scalars().all()
@@ -691,6 +355,7 @@ class WorkerCapacityController(ABC):
                     select(func.count()).select_from(ExecutionWorker).where(
                         ExecutionWorker.form.in_(MANAGED_WORKER_FORMS),
                         ExecutionWorker.state.in_(LIVE_STATES),
+                        ExecutionWorker.isolated_platform_job_id.is_(None),
                     )
                 )
                 or 0
@@ -786,6 +451,10 @@ class WorkerCapacityController(ABC):
         memory_limit_bytes: int,
         environment: dict[str, Any],
         execution_lane: str = "normal",
+        reserved_for_dispatch_id: UUID | None = None,
+        isolated_job_id: UUID | None = None,
+        isolated_job_attempt: int | None = None,
+        isolated_compute: tuple[str, ...] | None = None,
     ) -> UUID:
         """A durable row for one Job, recording the limit it launches with:
         a later Worker memory change applies to new Jobs only."""
@@ -798,13 +467,677 @@ class WorkerCapacityController(ABC):
                 resource_class=resource_class,
                 memory_limit_bytes=memory_limit_bytes,
                 memory_calibration={"environment": environment},
-                supported_handlers=list(self._planner_execution_handlers()),
-                supported_compute=list(self._planner_compute_capabilities()),
+                supported_handlers=([] if isolated_job_id is not None else list(self._planner_execution_handlers())),
+                supported_compute=(
+                    list(isolated_compute)
+                    if isolated_compute is not None
+                    else list(self._planner_compute_capabilities())
+                ),
                 execution_lane=execution_lane,
+                reserved_for_dispatch_id=reserved_for_dispatch_id,
+                isolated_platform_job_id=isolated_job_id,
+                isolated_platform_job_attempt=isolated_job_attempt,
                 **self._binding_fields(worker_id),
             )
         )
         return worker_id
+
+
+    async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
+        """Reserve demand through the provider-neutral locked planner."""
+        return (await plan_capacity_launches(policy, (self,)))[self]
+
+
+class CapacityProfileRefreshRequired(Exception):
+    """Unwind admission before refreshing the provider used by this plan."""
+
+    def __init__(self, refresh: Callable[[], Awaitable[None]]) -> None:
+        super().__init__("Provider profile requires refresh")
+        self.refresh = refresh
+
+
+async def plan_capacity_launches(
+    policy: KubernetesPolicy, providers: Collection[WorkerCapacityController],
+) -> dict[WorkerCapacityController, list[UUID]]:
+    """Refresh demanded providers outside the shared reservation transaction."""
+    refreshed: set[Callable[[], Awaitable[None]]] = set()
+    while True:
+        try:
+            return await _plan_capacity_launches(policy, providers)
+        except CapacityProfileRefreshRequired as required:
+            if required.refresh in refreshed:
+                raise
+            refreshed.add(required.refresh)
+            await required.refresh()
+
+
+async def _plan_capacity_launches(
+    policy: KubernetesPolicy, providers: Collection[WorkerCapacityController],
+) -> dict[WorkerCapacityController, list[UUID]]:
+    """Reserve Normal capacity for several physical providers in one transaction.
+
+    Every provider mix, including a single Kubernetes or Cloud provider, uses
+    this one transaction and worker snapshot.  Callers must never compose
+    per-provider passes: they would each see the same demand and over-reserve.
+
+    Physical preparation remains the adapter's responsibility after this
+    transaction commits.  A descriptor's order is its admission preference:
+    Kubernetes is first, external capacity is overflow only.
+    """
+    ordered = tuple(providers)
+    launched: dict[WorkerCapacityController, list[UUID]] = {provider: [] for provider in ordered}
+    if not ordered:
+        return launched
+    async with get_db_context() as db:
+        locked = (
+            await db.execute(text("SELECT pg_try_advisory_xact_lock(hashtext(:key))"), {"key": CAPACITY_LOCK})
+        ).scalar_one()
+        if not locked:
+            return launched
+        now = _now()
+        handlers = frozenset().union(*(provider._planner_execution_handlers() for provider in ordered))
+        platform_types = frozenset().union(*(provider._planner_platform_job_types() for provider in ordered))
+        platform_job_ids = await pending_capacity_platform_job_ids(
+            db, policy, now, eligible_job_types=platform_types,
+            backends=("local", EXTERNAL_ISOLATED_BACKEND),
+        )
+        sources = [
+            select(
+                WorkDispatch.id.label("id"), WorkDispatch.memory_request_bytes.label("memory_request_bytes"),
+                WorkDispatch.created_at.label("created_at"), WorkDispatch.handler.label("handler"),
+                literal(None).label("compute_capability"), literal(None).label("job_type"),
+                literal("local").label("backend"), literal(None).label("attempt"),
+                literal("dispatch").label("source"),
+            ).where(
+                WorkDispatch.assigned_worker_id.is_(None), WorkDispatch.execution_lane == "normal",
+                WorkDispatch.handler.in_(handlers),
+            )
+        ]
+        if platform_job_ids:
+            sources.append(select(
+                PlatformJob.id, PlatformJob.memory_required_bytes, PlatformJob.created_at,
+                literal(None), literal(None), PlatformJob.job_type,
+                PlatformJob.execution_backend, PlatformJob.attempt, literal("platform"),
+            ).where(
+                PlatformJob.id.in_(platform_job_ids), PlatformJob.status == "queued",
+                PlatformJob.execution_backend.in_(("local", EXTERNAL_ISOLATED_BACKEND)),
+                PlatformJob.available_at <= now,
+            ))
+        if any("workflow.execute" in provider._planner_execution_handlers() for provider in ordered):
+            sources.append(pending_service_statement(now).with_only_columns(
+                ServiceDefinition.id, workflow_request_sql(Workflow), ServiceDefinition.updated_at,
+                literal("workflow.execute"), literal(None), literal(None),
+                literal("local"), literal(None), literal("service"),
+            ))
+        waiting = (await db.execute(sources[0].union_all(*sources[1:]).order_by(text("created_at")))).all()
+        workers = (await db.execute(
+            select(ExecutionWorker).where(ExecutionWorker.state.in_(LIVE_STATES)).with_for_update()
+        )).scalars().all()
+        generation = int(await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0)
+
+        # Each provider owns its calibration identity.  A provider without a
+        # compatible largest measurement is explicitly unknown, never evidence
+        # that another provider's smaller measurement makes work impossible.
+        sizing: dict[WorkerCapacityController, JobSizing] = {}
+        largest: dict[WorkerCapacityController, int | None] = {}
+        standard: dict[WorkerCapacityController, int] = {}
+        known_limits: dict[WorkerCapacityController, set[int]] = {}
+        blocked_limits: dict[WorkerCapacityController, set[int]] = {}
+        cold_busy: dict[WorkerCapacityController, bool] = {}
+        for provider in ordered:
+            environment = provider._memory_environment(generation)
+            history = (await db.scalars(select(ExecutionWorker).where(
+                provider._managed_scope(), ExecutionWorker.state.in_((*LIVE_STATES, "retired")),
+                ExecutionWorker.memory_calibration["environment"] == environment,
+                ExecutionWorker.memory_calibration["measurement"].is_not(None),
+            ).order_by(ExecutionWorker.created_at.desc()))).all()
+            measurements = [sample for worker in history if (sample := measured_budget(worker, environment))]
+            provider_sizing = provider._sizing(policy, [])
+            if measurements:
+                provider_sizing = replace(
+                    provider_sizing, baseline_bytes=max(sample.baseline_bytes for sample in measurements),
+                )
+            sizing[provider] = provider_sizing
+            standard_reports = [sample.budget_bytes for sample in measurements
+                                if sample.limit_bytes == provider_sizing.standard_limit_bytes]
+            largest_reports = [sample.budget_bytes for sample in measurements
+                               if sample.limit_bytes == provider_sizing.largest_limit_bytes]
+            standard[provider] = standard_reports[-1] if standard_reports else provider_sizing.standard_budget_bytes
+            largest[provider] = largest_reports[-1] if largest_reports else None
+            known_limits[provider] = {sample.limit_bytes for sample in measurements}
+            failed = set((await db.scalars(select(ExecutionWorker.memory_limit_bytes).where(
+                provider._managed_scope(), ExecutionWorker.state == "lost",
+                ExecutionWorker.memory_budget_bytes.is_(None),
+                ExecutionWorker.version == provider.version,
+                ExecutionWorker.memory_calibration["environment"] == environment,
+                ExecutionWorker.ended_at > now - timedelta(
+                    seconds=provider.settings.pool_start_timeout_seconds,
+                ),
+            ))).all())
+            probing = {
+                worker.memory_limit_bytes
+                for worker in workers
+                if provider._owns_managed_worker(worker)
+                and worker.memory_budget_bytes is None
+                and worker.memory_calibration
+                and worker.memory_calibration.get("environment") == environment
+                and worker.memory_limit_bytes not in known_limits[provider]
+            }
+            blocked_limits[provider] = failed | probing
+            cold_busy[provider] = not measurements and bool(probing)
+
+        request_rows = [
+            (
+                Request(
+                    row.id,
+                    row.memory_request_bytes,
+                    row.handler,
+                    row.compute_capability
+                    if row.job_type is None
+                    else (
+                        get_platform_job_metadata(row.job_type).compute_capability
+                        if get_platform_job_metadata(row.job_type) is not None
+                        else None
+                    ),
+                    row.attempt + 1 if row.backend == EXTERNAL_ISOLATED_BACKEND else None,
+                    frozenset(
+                        get_platform_job_metadata(row.job_type).additional_compute_capabilities
+                        if row.job_type is not None and get_platform_job_metadata(row.job_type) is not None
+                        else ()
+                    ),
+                ),
+                row.job_type,
+                row.id if row.source == "dispatch" and row.handler == "workflow.execute" else None,
+            )
+            for row in waiting
+        ]
+        dispatch_requests = {
+            dispatch_id: request
+            for request, _job_type, dispatch_id in request_rows
+            if dispatch_id is not None
+        }
+
+        def accepts(provider: WorkerCapacityController, request: Request, job_type: str | None) -> bool:
+            if request.handler is not None:
+                return request.handler in provider._planner_execution_handlers()
+            return job_type in provider._planner_platform_job_types() and (
+                request.required_compute_capabilities.issubset(provider._planner_compute_capabilities())
+            )
+
+        kubernetes = next((provider for provider in ordered if provider.worker_form == "job"), None)
+        local_path_present = kubernetes is not None or any(
+            worker.form not in MANAGED_WORKER_FORMS for worker in workers
+        )
+
+        def cloudflare_start_selected(
+            provider: WorkerCapacityController, request: Request, job_type: str | None,
+        ) -> bool:
+            """Whether this request may start a new Cloudflare worker.
+
+            Rules affect only new reservations. Existing external bins were
+            deliberately considered first and may continue serving every
+            capability their worker truthfully advertised.
+            """
+            if provider.worker_form != "external" or not local_path_present:
+                return True
+            rules = getattr(provider, "rules", None)
+            if rules is None:
+                return True
+            if request.handler == "workflow.execute":
+                return rules.workflows
+            if request.handler in {"agent.run", "agent.summarize", "agent.summarize_backfill"}:
+                return rules.agents
+            if job_type is None or request.compute_capability is None:
+                return False
+            if job_type.startswith("application."):
+                return rules.app_builds
+            return rules.other_jobs
+
+        def reservation_providers(
+            request: Request, job_type: str | None,
+        ) -> tuple[WorkerCapacityController, ...]:
+            candidates = tuple(
+                provider
+                for provider in ordered
+                if accepts(provider, request, job_type)
+                and cloudflare_start_selected(provider, request, job_type)
+            )
+            cloudflare = tuple(provider for provider in candidates if provider.worker_form == "external")
+            if not cloudflare or any(
+                getattr(getattr(provider, "rules", None), "prefer_kubernetes", False)
+                for provider in cloudflare
+            ):
+                return candidates
+            return cloudflare + tuple(provider for provider in candidates if provider.worker_form != "external")
+
+        # Real static and already-reserved/ready workers are placed before new
+        # capacity.  Managed rows retain their own advertised capability rather
+        # than being attributed to whichever provider happens to plan next.
+        bins: list[FreeBudget] = []
+        bin_owners: list[WorkerCapacityController | None] = []
+        bin_workers: list[ExecutionWorker | None] = []
+        covered: set[UUID] = set()
+        for worker in workers:
+            if (
+                worker.isolated_platform_job_id is not None
+                or
+                worker.execution_lane != "normal"
+                or worker.state == "draining"
+                or worker.memory_pressured
+            ):
+                continue
+            if worker.state not in ("reserved", "starting", "ready"):
+                continue
+            handler_slots = dict(HANDLER_CONCURRENCY_LIMITS)
+            if worker.state == "ready":
+                if worker.active_handler_counts is None:
+                    handler_slots = {name: 0 for name in handler_slots}
+                else:
+                    handler_slots = {
+                        name: max(0, limit - worker.active_handler_counts.get(name, 0))
+                        for name, limit in HANDLER_CONCURRENCY_LIMITS
+                    }
+            owner: WorkerCapacityController | None = None
+            if worker.form in MANAGED_WORKER_FORMS:
+                owner = next((provider for provider in ordered if provider._owns_managed_worker(worker)), None)
+                if owner is None:
+                    continue
+            if owner is not None and not owner._worker_contributes_to_planner(worker):
+                continue
+            # Static API executors can run summary maintenance, but only
+            # physical worker capacity may stand in for the worker pool.
+            if owner is None and not _worker_can_claim_workflows(worker):
+                continue
+            held = 0
+            held_request = dispatch_requests.get(worker.reserved_for_dispatch_id)
+            if held_request is not None:
+                covered.add(held_request.id)
+                held = held_request.bytes
+                if held_request.handler in handler_slots:
+                    handler_slots[held_request.handler] = max(0, handler_slots[held_request.handler] - 1)
+            elif worker.reserved_for_dispatch_id is not None:
+                # Cancellation removes a WorkDispatch. Do not leave the
+                # physical worker stranded behind its obsolete reservation.
+                worker.reserved_for_dispatch_id = None
+            if worker.form in MANAGED_WORKER_FORMS and (
+                worker.state in ("reserved", "starting") or worker.memory_budget_bytes is None
+            ):
+                budget = sizing[owner].budget_bytes(launch_limit(worker, sizing[owner].standard_limit_bytes))
+            elif worker.state == "ready" and worker.memory_budget_bytes is not None:
+                budget = worker.memory_budget_bytes - worker.memory_reserved_bytes
+            else:
+                continue
+            bins.append(FreeBudget(max(0, budget - held), frozenset(worker.supported_handlers),
+                                   frozenset(worker.supported_compute), handler_slots))
+            bin_owners.append(owner)
+            bin_workers.append(worker)
+
+        rooms = [bin.bytes for bin in bins]
+        slots = [dict(bin.handler_slots) for bin in bins]
+        consumed_bins: set[int] = set()
+        limited = dict(HANDLER_CONCURRENCY_LIMITS)
+        managed_total = sum(
+            worker.form in MANAGED_WORKER_FORMS and worker.isolated_platform_job_id is None
+            for worker in workers
+        )
+        provider_count = {
+            provider: sum(provider._owns_managed_worker(worker) for worker in workers)
+            for provider in ordered
+        }
+        for provider in ordered:
+            if provider.worker_form == "external":
+                provider_count[provider] = int(await db.scalar(
+                    select(func.count()).select_from(ExecutionWorker).where(
+                        provider._managed_scope(), ExecutionWorker.capacity_resource_deleted_at.is_(None),
+                    )
+                ) or 0)
+        unknown = {provider for provider in ordered if largest[provider] is None}
+
+        async def publish_launchability() -> None:
+            """Publish once from this locked provider and demand snapshot."""
+            compatible_unknown = any(
+                provider in unknown and accepts(provider, request, job_type)
+                for request, job_type, _dispatch_id in request_rows
+                for provider in ordered
+            )
+            measured = [budget for budget in largest.values() if budget is not None]
+            launchable = None if compatible_unknown else (max(measured) if measured else None)
+            if len(ordered) == 1:
+                await _publish_launchable(launchable, generation)
+                return
+            fingerprint = ",".join(f"{provider._live_scope()}@{provider.version}" for provider in ordered)
+            await _publish_launchable(launchable, generation, fingerprint=fingerprint)
+
+        # Fast Path is an exclusive Kubernetes reservation.  Commit its floor
+        # before normal demand so a burst cannot consume its final slots.
+        primary = kubernetes or ordered[0]
+        fast_path_launches = 0
+        if getattr(primary, "worker_form", None) == "job":
+            fast = sum(
+                worker.form == "job" and primary._owns_managed_worker(worker)
+                and worker.execution_lane == "fast_path" and worker.state != "draining"
+                and not primary.live.outdated(worker)
+                and not primary._lifetime_handoff_imminent(worker, now)
+                for worker in workers
+            )
+            fast_needed = max(0, policy.reserved_fast_path_workers - fast)
+            if managed_total >= policy.max_workers and fast_needed:
+                normal_cap = policy.max_workers - policy.reserved_fast_path_workers
+                normal_live = [
+                    worker
+                    for worker in workers
+                    if primary._owns_managed_worker(worker)
+                    and worker.execution_lane == "normal"
+                    and worker.state != "draining"
+                ]
+                excess = max(0, len(normal_live) - normal_cap)
+                candidates = [
+                    worker
+                    for worker in normal_live
+                    if worker.state == "ready"
+                    and worker.reserved_for_dispatch_id is None
+                ]
+                for worker in candidates[:excess]:
+                    await db.execute(update(ExecutionWorker).where(
+                        ExecutionWorker.id == worker.id,
+                        ExecutionWorker.state == "ready",
+                        ExecutionWorker.reserved_for_dispatch_id.is_(None),
+                    ).values(state="draining", end_reason="fast_path_reservation"))
+                if candidates[:excess]:
+                    await publish_launchability()
+                    await db.commit()
+                    return launched
+            for _ in range(fast_needed):
+                if managed_total >= policy.max_workers:
+                    break
+                launched[primary].append(primary._reserve(
+                    db, resource_class="standard", memory_limit_bytes=sizing[primary].standard_limit_bytes,
+                    environment=primary._memory_environment(generation), execution_lane="fast_path",
+                ))
+                managed_total += 1
+                fast_path_launches += 1
+
+        # An external isolated resource remains bound through loss and
+        # retirement until the provider deletion receipt lands. A later retry
+        # must not prepare another physical resource for that same job first.
+        from src.services.platform_jobs import publish_platform_job_update
+        from src.services.worker_pool.unfit import fail_unfit_platform_job
+
+        changed_isolated: list[PlatformJob] = []
+        bound_isolated = set((await db.scalars(select(
+            ExecutionWorker.isolated_platform_job_id,
+        ).where(
+            ExecutionWorker.isolated_platform_job_id.is_not(None),
+            ExecutionWorker.capacity_resource_deleted_at.is_(None),
+        ))).all())
+
+        async def drain_idle_external_for_isolated(
+            provider: WorkerCapacityController,
+        ) -> bool:
+            """Drain one unused standard external worker to free its profile.
+
+            A preceding drain remains a physical reservation until the
+            provider confirms deletion, so never start a second drain while it
+            is unresolved. ``consumed_bins`` prevents stealing capacity that
+            an older request already planned to use this pass.
+            """
+            prior_drain = await db.scalar(select(ExecutionWorker.id).where(
+                provider._managed_scope(),
+                ExecutionWorker.end_reason == "isolated_capacity",
+                ExecutionWorker.capacity_resource_deleted_at.is_(None),
+            ))
+            if prior_drain is not None:
+                return False
+            for index, worker in enumerate(bin_workers):
+                if (
+                    worker is None
+                    or bin_owners[index] is not provider
+                    or index in consumed_bins
+                    or rooms[index] != bins[index].bytes
+                    or worker.form != "external"
+                    or worker.state != "ready"
+                    or worker.resource_class != "standard"
+                    or worker.active_runs != 0
+                    or worker.memory_reserved_bytes != 0
+                    or worker.active_handler_counts is None
+                    or any(worker.active_handler_counts.values())
+                    or worker.reserved_for_dispatch_id is not None
+                    or worker.isolated_platform_job_id is not None
+                    or worker.memory_budget_bytes is None
+                    or worker.memory_budget_bytes <= 0
+                ):
+                    continue
+                drained = await db.scalar(update(ExecutionWorker).where(
+                    ExecutionWorker.id == worker.id,
+                    ExecutionWorker.state == "ready",
+                    ExecutionWorker.active_runs == 0,
+                    ExecutionWorker.memory_reserved_bytes == 0,
+                    ExecutionWorker.reserved_for_dispatch_id.is_(None),
+                    ExecutionWorker.isolated_platform_job_id.is_(None),
+                ).values(state="draining", end_reason="isolated_capacity").returning(ExecutionWorker.id))
+                return drained is not None
+            return False
+
+        async def reserve_isolated(
+            request: Request,
+            job_type: str | None,
+        ) -> bool:
+            """Reserve or route one ordered external-isolated request.
+
+            True means the pass drained a reusable external resource and must
+            wait for its confirmed deletion before planning more capacity.
+            """
+            if job_type is None or request.isolated_attempt is None or request.id in bound_isolated:
+                return False
+            job = await db.scalar(select(PlatformJob).where(
+                PlatformJob.id == request.id,
+                PlatformJob.status == "queued",
+                PlatformJob.execution_backend == EXTERNAL_ISOLATED_BACKEND,
+                PlatformJob.attempt == request.isolated_attempt - 1,
+                PlatformJob.available_at <= now,
+            ).with_for_update(skip_locked=True))
+            if job is None:
+                return False
+            metadata = get_platform_job_metadata(job.job_type)
+            if metadata is None or metadata.compute_capability is None:
+                return False
+            if not policy.isolated_jobs_enabled or job.job_type not in policy.enabled_job_types:
+                job.execution_backend, job.phase = "local", "Queued"
+                job.revision += 1
+                changed_isolated.append(job)
+                return False
+            known_unfit: list[int] = []
+            external_candidates = 0
+            for provider in reservation_providers(request, job_type):
+                if provider.worker_form == "job":
+                    # Kubernetes retains its existing queued-job lifecycle;
+                    # it will mint the attempt lease when its pod claims it.
+                    job.execution_backend, job.phase = "kubernetes", "Queued"
+                    job.revision += 1
+                    changed_isolated.append(job)
+                    return False
+                # Exclusive resources exist only on the external adapter.
+                # A future provider must opt into this lifecycle explicitly;
+                # it cannot accidentally receive an isolated reservation.
+                if provider.worker_form != "external":
+                    continue
+                external_candidates += 1
+                if largest[provider] is not None and request.bytes > largest[provider]:
+                    known_unfit.append(largest[provider])
+                    continue
+                if provider_count[provider] >= provider._max_managed_workers(policy):
+                    if await drain_idle_external_for_isolated(provider):
+                        return True
+                    continue
+                limit = sizing[provider].standard_limit_bytes
+                if limit in blocked_limits[provider] or cold_busy[provider]:
+                    continue
+                worker_id = provider._reserve(
+                    db,
+                    resource_class="isolated",
+                    memory_limit_bytes=limit,
+                    environment=provider._memory_environment(generation),
+                    isolated_job_id=job.id,
+                    isolated_job_attempt=request.isolated_attempt,
+                    isolated_compute=tuple(sorted(metadata.required_compute_capabilities)),
+                )
+                launched[provider].append(worker_id)
+                provider_count[provider] += 1
+                bound_isolated.add(job.id)
+                if limit not in known_limits[provider]:
+                    blocked_limits[provider].add(limit)
+                if not known_limits[provider]:
+                    cold_busy[provider] = True
+                return False
+            if known_unfit and len(known_unfit) == external_candidates:
+                await fail_unfit_platform_job(db, job, max(known_unfit))
+                changed_isolated.append(job)
+            return False
+
+        unplaced: list[tuple[Request, str | None, UUID | None]] = []
+        drained_for_isolated = False
+        for request, job_type, dispatch_id in request_rows:
+            if request.id in covered:
+                continue
+            if request.isolated_attempt is not None:
+                drained_for_isolated = await reserve_isolated(request, job_type)
+                if drained_for_isolated:
+                    break
+                continue
+            placed = False
+            for index, bin in enumerate(bins):
+                owner = bin_owners[index]
+                if job_type is not None and owner is not None and job_type not in owner._planner_platform_job_types():
+                    continue
+                if (rooms[index] >= request.bytes and bin.takes(request)
+                        and (request.handler not in limited or slots[index].get(request.handler, 0) > 0)):
+                    rooms[index] -= request.bytes
+                    if request.handler in limited:
+                        slots[index][request.handler] -= 1
+                    consumed_bins.add(index)
+                    placed = True
+                    break
+            if placed:
+                continue
+            for provider in reservation_providers(request, job_type):
+                if managed_total >= policy.max_workers or not accepts(provider, request, job_type):
+                    continue
+                # External providers expose a real individual ceiling; other
+                # providers share only the canonical global cap.
+                if provider_count[provider] >= provider._max_managed_workers(policy):
+                    continue
+                predicted_largest = largest[provider] or sizing[provider].largest_budget_bytes
+                if request.bytes > predicted_largest and provider not in unknown:
+                    continue
+                limit = sizing[provider].pod_limit_bytes(request.bytes)
+                calibration_probe = limit is None
+                if limit is None:
+                    limit = sizing[provider].largest_limit_bytes
+                if limit in blocked_limits[provider] or cold_busy[provider]:
+                    continue
+                worker_id = provider._reserve(
+                    db, resource_class="standard" if limit == sizing[provider].standard_limit_bytes else "sized",
+                    memory_limit_bytes=limit, environment=provider._memory_environment(generation),
+                    reserved_for_dispatch_id=(
+                        dispatch_id
+                        if (
+                            dispatch_id is not None
+                            and not calibration_probe
+                            and request.bytes > standard[provider]
+                        )
+                        else None
+                    ),
+                )
+                launched[provider].append(worker_id)
+                provider_count[provider] += 1
+                managed_total += 1
+                if limit not in known_limits[provider]:
+                    blocked_limits[provider].add(limit)
+                if not known_limits[provider]:
+                    cold_busy[provider] = True
+                bins.append(FreeBudget(
+                    standard[provider] if limit == sizing[provider].standard_limit_bytes else predicted_largest,
+                    frozenset(provider._planner_execution_handlers()),
+                    frozenset(provider._planner_compute_capabilities()),
+                ))
+                bin_owners.append(provider)
+                bin_workers.append(None)
+                rooms.append(max(0, bins[-1].bytes - request.bytes))
+                new_slots = dict(limited)
+                if request.handler in limited:
+                    new_slots[request.handler] -= 1
+                slots.append(new_slots)
+                break
+            else:
+                unplaced.append((request, job_type, dispatch_id))
+
+        if not drained_for_isolated and managed_total >= policy.max_workers and unplaced:
+            ready = [
+                worker
+                for worker in workers
+                if worker.form in MANAGED_WORKER_FORMS
+                and worker.state == "ready"
+                and worker.active_runs == 0
+                and worker.memory_reserved_bytes == 0
+                and worker.active_handler_counts is not None
+                and not any(worker.active_handler_counts.values())
+                and worker.reserved_for_dispatch_id is None
+                and worker.isolated_platform_job_id is None
+                and worker.memory_budget_bytes is not None
+            ]
+            for worker in ready:
+                owner = next((provider for provider in ordered if provider._owns_managed_worker(worker)), None)
+                if owner is None:
+                    continue
+                if not any(
+                    request.bytes > worker.memory_budget_bytes
+                    and accepts(owner, request, job_type)
+                    for request, job_type, _dispatch_id in unplaced
+                ):
+                    continue
+                await db.execute(update(ExecutionWorker).where(
+                    ExecutionWorker.id == worker.id,
+                    ExecutionWorker.state == "ready",
+                    ExecutionWorker.active_runs == 0,
+                    ExecutionWorker.memory_reserved_bytes == 0,
+                ).values(state="draining", end_reason="capacity_replacement"))
+                await publish_launchability()
+                await db.commit()
+                for job in changed_isolated:
+                    await publish_platform_job_update(job)
+                return launched
+
+        # Only Kubernetes may supply the fixed Fast Path reservation.  Warm
+        # normal capacity likewise stays primary so Cloud is true overflow.
+        primary = kubernetes or ordered[0]
+        if not drained_for_isolated and managed_total < policy.max_workers:
+            normal = sum(
+                primary._owns_managed_worker(worker) and worker.execution_lane == "normal"
+                and worker.resource_class == "standard" and worker.state != "draining"
+                and not primary.live.outdated(worker)
+                and not primary._lifetime_handoff_imminent(worker, now)
+                for worker in workers
+            ) + len(launched[primary]) - fast_path_launches
+            warm_launches = max(0, policy.warm_workers - normal)
+            if primary in unknown:
+                warm_launches = min(1, warm_launches)
+            if sizing[primary].standard_limit_bytes in blocked_limits[primary]:
+                warm_launches = 0
+            for _ in range(warm_launches):
+                if (managed_total >= policy.max_workers
+                        or provider_count[primary] >= primary._max_managed_workers(policy)):
+                    break
+                launched[primary].append(primary._reserve(
+                    db, resource_class="standard", memory_limit_bytes=sizing[primary].standard_limit_bytes,
+                    environment=primary._memory_environment(generation),
+                ))
+                managed_total += 1
+                provider_count[primary] += 1
+        await publish_launchability()
+        await db.commit()
+    for job in changed_isolated:
+        await publish_platform_job_update(job)
+    return launched
 
 
 class WorkerPoolController(WorkerCapacityController):
@@ -824,13 +1157,15 @@ class WorkerPoolController(WorkerCapacityController):
         return and_(
             ExecutionWorker.form == "job",
             ExecutionWorker.kubernetes_namespace == self.client.namespace,
+            ExecutionWorker.isolated_platform_job_id.is_(None),
         )
 
     def _live_scope(self) -> str:
         return f"job:{self.client.namespace}"
 
     def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
-        return worker.form == "job" and worker.kubernetes_namespace == self.client.namespace
+        return (worker.form == "job" and worker.kubernetes_namespace == self.client.namespace
+                and worker.isolated_platform_job_id is None)
 
     def _binding_fields(self, worker_id: UUID) -> dict[str, Any]:
         return {
@@ -959,6 +1294,16 @@ class Request:
     bytes: int
     handler: str | None = None
     compute_capability: str | None = None
+    # The exact next PlatformJob attempt an exclusive external worker may
+    # claim. ``None`` means reusable dispatch/service/local-job capacity.
+    isolated_attempt: int | None = None
+    additional_compute_capabilities: frozenset[str] = field(default_factory=frozenset)
+
+    @property
+    def required_compute_capabilities(self) -> frozenset[str]:
+        return self.additional_compute_capabilities.union(
+            () if self.compute_capability is None else (self.compute_capability,),
+        )
 
 
 @dataclass(frozen=True)
@@ -973,10 +1318,7 @@ class FreeBudget:
     def takes(self, request: Request) -> bool:
         return (
             (request.handler is None or request.handler in self.handlers)
-            and (
-                request.compute_capability is None
-                or request.compute_capability in self.compute_capabilities
-            )
+            and request.required_compute_capabilities.issubset(self.compute_capabilities)
         )
 
 
@@ -1040,7 +1382,9 @@ def _plan_launches(
     return LaunchPlan(standard=len(bins) - len(free), sized=sized)
 
 
-async def _publish_launchable(largest_budget: int | None, generation: int) -> None:
+async def _publish_launchable(
+    largest_budget: int | None, generation: int, *, fingerprint: str | None = None,
+) -> None:
     """Tell the dispatch reconciler the largest budget this controller can launch."""
     from src.core.cache.redis_client import get_redis
 
@@ -1051,7 +1395,12 @@ async def _publish_launchable(largest_budget: int | None, generation: int) -> No
             pipe.set(LAUNCHABLE_KEY, "" if largest_budget is None else str(largest_budget),
                      ex=LAUNCHABLE_TTL_SECONDS)
             value = "" if largest_budget is None else str(largest_budget)
-            pipe.set(LAUNCHABLE_GENERATION_KEY, f"{generation}:{value}", ex=LAUNCHABLE_TTL_SECONDS)
+            # Keep the two-field encoding for single-provider compatibility;
+            # the mixed controller adds its ordered provider/version identity.
+            encoded = f"{generation}:{value}"
+            if fingerprint is not None:
+                encoded = f"{encoded}:{fingerprint}"
+            pipe.set(LAUNCHABLE_GENERATION_KEY, encoded, ex=LAUNCHABLE_TTL_SECONDS)
             await pipe.execute()
 
 
@@ -1167,4 +1516,7 @@ async def worker_pool_loop(stop_event: asyncio.Event, settings: Any | None = Non
         await client.close()
 
 
-__all__ = ["LiveControllers", "WorkerCapacityController", "WorkerPoolController", "worker_pool_loop"]
+__all__ = [
+    "LiveControllers", "WorkerCapacityController", "WorkerPoolController", "worker_pool_loop",
+    "plan_capacity_launches",
+]

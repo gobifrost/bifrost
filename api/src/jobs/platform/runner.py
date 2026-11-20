@@ -11,6 +11,7 @@ from pydantic import ValidationError
 from sqlalchemy import select
 
 from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
+from shared.file_compute import FileCompute
 from src.core.database import close_db, get_db_context, init_db
 from src.jobs.platform.base import (
     AppBuildCompute,
@@ -33,6 +34,7 @@ async def run_claimed_platform_job(
     lease_token: UUID,
     *,
     app_build_compute: AppBuildCompute | None = None,
+    file_compute: FileCompute | None = None,
 ) -> bool:
     async with get_db_context() as db:
         job = (
@@ -85,6 +87,7 @@ async def run_claimed_platform_job(
             impersonation_session_id=job.impersonation_session_id,
             checkpoint=job.result,
             app_build_compute=app_build_compute,
+            file_compute=file_compute,
         )
 
     try:
@@ -118,11 +121,12 @@ async def run_claimed_platform_job(
             status="succeeded",
             result=result or {},
         )
-    except PlatformJobCancelled:
+    except PlatformJobCancelled as exc:
         return await finish_platform_job(
             job_id,
             lease_token,
             status="cancelled",
+            preserve_checkpoint=exc.preserve_checkpoint,
         )
     except PlatformJobDeferred as exc:
         return await defer_platform_job(
@@ -132,7 +136,8 @@ async def run_claimed_platform_job(
             result=exc.result,
         )
     except PlatformJobFailure as exc:
-        return await retry_platform_job_failure(job_id, lease_token, exc, enabled=definition.policy.retry_on_failure)
+        return await retry_platform_job_failure(job_id, lease_token, exc, enabled=definition.policy.retry_on_failure,
+            preserve_checkpoint=exc.preserve_checkpoint)
     except PlatformJobRequiresAction as exc:
         return await finish_platform_job(
             job_id,

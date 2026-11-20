@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import delete, text, update
+from sqlalchemy import delete, event, func, select, text, update
 from sqlalchemy.exc import DBAPIError
 
 from src.models.orm.execution_workers import ExecutionWorker
@@ -31,6 +32,92 @@ def test_remote_owner_context_observes_a_same_owner_reconnect() -> None:
         assert ref.lease.session_generation == 1
         ref.lease = replace(ref.lease, session_generation=2)
         assert ref.lease.session_generation == 2
+
+
+@pytest.mark.asyncio
+async def test_ordinary_callers_without_remote_owner_context_remain_unfenced(
+    async_session_factory,
+) -> None:
+    async with async_session_factory() as session:
+        assert await fence_remote_owner(session)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ("lost", "retired"))
+async def test_terminal_worker_cannot_fence_its_remote_owner(
+    async_session_factory,
+    state: str,
+) -> None:
+    worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
+    lease = RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(
+            id=worker_id, form="external", state=state, resource_class="isolated",
+            remote_owner_id=owner_id, remote_launcher_id=launcher_id,
+            remote_session_generation=1,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        await session.commit()
+    try:
+        async with async_session_factory() as session:
+            with remote_owner_context(LeaseRef(lease)):
+                assert not await fence_remote_owner(session)
+    finally:
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_fence_rechecks_the_database_clock_after_waiting_on_owner_row(
+    async_session_factory,
+    async_engine,
+) -> None:
+    worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
+    lease = RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
+    async with async_session_factory() as session:
+        session.add(ExecutionWorker(
+            id=worker_id, form="static", state="ready", resource_class="standard",
+            remote_owner_id=owner_id, remote_launcher_id=launcher_id,
+            remote_session_generation=1,
+            remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        ))
+        await session.commit()
+        await session.execute(update(ExecutionWorker).where(ExecutionWorker.id == worker_id).values(
+            remote_owner_lease_expires_at=func.clock_timestamp() + text("INTERVAL '1 second'"),
+        ))
+        await session.commit()
+
+    issued = asyncio.Event()
+
+    def observe(_conn, _cursor, statement, *_args) -> None:
+        if "execution_workers" in statement:
+            issued.set()
+
+    try:
+        async with async_session_factory() as holder:
+            assert await holder.scalar(select(ExecutionWorker.id).where(
+                ExecutionWorker.id == worker_id
+            ).with_for_update()) == worker_id
+
+            event.listen(async_engine.sync_engine, "before_cursor_execute", observe)
+
+            async def contend() -> bool:
+                async with async_session_factory() as session:
+                    with remote_owner_context(LeaseRef(lease)):
+                        return await fence_remote_owner(session)
+
+            contender = asyncio.create_task(contend())
+            await issued.wait()
+            async with async_session_factory() as clock:
+                await clock.execute(text("SELECT pg_sleep(1.1)"))
+            await holder.commit()
+            assert not await contender
+    finally:
+        event.remove(async_engine.sync_engine, "before_cursor_execute", observe)
+        async with async_session_factory() as session:
+            await session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker_id))
+            await session.commit()
 
 
 @pytest.mark.asyncio

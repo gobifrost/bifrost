@@ -31,3 +31,14 @@ def test_durable_analysis_payload_cannot_widen_partial_scope_into_platform_cutov
         ANALYZE_JOB_DEFINITION.payload_model.model_validate(
             {"scope": "global", "platform_cutover": True}
         )
+
+
+def test_cutover_is_bounded_api_work_and_creates_no_physical_demand():
+    from src.jobs.platform.catalog import api_platform_job_types, executor_platform_job_types, get_platform_job_metadata
+    metadata = get_platform_job_metadata(CUTOVER_JOB_DEFINITION.job_type)
+    assert metadata.execution_owner == "api"
+    assert not metadata.required_compute_capabilities
+    assert metadata.job_type in api_platform_job_types()
+    assert metadata.job_type not in executor_platform_job_types()
+    # Long source review must not consume the reserved maintenance control slot.
+    assert not metadata.api_control

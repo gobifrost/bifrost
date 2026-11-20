@@ -30,6 +30,7 @@ from src.models.contracts.platform_jobs import (
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
+from src.worker.remote.fencing import fence_remote_owner
 from src.services.durable_impersonation import current_durable_impersonation
 from src.services.platform_job_memory_profiles import (
     resolve_platform_job_memory_required_bytes,
@@ -97,12 +98,16 @@ async def record_platform_job_executor_attribution(
     stage_id: UUID | None = None,
     input_sha256: str | None = None,
     phase: str | None = None,
+    predecessor_stage_id: UUID | None = None,
 ) -> bool:
     """Persist a fenced, API-side executor snapshot for one running attempt.
 
     The physical worker never supplies its own capacity identity.  A remote
     API task additionally proves that it still owns the launcher's lease
     before locking the exact PlatformJob attempt and loading the worker row.
+    A sequential file operation may advance only from its just-released,
+    currently attributed stage on the same worker. Every stage capability
+    must belong to the code-owned handler's declared compute sequence.
     """
     if (stage_id is None) != (input_sha256 is None):
         raise ValueError("executor stage identity and input digest must be recorded together")
@@ -136,6 +141,12 @@ async def record_platform_job_executor_attribution(
         ).scalar_one_or_none()
         if job is None:
             return False
+        if compute_capability is not None:
+            from src.jobs.platform.catalog import get_platform_job_metadata
+
+            metadata = get_platform_job_metadata(job.job_type)
+            if metadata is None or compute_capability not in metadata.required_compute_capabilities:
+                return False
         worker = await db.scalar(
             select(ExecutionWorker)
             .where(ExecutionWorker.id == worker_id)
@@ -155,14 +166,29 @@ async def record_platform_job_executor_attribution(
                     and job.executor_input_sha256 == input_sha256
                     and job.executor_compute_capability == compute_capability):
                 return True
-            raise PlatformJobExecutorAttributionConflict
-        set_platform_job_executor_attribution(
-            job,
-            worker,
-            compute_capability=compute_capability,
-            stage_id=stage_id,
-            input_sha256=input_sha256,
-        )
+            if (
+                predecessor_stage_id == job.executor_stage_id
+                and job.executor_attempt == job.attempt
+                and job.executor_worker_id == worker_id
+                and stage_id is not None and compute_capability is not None
+            ):
+                set_platform_job_executor_attribution(
+                    job,
+                    worker,
+                    compute_capability=compute_capability,
+                    stage_id=stage_id,
+                    input_sha256=input_sha256,
+                )
+            else:
+                raise PlatformJobExecutorAttributionConflict
+        else:
+            set_platform_job_executor_attribution(
+                job,
+                worker,
+                compute_capability=compute_capability,
+                stage_id=stage_id,
+                input_sha256=input_sha256,
+            )
         if phase is not None:
             job.phase = phase[:200]
         job.revision += 1
@@ -511,6 +537,8 @@ async def update_platform_job_progress(
 ) -> bool:
     """Persist progress only for the current fenced runner attempt."""
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)
@@ -544,11 +572,14 @@ async def finish_platform_job(
     error_message: str | None = None,
     error_retryable: bool = False,
     phase: str | None = None,
+    preserve_checkpoint: bool = False,
 ) -> bool:
     """Finalize only the currently leased attempt; stale runners are fenced out."""
     if status not in TERMINAL_PLATFORM_JOB_STATUSES:
         raise ValueError(f"Invalid terminal platform-job status: {status}")
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)
@@ -571,7 +602,8 @@ async def finish_platform_job(
         }[status])[:200]
         if status == "succeeded":
             job.progress_percent = 100
-        job.result = result
+        if not preserve_checkpoint:
+            job.result = result
         job.error_code = error_code
         job.error_message = error_message.strip()[:4000] if error_message else None
         job.error_retryable = error_retryable if error_message else None
@@ -602,6 +634,8 @@ async def checkpoint_platform_job(
     checkpoints per unit of work does not need a second progress write.
     """
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (await db.execute(
             select(PlatformJob).where(
                 PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
@@ -623,12 +657,14 @@ async def checkpoint_platform_job(
 
 
 async def retry_platform_job_failure(
-    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool
+    job_id: UUID, lease_token: UUID, failure: Any, *, enabled: bool, preserve_checkpoint: bool = False
 ) -> bool:
     """Requeue a retryable failure while retaining its handler checkpoint."""
     if not enabled or not failure.retryable:
-        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable)
+        return await finish_platform_job(job_id, lease_token, status="failed", result=failure.result, error_code=failure.code, error_message=failure.message, error_retryable=failure.retryable, preserve_checkpoint=preserve_checkpoint)
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (await db.execute(
             select(PlatformJob).where(
                 PlatformJob.id == job_id, PlatformJob.lease_token == lease_token,
@@ -652,7 +688,8 @@ async def retry_platform_job_failure(
             job.phase = "Retrying after recoverable failure"
             job.available_at = _now()
             job.error_retryable = True
-        job.result = failure.result
+        if not preserve_checkpoint:
+            job.result = failure.result
         job.error_code = failure.code
         job.error_message = failure.message[:4000]
         job.lease_owner = None
@@ -674,6 +711,8 @@ async def defer_platform_job(
 ) -> bool:
     """Release a runner after durable child work has been dispatched."""
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return False
         job = (
             await db.execute(
                 select(PlatformJob)

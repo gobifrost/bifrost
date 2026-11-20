@@ -15,6 +15,12 @@ import { useEffect, useState, useCallback } from "react";
 import { webSocketService, type PoolMessage } from "@/services/websocket";
 import type { PoolDetail, QueueItem, ProcessInfo } from "@/services/workers";
 
+type LivePool = PoolDetail & {
+	processes: ProcessInfo[];
+	memory_current_bytes: number;
+	memory_max_bytes: number;
+};
+
 export interface ScalingState {
 	worker_id: string;
 	action: "scale_up" | "scale_down" | "recycle_all";
@@ -32,7 +38,7 @@ export interface ProgressState {
 }
 
 interface UseWorkerWebSocketReturn {
-	pools: PoolDetail[];
+	pools: LivePool[];
 	queue: QueueItem[];
 	isConnected: boolean;
 	scalingStates: Map<string, ScalingState>;
@@ -43,7 +49,7 @@ interface UseWorkerWebSocketReturn {
  * Hook to subscribe to real-time pool updates via WebSocket
  */
 export function useWorkerWebSocket(): UseWorkerWebSocketReturn {
-	const [pools, setPools] = useState<PoolDetail[]>([]);
+	const [pools, setPools] = useState<LivePool[]>([]);
 	const [queue] = useState<QueueItem[]>([]);
 	const [isConnected, setIsConnected] = useState(false);
 	const [scalingStates, setScalingStates] = useState<
@@ -75,19 +81,15 @@ export function useWorkerWebSocket(): UseWorkerWebSocketReturn {
 						uptime_seconds: p.uptime_seconds,
 						memory_mb: p.memory_mb,
 						is_alive: true,
-						pending_recycle: p.pending_recycle,
 					}));
 
-					const updatedPool: PoolDetail = {
+					const updatedPool: LivePool = {
 						worker_id: message.worker_id,
 						hostname: message.hostname || null,
 						status: message.status || null,
 						started_at: message.started_at || null,
 						last_heartbeat: message.timestamp || null,
 						processes,
-						requirements_installed:
-							message.requirements_installed ?? null,
-						requirements_total: message.requirements_total ?? null,
 						memory_current_bytes:
 							message.memory_current_bytes ?? -1,
 						memory_max_bytes: message.memory_max_bytes ?? -1,
@@ -119,8 +121,8 @@ export function useWorkerWebSocket(): UseWorkerWebSocketReturn {
 							started_at: message.started_at || null,
 							last_heartbeat: null,
 							processes: [],
-							requirements_installed: null,
-							requirements_total: null,
+							memory_current_bytes: -1,
+							memory_max_bytes: -1,
 						},
 					];
 				});

@@ -23,6 +23,7 @@ from src.models import Execution, Workflow
 from src.models.enums import ExecutionStatus
 from src.models.orm.users import User
 from src.models.orm.work_dispatches import WorkDispatch
+from src.models.orm.execution_workers import ExecutionWorker
 from src.core.constants import PROVIDER_ORG_ID
 from tests.conftest import TEST_REDIS_URL
 
@@ -96,7 +97,7 @@ async def clean_test_data(db_session: AsyncSession):
 
 
 @pytest_asyncio.fixture
-async def test_user(db_session: AsyncSession):
+async def test_user(db_session: AsyncSession, platform_admin):
     """Create a test user for executions."""
     user = User(
         id=uuid4(),
@@ -207,6 +208,97 @@ class TestWorkersListEndpoint:
         assert pool.pool_size == 2
         assert pool.busy_count == 1
 
+    async def test_list_workers_preserves_redis_only_default_when_incarnations_exist(
+        self,
+        db_session: AsyncSession,
+        clean_redis_workers,
+    ):
+        """The optional canonical view does not change existing CLI/list behavior."""
+        from src.core.principal import UserPrincipal
+        from src.routers.platform.workers import list_pools
+
+        db_session.add(ExecutionWorker(form="external", state="starting", version="2026.11"))
+        await db_session.flush()
+
+        result = await list_pools(UserPrincipal(
+            user_id=uuid4(), email="admin@test.com", organization_id=None, is_superuser=True,
+        ))
+
+        assert result.pools == []
+        assert result.total == 0
+        assert result.capacity_overview is None
+
+    async def test_list_workers_can_show_canonical_starting_and_lost_incarnations(
+        self,
+        db_session: AsyncSession,
+        clean_redis_workers,
+    ):
+        """Explicit diagnostics include durable workers even without a Redis row."""
+        from src.core.principal import UserPrincipal
+        from src.routers.platform.workers import list_pools
+
+        starting = ExecutionWorker(
+            form="external", state="starting", execution_lane="normal", version="2026.11",
+            capacity_scope="cloudflare:primary", memory_budget_bytes=512, memory_reserved_bytes=128,
+        )
+        lost = ExecutionWorker(
+            form="external", state="lost", execution_lane="normal", version="2026.10",
+            capacity_scope="cloudflare:primary", capacity_resource_uid="provider-only-uid",
+            end_reason="heartbeat_lost", ended_at=datetime.now(timezone.utc),
+        )
+        db_session.add_all((starting, lost))
+        await db_session.flush()
+
+        result = await list_pools(
+            UserPrincipal(user_id=uuid4(), email="admin@test.com", organization_id=None, is_superuser=True),
+            include_incarnations=True,
+            db=db_session,
+        )
+
+        by_id = {pool.worker_id: pool for pool in result.pools}
+        assert by_id[str(starting.id)].incarnation.state == "starting"
+        assert by_id[str(lost.id)].incarnation.state == "lost"
+        assert by_id[str(lost.id)].incarnation.cleanup_confirmed is False
+        assert "provider-only-uid" not in by_id[str(lost.id)].model_dump_json()
+        assert result.capacity_overview.cleanup_pending_count == 1
+
+    async def test_list_workers_bounds_terminal_history_to_one_hundred_incarnations(
+        self,
+        db_session: AsyncSession,
+        clean_redis_workers,
+    ):
+        """Diagnostics keeps all live rows while bounding terminal worker history."""
+        from src.core.principal import UserPrincipal
+        from src.routers.platform.workers import list_pools
+
+        now = datetime.now(timezone.utc)
+        workers = [
+            ExecutionWorker(
+                form="job", state="lost", end_reason="start_timeout",
+                ended_at=now - timedelta(seconds=index),
+            )
+            for index in range(101)
+        ]
+        workers.append(ExecutionWorker(form="job", state="ready", version="2026.11"))
+        db_session.add_all(workers)
+        await db_session.flush()
+
+        result = await list_pools(
+            UserPrincipal(user_id=uuid4(), email="admin@test.com", organization_id=None, is_superuser=True),
+            include_incarnations=True,
+            db=db_session,
+        )
+
+        ids = {pool.worker_id for pool in result.pools}
+        assert str(workers[-1].id) in ids
+        assert str(workers[0].id) in ids
+        assert str(workers[100].id) not in ids
+        # The running stack can also have its own static incarnations. Keep
+        # those live rows while bounding only the terminal history.
+        terminal = [pool for pool in result.pools if pool.incarnation.state in ("lost", "retired")]
+        assert len(terminal) == 100
+        assert result.total == len(result.pools)
+
 
 @pytest.mark.e2e
 @pytest.mark.asyncio
@@ -234,6 +326,33 @@ class TestWorkerDetailEndpoint:
             await get_pool("non-existent-worker", admin)
 
         assert exc_info.value.status_code == 404
+
+    async def test_get_worker_reads_known_canonical_incarnation_without_redis(
+        self,
+        db_session: AsyncSession,
+        clean_redis_workers,
+    ):
+        """A durable worker remains inspectable after its Redis entry expires."""
+        from src.core.principal import UserPrincipal
+        from src.routers.platform.workers import get_pool
+
+        worker = ExecutionWorker(
+            form="external", state="lost", version="2026.11",
+            capacity_scope="cloudflare:primary", capacity_resource_uid="must-not-be-public",
+            end_reason="heartbeat_lost", ended_at=datetime.now(timezone.utc),
+        )
+        db_session.add(worker)
+        await db_session.flush()
+
+        result = await get_pool(
+            str(worker.id),
+            UserPrincipal(user_id=uuid4(), email="admin@test.com", organization_id=None, is_superuser=True),
+            db=db_session,
+        )
+
+        assert result.processes == []
+        assert result.incarnation.state == "lost"
+        assert "must-not-be-public" not in result.model_dump_json()
 
     async def test_get_worker_with_details(
         self,

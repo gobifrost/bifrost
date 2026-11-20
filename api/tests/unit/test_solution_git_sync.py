@@ -1,25 +1,24 @@
 """Sub-plan 5 — Git-connected mode (criterion 13).
 
 A git-connected install has exactly one writer: auto-pull from its repo.
-- ``deploy_from_workspace`` reads a checked-out Solution workspace (Python source
-  + ``.bifrost/*.yaml`` manifest) and deploys it via SolutionDeployer.
 - ``bifrost deploy`` / the REST deploy endpoint are REFUSED for a connected
   install (the one-writer invariant; verified in the e2e).
 """
 from __future__ import annotations
 
 import uuid
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
 
 from src.models.orm.solutions import Solution
-from src.models.orm.workflows import Workflow
 from src.services.solutions.git_sync import (
-    NotASolutionWorkspace,
-    deploy_from_workspace,
+    GitSyncSnapshot,
+    assert_current_git_settings,
 )
+from src.services.solutions.deploy import SolutionDeployConflict
 
 
 @pytest.fixture(autouse=True)
@@ -33,71 +32,17 @@ def _reset_redis_singleton():
     rc._redis_client = None
 
 
-@pytest.mark.e2e
-class TestDeployFromWorkspace:
-    async def test_reads_workspace_and_deploys(self, db_session, tmp_path) -> None:
-        from sqlalchemy import select
+def test_git_sync_rejects_connection_changes_after_preparation() -> None:
+    solution = Solution(
+        id=uuid.uuid4(), slug="managed-git", name="Managed Git",
+        git_connected=True, git_repo_url="https://example.test/managed-git.git",
+        git_ref="main", repo_subpath="solutions/managed",
+    )
+    snapshot = GitSyncSnapshot.from_solution(solution)
+    solution.git_ref = "release"
 
-        db = db_session
-        sol = Solution(
-            id=uuid.uuid4(), slug=f"git-{uuid.uuid4().hex[:8]}", name="G",
-            organization_id=None, git_connected=True,
-            git_repo_url="https://example.com/x.git",
-        )
-        db.add(sol)
-        await db.flush()
-
-        # Lay out a checked-out Solution workspace (must have the descriptor).
-        (tmp_path / "bifrost.solution.yaml").write_text(
-            f"slug: {sol.slug}\nname: G\nscope: global\n"
-        )
-        wf_id = str(uuid.uuid4())
-        (tmp_path / "workflows").mkdir()
-        (tmp_path / "workflows" / "w.py").write_text(
-            "from bifrost import workflow\n@workflow\nasync def w():\n    return {}\n"
-        )
-        (tmp_path / ".bifrost").mkdir()
-        (tmp_path / ".bifrost" / "workflows.yaml").write_text(
-            f"workflows:\n  {wf_id}:\n    id: {wf_id}\n    name: gitwf\n"
-            f"    function_name: w\n    path: workflows/w.py\n    type: workflow\n"
-        )
-
-        await deploy_from_workspace(db, sol, tmp_path)
-        await db.flush()
-
-        names = (
-            await db.execute(select(Workflow.name).where(Workflow.solution_id == sol.id))
-        ).scalars().all()
-        assert names == ["gitwf"]
-
-    async def test_refuses_non_solution_checkout(self, db_session, tmp_path) -> None:
-        """A checkout with no bifrost.solution.yaml must NOT full-replace the
-        install down to empty (Codex Sub-plan 5 P1)."""
-        from sqlalchemy import select
-
-        db = db_session
-        sol = Solution(
-            id=uuid.uuid4(), slug=f"git-{uuid.uuid4().hex[:8]}", name="G",
-            organization_id=None, git_connected=True, git_repo_url="https://example.com/x.git",
-        )
-        db.add(sol)
-        # Pre-existing deployed workflow that must survive a bad sync.
-        keep_id = uuid.uuid4()
-        db.add(Workflow(
-            id=keep_id, name="keepme", function_name="run", path="workflows/keepme.py",
-            type="workflow", organization_id=None, solution_id=sol.id,
-        ))
-        await db.flush()
-
-        # tmp_path has NO bifrost.solution.yaml.
-        with pytest.raises(NotASolutionWorkspace):
-            await deploy_from_workspace(db, sol, tmp_path)
-
-        # The existing install is untouched.
-        survivors = (
-            await db.execute(select(Workflow.name).where(Workflow.solution_id == sol.id))
-        ).scalars().all()
-        assert survivors == ["keepme"]
+    with pytest.raises(SolutionDeployConflict, match="Git connection changed"):
+        assert_current_git_settings(solution, snapshot)
 
 
 @pytest.mark.asyncio
@@ -118,22 +63,51 @@ async def test_git_sync_propagates_incomplete_storage_finalization(
     result = SimpleNamespace(
         finalize_s3=AsyncMock(side_effect=SolutionFinalizeIncomplete(str(solution.id)))
     )
-    db = SimpleNamespace(commit=AsyncMock())
+    db = SimpleNamespace(get=AsyncMock(return_value=solution), commit=AsyncMock())
+    context = SimpleNamespace(authorize_effect=AsyncMock(return_value=True))
 
-    async def fake_clone(_repo_url, destination, *, ref=None):  # noqa: ANN001
+    @asynccontextmanager
+    async def fake_db_context():
+        yield db
+
+    async def fake_clone(_db, _source_id, _org_id, _repo_url, destination, _ref):  # noqa: ANN001
         (destination / "bifrost.solution.yaml").write_text(
             "slug: storage-finalize\nname: Storage Finalize\nscope: global\n"
         )
 
-    monkeypatch.setattr(git_sync, "clone_repo_to_dir", fake_clone)
+    prepared = SimpleNamespace(
+        archive=SimpleNamespace(workspace=SimpleNamespace(), preview=SimpleNamespace()),
+        bundle=SimpleNamespace(),
+        app_builds=SimpleNamespace(),
+        source_artifact=b"source",
+    )
+
+    @asynccontextmanager
+    async def fake_prepare(*_args, **kwargs):
+        assert kwargs == {
+            "solution_id": solution.id,
+            "allow_connected_install": True,
+            "lock_already_held": True,
+            "force": True,
+        }
+        yield prepared
+
+    monkeypatch.setattr("src.core.database.get_db_context", fake_db_context)
+    monkeypatch.setattr("shared.solution_git_sources.clone_solution_repository", fake_clone)
+    monkeypatch.setattr("bifrost.commands.solution._build_deploy_zip", lambda *_args, **_kwargs: b"archive")
+    monkeypatch.setattr("src.services.solutions.compute_pipeline.prepare_solution_deployment", fake_prepare)
     monkeypatch.setattr(
-        git_sync, "deploy_from_workspace", AsyncMock(return_value=result)
+        "src.services.solutions.zip_install._deploy_workspace_to_solution",
+        AsyncMock(return_value=result),
     )
 
     with pytest.raises(SolutionFinalizeIncomplete):
-        await git_sync._run_sync_once(db, solution)
+        await git_sync._run_sync_once(
+            context,
+            GitSyncSnapshot.from_solution(solution),
+        )
 
-    db.commit.assert_awaited_once()
+    assert db.commit.await_count == 2
     result.finalize_s3.assert_awaited_once()
 
 
@@ -323,7 +297,15 @@ class TestGitSyncRerun:
 
         calls = {"n": 0}
 
-        async def _fake_run_once(db, solution):
+        @asynccontextmanager
+        async def fake_db_context():
+            yield db_session
+
+        context = SimpleNamespace(
+            authorize_effect=AsyncMock(return_value=True), report=AsyncMock()
+        )
+
+        async def _fake_run_once(_context, _snapshot):
             calls["n"] += 1
             # On the FIRST run, simulate a newer commit's trigger arriving while
             # the lock is held: it would set the pending flag.
@@ -331,8 +313,9 @@ class TestGitSyncRerun:
                 await redis.set(pending_key, "1", ex=3600)
 
         monkeypatch.setattr(gs, "_run_sync_once", _fake_run_once)
+        monkeypatch.setattr("src.core.database.get_db_context", fake_db_context)
 
-        await gs.sync(db_session, sol)
+        await gs.sync(context, sol.id)
 
         # Ran twice: once for the original, once for the queued newer commit.
         assert calls["n"] == 2
@@ -354,11 +337,20 @@ class TestGitSyncRerun:
 
         calls = {"n": 0}
 
-        async def _fake_run_once(db, solution):
+        @asynccontextmanager
+        async def fake_db_context():
+            yield db_session
+
+        context = SimpleNamespace(
+            authorize_effect=AsyncMock(return_value=True), report=AsyncMock()
+        )
+
+        async def _fake_run_once(_context, _snapshot):
             calls["n"] += 1
 
         monkeypatch.setattr(gs, "_run_sync_once", _fake_run_once)
-        await gs.sync(db_session, sol)
+        monkeypatch.setattr("src.core.database.get_db_context", fake_db_context)
+        await gs.sync(context, sol.id)
         assert calls["n"] == 1  # no pending flag → single run
 
 

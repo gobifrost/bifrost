@@ -36,6 +36,7 @@ def _status_service(work_dir: Path):
     from src.services.github_sync import GitHubSyncService
 
     service = GitHubSyncService.__new__(GitHubSyncService)
+    service._job_context = None
     service.branch = "main"
     service.repo_url = "https://example.invalid/workspace.git"
     service.repo_manager = _StatusRepoManager(work_dir)

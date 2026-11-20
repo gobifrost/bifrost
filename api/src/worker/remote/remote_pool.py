@@ -90,6 +90,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         transport: ThinRemoteTransport,
         *,
         worker_id: str | None = None,
+        workflow_packages: bool = True,
         **kwargs: Any,
     ) -> None:
         identity = worker_id or (
@@ -97,6 +98,7 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         )
         super().__init__(worker_id=identity, **kwargs)
         self.transport = transport
+        self.workflow_packages = workflow_packages
         self._routes: dict[str, ProcessHandle] = {}
         self._route_metrics: dict[str, dict[str, float | int]] = {}
         self._remote_memory_current = -1
@@ -377,6 +379,9 @@ class ThinRemoteProcessPool(ProcessPoolManager):
         )
 
     async def _remote_packages(self) -> list[dict[str, Any]]:
+        if not self.workflow_packages:
+            # Isolated compute has no dynamic workflow package environment.
+            return []
         response = await self.transport.request(
             "package_tool", {"operation": "inventory"}
         )

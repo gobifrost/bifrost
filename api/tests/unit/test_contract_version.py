@@ -202,6 +202,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
+# Optional PlatformJob executor attribution is additive; older CLIs ignore it.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -430,12 +431,16 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Preserve the existing hardware-only capacity profile. Unreleased provider
-    # job declarations were removed; worker Hello remains the capability source.
-    # Optional PlatformJob executor attribution is additive, so existing CLI/SDK
-    # command shapes and MIN_CLI_VERSION remain unchanged.
-    # Merged inline-code permission clarification is description-only.
-    "0c88f0b767556c60d7cc84709a64433b66e33133a08f6af14e256f7ee382bd04"
+    # Preserve the existing hardware-only capacity profile; worker Hello owns
+    # capabilities. Unreleased provider job declarations have been removed.
+    # Cloudflare setup DTOs are additive; MIN_CLI_VERSION remains unchanged.
+    # Optional PlatformJob executor attribution is additive and sanitizes
+    # provider resource identifiers from the CLI-visible response.
+    # Other Jobs is an additive Cloudflare overflow rule with a default;
+    # existing CLI requests and minimum version remain compatible.
+    "594b3524348d5df92e48f09323f21e85daef7b8697f11fd5d9f12a53e49ccb76"
+    # Inline-code permission clarification only changes an existing field description.
+    # CLI shapes and MIN_CLI_VERSION remain unchanged.
 )
 
 
