@@ -28,7 +28,7 @@ _provider = None
 
 @pytest.fixture(autouse=True)
 def _clean_env(monkeypatch):
-    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid")
     yield
 
 
@@ -75,7 +75,8 @@ def _tracer():
     return trace.get_tracer(__name__)
 
 
-def test_disabled_by_default():
+def test_disabled_by_default(monkeypatch):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
     assert not is_enabled()
     # Helpers are safe no-ops when disabled.
     message: dict = {}

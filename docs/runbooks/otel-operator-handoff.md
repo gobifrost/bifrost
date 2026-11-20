@@ -31,12 +31,19 @@ OTEL_TRACES_SAMPLER=parentbased_traceidratio
 OTEL_TRACES_SAMPLER_ARG=0.1              # default is always-on
 OTEL_METRIC_EXPORT_INTERVAL=60000        # ms between metric pushes
 OTEL_RESOURCE_ATTRIBUTES=deployment.environment=prod,host.name=worker-1
-OTEL_PYTHON_FASTAPI_EXCLUDED_URLS='^/health(/|$),^/ready$,^/noisy'  # default shown first; regex, extend to silence routes
+OTEL_PYTHON_FASTAPI_EXCLUDED_URLS='^https?://[^/]+/health(?:/|$),^https?://[^/]+/ready$'  # default shown first; regex, extend to silence routes
 ```
 
-Without `OTEL_EXPORTER_OTLP_ENDPOINT`, every OpenTelemetry call in the
-platform is a no-op: no spans, no metrics, no connections, no log-format
-changes.
+Leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset or empty to disable telemetry.
+This is an endpoint string, not a Boolean flag: `false` and `0` are nonempty
+and therefore enable initialization. Configure it before starting the process;
+changing it does not uninstall an already initialized SDK.
+
+Disabled startup configures no providers, automatic instrumentation, exporter
+threads or connections, and does not change the log format. SDK types are
+still imported once per process and take resident memory; dispatch/run helpers
+return without recording spans or propagating context, including when another
+library has independently installed an OpenTelemetry provider.
 
 ## Minimal collector (example, not a recommendation)
 

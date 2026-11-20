@@ -1,11 +1,9 @@
 """OpenTelemetry setup: traces + metrics to operator backends. Default off.
 
 Everything here degrades to no-ops when ``OTEL_EXPORTER_OTLP_ENDPOINT`` is
-unset, so unconfigured installs pay nothing and emit nothing. Depends only
-on the standard library plus ``opentelemetry-api`` at import time;
-SDK/exporter/instrumentation packages are imported lazily inside the init
-helpers so the CLI never pays import cost (or fails) when telemetry is
-absent.
+unset or empty. SDK types are imported eagerly; provider, exporter and
+instrumentor setup is gated by the endpoint. Disabled helpers do not use
+other libraries' independently configured providers or propagate their context.
 
 Conventions (see docs/architecture/otel-observability.md):
 - Span attributes carry IDs and fixed names only — never user content,
@@ -567,6 +565,9 @@ def launch_span(execution_id: str, context: dict[str, Any]) -> Iterator[Any]:
     child, including any wait for the template. Exceptions propagate after
     marking the span failed with their type only.
     """
+    if not is_enabled():
+        yield trace.INVALID_SPAN
+        return
     tracer = trace.get_tracer(__name__)
     with tracer.start_as_current_span(
         "workflow.launch",
@@ -593,6 +594,9 @@ def child_run_span(execution_id: str, context: dict[str, Any]) -> Iterator[Any]:
     span for the time before the work began. Call :func:`mark_child_run`
     with the result.
     """
+    if not is_enabled():
+        yield trace.INVALID_SPAN
+        return
     global _child_started_ns
     started_ns, _child_started_ns = _child_started_ns, None
     tracer = trace.get_tracer(__name__)
@@ -615,7 +619,7 @@ def child_run_span(execution_id: str, context: dict[str, Any]) -> Iterator[Any]:
 
 def mark_child_run(span: Any, result: Any) -> None:
     """ERROR status (exception type only) when the run did not succeed."""
-    if not isinstance(result, dict) or result.get("success", False):
+    if not is_enabled() or not isinstance(result, dict) or result.get("success", False):
         return
     error_type = result.get("error_type")
     span.set_status(
@@ -661,6 +665,8 @@ def inject_traceparent(message: dict[str, Any]) -> None:
     the global tracer only hands out invalid contexts. Baggage is never
     written: only W3C trace context crosses the queue.
     """
+    if not is_enabled():
+        return
     span = trace.get_current_span()
     if not span.get_span_context().is_valid:
         return
@@ -669,7 +675,7 @@ def inject_traceparent(message: dict[str, Any]) -> None:
 
 def extract_context(message: dict[str, Any] | None) -> Any | None:
     """Pull a parent trace context out of a dispatch message, if present."""
-    if not isinstance(message, dict) or TRACEPARENT_KEY not in message:
+    if not is_enabled() or not isinstance(message, dict) or TRACEPARENT_KEY not in message:
         return None
     return _PROPAGATOR.extract(message)
 
@@ -717,6 +723,9 @@ def run_span(
     named ``bifrost.dispatch.*`` to describe what is actually measured.
     Exceptions propagate after marking the span failed.
     """
+    if not is_enabled():
+        yield trace.INVALID_SPAN
+        return
     started_counter, duration_histogram, failed_counter = _instruments()
     parent = extract_context(message)
     tracer = trace.get_tracer(__name__)

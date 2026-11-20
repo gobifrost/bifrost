@@ -307,6 +307,7 @@ def test_real_fork_child_returns_spans_over_a_pipe(monkeypatch):
 
 
 def test_launch_span_parents_on_the_dispatch_and_marks_failure(monkeypatch):
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
     from opentelemetry.sdk.trace import TracerProvider
 
     sink = InMemorySpanExporter()
