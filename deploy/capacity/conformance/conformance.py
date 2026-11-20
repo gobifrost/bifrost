@@ -97,6 +97,13 @@ class Hook:
             raise RuntimeError(f"hook {op} returned non-JSON") from None
 
 
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    """Keep conformance requests aligned with the canonical controller."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
 class Client:
     def __init__(self, base_url: str, token: str, scope: str, user_agent: str = DEFAULT_USER_AGENT) -> None:
         self.base = base_url.rstrip("/")
@@ -104,6 +111,9 @@ class Client:
         self.scope = scope
         self.user_agent = user_agent
         self._ctx = ssl.create_default_context()
+        self._opener = urllib.request.build_opener(
+            _NoRedirect(), urllib.request.HTTPSHandler(context=self._ctx),
+        )
 
     def request(
         self,
@@ -126,7 +136,7 @@ class Client:
         req = urllib.request.Request(f"{self.base}{path}", data=data, method=method, headers=headers)
         # Euler 4xx must be readable, not raised.
         try:
-            with urllib.request.urlopen(req, context=self._ctx, timeout=45) as resp:
+            with self._opener.open(req, timeout=45) as resp:
                 raw = resp.read().decode() or "{}"
                 return resp.status, json.loads(raw)
         except urllib.error.HTTPError as exc:
