@@ -40,7 +40,9 @@ and therefore enable initialization. Configure it before starting the process;
 changing it does not uninstall an already initialized SDK.
 
 Disabled startup configures no providers, automatic instrumentation, exporter
-threads or connections, and does not change the log format. SDK, exporter and instrumentor code stays unloaded; dispatch/run helpers
+threads or connections, and does not change the log format. Bifrost's SDK exporter/buffer module stays unloaded; third-party libraries may
+import SDK types when the dependency is installed. No SDK providers are
+configured by Bifrost. Dispatch/run helpers
 return without recording spans or propagating context, including when another
 library has independently installed an OpenTelemetry provider.
 
