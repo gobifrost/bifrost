@@ -19,8 +19,15 @@ WORKER_CONTAINER_ENV; this candidate rejects them.
 The template does not declare job types. The matching image registers its
 capabilities through authenticated worker hello; the provider reports only
 hardware and build. Settings rules choose which work may trigger overflow.
-Workflows, agents, summaries and App builds use the API-only adapters; generic
-privileged platform-job runners remain on their existing execution paths.
+Workflows, agents, summaries and the current platform-job catalog use shared
+API-owned orchestration and API-only compute stages. Maintenance and control
+handlers that need no physical compute stay in the API; they need no worker.
+Workers receive only the inputs for registered compute recipes. Authorization,
+credentials and durable effects remain API-owned.
+
+This candidate remains unqualified on Cloudflare. Provider readiness and local
+correctness do not establish real-container workloads, fault/scaling behavior,
+latency or cost; historical deployment receipts are not current-image acceptance.
 
 API and launcher must be upgraded together for the bootstrap exchange; the
 external handshake deliberately does not accept the installation signing key.
@@ -53,7 +60,7 @@ workers, and fences enrollment. This Worker never sees job payloads.
    **Let Kubernetes Scale First** is enabled. With no local or Kubernetes capacity,
    Cloudflare handles all supported Normal work. Fast Path stays local.
 
-The qualified profile is fixed at 4 GiB per worker. Its provider maximum and the
+Onboarding requests a fixed 4 GiB profile per worker. Its provider maximum and the
 global managed-worker limit both apply; Kubernetes memory settings do not resize
 Cloudflare. Start categories control provisioning, not affinity: an existing
 Cloudflare worker may execute any supported Normal work.

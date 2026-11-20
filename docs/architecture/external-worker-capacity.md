@@ -70,8 +70,9 @@ The `/v1/` resource paths remain unchanged. Capability envelopes use
 `protocol_version: 1` and describe hardware only. The API derives the expected
 handlers and API-only compute stages from one shared contract for its own
 version-matched worker image; an adapter never declares job types or privileged
-platform-job support. Only the catalog's existing eligible API-only compute
-jobs participate in external demand; generic privileged PlatformJobs do not.
+platform-job support. The shared catalog maps each physical compute stage to eligible job types for
+external demand. API-only maintenance/control handlers need no worker; the
+current migration does not rely on generic privileged platform-job runners.
 
 The provider reports its worker build, which must match the running API before
 policy can be saved; the controller also validates it against the immutable
