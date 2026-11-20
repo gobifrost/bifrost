@@ -568,12 +568,20 @@ async def execute(request: ExecutionRequest) -> ExecutionResult:
         for stream, level in ((stdout_capture, 'info'), (stderr_capture, 'error')):
             for line in stream.getvalue().splitlines():
                 if line:
+                    message = _sanitize_runtime_log_message(line, context._collect_secret_values())
                     logger_output.append({
                         'timestamp': datetime.now(timezone.utc).isoformat(),
                         'level': level,
-                        'message': line,
+                        'message': message,
                         'source': source,
                     })
+                    # Streams are restored before this boundary flush. Reuse
+                    # the credential-scoped log transport without recursively
+                    # capturing its diagnostics or exposing exception text.
+                    try:
+                        write_log(level=level.upper(), message=message)
+                    except Exception as error:
+                        logger.warning("Failed to stream captured output (%s)", type(error).__name__)
 
     # SDK authentication uses the pre-minted runtime credential installed by
     # worker.py for this one-shot child.

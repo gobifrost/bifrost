@@ -75,8 +75,12 @@ async def test_engine_token_redacted_from_logs():
     assert _ENGINE_TOKEN not in json.dumps(result.logs)
 
 
-async def test_stdout_and_stderr_are_captured_and_redacted():
+@pytest.mark.parametrize("transport_fails", [False, True])
+async def test_stdout_and_stderr_are_captured_and_redacted(monkeypatch, transport_fails):
     """Direct stream output uses the same persisted, redacted log path."""
+    from unittest.mock import Mock
+    write = Mock(side_effect=RuntimeError("private transport diagnostic") if transport_fails else None)
+    monkeypatch.setattr("src.services.execution.engine.write_log", write)
     async def writes_to_standard_streams():
         import sys
 
@@ -91,6 +95,11 @@ async def test_stdout_and_stderr_are_captured_and_redacted():
     assert "stdout token [REDACTED]" in messages
     assert "stderr token [REDACTED]" in messages
     assert _ENGINE_TOKEN not in json.dumps(result.logs)
+    assert [call.kwargs for call in write.call_args_list] == [
+        {"level": "INFO", "message": "stdout token [REDACTED]"},
+        {"level": "ERROR", "message": "stderr token [REDACTED]"},
+    ]
+
 
 
 async def test_engine_token_redacted_from_error_message():
