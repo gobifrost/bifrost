@@ -74,6 +74,12 @@ platform-job support. The shared catalog maps each physical compute stage to eli
 external demand. API-only maintenance/control handlers need no worker; the
 current migration does not rely on generic privileged platform-job runners.
 
+The runtime contract is the matching Linux image. Explicit `runtime_profile`
+metadata in either the hello frame or identity document is refused before
+admission; the current protocol does not negotiate alternate runtime profiles
+or opaque invocation handles. Omitted metadata preserves existing Linux signed
+bytes and process semantics.
+
 The provider reports its worker build, which must match the running API before
 policy can be saved; the controller also validates it against the immutable
 reservation before startup and enrollment. After boot, the signed launcher
