@@ -1198,6 +1198,38 @@ class TestProcessPoolManagerResultHandling:
         callback.assert_called_once_with({**result_data, "sync": True})
 
     @pytest.mark.asyncio
+    async def test_handle_result_relays_child_spans_and_strips_them(self):
+        """Spans a traced child returns are exported here, never forwarded."""
+        callback = AsyncMock()
+        pool = ProcessPoolManager(on_result=callback)
+        handle = ProcessHandle(
+            id="process-1",
+            process=MagicMock(),
+            pid=12345,
+            state=ProcessState.BUSY,
+            work_queue=MagicMock(),
+            result_queue=MagicMock(),
+            started_at=datetime.now(timezone.utc),
+            current_execution=ExecutionInfo(
+                execution_id="exec-123",
+                started_at=datetime.now(timezone.utc),
+                timeout_seconds=300,
+                active_execution=_active_execution("exec-123", sync=True),
+            ),
+        )
+        pool.processes[handle.id] = handle
+        spans = [{"name": "workflow.run"}]
+
+        with patch("src.core.telemetry.relay_child_spans") as relay:
+            await pool._handle_result(
+                handle, {"execution_id": "exec-123", "success": True, "_otel_spans": spans}
+            )
+
+        relay.assert_called_once_with(spans)
+        forwarded = callback.call_args.args[0]
+        assert "_otel_spans" not in forwarded and forwarded["success"] is True
+
+    @pytest.mark.asyncio
     async def test_late_child_result_does_not_duplicate_shutdown_terminal_callback(self):
         """A child success racing shutdown failure must not fire a second callback."""
         callback_started = asyncio.Event()

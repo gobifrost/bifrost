@@ -1122,6 +1122,12 @@ class WorkflowExecutionConsumer:
             if credentials.refresh_token is not None:
                 context_data["engine_refresh_token"] = credentials.refresh_token
 
+            # The forked child parents its run span on the active dispatch
+            # span; nothing is written when telemetry is off.
+            from src.core.telemetry import inject_traceparent
+
+            inject_traceparent(context_data)
+
             # Route to process pool
             # Results are handled asynchronously via _handle_result callback
             await self._pool.route_execution(

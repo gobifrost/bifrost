@@ -357,3 +357,33 @@ def current_runtime_authority():
         patch("src.services.authorization.runtime.load_execution_provenance", new=AsyncMock(return_value=ExecutionProvenance("agent", authority.agent_id))),
     ):
         yield authority, load
+
+
+@pytest.mark.asyncio
+async def test_routed_context_carries_the_dispatch_trace_context_only_when_tracing(monkeypatch) -> None:
+    """The forked child parents its run span on the active dispatch span."""
+    from opentelemetry import trace
+    from opentelemetry.trace import NonRecordingSpan, SpanContext, TraceFlags
+
+    async def routed_context() -> dict:
+        with (
+            patch(f"{MODULE}.create_execution", new=AsyncMock()),
+            patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+            patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+            patch("src.services.execution.queue_tracker.request_queue_position_refresh", new=Mock()),
+        ):
+            consumer = _consumer()
+            await consumer.process_message(MESSAGE, _claimed())  # type: ignore[arg-type]
+        return consumer._pool.route_execution.await_args.kwargs["context"]
+
+    # No active span (telemetry off): nothing is written.
+    assert "traceparent" not in await routed_context()
+
+    span = NonRecordingSpan(SpanContext(
+        trace_id=int("ab" * 16, 16), span_id=int("cd" * 8, 16), is_remote=False,
+        trace_flags=TraceFlags(TraceFlags.SAMPLED),
+    ))
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid")
+    with trace.use_span(span):
+        context = await routed_context()
+    assert context["traceparent"] == f"00-{'ab' * 16}-{'cd' * 8}-01"
