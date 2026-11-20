@@ -1,0 +1,31 @@
+"""Versioned compute-stage identifiers shared by launchers and API hosts."""
+
+# The version-matched Bifrost worker image has one pre-enrollment capability
+# contract. Capacity providers supply physical bounds only; signed Hello is
+# still the authoritative proof after a process starts.
+LEGACY_WORKER_IMAGE_EXECUTION_HANDLERS = (
+    ("workflow.execute", 1),
+    ("agent.run", 1),
+)
+WORKER_IMAGE_EXECUTION_HANDLERS = (
+    *LEGACY_WORKER_IMAGE_EXECUTION_HANDLERS,
+    ("workflow.execute", 2),
+    ("agent.summarize", 1),
+    ("agent.summarize_backfill", 1),
+)
+WORKER_IMAGE_HANDLER_NAMES = tuple(
+    dict.fromkeys(handler for handler, _version in WORKER_IMAGE_EXECUTION_HANDLERS)
+)
+
+# v2 inventory includes the immutable input digest required for strict
+# reconnect reconciliation. API and worker images must negotiate this version.
+APP_COMPILE_CAPABILITY = ("app.compile", 2)
+APP_COMPILE_CAPABILITY_NAME = "app.compile.v2"
+AGENT_COMPUTE_CAPABILITY = ("agent.loop", 1)
+AGENT_COMPUTE_CAPABILITY_NAME = "agent.loop.v1"
+SUMMARY_COMPUTE_CAPABILITY = ("summary.compute", 1)
+SUMMARY_COMPUTE_CAPABILITY_NAME = "summary.compute.v1"
+COMPUTE_CAPABILITIES = (APP_COMPILE_CAPABILITY, AGENT_COMPUTE_CAPABILITY, SUMMARY_COMPUTE_CAPABILITY)
+WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES = tuple(
+    f"{name}.v{version}" for name, version in COMPUTE_CAPABILITIES
+)

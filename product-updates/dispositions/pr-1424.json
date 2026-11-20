@@ -1,0 +1,14 @@
+{
+  "key": "pr:1424",
+  "classification": "highlight",
+  "entry_ids": [
+    "fee53a0b-f899-5b58-8fd4-e06d4d2ef639"
+  ],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1424",
+      "Custom external provider bootstrap upgrade requires exact notice/prompt approval and security review; this remains unapproved."
+    ]
+  }
+}

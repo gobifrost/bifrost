@@ -95,6 +95,7 @@ class Context:
     worker_id: str
     resource_uid: str
     operation_id: str
+    start_requested: bool = False
 
 
 class AdapterError(RuntimeError):
@@ -287,6 +288,8 @@ class CapacityEngine:
             worker_id=worker_id,
             resource_uid=row["resource_uid"],
             operation_id=row.get("operation_id") or uuid.uuid4().hex,
+            start_requested=bool(row.get("start_requested") or row.get("intent") == "start"
+                                 or row.get("started_at")),
         )
 
     def _settle(self, worker_id: str, row: dict[str, Any], obs: Observation) -> dict[str, Any]:
@@ -402,6 +405,8 @@ class CapacityEngine:
                 raise ProtocolError(409, "worker incarnation already terminated")
             if body.get("resource_uid") != row["resource_uid"]:
                 raise ProtocolError(409, "resource UID does not match the prepared incarnation")
+            if row.get("intent") == "delete":
+                raise ProtocolError(409, "worker incarnation is being deleted")
             if row.get("intent") == "prepare":
                 row = self._complete_prepare(worker_id, row)
             if row["state"] in (STATE_STARTING, STATE_RUNNING):
@@ -433,6 +438,7 @@ class CapacityEngine:
                     raise ProtocolError(502, "start outcome unknown: provider cannot prove no launch occurred")
 
             row["intent"] = "start"
+            row["start_requested"] = True
             row["operation_id"] = row.get("operation_id") or uuid.uuid4().hex
             self.ledger.write(worker_id, row)
 
@@ -468,6 +474,9 @@ class CapacityEngine:
             if row.get("intent") == "prepare":
                 row = self._complete_prepare(worker_id, row)
 
+            # Preserve an interrupted start across repeated deletion attempts.
+            # A provider list miss is not proof that an accepted launch is absent.
+            row["start_requested"] = self._ctx(worker_id, row).start_requested
             row["intent"] = "delete"
             self.ledger.write(worker_id, row)
             ctx = self._ctx(worker_id, row)

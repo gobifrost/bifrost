@@ -1,43 +1,75 @@
-"""Pause check at executor entry.
-
-Verifies the autonomous agent executor short-circuits when the agent is paused
-(``is_active=False``) and that the check happens before the Pydantic AI runtime
-is constructed, so an inactive agent cannot make a model request.
-"""
+"""Pause semantics at autonomous executor entry."""
 from __future__ import annotations
 
-import inspect
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
+import pytest
+
+from src.core.principal import UserPrincipal
+from src.services.authorization.enforce import Caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 
 
-def test_run_method_has_pause_check_before_runtime_construction():
-    """The pause check must happen before constructing the agent runtime.
-
-    This is a structural assertion — paired with the e2e test that proves the
-    HTTP-level behavior — to guard against future refactors that accidentally
-    allow an inactive agent to reach the model.
-    """
-    source = inspect.getsource(AutonomousAgentExecutor.run)
-    pause_pos = source.find("if not agent.is_active")
-    runtime_pos = source.find("runtime = PydanticAgent(")
-
-    assert pause_pos > 0, "No pause check (`if not agent.is_active`) found in run()"
-    assert runtime_pos > 0, "Could not locate Pydantic AI runtime construction in run()"
-    assert pause_pos < runtime_pos, (
-        "Pause check must occur before runtime construction so inactive agents "
-        "cannot make model requests."
+@pytest.mark.asyncio
+async def test_paused_agent_returns_paused_status_without_constructing_runtime():
+    """A paused agent is refused before the shared runtime builder can run."""
+    user_id = uuid4()
+    caller = Caller(
+        UserPrincipal(
+            user_id=user_id,
+            email="operator@example.test",
+            organization_id=uuid4(),
+            name="Operator",
+            is_active=True,
+        ),
+        None,
     )
+    agent = SimpleNamespace(
+        id=uuid4(),
+        name="Paused Agent",
+        is_active=False,
+        llm_profile_id=None,
+    )
+    session = AsyncMock()
+    session_context = AsyncMock()
+    session_context.__aenter__.return_value = session
+    session_context.__aexit__.return_value = False
+    session_factory = MagicMock(return_value=session_context)
 
+    with (
+        patch(
+            "src.services.execution.autonomous_agent_executor.authorize_agent_execution",
+            new=AsyncMock(return_value=(caller, agent)),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.get_llm_configs",
+            new=AsyncMock(return_value=[SimpleNamespace(model="test-model")]),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.chain_context_window",
+            new=AsyncMock(return_value=128_000),
+        ),
+        patch(
+            "src.services.execution.autonomous_agent_executor.build_agent_runtime"
+        ) as build_runtime,
+    ):
+        result = await AutonomousAgentExecutor(session_factory).run(
+            agent,
+            caller=caller,
+            run_user_id=None,
+            run_as=None,
+            agent_execution_mode="delegated",
+        )
 
-def test_run_method_returns_paused_status_dict_shape():
-    """The pause short-circuit must return a dict with ``status='paused'`` and
-    ``accepted=False`` so /execute can return it directly to clients."""
-    source = inspect.getsource(AutonomousAgentExecutor.run)
-    pause_section = source[source.find("if not agent.is_active"):]
-    # Find end of the pause-handling block (next blank line or `step_number = 0`)
-    pause_section = pause_section.split("step_number = 0")[0]
-
-    assert '"status": "paused"' in pause_section, "Paused branch must set status='paused'"
-    assert '"accepted": False' in pause_section, "Paused branch must set accepted=False"
-    assert '"message"' in pause_section, "Paused branch must include a message"
+    assert result == {
+        "output": None,
+        "iterations_used": 0,
+        "tokens_used": 0,
+        "status": "paused",
+        "accepted": False,
+        "message": "Agent 'Paused Agent' is paused. Request not processed.",
+        "llm_model": "test-model",
+    }
+    build_runtime.assert_not_called()

@@ -70,6 +70,8 @@ async def run_application_sdk_update(
             target_sdk_binding_api_major=(
                 payload.target_sdk_binding_api_major if isinstance(payload, ApplicationSdkUpdatePayload) else None
             ),
+            app_build_compute=context.app_build_compute,
+            app_build_authorization=context.authorize_effect,
         )
     else:
         result = await rebuild_application_from_source(
@@ -82,6 +84,8 @@ async def run_application_sdk_update(
             expected_sdk_contract_version=payload.expected_sdk_contract_version,
             expected_sdk_built_at=payload.expected_sdk_built_at,
             enforce_expected_state=True,
+            app_build_compute=context.app_build_compute,
+            app_build_authorization=context.authorize_effect,
         )
     await context.report("App SDK updated", percent=100)
     return result

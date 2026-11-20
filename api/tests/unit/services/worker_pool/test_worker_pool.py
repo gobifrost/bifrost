@@ -1883,7 +1883,7 @@ async def test_a_platform_job_no_executor_can_hold_fails_visibly(db) -> None:
 
     def job(required: int) -> PlatformJob:
         return PlatformJob(
-            job_type="workspace.reindex", payload={}, requested_by_user_id=str(uuid4()),
+            job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
             requested_by_email="person@contoso.example", requested_by_name="Contoso User",
             title="Contoso Reindex", memory_required_bytes=required,
         )
@@ -2093,7 +2093,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_s
     from src.services.platform_jobs import WAITING_FOR_MEMORY
 
     startup = PlatformJob(
-        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Startup Reindex", status=startup_state,
     )
@@ -2105,7 +2105,7 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_s
     await _clear_pool_state(db.sessions)
 
     waiting = PlatformJob(
-        job_type="workspace.file_index_reconcile", payload={}, requested_by_user_id=str(uuid4()),
+        job_type="files.move", payload={}, requested_by_user_id=str(uuid4()),
         requested_by_email="person@contoso.example", requested_by_name="Contoso User",
         title="Contoso Reindex", memory_required_bytes=512 * MIB, phase=WAITING_FOR_MEMORY,
     )
@@ -2121,6 +2121,36 @@ async def test_a_platform_job_waiting_for_memory_launches_a_worker(db, startup_s
     finally:
         async with db.sessions() as session:
             await session.execute(delete(PlatformJob).where(PlatformJob.id == waiting.id))
+            await session.commit()
+
+
+async def test_api_owned_platform_job_is_not_failed_for_executor_capacity(db) -> None:
+    from src.models.orm.platform_jobs import PlatformJob
+    from src.services.worker_pool import unfit
+
+    job = PlatformJob(
+        job_type="workspace.file_index_reconcile",
+        payload={},
+        memory_required_bytes=2 * GIB,
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="person@contoso.example",
+        requested_by_name="Contoso User",
+        title="Reconcile Source Index",
+    )
+    async with db.sessions() as session:
+        session.add(job)
+        await session.commit()
+    try:
+        async with db.sessions() as session:
+            assert await unfit.fail_platform_jobs_that_never_fit(
+                session, GIB, largest_pod=None
+            ) == []
+            await session.commit()
+        async with db.sessions() as session:
+            assert (await session.get(PlatformJob, job.id)).status == "queued"
+    finally:
+        async with db.sessions() as session:
+            await session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
             await session.commit()
 
 
@@ -2218,7 +2248,7 @@ def _controller(cluster: FakeCluster, version: str, settings=SETTINGS) -> contro
 async def _pass(pool: controller.WorkerPoolController, policy: KubernetesPolicy = WARM) -> list[UUID]:
     """One reconcile pass without the per-Job reconciliation: publish, launch
     (creating the launched Jobs), replace. Returns the Jobs launched."""
-    pool.live = await controller._publish_live(pool.id, pool.version)
+    pool.live = await controller._publish_live(pool.id, pool.version, pool._live_scope())
     launched = await pool.launch_for_demand(policy)
     for worker_id in launched:
         await pool.reconcile_worker(worker_id, policy)
@@ -2384,15 +2414,22 @@ def test_a_job_is_outdated_only_when_its_build_and_its_launcher_are_gone() -> No
 
 async def test_live_controllers_expire_and_withdraw(db) -> None:  # type: ignore[no-untyped-def]
     old, new = uuid4(), uuid4()
-    await controller._publish_live(old, "1.0")
+    scope = "job:test"
+    await controller._publish_live(old, "1.0", scope)
+    external = uuid4()
+    await controller._publish_live(external, "provider-build", "external:test-provider")
     async with get_redis() as redis:
-        await redis.hset(controller.CONTROLLERS_KEY, str(uuid4()), '{"version": "0.9", "at": 0}')  # type: ignore[misc]
+        await redis.hset(  # type: ignore[misc]
+            controller.CONTROLLERS_KEY,
+            str(uuid4()),
+            '{"version": "0.9", "scope": "job:test", "at": 0}',
+        )
 
-    live = await controller._publish_live(new, "2.0")
+    live = await controller._publish_live(new, "2.0", scope)
     assert (live.ids, live.versions) == (frozenset({old, new}), frozenset({"1.0", "2.0"}))
 
     await controller._withdraw_live(old)
-    live = await controller._publish_live(new, "2.0")
+    live = await controller._publish_live(new, "2.0", scope)
     assert (live.ids, live.versions) == (frozenset({new}), frozenset({"2.0"}))
 
 
@@ -2402,7 +2439,7 @@ async def test_an_upgrade_replaces_the_warm_job_once_its_controllers_are_gone(db
     cluster = FakeCluster()
     old = _controller(cluster, "old-build")
     new = _controller(cluster, get_version())
-    old.live = await controller._publish_live(old.id, old.version)
+    old.live = await controller._publish_live(old.id, old.version, old._live_scope())
     warm = await _admitted_job(db.sessions, version="old-build", launched_by=old.id)
 
     # Rolling upgrade: the old replica is still live, so nothing moves.
@@ -2474,6 +2511,63 @@ async def test_a_replacement_on_another_build_is_never_replaced_while_its_launch
     assert await _pass(pool) == []
     assert await _state(db.sessions, warm) == ("ready", None)
     assert cluster.created == []
+
+
+async def test_kubernetes_rotation_never_drains_external_workers(db) -> None:
+    pool = _controller(FakeCluster(), "current-build")
+    kubernetes_worker = await _admitted_job(
+        db.sessions, version="old-kubernetes-build", launched_by=uuid4()
+    )
+    external_worker = uuid4()
+    async with db.sessions() as session:
+        session.add(
+            ExecutionWorker(
+                id=external_worker,
+                form="external",
+                state="ready",
+                resource_class="standard",
+                capacity_scope="test-provider",
+                capacity_resource_uid="provider-resource",
+                version="old-provider-build",
+                memory_budget_bytes=GIB,
+                execution_lane="normal",
+            )
+        )
+        await session.commit()
+    pool.live = controller.LiveControllers(
+        ids=frozenset({pool.id}), versions=frozenset({pool.version})
+    )
+
+    assert await pool.replace_outdated(replace(WARM, warm_workers=0)) == [kubernetes_worker]
+
+    assert await _state(db.sessions, kubernetes_worker) == ("draining", "rotated")
+    assert await _state(db.sessions, external_worker) == ("ready", None)
+
+
+async def test_kubernetes_warm_pool_does_not_count_external_capacity(db) -> None:
+    async with db.sessions() as session:
+        session.add(
+            ExecutionWorker(
+                id=uuid4(),
+                form="external",
+                state="ready",
+                resource_class="standard",
+                capacity_scope="test-provider",
+                capacity_resource_uid="provider-resource",
+                supported_handlers=["workflow.execute"],
+                memory_budget_bytes=GIB,
+                execution_lane="normal",
+            )
+        )
+        await session.commit()
+    pool = _controller(FakeCluster(), "current-build")
+
+    [worker_id] = await pool.launch_for_demand(replace(POLICY, warm_workers=1, max_workers=2))
+
+    async with db.sessions() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert worker is not None
+    assert (worker.form, worker.kubernetes_namespace) == ("job", "test")
 
 
 async def test_a_job_launched_for_a_dispatch_drains_only_after_claiming_it(db) -> None:

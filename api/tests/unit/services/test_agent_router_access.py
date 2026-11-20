@@ -26,7 +26,7 @@ class SessionBoundAgentExecutor(AgentExecutor):
         self._session = session
 
     @asynccontextmanager
-    async def _db(self):
+    async def _db(self, *, write: bool = False):
         yield self._session
         await self._session.flush()
 

@@ -59,6 +59,8 @@ async def run_application_deploy(
                     source_kind="independent",
                 ),
                 retained_source_zip=retained_source_zip,
+                app_build_compute=context.app_build_compute,
+                app_build_authorization=context.authorize_effect,
             )
 
         await context.report("App deployed", percent=100)

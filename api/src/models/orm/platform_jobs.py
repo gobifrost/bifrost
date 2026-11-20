@@ -76,6 +76,26 @@ class PlatformJob(Base):
         DateTime(timezone=True), nullable=True
     )
 
+    # Durable executor attribution is separate from a handler's public result.
+    # These are plain snapshots, so a completed job keeps its last attempt's
+    # identity after a worker has been retired or its provider resource removed.
+    executor_attempt: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    executor_worker_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    executor_worker_form: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    executor_capacity_scope: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    executor_capacity_resource_uid: Mapped[str | None] = mapped_column(
+        String(255), nullable=True
+    )
+    executor_compute_capability: Mapped[str | None] = mapped_column(
+        String(100), nullable=True
+    )
+    executor_stage_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True
+    )
+    executor_input_sha256: Mapped[str | None] = mapped_column(String(64), nullable=True)
+
     status: Mapped[str] = mapped_column(
         String(30), nullable=False, default="queued", index=True
     )

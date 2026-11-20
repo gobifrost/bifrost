@@ -74,7 +74,10 @@ async def test_complete_forwards_profile_model_max_tokens():
     principal = _principal()
 
     with (
-        patch("src.services.llm.get_llm_client", new=AsyncMock(return_value=client)) as get_client,
+        patch(
+            "src.services.llm.factory.get_llm_client",
+            new=AsyncMock(return_value=client),
+        ) as get_client,
         patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=AsyncMock())),
         patch("src.services.ai_usage_service.record_ai_usage", new=AsyncMock()) as record,
         patch(
@@ -82,12 +85,6 @@ async def test_complete_forwards_profile_model_max_tokens():
             new=AsyncMock(return_value=principal.organization_id),
         ),
     ):
-        # The service imports get_llm_client at call time from the
-        # src.services.llm package (re-exported from .factory); point
-        # that attribute at the mock so both import paths resolve.
-        import src.services.llm as llm_pkg
-
-        llm_pkg.get_llm_client = get_client
         result = await sdk_ai.complete_sdk_ai(
             session,
             principal,
@@ -133,10 +130,10 @@ async def test_complete_releases_connection_before_provider():
     session.close.side_effect = _close
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
     get_client = AsyncMock(return_value=client)
-    llm_pkg.get_llm_client = get_client
+    llm_factory.get_llm_client = get_client
     with (
         patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=AsyncMock())),
         patch("src.services.ai_usage_service.record_ai_usage", new=AsyncMock()),
@@ -164,9 +161,9 @@ async def test_complete_input_files_attach_to_last_user_message():
     principal = _principal()
     payload = base64.b64encode(b"%PDF-data").decode()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     with (
         patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=AsyncMock())),
         patch("src.services.ai_usage_service.record_ai_usage", new=AsyncMock()),
@@ -206,9 +203,9 @@ async def test_complete_input_files_require_user_message():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock()
+    llm_factory.get_llm_client = AsyncMock()
     with pytest.raises(SdkAIError) as exc_info:
         await sdk_ai.complete_sdk_ai(
             session,
@@ -234,9 +231,9 @@ async def test_complete_bad_base64_is_503():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock()
+    llm_factory.get_llm_client = AsyncMock()
     with pytest.raises(SdkAIError) as exc_info:
         await sdk_ai.complete_sdk_ai(
             session,
@@ -261,9 +258,9 @@ async def test_complete_value_error_from_client_is_503():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(side_effect=ValueError("no profile"))
+    llm_factory.get_llm_client = AsyncMock(side_effect=ValueError("no profile"))
     with pytest.raises(SdkAIError) as exc_info:
         await sdk_ai.complete_sdk_ai(
             session, principal, messages=[{"role": "user", "content": "hi"}]
@@ -287,9 +284,9 @@ async def test_complete_provider_auth_is_401():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     with pytest.raises(SdkAIError) as exc_info:
         await sdk_ai.complete_sdk_ai(
             session, principal, messages=[{"role": "user", "content": "hi"}]
@@ -308,9 +305,9 @@ async def test_complete_generic_error_is_sanitized_500(caplog):
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     with pytest.raises(SdkAIError) as exc_info:
         await sdk_ai.complete_sdk_ai(
             session, principal, messages=[{"role": "user", "content": "hi"}]
@@ -335,9 +332,9 @@ async def test_complete_rejects_an_invalid_scope_before_calling_the_provider():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     record = AsyncMock()
     with (
         patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=AsyncMock())),
@@ -367,9 +364,9 @@ async def test_complete_usage_redis_failure_never_fails_request():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     record = AsyncMock()
     with (
         patch(
@@ -394,9 +391,9 @@ async def test_complete_malformed_execution_id_never_fails_request():
     session = AsyncMock()
     principal = _principal()
 
-    import src.services.llm as llm_pkg
+    import src.services.llm.factory as llm_factory
 
-    llm_pkg.get_llm_client = AsyncMock(return_value=client)
+    llm_factory.get_llm_client = AsyncMock(return_value=client)
     with (
         patch("src.core.cache.get_shared_redis", new=AsyncMock(return_value=AsyncMock())),
         patch(

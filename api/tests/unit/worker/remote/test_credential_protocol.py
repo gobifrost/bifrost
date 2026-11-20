@@ -29,6 +29,7 @@ from src.worker.remote.launcher import Launcher
 from src.worker.remote.ownership import RemoteOwnerLease
 from src.worker.remote.protocol import (
     CREDENTIAL_PROTOCOL,
+    ControlEnvelope,
     CredentialRouteChanged,
     Hello,
     hello_credential_protocol,
@@ -65,7 +66,13 @@ async def test_a_launcher_of_this_build_reports_the_claims_protocol() -> None:
         launcher_id=uuid4(), incarnation_id=uuid4(), job_uid=None, pod_uid=None, hostname="runner", form="static",
     )
     socket = AsyncMock()
-    socket.recv.return_value = json.dumps({"event": "welcome", "session_generation": 1})
+    socket.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 1}),
+        ControlEnvelope(
+            session_generation=1, sequence=1, kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
     launcher = Launcher(socket, identity=identity, secret="secret")
 
     await launcher.hello({})

@@ -12,7 +12,10 @@ from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID
 
 import pytest
+from pydantic import SecretStr
 from sqlalchemy.exc import OperationalError
+
+from shared.worker_control_auth import external_worker_control_key
 
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.worker.remote.host import ApiExecutor, Bridge, RemoteControlHost, RemoteSession, _reply_timeout
@@ -31,6 +34,39 @@ LEASE = RemoteOwnerLease(
 )
 
 
+@pytest.fixture(autouse=True)
+def startup_requirements(monkeypatch):
+    monkeypatch.setattr("src.worker.remote.host.get_requirements", AsyncMock(return_value=None))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("placement,profile", [
+    ("frame", "workerd-v1"), ("hello", "workerd-v1"), ("hello", "linux-process-v1"),
+])
+async def test_explicit_runtime_profiles_fail_closed_before_admission(placement, profile):
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="owned-profile-fixture", form="static",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+    )
+    signed = sign_hello("test-profile-key", hello).to_dict()
+    frame = {"event": "hello", "hello": signed}
+    if placement == "frame":
+        frame["runtime_profile"] = profile
+    else:
+        signed["runtime_profile"] = profile
+    socket = AsyncMock()
+    socket.receive_text.return_value = json.dumps(frame)
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(secret_key="test-profile-key")),
+        patch("src.worker.remote.host.get_liveness_db_context", side_effect=AssertionError("profile reached admission")) as db,
+    ):
+        with pytest.raises(AuthenticationError, match="runtime profiles are unsupported"):
+            await RemoteControlHost().connect(socket)
+    db.assert_not_called()
+    socket.close.assert_awaited_once_with(code=1008)
+
+
 @pytest.mark.asyncio
 async def test_external_fast_path_hello_is_refused_before_admission() -> None:
     hello = Hello(
@@ -41,14 +77,42 @@ async def test_external_fast_path_hello_is_refused_before_admission() -> None:
     )
     socket = AsyncMock()
     socket.receive_text.return_value = json.dumps({
-        "event": "hello", "hello": sign_hello("test-control-key", hello).to_dict(),
+        "event": "hello", "hello": sign_hello(
+            external_worker_control_key("provider-key", hello.incarnation_id, hello.resource_uid), hello,
+        ).to_dict(),
         "sample": {"current": 1, "limit": 100},
     })
     with (
-        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(secret_key="test-control-key")),
+        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(
+            secret_key="test-control-key", worker_capacity_token=SecretStr("provider-key"),
+        )),
         patch("src.worker.remote.host.admit_external_worker", new=AsyncMock()) as admit,
     ):
         with pytest.raises(AuthenticationError, match="only support the Normal lane"):
+            await RemoteControlHost().connect(socket)
+    admit.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_external_worker_cannot_use_installation_signing_key_for_control() -> None:
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="external", form="external",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+        resource_uid="external-capacity-1",
+    )
+    socket = AsyncMock()
+    socket.receive_text.return_value = json.dumps({
+        "event": "hello", "hello": sign_hello("installation-key", hello).to_dict(),
+        "sample": {"current": 1, "limit": 100},
+    })
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=SimpleNamespace(
+            secret_key="installation-key", worker_capacity_token=SecretStr("provider-key"),
+        )),
+        patch("src.worker.remote.host.admit_external_worker", new=AsyncMock()) as admit,
+    ):
+        with pytest.raises(AuthenticationError, match="invalid hello proof"):
             await RemoteControlHost().connect(socket)
     admit.assert_not_awaited()
 
@@ -295,14 +359,19 @@ async def test_owner_renewal_refusal_loses_ownership_immediately() -> None:
 
 
 @pytest.mark.asyncio
-async def test_control_host_startup_does_not_start_a_token_worker_in_the_api() -> None:
+async def test_control_host_starts_one_api_maintenance_executor() -> None:
     from src.worker.remote import host
 
-    with patch.object(host, "_host", None), patch.object(asyncio, "create_task") as spawn:
+    maintenance = Mock(start=AsyncMock(), stop=AsyncMock())
+    with (
+        patch.object(host, "_host", None),
+        patch("src.jobs.platform.api_maintenance.ApiMaintenanceExecutor", return_value=maintenance),
+    ):
         await host.start_remote_control_host(Mock())
         await host.start_remote_control_host(Mock())
-        spawn.assert_not_called()
+        maintenance.start.assert_awaited_once_with()
         await host.stop_remote_control_host()
+        maintenance.stop.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
@@ -319,7 +388,10 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
         resource_uid="capacity-resource" if form == "external" else None,
     )
     initial = {
-        "event": "hello", "hello": sign_hello("secret", hello).to_dict(),
+        "event": "hello", "hello": sign_hello(
+            external_worker_control_key("provider-key", hello.incarnation_id, "capacity-resource")
+            if form == "external" else "secret", hello,
+        ).to_dict(),
         "sample": {"current": 1, "limit": 100}, "requirements": {},
     }
     if reported is not None:
@@ -329,12 +401,20 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
     @asynccontextmanager
     async def database():
         yield Mock(
+            get=AsyncMock(return_value=SimpleNamespace(
+                form="external",
+                supported_handlers=["workflow.execute", "agent.run"],
+                supported_compute=[],
+            )),
             scalar=AsyncMock(return_value=None),
             execute=AsyncMock(return_value=Mock(one_or_none=Mock(return_value=None))),
         )
 
     with (
-        patch("src.worker.remote.host.get_settings", return_value=Mock(secret_key="secret", memory_pressure_threshold=.85)),
+        patch("src.worker.remote.host.get_settings", return_value=Mock(
+            secret_key="secret", memory_pressure_threshold=.85,
+            worker_capacity_token=SecretStr("provider-key"),
+        )),
         patch("src.worker.remote.host.admit_worker", new_callable=AsyncMock) as admit,
         patch("src.worker.remote.host.admit_external_worker", new_callable=AsyncMock) as external,
         patch("src.worker.remote.host.register_static_worker", new_callable=AsyncMock) as register,
@@ -355,7 +435,101 @@ async def test_a_worker_is_admitted_with_the_build_its_launcher_runs(reported, f
         external.assert_awaited_once_with(
             LEASE.worker_id, resource_uid="capacity-resource",
             launcher_id=LEASE.launcher_id, version=reported, hostname="runner-0",
+            actual_handlers=["workflow.execute", "agent.run"], actual_compute=[],
         )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("admitted", [True, False], ids=["initial", "reconnect"])
+async def test_external_worker_intersects_actual_capabilities_with_its_reserved_profile(
+    admitted: bool,
+) -> None:
+    hello = Hello(
+        launcher_id=LEASE.launcher_id, incarnation_id=LEASE.worker_id,
+        job_uid=None, pod_uid=None, hostname="external", form="external",
+        issued_at=int(time.time()), nonce="n" * 32, hello_sequence=1,
+        resource_uid="capacity-resource",
+    )
+    socket = Mock(accept=AsyncMock(), send_text=AsyncMock())
+    socket.receive_text = AsyncMock(return_value=json.dumps({
+        "event": "hello",
+        "hello": sign_hello(
+            external_worker_control_key("provider-key", hello.incarnation_id, "capacity-resource"),
+            hello,
+        ).to_dict(),
+        "sample": {"current": 1, "limit": 100},
+        "requirements": {},
+        "handlers": [["workflow.execute", 2], ["agent.run", 1]],
+        "compute_capabilities": [["app.compile", 2], ["agent.loop", 1]],
+    }))
+    reserved = SimpleNamespace(
+        form="external", supported_handlers=["workflow.execute"],
+        supported_compute=["app.compile.v2"],
+    )
+    db = SimpleNamespace(
+        get=AsyncMock(return_value=reserved),
+        scalar=AsyncMock(return_value=LEASE.worker_id),
+    )
+
+    @asynccontextmanager
+    async def database():
+        yield db
+
+    captured: list[Bridge] = []
+
+    def executor(bridge, *_args, **_kwargs):
+        captured.append(bridge)
+        return Mock()
+
+    with (
+        patch("src.worker.remote.host.get_settings", return_value=Mock(
+            secret_key="secret", memory_pressure_threshold=.85,
+            worker_capacity_token=SecretStr("provider-key"),
+        )),
+        patch("src.worker.remote.host.get_liveness_db_context", new=database),
+        patch(
+            "src.worker.remote.host.admit_external_worker",
+            new=AsyncMock(return_value=LEASE.worker_id if admitted else None),
+        ) as admit,
+        patch("src.worker.remote.host.acquire_remote_owner", new=AsyncMock(return_value=LEASE)),
+        patch("src.worker.remote.host.ApiExecutor", side_effect=executor),
+        patch("src.worker.remote.host.RemoteSession", return_value=Mock(task=Mock())),
+    ):
+        await RemoteControlHost().connect(socket)
+
+    admit.assert_awaited_once_with(
+        LEASE.worker_id, resource_uid="capacity-resource", launcher_id=LEASE.launcher_id,
+        version=None, hostname="external", actual_handlers=["workflow.execute"],
+        actual_compute=["app.compile.v2"],
+    )
+    assert captured[0].handlers == [("workflow.execute", 2)]
+    assert captured[0].compute_capabilities == [("app.compile", 2)]
+    if admitted:
+        db.scalar.assert_not_awaited()
+    else:
+        db.scalar.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_external_reserved_capabilities_come_from_the_worker_enrollment() -> None:
+    from src.worker.remote import host as host_mod
+
+    worker = SimpleNamespace(
+        form="external", supported_handlers=["workflow.execute"],
+        supported_compute=["app.compile.v2"],
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=worker))
+
+    @asynccontextmanager
+    async def database():
+        yield db
+
+    with patch.object(host_mod, "get_liveness_db_context", new=database):
+        handlers, compute = await host_mod._external_reserved_capabilities(LEASE.worker_id)
+
+    assert handlers == {"workflow.execute"}
+    assert compute == {"app.compile.v2"}
+    db.get.assert_awaited_once_with(host_mod.ExecutionWorker, LEASE.worker_id)
 
 
 @pytest.mark.asyncio
@@ -876,6 +1050,27 @@ async def test_each_lane_reconciles_inventory_before_opening_claims(lane) -> Non
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("supports_agents", [False, True])
+async def test_inventory_reconciles_with_the_consumers_the_worker_supports(supports_agents) -> None:
+    bridge = Bridge(Mock(), {"current": 1, "limit": 100, "hostname": "runner", "requirements": {}}, LEASE)
+    snapshot = {"workflow_requests": {}, "services": [], "platform_jobs": [], "agent_runs": {}}
+    bridge.pool = Mock(reconcile_inventory=AsyncMock(return_value=snapshot))
+    bridge.inventory = {"routes": []}
+    bridge.inventory_ready.set()
+    agents = Mock(reject_missing=AsyncMock()) if supports_agents else None
+    bridge.agents = agents
+    worker = ApiExecutor(bridge, LEASE.worker_id)
+    worker.admission = Mock()
+
+    assert await worker._reconcile_transport_inventory() == snapshot
+    await worker._apply_reconciled_snapshot(snapshot)
+    assert worker._reconciled_generation == LEASE.session_generation
+    bridge.pool.reconcile_inventory.assert_awaited_once_with(bridge.inventory)
+    if agents is not None:
+        agents.reject_missing.assert_awaited_once_with(bridge.inventory)
+
+
+@pytest.mark.asyncio
 async def test_an_adopted_agent_precondition_failure_releases_its_memory() -> None:
     bridge = Bridge(Mock(), {"current": 1, "limit": 100, "hostname": "runner", "requirements": {}}, LEASE)
     bridge.agents = Mock()
@@ -897,3 +1092,69 @@ async def test_an_adopted_agent_precondition_failure_releases_its_memory() -> No
 
     assert worker.admission.free_bytes() == 100
     assert worker._tasks[route.handler] == set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("supports_platform_jobs", [True, False])
+@pytest.mark.parametrize("job_type", ["application.deploy", "application.sdk_update"])
+async def test_capable_app_builds_keep_orchestration_in_api_for_every_worker_form(
+    supports_platform_jobs, job_type,
+):
+    from src.worker.remote.app_compile_host import ApiAppBuildBackend
+
+    executor = object.__new__(ApiExecutor)
+    executor.bridge = SimpleNamespace(
+        supports_platform_jobs=supports_platform_jobs,
+        compute_capabilities=(("app.compile", 2),),
+    )
+    claim = SimpleNamespace(job_type=job_type)
+    with patch("src.worker.remote.host.run_claimed_platform_job", new_callable=AsyncMock) as run:
+        run.return_value = True
+        assert await executor._execute_platform_job(claim)
+    assert run.await_args.args == (claim,)
+    backend = run.await_args.kwargs["backend"]
+    assert isinstance(backend, ApiAppBuildBackend)
+    assert backend.bridge is executor.bridge
+
+
+@pytest.mark.asyncio
+async def test_agent_import_keeps_the_api_loop_responsive_before_admission(monkeypatch):
+    import threading
+    from src.worker.remote import host
+    from src.worker.pool_main import PoolWorker
+
+    entered, release, preloaded = threading.Event(), threading.Event(), threading.Event()
+
+    def cold_import():
+        entered.set()
+        assert release.wait(2), "API loop could not release the import"
+        preloaded.set()
+
+    executor = object.__new__(host.ApiExecutor)
+    from src.services.execution.requirements_setup_result import RequirementsInstallResult
+    inventory_ready = asyncio.Event()
+    executor.bridge = SimpleNamespace(
+        agents=None, compute_capabilities=(("agent.loop", 1),), inventory_ready=inventory_ready,
+        requirements=RequirementsInstallResult().to_json_dict(),
+    )
+    started = AsyncMock()
+    monkeypatch.setattr(host, "_preload_agent_orchestration", cold_import)
+    monkeypatch.setattr(PoolWorker, "_start_executor", started)
+    pending = asyncio.create_task(executor._start_executor())
+    try:
+        assert await asyncio.to_thread(entered.wait, 2)
+        responsive = asyncio.Event()
+        asyncio.get_running_loop().call_soon(responsive.set)
+        await asyncio.wait_for(responsive.wait(), 2)
+        started.assert_not_awaited()
+        release.set()
+        assert await asyncio.to_thread(preloaded.wait, 2)
+        started.assert_not_awaited()
+        inventory_ready.set()
+        await asyncio.wait_for(pending, 2)
+        started.assert_awaited_once()
+    finally:
+        release.set()
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)

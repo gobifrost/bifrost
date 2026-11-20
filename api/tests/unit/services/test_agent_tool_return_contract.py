@@ -24,8 +24,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from src.services.agent_runtime.code_mode import build_code_mode_capabilities
 from src.services.agent_runtime.composition import (
     AgentComposition,
+)
+from src.services.agent_runtime.composition_view import (
+    DeferredAgentSnapshot,
     ToolBinding,
-    _DeferredAgent,
     _capability_id,
     _qualified_tool_name,
 )
@@ -182,7 +184,15 @@ async def test_composition_preserves_known_return_schema_for_specialist_tool() -
             )
         },
         deferred=(
-            _DeferredAgent(source, (root_id, child_id), (definition,), capability_id),
+            DeferredAgentSnapshot(
+                agent_id=source.id,
+                name=source.name,
+                description=getattr(source, "description", None),
+                system_prompt=source.system_prompt,
+                path=(root_id, child_id),
+                definitions=(definition,),
+                capability_id=capability_id,
+            ),
         ),
         isolated_delegates={},
     )

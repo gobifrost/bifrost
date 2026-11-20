@@ -67,9 +67,16 @@ async def test_bound_tool_uses_original_user_for_authority_and_actor_for_effects
     session.execute = AsyncMock(return_value=MagicMock(one_or_none=MagicMock(return_value=(agent, workflow))))
     session.commit = AsyncMock()
 
+    session_open = False
+
     @asynccontextmanager
     async def session_context():
-        yield session
+        nonlocal session_open
+        session_open = True
+        try:
+            yield session
+        finally:
+            session_open = False
 
     session_factory = MagicMock(return_value=session_context())
     require_calls = []
@@ -99,7 +106,13 @@ async def test_bound_tool_uses_original_user_for_authority_and_actor_for_effects
         "src.services.agent_write_policy.can_read_agent",
         allow_agent,
     )
-    execute_tool = AsyncMock(return_value=MagicMock())
+    async def dispatch(**_kwargs):
+        assert not session_open, "Workflow result waits must release the authorization session"
+        session.commit.assert_awaited_once()
+        return response
+
+    response = MagicMock()
+    execute_tool = AsyncMock(side_effect=dispatch)
     monkeypatch.setattr("src.services.execution.service.execute_tool", execute_tool)
 
     result = await execute_agent_workflow_tool(
@@ -113,7 +126,7 @@ async def test_bound_tool_uses_original_user_for_authority_and_actor_for_effects
         result_wait_seconds=30,
     )
 
-    assert result is execute_tool.return_value
+    assert result is response
     assert require_calls == [
         (original_user_id, "agents.execute", organization_id),
         (original_user_id, "workflows.execute", organization_id),

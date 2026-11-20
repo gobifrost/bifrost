@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     worker_capacity_url: str | None = Field(default=None, description="External physical-capacity provider HTTPS endpoint")
     worker_capacity_token: SecretStr | None = Field(default=None, repr=False, exclude=True)
 
+    @field_validator("worker_capacity_url", "worker_capacity_token", mode="before")
+    @classmethod
+    def optional_capacity_setting(cls, value: object) -> object:
+        """Compose emits empty values for optional deployment settings."""
+        if value == "" or isinstance(value, SecretStr) and value.get_secret_value() == "":
+            return None
+        return value
+
     # ==========================================================================
     # Environment
     # ==========================================================================
@@ -203,6 +211,14 @@ class Settings(BaseSettings):
         default=300,
         ge=10,
         description="Seconds a launched worker may take to become ready",
+    )
+    pool_provisioning_grace_seconds: int = Field(
+        default=60,
+        ge=0,
+        description=(
+            "Seconds a starting external worker's provider absence (GET 404) "
+            "is tolerated before its reservation is fenced as lost"
+        ),
     )
     pool_worker_memory_request_mib: int = Field(default=512, ge=1)
     pool_worker_cpu_request: str = Field(default="250m")

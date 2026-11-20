@@ -8,7 +8,11 @@ from uuid import uuid4
 import pytest
 from pydantic import BaseModel
 
-from src.jobs.platform.base import PlatformJobDefinition, PlatformJobPolicy
+from src.jobs.platform.base import (
+    PlatformJobContext,
+    PlatformJobDefinition,
+    PlatformJobPolicy,
+)
 from src.jobs.platform.runner import run_claimed_platform_job
 from src.models.orm.platform_jobs import PlatformJob
 from src.services.audit_context import current_actor
@@ -35,6 +39,32 @@ def _running_job(*, payload_version: int, payload: dict[str, object]) -> SimpleN
         impersonation_session_id=None,
         result=None,
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("owner_current, lease_current", [(False, True), (True, False)])
+async def test_app_activation_authorization_rejects_stale_owner_or_lease(
+    monkeypatch, owner_current: bool, lease_current: bool
+) -> None:
+    context = PlatformJobContext(
+        job_id=uuid4(),
+        lease_token=uuid4(),
+        organization_id=None,
+        requested_by_user_id=str(uuid4()),
+        requested_by_email="operator@example.com",
+        requested_by_name="Operator",
+    )
+    fence_owner = AsyncMock(return_value=owner_current)
+    monkeypatch.setattr("src.worker.remote.fencing.fence_remote_owner", fence_owner)
+    db = AsyncMock()
+    db.scalar.return_value = context.job_id if lease_current else None
+
+    assert await context.authorize_effect(db) is (owner_current and lease_current)
+    fence_owner.assert_awaited_once_with(db)
+    if owner_current:
+        db.scalar.assert_awaited_once()
+    else:
+        db.scalar.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -98,6 +128,48 @@ async def test_runner_restores_requesting_actor_for_handler(monkeypatch) -> None
 
     assert await run_claimed_platform_job(job_id, lease_token)
     assert current_actor() is None
+    finish.assert_awaited_once_with(
+        job_id, lease_token, status="succeeded", result={"ok": True}
+    )
+
+
+@pytest.mark.asyncio
+async def test_runner_injects_app_build_compute_into_the_handler_context(monkeypatch) -> None:
+    job_id, lease_token = uuid4(), uuid4()
+    job = _running_job(payload_version=1, payload={"value": "ok"})
+    job.id, job.lease_token, job.job_type = job_id, lease_token, "test.compute"
+    db = AsyncMock()
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalar_one_or_none.return_value = job
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
+    compute = AsyncMock()
+
+    async def handler(context, _payload):
+        assert context.app_build_compute is compute
+        return {"ok": True}
+
+    definition = PlatformJobDefinition(
+        job_type="test.compute",
+        payload_version=1,
+        payload_model=_Payload,
+        handler=handler,
+        policy=PlatformJobPolicy(timeout_seconds=30),
+    )
+    monkeypatch.setattr("src.jobs.platform.runner.get_db_context", db_context)
+    monkeypatch.setattr(
+        "src.jobs.platform.runner.get_platform_job_definition",
+        lambda _job_type: definition,
+    )
+    finish = AsyncMock(return_value=True)
+    monkeypatch.setattr("src.jobs.platform.runner.finish_platform_job", finish)
+
+    assert await run_claimed_platform_job(
+        job_id, lease_token, app_build_compute=compute
+    )
     finish.assert_awaited_once_with(
         job_id, lease_token, status="succeeded", result={"ok": True}
     )

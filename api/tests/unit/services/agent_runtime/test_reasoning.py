@@ -3,7 +3,7 @@
 import pytest
 from pydantic_ai.usage import RequestUsage
 
-from src.services.agent_runtime import reasoning_tokens
+from src.services.agent_runtime.usage import reasoning_tokens
 from src.services.agent_runtime.model_factory import (
     agent_model_settings,
     provider_name_for_config,

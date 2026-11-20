@@ -469,7 +469,7 @@ async def test_unknown_capabilities_still_offer_agent_tools(
             "src.services.agent_runtime.model_factory.create_agent_model",
             return_value=CountingTestModel(custom_output_text="Hello from Pydantic",),
     ), patch(
-        "src.services.agent_executor.PydanticAgent",
+        "src.services.agent_runtime.compute.PydanticAgent",
         new=FakePydanticAgent,
     ), patch(
         "src.services.agent_executor.authorize_agent_execution",

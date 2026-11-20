@@ -7,15 +7,19 @@ real cloud services that Floci emulates.
 from __future__ import annotations
 
 import importlib.util
+import tempfile
+import threading
+from http.server import ThreadingHTTPServer
 import sys
 import unittest
 from pathlib import Path
 
 
 CAPACITY_ROOT = Path(__file__).resolve().parents[1]
+CONTROL_TOKEN = "c" * 32
 sys.path.insert(0, str(CAPACITY_ROOT / "python"))
 
-from capacity_core import CapacityEngine, Context, Ledger, ProtocolError, ProviderConfig  # noqa: E402
+from capacity_core import CapacityEngine, CapacityHandler, Context, Ledger, ProtocolError, ProviderConfig  # noqa: E402
 
 
 def load_adapter(provider: str):
@@ -102,12 +106,13 @@ class FakeAci:
 
 class FlociAdapterContracts(unittest.TestCase):
     def ctx(self) -> Context:
-        return Context("scope", "worker-1234567890", "resource", "operation-1234567890")
+        return Context("scope", "12345678-1234-5678-1234-567812345678", "resource", "operation-1234567890")
 
     def aws_adapter(self, ecs: FakeEcs):
         module = load_adapter("aws")
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.ecs = ecs
+        adapter.control_token = CONTROL_TOKEN
         adapter.cluster = "cluster"
         adapter.image = "worker:test"
         adapter.cpu_units = 2048
@@ -115,6 +120,18 @@ class FlociAdapterContracts(unittest.TestCase):
         adapter.env = {}
         adapter.entrypoint = ["python"]
         adapter.command = ["-m", "worker"]
+        return adapter
+
+    def azure_adapter(self, aci: FakeAci):
+        module = load_adapter("azure")
+        adapter = module.Adapter.__new__(module.Adapter)
+        adapter.aci = aci
+        adapter.control_token = CONTROL_TOKEN
+        adapter.image = "worker:test"
+        adapter.cpu = 2.0
+        adapter.memory_gb = 4.0
+        adapter.env = {}
+        adapter.command = ["python", "-m", "worker"]
         return adapter
 
     def engine(self, adapter) -> CapacityEngine:
@@ -155,6 +172,60 @@ class FlociAdapterContracts(unittest.TestCase):
         engine.adapter.start = original_start
         return prepared
 
+    def test_http_uncertain_ecs_start_and_cleanup_never_fabricate_finality(self) -> None:
+        from conformance import Client
+
+        ecs = FakeEcs()
+        adapter = self.aws_adapter(ecs)
+        accepted = ecs.run_task
+
+        def lose_accepted_reply(*args):
+            accepted(*args)
+            # The task exists but is not visible through ListTasks yet.
+            ecs.owned = []
+            raise RuntimeError("accepted ECS reply lost")
+
+        ecs.run_task = lose_accepted_reply
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "ledger.json")
+            engine = self.engine(adapter)
+            engine.ledger = Ledger(path)
+            server = ThreadingHTTPServer(("127.0.0.1", 0), CapacityHandler)
+            server.engine, server.cfg = engine, engine.cfg
+            thread = threading.Thread(target=server.serve_forever, daemon=True)
+            thread.start()
+            try:
+                client = Client(f"http://127.0.0.1:{server.server_port}", engine.cfg.token, "scope")
+                worker_id = self.ctx().worker_id
+                status, prepared = client.put(worker_id, self.reservation(worker_id))
+                self.assertEqual(200, status)
+                uid = prepared["resource_uid"]
+                self.assertEqual(502, client.start(worker_id, uid)[0])
+                # Reconstruct the provider from durable state; public GET/PUT
+                # and retries must not erase the uncertain-start fence.
+                server.engine = CapacityEngine(engine.cfg, adapter, Ledger(path))
+                self.assertEqual(200, client.get(worker_id)[0])
+                self.assertEqual(200, client.put(worker_id, self.reservation(worker_id))[0])
+                self.assertEqual(502, client.start(worker_id, uid)[0])
+                self.assertEqual(1, len(ecs.run_calls))
+                self.assertEqual(502, client.delete(worker_id, uid)[0],
+                                 "invisible accepted task cannot count as deleted")
+                self.assertEqual([], ecs.deregistered)
+                self.assertEqual(409, client.start(worker_id, uid)[0])
+                self.assertEqual(1, len(ecs.run_calls))
+                ecs.owned = ["task"]
+                ecs.tasks = [{"lastStatus": "RUNNING"}, {"lastStatus": "STOPPED"}]
+                self.assertEqual(502, client.delete(worker_id, uid)[0])
+                self.assertEqual(200, client.delete(worker_id, uid)[0])
+                self.assertEqual("deleted", client.get(worker_id)[1]["state"])
+                self.assertEqual(409, client.start(worker_id, uid)[0])
+                self.assertEqual(409, client.put(worker_id, self.reservation(worker_id))[0])
+                self.assertEqual(1, len(ecs.run_calls))
+            finally:
+                server.shutdown()
+                server.server_close()
+                thread.join()
+
     def test_aws_prepare_reuses_the_existing_operation_definition_after_a_lost_reply(self) -> None:
         ecs = FakeEcs()
         adapter = self.aws_adapter(ecs)
@@ -185,6 +256,7 @@ class FlociAdapterContracts(unittest.TestCase):
         cloud = FakeCloudRun()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.cloud = cloud
+        adapter.control_token = CONTROL_TOKEN
         handle = {"pool_id": "pool", "started": True}
         cloud.pools = [
             {"scaling": {"manualInstanceCount": 1}},
@@ -205,6 +277,7 @@ class FlociAdapterContracts(unittest.TestCase):
         aci = FakeAci()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.aci = aci
+        adapter.control_token = CONTROL_TOKEN
         handle = {"group": "group", "started": True}
         aci.groups = [
             {"properties": {"provisioningState": "Deleting", "instanceView": {"state": "Running"}}},
@@ -262,6 +335,7 @@ class FlociAdapterContracts(unittest.TestCase):
         cloud = FakeCloudRun()
         adapter = module.Adapter.__new__(module.Adapter)
         adapter.cloud = cloud
+        adapter.control_token = CONTROL_TOKEN
         adapter.image = "worker:test"
         adapter.cpu = "2000m"
         adapter.memory = "4096Mi"
@@ -286,16 +360,25 @@ class FlociAdapterContracts(unittest.TestCase):
         self.assertEqual(1, len(cloud.scaled))
         self.assertEqual("deleted", removed["state"])
 
-    def test_azure_lost_start_reply_is_reconciled_without_a_second_launch_and_cleanup_finds_it(self) -> None:
-        module = load_adapter("azure")
+    def test_azure_invisible_accepted_start_cannot_confirm_deletion(self) -> None:
         aci = FakeAci()
-        adapter = module.Adapter.__new__(module.Adapter)
-        adapter.aci = aci
-        adapter.image = "worker:test"
-        adapter.cpu = 2.0
-        adapter.memory_gb = 4.0
-        adapter.env = {}
-        adapter.command = ["python", "-m", "worker"]
+        adapter = self.azure_adapter(aci)
+        engine = self.engine(adapter)
+        worker_id = self.ctx().worker_id
+        prepared = self.accepted_start_lost(engine, worker_id)
+        aci.groups = [None,
+            {"properties": {"instanceView": {"state": "Running"}}}, None]
+        with self.assertRaisesRegex(ProtocolError, "delete outcome unknown"):
+            engine.remove(worker_id, {"resource_uid": prepared["resource_uid"]})
+        self.assertEqual([], aci.deleted)
+        self.assertEqual(1, len(aci.created))
+        removed = engine.remove(worker_id, {"resource_uid": prepared["resource_uid"]})
+        self.assertEqual("deleted", removed["state"])
+        self.assertEqual(1, len(aci.created))
+
+    def test_azure_lost_start_reply_is_reconciled_without_a_second_launch_and_cleanup_finds_it(self) -> None:
+        aci = FakeAci()
+        adapter = self.azure_adapter(aci)
         engine = self.engine(adapter)
         worker_id = self.ctx().worker_id
         prepared = self.accepted_start_lost(engine, worker_id)

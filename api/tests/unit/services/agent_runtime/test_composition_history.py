@@ -33,8 +33,10 @@ from pydantic_ai.models.function import FunctionModel
 
 from src.services.agent_runtime.composition import (
     AgentComposition,
+)
+from src.services.agent_runtime.composition_view import (
+    DeferredAgentSnapshot,
     ToolBinding,
-    _DeferredAgent,
     _capability_id,
     _qualified_tool_name,
 )
@@ -53,6 +55,18 @@ def _composition(*, root_id, deferred=(), bindings=None, session_factory=None):
         bindings=bindings or {},
         deferred=deferred,
         isolated_delegates={},
+    )
+
+
+def _deferred_snapshot(agent, path, definitions, capability_id):
+    return DeferredAgentSnapshot(
+        agent_id=agent.id,
+        name=agent.name,
+        description=getattr(agent, "description", None),
+        system_prompt=agent.system_prompt,
+        path=path,
+        definitions=definitions,
+        capability_id=capability_id,
     )
 
 
@@ -226,11 +240,11 @@ async def test_deferred_capability_survives_legacy_chat_history_without_a_second
         composition = _composition(
             root_id=root_id,
             deferred=(
-                _DeferredAgent(
-                    agent=child,
-                    path=(root_id, child_id),
-                    definitions=(source,),
-                    capability_id=capability_id,
+                _deferred_snapshot(
+                    child,
+                    (root_id, child_id),
+                    (source,),
+                    capability_id,
                 ),
             ),
             bindings={qualified: binding},

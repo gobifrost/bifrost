@@ -8,7 +8,7 @@ from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import BaseModel
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
@@ -27,6 +27,7 @@ from src.models.contracts.platform_jobs import (
     PlatformJobPublic,
     PlatformJobStatus,
 )
+from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.services.durable_impersonation import current_durable_impersonation
@@ -49,6 +50,125 @@ EXPORT_TOO_LARGE = "Backup export needs more memory than any executor can hold"
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+class PlatformJobExecutorAttributionConflict(RuntimeError):
+    """The current attempt already owns an immutable compute-stage receipt."""
+
+
+def clear_platform_job_executor_attribution(job: PlatformJob) -> None:
+    """Clear one attempt's worker snapshot before the next claim begins."""
+    job.executor_attempt = None
+    job.executor_worker_id = None
+    job.executor_worker_form = None
+    job.executor_capacity_scope = None
+    job.executor_capacity_resource_uid = None
+    job.executor_compute_capability = None
+    job.executor_stage_id = None
+    job.executor_input_sha256 = None
+
+
+def set_platform_job_executor_attribution(
+    job: PlatformJob,
+    worker: ExecutionWorker,
+    *,
+    compute_capability: str | None = None,
+    stage_id: UUID | None = None,
+    input_sha256: str | None = None,
+) -> None:
+    """Copy trusted worker identity onto one currently locked job attempt."""
+    clear_platform_job_executor_attribution(job)
+    job.executor_attempt = job.attempt
+    job.executor_worker_id = worker.id
+    job.executor_worker_form = worker.form
+    job.executor_capacity_scope = worker.capacity_scope
+    job.executor_capacity_resource_uid = worker.capacity_resource_uid
+    job.executor_compute_capability = compute_capability
+    job.executor_stage_id = stage_id
+    job.executor_input_sha256 = input_sha256
+
+
+async def record_platform_job_executor_attribution(
+    job_id: UUID,
+    lease_token: UUID,
+    *,
+    worker_id: UUID,
+    compute_capability: str | None = None,
+    stage_id: UUID | None = None,
+    input_sha256: str | None = None,
+    phase: str | None = None,
+) -> bool:
+    """Persist a fenced, API-side executor snapshot for one running attempt.
+
+    The physical worker never supplies its own capacity identity.  A remote
+    API task additionally proves that it still owns the launcher's lease
+    before locking the exact PlatformJob attempt and loading the worker row.
+    """
+    if (stage_id is None) != (input_sha256 is None):
+        raise ValueError("executor stage identity and input digest must be recorded together")
+    if input_sha256 is not None and (
+        len(input_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in input_sha256)
+    ):
+        raise ValueError("executor input digest must be a lowercase SHA-256 value")
+    async with get_db_context() as db:
+        from src.worker.remote.fencing import (
+            current_remote_lease_ref,
+            fence_remote_owner,
+        )
+
+        lease_ref = current_remote_lease_ref()
+        if lease_ref is not None and lease_ref.lease.worker_id != worker_id:
+            return False
+        if not await fence_remote_owner(db):
+            return False
+        job = (
+            await db.execute(
+                select(PlatformJob)
+                .where(
+                    PlatformJob.id == job_id,
+                    PlatformJob.lease_token == lease_token,
+                    PlatformJob.status == "running",
+                    PlatformJob.lease_expires_at > func.now(),
+                )
+                .with_for_update()
+            )
+        ).scalar_one_or_none()
+        if job is None:
+            return False
+        worker = await db.scalar(
+            select(ExecutionWorker)
+            .where(ExecutionWorker.id == worker_id)
+            .with_for_update(read=True)
+        )
+        if worker is None:
+            return False
+        if (
+            compute_capability is not None
+            and compute_capability not in worker.supported_compute
+        ):
+            return False
+        if job.executor_stage_id is not None:
+            if (job.executor_attempt == job.attempt
+                    and job.executor_worker_id == worker_id
+                    and job.executor_stage_id == stage_id
+                    and job.executor_input_sha256 == input_sha256
+                    and job.executor_compute_capability == compute_capability):
+                return True
+            raise PlatformJobExecutorAttributionConflict
+        set_platform_job_executor_attribution(
+            job,
+            worker,
+            compute_capability=compute_capability,
+            stage_id=stage_id,
+            input_sha256=input_sha256,
+        )
+        if phase is not None:
+            job.phase = phase[:200]
+        job.revision += 1
+        await db.commit()
+    await publish_platform_job_update(job)
+    return True
 
 
 async def fail_linked_solution_export(
@@ -89,6 +209,8 @@ async def fail_linked_solution_export(
 
 
 def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
+    from shared.models import PlatformJobExecutorAttribution
+
     error = None
     if job.error_message:
         error = PlatformJobError(
@@ -134,6 +256,19 @@ def platform_job_to_public(job: PlatformJob) -> PlatformJobPublic:
         memory_start_bytes=job.memory_start_bytes,
         memory_peak_bytes=job.memory_peak_bytes,
         memory_limit_bytes=job.memory_limit_bytes,
+        executor=(
+            PlatformJobExecutorAttribution(
+                attempt=job.executor_attempt,
+                worker_id=job.executor_worker_id,
+                worker_form=job.executor_worker_form,
+                capacity_scope=job.executor_capacity_scope,
+                compute_capability=job.executor_compute_capability,
+                stage_id=job.executor_stage_id,
+                input_sha256=job.executor_input_sha256,
+            )
+            if job.executor_attempt is not None and job.executor_worker_id is not None
+            else None
+        ),
         started_at=job.started_at,
         completed_at=job.completed_at,
         created_at=job.created_at,

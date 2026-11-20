@@ -304,6 +304,15 @@ export default defineConfig({
 				changeOrigin: true,
 				ws: true,
 			},
+			"^/api/worker-control$": {
+				target: process.env.API_URL || "http://localhost:8000",
+				changeOrigin: true,
+				ws: true,
+			},
+			"/health": {
+				target: process.env.API_URL || "http://localhost:8000",
+				changeOrigin: true,
+			},
 			"/api": {
 				target: process.env.API_URL || "http://localhost:8000",
 				changeOrigin: true,

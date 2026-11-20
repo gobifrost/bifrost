@@ -5,7 +5,8 @@ Provides a unified interface for interacting with different LLM providers
 (OpenAI, Anthropic, Google, and compatible endpoints) for AI agent completions.
 
 Usage:
-    from src.services.llm import get_llm_client, LLMMessage
+    from src.services.llm import LLMMessage
+    from src.services.llm.factory import get_llm_client
 
     client = await get_llm_client(session)
     response = await client.complete(
@@ -23,8 +24,6 @@ from src.services.llm.base import (
     ToolCallRequest,
     ToolDefinition,
 )
-from src.services.llm.factory import get_llm_client
-
 __all__ = [
     "BaseLLMClient",
     "LLMMessage",
@@ -33,5 +32,4 @@ __all__ = [
     "LLMStreamChunk",
     "ToolCallRequest",
     "ToolDefinition",
-    "get_llm_client",
 ]

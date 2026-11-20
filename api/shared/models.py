@@ -307,7 +307,7 @@ class ApplicationBundleManifest(BaseModel):
 
 
 class WorkerCapacityProfile(BaseModel):
-    """Capabilities of an authenticated external physical-capacity provider."""
+    """Hardware bounds of an authenticated external physical-capacity provider."""
 
     model_config = ConfigDict(extra="forbid", frozen=True)
     protocol_version: Literal[1]
@@ -339,6 +339,18 @@ class WorkerCapacityResource(BaseModel):
     resource_uid: str = Field(min_length=1, max_length=255, pattern=r"^[a-zA-Z0-9._:-]+$")
     state: Literal["prepared", "starting", "running", "stopped", "deleted"]
     out_of_memory: bool = Field(default=False, strict=True)
+
+
+class PlatformJobExecutorAttribution(BaseModel):
+    """Sanitized durable identity of the worker that last ran a PlatformJob."""
+
+    attempt: int = Field(ge=1)
+    worker_id: UUID
+    worker_form: str | None = None
+    capacity_scope: str | None = None
+    compute_capability: str | None = None
+    stage_id: UUID | None = None
+    input_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
 
 
 class SolutionAppBuildCandidate(BaseModel):

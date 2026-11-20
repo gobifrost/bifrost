@@ -5,12 +5,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
-from pydantic_ai.capabilities import Capability, ToolSearch
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 
 from src.models.contracts.agents import ToolResult
 from src.models.enums import MessageRole
-from src.services.agent_runtime import BifrostToolset
+from src.services.agent_runtime.composition_view import (
+    AgentCompositionSnapshot, DeferredAgentSnapshot, ToolBinding,
+    _capability_id, _qualified_tool_name,
+)
 from src.services.llm.base import LLMConfig, LLMMessage, ToolDefinition
 from src.services.llm.pydantic_client import PydanticAIClient
 from tests.unit.services.test_agent_executor_runtime import (
@@ -35,8 +37,12 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
     agent.max_token_budget = None
     agent.llm_max_tokens = None
     owner = SimpleNamespace(id=uuid4())
+    is_specialist = tool_name == "specialist_read"
+    if is_specialist:
+        tool_name = _qualified_tool_name(owner.id, "read")
+    capability_id = _capability_id(owner.id)
     definitions = [ToolDefinition(
-        name="specialist_read", description="Read the approved resource.",
+        name="read", description="Read the approved resource.",
         parameters={"type": "object", "properties": {}},
     )]
     binding = SimpleNamespace(owner=owner, original_name="read", arguments={}, workflow_ids={})
@@ -53,34 +59,31 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
         else []
     )
 
-    def entry_toolset(execute, *, toolset_id):
-        return BifrostToolset(
-            entry_definitions, execute, toolset_id=toolset_id
-        ).defer_loading()
-
-    def capabilities(execute):
-        source_toolset = BifrostToolset(
-            definitions, execute, toolset_id="specialist-source"
-        ).filtered(
-            lambda ctx, _tool: "specialist" in ctx.loaded_capability_ids
-        ).defer_loading()
-        capabilities = [
-            Capability(
-                id="specialist",
-                description="Read specialist",
-                instructions="Read before deciding.",
-                defer_loading=True,
-            ),
-            Capability(id="specialist-source", toolsets=[source_toolset]),
-        ]
-        capabilities.insert(0, ToolSearch(strategy="keywords"))
-        return capabilities
-
+    bindings = {
+        _qualified_tool_name(owner.id, "read"): ToolBinding(
+            name=_qualified_tool_name(owner.id, "read"), owner_id=owner.id,
+            original_name="read", path=(agent.id, owner.id),
+            capability_id=capability_id, parameters=definitions[0].parameters,
+        ),
+        **{definition.name: ToolBinding(
+            name=definition.name, owner_id=agent.id, original_name=definition.name,
+            path=(agent.id,), capability_id=None, parameters=definition.parameters,
+        ) for definition in entry_definitions},
+    }
     composition = SimpleNamespace(
         instructions="\n\nRetain task ownership.",
         entry_definitions=entry_definitions,
-        entry_toolset=entry_toolset,
-        capabilities=capabilities,
+        snapshot=AgentCompositionSnapshot.from_parts(
+            root_id=agent.id, instructions="Retain task ownership.",
+            entry_definitions=entry_definitions, bindings=bindings,
+            deferred=[DeferredAgentSnapshot(
+                agent_id=owner.id, name="Read Specialist", description="Read specialist",
+                system_prompt="Read before deciding.", path=(agent.id, owner.id),
+                definitions=tuple(definitions), capability_id=capability_id,
+            )],
+            isolated_delegates={},
+        ),
+        authorize_capability_load=AsyncMock(),
         resolve_call=AsyncMock(return_value=binding),
     )
 
@@ -96,14 +99,14 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
                 if parameters.visibility_of(tool.name) in {"visible", "via_history"}
             }
             if "load_capability" not in returned:
-                return ModelResponse(parts=[ToolCallPart("load_capability", {"id": "specialist"}, "load")])
+                return ModelResponse(parts=[ToolCallPart("load_capability", {"id": capability_id}, "load")])
             if "search_tools" not in returned:
                 assert tool_name not in visible
                 assert "run_code" in visible
                 assert "search_tools" in visible
                 query = (
                     "approved resource"
-                    if tool_name == "specialist_read"
+                    if is_specialist
                     else "list files"
                 )
                 return ModelResponse(parts=[ToolCallPart(
@@ -161,7 +164,7 @@ async def test_native_skill_load_and_tool_result_are_streamed_and_persisted(exec
     ]
     assert len(completed) == 4
     executor._execute_tool.assert_awaited_once()
-    assert executor._execute_tool.await_args.args[0].name == ("read" if tool_name == "specialist_read" else tool_name)
-    assert executor._execute_tool.await_args.args[1] is (owner if tool_name == "specialist_read" else agent)
+    assert executor._execute_tool.await_args.args[0].name == ("read" if is_specialist else tool_name)
+    assert executor._execute_tool.await_args.args[1] is (owner if is_specialist else agent)
     if tool_name == "list_artifacts":
         composition.resolve_call.assert_not_awaited()

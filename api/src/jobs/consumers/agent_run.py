@@ -18,6 +18,7 @@ from src.core.cache.keys import agent_run_steps_stream_key
 from src.core.cache.redis_client import get_redis
 from src.core.database import get_session_factory
 from src.core.database_retry import RetryBudget, run_with_database_retry
+from src.worker.remote.fencing import require_remote_owner
 from src.core.pubsub import publish_agent_run_update, publish_chat_run_event
 from src.models.contracts.agents import ChatStreamChunk
 from src.models.enums import MessageRole
@@ -146,7 +147,8 @@ async def _generate_conversation_title(
     conversation: Conversation,
     user_message: str,
 ) -> str | None:
-    from src.services.llm import LLMMessage, get_llm_client
+    from src.services.llm import LLMMessage
+    from src.services.llm.factory import get_llm_client
 
     try:
         llm_client = await get_llm_client(db)
@@ -215,6 +217,7 @@ class AgentRunConsumer:
         try:
             # Atomically claim the durable queued row and load the agent.
             async with self._session_factory() as db:
+                await require_remote_owner(db)
                 agent_run = await db.get(
                     AgentRun,
                     UUID(run_id),
@@ -295,6 +298,10 @@ class AgentRunConsumer:
                     chat_caller = await load_caller(db, runtime_principal)
                     if chat_caller.ctx is None:
                         raise ValueError("Chat run caller is unavailable")
+                    # Runtime authority was read after the claim committed.
+                    # Release that read transaction before the API hosts a
+                    # potentially long streamed conversation.
+                    await db.close()
                     await publish_agent_run_update(agent_run, "Unknown")
                     await self._process_chat_run(
                         run_id=run_id,
@@ -547,6 +554,7 @@ class AgentRunConsumer:
                 _write_result,
                 description=f"agent run {run_id} final update",
                 budget=terminal_budget,
+                authorize=require_remote_owner,
             )
             if written is None:
                 logger.info(f"Agent run {run_id}: final update skipped because row disappeared")
@@ -644,6 +652,7 @@ class AgentRunConsumer:
                     _write_failure,
                     description=f"agent run {run_id} failure update",
                     budget=terminal_budget,
+                    authorize=require_remote_owner,
                 )
                 if failed_run is not None:
                     agent_run = failed_run
@@ -973,6 +982,7 @@ class AgentRunConsumer:
                     _write_terminal,
                     description=f"chat run {run_id} final update",
                     budget=terminal_budget,
+                    authorize=require_remote_owner,
                 )
                 if written is None:
                     logger.info(
@@ -1116,6 +1126,7 @@ class AgentRunConsumer:
                     _write_interrupted,
                     description=f"chat run {run_id} interrupted update",
                     budget=terminal_budget,
+                    authorize=require_remote_owner,
                 )
                 if written is None:
                     logger.info(

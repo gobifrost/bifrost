@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest
@@ -198,6 +199,10 @@ async def test_deploy_atomically_activates_then_removes_old_artifact(
 
     class Context:
         job_id = uuid4()
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, message: str, *, percent: int):
             events.append(("report", (message, percent)))
@@ -270,6 +275,59 @@ async def test_deploy_atomically_activates_then_removes_old_artifact(
 
 
 @pytest.mark.asyncio
+async def test_deploy_passes_injected_app_compute_to_shared_build_service(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _zip(
+        tmp_path / "source.zip",
+        {"package.json": b"{}", "index.html": b"<div id='root'>"},
+    )
+    app_id, deployment_id = uuid4(), uuid4()
+    compute = object()
+
+    class Storage:
+        def __init__(self, _job_id):
+            pass
+
+        async def copy_to_path(self, path: Path, *, expected_sha256: str) -> None:
+            assert expected_sha256 == "expected"
+            path.write_bytes(source.read_bytes())
+
+        async def delete(self) -> None:
+            pass
+
+    class Context:
+        job_id = uuid4()
+        app_build_compute = compute
+
+        async def authorize_effect(self, _db):
+            return True
+
+        async def report(self, *_args, **_kwargs) -> None:
+            pass
+
+    rebuild = AsyncMock(
+        return_value={"application_id": str(app_id), "deployment_id": str(deployment_id)}
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.application_deploy.ApplicationDeployStorage", Storage
+    )
+    monkeypatch.setattr(
+        "src.jobs.platform.application_deploy.rebuild_application_from_source", rebuild
+    )
+
+    assert await run_application_deploy(
+        Context(),
+        ApplicationDeployPayload(
+            application_id=app_id,
+            deployment_id=deployment_id,
+            input_sha256="expected",
+        ),
+    ) == {"application_id": str(app_id), "deployment_id": str(deployment_id)}
+    assert rebuild.await_args.kwargs["app_build_compute"] is compute
+
+
+@pytest.mark.asyncio
 async def test_failed_build_keeps_active_artifact_and_cleans_transient_state(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -306,6 +364,11 @@ async def test_failed_build_keeps_active_artifact_and_cleans_transient_state(
 
     class Context:
         job_id = uuid4()
+
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, _message: str, *, percent: int):
             pass
@@ -376,6 +439,11 @@ async def test_memory_failed_build_surfaces_nonretryable_memory_pressure(
     class Context:
         job_id = uuid4()
 
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
+
         async def report(self, _message: str, *, percent: int) -> None:
             pass
 
@@ -438,6 +506,11 @@ async def test_sdk_metadata_oom_surfaces_nonretryable_memory_pressure(
 
     class Context:
         job_id = uuid4()
+
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, _message: str, *, percent: int) -> None:
             pass
@@ -531,6 +604,11 @@ async def test_retained_source_failure_preserves_old_pointer_and_provenance_and_
 
     class Context:
         job_id = uuid4()
+
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, _message: str, *, percent: int):
             pass

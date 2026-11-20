@@ -1257,6 +1257,20 @@ class TestProcessPoolManagerResultHandling:
 class TestResultTransportMetadata:
     """Every terminal path carries parent-owned sync routing metadata."""
 
+    def test_child_result_cannot_choose_canonical_identity_or_sync_route(self):
+        info = ExecutionInfo(
+            execution_id="parent-execution",
+            started_at=datetime.now(timezone.utc), timeout_seconds=300,
+            active_execution=_active_execution("parent-execution", sync=True),
+        )
+        child = {"execution_id": "another-execution", "sync": False,
+                 "result": {"execution_id": "legitimate-business-value"}}
+        result = info.attach_transport_metadata(child)
+        assert result["execution_id"] == "parent-execution"
+        assert result["sync"] is True
+        assert result["result"] == {"execution_id": "legitimate-business-value"}
+        assert child["execution_id"] == "another-execution"
+
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         ("report_method", "error_type"),

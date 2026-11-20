@@ -430,9 +430,12 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Inline-code permission clarification only changes an existing field description.
-    # CLI shapes and MIN_CLI_VERSION remain unchanged.
-    "5001d16c3d26682f5f3bddfb388303378b8d28bd0239b3e20507f9417e334925"
+    # Preserve the existing hardware-only capacity profile. Unreleased provider
+    # job declarations were removed; worker Hello remains the capability source.
+    # Optional PlatformJob executor attribution is additive, so existing CLI/SDK
+    # command shapes and MIN_CLI_VERSION remain unchanged.
+    # Merged inline-code permission clarification is description-only.
+    "0c88f0b767556c60d7cc84709a64433b66e33133a08f6af14e256f7ee382bd04"
 )
 
 

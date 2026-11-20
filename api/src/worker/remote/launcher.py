@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import logging
 import os
+from queue import Empty
 import signal
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
 from uuid import UUID, uuid4
@@ -22,6 +24,13 @@ from shared.version import get_version
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import effective_memory_sample, memory_pressure_ratio
 from src.services.execution.template_process import TemplateProcess
+from src.worker.remote.app_compile import AppCompileStages
+from shared.worker_compute import (
+    AGENT_COMPUTE_CAPABILITY,
+    SUMMARY_COMPUTE_CAPABILITY,
+    COMPUTE_CAPABILITIES,
+)
+from src.worker.remote.agent_compute import MAX_AGENT_COMPUTE_FRAME_BYTES
 from src.worker.remote.control_connection import connect_control, load_control_headers
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
 from src.worker.remote.protocol import (
@@ -39,6 +48,11 @@ from src.worker.remote.protocol import (
 
 logger = logging.getLogger(__name__)
 LAUNCHER_DRAIN_GRACE_SECONDS = 300.0
+MAX_AGENT_COMPUTE_STAGES = 4
+MAX_AGENT_COMPUTE_STAGE_RECORDS = 4096
+MAX_AGENT_COMPUTE_INFLIGHT_RPCS = 64
+MAX_AGENT_COMPUTE_RPC_BYTES = 64 * 1024 * 1024
+MAX_AGENT_COMPUTE_RPC_RECEIPTS = 4096
 
 
 async def _next_control_frame(
@@ -168,6 +182,86 @@ class Child:
         return "service" if self.service is not None else "workflow"
 
 
+@dataclass(frozen=True)
+class AgentComputeBinding:
+    """Immutable API-owned identity for one physical pure-compute stage."""
+
+    stage_id: str
+    route_id: str
+    run_id: str
+    dispatch_id: str
+    input_sha256: str
+
+
+@dataclass
+class AgentComputeRequest:
+    frame: dict[str, Any]
+    frame_bytes: int
+    stream: bool
+    next_sequence: int = 0
+
+
+@dataclass
+class AgentComputeStage:
+    binding: AgentComputeBinding
+    init: dict[str, Any]
+    memory_request_bytes: int
+    state: str = "starting"
+    pid: int | None = None
+    work: Any | None = None
+    result: Any | None = None
+    sampler: CPUSampler | None = None
+    terminal: dict[str, Any] | None = None
+    pending: dict[str, AgentComputeRequest] = field(default_factory=dict)
+    reply_receipts: dict[tuple[str, int | None], str] = field(default_factory=dict)
+    total_rpc_bytes: int = 0
+    request_count: int = 0
+
+
+def _agent_compute_uuid(value: object, label: str) -> str:
+    try:
+        return str(UUID(str(value)))
+    except (TypeError, ValueError, AttributeError) as exc:
+        raise ValueError(f"{label} must be a UUID") from exc
+
+
+def _agent_compute_json(value: Any, *, label: str) -> bytes:
+    try:
+        return json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} must be JSON serializable") from exc
+
+
+def _agent_compute_binding(payload: dict[str, Any]) -> AgentComputeBinding:
+    route_id = payload.get("route_id")
+    if not isinstance(route_id, str) or not route_id:
+        raise ValueError("route_id is required")
+    input_sha256 = payload.get("input_sha256")
+    if (
+        not isinstance(input_sha256, str)
+        or len(input_sha256) != 64
+        or any(char not in "0123456789abcdef" for char in input_sha256)
+    ):
+        raise ValueError("input_sha256 must be a lowercase SHA-256 digest")
+    return AgentComputeBinding(
+        stage_id=_agent_compute_uuid(payload.get("stage_id"), "stage_id"),
+        route_id=route_id,
+        run_id=_agent_compute_uuid(payload.get("run_id"), "run_id"),
+        dispatch_id=_agent_compute_uuid(payload.get("dispatch_id"), "dispatch_id"),
+        input_sha256=input_sha256,
+    )
+
+
+def _agent_compute_binding_dict(binding: AgentComputeBinding) -> dict[str, str]:
+    return {
+        "stage_id": binding.stage_id,
+        "route_id": binding.route_id,
+        "run_id": binding.run_id,
+        "dispatch_id": binding.dispatch_id,
+        "input_sha256": binding.input_sha256,
+    }
+
+
 class Launcher:
     def __init__(
         self,
@@ -190,11 +284,26 @@ class Launcher:
         self.on_ready = on_ready or (lambda: None)
         self.on_stop = on_stop or (lambda: None)
         self.requirements: dict[str, Any] = {}
+        self.requirements_content: str | None = None
+        # External launchers begin with scoped workflows. Agent runs become
+        # eligible only after their credential-free compute template is warm.
+        self.handlers = tuple(
+            pair for pair in EXECUTION_HANDLERS
+            if identity.form != "external" or pair[0] == "workflow.execute"
+        )
         self.pending_terminal: dict[str, dict[str, Any]] = {}
         self.pending_terminal_inventory: dict[str, dict[str, Any]] = {}
         self.template = TemplateProcess()
         # Started with the launcher and kept, like the workflow template.
-        self.agent_template = TemplateProcess(profile="agent")
+        self.agent_template = (
+            TemplateProcess(profile="agent")
+            if any(pair[0].startswith("agent.") for pair in self.handlers) else None
+        )
+        # The pure compute template intentionally has none of the legacy
+        # agent consumer's database or provider authority. It is started
+        # before advertising ``agent.loop.v1`` to the API control host.
+        self.agent_compute_template = TemplateProcess(profile="agent_compute")
+        self._agent_compute_template_ready = False
         # Finished agent children by PID -> start time. If their template
         # dies they re-parent to the launcher (PID 1 in a pod), which must
         # reap them.
@@ -202,10 +311,19 @@ class Launcher:
         self.children: dict[str, Child] = {}
         self.jobs: dict[str, asyncio.subprocess.Process] = {}
         self.job_claims: dict[str, dict[str, str | int]] = {}
+        # This owns only file-backed CPU compute; PlatformJob authority stays
+        # with the API control host.
+        self.app_compiles = AppCompileStages(
+            terminal_notification=self.send_app_compile_state,
+        )
+        self.agent_compute_stages: dict[str, AgentComputeStage] = {}
+        self._agent_compute_tombstones: dict[str, AgentComputeBinding] = {}
+        self._agent_compute_retire_requested = False
         self._template_lock = asyncio.Lock()
         # Separate from the workflow template's lock: rebuilding the agent
         # template takes seconds and must not stall workflow forks.
         self._agent_template_lock = asyncio.Lock()
+        self._agent_compute_template_lock = asyncio.Lock()
         self._send_lock = asyncio.Lock()
         self._tasks: set[asyncio.Task[Any]] = set()
         self._monitor_task: asyncio.Task[Any] | None = None
@@ -214,6 +332,7 @@ class Launcher:
         self.dangerous_memory_ratio: float | None = None
         self.baseline_bytes: int | None = None
         self.retired = asyncio.Event()
+        self._compute_retirement_drain_sent = False
 
     async def send(self, payload: dict[str, Any]) -> None:
         async with self._send_lock:
@@ -275,14 +394,33 @@ class Launcher:
 
     async def start(self) -> None:
         # This existing helper owns requirements IO and exits before ready.
-        result = await self.helper("src.services.execution.requirements_setup_helper")
-        self.requirements = result
-        await asyncio.gather(
-            asyncio.to_thread(self.template.start), asyncio.to_thread(self.agent_template.start)
+        result = await self.helper(
+            "src.services.execution.requirements_setup_helper",
+            input_payload={"content": self.requirements_content},
         )
+        self.requirements = result
+        startup = [asyncio.to_thread(self.template.start)]
+        if self.agent_template is not None:
+            startup.append(asyncio.to_thread(self.agent_template.start))
+        if not self._agent_compute_template_ready:
+            startup.append(self.start_agent_compute_template())
+        await asyncio.gather(*startup)
         current, limit = effective_memory_sample()
         self.baseline_bytes = current
         self._monitor_task = self.task(self.monitor())
+
+    async def start_agent_compute_template(self) -> None:
+        """Make the pure compute path real before it is advertised."""
+        async with self._agent_compute_template_lock:
+            if self._agent_compute_template_ready:
+                return
+            await asyncio.to_thread(self.agent_compute_template.start)
+            self._agent_compute_template_ready = True
+            if self.identity.form == "external":
+                self.handlers = tuple(
+                    pair for pair in EXECUTION_HANDLERS
+                    if pair[0] in ("workflow.execute", "agent.run", "agent.summarize", "agent.summarize_backfill")
+                )
 
     async def hello(self, requirements: dict[str, Any]) -> None:
         """Authenticate each new WebSocket; the physical process stays alive."""
@@ -321,7 +459,14 @@ class Launcher:
             "requirements": requirements,
             "version": get_version(),
             "credential_protocol": CREDENTIAL_PROTOCOL,
-            "handlers": EXECUTION_HANDLERS,
+            "handlers": self.handlers,
+            "supports_platform_jobs": self.identity.form != "external",
+            "compute_capabilities": [
+                list(capability)
+                for capability in COMPUTE_CAPABILITIES
+                if capability not in (AGENT_COMPUTE_CAPABILITY, SUMMARY_COMPUTE_CAPABILITY)
+                or self._agent_compute_template_ready
+            ],
             "summary_claim_protocol": SUMMARY_CLAIM_PROTOCOL,
         }, separators=(",", ":")))
         welcome = json.loads(await self.socket.recv())
@@ -330,6 +475,23 @@ class Launcher:
         self.session_generation = welcome["session_generation"]
         self._sequence = 0
         self._last_command_sequence = 0
+
+        assembler = FragmentAssembler()
+        while True:
+            frame = ControlEnvelope.from_json(await self.socket.recv())
+            if frame.session_generation != self.session_generation or frame.sequence <= self._last_command_sequence:
+                raise RuntimeError("Invalid worker bootstrap session")
+            self._last_command_sequence = frame.sequence
+            startup = assembler.feed(frame)
+            if startup is None:
+                continue
+            if startup.kind != "bootstrap" or "requirements_content" not in startup.payload:
+                raise RuntimeError("Worker bootstrap inputs are required")
+            content = startup.payload["requirements_content"]
+            if content is not None and not isinstance(content, str):
+                raise RuntimeError("Invalid worker requirements content")
+            self.requirements_content = content
+            break
 
     def inventory(self) -> dict[str, Any]:
         """Describe live physical routes for fenced API-owner adoption.
@@ -367,22 +529,213 @@ class Launcher:
             "version": 1,
             "baseline_bytes": self.baseline_bytes,
             "routes": routes,
+            "compute_stages": self.app_compiles.inventory(),
+            "compute_retirement_requested": self.app_compiles.retire_requested,
+            "agent_compute_stages": [
+                {
+                    **self.agent_compute_status(_agent_compute_binding_dict(stage.binding)),
+                    "compute_kind": stage.init["plan"].get("surface"),
+                    **({"summary_claim_id": stage.init["plan"].get("claim_id")}
+                       if stage.init["plan"].get("surface") == "summary" else {}),
+                }
+                for stage in self.agent_compute_stages.values()
+            ],
+            "agent_compute_retirement_requested": self._agent_compute_retire_requested,
             "terminal_routes": list(self.pending_terminal_inventory.values()),
         }
 
-    async def helper(self, module: str, *args: str) -> dict[str, Any]:
+    async def helper(
+        self, module: str, *, input_payload: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         process = await asyncio.create_subprocess_exec(
-            sys.executable, "-m", module, *args,
+            sys.executable, "-m", module,
+            stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE, start_new_session=True,
         )
         try:
-            stdout, _ = await process.communicate()
+            stdin = json.dumps(input_payload).encode() if input_payload is not None else None
+            stdout, _ = await process.communicate(stdin)
         except BaseException:
             await self.kill_process(process)
             raise
         if process.returncode:
             raise RuntimeError(f"{module} failed with exit code {process.returncode}")
         return json.loads(stdout)
+
+    @staticmethod
+    def _agent_compute_init(payload: dict[str, Any], binding: AgentComputeBinding) -> dict[str, Any]:
+        keys = ("plan", "model_name", "model_profile_payload_b64", "usage_initial", "user_prompt", "history")
+        if any(key not in payload for key in keys):
+            raise ValueError("Agent compute start is missing immutable initialization inputs")
+        immutable = {key: payload[key] for key in keys}
+        digest = hashlib.sha256(_agent_compute_json(immutable, label="Agent compute initialization")).hexdigest()
+        if digest != binding.input_sha256:
+            raise ValueError("Agent compute initialization digest does not match input_sha256")
+        return {"kind": "init", **_agent_compute_binding_dict(binding), **immutable}
+
+    @staticmethod
+    def _agent_compute_memory_request(payload: dict[str, Any]) -> int:
+        value = payload.get("memory_request_bytes")
+        if type(value) is not int or value < 0:
+            raise ValueError("memory_request_bytes must be a non-negative integer")
+        return value
+
+    @staticmethod
+    def _agent_compute_same_binding(actual: AgentComputeBinding, expected: AgentComputeBinding) -> None:
+        if actual != expected:
+            raise ValueError("Agent compute stage identity does not match its existing binding")
+
+    def _agent_compute_stage(self, payload: dict[str, Any]) -> AgentComputeStage:
+        binding = _agent_compute_binding(payload)
+        stage = self.agent_compute_stages.get(binding.stage_id)
+        if stage is None:
+            raise ValueError("Unknown Agent compute stage")
+        self._agent_compute_same_binding(stage.binding, binding)
+        return stage
+
+    def agent_compute_status(self, payload: dict[str, Any]) -> dict[str, Any]:
+        binding = _agent_compute_binding(payload)
+        stage = self.agent_compute_stages.get(binding.stage_id)
+        if stage is None:
+            tombstone = self._agent_compute_tombstones.get(binding.stage_id)
+            if tombstone is not None:
+                self._agent_compute_same_binding(tombstone, binding)
+            return {
+                **_agent_compute_binding_dict(binding),
+                "state": "released" if tombstone is not None else "unknown",
+                "memory_request_bytes": 0,
+                "pid": None,
+                "pending_rpc_count": 0,
+            }
+        self._agent_compute_same_binding(stage.binding, binding)
+        response: dict[str, Any] = {
+            **_agent_compute_binding_dict(stage.binding),
+            "state": stage.state,
+            "memory_request_bytes": stage.memory_request_bytes,
+            "pid": stage.pid,
+            "pending_rpc_count": len(stage.pending),
+        }
+        if stage.terminal is not None:
+            response["terminal"] = stage.terminal
+        return response
+
+    async def agent_compute_start(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Fork at most one pure-compute child for an immutable stage binding."""
+        binding = _agent_compute_binding(payload)
+        init = self._agent_compute_init(payload, binding)
+        memory_request_bytes = self._agent_compute_memory_request(payload)
+        tombstone = self._agent_compute_tombstones.get(binding.stage_id)
+        if tombstone is not None:
+            self._agent_compute_same_binding(tombstone, binding)
+            raise ValueError("Agent compute stage has already been released")
+        existing = self.agent_compute_stages.get(binding.stage_id)
+        if existing is not None:
+            self._agent_compute_same_binding(existing.binding, binding)
+            if existing.init != init or existing.memory_request_bytes != memory_request_bytes:
+                raise ValueError("Agent compute start conflicts with the existing stage")
+            return self.agent_compute_status(_agent_compute_binding_dict(binding))
+        if self._agent_compute_retire_requested:
+            raise RuntimeError("Agent compute stage journal is full; launcher retirement is requested")
+        if len(self.agent_compute_stages) >= MAX_AGENT_COMPUTE_STAGES:
+            raise RuntimeError("Agent compute stage limit is reached")
+        if len(self.agent_compute_stages) + len(self._agent_compute_tombstones) >= MAX_AGENT_COMPUTE_STAGE_RECORDS:
+            raise RuntimeError("Agent compute stage record limit is reached")
+        # Insert before the first await: uncertain starts read back this stage,
+        # never fork a second process for the same immutable identity.
+        stage = AgentComputeStage(binding=binding, init=init, memory_request_bytes=memory_request_bytes)
+        self.agent_compute_stages[binding.stage_id] = stage
+        try:
+            self.check_fork_pressure()
+            if not self._agent_compute_template_ready:
+                raise RuntimeError("Agent compute template is not ready")
+            async with self._agent_compute_template_lock:
+                if not self._agent_compute_template_ready:
+                    raise RuntimeError("Agent compute template is not ready")
+                pid, work, result = await asyncio.to_thread(
+                    self.agent_compute_template.fork, worker_id=binding.route_id
+                )
+            stage.pid, stage.work, stage.result = pid, work, result
+            stage.sampler = CPUSampler(pid=pid, clock_ticks=get_clock_ticks())
+            stage.sampler.set_baseline(time.monotonic())
+            asyncio.get_running_loop().add_reader(result.fileno(), self.agent_compute_result_ready, binding.stage_id)
+            work.put_nowait(init)
+            stage.state = "running"
+        except Exception as exc:
+            await self._fail_agent_compute_stage(stage, type(exc).__name__, str(exc), stop_child=stage.pid is not None)
+        return self.agent_compute_status(_agent_compute_binding_dict(binding))
+
+    async def agent_compute_reply(self, payload: dict[str, Any]) -> dict[str, Any]:
+        stage = self._agent_compute_stage(payload)
+        request_id = _agent_compute_uuid(payload.get("request_id"), "request_id")
+        reply = payload.get("reply_frame")
+        if not isinstance(reply, dict):
+            raise ValueError("Agent compute reply_frame is required")
+        reply_hash = hashlib.sha256(_agent_compute_json(reply, label="Agent compute reply")).hexdigest()
+        receipt_key = (request_id, reply.get("sequence") if type(reply.get("sequence")) is int else None)
+        receipt = stage.reply_receipts.get(receipt_key)
+        if receipt is not None:
+            if receipt != reply_hash:
+                raise ValueError("Agent compute reply conflicts with its prior delivery")
+            return {**_agent_compute_binding_dict(stage.binding), "request_id": request_id, "accepted": True}
+        request = stage.pending.get(request_id)
+        if request is None:
+            raise ValueError("Unknown Agent compute callback request")
+        if request.stream:
+            sequence = reply.get("sequence")
+            if type(sequence) is not int or sequence != request.next_sequence:
+                raise ValueError("Agent compute stream reply sequence is invalid")
+            if type(reply.get("final")) is not bool:
+                raise ValueError("Agent compute stream reply must declare final")
+        elif "sequence" in reply:
+            raise ValueError("Non-stream Agent compute reply cannot have a sequence")
+        frame = {"kind": "rpc_reply", "request_id": request_id, **reply}
+        if len(_agent_compute_json(frame, label="Agent compute reply")) > MAX_AGENT_COMPUTE_FRAME_BYTES:
+            raise ValueError("Agent compute reply exceeds the byte limit")
+        if stage.work is None or stage.state != "running":
+            raise RuntimeError("Agent compute stage is not accepting replies")
+        if len(stage.reply_receipts) >= MAX_AGENT_COMPUTE_RPC_RECEIPTS:
+            self._agent_compute_retire_requested = True
+            await self._fail_agent_compute_stage(
+                stage, "ResourceLimitError", "Agent compute callback journal limit is reached", stop_child=True
+            )
+            raise RuntimeError("Agent compute callback journal limit is reached")
+        try:
+            await asyncio.to_thread(stage.work.put_nowait, frame)
+        except Exception as exc:
+            await self._fail_agent_compute_stage(stage, type(exc).__name__, str(exc), stop_child=True)
+            raise
+        stage.reply_receipts[receipt_key] = reply_hash
+        if request.stream and reply["final"] is False:
+            request.next_sequence += 1
+        else:
+            stage.pending.pop(request_id, None)
+            stage.total_rpc_bytes -= request.frame_bytes
+        return {**_agent_compute_binding_dict(stage.binding), "request_id": request_id, "accepted": True}
+
+    async def agent_compute_release(self, payload: dict[str, Any]) -> dict[str, Any]:
+        binding = _agent_compute_binding(payload)
+        tombstone = self._agent_compute_tombstones.get(binding.stage_id)
+        if tombstone is not None:
+            self._agent_compute_same_binding(tombstone, binding)
+            return {**_agent_compute_binding_dict(binding), "released": True}
+        stage = self.agent_compute_stages.get(binding.stage_id)
+        if stage is None:
+            raise ValueError("Unknown Agent compute stage")
+        self._agent_compute_same_binding(stage.binding, binding)
+        try:
+            await self._stop_agent_compute_stage(stage)
+        except Exception as exc:
+            # Do not forget an uncertain physical child. The same release can
+            # be retried against the retained, fully-bound stage record.
+            await self._fail_agent_compute_stage(stage, type(exc).__name__, str(exc))
+            raise
+        self.agent_compute_stages.pop(binding.stage_id, None)
+        self._agent_compute_tombstones[binding.stage_id] = binding
+        if len(self._agent_compute_tombstones) >= MAX_AGENT_COMPUTE_STAGE_RECORDS:
+            self._agent_compute_retire_requested = True
+        if self._agent_compute_retire_requested and not self.agent_compute_stages:
+            self._request_compute_retirement_drain()
+        return {**_agent_compute_binding_dict(binding), "released": True}
 
     async def command(self, request: dict[str, Any], *, generation: int) -> None:
         """Execute one command only while its fenced session remains current."""
@@ -418,6 +771,8 @@ class Launcher:
                 work.put_nowait((child.execution_id, context))
                 response["pid"] = pid
             elif action in ("agent_run", "agent_summary"):
+                if self.agent_template is None:
+                    raise ValueError("This worker does not support agent execution")
                 handler = "agent.run" if action == "agent_run" else payload["handler"]
                 if handler not in ("agent.run", "agent.summarize", "agent.summarize_backfill"):
                     raise ValueError("Unknown agent handler")
@@ -449,6 +804,8 @@ class Launcher:
                 })
                 response["pid"] = pid
             elif action == "platform_job":
+                if self.identity.form == "external":
+                    raise ValueError("This worker does not support privileged platform runners")
                 if self.pressure_threshold is None:
                     raise RuntimeError("Launcher resource policy has not been configured")
                 if memory_pressure_ratio() >= self.pressure_threshold:
@@ -469,6 +826,33 @@ class Launcher:
                     "memory_request_bytes": int(payload["memory_request_bytes"]),
                 }
                 self.task(self.wait_job(route_id, process))
+            elif action == "app_compile_prepare":
+                response = self.app_compiles.prepare(payload)
+            elif action == "app_compile_chunk":
+                response = self.app_compiles.add_chunk(payload)
+            elif action == "app_compile_start":
+                response = await self.app_compiles.start(payload)
+            elif action == "app_compile_status":
+                response = self.app_compiles.status(payload)
+            elif action == "app_compile_result_chunk":
+                response = self.app_compiles.result_chunk(payload)
+            elif action == "app_compile_release":
+                response = await self.app_compiles.release(payload)
+                if (
+                    self.app_compiles.retire_requested
+                    and not self.app_compiles.has_stages
+                    and not self._compute_retirement_drain_sent
+                ):
+                    self._compute_retirement_drain_sent = True
+                    self.task(self.send_compute_retirement_drain())
+            elif action == "agent_compute_start":
+                response = await self.agent_compute_start(payload)
+            elif action == "agent_compute_status":
+                response = self.agent_compute_status(payload)
+            elif action == "agent_compute_reply":
+                response = await self.agent_compute_reply(payload)
+            elif action == "agent_compute_release":
+                response = await self.agent_compute_release(payload)
             elif action == "terminate_job":
                 process = self.jobs.get(payload["route_id"])
                 if process is not None:
@@ -486,7 +870,7 @@ class Launcher:
                     await asyncio.to_thread(self.template.shutdown)
                     await asyncio.to_thread(self.template.start)
             elif action == "package_tool":
-                response = await self.helper("src.worker.remote.package_helper", json.dumps(payload))
+                response = await self.helper("src.worker.remote.package_helper", input_payload=payload)
             elif action == "configure":
                 pressure = float(payload["pressure_threshold"])
                 dangerous = float(payload["dangerous_memory_ratio"])
@@ -580,6 +964,50 @@ class Launcher:
             self.jobs.pop(route_id, None)
             self.job_claims.pop(route_id, None)
 
+    async def send_app_compile_state(self, binding: dict[str, str]) -> None:
+        """Wake the API to read retained compute state without sending artifacts."""
+        with contextlib.suppress(ConnectionError):
+            await self.send({"event": "app_compile_state", "stage_id": binding["stage_id"]})
+
+    async def send_agent_compute_rpc(
+        self, stage: AgentComputeStage, request_id: str, request: AgentComputeRequest
+    ) -> None:
+        """Forward a child callback only after retaining it for reconnect replay."""
+        if stage.state != "running" or stage.pending.get(request_id) is not request:
+            return
+        with contextlib.suppress(ConnectionError):
+            await self.send({
+                "event": "agent_compute_rpc",
+                **_agent_compute_binding_dict(stage.binding),
+                "request_id": request_id,
+                "op": request.frame["op"],
+                "payload": request.frame["payload"],
+                "stream": request.stream,
+            })
+
+    async def send_agent_compute_state(self, stage: AgentComputeStage) -> None:
+        """Wake the API to read the retained terminal state by exact binding."""
+        with contextlib.suppress(ConnectionError):
+            await self.send({"event": "agent_compute_state", **_agent_compute_binding_dict(stage.binding)})
+
+    async def resend_agent_compute_rpcs(self) -> None:
+        """Replay unresolved child callbacks once after a new inventory frame."""
+        for stage in list(self.agent_compute_stages.values()):
+            if stage.state != "running":
+                continue
+            for request_id, request in list(stage.pending.items()):
+                await self.send_agent_compute_rpc(stage, request_id, request)
+
+    def _request_compute_retirement_drain(self) -> None:
+        if not self._compute_retirement_drain_sent:
+            self._compute_retirement_drain_sent = True
+            self.task(self.send_compute_retirement_drain())
+
+    async def send_compute_retirement_drain(self) -> None:
+        """Use the ordinary drain signal after a bounded compute ledger fills."""
+        with contextlib.suppress(ConnectionError):
+            await self.send({"event": "draining"})
+
     @staticmethod
     async def kill_process(process: asyncio.subprocess.Process) -> None:
         if process.returncode is not None:
@@ -592,6 +1020,161 @@ class Launcher:
             with contextlib.suppress(ProcessLookupError):
                 os.killpg(process.pid, signal.SIGKILL)
             await process.wait()
+
+    def agent_compute_result_ready(self, stage_id: str) -> None:
+        """Drain callback frames without ever treating them as workflow results."""
+        stage = self.agent_compute_stages.get(stage_id)
+        if stage is None or stage.result is None:
+            return
+        while True:
+            try:
+                frame = stage.result.get_nowait()
+            except Empty:
+                return
+            except (EOFError, OSError):
+                self._mark_agent_compute_terminal(
+                    stage, {"ok": False, "error_type": "ProcessCrashError", "error": "Child exited without a terminal frame"}
+                )
+                return
+            if not isinstance(frame, dict) or frame.get("stage_id") != stage.binding.stage_id:
+                self._fail_agent_compute_protocol(stage, "Agent compute child sent an invalid frame")
+                return
+            try:
+                frame_size = len(_agent_compute_json(frame, label="Agent compute child frame"))
+            except ValueError:
+                self._fail_agent_compute_protocol(stage, "Agent compute child frame is not JSON serializable")
+                return
+            if frame_size > MAX_AGENT_COMPUTE_FRAME_BYTES:
+                self._fail_agent_compute_protocol(stage, "Agent compute child frame exceeds the byte limit")
+                return
+            if frame.get("kind") == "rpc":
+                self._receive_agent_compute_rpc(stage, frame)
+                if stage.state != "running":
+                    return
+                continue
+            if frame.get("kind") == "terminal":
+                terminal: dict[str, Any] = {"ok": frame.get("ok") is True}
+                if terminal["ok"]:
+                    terminal["result"] = frame.get("result")
+                else:
+                    terminal["error_type"] = str(frame.get("error_type") or "AgentComputeError")
+                    terminal["error"] = str(frame.get("error") or "Agent compute child failed")
+                    # A provider may have reported usage or an empty-output
+                    # guard before a later budget/runtime failure. Preserve
+                    # that bounded evidence; the API remains authoritative
+                    # for billing validation.
+                    if "result" in frame:
+                        terminal["result"] = frame["result"]
+                self._mark_agent_compute_terminal(stage, terminal)
+                return
+            self._fail_agent_compute_protocol(stage, "Agent compute child sent an unknown frame")
+            return
+
+    def _receive_agent_compute_rpc(self, stage: AgentComputeStage, frame: dict[str, Any]) -> None:
+        request_id = frame.get("request_id")
+        op = frame.get("op")
+        payload = frame.get("payload")
+        stream = frame.get("stream")
+        try:
+            request_id = _agent_compute_uuid(request_id, "request_id")
+        except ValueError as exc:
+            self._fail_agent_compute_protocol(stage, str(exc), error_type=type(exc).__name__)
+            return
+        if not isinstance(op, str) or not op or not isinstance(payload, dict) or type(stream) is not bool:
+            self._fail_agent_compute_protocol(stage, "Agent compute RPC frame is invalid")
+            return
+        if request_id in stage.pending or any(key[0] == request_id for key in stage.reply_receipts):
+            self._fail_agent_compute_protocol(stage, "Agent compute child reused a callback request ID")
+            return
+        frame_bytes = len(_agent_compute_json(frame, label="Agent compute RPC frame"))
+        if (
+            len(stage.pending) >= MAX_AGENT_COMPUTE_INFLIGHT_RPCS
+            or stage.total_rpc_bytes + frame_bytes > MAX_AGENT_COMPUTE_RPC_BYTES
+            or stage.request_count >= MAX_AGENT_COMPUTE_RPC_RECEIPTS
+        ):
+            self._agent_compute_retire_requested = True
+            self._fail_agent_compute_protocol(
+                stage, "Agent compute callback journal limit is reached", error_type="ResourceLimitError"
+            )
+            return
+        request = AgentComputeRequest(frame=frame, frame_bytes=frame_bytes, stream=stream)
+        stage.pending[request_id] = request
+        stage.total_rpc_bytes += frame_bytes
+        stage.request_count += 1
+        self.task(self.send_agent_compute_rpc(stage, request_id, request))
+
+    def _mark_agent_compute_terminal(self, stage: AgentComputeStage, terminal: dict[str, Any]) -> None:
+        if stage.state == "terminal":
+            return
+        stage.state, stage.terminal = "terminal", terminal
+        stage.pending.clear()
+        stage.total_rpc_bytes = 0
+        if stage.result is not None:
+            with contextlib.suppress(Exception):
+                asyncio.get_running_loop().remove_reader(stage.result.fileno())
+        if stage.work is not None:
+            stage.work.close()
+            stage.work = None
+        if stage.result is not None:
+            stage.result.close()
+            stage.result = None
+        self.task(self.send_agent_compute_state(stage))
+
+    def _fail_agent_compute_protocol(
+        self, stage: AgentComputeStage, error: str, *, error_type: str = "ProtocolError"
+    ) -> None:
+        self._mark_agent_compute_terminal(
+            stage, {"ok": False, "error_type": error_type, "error": error}
+        )
+        self.task(self._stop_agent_compute_stage(stage))
+
+    async def _fail_agent_compute_stage(
+        self, stage: AgentComputeStage, error_type: str, error: str, *, stop_child: bool = False
+    ) -> None:
+        self._mark_agent_compute_terminal(
+            stage, {"ok": False, "error_type": error_type, "error": error[:4096]}
+        )
+        if stop_child:
+            with contextlib.suppress(Exception):
+                await self._stop_agent_compute_stage(stage)
+
+    async def _stop_agent_compute_stage(self, stage: AgentComputeStage) -> None:
+        if stage.pid is None:
+            return
+        stat = proc_stat(stage.pid)
+        if stat is None or stat.state == "Z":
+            return
+        os.kill(stage.pid, signal.SIGTERM)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            stat = proc_stat(stage.pid)
+            if stat is None or stat.state == "Z":
+                return
+            await asyncio.sleep(.05)
+        os.kill(stage.pid, signal.SIGKILL)
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            stat = proc_stat(stage.pid)
+            if stat is None or stat.state == "Z":
+                return
+            await asyncio.sleep(.05)
+        raise RuntimeError("Agent compute child did not stop")
+
+    def agent_compute_telemetry(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        for stage in self.agent_compute_stages.values():
+            sampler = stage.sampler
+            if sampler is not None and stage.state == "running":
+                sampler.sample(time.monotonic())
+            records.append({
+                "stage_id": stage.binding.stage_id,
+                "pid": stage.pid,
+                "state": stage.state,
+                "rss_bytes": sampler.last_process_rss_bytes if sampler else None,
+                "peak_memory_bytes": sampler.peak_process_rss_bytes if sampler else None,
+                "peak_cpu_cores": sampler.peak_cpu_cores if sampler else None,
+            })
+        return records
 
     def result_ready(self, route_id: str) -> None:
         child = self.children.get(route_id)
@@ -701,11 +1284,15 @@ class Launcher:
                     logger.warning("Execution template died; replacing it")
                     await asyncio.to_thread(self.template.start)
             async with self._agent_template_lock:
-                if not self.agent_template.is_alive():
+                if self.agent_template is not None and not self.agent_template.is_alive():
                     # Its live children keep running; reap_exited_agent_children
                     # reaps those that re-parent to the launcher.
                     logger.warning("Agent template died; replacing it")
                     await asyncio.to_thread(self.agent_template.start)
+            async with self._agent_compute_template_lock:
+                if self._agent_compute_template_ready and not self.agent_compute_template.is_alive():
+                    logger.warning("Agent compute template died; replacing it")
+                    await asyncio.to_thread(self.agent_compute_template.start)
             current, limit = effective_memory_sample()
             samples = {}
             for child in list(self.children.values()):
@@ -730,6 +1317,9 @@ class Launcher:
                     if child.service is None:
                         child.terminal_reason = reason
                     self.task(self.terminate(child.route_id, *reason, grace=0))
+            for stage in self.agent_compute_stages.values():
+                if stage.state == "running" and stage.sampler is not None:
+                    stage.sampler.sample(time.monotonic())
             self.stop_largest_when_dangerous(
                 current, limit,
                 dangerous=memory_pressure_ratio() >= (self.dangerous_memory_ratio or 1),
@@ -739,10 +1329,18 @@ class Launcher:
                 async with self._template_lock:
                     await asyncio.to_thread(self.template.collect_child_exit_statuses)
                 async with self._agent_template_lock:
-                    await asyncio.to_thread(self.agent_template.collect_child_exit_statuses)
+                    if self.agent_template is not None:
+                        await asyncio.to_thread(self.agent_template.collect_child_exit_statuses)
+                async with self._agent_compute_template_lock:
+                    if self._agent_compute_template_ready:
+                        await asyncio.to_thread(
+                            self.agent_compute_template.collect_child_exit_statuses
+                        )
                 with contextlib.suppress(ConnectionError):
                     await self.send({"event": "sample", "current": current, "limit": limit,
-                                     "pressure_ratio": memory_pressure_ratio(), "runs": samples})
+                                     "pressure_ratio": memory_pressure_ratio(), "runs": samples,
+                                     "compute_stages": self.app_compiles.telemetry(),
+                                     "agent_compute_stages": self.agent_compute_telemetry()})
             tick += 1
             await asyncio.sleep(.25)
 
@@ -756,12 +1354,24 @@ class Launcher:
             return
         candidates = [child for child in self.children.values()
                       if not child.stopping and child.terminal_reason is None]
-        if not candidates:
-            return
-        child = max(candidates, key=lambda item: item.current_growth)
-        reason = ("MemoryLimitExceeded", "Runner memory pressure")
-        child.terminal_reason = reason
-        self.task(self.terminate(child.route_id, *reason, grace=0))
+        compute_stages = [
+            stage for stage in self.agent_compute_stages.values()
+            if stage.state == "running" and stage.sampler is not None
+        ]
+        if candidates:
+            child = max(candidates, key=lambda item: item.current_growth)
+            if not compute_stages or child.current_growth >= max(
+                stage.sampler.growth_bytes() or 0 for stage in compute_stages
+            ):
+                reason = ("MemoryLimitExceeded", "Runner memory pressure")
+                child.terminal_reason = reason
+                self.task(self.terminate(child.route_id, *reason, grace=0))
+                return
+        if compute_stages:
+            stage = max(compute_stages, key=lambda item: item.sampler.growth_bytes() or 0)
+            self.task(self._fail_agent_compute_stage(
+                stage, "MemoryLimitExceeded", "Runner memory pressure", stop_child=True
+            ))
 
     async def stop(self) -> None:
         self.on_stop()
@@ -775,8 +1385,23 @@ class Launcher:
             child.result.close()
         self.children.clear()
         await asyncio.gather(*(self.kill_process(p) for p in self.jobs.values()))
+        for stage in list(self.agent_compute_stages.values()):
+            with contextlib.suppress(Exception):
+                await self._stop_agent_compute_stage(stage)
+            if stage.work is not None:
+                stage.work.close()
+            if stage.result is not None:
+                with contextlib.suppress(Exception):
+                    asyncio.get_running_loop().remove_reader(stage.result.fileno())
+                stage.result.close()
+        self.agent_compute_stages.clear()
+        await self.app_compiles.shutdown()
         await asyncio.to_thread(self.template.shutdown)
-        await asyncio.to_thread(self.agent_template.shutdown)
+        if self.agent_template is not None:
+            await asyncio.to_thread(self.agent_template.shutdown)
+        if self._agent_compute_template_ready:
+            await asyncio.to_thread(self.agent_compute_template.shutdown)
+            self._agent_compute_template_ready = False
 
     async def begin_drain(self) -> None:
         """Ask the API to drain and retain physical children for its grace."""
@@ -786,7 +1411,13 @@ class Launcher:
         # A child leaves ``children`` before its terminal result is ACKed.
         # Do not cancel that replay task merely because the process itself
         # exited; the canonical owner must persist the terminal outcome.
-        while (self.children or self.jobs or self.pending_terminal) and time.monotonic() < deadline:
+        while (
+            self.children
+            or self.jobs
+            or self.app_compiles.has_live
+            or any(stage.state in {"starting", "running"} for stage in self.agent_compute_stages.values())
+            or self.pending_terminal
+        ) and time.monotonic() < deadline:
             await asyncio.sleep(0.1)
 
 
@@ -817,7 +1448,9 @@ async def _run_launcher(
     control_url += "/api/worker-control"
     control_headers = load_control_headers(control_url)
     identity = load_launcher_identity()
-    secret = os.environ["BIFROST_SECRET_KEY"]
+    secret = os.environ[
+        "BIFROST_WORKER_CONTROL_SECRET" if identity.form == "external" else "BIFROST_SECRET_KEY"
+    ]
     launcher: Launcher | None = None
     candidate: Launcher | None = None
     stopping = asyncio.Event()
@@ -840,6 +1473,20 @@ async def _run_launcher(
                             # A lost welcome may follow a committed enrollment.
                             # Keep the physical identity's monotonic hello sequence.
                             candidate.socket = socket
+                        # ``agent.loop.v1`` is advertised only after the
+                        # physical pure-compute template is genuinely ready.
+                        # Both profiles preload platform dependencies; the
+                        # legacy agent profile does not consume workspace
+                        # requirements. Warm it alongside pure compute so
+                        # enrollment does not serialize their cold imports.
+                        warmups = [candidate.start_agent_compute_template()]
+                        if candidate.agent_template is not None:
+                            warmups.append(asyncio.to_thread(candidate.agent_template.start))
+                        outcomes = await asyncio.gather(*warmups, return_exceptions=True)
+                        for outcome in outcomes:
+                            if isinstance(outcome, (Exception, asyncio.CancelledError)):
+                                candidate.failed = True
+                                raise outcome
                         # Enroll before the potentially minute-long requirements
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the
@@ -871,6 +1518,7 @@ async def _run_launcher(
                         "event": "inventory", "inventory": launcher.inventory(),
                         "requirements": launcher.requirements,
                     })
+                    await launcher.resend_agent_compute_rpcs()
                     for event in launcher.pending_terminal.values():
                         await launcher.send(event)
                     drain_task = await _receive_control_commands(
@@ -881,7 +1529,8 @@ async def _run_launcher(
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                if launcher is not None and launcher.failed:
+                current = launcher if launcher is not None else candidate
+                if current is not None and current.failed:
                     message = "Remote launcher initialization or supervision failed"
                     level = logging.ERROR
                 else:
@@ -892,13 +1541,14 @@ async def _run_launcher(
                     logger.log(level, "%s (%s)", message, type(exc).__name__)
                 else:
                     logger.log(level, message, exc_info=True)
-                if stopping.is_set() or (launcher is not None and launcher.failed):
+                if stopping.is_set() or (current is not None and current.failed):
                     break
                 await asyncio.sleep(1)
     finally:
-        if launcher is not None:
-            await _shutdown_launcher(launcher, drain_task, stopping)
-    return 1 if launcher is not None and launcher.failed else 0
+        cleanup = launcher if launcher is not None else candidate
+        if cleanup is not None:
+            await _shutdown_launcher(cleanup, drain_task, stopping)
+    return 1 if cleanup is not None and cleanup.failed else 0
 
 
 async def main() -> int:

@@ -4,6 +4,7 @@ import json
 import multiprocessing
 import os
 import time
+import threading
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
@@ -112,6 +113,9 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
     closed = asyncio.Event()
     socket = Mock(close=AsyncMock(side_effect=lambda **_kwargs: closed.set()))
     launcher = _launcher(socket)
+    # This control-loop unit owns fake startup profiles; real warmup is tested separately.
+    launcher.agent_template = _live_template()
+    launcher.start_agent_compute_template = AsyncMock()
     launcher.template = Mock(
         is_alive=Mock(return_value=False), start=Mock(side_effect=RuntimeError("Template failed")),
     )
@@ -152,6 +156,9 @@ async def test_fatal_launcher_exits_instead_of_reconnecting() -> None:
 async def test_failed_bootstrap_exits_without_reusing_an_authenticated_identity() -> None:
     socket = Mock()
     launcher = _launcher(socket)
+    # This control-loop unit owns fake startup profiles; real warmup is tested separately.
+    launcher.agent_template = _live_template()
+    launcher.start_agent_compute_template = AsyncMock()
     launcher.hello = AsyncMock()
     launcher.start = AsyncMock(side_effect=RuntimeError("agent template database unavailable"))
     launcher.stop = AsyncMock()
@@ -180,10 +187,20 @@ async def test_failed_bootstrap_exits_without_reusing_an_authenticated_identity(
 @pytest.mark.asyncio
 async def test_lost_initial_welcome_preserves_the_hello_sequence() -> None:
     first = Mock(send=AsyncMock(), recv=AsyncMock(side_effect=ConnectionError("welcome lost")))
-    second = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
-        "event": "welcome", "session_generation": 2,
-    })))
+    second = Mock(send=AsyncMock(), recv=AsyncMock())
+    second.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 2}),
+        ControlEnvelope(
+            session_generation=2,
+            sequence=1,
+            kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
     launcher = _launcher(first)
+    # This control-loop unit owns fake startup profiles; real warmup is tested separately.
+    launcher.agent_template = _live_template()
+    launcher.start_agent_compute_template = AsyncMock()
     launcher.start, launcher.stop, launcher.send = (AsyncMock() for _ in range(3))
     launcher.inventory = Mock(return_value={})
     sockets = iter((first, second))
@@ -767,18 +784,26 @@ async def test_unencodable_result_becomes_replayable_failure_and_next_result_com
     assert len(launcher.pending_terminal) == len(launcher.pending_terminal_inventory) == 2
     assert "sensitive" not in json.dumps(sent)
 
-    new_socket = Mock(send=AsyncMock(), recv=AsyncMock(return_value=json.dumps({
-        "event": "welcome", "session_generation": 2,
-    })))
+    new_socket = Mock(send=AsyncMock(), recv=AsyncMock())
+    new_socket.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 2}),
+        ControlEnvelope(
+            session_generation=2,
+            sequence=1,
+            kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
     await launcher.reconnect(new_socket, {})
     for event in list(launcher.pending_terminal.values()):
         await launcher.send(event)
     replayed = [ControlEnvelope.from_json(call.args[0]).payload for call in new_socket.send.await_args_list[1:]]
     assert replayed == sent
+    next_sequence = launcher._last_command_sequence + 1
     acks = [ControlEnvelope(session_generation=2, sequence=i, kind="ack",
                             payload={"event_id": event["_event_id"]}).to_json()
-            for i, event in enumerate(replayed, start=1)]
-    retired = ControlEnvelope(session_generation=2, sequence=3, kind="command",
+            for i, event in enumerate(replayed, start=next_sequence)]
+    retired = ControlEnvelope(session_generation=2, sequence=next_sequence + len(acks), kind="command",
                               payload={"id": "retire", "action": "retired", "payload": {}}).to_json()
     frames = iter([*acks, retired])
 
@@ -811,3 +836,56 @@ async def test_transport_failure_retains_original_result_for_replay() -> None:
     socket.send.side_effect = None
     await launcher.send(pending)
     assert [ControlEnvelope.from_json(call.args[0]).payload for call in socket.send.await_args_list][-1] == pending
+
+
+@pytest.mark.asyncio
+async def test_pre_enrollment_warmup_failure_joins_and_stops_the_owned_candidate(monkeypatch):
+    from src.worker.remote import launcher as module
+
+    candidate = _launcher(Mock())
+    legacy_started = threading.Event()
+    pure_failed = threading.Event()
+    release_legacy = threading.Event()
+    legacy_finished = threading.Event()
+
+    def warm_legacy():
+        legacy_started.set()
+        assert release_legacy.wait(2), "Test did not release the owned warmup"
+        legacy_finished.set()
+
+    async def fail_pure():
+        assert await asyncio.to_thread(legacy_started.wait, 2), "Warmups were serialized"
+        pure_failed.set()
+        raise RuntimeError("Owned template initialization failed")
+
+    async def stopped():
+        assert legacy_finished.is_set(), "Cleanup raced an unfinished template start"
+
+    candidate.agent_template = Mock(start=warm_legacy)
+    candidate.start_agent_compute_template = fail_pure
+    candidate.hello = AsyncMock()
+    candidate.stop = AsyncMock(side_effect=stopped)
+
+    @asynccontextmanager
+    async def connect(*_args, **_kwargs):
+        yield Mock()
+
+    monkeypatch.setattr(module, "connect_control", connect)
+    monkeypatch.setattr(module, "Launcher", lambda *_args, **_kwargs: candidate)
+    monkeypatch.setattr(module, "load_launcher_identity", lambda: candidate.identity)
+    monkeypatch.setenv("BIFROST_SECRET_KEY", "test-secret")
+    monkeypatch.setattr(asyncio.get_running_loop(), "add_signal_handler", lambda *_args: None)
+    pending = asyncio.create_task(module.run_launcher())
+    try:
+        assert await asyncio.to_thread(pure_failed.wait, 2)
+        assert not pending.done()
+        candidate.stop.assert_not_awaited()
+        release_legacy.set()
+        assert await asyncio.wait_for(pending, 2) == 1
+        candidate.hello.assert_not_awaited()
+        candidate.stop.assert_awaited_once()
+    finally:
+        release_legacy.set()
+        if not pending.done():
+            pending.cancel()
+            await asyncio.gather(pending, return_exceptions=True)

@@ -15,42 +15,37 @@ This is the ONE canonical build path: git-connected installs always build here
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import logging
 import subprocess
-import tempfile
 from pathlib import Path
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from bifrost.app_build_identity import build_identity, build_recipe, valid_recipe
-from bifrost.app_lockfile import ReproducibleDependencyBuildError, refresh_sdk_lockfile
+from bifrost.app_lockfile import ReproducibleDependencyBuildError
 from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
+from shared.solution_app_compiler import (
+    AppBuildResult,
+    BUILD_STEP_TIMEOUT_S,
+    AppBuildInputs,
+    compile_app,
+    output_tail,
+    source_build_identity,
+)
 from shared.subprocess_env import package_tool_env
 from src.config import Settings, get_settings
 from src.core.storage import object_pages, object_store, optional_read
 from src.core.storage.contracts import ObjectStore
 
+if TYPE_CHECKING:
+    from src.jobs.platform.base import AppBuildCompute
+
 logger = logging.getLogger(__name__)
 
 APPS_PREFIX = "_apps/"
-
-# Hard cap per npm/vite step. The build runs under the self-renewing per-install
-# write lock (write_lock.py renews forever), so an un-timeboxed hang — e.g. a
-# dependency's postinstall script waiting on the network — would wedge the
-# install until process restart (every subsequent deploy 409s).
-_BUILD_STEP_TIMEOUT_S = 600
-
-# How much of a failed step's output is surfaced on the deploy job.
-_FAILURE_OUTPUT_LINES = 20
-
-
-def _output_tail(exc: subprocess.CalledProcessError) -> str:
-    """The last lines of a failed step's stderr, or stdout when stderr is empty."""
-    raw = exc.stderr or exc.output or b""
-    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else raw
-    lines = [line for line in text.strip().splitlines() if line.strip()]
-    return "\n".join(lines[-_FAILURE_OUTPUT_LINES:]) or "(no output)"
 
 
 class SolutionAppBuilder:
@@ -82,16 +77,63 @@ class SolutionAppBuilder:
         self, app_id: UUID | str, files: dict[str, bytes], dependencies: dict[str, str],
         *, require_lockfile: bool = False,
     ) -> str:
+        sdk_tarball = self._sdk_tarball()
+        return source_build_identity(self._compiler_inputs(
+            app_id,
+            files,
+            dependencies,
+            sdk_tarball,
+            require_lockfile=require_lockfile,
+        ))
+
+    def _sdk_tarball(self) -> bytes:
         from shared.version import get_version
         from src.services.sdk_package import build_sdk_tarball
 
+        return build_sdk_tarball(get_version())
+
+    def _compiler_inputs(
+        self,
+        app_id: UUID | str,
+        files: dict[str, bytes],
+        dependencies: dict[str, str],
+        sdk_tarball: bytes,
+        *,
+        require_lockfile: bool,
+    ) -> AppBuildInputs:
+        environment = package_tool_env()
         if require_lockfile not in self._recipes:
             self._recipes[require_lockfile] = build_recipe(
-                build_sdk_tarball(get_version()),
+                sdk_tarball,
                 variant="server-locked-v1" if require_lockfile else "server-install-v2",
-                environment=package_tool_env(),
+                environment=environment,
             )
-        return build_identity(app_id, files, dependencies, self._recipes[require_lockfile])
+        return AppBuildInputs(
+            app_id=app_id,
+            source_files=files,
+            dependencies=dependencies,
+            sdk_tarball=sdk_tarball,
+            recipe=self._recipes[require_lockfile],
+            environment=environment,
+            require_lockfile=require_lockfile,
+        )
+
+    def _compile_inputs_for_remote(
+        self,
+        app_id: UUID | str,
+        files: dict[str, bytes],
+        dependencies: dict[str, str],
+        *,
+        require_lockfile: bool,
+    ) -> AppBuildInputs:
+        """Prepare the exact SDK-bearing compiler inputs off the API loop."""
+        return self._compiler_inputs(
+            app_id,
+            files,
+            dependencies,
+            self._sdk_tarball(),
+            require_lockfile=require_lockfile,
+        )
 
     @staticmethod
     def attested_identity(
@@ -176,53 +218,80 @@ class SolutionAppBuilder:
         self.last_build_identity = None
         if prebuilt_dist:
             return prebuilt_dist
-        with tempfile.TemporaryDirectory(prefix=f"bifrost-appbuild-{app_id}-") as tmp:
-            workdir = Path(tmp)
-            try:
-                identity = self.source_identity(app_id, src_files, dependencies, require_lockfile=require_lockfile)
-                self._materialize(workdir, src_files, dependencies)
-                # base must match the serving route so emitted asset URLs resolve
-                # under /api/applications/{id}/dist/ rather than the site root.
-                vite_kwargs = {"require_lockfile": True} if require_lockfile else {}
-                dist = self._run_vite_build(
-                    workdir,
-                    base=self._dist_base(app_id),
-                    **vite_kwargs,
+        try:
+            result = compile_app(
+                self._compiler_inputs(
+                    app_id,
+                    src_files,
+                    dependencies,
+                    self._sdk_tarball(),
+                    require_lockfile=require_lockfile,
                 )
-                self.last_build_identity = identity
-                return dist
-            except ReproducibleDependencyBuildError as exc:
-                if require_lockfile:
-                    raise
-                from src.services.solutions.deploy import SolutionDeployConflict
+            )
+            self.last_build_identity = result.build_identity
+            return result.artifacts
+        except ReproducibleDependencyBuildError as exc:
+            if require_lockfile:
+                raise
+            from src.services.solutions.deploy import SolutionDeployConflict
 
-                raise SolutionDeployConflict(str(exc)) from exc
-            except subprocess.TimeoutExpired as exc:
-                # Translate to the deploy's build-failure exception (→ 409 with
-                # the reason) instead of an unhandled TimeoutExpired 500.
-                from src.services.solutions.deploy import SolutionDeployConflict
+            raise SolutionDeployConflict(str(exc)) from exc
+        except subprocess.TimeoutExpired as exc:
+            # Translate to the deploy's build-failure exception (→ 409 with
+            # the reason) instead of an unhandled TimeoutExpired 500.
+            from src.services.solutions.deploy import SolutionDeployConflict
 
-                raise SolutionDeployConflict(
-                    f"npm/vite step timed out after {_BUILD_STEP_TIMEOUT_S}s for "
-                    f"app {app_id}; a dependency's install script may be hanging"
-                ) from exc
-            except subprocess.CalledProcessError as exc:
-                memory_error = subprocess_memory_error(
-                    exc.returncode, exc.stderr, exc.stdout
-                )
-                if memory_error is not None:
-                    raise memory_error from exc
-                # Same translation for a non-OOM failing step, carrying the
-                # tool's own error so the deploy job reports why instead of
-                # "see server logs".
-                from src.services.solutions.deploy import SolutionDeployConflict
+            raise SolutionDeployConflict(
+                f"npm/vite step timed out after {BUILD_STEP_TIMEOUT_S}s for "
+                f"app {app_id}; a dependency's install script may be hanging"
+            ) from exc
+        except subprocess.CalledProcessError as exc:
+            memory_error = subprocess_memory_error(
+                exc.returncode, exc.stderr, exc.stdout
+            )
+            if memory_error is not None:
+                raise memory_error from exc
+            # Same translation for a non-OOM failing step, carrying the
+            # tool's own error so the deploy job reports why instead of
+            # "see server logs".
+            from src.services.solutions.deploy import SolutionDeployConflict
 
-                raise SolutionDeployConflict(
-                    f"`{' '.join(exc.cmd[:2])}` failed for app {app_id} "
-                    f"(exit {exc.returncode}):\n{_output_tail(exc)}"
-                ) from exc
-            except MemoryError as exc:
-                raise AppBuildMemoryError() from exc
+            raise SolutionDeployConflict(
+                f"`{' '.join(exc.cmd[:2])}` failed for app {app_id} "
+                f"(exit {exc.returncode}):\n{output_tail(exc)}"
+            ) from exc
+        except MemoryError as exc:
+            raise AppBuildMemoryError() from exc
+
+    async def compile_dist_using(
+        self,
+        app_id: UUID | str,
+        src_files: dict[str, bytes],
+        dependencies: dict[str, str],
+        compute: "AppBuildCompute",
+        prebuilt_dist: dict[str, bytes] | None = None,
+        *,
+        require_lockfile: bool = False,
+    ) -> dict[str, bytes]:
+        """Compile through an explicitly supplied physical compute stage.
+
+        Storage and activation remain with this adapter's caller.  A remote
+        compute failure deliberately propagates: it must never fall back to
+        compiling the same inputs in the API process.
+        """
+        self.last_build_identity = None
+        if prebuilt_dist:
+            return prebuilt_dist
+        inputs = await asyncio.to_thread(
+            self._compile_inputs_for_remote,
+            app_id,
+            src_files,
+            dependencies,
+            require_lockfile=require_lockfile,
+        )
+        result: AppBuildResult = await compute(inputs)
+        self.last_build_identity = result.build_identity
+        return result.artifacts
 
     async def upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         """Full-replace upload of an already-compiled dist/ to
@@ -257,107 +326,6 @@ class SolutionAppBuilder:
     def _dist_base(app_id: UUID | str) -> str:
         """The public URL prefix the built assets are served from."""
         return f"/api/applications/{app_id}/dist/"
-
-    # The app resolves `import ... from "bifrost"` against this local tarball,
-    # the SAME `bifrost` package /api/sdk/download serves to a dev laptop. We
-    # drop it into the workspace and reference it as a file: dependency so the
-    # build needs no registry/network (and stays deterministic). One mechanism,
-    # laptop == server (Codex P1-a).
-    _SDK_TARBALL = "bifrost-sdk.tgz"
-
-    def _materialize(
-        self, workdir: Path, src_files: dict[str, bytes], dependencies: dict[str, str]
-    ) -> None:
-        """Lay out the app sources + a package.json carrying its npm deps, and
-        vendor the local ``bifrost`` SDK tarball so ``import from "bifrost"``
-        resolves during the build."""
-        from shared.version import get_version
-        from src.services.sdk_package import build_sdk_tarball
-
-        for rel, content in src_files.items():
-            dest = workdir / rel
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            dest.write_bytes(content)
-
-        # Drop the instance's bifrost SDK tarball next to the app.
-        (workdir / self._SDK_TARBALL).write_bytes(build_sdk_tarball(get_version()))
-
-        # Build package.json: app deps + a file: ref to the SDK tarball. If the
-        # app already shipped a package.json (its own deps/scripts), merge the
-        # SDK ref into its dependencies rather than clobbering it.
-        deps = {**(dependencies or {}), "bifrost": f"file:./{self._SDK_TARBALL}"}
-        pkg = workdir / "package.json"
-        if pkg.exists():
-            existing = json.loads(pkg.read_text())
-            existing.setdefault("dependencies", {})
-            existing["dependencies"] = {**existing["dependencies"], **deps}
-            pkg.write_text(json.dumps(existing, indent=2))
-        else:
-            pkg.write_text(
-                json.dumps(
-                    {"name": "bifrost-app", "private": True, "dependencies": deps},
-                    indent=2,
-                )
-            )
-
-    def _run_vite_build(
-        self,
-        workdir: Path,
-        base: str = "/",
-        *,
-        require_lockfile: bool = False,
-    ) -> dict[str, bytes]:
-        """Install declared deps, run ``vite build`` in ``workdir``, and return
-        the produced dist/ files.
-
-        Isolated as a seam so tests can stub it (the Node toolchain is an
-        environmental dependency, not under unit test). ``base`` is passed to
-        Vite so emitted asset URLs in index.html resolve under the serving
-        route, not the site root. ``npm install`` runs first so a real app's
-        declared dependencies (react, the bifrost SDK, etc.) resolve during the
-        build — Vite cannot resolve bare imports from a bare package.json alone.
-        """
-        locked = require_lockfile or (workdir / "package-lock.json").exists()
-        if locked:
-            self._refresh_sdk_lockfile(workdir)
-        install_command = (
-            ["npm", "ci", "--no-audit", "--no-fund"]
-            if locked
-            else ["npm", "install", "--no-audit", "--no-fund", "--package-lock=false"]
-        )
-        subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            install_command,
-            cwd=str(workdir),
-            check=True,
-            capture_output=True,
-            timeout=_BUILD_STEP_TIMEOUT_S,
-            env=package_tool_env(),
-        )
-        vite_command = ["npx", "vite"]
-        if locked:
-            locked_vite = workdir / "node_modules" / ".bin" / "vite"
-            if not locked_vite.is_file():
-                raise ReproducibleDependencyBuildError(
-                    "Locked builds require Vite in package-lock.json; add Vite to the app dependencies and update the lockfile."
-                )
-            vite_command = [str(locked_vite)]
-        subprocess.run(  # noqa: S603 - trusted toolchain, fixed argv
-            [*vite_command, "build", "--base", base],
-            cwd=str(workdir),
-            check=True,
-            capture_output=True,
-            timeout=_BUILD_STEP_TIMEOUT_S,
-            env=package_tool_env(),
-        )
-        dist_dir = workdir / "dist"
-        out: dict[str, bytes] = {}
-        for f in dist_dir.rglob("*"):
-            if f.is_file():
-                out[f.relative_to(dist_dir).as_posix()] = f.read_bytes()
-        return out
-
-    def _refresh_sdk_lockfile(self, workdir: Path) -> None:
-        refresh_sdk_lockfile(workdir, npm="npm", timeout=_BUILD_STEP_TIMEOUT_S, env=package_tool_env())
 
     async def _upload_dist(self, app_id: UUID | str, dist: dict[str, bytes]) -> None:
         # Full replace: a redeploy must not leave a removed/renamed asset

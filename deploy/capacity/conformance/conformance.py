@@ -9,8 +9,8 @@ and real clouds.
     python conformance.py --base-url https://127.0.0.1:8443 \
         --token-env CAPACITY_TOKEN --scope demo --hook-command ./hooks/docker_floci.py
 
-Exit code 0 means every executed case passed. Skipped cases (a hook that cannot
-support an operation) are reported as SKIP and never counted as passes.
+Exit code 0 means every required case passed, with no skips. Unsupported hooks
+produce SKIP and exit 2 (incomplete); failures exit 1. Neither qualifies a provider.
 
 Hook protocol: the hook is invoked as `<hook> <op>` with a JSON object on stdin
 and must write a JSON object to stdout.
@@ -51,6 +51,10 @@ DEFAULT_USER_AGENT = "bifrost-capacity-conformance/1.0"
 PASSED, FAILED, SKIPPED = "PASS", "FAIL", "SKIP"
 
 
+class HookUnsupported(RuntimeError):
+    """The hook cannot perform this operation for this provider."""
+
+
 class Hook:
     def __init__(self, command: str | None) -> None:
         self.command = command
@@ -60,7 +64,7 @@ class Hook:
 
     def call(self, op: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
         if not self.command:
-            raise RuntimeError("no hook configured")
+            raise HookUnsupported("no hook configured")
         # A hook may be a bare executable or a command line (e.g. "python hook.py").
         if " " in self.command:
             proc = subprocess.run(
@@ -80,7 +84,13 @@ class Hook:
                 timeout=180,
             )
         if proc.returncode != 0:
-            raise RuntimeError(f"hook {op} failed: {proc.stderr.strip()[:200]}")
+            message = (proc.stderr or "").strip()[:200]
+            # Exit 3 is the hook's documented "cannot do this here" signal. A
+            # provider that cannot support an operation must SKIP the case, not
+            # fail it, and must never let it count as a pass.
+            if proc.returncode == 3:
+                raise HookUnsupported(message or f"hook does not support {op}")
+            raise RuntimeError(f"hook {op} failed: {message}")
         try:
             return json.loads(proc.stdout or "{}")
         except ValueError:
@@ -94,8 +104,6 @@ class Client:
         self.scope = scope
         self.user_agent = user_agent
         self._ctx = ssl.create_default_context()
-        self._ctx.check_hostname = False
-        self._ctx.verify_mode = ssl.CERT_NONE
 
     def request(
         self,
@@ -197,8 +205,41 @@ class Suite:
     def launches(self, worker_id: str, uid: str) -> list[str]:
         if not self.hook.available():
             raise SkipCase("no hook: physical launches cannot be observed")
-        obs = self.hook.call("observe", {"worker_id": worker_id, "resource_uid": uid})
-        return list(obs.get("launches") or [])
+        try:
+            obs = self.hook.call("observe", {"worker_id": worker_id, "resource_uid": uid})
+        except HookUnsupported as exc:
+            raise SkipCase(str(exc)) from None
+        launches = obs.get("launches")
+        if (not isinstance(launches, list)
+                or not all(isinstance(item, str) and item for item in launches)
+                or len(set(launches)) != len(launches)):
+            raise ValueError("hook must report unique cumulative physical launch identities")
+        return launches
+
+    def wait_for_first_launch(self, worker_id: str, uid: str, timeout: int = 120) -> list[str]:
+        """Wait only for provider-side physical-launch evidence to appear.
+
+        A capacity provider may report ``starting`` synchronously while its
+        cloud's scheduling/dashboard telemetry has not yet recorded the
+        process. Once any launch is visible, return it immediately: the caller
+        must reject duplicates rather than retrying the conformance case.
+        """
+        deadline = time.monotonic() + timeout
+        while True:
+            launches = self.launches(worker_id, uid)
+            if launches:
+                return launches
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                return launches
+            time.sleep(min(2, remaining))
+
+    def hook_op(self, op: str, payload: dict[str, Any]) -> dict[str, Any]:
+        """Run a hook operation, converting 'unsupported here' into a skip."""
+        try:
+            return self.hook.call(op, payload)
+        except HookUnsupported as exc:
+            raise SkipCase(str(exc)) from None
 
     def wait_for_state(self, worker_id: str, wanted: set[str], timeout: int = 120) -> str:
         deadline = time.time() + timeout
@@ -289,8 +330,7 @@ def main() -> int:
             assert status == 200, f"status {status}"
             assert doc["resource_uid"] == uid, "resource_uid changed on repeat prepare"
             assert doc["state"] == "prepared"
-        if suite.hook.available():
-            assert suite.launches(prepared, uid) == [], "prepare launched a process"
+        assert suite.launches(prepared, uid) == [], "prepare launched a process"
 
     @suite.case("prepare: conflicting reservation rejected")
     def _() -> None:
@@ -322,7 +362,7 @@ def main() -> int:
 
     @suite.case("start: exactly one physical launch")
     def _() -> None:
-        launches = suite.launches(prepared, uid_prepared)
+        launches = suite.wait_for_first_launch(prepared, uid_prepared)
         assert len(launches) == 1, f"expected 1 launch, observed {len(launches)}: {launches}"
 
     @suite.case("start: replay does not launch a second incarnation")
@@ -367,52 +407,87 @@ def main() -> int:
         assert status in (400, 404), f"status {status}"
 
     # ---- restart durability -------------------------------------------
-    if suite.hook.available():
-        restart_worker = str(uuid.uuid4())
+    restart_worker = str(uuid.uuid4())
 
-        @suite.case("durability: prepared reservation survives provider restart")
-        def _() -> None:
-            status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
-            assert status == 200, f"status {status}"
-            uid = doc["resource_uid"]
-            suite.hook.call("restart-provider", {"scope": args.scope})
+    @suite.case("durability: prepared reservation survives provider restart")
+    def _() -> None:
+        status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
+        assert status == 200, f"status {status}"
+        uid = doc["resource_uid"]
+        suite.hook_op("restart-provider", {"scope": args.scope})
+        time.sleep(5)
+        status, after = suite.c.get(restart_worker)
+        assert status == 200, f"worker lost across restart ({status})"
+        assert after["resource_uid"] == uid, "UID changed across restart"
+        assert after["state"] == "prepared", f"state {after['state']}"
+
+    @suite.case("durability: tombstone survives provider restart")
+    def _() -> None:
+        status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
+        assert status == 200, f"status {status}"
+        uid = doc["resource_uid"]
+        status, _ = suite.c.delete(restart_worker, uid)
+        assert status == 200, f"delete status {status}"
+        suite.hook_op("restart-provider", {"scope": args.scope})
+        time.sleep(5)
+        status, after = suite.c.get(restart_worker)
+        assert status == 200, f"tombstone lost across restart ({status})"
+        assert after["state"] == "deleted", f"state {after['state']}"
+
+    @suite.case("durability: stopped incarnation never restarts")
+    def _() -> None:
+        wid = str(uuid.uuid4())
+        status, doc = suite.c.put(wid, suite.reservation(wid))
+        assert status == 200, f"status {status}"
+        uid = doc["resource_uid"]
+        assert suite.c.start(wid, uid)[0] == 200
+        suite.wait_for_state(wid, {"starting", "running", "stopped"}, timeout=180)
+        before = suite.launches(wid, uid)
+        if not before:
+            raise SkipCase("hook reported no launch to stop")
+        suite.hook_op("stop-process", {"worker_id": wid, "resource_uid": uid})
+        state = suite.wait_for_state(wid, {"stopped"}, timeout=180)
+        assert state == "stopped", f"expected stopped, saw {state}"
+        status, _doc = suite.c.start(wid, uid)
+        assert status >= 400, f"stopped incarnation accepted a start ({status})"
+        after = suite.launches(wid, uid)
+        assert len(after) == len(before), f"stopped incarnation relaunched: {after}"
+
+    @suite.case("uncertainty: lost start reply survives restart without duplicate or resurrection")
+    def _() -> None:
+        wid = str(uuid.uuid4())
+        status, doc = suite.c.put(wid, suite.reservation(wid))
+        assert status == 200, f"prepare status {status}"
+        uid = doc["resource_uid"]
+        try:
+            suite.hook_op("inject-fault", {
+                "phase": "start-response", "method": "POST",
+                "path": f"/v1/workers/{wid}/start",
+            })
+            try:
+                status, _doc = suite.c.start(wid, uid)
+                assert status >= 500, f"accepted response-loss fault not exercised ({status})"
+            except (urllib.error.URLError, TimeoutError, ConnectionError):
+                pass  # A dropped HTTP response is also an uncertain outcome.
+            finally:
+                suite.hook_op("clear-fault", {})
+            launches = suite.wait_for_first_launch(wid, uid)
+            assert len(launches) == 1, f"accepted uncertain start launches: {launches}"
+            suite.hook_op("restart-provider", {"scope": args.scope})
             time.sleep(5)
-            status, after = suite.c.get(restart_worker)
-            assert status == 200, f"worker lost across restart ({status})"
-            assert after["resource_uid"] == uid, "UID changed across restart"
-            assert after["state"] == "prepared", f"state {after['state']}"
-
-        @suite.case("durability: tombstone survives provider restart")
-        def _() -> None:
-            status, doc = suite.c.put(restart_worker, suite.reservation(restart_worker))
-            assert status == 200, f"status {status}"
-            uid = doc["resource_uid"]
-            status, _ = suite.c.delete(restart_worker, uid)
-            assert status == 200, f"delete status {status}"
-            suite.hook.call("restart-provider", {"scope": args.scope})
-            time.sleep(5)
-            status, after = suite.c.get(restart_worker)
-            assert status == 200, f"tombstone lost across restart ({status})"
-            assert after["state"] == "deleted", f"state {after['state']}"
-
-        @suite.case("durability: stopped incarnation never restarts")
-        def _() -> None:
-            wid = str(uuid.uuid4())
-            status, doc = suite.c.put(wid, suite.reservation(wid))
-            assert status == 200, f"status {status}"
-            uid = doc["resource_uid"]
-            assert suite.c.start(wid, uid)[0] == 200
-            suite.wait_for_state(wid, {"starting", "running", "stopped"}, timeout=180)
-            before = suite.launches(wid, uid)
-            if not before:
-                raise SkipCase("hook reported no launch to stop")
-            suite.hook.call("stop-process", {"worker_id": wid, "resource_uid": uid})
-            state = suite.wait_for_state(wid, {"stopped"}, timeout=180)
-            assert state == "stopped", f"expected stopped, saw {state}"
-            status, _doc = suite.c.start(wid, uid)
-            assert status >= 400, f"stopped incarnation accepted a start ({status})"
+            status, recovered = suite.c.get(wid)
+            assert status == 200 and recovered["resource_uid"] == uid
+            for _retry in range(2):
+                status, _doc = suite.c.start(wid, uid)
+                assert status == 200 or status >= 500, f"unexpected replay status {status}"
             after = suite.launches(wid, uid)
-            assert len(after) == len(before), f"stopped incarnation relaunched: {after}"
+            assert after == launches, f"uncertain start duplicated: {launches} -> {after}"
+            status, deleted = suite.c.delete(wid, uid)
+            assert status == 200 and deleted["state"] == "deleted", "cleanup unconfirmed"
+            assert suite.c.start(wid, uid)[0] == 409, "uncertain incarnation resurrected"
+            assert suite.launches(wid, uid) == launches
+        finally:
+            suite.c.delete(wid, uid)
 
     # ---- report -------------------------------------------------------
     total = len(suite.results)
@@ -435,6 +510,9 @@ def main() -> int:
             if status == FAILED:
                 print(f"  - {name}: {detail}", file=sys.stderr)
         return 1
+    if skipped:
+        print("conformance incomplete: required cases skipped", file=sys.stderr)
+        return 2
     if passed == 0:
         print("no cases passed; conformance is not established", file=sys.stderr)
         return 1

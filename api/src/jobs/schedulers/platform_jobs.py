@@ -20,6 +20,7 @@ from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_messag
 from src.core.database import get_db_context
 from src.jobs.platform.catalog import get_platform_job_metadata
 from src.models.orm.platform_jobs import PlatformJob
+from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.memory_monitor import get_cgroup_memory
 from src.services.platform_job_memory_profiles import (
     record_platform_job_memory_profile,
@@ -29,6 +30,8 @@ from src.services.platform_jobs import (
     WAITING_FOR_MEMORY,
     fail_linked_solution_export,
     publish_platform_job_update,
+    clear_platform_job_executor_attribution,
+    set_platform_job_executor_attribution,
 )
 from src.services.worker_pool.sizing import JobSizing
 
@@ -198,6 +201,8 @@ async def claim_platform_job(
     fits_bytes: int | None = None,
     isolated: IsolatedPods | None = None,
     memory_sample: tuple[int, int] | None = None,
+    job_types: frozenset[str] | None = None,
+    executor_worker_id: UUID | None = None,
 ) -> ClaimedPlatformJob | None:
     """Claim one admissible queued job using row locking and a fenced lease.
 
@@ -228,6 +233,7 @@ async def claim_platform_job(
                         PlatformJob.execution_backend == backend,
                         PlatformJob.status == "queued",
                         PlatformJob.available_at <= _now(),
+                        *([] if job_types is None else [PlatformJob.job_type.in_(job_types)]),
                     )
                     .order_by(PlatformJob.priority.desc(), PlatformJob.created_at.asc())
                 )
@@ -244,6 +250,7 @@ async def claim_platform_job(
                         PlatformJob.execution_backend == backend,
                         PlatformJob.status == "queued",
                         PlatformJob.available_at <= _now(),
+                        *([] if job_types is None else [PlatformJob.job_type.in_(job_types)]),
                     )
                     .with_for_update(skip_locked=True)
                 )
@@ -347,6 +354,15 @@ async def claim_platform_job(
 
             now = _now()
             token = uuid4()
+            worker: ExecutionWorker | None = None
+            if executor_worker_id is not None:
+                worker = await db.scalar(
+                    select(ExecutionWorker)
+                    .where(ExecutionWorker.id == executor_worker_id)
+                    .with_for_update(read=True)
+                )
+                if worker is None:
+                    continue
             job.status = "running"
             job.phase = (
                 "Waiting for Kubernetes capacity"
@@ -362,6 +378,10 @@ async def claim_platform_job(
             job.error_code = None
             job.error_message = None
             job.error_retryable = None
+            if worker is not None:
+                set_platform_job_executor_attribution(job, worker)
+            else:
+                clear_platform_job_executor_attribution(job)
             if isolated is not None and pod_memory is not None:
                 job.kubernetes_job_name = _remote_job_name(job.id, token)
                 job.kubernetes_namespace = isolated.namespace

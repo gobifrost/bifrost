@@ -16,7 +16,8 @@ from src.models.contracts.executions import WorkflowExecutionResponse
 from src.models.enums import ExecutionStatus
 from src.models.orm.agent_runs import AgentRun
 from src.repositories.knowledge import KnowledgeDocument
-from src.services.agent_runtime import AgentRunBudget, BifrostToolset
+from src.services.agent_runtime.budgets import AgentRunBudget
+from src.services.agent_runtime.toolset import BifrostToolset
 from src.services.authorization.enforce import Caller
 from src.services.authorization.agent_runtime import AgentRuntimeAuthorizationError
 from src.services.execution.agent_helpers import find_delegated_agent

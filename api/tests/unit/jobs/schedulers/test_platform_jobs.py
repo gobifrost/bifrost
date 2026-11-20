@@ -191,6 +191,22 @@ def patch_context(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("allowed", [frozenset(), frozenset({"application.deploy"})])
+async def test_compute_claim_filter_leaves_unsupported_jobs_queued(db_session, allowed):
+    unsupported = await _queued_job(db_session)
+    supported = await _queued_remote_build_job(db_session, clear_existing=False)
+    supported.execution_backend = "local"
+    await db_session.flush()
+
+    claim = await scheduler.claim_platform_job(
+        fits_bytes=AMPLE, memory_sample=(0, AMPLE), job_types=allowed,
+    )
+    assert (claim.id if claim else None) == (supported.id if allowed else None)
+    await db_session.refresh(unsupported)
+    assert unsupported.status == "queued"
+
+
+@pytest.mark.asyncio
 async def test_default_claim_ignores_kubernetes_backend_jobs(
     db_session: AsyncSession,
 ) -> None:

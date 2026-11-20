@@ -3,6 +3,7 @@
 from typing import TYPE_CHECKING
 
 from shared.models import WorkerCapacityProfile
+from shared.version import get_version
 
 if TYPE_CHECKING:
     from src.services.kubernetes_execution import KubernetesPolicy
@@ -12,6 +13,8 @@ def validate_external_policy(
     policy: "KubernetesPolicy", profile: WorkerCapacityProfile, *, max_lifetime_seconds: int,
 ) -> None:
     """Reject an incompatible policy without changing it or provisioning work."""
+    if profile.worker_version != get_version():
+        raise ValueError("worker_version must match the running API build")
     for field in ("worker_memory_mib", "largest_worker_mib"):
         if getattr(policy, field) * 2**20 != profile.memory_limit_bytes:
             raise ValueError(

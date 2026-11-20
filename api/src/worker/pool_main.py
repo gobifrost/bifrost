@@ -41,6 +41,7 @@ from src.jobs.schedulers.platform_jobs import (
     recover_expired_platform_jobs,
     run_claimed_platform_job,
 )
+from src.jobs.platform.catalog import executor_platform_job_types
 from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.kubernetes_execution import (
@@ -329,7 +330,16 @@ class PoolWorker:
         return await run_claimed_platform_job(claim)
 
     async def _claim_platform_job(self, fits_bytes: int) -> ClaimedPlatformJob | None:
-        return await claim_platform_job(backend="local", fits_bytes=fits_bytes)
+        return await claim_platform_job(
+            backend="local",
+            fits_bytes=fits_bytes,
+            job_types=executor_platform_job_types(),
+            executor_worker_id=self.incarnation_id,
+        )
+
+    @property
+    def supports_platform_jobs(self) -> bool:
+        return self.hosts_remote_work and self.execution_lane == "normal"
 
     async def run(self) -> int:
         if not await self._initialize_runtime():
@@ -359,7 +369,7 @@ class PoolWorker:
                 replica_heartbeat_loop(
                     replica_id=str(self.incarnation_id),
                     runs_platform_jobs=(
-                        self.hosts_remote_work and self.execution_lane == "normal"
+                        self.supports_platform_jobs
                     ),
                     stop_event=self._platform_stop,
                 ),
@@ -370,7 +380,7 @@ class PoolWorker:
             # Runtime package generations apply to every executor. They are
             # maintenance of its workflow environment, not borrowed work.
             background.append(asyncio.create_task(self._package_loop(), name="pool-packages"))
-            if self.execution_lane == "normal":
+            if self.supports_platform_jobs:
                 background.append(asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"))
             background.extend(await self._start_background_control())
         if self._on_ready is not None:

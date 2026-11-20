@@ -19,6 +19,8 @@ Two profiles share the fork protocol:
 - ``agent`` preloads the agent runtime, keeps platform credentials (the agent
   consumer opens database sessions and decrypts model keys), freezes the
   collector before accepting forks, and forks one child per ``agent.run``.
+- ``agent_compute`` preloads only the credential-free PydanticAI compute loop
+  and forks children that call back to the API over launcher control.
 """
 
 from __future__ import annotations
@@ -103,7 +105,7 @@ class _RecvQueue:
             # Connection already closed or broken — close is idempotent
             logger.debug(f"_RecvQueue.close ignoring: {e}")
 
-TemplateProfile = Literal["workflow", "agent"]
+TemplateProfile = Literal["workflow", "agent", "agent_compute"]
 
 # Commands sent from consumer to template via pipe
 CMD_FORK = "fork"
@@ -148,8 +150,9 @@ def _template_main(
 
     Args:
         pipe: Connection to receive commands from and send responses to consumer.
-        profile: ``workflow`` (scrubbed execution engine) or ``agent``
-            (agent runtime with platform credentials).
+        profile: ``workflow`` (scrubbed execution engine), ``agent`` (legacy
+            runtime with platform credentials), or ``agent_compute`` (pure
+            callback-driven PydanticAI loop).
     """
     # Configure logging (no thread-based handlers)
     logging.basicConfig(
@@ -161,12 +164,14 @@ def _template_main(
 
     if profile == "agent":
         ready_fields = _load_agent_runtime(pipe)
+    elif profile == "agent_compute":
+        ready_fields = _load_agent_compute_runtime(pipe)
     else:
         ready_fields = _load_workflow_runtime(pipe)
     if ready_fields is None:
         return
 
-    if profile == "agent":
+    if profile in {"agent", "agent_compute"}:
         # Move everything loaded so far to the permanent generation. A child's
         # collections then never write to the shared objects' GC headers, so
         # their pages stay shared with this template instead of being copied
@@ -337,6 +342,7 @@ def _load_workflow_runtime(pipe: Connection) -> dict[str, Any] | None:
         # only after fork. Never let ambient API credentials cross the template.
         "BIFROST_ACCESS_TOKEN",
         "BIFROST_REFRESH_TOKEN",
+        "BIFROST_WORKER_CONTROL_SECRET",
     ]
     scrubbed = []
     for key in _SCRUB_KEYS:
@@ -432,6 +438,23 @@ def _load_agent_runtime(pipe: Connection) -> dict[str, Any] | None:
     except Exception as e:
         logger.exception(f"Agent template failed to load dependencies: {e}")
         pipe.send({"status": "error", "error": str(e)})
+        pipe.close()
+        return None
+    return {}
+
+
+def _load_agent_compute_runtime(pipe: Connection) -> dict[str, Any] | None:
+    """Preload only the credential-free physical agent compute loop."""
+    try:
+        from shared.agent_model_compute import preload_model_profile_transformers
+        import src.services.agent_runtime.compute  # noqa: F401
+        import src.services.agent_runtime.composition_view  # noqa: F401
+        from src.worker.remote.agent_compute import run_agent_compute_child  # noqa: F401
+
+        preload_model_profile_transformers()
+    except Exception as exc:
+        logger.exception(f"Agent compute template failed to load dependencies: {exc}")
+        pipe.send({"status": "error", "error": str(exc)})
         pipe.close()
         return None
     return {}
@@ -546,6 +569,14 @@ def _handle_fork_request(
             exit_code = 1
             try:
                 _run_agent_child(work_recv, result_send, worker_id)
+                exit_code = 0
+            finally:
+                os._exit(exit_code)
+        if profile == "agent_compute":
+            exit_code = 1
+            try:
+                from src.worker.remote.agent_compute import run_agent_compute_child
+                run_agent_compute_child(work_recv, result_send, worker_id)
                 exit_code = 0
             finally:
                 os._exit(exit_code)
@@ -821,14 +852,31 @@ class TemplateProcess:
 
         process: subprocess.Popen[bytes] | None = None
         try:
+            child_env = {
+                name: value for name, value in os.environ.items()
+                if name != "BIFROST_WORKER_CONTROL_HEADERS"
+            }
+            if self.profile == "agent_compute":
+                for name in tuple(child_env):
+                    if (
+                        name in {
+                            "DATABASE_URL", "REDIS_URL", "SECRET_KEY", "ENCRYPTION_KEY",
+                            "BIFROST_SECRET_KEY", "BIFROST_ACCESS_TOKEN",
+                            "BIFROST_REFRESH_TOKEN", "BIFROST_WORKER_CONTROL_SECRET",
+                        }
+                        or name.endswith((
+                            "_KEY", "_ACCESS_KEY", "_SECRET", "_SECRET_KEY", "_TOKEN",
+                            "_PASSWORD", "_DATABASE_URL", "_REDIS_URL",
+                        ))
+                    ):
+                        child_env.pop(name)
             process = subprocess.Popen(
                 argv,
                 pass_fds=(child_conn.fileno(),),
                 close_fds=True,
                 # Edge credentials belong only to the physical launcher, never
                 # to either template profile or the user-code children it forks.
-                env={name: value for name, value in os.environ.items()
-                     if name != "BIFROST_WORKER_CONTROL_HEADERS"},
+                env=child_env,
             )
             child_conn.close()
             parent_conn.send_bytes(authkey)
@@ -1011,6 +1059,7 @@ class TemplateProcess:
 if __name__ == "__main__":
     if len(sys.argv) != 3 or sys.argv[2] not in get_args(TemplateProfile):
         raise SystemExit(
-            "usage: python -m src.services.execution.template_process <control_fd> <workflow|agent>"
+            "usage: python -m src.services.execution.template_process "
+            "<control_fd> <workflow|agent|agent_compute>"
         )
     _template_subprocess_entry(int(sys.argv[1]), sys.argv[2])  # pyright: ignore[reportArgumentType]

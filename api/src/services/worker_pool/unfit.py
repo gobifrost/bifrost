@@ -1,10 +1,11 @@
-"""Work no executor can ever hold fails visibly (#769 stage 6).
+"""Work no physical executor can ever hold fails visibly (#769 stage 6).
 
 Runs are settled with their dispatches (``work_dispatch``). Here: a queued
-local platform job whose memory requirement exceeds the largest executor
-fails, and a service whose request exceeds it is blocked ``too_large`` (and
-unblocked once an executor large enough exists). "Largest" includes what the
-worker controller can launch.
+executor-owned local platform job whose memory requirement exceeds the largest
+executor fails, and a service whose request exceeds it is blocked ``too_large``
+(and unblocked once an executor large enough exists). API-owned maintenance is
+not physical capacity demand. "Largest" includes what the worker controller can
+launch.
 
 While isolated jobs are on, a queued isolated job not yet placed fails
 when no pod up to *Largest worker* can hold it (``worker_pool.sizing``).
@@ -24,6 +25,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.core.database import get_db_context
+from src.jobs.platform.catalog import executor_platform_job_types
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.services import ServiceDefinition
 from src.models.orm.workflows import Workflow
@@ -85,6 +87,7 @@ async def fail_platform_jobs_that_never_fit(
                     .where(
                         PlatformJob.status == "queued",
                         PlatformJob.execution_backend == "local",
+                        PlatformJob.job_type.in_(executor_platform_job_types()),
                         PlatformJob.memory_required_bytes > largest,
                     )
                     .with_for_update(skip_locked=True)

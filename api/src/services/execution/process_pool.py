@@ -167,6 +167,7 @@ async def _run_requirements_setup_subprocess() -> RequirementsInstallResult:
         sys.executable,
         "-m",
         "src.services.execution.requirements_setup_helper",
+        "--local",
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
         start_new_session=True,
@@ -330,7 +331,8 @@ class ExecutionInfo:
 
     def attach_transport_metadata(self, result: dict[str, Any]) -> dict[str, Any]:
         """Attach parent-owned metadata required after Redis loss."""
-        return {**result, "sync": self.active_execution["sync"]}
+        return {**result, "execution_id": self.execution_id,
+                "sync": self.active_execution["sync"]}
 
 
 @dataclass

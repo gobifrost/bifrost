@@ -32,6 +32,10 @@ _remote_lease_ref: ContextVar[LeaseRef | None] = ContextVar(
 )
 
 
+class RemoteOwnerLost(RuntimeError):
+    """A previous API owner may no longer publish execution state."""
+
+
 @contextmanager
 def remote_owner_context(ref: LeaseRef) -> Iterator[None]:
     """Install ``ref`` for a remote API-owner task and its child tasks."""
@@ -80,9 +84,17 @@ async def fence_remote_owner(db: AsyncSession, *, for_update: bool = False) -> b
     return worker_id is not None
 
 
+async def require_remote_owner(db: AsyncSession) -> None:
+    """Fence a short mutation before it takes any execution-row locks."""
+    if not await fence_remote_owner(db):
+        raise RemoteOwnerLost("Remote worker control ownership was lost")
+
+
 __all__ = [
     "LeaseRef",
     "current_remote_lease_ref",
     "fence_remote_owner",
     "remote_owner_context",
+    "require_remote_owner",
+    "RemoteOwnerLost",
 ]

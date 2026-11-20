@@ -20,7 +20,8 @@ from decimal import Decimal
 from typing import Any
 from uuid import UUID, uuid4
 
-from pydantic_ai import Agent as PydanticAgent, AgentRunResultEvent
+from pydantic_ai import AgentRunResultEvent
+from src.services.agent_runtime.compute import RuntimeComputeResultEvent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.messages import (
     FunctionToolCallEvent,
@@ -56,32 +57,31 @@ from src.services.llm import (
     LLMInputFile,
     ToolCallRequest,
     ToolDefinition,
-    get_llm_client,
 )
+from src.services.llm.factory import get_llm_client
 from src.services.llm.pydantic_client import PydanticAIClient
-from src.services.agent_runtime import (
+from src.services.agent_runtime.budgets import (
     AgentRunBudget,
-    BifrostToolset,
-    ModelCallEvent,
-    bound_tool_result_for_model,
-    build_chain_model,
-    build_runtime_capabilities,
-    provider_reported_cost,
-    reasoning_tokens,
 )
+from src.services.agent_runtime.model_failover import build_chain_model
+from src.services.agent_runtime.observed_model import ModelCallEvent
+from src.services.agent_runtime.toolset import (
+    bound_tool_result_for_model,
+)
+from src.services.agent_runtime.usage import provider_reported_cost, reasoning_tokens
 from src.services.model_capabilities import should_offer_tool_calling
 from src.services.model_pricing import chain_context_window, config_context_window
 from src.services.model_catalog import get_model_catalog
 from src.services.agent_runtime.model_factory import provider_name_for_config
-from src.services.agent_runtime.composition import build_agent_composition
+from src.services.agent_runtime.composition import AgentCompositionError, build_agent_composition
+from src.services.agent_runtime.compute import AgentRuntimePlan
+from src.services.agent_runtime.compute_execution import build_agent_runtime
 from src.services.agent_runtime.tool_policy import (
     CODE_MODE_AUDIT_METADATA_KEY,
     CODE_MODE_NESTED_TOOL_CALL_IDS_KEY,
-    build_automatic_code_mode_capabilities,
     code_mode_nested_tool_call_ids_from_audit,
 )
 from src.services.agent_runtime.toolset import (
-    code_mode_safe_name_map,
     get_code_mode_tool_result_scope,
 )
 from src.services.ai_behavior_service import (
@@ -216,9 +216,13 @@ class AgentExecutor:
         self._agent_execution_mode: AgentExecutionMode = DEFAULT_AGENT_EXECUTION_MODE
 
     @asynccontextmanager
-    async def _db(self):
+    async def _db(self, *, write: bool = False):
         """Short-lived DB session for discrete operations."""
         async with self._session_factory() as session:
+            if write:
+                from src.worker.remote.fencing import require_remote_owner
+
+                await require_remote_owner(session)
             yield session
             await session.commit()
 
@@ -245,7 +249,7 @@ class AgentExecutor:
         Returns:
             Tuple of optional agent_switch event and the access-checked agent.
         """
-        async with self._db() as session:
+        async with self._db(write=True) as session:
             try:
                 _, accessible_agent = await authorize_agent_execution(
                     session, caller, new_agent.id
@@ -566,7 +570,7 @@ class AgentExecutor:
                     cache_read_tokens=response_usage.cache_read_tokens,
                     model_profile_id=chat_profile.id,
                 )
-                async with self._db() as session:
+                async with self._db(write=True) as session:
                     await store_chat_context_usage(session, conversation.id, context_usage)
                 pending_context_chunks.append(
                     ChatStreamChunk(type="context_usage", context_usage=context_usage)
@@ -895,52 +899,24 @@ class AgentExecutor:
                 self._agent_execution_mode == "automatic"
                 and (tool_definitions or composition is not None)
             )
-            toolset = (
-                composition.entry_toolset(
-                    execute_runtime_tool,
-                    toolset_id=f"bifrost-chat-{agent.id}",
-                )
-                if composition is not None
-                else BifrostToolset(
-                    tool_definitions,
-                    execute_runtime_tool,
-                    toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
-                )
+            plan = AgentRuntimePlan.from_budget(
+                surface="chat", prompt=system_prompt, definitions=tool_definitions,
+                composition_snapshot=composition.snapshot if composition is not None else None,
+                budget=budget, context_window=context_window,
+                automatic_code_mode=bool(automatic_code_mode),
+                runtime_id=str(conversation.id),
+                toolset_id=f"bifrost-chat-{agent.id if agent else 'default'}",
+                empty_output_guard=False,
             )
-            if automatic_code_mode and composition is None:
-                toolset = toolset.renamed(
-                    code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
-                )
-            automatic_code_mode_capabilities = (
-                build_automatic_code_mode_capabilities()
-                if automatic_code_mode
-                else []
+            built = build_agent_runtime(
+                plan, model=chain.model, executor=execute_runtime_tool,
+                event_handler=None, model_settings=chain.primary_settings, usage=usage,
+                capability_load_authorizer=(
+                    composition.authorize_capability_load if composition is not None else None
+                ),
+                composition_error_type=AgentCompositionError,
             )
-            runtime = PydanticAgent(
-                chain.model,
-                # Stored chat history intentionally excludes the agent's
-                # system message. Pydantic's `instructions` are prepended on
-                # every fresh run, whereas `system_prompt` assumes an existing
-                # history already contains its original system part.
-                instructions=system_prompt,
-                toolsets=[toolset] if tool_definitions else [],
-                capabilities=[
-                    *build_runtime_capabilities(budget, context_window=context_window),
-                    *(composition.capabilities(
-                        execute_runtime_tool,
-                    ) if composition is not None else []),
-                    *automatic_code_mode_capabilities,
-                ],
-                model_settings=chain.primary_settings,
-                # Permit one schema/tool-name correction. It is charged to the
-                # same pre-request budget, so a malformed provider response can
-                # recover once without opening an unbounded retry loop.
-                retries=1,
-                # A provider may return final text and tool calls together.
-                # Bifrost must finish every accepted side effect and persist its
-                # result before closing the stable chat stream.
-                end_strategy="exhaustive",
-            )
+            runtime = built.runtime
 
             final_content = ""
             current_response_content = ""
@@ -1068,8 +1044,9 @@ class AgentExecutor:
                                         part,
                                     ),
                                 )
-                        elif isinstance(event, AgentRunResultEvent):
-                            final_content = str(event.result.output or "")
+                        elif isinstance(event, (AgentRunResultEvent, RuntimeComputeResultEvent)):
+                            result = event.result
+                            final_content = str(result.output or "")
                     for pending_chunk in pending_tool_chunks:
                         yield pending_chunk
                     pending_tool_chunks.clear()
@@ -1529,7 +1506,7 @@ class AgentExecutor:
         """Save a message to the conversation."""
         msg_id = message_id if message_id else uuid4()
 
-        async with self._db() as session:
+        async with self._db(write=True) as session:
             message = Message(
                 id=msg_id,
                 conversation_id=conversation_id,
@@ -1571,7 +1548,7 @@ class AgentExecutor:
         duration_ms: int | None = None,
     ) -> None:
         """Update a TOOL_CALL message with execution result."""
-        async with self._db() as session:
+        async with self._db(write=True) as session:
             result = await session.execute(
                 select(Message).where(Message.id == message_id)
             )
