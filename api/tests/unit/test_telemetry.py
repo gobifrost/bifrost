@@ -138,7 +138,7 @@ def test_no_network_when_disabled(monkeypatch):
     assert telemetry.init_telemetry() is False
 
 
-def test_export_scrubs_statements_urls_and_exceptions():
+def test_export_scrubs_urls_headers_and_exceptions():
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
     inner = _capture_inner()
@@ -146,19 +146,14 @@ def test_export_scrubs_statements_urls_and_exceptions():
     with tracer.start_as_current_span(
         "auto", kind=SpanKind.CLIENT, record_exception=False
     ) as span:
-        span.set_attribute("db.statement", "SELECT * FROM users WHERE email = 'a@b.c'")
-        span.set_attribute("db.system", "postgresql")
-        span.set_attribute("db.query.parameter.email", "a@b.c")
         span.set_attribute("http.target", "/api/files/read?token=secret&x=1")
         span.set_attribute("url.full", "https://host/api/files/read?token=secret")
         span.set_attribute("url.query", "token=secret")
         span.set_attribute("url.path", "/api/files/read")
         span.set_attribute("http.route", "/api/files/{path:path}")
         span.set_attribute("http.request.header.authorization", "Bearer secret")
-        # Redis FT.SEARCH leaks the query and returned document contents.
-        span.set_attribute("redis.search.query", "@email:{a@b.c}")
-        span.set_attribute("redis.search.xdoc_1.email", "a@b.c")
-        span.set_attribute("redis.search.total", 1)
+        span.set_attribute("http.response.header.set_cookie", "session=secret")
+        span.set_attribute("http.method", "GET")
         span.add_event(
             "exception",
             attributes={
@@ -171,19 +166,15 @@ def test_export_scrubs_statements_urls_and_exceptions():
     ScrubbingSpanExporter(inner).export([span])
     (exported,) = inner.get_finished_spans()
     attrs = dict(exported.attributes)
-    assert "db.statement" not in attrs
-    assert "db.query.parameter.email" not in attrs
     assert "url.query" not in attrs
     assert "url.full" not in attrs
     assert "url.path" not in attrs
     assert "http.target" not in attrs
     assert "http.request.header.authorization" not in attrs
-    assert "redis.search.query" not in attrs
-    assert "redis.search.xdoc_1.email" not in attrs
+    assert "http.response.header.set_cookie" not in attrs
     # Useful, non-content attributes survive.
-    assert attrs["db.system"] == "postgresql"
     assert attrs["http.route"] == "/api/files/{path:path}"
-    assert attrs["redis.search.total"] == 1
+    assert attrs["http.method"] == "GET"
     # No span events survive export, exception or otherwise.
     assert list(exported.events) == []
     assert exported.status.status_code == StatusCode.ERROR
@@ -298,3 +289,43 @@ def test_health_exclusions_match_the_url_the_instrumentor_builds():
     # Must not over-match a real route that merely starts with the prefix.
     assert not excluded(f"{base}/healthz-report")
     assert not excluded(f"{base}/api/health")
+
+
+async def test_request_span_follows_traceparent_not_a_leaked_context(monkeypatch):
+    """One server span per request, parented by the caller's traceparent.
+
+    A span left current by an earlier request on the same connection must
+    not adopt the next request (cpython#140947), and the per-message
+    send/receive spans are not emitted.
+    """
+    import httpx
+    from fastapi import FastAPI
+    from opentelemetry.trace import SpanKind
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    exporter = _capture()
+    app = FastAPI()
+
+    @app.get("/api/thing")
+    async def thing():
+        return {"ok": True}
+
+    assert telemetry.instrument_fastapi_app(app)
+    with _tracer().start_as_current_span("caller") as caller:
+        message: dict = {}
+        inject_traceparent(message)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
+        with _tracer().start_as_current_span("leaked"):
+            response = await client.get(
+                "/api/thing", headers={"traceparent": message["traceparent"]}
+            )
+    assert response.status_code == 200
+
+    request_spans = [
+        s for s in exporter.get_finished_spans() if s.name.startswith("GET /api/thing")
+    ]
+    (server,) = request_spans
+    assert server.kind is SpanKind.SERVER
+    assert server.parent is not None
+    assert server.parent.span_id == caller.get_span_context().span_id

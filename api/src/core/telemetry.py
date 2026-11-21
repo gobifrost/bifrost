@@ -57,10 +57,6 @@ _SERVICE_DEFAULT_BY_ROLE = {
 # (0.62b1) — see docs/architecture/otel-observability.md.
 _DROPPED_ATTRIBUTE_KEYS = frozenset(
     {
-        # SQL text and parameters (SQLAlchemy, asyncpg)
-        "db.statement",
-        "db.query.text",
-        "db.query.parameter",
         # Raw URLs and paths: they carry ids, slugs and (on outbound calls)
         # credentials. The route template (http.route) remains.
         "url.full",
@@ -68,19 +64,11 @@ _DROPPED_ATTRIBUTE_KEYS = frozenset(
         "url.query",
         "http.url",
         "http.target",
-        # Redis FT.SEARCH emits the query and, worse, *document contents*
-        # as redis.search.xdoc_<idx>.<field>; FT.CREATE emits the schema
-        # derived from its args.
-        "redis.search.query",
-        "redis.create_index.fields",
     }
 )
-# Prefix rules for the same families (indexed attribute names).
+# Captured headers are opt-in for operators, but a credential in a header
+# must never reach a collector even then.
 _DROPPED_ATTRIBUTE_PREFIXES = (
-    "redis.search.xdoc",
-    "db.query.parameter.",
-    # Captured headers are opt-in for operators, but a credential in a
-    # header must never reach a collector even then.
     "http.request.header.",
     "http.response.header.",
 )
@@ -233,43 +221,65 @@ def instrument_fastapi_app(app: Any) -> bool:
     try:
         from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 
+        # One server span per request. The per-message send/receive spans
+        # tripled the API's span volume and said nothing the server span
+        # does not.
         FastAPIInstrumentor.instrument_app(
             app,
+            exclude_spans=["send", "receive"],
             excluded_urls=(
                 os.environ.get("OTEL_PYTHON_FASTAPI_EXCLUDED_URLS")
                 or _DEFAULT_EXCLUDED_URLS
             ),
         )
+        _start_each_request_untraced(app)
         return True
     except Exception as e:  # noqa: BLE001 — never break startup
         logger.warning("FastAPI instrumentation unavailable: %s", e)
         return False
 
 
+def _start_each_request_untraced(app: Any) -> None:
+    """Run every request under an empty trace context.
+
+    asyncio can carry one request's context into the next request on the
+    same keep-alive connection (cpython#140947): uvicorn resumes reading
+    from inside the finished request, so the next request's task copies its
+    context. The ASGI instrumentor then sees a current span, ignores the
+    incoming ``traceparent`` and nests the new request under the old one.
+    Only the trace context is reset; the app's own context variables are
+    set per request already.
+    """
+    from opentelemetry import context as otel_context
+
+    build_instrumented_stack = app.build_middleware_stack
+
+    def build_middleware_stack() -> Any:
+        stack = build_instrumented_stack()
+
+        async def untraced(scope: Any, receive: Any, send: Any) -> None:
+            token = otel_context.attach(otel_context.Context())
+            try:
+                await stack(scope, receive, send)
+            finally:
+                otel_context.detach(token)
+
+        return untraced
+
+    app.build_middleware_stack = build_middleware_stack
+
+
 def _instrument_libraries() -> None:
     """Auto-instrumentation for a process that serves requests and owns
     runtime metrics. Each import is local so a missing optional package
-    degrades to one warning instead of a failed startup."""
-    try:
-        from opentelemetry.instrumentation.sqlalchemy import SQLAlchemyInstrumentor
+    degrades to one warning instead of a failed startup.
 
-        # Statement text is dropped by the export scrubber; bound values
-        # are placeholders. See docs/architecture/otel-observability.md.
-        SQLAlchemyInstrumentor().instrument()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("SQLAlchemy instrumentation unavailable: %s", e)
-    try:
-        from opentelemetry.instrumentation.asyncpg import AsyncPGInstrumentor
-
-        AsyncPGInstrumentor().instrument()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("asyncpg instrumentation unavailable: %s", e)
-    try:
-        from opentelemetry.instrumentation.redis import RedisInstrumentor
-
-        RedisInstrumentor().instrument()
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Redis instrumentation unavailable: %s", e)
+    Database and Redis clients are not instrumented. Their spans were most
+    of the export volume, and most of the measured request overhead, while
+    showing only pool checkouts, transaction statements and single cache
+    commands. Query cost comes from ``pg_stat_statements`` instead. See
+    docs/architecture/otel-observability.md.
+    """
     _instrument_http_client()
     try:
         from opentelemetry.instrumentation.system_metrics import (
@@ -338,10 +348,11 @@ _relay_processor: Any = None
 def prepare_child_telemetry() -> None:
     """Resolve, once in a template process, what its forked children need.
 
-    Loads the SDK and HTTPX instrumentor modules, builds the run resource and
-    runs the instrumentor's dependency check. Children inherit all of it
-    copy-on-write, so per-run set-up stays off the import and package-metadata
-    paths (tens of milliseconds per fork when left to the child).
+    Loads the SDK and HTTPX instrumentor modules, builds the run resource,
+    runs the instrumentor's dependency check and rehearses a run's tracing
+    once. Children inherit all of it copy-on-write, so per-run set-up stays
+    off the import and package-metadata paths (tens of milliseconds per fork
+    when left to the child) and off every first-use cost.
     Never raises, and a no-op when telemetry is disabled.
     """
     global _child_resource, _child_http_instrumentable
@@ -350,13 +361,12 @@ def prepare_child_telemetry() -> None:
     try:
         from opentelemetry.instrumentation.dependencies import get_dependency_conflicts
         from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
-        from opentelemetry.sdk.trace import TracerProvider  # noqa: F401 — loaded for children
-        from src.core.telemetry_sdk import _ChildSpanBuffer  # noqa: F401 — loaded for children
 
         conflict = get_dependency_conflicts(
             HTTPXClientInstrumentor().instrumentation_dependencies()
         )
         resource = _resource("run")
+        _rehearse_child_run(resource)
     except Exception as e:  # noqa: BLE001 — telemetry must never break a template
         logger.warning("OpenTelemetry child preparation failed, runs stay untraced: %s", e)
         return
@@ -364,6 +374,34 @@ def prepare_child_telemetry() -> None:
         logger.warning("HTTPX instrumentation unavailable: %s", conflict)
     _child_http_instrumentable = conflict is None
     _child_resource = resource
+
+
+def _rehearse_child_run(resource: Any) -> None:
+    """Trace one throwaway run in the template, as a child would.
+
+    A child's first tracer, span and buffered span each pay one-time costs
+    (the SDK's warning-filter patterns, attribute and context machinery,
+    the wire conversion). Paying them here instead saved about a quarter of
+    a child's telemetry CPU. The provider is private and discarded: the
+    template's global tracing and current context are left untouched.
+    """
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.sampling import ALWAYS_ON
+
+    from src.core.telemetry_sdk import _ChildSpanBuffer
+
+    # Always sampled: an unsampled rehearsal would skip the buffer and the
+    # wire conversion it exists to warm.
+    provider = TracerProvider(resource=resource, sampler=ALWAYS_ON)
+    buffer = _ChildSpanBuffer()
+    provider.add_span_processor(buffer)
+    tracer = provider.get_tracer(__name__)
+    with tracer.start_as_current_span(
+        "workflow.run", attributes={"bifrost.execution.id": "template"}
+    ):
+        tracer.start_span("workflow.startup", start_time=time.time_ns()).end()
+    buffer.take()
+    provider.shutdown()
 
 
 def init_telemetry_in_child() -> bool:
