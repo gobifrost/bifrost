@@ -73,6 +73,7 @@ async def test_queue_service_target_fails_loudly():
 @pytest.mark.asyncio
 async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
     """No person started it: the run is for the workflow's identity."""
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid:4318")
     from shared.run_lineage import RunLineage
 
     session = AsyncMock()
@@ -86,7 +87,8 @@ async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
     )
     event = SimpleNamespace(
         id=uuid.uuid4(),
-        event_type="schedule",
+        event_type="vendor.custom",
+        event_source=SimpleNamespace(source_type="schedule"),
         data={},
         headers=None,
         received_at=None,
@@ -106,6 +108,7 @@ async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
 
     resolve.assert_awaited_once_with(session, workflow_id)
     assert enqueue.await_args.kwargs["lineage"] == lineage
+    assert enqueue.await_args.kwargs["event_source_type"] == "schedule"
 
 
 @pytest.mark.asyncio

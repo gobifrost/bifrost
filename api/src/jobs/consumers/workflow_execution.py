@@ -870,6 +870,7 @@ class WorkflowExecutionConsumer:
             workflow_type = "workflow"
             cache_ttl_seconds = 300
             solution_id: str | None = None  # Install id if solution-managed
+            solution_slug: str | None = None
             solution_global_repo_access = False  # Whether solution code may import _repo/
 
             if not is_script and workflow_id:
@@ -906,6 +907,7 @@ class WorkflowExecutionConsumer:
                     # the install's global_repo_access here so the worker can set
                     # the per-execution import root. See module_cache_sync.
                     solution_id = workflow_data.get("solution_id")
+                    solution_slug = workflow_data.get("solution_slug")
                     # global_repo_access now rides on workflow_data from the same
                     # DB grab as the metadata (get_workflow_for_execution). The
                     # engine subprocess has no DB; this is the last enrichment.
@@ -1124,8 +1126,17 @@ class WorkflowExecutionConsumer:
 
             # The forked child parents its run span on the active dispatch
             # span; nothing is written when telemetry is off.
-            from src.core.telemetry import inject_traceparent
+            from src.core.telemetry import inject_traceparent, is_enabled
 
+            if is_enabled():
+                context_data["run_identity"] = {
+                    "organization_id": org_id,
+                    "solution_slug": solution_slug,
+                    "event_source_type": message_data.get("event_source_type"),
+                    "form_id": form_id,
+                    "agent_id": agent_id,
+                    "api_key_id": api_key_id,
+                }
             inject_traceparent(context_data)
 
             # Route to process pool

@@ -503,7 +503,35 @@ def child_run_span(execution_id: str, context: dict[str, Any]) -> Iterator[Any]:
             tracer.start_span(
                 "workflow.startup", start_time=started_ns, attributes=attributes
             ).end()
+        if span.is_recording():
+            _set_run_identity(span, context)
         yield span
+
+
+def _set_run_identity(span: Any, context: dict[str, Any]) -> None:
+    identity = context.get("run_identity", {})
+    source_type = identity.get("event_source_type")
+    if source_type in ("webhook", "schedule", "topic"):
+        trigger = source_type
+    elif identity.get("form_id"):
+        trigger = "form"
+    elif identity.get("agent_id"):
+        trigger = "agent"
+    elif identity.get("api_key_id"):
+        trigger = "api_key"
+    else:
+        trigger = "direct"
+
+    span.set_attribute("bifrost.trigger", trigger)
+    if org_id := identity.get("organization_id"):
+        span.set_attribute("bifrost.organization.id", org_id)
+    if install_id := context.get("solution_id"):
+        span.set_attribute("bifrost.solution.install.id", install_id)
+        if slug := identity.get("solution_slug"):
+            span.set_attribute("bifrost.solution.id", slug)
+    if os.environ.get("BIFROST_OTEL_INCLUDE_WORKFLOW_NAME", "").lower() == "true":
+        if name := context.get("name"):
+            span.set_attribute("bifrost.workflow.name", name)
 
 
 def mark_child_run(span: Any, result: Any) -> None:

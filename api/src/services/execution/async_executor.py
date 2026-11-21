@@ -295,6 +295,7 @@ async def stage_system_workflow_execution(
     event: EventContext | None = None,
     *,
     lineage: RunLineage,
+    event_source_type: str | None = None,
 ) -> AcceptedRun:
     """Stage a system-triggered workflow run in the caller's transaction.
 
@@ -328,4 +329,6 @@ async def stage_system_workflow_execution(
         lineage=lineage.bound(execution_id),
         **_context_fields(context),
     )
+    if event_source_type is not None:
+        message["event_source_type"] = event_source_type
     return await stage_workflow_run(db, pending, message, record_exists=False)

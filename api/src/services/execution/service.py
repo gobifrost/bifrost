@@ -157,6 +157,7 @@ async def get_workflow_for_execution(
         - execution_mode: sync or async
         - organization_id: Org scope (or None for global)
         - solution_id: Solution install id if solution-managed (else None)
+        - solution_slug: Shared Solution definition identity (else None)
         - content_hash: Workspace entry digest (None for Solution workflows)
         - type: Executable type (workflow, tool, or data_provider)
         - cache_ttl_seconds: Data provider cache TTL
@@ -175,7 +176,7 @@ async def get_workflow_for_execution(
         from src.models.orm.solutions import Solution as SolutionORM
 
         stmt = (
-            select(WorkflowORM, SolutionORM.allow_outbound_access, FileIndex.content_hash)
+            select(WorkflowORM, SolutionORM.allow_outbound_access, FileIndex.content_hash, SolutionORM.slug)
             .outerjoin(SolutionORM, WorkflowORM.solution_id == SolutionORM.id)
             .outerjoin(FileIndex, and_(
                 WorkflowORM.solution_id.is_(None),
@@ -199,7 +200,7 @@ async def get_workflow_for_execution(
         if row is None:
             raise WorkflowNotFoundError(f"Workflow with ID '{workflow_id}' not found")
 
-        workflow_record, allow_outbound_access, content_hash = row
+        workflow_record, allow_outbound_access, content_hash, solution_slug = row
         if workflow_record.solution_id is None and not content_hash:
             raise WorkflowLoadError(
                 f"Workflow source digest is unavailable for '{workflow_record.path}'"
@@ -217,6 +218,7 @@ async def get_workflow_for_execution(
             "organization_id": str(workflow_record.organization_id) if workflow_record.organization_id else None,
             "solution_id": str(workflow_record.solution_id) if workflow_record.solution_id else None,
             "content_hash": content_hash,
+            "solution_slug": solution_slug,
             # Wire key kept stable for in-flight workflow_data across deploys.
             "can_access_global_repo": bool(allow_outbound_access),
             "type": workflow_record.type or "workflow",
