@@ -11,18 +11,32 @@ from __future__ import annotations
 
 import ast
 import builtins
+import io
 import json
+import re
 import sys
+import tokenize
 from dataclasses import dataclass
 from functools import lru_cache
 from importlib.metadata import packages_distributions
-from typing import Any, Awaitable, Callable
+from typing import Any, Awaitable, Callable, Iterator
 
-from shared.workflow_conversion_sdk import sdk_call_contract, sdk_object_contract, sdk_object_is_data
+from shared.workflow_conversion_sdk import (
+    sdk_call_contract,
+    sdk_object_contract,
+    sdk_object_is_data,
+    sdk_object_method_names,
+    sdk_object_methods,
+)
 
-ANALYZER_VERSION = "27"
+ANALYZER_VERSION = "28"
 MAX_SOURCE_BYTES = 2_000_000
 MAX_AST_NODES = 256_000
+# Oversized sources fall back to a streaming token scan, which is bounded
+# separately: it never retains the file's tokens or a syntax tree.
+MAX_LEXICAL_SOURCE_BYTES = 16_000_000
+MAX_LEXICAL_IMPORTS = 1_024
+MAX_LEXICAL_IMPORT_CHARS = 4_096
 MAX_EVENTS_PER_SCOPE = 2_048
 MAX_DEPENDENCIES = 256
 MAX_GRAPH_STEPS = 10_000
@@ -30,6 +44,52 @@ MAX_SDK_CALLS = 2_048
 MAX_EVIDENCE = 4_096
 MAX_SELECTOR_VALUE_CHARS = 2_000
 _MODULE_INIT = "<import>"
+# ``isinstance`` against these built-ins proves a value is ordinary data.
+_ISINSTANCE_DATA_KINDS = {
+    "bool": "json",
+    "bytes": "bytes",
+    "dict": "dict",
+    "float": "json",
+    "frozenset": "json",
+    "int": "json",
+    "list": "list",
+    "set": "set",
+    "str": "str",
+    "tuple": "tuple",
+}
+_IDENTIFIER = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
+# A lexical scan cannot follow dynamic imports, evaluation, or reflection that
+# reaches loaded modules or caller frames.  Any of these names rejects the scan.
+_LEXICAL_REJECTED_NAMES = frozenset(
+    {
+        "__builtins__",
+        "__import__",
+        "builtins",
+        "compile",
+        "eval",
+        "exec",
+        "globals",
+        "import_module",
+        "importlib",
+        "locals",
+        "vars",
+    }
+)
+_LEXICAL_REJECTED_ATTRIBUTES = frozenset(
+    {
+        "__dict__",
+        "__globals__",
+        "__subclasses__",
+        "_getframe",
+        "cr_frame",
+        "f_back",
+        "f_globals",
+        "f_locals",
+        "gi_frame",
+        "modules",
+        "tb_frame",
+    }
+)
 _THIRD_PARTY_ROOTS = {
     "aiohttp",
     "babel",
@@ -1503,6 +1563,87 @@ class _ScopeSummary(ast.NodeVisitor):
             self.selector_constants.pop(node.target.id, None)
             self.data_assignments.discard(node.target.id)
 
+    def _is_shadowed(self, name: str) -> bool:
+        return (
+            name in self.bindings
+            or name in self.handles
+            or name in self.value_kinds
+            or name in self.parameter_names
+            or name in self.local_functions
+            or name in self.local_classes
+            or name in self.local_aliases
+        )
+
+    def _isinstance_data_kinds(self, test: ast.AST) -> dict[str, str]:
+        """Names a passing ``isinstance`` check proves are built-in data values."""
+        if isinstance(test, ast.BoolOp) and isinstance(test.op, ast.And):
+            narrowed: dict[str, str] = {}
+            for value in test.values:
+                narrowed.update(self._isinstance_data_kinds(value))
+            return narrowed
+        if not (
+            isinstance(test, ast.Call)
+            and isinstance(test.func, ast.Name)
+            and test.func.id == "isinstance"
+            and len(test.args) == 2
+            and not test.keywords
+            and isinstance(test.args[0], ast.Name)
+            and not self._is_shadowed("isinstance")
+        ):
+            return {}
+        types = test.args[1].elts if isinstance(test.args[1], ast.Tuple) else [test.args[1]]
+        kinds: set[str] = set()
+        for type_node in types:
+            if (
+                not isinstance(type_node, ast.Name)
+                or type_node.id not in _ISINSTANCE_DATA_KINDS
+                or self._is_shadowed(type_node.id)
+            ):
+                return {}
+            kinds.add(_ISINSTANCE_DATA_KINDS[type_node.id])
+        if not kinds:
+            return {}
+        return {test.args[0].id: kinds.pop() if len(kinds) == 1 else "json"}
+
+    def _visit_narrowed(self, test: ast.AST, body: list[ast.stmt] | list[ast.expr]) -> None:
+        """Visit a branch where an ``isinstance`` test proved built-in data.
+
+        SDK objects are never built-in ``dict``/``list``/``str`` values, so a
+        method on such a name inside the guarded branch is ordinary data
+        handling, not an SDK operation.  A name rebound in the branch keeps
+        its ordinary, unnarrowed analysis.
+        """
+        assigned = {
+            node.id
+            for statement in body
+            for node in ast.walk(statement)
+            if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del))
+        }
+        narrowed = {
+            name: kind
+            for name, kind in self._isinstance_data_kinds(test).items()
+            if name not in assigned
+        }
+        prior_kinds = {name: self.value_kinds.get(name) for name in narrowed}
+        prior_handles = {name: self.handles.pop(name, None) for name in narrowed}
+        self.value_kinds.update(narrowed)
+        try:
+            for statement in body:
+                self.visit(statement)
+        finally:
+            for name in narrowed:
+                if prior_kinds[name] is None:
+                    self.value_kinds.pop(name, None)
+                else:
+                    self.value_kinds[name] = prior_kinds[name]
+                if prior_handles[name] is not None:
+                    self.handles[name] = prior_handles[name]
+
+    def visit_IfExp(self, node: ast.IfExp) -> None:  # noqa: N802
+        self.visit(node.test)
+        self._visit_narrowed(node.test, [node.body])
+        self.visit(node.orelse)
+
     def visit_If(self, node: ast.If) -> None:  # noqa: N802
         self.visit(node.test)
         body_updates = _branch_binding_updates(node.body)
@@ -1521,8 +1662,7 @@ class _ScopeSummary(ast.NodeVisitor):
         prior_callable_targets = {
             name: self._current_callable_target(name) for name in updated_names
         }
-        for statement in node.body:
-            self.visit(statement)
+        self._visit_narrowed(node.test, node.body)
         for statement in node.orelse:
             self.visit(statement)
         for name in updated_names:
@@ -2704,17 +2844,384 @@ def _lazy_facade_router(tree: ast.Module) -> dict[str, str]:
     return {}
 
 
-def summarize_source(source: str) -> dict[str, Any]:
-    """Return a bounded, JSON-serializable static summary without retaining source or AST."""
-    if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
+class _LexicalScanRejected(Exception):
+    """An oversized source cannot be bounded by the lexical SDK scan."""
+
+
+def _lexical_tokens(source: str) -> Iterator[tokenize.TokenInfo]:
+    """Stream significant tokens without building a syntax tree."""
+    skipped = {tokenize.NL, tokenize.COMMENT, tokenize.INDENT, tokenize.DEDENT}
+    for token in tokenize.generate_tokens(io.StringIO(source).readline):
+        if token.type not in skipped:
+            yield token
+
+
+def _legacy_fstring_words(token: tokenize.TokenInfo) -> set[str]:
+    """Return identifiers hidden in an f-string that older tokenizers keep whole."""
+    if token.type != tokenize.STRING:
+        return set()
+    prefix = token.string[: len(token.string) - len(token.string.lstrip("rRbBuUfFtT"))]
+    if not any(character in prefix for character in "fFtT"):
+        return set()
+    return set(_IDENTIFIER.findall(token.string))
+
+
+def _lexical_import_statements(
+    tokens: list[str], line: int
+) -> list[ast.Import | ast.ImportFrom]:
+    try:
+        module = ast.parse(" ".join(tokens))
+    except SyntaxError as error:
+        raise _LexicalScanRejected(f"unparseable import at line {line}") from error
+    statements: list[ast.Import | ast.ImportFrom] = []
+    for statement in module.body:
+        if not isinstance(statement, (ast.Import, ast.ImportFrom)):
+            raise _LexicalScanRejected(f"compound import statement at line {line}")
+        statements.append(statement)
+    return statements
+
+
+def _lexical_sdk_event(call: str, line: int) -> dict[str, Any]:
+    """Record one SDK call whose arguments were not parsed.
+
+    Every resource selector the call accepts stays dynamic, so the proposal
+    can only widen or require review; it never narrows to an unproven value.
+    """
+    event: dict[str, Any] = {"kind": "sdk", "line": line, "call": call}
+    contract = sdk_call_contract(call)
+    if contract is None:
+        return event
+    selector_parameters = {"scope", "solution", "solution_id", "organization_id", "org_id"}
+    if call.startswith(("bifrost.tables.", "bifrost.files.")):
+        selector_parameters |= _RESOURCE_SELECTOR_PARAMETERS
+    if call == "bifrost.files.get_signed_url":
+        selector_parameters |= {"method"}
+    dynamic = [parameter for parameter in contract.parameters if parameter in selector_parameters]
+    generic_shape = _generic_http_selector_shape(call)
+    if generic_shape is not None:
+        dynamic.append("path")
+        if generic_shape[2] is not None:
+            dynamic.append("http_method")
+    if dynamic:
+        event["resource_call"] = {
+            "selectors": {},
+            "dynamic_selectors": dynamic,
+            "selector_reasons": {
+                selector: "oversized source was scanned lexically" for selector in dynamic
+            },
+        }
+    return event
+
+
+def _reached_sdk_object_methods(
+    roots: dict[str, int], attributes: dict[str, int]
+) -> tuple[list[tuple[str, int]], list[tuple[str, int]]]:
+    """Follow SDK objects reachable from ``roots`` through their declared fields.
+
+    Returns the declared capability methods of reached objects whose names the
+    source uses as attributes, with the first such line, and the reached
+    objects whose generic transports cannot be bounded by method name.
+    """
+    reachable = dict(roots)
+    queue = list(reachable)
+    seen: set[str] = set()
+    calls: list[tuple[str, int]] = []
+    opaque: list[tuple[str, int]] = []
+    while queue:
+        sdk_type = queue.pop()
+        if sdk_type in seen:
+            continue
+        seen.add(sdk_type)
+        line = reachable[sdk_type]
+        contract = sdk_object_contract(sdk_type)
+        for field in contract.fields if contract is not None else ():
+            for field_type in (field.sdk_type, field.element_sdk_type):
+                if field_type is not None and field_type not in seen:
+                    reachable.setdefault(field_type, line)
+                    queue.append(field_type)
+        if sdk_object_is_data(sdk_type):
+            continue
+        methods = sdk_object_methods(sdk_type)
+        if (
+            contract is None
+            or sdk_type.startswith("bifrost.client.")
+            or any(
+                _generic_http_selector_shape(f"{sdk_type}.{method}") is not None
+                for method in methods
+            )
+        ):
+            opaque.append((sdk_type, line))
+            continue
+        calls.extend(
+            (f"{sdk_type}.{method}", attributes[method])
+            for method in methods
+            if method in attributes
+        )
+    return sorted(calls), sorted(opaque)
+
+
+def _lexical_scan(source: str, reason: str) -> dict[str, Any]:
+    """Collect an oversized module's imports and SDK references from tokens.
+
+    The scan never builds an AST of the whole file and is deliberately an
+    over-approximation within that file: every recognized SDK call is
+    attributed to any use of the module.  Constructs it cannot bound lexically
+    either reject the scan, which keeps the source-limit unknown, or become an
+    unknown at the line that uses an SDK name.
+    """
+    if len(source.encode("utf-8")) > MAX_LEXICAL_SOURCE_BYTES:
+        raise _LexicalScanRejected(
+            f"source exceeds lexical scan size ({MAX_LEXICAL_SOURCE_BYTES} bytes)"
+        )
+    external_imports: dict[str, None] = {}
+    sdk_names: dict[str, set[str]] = {}
+    attribute_lines: dict[str, int] = {}
+    import_tokens: list[str] | None = None
+    import_line = 0
+    import_chars = 0
+    line_start = True
+    previous: tokenize.TokenInfo | None = None
+    try:
+        for token in _lexical_tokens(source):
+            if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
+                if import_tokens is not None:
+                    for statement in _lexical_import_statements(import_tokens, import_line):
+                        if isinstance(statement, ast.ImportFrom):
+                            module = statement.module or ""
+                            if statement.level:
+                                raise _LexicalScanRejected(
+                                    f"relative import at line {import_line}"
+                                )
+                            if _is_sdk_module(module):
+                                for alias in statement.names:
+                                    if alias.name == "*":
+                                        raise _LexicalScanRejected(
+                                            f"SDK star import at line {import_line}"
+                                        )
+                                    sdk_names.setdefault(
+                                        alias.asname or alias.name, set()
+                                    ).add(f"{module}.{alias.name}")
+                            else:
+                                external_imports[module] = None
+                            continue
+                        for alias in statement.names:
+                            if _is_sdk_module(alias.name):
+                                if alias.asname:
+                                    sdk_names.setdefault(alias.asname, set()).add(alias.name)
+                                else:
+                                    sdk_names.setdefault("bifrost", set()).add("bifrost")
+                            else:
+                                external_imports[alias.name] = None
+                        if len(external_imports) > MAX_LEXICAL_IMPORTS:
+                            raise _LexicalScanRejected(
+                                f"import limit reached ({MAX_LEXICAL_IMPORTS})"
+                            )
+                import_tokens = None
+                line_start = True
+                previous = None
+                continue
+            if line_start:
+                line_start = False
+                if token.type == tokenize.NAME and token.string in {"import", "from"}:
+                    import_tokens = []
+                    import_line = token.start[0]
+                    import_chars = 0
+            if import_tokens is not None:
+                import_chars += len(token.string) + 1
+                if import_chars > MAX_LEXICAL_IMPORT_CHARS:
+                    raise _LexicalScanRejected(
+                        f"import statement exceeds lexical bound at line {import_line}"
+                    )
+                import_tokens.append(token.string)
+            elif token.type == tokenize.NAME and token.string == "import":
+                raise _LexicalScanRejected(
+                    f"import inside a compound statement at line {token.start[0]}"
+                )
+            after_dot = (
+                previous is not None
+                and previous.type == tokenize.OP
+                and previous.string == "."
+            )
+            words = (
+                {token.string} if token.type == tokenize.NAME else _legacy_fstring_words(token)
+            )
+            rejected = words & _LEXICAL_REJECTED_NAMES or (
+                words & _LEXICAL_REJECTED_ATTRIBUTES
+                if after_dot or token.type == tokenize.STRING
+                else set()
+            )
+            if rejected:
+                raise _LexicalScanRejected(
+                    f"dynamic import, evaluation or reflection ({min(rejected)}) "
+                    f"at line {token.start[0]}"
+                )
+            if after_dot or token.type == tokenize.STRING:
+                for word in words:
+                    attribute_lines.setdefault(word, token.start[0])
+            previous = token
+    except (tokenize.TokenError, SyntaxError) as error:
+        raise _LexicalScanRejected("source cannot be tokenized") from error
+
+    events: dict[tuple[str, int, str], dict[str, Any]] = {}
+    reachable: dict[str, int] = {}
+
+    def emit(event: dict[str, Any]) -> None:
+        key = (event["kind"], event["line"], event.get("call") or event.get("reason", ""))
+        if key in events:
+            return
+        if len(events) >= MAX_EVENTS_PER_SCOPE:
+            raise _LexicalScanRejected(f"SDK event limit reached ({MAX_EVENTS_PER_SCOPE})")
+        events[key] = event
+
+    def reach(sdk_type: str | None, line: int) -> None:
+        if sdk_type is not None:
+            reachable.setdefault(sdk_type, line)
+
+    def classify(target: str, line: int) -> None:
+        call = _sdk_call(target)
+        contract = sdk_call_contract(call) if call else None
+        if call is not None and contract is not None:
+            emit(_lexical_sdk_event(call, line))
+            reach(contract.sdk_type, line)
+            reach(contract.element_sdk_type, line)
+            return
+        field = _sdk_object_field_contract(target)
+        if field is not None:
+            reach(field.sdk_type, line)
+            reach(field.element_sdk_type, line)
+            return
+        if _is_context_data_field(target) or (
+            sdk_object_contract(target) is not None and sdk_object_is_data(target)
+        ):
+            return
+        emit(
+            {
+                "kind": "unknown",
+                "line": line,
+                "reason": f"unrecognized SDK reference in lexically scanned source: {target}",
+            }
+        )
+
+    def finish(
+        name: str, chain: list[str], line: int, opener: tokenize.TokenInfo | None,
+        follower: tokenize.TokenInfo | None,
+    ) -> None:
+        if not chain and follower is not None and follower.type == tokenize.OP and (
+            follower.string == "="
+            or follower.string == ":" and opener is None
+        ):
+            # An assignment, keyword-argument or annotation target rebinds
+            # the name; it does not copy the SDK object anywhere.
+            return
+        if not chain and opener is not None and opener.string in {"def", "class", "as"}:
+            return
+        for target in sorted(sdk_names[name]):
+            classify(".".join([target, *chain]), line)
+
+    if sdk_names:
+        pending: tuple[str, list[str], int, tokenize.TokenInfo | None] | None = None
+        expect_name = False
+        in_import = False
+        line_start = True
+        previous = None
+        for token in _lexical_tokens(source):
+            if pending is not None:
+                if not expect_name and token.type == tokenize.OP and token.string == ".":
+                    expect_name = True
+                    previous = token
+                    continue
+                if expect_name and token.type == tokenize.NAME:
+                    pending[1].append(token.string)
+                    expect_name = False
+                    previous = token
+                    continue
+                finish(*pending, token)
+                pending = None
+                expect_name = False
+            if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
+                line_start = True
+                in_import = False
+                previous = None
+                continue
+            if line_start:
+                line_start = False
+                in_import = token.type == tokenize.NAME and token.string in {"import", "from"}
+            if in_import:
+                previous = token
+                continue
+            after_dot = (
+                previous is not None
+                and previous.type == tokenize.OP
+                and previous.string == "."
+            )
+            if token.type == tokenize.NAME and token.string in sdk_names and not after_dot:
+                pending = (token.string, [], token.start[0], previous)
+            elif words := _legacy_fstring_words(token) & set(sdk_names):
+                emit(
+                    {
+                        "kind": "unknown",
+                        "line": token.start[0],
+                        "reason": "SDK name inside f-string in lexically scanned source: "
+                        + min(words),
+                    }
+                )
+            previous = token
+        if pending is not None:
+            finish(*pending, None)
+
+    reached_calls, opaque_types = _reached_sdk_object_methods(reachable, attribute_lines)
+    for call, line in reached_calls:
+        emit(_lexical_sdk_event(call, line))
+    for sdk_type, line in opaque_types:
+        emit(
+            {
+                "kind": "unknown",
+                "line": line,
+                "reason": f"SDK object {sdk_type} used in lexically scanned source",
+            }
+        )
+
+    method_names = sdk_object_method_names()
+    return {
+        "reason": reason,
+        "imports": sorted(external_imports),
+        "events": [events[key] for key in sorted(events, key=lambda key: (key[1], key[0], key[2]))],
+        # Kept so SDK data objects handed to this module later can be checked
+        # against the capability methods the source could reach through them.
+        "sdk_method_attributes": {
+            name: line for name, line in sorted(attribute_lines.items()) if name in method_names
+        },
+    }
+
+
+def _oversized_summary(source: str, reason: str) -> dict[str, Any]:
+    try:
+        scan = _lexical_scan(source, reason)
+    except _LexicalScanRejected as rejection:
         return {
             "version": ANALYZER_VERSION,
             "functions": {},
             "classes": {},
             "bindings": {},
             "top_level": [],
-            "parse_error": f"source exceeds maximum size ({MAX_SOURCE_BYTES} bytes)",
+            "parse_error": f"{reason}; lexical scan rejected: {rejection}",
         }
+    return {
+        "version": ANALYZER_VERSION,
+        "functions": {},
+        "classes": {},
+        "bindings": {},
+        "top_level": [],
+        "lexical_scan": scan,
+    }
+
+
+def summarize_source(source: str) -> dict[str, Any]:
+    """Return a bounded, JSON-serializable static summary without retaining source or AST."""
+    if len(source.encode("utf-8")) > MAX_SOURCE_BYTES:
+        return _oversized_summary(
+            source, f"source exceeds maximum size ({MAX_SOURCE_BYTES} bytes)"
+        )
     try:
         tree = ast.parse(source)
     except SyntaxError as error:
@@ -2728,14 +3235,10 @@ def summarize_source(source: str) -> dict[str, Any]:
         }
 
     if sum(1 for _ in ast.walk(tree)) > MAX_AST_NODES:
-        return {
-            "version": ANALYZER_VERSION,
-            "functions": {},
-            "classes": {},
-            "bindings": {},
-            "top_level": [],
-            "parse_error": f"source exceeds maximum AST nodes ({MAX_AST_NODES})",
-        }
+        del tree
+        return _oversized_summary(
+            source, f"source exceeds maximum AST nodes ({MAX_AST_NODES})"
+        )
 
     functions = {
         node.name: node
@@ -3387,6 +3890,15 @@ async def analyze_workflow(
             )
             return
         await walk_module_init(resolved, via + [_label(resolved, _MODULE_INIT)])
+        constructor_inputs = (
+            *argument_kinds,
+            *(value for _, value in keyword_kinds),
+            *constructor_context.values(),
+        )
+        if await enter_lexical_module(
+            source_file, resolved, line, via, constructor_inputs
+        ):
+            return
 
         async def walk_imported_member(
             definition_source: SourceFile, imported_member: str
@@ -3453,6 +3965,10 @@ async def analyze_workflow(
                     )
                     return
                 await walk_module_init(child, via + [_label(child, _MODULE_INIT)])
+                if await enter_lexical_module(
+                    source_file, child, line, via, constructor_inputs
+                ):
+                    return
                 if member:
                     await walk_child_member(child, member)
                 return
@@ -3499,6 +4015,10 @@ async def analyze_workflow(
                 child = await resolve_import(resolved, symbol, 1)
                 if child is not None and child.key != resolved.key:
                     await walk_module_init(child, via + [_label(child, _MODULE_INIT)])
+                    if await enter_lexical_module(
+                        source_file, child, line, via, constructor_inputs
+                    ):
+                        return
                     if member:
                         await walk_child_member(child, member)
                     return
@@ -3868,6 +4388,86 @@ async def analyze_workflow(
             elif kind == "warning":
                 warnings.add(f"{source_file.path}:{event['line']}: {event['reason']}")
 
+    async def enter_lexical_module(
+        caller: SourceFile,
+        target: SourceFile,
+        line: int,
+        via: list[str],
+        inputs: tuple[Any, ...],
+    ) -> bool:
+        """Treat a lexically scanned module as opaque beyond its own SDK calls.
+
+        Its SDK references were attributed when the module initialized.  What
+        it does with values handed to it cannot be followed, exactly like an
+        external module, so SDK handles crossing that boundary stay unknown.
+        """
+        scan = (await load(target)).get("lexical_scan")
+        if scan is None:
+            return False
+        await walk_module_init(target, via + [_label(target, _MODULE_INIT)])
+        values = [
+            item
+            for value in inputs
+            for item in (value if isinstance(value, list) else (value,))
+        ]
+        for value in values:
+            if isinstance(value, dict) and value.get("kind") in {"sdk", "local", "imported"}:
+                await walk_class_callback(caller, value, line, via)
+        data_objects: dict[str, int] = {}
+        for value in values:
+            if isinstance(value, str) and value.startswith("sdk:") and sdk_object_is_data(
+                value[4:]
+            ):
+                data_objects[value[4:]] = line
+            elif isinstance(value, str) and value.startswith("sdk:") or (
+                isinstance(value, dict) and value.get("kind") == "sdk_namespace"
+            ):
+                unknowns.add(
+                    f"{caller.path}:{line}: SDK handle passed to lexically scanned "
+                    f"module: {target.path}"
+                )
+        # A data object's own methods are local, but its fields may carry
+        # capability objects (an integration's OAuth credentials can refresh).
+        reached_calls, opaque_types = _reached_sdk_object_methods(
+            data_objects, scan.get("sdk_method_attributes", {})
+        )
+        for call, attribute_line in reached_calls:
+            event = _lexical_sdk_event(call, attribute_line)
+            add_sdk_call(target, event, via)
+            add_resource_call(target, event)
+        for sdk_type, _ in opaque_types:
+            unknowns.add(
+                f"{caller.path}:{line}: SDK object {sdk_type} passed to lexically "
+                f"scanned module: {target.path}"
+            )
+        return True
+
+    async def verify_lexical_imports(
+        source_file: SourceFile, scan: dict[str, Any]
+    ) -> None:
+        """A lexical scan is sound only when its other imports leave the workspace."""
+        for module in scan.get("imports", []):
+            if not consume_graph_step(source_file):
+                return
+            parts = module.split(".")
+            workspace_module = None
+            for end in range(1, len(parts) + 1):
+                workspace_module = await resolve_import(
+                    source_file, ".".join(parts[:end]), 0
+                )
+                if workspace_module is not None:
+                    break
+            if workspace_module is None and (
+                _is_stdlib(module)
+                or _is_installed_third_party(module)
+                or parts[0] in external_module_roots
+            ):
+                continue
+            unknowns.add(
+                f"{source_file.path}: {scan['reason']}; lexical scan cannot follow "
+                f"import: {module}"
+            )
+
     async def walk_module_init(source_file: SourceFile, via: list[str]) -> None:
         if source_file.key in initialized:
             return
@@ -3878,6 +4478,11 @@ async def analyze_workflow(
         parse_error = summary.get("parse_error")
         if parse_error:
             unknowns.add(f"{source_file.path}: {parse_error}")
+            return
+        scan = summary.get("lexical_scan")
+        if scan is not None:
+            await verify_lexical_imports(source_file, scan)
+            await process_events(source_file, scan.get("events", []), via)
             return
         await process_events(source_file, summary.get("top_level", []), via)
         # Imports do not appear as call events, but execute import-time code.
@@ -3973,6 +4578,15 @@ async def analyze_workflow(
             return
         summary = await load(source_file)
         if summary.get("parse_error"):
+            return
+        if await enter_lexical_module(
+            source_file,
+            source_file,
+            1,
+            via,
+            (*argument_kinds, *(value for _, value in keyword_kinds)),
+        ):
+            completed_functions.add(marker)
             return
         function = summary.get("functions", {}).get(name)
         if function is None:
@@ -4273,6 +4887,11 @@ async def analyze_workflow(
             return
         if not consume_graph_step(source_file):
             return
+        if await enter_lexical_module(
+            source_file, source_file, 1, via, tuple(callable_context.values())
+        ):
+            completed_functions.add(marker)
+            return
         summary = await load(source_file)
         class_summary = summary.get("classes", {}).get(class_name)
         if class_summary is None:
@@ -4406,6 +5025,10 @@ async def analyze_workflow(
     try:
         await walk_module_init(entry, [_label(entry, _MODULE_INIT)])
         entry_summary = await load(entry)
+        if entry_summary.get("lexical_scan") is not None:
+            # Only imported helpers may be scanned lexically; the reviewed
+            # workflow entry itself must be parsed.
+            unknowns.add(f"{entry.path}: {entry_summary['lexical_scan']['reason']}")
         entrypoint_found = await entrypoint_exists(entry, function_name, set())
         entry_function = entry_summary.get("functions", {}).get(function_name, {})
         context_parameter = entry_function.get("context_parameter")
