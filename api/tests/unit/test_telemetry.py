@@ -138,7 +138,7 @@ def test_no_network_when_disabled(monkeypatch):
     assert telemetry.init_telemetry() is False
 
 
-def test_export_scrubs_urls_headers_and_exceptions():
+def test_export_scrubs_content_attributes_and_exceptions():
     from opentelemetry.trace import SpanKind, Status, StatusCode
 
     inner = _capture_inner()
@@ -154,6 +154,13 @@ def test_export_scrubs_urls_headers_and_exceptions():
         span.set_attribute("http.request.header.authorization", "Bearer secret")
         span.set_attribute("http.response.header.set_cookie", "session=secret")
         span.set_attribute("http.method", "GET")
+        span.set_attribute("db.statement", "SELECT synthetic")
+        span.set_attribute("db.query.text", "SELECT synthetic")
+        span.set_attribute("db.query.parameter", "synthetic")
+        span.set_attribute("db.query.parameter.id", "synthetic")
+        span.set_attribute("redis.search.query", "@name:synthetic")
+        span.set_attribute("redis.search.xdoc_0.name", "synthetic")
+        span.set_attribute("redis.create_index.fields", "synthetic")
         span.add_event(
             "exception",
             attributes={
@@ -166,15 +173,7 @@ def test_export_scrubs_urls_headers_and_exceptions():
     ScrubbingSpanExporter(inner).export([span])
     (exported,) = inner.get_finished_spans()
     attrs = dict(exported.attributes)
-    assert "url.query" not in attrs
-    assert "url.full" not in attrs
-    assert "url.path" not in attrs
-    assert "http.target" not in attrs
-    assert "http.request.header.authorization" not in attrs
-    assert "http.response.header.set_cookie" not in attrs
-    # Useful, non-content attributes survive.
-    assert attrs["http.route"] == "/api/files/{path:path}"
-    assert attrs["http.method"] == "GET"
+    assert attrs == {"http.route": "/api/files/{path:path}", "http.method": "GET"}
     # No span events survive export, exception or otherwise.
     assert list(exported.events) == []
     assert exported.status.status_code == StatusCode.ERROR
@@ -329,3 +328,30 @@ async def test_request_span_follows_traceparent_not_a_leaked_context(monkeypatch
     assert server.kind is SpanKind.SERVER
     assert server.parent is not None
     assert server.parent.span_id == caller.get_span_context().span_id
+
+
+async def test_request_span_reset_preserves_http_suppression(monkeypatch):
+    import httpx
+    from fastapi import FastAPI
+    from opentelemetry import trace
+    from opentelemetry.instrumentation.utils import suppress_http_instrumentation
+
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector:4318")
+    exporter = _capture()
+    app = FastAPI()
+
+    @app.get("/api/thing")
+    async def thing():
+        return {"span_is_valid": trace.get_current_span().get_span_context().is_valid}
+
+    assert telemetry.instrument_fastapi_app(app)
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://api") as client:
+        with _tracer().start_as_current_span("leaked") as leaked:
+            with suppress_http_instrumentation():
+                response = await client.get("/api/thing")
+            assert trace.get_current_span() is leaked
+
+    assert response.status_code == 200
+    assert response.json() == {"span_is_valid": False}
+    assert [span.name for span in exporter.get_finished_spans()] == ["leaked"]

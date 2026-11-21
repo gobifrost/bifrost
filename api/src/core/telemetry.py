@@ -52,11 +52,15 @@ _SERVICE_DEFAULT_BY_ROLE = {
     "run": "bifrost-run",
 }
 
-# Attributes dropped at export: content-bearing values from automatic
-# instrumentation. Audited against the pinned instrumentor versions
-# (0.62b1) — see docs/architecture/otel-observability.md.
+# Content-bearing attributes dropped before child serialization and export.
+# The rules also cover spans supplied by external instrumentation.
 _DROPPED_ATTRIBUTE_KEYS = frozenset(
     {
+        "db.statement",
+        "db.query.text",
+        "db.query.parameter",
+        "redis.search.query",
+        "redis.create_index.fields",
         # Raw URLs and paths: they carry ids, slugs and (on outbound calls)
         # credentials. The route template (http.route) remains.
         "url.full",
@@ -66,9 +70,9 @@ _DROPPED_ATTRIBUTE_KEYS = frozenset(
         "http.target",
     }
 )
-# Captured headers are opt-in for operators, but a credential in a header
-# must never reach a collector even then.
 _DROPPED_ATTRIBUTE_PREFIXES = (
+    "db.query.parameter.",
+    "redis.search.xdoc",
     "http.request.header.",
     "http.response.header.",
 )
@@ -240,15 +244,15 @@ def instrument_fastapi_app(app: Any) -> bool:
 
 
 def _start_each_request_untraced(app: Any) -> None:
-    """Run every request under an empty trace context.
+    """Clear the current span before instrumenting an incoming request.
 
     asyncio can carry one request's context into the next request on the
     same keep-alive connection (cpython#140947): uvicorn resumes reading
     from inside the finished request, so the next request's task copies its
     context. The ASGI instrumentor then sees a current span, ignores the
     incoming ``traceparent`` and nests the new request under the old one.
-    Only the trace context is reset; the app's own context variables are
-    set per request already.
+    Preserve the rest of the OpenTelemetry context, including
+    instrumentation suppression.
     """
     from opentelemetry import context as otel_context
 
@@ -258,7 +262,14 @@ def _start_each_request_untraced(app: Any) -> None:
         stack = build_instrumented_stack()
 
         async def untraced(scope: Any, receive: Any, send: Any) -> None:
-            token = otel_context.attach(otel_context.Context())
+            current = otel_context.get_current()
+            if (
+                scope["type"] not in ("http", "websocket")
+                or trace.get_current_span(current) is trace.INVALID_SPAN
+            ):
+                await stack(scope, receive, send)
+                return
+            token = otel_context.attach(trace.set_span_in_context(trace.INVALID_SPAN, current))
             try:
                 await stack(scope, receive, send)
             finally:

@@ -103,8 +103,10 @@ never filters.
 
 - Exception messages, stack traces, or span events (rebuilt run spans
   never create them; the export scrubber strips them from automatic spans).
-- Database and Redis spans of any kind, so no SQL text, parameters or
-  cache contents.
+- SQL text and parameters, Redis search queries and document fields,
+  and Redis index schemas. Bifrost does not automatically instrument
+  database or Redis clients. The scrubber also filters these attributes
+  from spans supplied by external instrumentation.
 - Raw URLs entirely: `http.target`, `http.url`, `url.full`, `url.path`,
   `url.query`. Route templates (`http.route`) remain for grouping.
 - Captured request/response headers, if an operator enables header

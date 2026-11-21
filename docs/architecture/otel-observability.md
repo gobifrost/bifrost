@@ -164,7 +164,9 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   the class-patching `.instrument()` form only covers apps created after
   the call, which would leave the API with no request spans. It emits one
   server span per request: the ASGI per-message `send`/`receive` spans are
-  excluded. Each request starts from an empty trace context. Otherwise
+  excluded. Before instrumenting a request, clear the current span while
+  preserving instrumentation suppression and other OpenTelemetry context.
+  Otherwise
   asyncio can carry the previous request's context into the next request
   on the same keep-alive connection (cpython#140947), and the instrumentor
   would nest it under that request and ignore its `traceparent`.
@@ -222,8 +224,9 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   (`workflow.startup`, then outbound calls), with no unattributed time
   between the dispatch and the run.
 - `ScrubbingSpanExporter` enforces the export privacy boundary in-process
-  before OTLP: raw URLs and query strings, captured headers, **all span
-  events**, and
+  before OTLP. It strips SQL text and parameters, Redis query and
+  document fields, raw URLs and query strings, captured headers, **all
+  span events**, and
   SDK-generated error descriptions never leave the process. A failing span
   keeps the ERROR status and the exception type; nothing else. Covered by
   `api/tests/unit/test_telemetry.py`.
