@@ -9,6 +9,7 @@ collector, database, or network.
 
 import sys
 import types
+from uuid import uuid4
 
 import pytest
 
@@ -97,6 +98,7 @@ def _isolate_global_state(monkeypatch):
     ):
         monkeypatch.setattr(telemetry, name, value)
     monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    monkeypatch.delenv("BIFROST_OTEL_INCLUDE_WORKFLOW_NAME", raising=False)
     yield
     trace_api._TRACER_PROVIDER, trace_api._TRACER_PROVIDER_SET_ONCE._done = saved[0], saved[1]
     (
@@ -208,12 +210,66 @@ def test_child_run_span_parents_on_the_dispatch_and_marks_failure(monkeypatch):
     assert startup["name"] == "workflow.startup" and startup["parent"][1] == run1["span_id"]
     assert startup["end"] <= get["start"]
     assert run2["start"] > run1["end"]  # later runs start when they begin
-    assert run1["attributes"] == {"bifrost.execution.id": "exec-1", "bifrost.workflow.id": "wf-1"}
+    assert run1["attributes"] == {
+        "bifrost.execution.id": "exec-1",
+        "bifrost.workflow.id": "wf-1",
+        "bifrost.trigger": "direct",
+    }
     assert get["parent"][1] == run1["span_id"]  # outbound calls nest under the run
     assert run1["status"] == (StatusCode.ERROR.value, "ValueError")
     assert run2["status"] == (StatusCode.ERROR.value, None)  # message-like types are not exported
     assert run3["status"][0] == StatusCode.UNSET.value
     assert run2["parent"] is None  # no traceparent, so the run starts its own trace
+
+
+@pytest.mark.parametrize("include_name", [False, True])
+def test_child_run_span_identity(monkeypatch, include_name):
+    _prepared_child(monkeypatch)
+    if include_name:
+        monkeypatch.setenv("BIFROST_OTEL_INCLUDE_WORKFLOW_NAME", "true")
+    org_id, install_id = str(uuid4()), str(uuid4())
+    context = {
+        "name": "Nightly Sync",
+        "solution_id": install_id,
+        "run_identity": {"organization_id": org_id, "solution_slug": "nightly-sync"},
+    }
+
+    with telemetry.child_run_span("exec-1", context):
+        pass
+
+    startup, run = telemetry.take_child_spans()
+    expected = {
+        "bifrost.organization.id": org_id,
+        "bifrost.solution.id": "nightly-sync",
+        "bifrost.solution.install.id": install_id,
+        "bifrost.trigger": "direct",
+    }
+    if include_name:
+        expected["bifrost.workflow.name"] = "Nightly Sync"
+    assert run["attributes"] == {"bifrost.execution.id": "exec-1", **expected}
+    assert startup["attributes"] == {"bifrost.execution.id": "exec-1"}
+
+
+@pytest.mark.parametrize(
+    ("identity", "trigger"),
+    [
+        ({"event_source_type": "webhook", "form_id": "form"}, "webhook"),
+        ({"event_source_type": "schedule"}, "schedule"),
+        ({"event_source_type": "topic"}, "topic"),
+        ({"form_id": "form", "agent_id": "agent"}, "form"),
+        ({"agent_id": "agent", "api_key_id": "key"}, "agent"),
+        ({"api_key_id": "key"}, "api_key"),
+        ({"event_source_type": "custom.topic"}, "direct"),
+    ],
+)
+def test_child_run_span_trigger(monkeypatch, identity, trigger):
+    _prepared_child(monkeypatch)
+
+    with telemetry.child_run_span("exec-1", {"run_identity": identity}):
+        pass
+
+    _, run = telemetry.take_child_spans()
+    assert run["attributes"]["bifrost.trigger"] == trigger
 
 
 def test_parent_relays_returned_spans_through_its_batch_processor(monkeypatch):
