@@ -1,5 +1,6 @@
 """Static workflow capability analysis stays conservative and executable-free."""
 
+import builtins as builtins_module
 import hashlib
 
 import pytest
@@ -673,6 +674,27 @@ async def test_isinstance_data_guard_keeps_sdk_credentials_out_of_dict_access() 
     assert result["sdk_calls"] == ["bifrost.integrations.get"]
     assert result["unknowns"] == []
     assert permissions_for_sdk_calls(result["sdk_calls"])[1] == []
+
+
+def test_isinstance_data_narrowing_holds_for_every_shipped_sdk_object() -> None:
+    """Narrowing assumes no SDK object passes ``isinstance`` for a built-in."""
+    import importlib
+
+    from shared.workflow_conversion_analysis import _ISINSTANCE_DATA_KINDS
+    from shared.workflow_conversion_sdk import _sdk_contracts
+
+    built_ins = tuple(getattr(builtins_module, name) for name in _ISINSTANCE_DATA_KINDS)
+    subclasses = []
+    for sdk_type in _sdk_contracts()[1]:
+        module, _, name = sdk_type.rpartition(".")
+        try:
+            cls = getattr(importlib.import_module(module), name)
+        except (AttributeError, ImportError):
+            continue
+        if isinstance(cls, type) and issubclass(cls, built_ins):
+            subclasses.append(sdk_type)
+
+    assert subclasses == []
 
 
 @pytest.mark.asyncio

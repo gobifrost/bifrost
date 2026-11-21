@@ -1608,9 +1608,9 @@ class _ScopeSummary(ast.NodeVisitor):
     def _visit_narrowed(self, test: ast.AST, body: list[ast.stmt] | list[ast.expr]) -> None:
         """Visit a branch where an ``isinstance`` test proved built-in data.
 
-        SDK objects are never built-in ``dict``/``list``/``str`` values, so a
-        method on such a name inside the guarded branch is ordinary data
-        handling, not an SDK operation.  A name rebound in the branch keeps
+        No shipped SDK object type subclasses a built-in data type (a unit
+        test pins this), so a method on such a name inside the guarded branch
+        is ordinary data handling, not an SDK operation.  A name rebound in the branch keeps
         its ordinary, unnarrowed analysis.
         """
         assigned = {
