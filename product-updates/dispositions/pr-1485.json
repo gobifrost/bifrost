@@ -6,8 +6,16 @@
     "status": "approved",
     "evidence": [
       "https://github.com/gobifrost/bifrost/pull/1485",
-      "https://github.com/gobifrost/bifrost/blob/e489d5dca245de3cdb354305ea9327fe69465f61/docs/product-updates-authoring.md"
+      "https://github.com/gobifrost/bifrost/blob/e489d5dca245de3cdb354305ea9327fe69465f61/docs/product-updates-authoring.md",
+      "https://github.com/ossf/scorecard/releases/tag/v5.7.0",
+      "https://github.com/github/codeql-action/releases/tag/v4.39.4",
+      "https://github.com/actions/create-github-app-token/releases/tag/v3.4.0",
+      "Reviewed all three action pins against their upstream release tags. Scorecard carries upstream security fixes for the repository scanner, and the token action retains the existing private-key inputs and repository-scoped permissions. The diff changes repository automation only."
     ]
   },
-  "reason": "Dependabot dependency maintenance; omitted under the repository's customer-facing selection policy. CI and dependency security review remain required."
+  "reason": "Internal GitHub Actions maintenance for code scanning, Scorecard, and Dependabot token issuance. Customers have no upgrade steps.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1485"
+  }
 }
