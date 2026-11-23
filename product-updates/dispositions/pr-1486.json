@@ -1,0 +1,18 @@
+{
+  "key": "pr:1486",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1486",
+      "https://github.com/gobifrost/bifrost/blob/e489d5dca245de3cdb354305ea9327fe69465f61/docs/product-updates-authoring.md",
+      "https://github.com/isaacs/minimatch/security/advisories/GHSA-g3hv-75wg-m249"
+    ]
+  },
+  "reason": "Client dependency maintenance, including a development-only minimatch update from 10.2.6 to 11.0.9 that addresses CVE-2026-118764 (reported by Reid Downing). Customers need no upgrade action.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1486"
+  }
+}
