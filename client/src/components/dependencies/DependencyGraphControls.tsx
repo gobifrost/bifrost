@@ -1,13 +1,12 @@
 import { Maximize, Minus, Plus, LocateFixed } from "lucide-react";
-import { useReactFlow, useStore } from "@xyflow/react";
+import { useNodesStore, useReactFlow, useViewportStore } from "@xyflow/react";
 import { Button } from "@/components/ui/button";
 
 export function DependencyGraphControls() {
 	const { zoomIn, zoomOut, fitView } = useReactFlow();
-	const zoom = useStore((state) => state.transform[2]);
-	const selectedNodes = useStore((state) =>
-		state.nodes.filter((node) => node.selected),
-	);
+	const zoom = useViewportStore((state) => state.transform[2]);
+	const nodes = useNodesStore((state) => state.nodes);
+	const selectedNodes = nodes.filter((node) => node.selected);
 	const zoomPercent = Math.round(zoom * 100);
 
 	return (
@@ -45,7 +44,11 @@ export function DependencyGraphControls() {
 					aria-label="Fit graph"
 					title="Fit graph"
 					onClick={() =>
-						void fitView({ padding: 0.2, maxZoom: 1.5, duration: 0 })
+						void fitView({
+							padding: "8.34%",
+							maxZoom: 1.5,
+							duration: 0,
+						})
 					}
 				>
 					<Maximize className="size-4" />
@@ -60,7 +63,7 @@ export function DependencyGraphControls() {
 						onClick={() =>
 							void fitView({
 								nodes: selectedNodes,
-								padding: 0.24,
+								padding: "9.68%",
 								maxZoom: 1.5,
 								duration: 0,
 							})
@@ -75,7 +78,9 @@ export function DependencyGraphControls() {
 				<span className="inline-flex min-h-11 items-center rounded-[var(--bf-radius-control)] border border-border/70 bg-muted/40 px-2.5 font-medium text-foreground">
 					{zoomPercent}%
 				</span>
-				<span className="hidden lg:inline">Pinch or scroll to zoom</span>
+				<span className="hidden lg:inline">
+					Pinch or scroll to zoom
+				</span>
 			</div>
 		</div>
 	);
