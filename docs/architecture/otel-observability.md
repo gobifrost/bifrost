@@ -233,9 +233,9 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
 
 ## Span budget
 
-Telemetry is meant to stay cheap enough to leave on. Measured on a
-rehearsal stack (mixed workflow load, concurrency 4, local OTLP sink,
-interleaved off/on phases), the first version, which also instrumented
+Prototype measurements used a rehearsal stack with mixed workflow load,
+concurrency 4, a local OTLP sink, and interleaved off/on phases. The first
+version, which also instrumented
 SQLAlchemy, asyncpg and Redis and kept the ASGI send/receive spans, exported
 about 45 spans per workflow execute. Across two measurement rounds it cut
 throughput 17-33% and added 31-38% to median request latency and 19-24% to
@@ -249,12 +249,10 @@ CPU per request. Most of those spans carried nothing useful:
 - Redis traced each command individually.
 - ASGI emitted a span for every `send` and `receive` message.
 
-Without them a workflow execute exports about 10 spans: the request,
+In that rehearsal, a workflow execution without those spans exported about 10 spans: the request,
 dispatch, launch, start-up and run chain plus outbound calls. The measured
 cost fell to 5-11% of median latency, 3-8% of throughput and 6-13% of CPU
-per request across three rounds. About two thirds of that CPU is in the
-forked runs, which spend a few milliseconds each setting up a tracer and
-recording their spans.
+per request across three rounds.
 Tracing each SQL statement through SQLAlchemy instead adds about 45 spans
 per execute and cost 17% of throughput and 27% of median latency. Query cost
 and frequency come from `pg_stat_statements`. Add a client instrumentation
