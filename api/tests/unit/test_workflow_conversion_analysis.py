@@ -493,6 +493,10 @@ async def test_oversized_module_with_lazy_sdk_import_contributes_its_sdk_calls(
     assert result["unknowns"] == []
     lazy_evidence = [item for item in result["evidence"] if item["path"] == vendor.path]
     assert [item["call"] for item in lazy_evidence] == ["bifrost.integrations.get"]
+    assert result["warnings"] == [
+        f"{vendor.path}: Permissions inferred from this oversized helper may be "
+        "broader than the workflow needs."
+    ]
     permissions, mapping_unknowns = permissions_for_sdk_calls(
         result["sdk_calls"], invocations=result["resource_calls"]
     )
@@ -516,6 +520,38 @@ async def test_oversized_module_attributes_methods_of_reached_sdk_objects(
 
     assert "bifrost.OAuthCredentials.refresh" in result["sdk_calls"]
     assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expression", "lookup"),
+    [
+        ("getattr(integration.oauth, 'refresh')", "getattr"),
+        ("integration.oauth.__getattribute__('refresh')", "__getattribute__"),
+    ],
+)
+async def test_oversized_module_reports_unresolved_attribute_lookup(
+    monkeypatch: pytest.MonkeyPatch, expression: str, lookup: str,
+) -> None:
+    vendor = _oversized_vendor(
+        "import requests\n",
+        "async def token():\n"
+        "    from bifrost import integrations\n"
+        "    integration = await integrations.get('Vendor')\n"
+        f"    await {expression}()\n",
+    )
+    lookup_line = next(
+        number for number, line in enumerate(vendor.source.splitlines(), 1)
+        if expression in line
+    )
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert "bifrost.integrations.get" in result["sdk_calls"]
+    assert result["unknowns"] == [
+        f"{vendor.path}:{lookup_line}: lexically scanned source cannot resolve "
+        f"attribute lookup ({lookup})"
+    ]
 
 
 @pytest.mark.asyncio

@@ -90,6 +90,7 @@ _LEXICAL_REJECTED_ATTRIBUTES = frozenset(
         "tb_frame",
     }
 )
+_LEXICAL_UNRESOLVED_LOOKUPS = frozenset({"getattr", "__getattribute__"})
 _THIRD_PARTY_ROOTS = {
     "aiohttp",
     "babel",
@@ -2887,7 +2888,9 @@ def _lexical_sdk_event(call: str, line: int) -> dict[str, Any]:
     Every resource selector the call accepts stays dynamic, so the proposal
     can only widen or require review; it never narrows to an unproven value.
     """
-    event: dict[str, Any] = {"kind": "sdk", "line": line, "call": call}
+    event: dict[str, Any] = {
+        "kind": "sdk", "line": line, "call": call, "lexically_scanned": True,
+    }
     contract = sdk_call_contract(call)
     if contract is None:
         return event
@@ -2981,6 +2984,16 @@ def _lexical_scan(source: str, reason: str) -> dict[str, Any]:
     import_chars = 0
     line_start = True
     previous: tokenize.TokenInfo | None = None
+    events: dict[tuple[str, int, str], dict[str, Any]] = {}
+
+    def emit(event: dict[str, Any]) -> None:
+        key = (event["kind"], event["line"], event.get("call") or event.get("reason", ""))
+        if key in events:
+            return
+        if len(events) >= MAX_EVENTS_PER_SCOPE:
+            raise _LexicalScanRejected(f"SDK event limit reached ({MAX_EVENTS_PER_SCOPE})")
+        events[key] = event
+
     try:
         for token in _lexical_tokens(source):
             if token.type in {tokenize.NEWLINE, tokenize.ENDMARKER}:
@@ -3055,6 +3068,12 @@ def _lexical_scan(source: str, reason: str) -> dict[str, Any]:
                     f"dynamic import, evaluation or reflection ({min(rejected)}) "
                     f"at line {token.start[0]}"
                 )
+            for lookup in words & _LEXICAL_UNRESOLVED_LOOKUPS:
+                emit({
+                    "kind": "unknown",
+                    "line": token.start[0],
+                    "reason": f"lexically scanned source cannot resolve attribute lookup ({lookup})",
+                })
             if after_dot or token.type == tokenize.STRING:
                 for word in words:
                     attribute_lines.setdefault(word, token.start[0])
@@ -3062,16 +3081,7 @@ def _lexical_scan(source: str, reason: str) -> dict[str, Any]:
     except (tokenize.TokenError, SyntaxError) as error:
         raise _LexicalScanRejected("source cannot be tokenized") from error
 
-    events: dict[tuple[str, int, str], dict[str, Any]] = {}
     reachable: dict[str, int] = {}
-
-    def emit(event: dict[str, Any]) -> None:
-        key = (event["kind"], event["line"], event.get("call") or event.get("reason", ""))
-        if key in events:
-            return
-        if len(events) >= MAX_EVENTS_PER_SCOPE:
-            raise _LexicalScanRejected(f"SDK event limit reached ({MAX_EVENTS_PER_SCOPE})")
-        events[key] = event
 
     def reach(sdk_type: str | None, line: int) -> None:
         if sdk_type is not None:
@@ -3635,6 +3645,11 @@ async def analyze_workflow(
     ) -> None:
         nonlocal evidence_limited, sdk_calls_limited
         call = event["call"]
+        if event.get("lexically_scanned"):
+            warnings.add(
+                f"{source_file.path}: Permissions inferred from this oversized helper may be "
+                "broader than the workflow needs."
+            )
         if call in sdk_calls or len(sdk_calls) < MAX_SDK_CALLS:
             sdk_calls.add(call)
         elif not sdk_calls_limited:
