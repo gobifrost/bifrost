@@ -1,0 +1,13 @@
+{
+  "key": "pr:1484",
+  "classification": "omit",
+  "entry_ids": [],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1484",
+      "https://github.com/gobifrost/bifrost/blob/e489d5dca245de3cdb354305ea9327fe69465f61/docs/product-updates-authoring.md"
+    ]
+  },
+  "reason": "Routine Python dependency maintenance and an internal Anthropic adapter compatibility repair. Existing workflows, configuration, custom code, and integrations require no upgrade steps."
+}

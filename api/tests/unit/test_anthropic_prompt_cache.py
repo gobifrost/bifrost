@@ -67,11 +67,22 @@ def test_anthropic_messages_through_openrouter_keeps_cache_settings():
 @pytest.mark.parametrize("stream", [False, True])
 async def test_native_anthropic_model_uses_adaptive_request_path(stream):
     calls = []
+    forwarded = []
+    thread_record = object()
+    compaction = {"type": "compact_20260112"}
 
     async def fake_create(
-        self, messages, stream, model_settings, model_request_parameters
+        self,
+        messages,
+        stream,
+        model_settings,
+        model_request_parameters,
+        *,
+        compaction,
+        thread_record,
     ):
         calls.append(model_settings)
+        forwarded.append((compaction, thread_record))
         if len(calls) == 1:
             raise ModelHTTPError(
                 400,
@@ -88,8 +99,11 @@ async def test_native_anthropic_model_uses_adaptive_request_path(stream):
             stream,
             anthropic_prompt_cache_settings(),
             ModelRequestParameters(),
+            compaction=compaction,
+            thread_record=thread_record,
         )
 
+    assert forwarded == [(compaction, thread_record)] * 2
     assert result == "ok"
     assert len(calls) == 2
     assert "anthropic_cache" in calls[0]
@@ -216,7 +230,7 @@ async def test_model_override_ignores_learned_state_without_mutating_its_profile
     config.anthropic_prompt_cache_supported = False
     calls = []
 
-    async def send(self, messages, stream, settings, params):
+    async def send(self, messages, stream, settings, params, *, compaction, thread_record):
         calls.append(settings)
         return "ok"
 
