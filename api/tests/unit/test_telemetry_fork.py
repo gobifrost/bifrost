@@ -152,6 +152,20 @@ def test_dependency_conflict_found_by_the_template_skips_http_instrumentation(mo
     assert telemetry._child_http_instrumentable is False
 
 
+def test_template_preparation_leaves_its_own_tracing_untouched(monkeypatch):
+    """The rehearsed run uses a private provider: the template exports
+    nothing, keeps its global provider and has no current span after."""
+    _fake_exporters(monkeypatch)
+    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", _ENDPOINT)
+    before = trace_api._TRACER_PROVIDER
+    telemetry.prepare_child_telemetry()
+    assert telemetry._child_resource is not None
+    assert trace_api._TRACER_PROVIDER is before
+    assert trace_api.get_current_span() is trace_api.INVALID_SPAN
+    assert _FakeSpanExporter.created == []
+    assert telemetry.take_child_spans() == []
+
+
 def test_child_buffers_spans_without_an_exporter(monkeypatch):
     _prepared_child(monkeypatch)
 
@@ -164,7 +178,11 @@ def test_child_buffers_spans_without_an_exporter(monkeypatch):
 
     with trace_api.get_tracer(__name__).start_as_current_span("child.http", context=_parent_context()) as span:
         span.set_attribute("bifrost.child", True)
-        span.set_attribute("db.statement", "SELECT token FROM sessions")
+        span.set_attribute("url.full", "https://host/oauth/token?code=secret")
+        span.set_attribute("db.statement", "SELECT synthetic")
+        span.set_attribute("db.query.parameter.id", "synthetic")
+        span.set_attribute("redis.search.query", "@name:synthetic")
+        span.set_attribute("redis.search.xdoc_0.name", "synthetic")
     (wire,) = telemetry.take_child_spans()
     assert telemetry.take_child_spans() == []  # drained
     assert wire["name"] == "child.http" and wire["trace_id"] == _TRACE_ID

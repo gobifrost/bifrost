@@ -2223,11 +2223,8 @@ opentelemetry-api==1.41.1 \
     #   opentelemetry-exporter-otlp-proto-http
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
-    #   opentelemetry-instrumentation-asyncpg
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-instrumentation-httpx
-    #   opentelemetry-instrumentation-redis
-    #   opentelemetry-instrumentation-sqlalchemy
     #   opentelemetry-instrumentation-system-metrics
     #   opentelemetry-sdk
     #   opentelemetry-semantic-conventions
@@ -2245,20 +2242,13 @@ opentelemetry-instrumentation==0.62b1 \
     --hash=sha256:976fc6e640f2006599e97429c949e622c108d0c17c2059347d1e6c93c707f257
     # via
     #   opentelemetry-instrumentation-asgi
-    #   opentelemetry-instrumentation-asyncpg
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-instrumentation-httpx
-    #   opentelemetry-instrumentation-redis
-    #   opentelemetry-instrumentation-sqlalchemy
     #   opentelemetry-instrumentation-system-metrics
 opentelemetry-instrumentation-asgi==0.62b1 \
     --hash=sha256:7cf5f5d5c493bbb1edd2bd6d51fa879d964e94048904017258a32ffa47329310 \
     --hash=sha256:b7f89be48528512619bd54fa2459f72afb1695ba71d7024d382ad96d467e7fa8
     # via opentelemetry-instrumentation-fastapi
-opentelemetry-instrumentation-asyncpg==0.62b1 \
-    --hash=sha256:6bd7fdcd8116ff400abe12503d43b89c076ded9df1db0638050351504d59b907 \
-    --hash=sha256:d58a3b2da6d41faba3e47613b0dfe739e639af5a7c74c2715e06730a0f57f81e
-    # via bifrost-api (pyproject.toml)
 opentelemetry-instrumentation-fastapi==0.62b1 \
     --hash=sha256:93fa9cc4f315819aee5f4fceb6196c1e5b0fbd789c5520c631de228bd3e5285b \
     --hash=sha256:b377d4ba32868fb1ff0f64da3fcdd3aa154d698fc83d65f5d380ea21bf31ee19
@@ -2266,14 +2256,6 @@ opentelemetry-instrumentation-fastapi==0.62b1 \
 opentelemetry-instrumentation-httpx==0.62b1 \
     --hash=sha256:88614015df451d61bc7e73f22524e6f223611f80b6caad2f6bdcbe05fa0df653 \
     --hash=sha256:a1fac9bcc3a6ef5996a7990563f1af0798468b2c146de535fd598369383fba7e
-    # via bifrost-api (pyproject.toml)
-opentelemetry-instrumentation-redis==0.62b1 \
-    --hash=sha256:2d3c421d95e05ade075bee5becbe34e743b1cdf5bdee2085cb524f88c4f13dcb \
-    --hash=sha256:9aedd02c1acf631251d1d676634db47da9da04e0a626cd0c7d83fe0eb791d165
-    # via bifrost-api (pyproject.toml)
-opentelemetry-instrumentation-sqlalchemy==0.62b1 \
-    --hash=sha256:613542ecd52aabeec83d8813b5c287a3fb6c9ac3cd660694c94c0571f066e972 \
-    --hash=sha256:bdeac015351a1de057e8ea39f1fe26c9e60ea6bedbf1d5ad6a8262a516b3dc7d
     # via bifrost-api (pyproject.toml)
 opentelemetry-instrumentation-system-metrics==0.62b1 \
     --hash=sha256:260130cb63e3028290305d8f25b744fb3a279677769dd65287ce60086cc11d32 \
@@ -2297,11 +2279,8 @@ opentelemetry-semantic-conventions==0.62b1 \
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-asgi
-    #   opentelemetry-instrumentation-asyncpg
     #   opentelemetry-instrumentation-fastapi
     #   opentelemetry-instrumentation-httpx
-    #   opentelemetry-instrumentation-redis
-    #   opentelemetry-instrumentation-sqlalchemy
     #   opentelemetry-sdk
 opentelemetry-util-http==0.62b1 \
     --hash=sha256:adf6facbb89aef8f8bc566e2f04624942ba08a7b678b3479a91051a8f4dc70a3 \
@@ -2316,7 +2295,6 @@ packaging==26.2 \
     # via
     #   bifrost-api (pyproject.toml)
     #   opentelemetry-instrumentation
-    #   opentelemetry-instrumentation-sqlalchemy
     #   pytest
 pamqp==5.0.0 \
     --hash=sha256:d76dd4af900802483cda5f318a5328c86a1e9b127159f5455b17d9a0bb658b89 \
@@ -3958,8 +3936,6 @@ wrapt==2.5.2 \
     # via
     #   opentelemetry-instrumentation
     #   opentelemetry-instrumentation-httpx
-    #   opentelemetry-instrumentation-redis
-    #   opentelemetry-instrumentation-sqlalchemy
 yarl==1.25.1 \
     --hash=sha256:0136d640dfa9b0523853e411430a99f8a91eca85774c6420285a33b755bc6de3 \
     --hash=sha256:03dd38de09bc213e9a8b29761eec33ee1d5318dac0e49d8af36e4d27830e23a7 \
