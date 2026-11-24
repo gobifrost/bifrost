@@ -22,7 +22,7 @@ from pydantic_ai.agent.wrapper import WrapperAgent
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import RunContext, ToolDefinition as PydanticToolDefinition
-from pydantic_ai_harness.subagents import SubAgent, SubAgents
+from pydantic_ai_harness.sub_agents import SubAgent, SubAgents
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload

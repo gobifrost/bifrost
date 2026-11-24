@@ -15,7 +15,9 @@ const actions = vi.hoisted(() => ({
 
 vi.mock("@xyflow/react", () => ({
 	useReactFlow: () => actions,
-	useStore: (selector: (state: typeof actions.store) => unknown) =>
+	useNodesStore: (selector: (state: typeof actions.store) => unknown) =>
+		selector(actions.store),
+	useViewportStore: (selector: (state: typeof actions.store) => unknown) =>
 		selector(actions.store),
 }));
 
@@ -41,7 +43,7 @@ it("exposes distinct keyboard-operable zoom and fit actions", async () => {
 
 	await user.click(screen.getByRole("button", { name: "Fit graph" }));
 	expect(actions.fitView).toHaveBeenCalledWith({
-		padding: 0.2,
+		padding: "8.34%",
 		maxZoom: 1.5,
 		duration: 0,
 	});
@@ -63,7 +65,7 @@ it("focuses the selected nodes when a selection exists", async () => {
 
 	expect(actions.fitView).toHaveBeenLastCalledWith({
 		nodes: actions.store.nodes.filter((node) => node.selected),
-		padding: 0.24,
+		padding: "9.68%",
 		maxZoom: 1.5,
 		duration: 0,
 	});

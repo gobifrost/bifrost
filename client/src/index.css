@@ -1,5 +1,5 @@
 /* Generated inline-app utilities must not override host responsive controls. */
-@layer theme, base, bifrost-app-utilities, components, utilities;
+@layer theme, base, xyflow, bifrost-app-utilities, components, utilities;
 
 @import "tailwindcss";
 @import "tw-animate-css";
