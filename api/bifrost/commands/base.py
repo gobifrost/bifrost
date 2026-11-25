@@ -39,7 +39,7 @@ from typing import Any, Callable, Coroutine
 import click
 import httpx
 
-from bifrost.client import BifrostClient
+from bifrost.client import BifrostClient, BifrostUnavailableError
 from bifrost.refs import AmbiguousRefError, RefNotFoundError, RefResolver
 
 _ExitCode = int
@@ -244,6 +244,14 @@ def _print_http_error(exc: httpx.HTTPStatusError) -> _ExitCode:
 
 
 def _handle_exception(exc: Exception) -> _ExitCode:
+    if isinstance(exc, BifrostUnavailableError):
+        # Distinguish "the platform is down" from "you are not signed in": the
+        # remedy is to retry, not to run 'bifrost login' against a dead server.
+        _emit_error(
+            {"error": "server_unavailable", "message": str(exc)},
+            [str(exc), "Retry once the platform is reachable; credentials were kept."],
+        )
+        return 1
     if isinstance(exc, RefNotFoundError):
         _emit_error(
             {"error": "ref_not_found", "kind": exc.kind, "value": exc.value},

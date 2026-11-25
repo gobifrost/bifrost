@@ -68,6 +68,15 @@ class BifrostAuthorizationError(BifrostAPIError):
 class BifrostDependencyError(BifrostAPIError):
     """A declared Bifrost dependency is unavailable."""
 
+
+class BifrostUnavailableError(RuntimeError):
+    """The platform could not answer, so nothing was learned about the session.
+
+    Kept distinct from authentication failures on purpose: a 5xx or a transport
+    error says the server is unreachable, not that the stored credentials are
+    invalid, and the two demand opposite responses (retry versus re-login).
+    """
+
 # Retry config for transient 5xx — see workstream E of issue #171.
 # SDK is machine-to-machine, so the retry budget is more generous than
 # the user-facing client.
@@ -327,6 +336,16 @@ async def refresh_connection_access_token(
                 json={"refresh_token": refresh_token},
             )
         if response.status_code != 200:
+            # A 5xx says the platform is unavailable, which is not evidence about
+            # the credentials. Conflating the two surfaced as "Not logged in. Run
+            # 'bifrost login'" during a brief outage, which is advice that cannot
+            # work while the server is down.
+            if response.status_code >= 500:
+                raise BifrostUnavailableError(
+                    f"token refresh for {normalized_url} returned HTTP "
+                    f"{response.status_code}; the platform is unavailable and the "
+                    "stored credentials were kept"
+                )
             logger.warning(
                 "Bifrost token refresh failed for %s using %s credentials: HTTP %s",
                 normalized_url,
@@ -366,6 +385,11 @@ async def refresh_connection_access_token(
             credential_source,
             type(exc).__name__,
         )
+        if isinstance(exc, httpx.TransportError):
+            raise BifrostUnavailableError(
+                f"token refresh for {normalized_url} could not reach the platform "
+                f"({type(exc).__name__}); the stored credentials were kept"
+            ) from exc
         return None
     finally:
         coordinator.lock.release()
