@@ -1309,6 +1309,25 @@ def sdk_object_contract(sdk_type: str) -> SdkObjectContract | None:
 
 
 @lru_cache(maxsize=512)
+def sdk_object_methods(sdk_type: str) -> tuple[str, ...]:
+    """Return the methods the shipped SDK declares directly on one object type."""
+    prefix = sdk_type + "."
+    return tuple(sorted(
+        call[len(prefix):]
+        for call in _sdk_contracts()[0]
+        if call.startswith(prefix) and "." not in call[len(prefix):]
+    ))
+
+
+@lru_cache(maxsize=1)
+def sdk_object_method_names() -> frozenset[str]:
+    """Return every method name declared on any shipped SDK object type."""
+    return frozenset(
+        method for sdk_type in _sdk_contracts()[1] for method in sdk_object_methods(sdk_type)
+    )
+
+
+@lru_cache(maxsize=512)
 def sdk_object_is_data(sdk_type: str) -> bool:
     """Distinguish DTO methods from objects that can perform SDK operations."""
     if sdk_object_contract(sdk_type) is None:

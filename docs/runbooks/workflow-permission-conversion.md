@@ -15,7 +15,23 @@ The analyzer follows the entry function and reachable Python helpers, imports,
 aliases, package initialization, and import-time effects without executing user
 code. Content-addressed compact file summaries are reused across workflows and
 runs. It does not hold source or ASTs for an entire workflow inventory in memory.
-Traversal and source-size limits produce visible review requirements.
+Traversal limits produce visible review requirements. An imported helper file
+over the source-size or AST-node limit, such as a generated vendor SDK, is
+scanned token by token instead of parsed. Every SDK call it names is attributed
+to any workflow that imports it, with all resource selectors treated as
+dynamic. The report warns when it attributes permissions this way, since
+the workflow might only use some of the SDK calls the scan found. The
+module is otherwise opaque like a third-party module: SDK handles
+passed into it remain review requirements. The scan still yields a review
+requirement when the file imports other workspace code or uses relative
+imports, a star import from the SDK, dynamic imports, `eval`/`exec`, or
+reflection over loaded modules or frames; when it copies an SDK name into a
+value the scan cannot follow; or when it obtains a generic SDK client. A
+lookup using `getattr` or `__getattribute__` adds a review requirement at
+its source line. A workflow's own entry file must always be parsed.
+
+Inside a branch guarded by `isinstance(value, dict)` (or another built-in data
+type), methods on that value are ordinary data handling, not SDK calls.
 
 Permission candidates combine SDK transport mappings from the canonical access
 list, named checks in the shipped SDK and its platform helpers, and successful
