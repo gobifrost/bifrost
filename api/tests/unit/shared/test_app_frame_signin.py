@@ -25,3 +25,16 @@ def test_signin_settings_canonicalize_and_deduplicate_origins():
         "https://halo.example.com",
     ])
     assert settings.allowed_origins == ["https://halo.example.com"]
+
+
+@pytest.mark.asyncio
+async def test_frame_signin_rejects_an_unverified_approval(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from shared import app_frame_signin
+
+    redis = AsyncMock()
+    redis.getdel.return_value = "{}"
+    monkeypatch.setattr(app_frame_signin, "get_shared_redis", AsyncMock(return_value=redis))
+
+    assert await app_frame_signin.consume_app_frame_signin_code("synthetic-verifier") is None

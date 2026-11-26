@@ -2,12 +2,14 @@
 
 from base64 import urlsafe_b64encode
 from hashlib import sha256
+from time import time
 from uuid import UUID
 
 from sqlalchemy import func
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.mcp_oauth import _open_auth_code_record, _seal_auth_code_record
 from shared.models import AppFrameSigninSettings
 from src.core.cache import get_shared_redis
 from src.models.orm import SystemConfig
@@ -48,14 +50,23 @@ def _code_key(code: str) -> str:
 
 async def issue_app_frame_signin_code(challenge: str, user_id: UUID, session_id: UUID) -> None:
     redis = await get_shared_redis()
-    await redis.set(_code_key(challenge), f"{user_id}:{session_id}", ex=_CODE_TTL_SECONDS, nx=True)
+    key = _code_key(challenge)
+    record = {
+        "user_id": str(user_id),
+        "session_id": str(session_id),
+        "expires_at": time() + _CODE_TTL_SECONDS,
+    }
+    await redis.set(key, _seal_auth_code_record(key, record), ex=_CODE_TTL_SECONDS, nx=True)
 
 
 async def consume_app_frame_signin_code(code: str) -> tuple[UUID, UUID] | None:
     redis = await get_shared_redis()
     challenge = urlsafe_b64encode(sha256(code.encode()).digest()).decode().rstrip("=")
-    value = await redis.getdel(_code_key(challenge))
+    key = _code_key(challenge)
+    value = await redis.getdel(key)
     if value is None:
         return None
-    user_id, session_id = (value.decode() if isinstance(value, bytes) else value).split(":")
-    return UUID(user_id), UUID(session_id)
+    record = _open_auth_code_record(key, value)
+    if record is None or record["expires_at"] <= time():
+        return None
+    return UUID(record["user_id"]), UUID(record["session_id"])
