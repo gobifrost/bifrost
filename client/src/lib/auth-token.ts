@@ -73,6 +73,29 @@ export function isInIframe(): boolean {
 	}
 }
 
+const FRAME_SESSION_KEY = "bifrost_frame_session";
+
+type FrameSession = { access_token: string; refresh_token: string };
+
+export function isAppFrame(): boolean {
+	return isInIframe() && window.location.pathname.startsWith("/embedded/apps/");
+}
+
+export function getFrameSession(): FrameSession | null {
+	if (!isAppFrame()) return null;
+	const stored = sessionStorage.getItem(FRAME_SESSION_KEY);
+	return stored ? JSON.parse(stored) as FrameSession : null;
+}
+
+export function getFrameSessionId(): string | null {
+	const token = getFrameSession()?.access_token;
+	return token ? parseTokenClaims<{ sid?: string }>(token)?.sid ?? null : null;
+}
+
+export function setFrameSession(session: FrameSession): void {
+	sessionStorage.setItem(FRAME_SESSION_KEY, JSON.stringify(session));
+}
+
 /**
  * Consume an `#embed_token=…` fragment from the current URL, if present,
  * and store the token in sessionStorage. Strips the fragment from the URL
@@ -108,6 +131,7 @@ export function consumeEmbedTokenFromHash(): void {
  * from support sessions even when the operator starts impersonating elsewhere.
  */
 export function getActiveToken(): string | null {
+	if (isAppFrame()) return getFrameSession()?.access_token ?? null;
 	const embed = sessionStorage.getItem(EMBED_TOKEN_KEY);
 	if (embed) return embed;
 	const impersonation = localStorage.getItem(IMPERSONATION_TOKEN_KEY);
@@ -133,6 +157,7 @@ export function clearImpersonationToken(): void {
 
 export function isImpersonating(): boolean {
 	return (
+		!isAppFrame() &&
 		!isEmbedSession() &&
 		localStorage.getItem(IMPERSONATION_TOKEN_KEY) !== null
 	);
@@ -151,7 +176,7 @@ export function getImpersonationTokenClaims(): ImpersonationTokenClaims | null {
  * doesn't apply to embed tokens.
  */
 export function isEmbedSession(): boolean {
-	return sessionStorage.getItem(EMBED_TOKEN_KEY) !== null;
+	return !isAppFrame() && sessionStorage.getItem(EMBED_TOKEN_KEY) !== null;
 }
 
 /**
@@ -160,6 +185,10 @@ export function isEmbedSession(): boolean {
  * support session that another regular tab started.
  */
 export function clearAuthTokens(): void {
+	if (isAppFrame()) {
+		sessionStorage.removeItem(FRAME_SESSION_KEY);
+		return;
+	}
 	if (isEmbedSession()) {
 		clearEmbedToken();
 		return;

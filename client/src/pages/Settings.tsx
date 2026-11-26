@@ -13,6 +13,7 @@ import { PageWorkspace } from "@/components/layout/PageWorkspace";
 import { Button } from "@/components/ui/button";
 import { WorkflowKeys } from "@/pages/settings/WorkflowKeys";
 import { Branding } from "@/pages/settings/Branding";
+import { AppEmbeddingSettings } from "@/pages/settings/AppEmbeddingSettings";
 import { OAuth } from "@/pages/settings/OAuth";
 import { GitHub } from "@/pages/settings/GitHub";
 import { AIModelSettings } from "@/pages/settings/AIModelSettings";
@@ -127,6 +128,12 @@ const settingsSections: SettingsSection[] = [
 				label: "Authentication",
 				icon: Shield,
 				content: OAuth,
+			},
+			{
+				value: "app-embedding",
+				label: "App Embedding",
+				icon: Shield,
+				content: AppEmbeddingSettings,
 			},
 			{
 				value: "workflow-keys",

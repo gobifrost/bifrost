@@ -31,6 +31,8 @@ CSRF_EXEMPT_PATHS = {
     "/auth/login",
     "/auth/register",
     "/auth/refresh",
+    "/auth/app-frame-signin/exchange",  # Explicit one-use proof in request body.
+    "/auth/app-frame-signin/refresh",  # Explicit refresh credential in request body.
     "/auth/oauth/callback",
     "/auth/mfa/login",
     "/auth/mfa/login/setup",
