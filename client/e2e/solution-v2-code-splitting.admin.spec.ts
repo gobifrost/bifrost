@@ -10,6 +10,7 @@ declare global {
  * binding from the entry. If the host queries only the entry URL, the browser
  * evaluates it a second time when the lazy chunk imports the canonical URL.
  */
+import { createServer } from "node:http";
 import { mkdtempSync, readFileSync, readdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
@@ -293,6 +294,75 @@ test.describe("Apps v2 code splitting", () => {
 			});
 			expect(entryRequests).toHaveLength(1);
 			expect(errors, errors.join("\n")).toEqual([]);
+
+			// Reuse the deployed App to exercise the genuine cross-site browser
+			// boundary, including native entry and dynamically imported chunks.
+			const bifrost = new URL(page.url()).origin;
+			const host = createServer((request, response) => {
+				if (request.url === "/isolated-sign-in") {
+					response.writeHead(200, {
+						"Content-Type": "text/html",
+						"Cross-Origin-Opener-Policy": "same-origin",
+					});
+					response.end("<title>Isolated sign-in</title>");
+					return;
+				}
+				response.writeHead(200, { "Content-Type": "text/html" });
+				response.end(`<iframe title="Bifrost App" src="${bifrost}/embedded/apps/${APP_SLUG}" width="800" height="600"></iframe>`);
+			});
+			await new Promise<void>((resolve, reject) => {
+				host.once("error", reject);
+				host.listen(0, "127.0.0.1", resolve);
+			});
+			const address = host.address();
+			if (!address || typeof address === "string") throw new Error("Expected a loopback port");
+			const parent = `http://127.0.0.1:${address.port}`;
+			const settings = "/auth/app-frame-signin/settings";
+			const original = await api.get(settings);
+			expect(original.ok(), await original.text()).toBe(true);
+			try {
+				const saved = await api.put(settings, { data: { allowed_origins: [parent] } });
+				expect(saved.ok(), await saved.text()).toBe(true);
+				await page.goto(parent);
+				const frame = page.frameLocator('iframe[title="Bifrost App"]');
+				// Pause after the popup saved the challenge and simulate the
+				// browsing-context isolation used by SSO providers like Entra.
+				const context = page.context();
+				const approvalURL = "**/api/auth/app-frame-signin/code";
+				await context.route(approvalURL, (route) => route.abort(), { times: 1 });
+				const approvalPaused = context.waitForEvent("requestfailed", (request) =>
+					request.url().endsWith("/api/auth/app-frame-signin/code"),
+				);
+				const popupOpened = page.waitForEvent("popup");
+				await frame.getByRole("button", { name: "Sign In to Bifrost" }).click();
+				const popup = await popupOpened;
+				await approvalPaused;
+				await popup.goto(`${parent}/isolated-sign-in`);
+				expect(await popup.evaluate(() => window.opener === null)).toBe(true);
+				await popup.goto(`${bifrost}/app-frame-signin`, { waitUntil: "commit" });
+				await expect(frame.getByText("Lazy chunk rendered", { exact: true })).toBeVisible();
+				await expect(frame.getByText(`/embedded/apps/${APP_SLUG}`, { exact: true })).toBeVisible();
+				expect(await frame.locator("body").evaluate(() => new Promise((resolve, reject) => {
+					const session = JSON.parse(sessionStorage.getItem("bifrost_frame_session") ?? "{}");
+					const claims = JSON.parse(atob(session.access_token.split(".")[1].replaceAll("-", "+").replaceAll("_", "/")));
+					const endpoint = new URL("/ws/connect", location.href);
+					endpoint.searchParams.set("frame", claims.sid);
+					endpoint.protocol = location.protocol === "https:" ? "wss:" : "ws:";
+					const socket = new WebSocket(endpoint);
+					socket.onopen = () => socket.send(JSON.stringify({ type: "ping" }));
+					socket.onmessage = (event) => {
+						if (JSON.parse(event.data).type !== "pong") return;
+						resolve(true);
+						socket.close();
+					};
+					socket.onerror = () => reject(new Error("Frame socket failed"));
+					socket.onclose = () => reject(new Error("Frame socket closed before pong"));
+				}))).toBe(true);
+			} finally {
+				await new Promise<void>((resolve) => host.close(() => resolve()));
+				const restored = await api.put(settings, { data: await original.json() });
+				expect(restored.ok(), await restored.text()).toBe(true);
+			}
 		} finally {
 			await api
 				.delete(`/api/solutions/${solutionId}`, {

@@ -8,6 +8,7 @@
  * - Navigation: Current page and route state
  */
 
+import { isAppFrame } from "@/lib/auth-token";
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
 
@@ -138,7 +139,9 @@ export const useAppBuilderStore = create<AppBuilderState>()(
 		getBasePath: () => {
 			const { appSlug, isPreview } = get();
 			if (!appSlug) return "/apps";
-			return isPreview ? `/apps/${appSlug}/preview` : `/apps/${appSlug}`;
+			return isPreview
+				? `/apps/${appSlug}/preview`
+				: `${isAppFrame() ? "/embedded" : ""}/apps/${appSlug}`;
 		},
 
 		// Variable management

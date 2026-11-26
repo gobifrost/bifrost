@@ -12,7 +12,7 @@
 
 import type { components } from "@/lib/v1";
 import { refreshAccessToken } from "@/lib/api-client";
-import { getActiveToken } from "@/lib/auth-token";
+import { getActiveToken, getFrameSessionId, isAppFrame } from "@/lib/auth-token";
 import type { ChatStreamEnvelope } from "@/lib/chat-runtime";
 import { useNotificationStore } from "@/stores/notificationStore";
 import type { Notification } from "@/stores/notificationStore";
@@ -597,7 +597,11 @@ class WebSocketService {
 			// cannot set custom authorization headers. Browser impersonation uses
 			// its HttpOnly marker cookie, so its bearer never enters the URL.
 			const activeToken = getActiveToken();
-			if (activeToken && isEmbedToken(activeToken)) {
+			if (isAppFrame()) {
+				const frameSession = getFrameSessionId();
+				if (!frameSession) throw new Error("App frame session required");
+				params.set("frame", frameSession);
+			} else if (activeToken && isEmbedToken(activeToken)) {
 				params.set("token", activeToken);
 			}
 

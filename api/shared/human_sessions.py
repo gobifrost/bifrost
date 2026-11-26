@@ -126,7 +126,9 @@ async def _preflight_current_refresh_session(user_id: UUID, session_id: UUID, jt
     return found is not None
 
 
-async def issue_human_session(user_id: UUID) -> SessionTokens:
+async def issue_human_session(
+    user_id: UUID, *, derived_from_session_id: UUID | None = None,
+) -> SessionTokens:
     """Create and commit a durable human refresh session before returning it."""
     session_id = uuid4()
     access_token, access_expires_at = await _issue_access_token(user_id, session_id)
@@ -135,6 +137,16 @@ async def issue_human_session(user_id: UUID) -> SessionTokens:
         user = await db.scalar(select(User).where(User.id == user_id).with_for_update())
         if not _is_human_user(user):
             raise HumanSessionUnavailable("The human account is not available.")
+
+        if derived_from_session_id is not None:
+            source = await db.scalar(select(HumanAuthSession.id).where(
+                HumanAuthSession.id == derived_from_session_id,
+                HumanAuthSession.user_id == user_id,
+                HumanAuthSession.revoked_at.is_(None),
+                HumanAuthSession.expires_at > datetime.now(timezone.utc),
+            ))
+            if source is None:
+                raise HumanSessionUnavailable("The source session is no longer available.")
 
         await db.execute(
             delete(HumanAuthSession).where(

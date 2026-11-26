@@ -17,6 +17,7 @@ from src.models.orm.forms import Form as FormORM
 from src.models.orm.form_publications import FormPublication
 from src.models.orm.solutions import Solution
 from src.services.embed_auth import verified_embed_context
+from shared.app_frame_signin import get_app_frame_signin_settings
 from shared.form_runtime import form_capability_fingerprint
 
 logger = logging.getLogger(__name__)
@@ -230,6 +231,13 @@ async def embed_public_form(request: Request, public_key: str = Path(...)):
         ),
         status_code=302,
     )
+
+
+@router.get("/apps/frame-signin/frame-policy", include_in_schema=False)
+async def app_signin_frame_policy() -> Response:
+    async with get_db_context() as db:
+        settings = await get_app_frame_signin_settings(db)
+    return _frame_policy_response(" ".join(settings.allowed_origins) or "'none'")
 
 
 @router.get("/forms/public/{public_key}/frame-policy", include_in_schema=False)

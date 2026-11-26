@@ -11424,7 +11424,7 @@
     "cli": 180,
     "manifest": 16,
     "mcp": 101,
-    "rest": 754,
+    "rest": 761,
     "sdk": 21
   },
   "schema_version": 1,
@@ -15972,6 +15972,48 @@
         "status": "transport_only"
       },
       {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/code",
+        "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/exchange",
+        "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/logout",
+        "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/refresh",
+        "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        "status": "transport_only"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/settings",
+        "reason": "Platform-admin browser embedding settings have no CLI, SDK, MCP, or manifest operation.",
+        "status": "intentionally_unsupported"
+      },
+      {
+        "method": "PUT",
+        "operation_id": "",
+        "path": "/auth/app-frame-signin/settings",
+        "reason": "Platform-admin browser embedding settings have no CLI, SDK, MCP, or manifest operation.",
+        "status": "intentionally_unsupported"
+      },
+      {
         "method": "GET",
         "operation_id": "",
         "path": "/auth/authorization",
@@ -16271,6 +16313,13 @@
         "path": "/authorize",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
+      },
+      {
+        "method": "GET",
+        "operation_id": "",
+        "path": "/embed/apps/frame-signin/frame-policy",
+        "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        "status": "transport_only"
       },
       {
         "method": "GET",
