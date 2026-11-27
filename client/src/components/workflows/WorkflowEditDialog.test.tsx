@@ -121,6 +121,24 @@ afterEach(() => {
 });
 
 describe("WorkflowEditDialog", () => {
+	it("shows Access for a managed workflow while keeping Save disabled", async () => {
+		renderWithProviders(
+			<WorkflowEditDialog
+				workflow={makeWorkflow({ is_solution_managed: true })}
+				open
+				initialTab="access"
+				onOpenChange={vi.fn()}
+			/>,
+		);
+		expect(
+			screen.getByRole("region", { name: "Workflow Access Panel" }),
+		).toBeVisible();
+		expect(
+			screen.getByRole("button", { name: "Save Changes" }),
+		).toBeDisabled();
+		expect(mockUpdateWorkflow).not.toHaveBeenCalled();
+	});
+
 	it("lets long App workflows explicitly use Normal priority", async () => {
 		const { user } = renderWithProviders(
 			<WorkflowEditDialog

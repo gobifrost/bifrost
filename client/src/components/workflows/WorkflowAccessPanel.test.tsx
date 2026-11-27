@@ -5,7 +5,7 @@ import userEvent from "@testing-library/user-event";
 
 import type { components } from "@/lib/v1";
 import type { Identity } from "@/services/identities";
-import type { UserAccessMap } from "@/services/access";
+import type { PermissionCatalogEntry, UserAccessMap } from "@/services/access";
 import type {
 	AssignableRole,
 	RecommendedAccess,
@@ -46,6 +46,7 @@ const state = vi.hoisted(() => ({
 	recommendationsError: null as Error | null,
 	assignableRoles: [] as AssignableRole[],
 	reach: [] as UserAccessMap["reach"],
+	permissionCatalog: [] as PermissionCatalogEntry[],
 }));
 const setRunIdentity = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
 const createIdentity = vi.hoisted(() => ({ mutateAsync: vi.fn() }));
@@ -82,6 +83,7 @@ vi.mock("@/services/identities", async (importOriginal) => ({
 }));
 
 vi.mock("@/services/access", () => ({
+	usePermissionCatalog: () => ({ data: state.permissionCatalog }),
 	useUserAccessMap: (id: string) => {
 		accessMapFor(id);
 		return { data: { reach: state.reach } };
@@ -173,6 +175,24 @@ function assignableRole(overrides: Partial<AssignableRole>): AssignableRole {
 	};
 }
 
+function catalogEntry(
+	domain: string,
+	names: Record<string, string>,
+): PermissionCatalogEntry {
+	return {
+		domain,
+		names,
+		title: domain,
+		area: "Data & Content",
+		description: "",
+		who_should_hold: "",
+		actions: ["read"],
+		privileged: [],
+		scope: "per_organization",
+		enforced: true,
+	};
+}
+
 beforeEach(() => {
 	state.identities = [DEFAULT, SYNC];
 	state.recommendations = recommendations([]);
@@ -186,6 +206,10 @@ beforeEach(() => {
 			organization_name: "Contoso",
 			label: "Contoso (Home)",
 		},
+	];
+	state.permissionCatalog = [
+		catalogEntry("tickets", { "tickets.read": "Read Tickets" }),
+		catalogEntry("secrets", { "secrets.read": "Read Secrets" }),
 	];
 	setRunIdentity.mutateAsync.mockReset();
 	setRunIdentity.mutateAsync.mockResolvedValue({});
@@ -211,7 +235,11 @@ describe("WorkflowAccessPanel", () => {
 	it("labels Full Access and explains its permissions stay within existing reach", () => {
 		render(<WorkflowAccessPanel workflow={makeWorkflow()} />);
 		expect(screen.getByText("Full Access")).toBeVisible();
-		expect(screen.getByText("Full Access adds every permission, including Secrets, within the run user's organization reach.")).toBeVisible();
+		expect(
+			screen.getByText(
+				"Full Access adds every permission, including Secrets, within the run user's organization reach.",
+			),
+		).toBeVisible();
 	});
 
 	it("opens the shared conversion wizard for this workflow", () => {
@@ -221,10 +249,71 @@ describe("WorkflowAccessPanel", () => {
 		).toHaveAttribute("href", "/workflows/convert?workflows=wf-1");
 	});
 
+	it("shows a pending Solution declaration and links an admin to review it", () => {
+		render(
+			<WorkflowAccessPanel
+				workflow={makeWorkflow({
+					is_solution_managed: true,
+					solution_permission_request: {
+						status: "pending",
+						request_digest: "request-digest",
+						requested_mode: "restricted",
+						requested_permissions: ["tickets.read", "secrets.read"],
+					},
+				})}
+			/>,
+		);
+
+		expect(
+			screen.getByRole("heading", {
+				name: "Solution Permission Request",
+			}),
+		).toBeVisible();
+		expect(screen.getByText("Pending", { exact: true })).toBeVisible();
+		expect(
+			screen.getByText(
+				"Declared permissions: Read Tickets, Read Secrets",
+			),
+		).toBeVisible();
+		expect(
+			screen.getByRole("link", { name: "Review Permission Request" }),
+		).toHaveAttribute("href", "/workflows/convert?workflows=wf-1");
+	});
+
+	it("shows an approved Solution declaration while retaining the conversion link", () => {
+		render(
+			<WorkflowAccessPanel
+				workflow={makeWorkflow({
+					is_solution_managed: true,
+					solution_permission_request: {
+						status: "approved",
+						request_digest: "request-digest",
+						approved_digest: "request-digest",
+						requested_mode: "restricted",
+						requested_permissions: ["tickets.read"],
+					},
+				})}
+			/>,
+		);
+
+		expect(screen.getByText("Approved", { exact: true })).toBeVisible();
+		expect(
+			screen.getByRole("link", { name: "Review conversion proposal" }),
+		).toHaveAttribute("href", "/workflows/convert?workflows=wf-1");
+	});
+
 	it("labels Declared Permissions and explains it does not expand organization reach", () => {
-		render(<WorkflowAccessPanel workflow={makeWorkflow({ permission_mode: "restricted" })} />);
+		render(
+			<WorkflowAccessPanel
+				workflow={makeWorkflow({ permission_mode: "restricted" })}
+			/>,
+		);
 		expect(screen.getByText("Declared Permissions")).toBeVisible();
-		expect(screen.getByText("Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach.")).toBeVisible();
+		expect(
+			screen.getByText(
+				"Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach.",
+			),
+		).toBeVisible();
 	});
 
 	it("runs as its organization's default identity when it names none, saying where it belongs", () => {

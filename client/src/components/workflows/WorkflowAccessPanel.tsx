@@ -40,8 +40,9 @@ import {
 import { EmptyState } from "@/components/ui/empty-state";
 import { Label } from "@/components/ui/label";
 import { getErrorMessage } from "@/lib/api-error";
+import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
 import type { components } from "@/lib/v1";
-import { useUserAccessMap } from "@/services/access";
+import { usePermissionCatalog, useUserAccessMap } from "@/services/access";
 import { useAuthorization } from "@/services/authorization";
 import {
 	identityLabel,
@@ -67,6 +68,12 @@ const ACCESS_MODE_LABELS: Record<Workflow["permission_mode"], string> = {
 	full: "Full Access",
 	restricted: "Declared Permissions",
 };
+
+function requestStatusLabel(status: string) {
+	return status
+		.replaceAll("_", " ")
+		.replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
 
 const RECOMMENDATION_ICONS: Record<RecommendedAccessItem["kind"], LucideIcon> =
 	{
@@ -338,11 +345,29 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 		: undefined;
 	const grants = useGrantToIdentity(current?.id);
 	const reachQuery = useUserAccessMap(current?.id);
+	const permissionCatalog = usePermissionCatalog().data;
 	const currentLabel = current ? identityLabel(current) : "The identity";
 
 	// A Solution's deployment owns the workflow, so who it runs as stays
 	// put; granting the identity access doesn't change the workflow.
 	const isSolutionManaged = workflow.is_solution_managed;
+	const solutionPermissionRequest = workflow.solution_permission_request;
+	const hasUnapprovedSolutionPermissionRequest =
+		solutionPermissionRequest?.status !== undefined &&
+		solutionPermissionRequest.status !== "approved";
+	const declaredPermissionNames = (
+		solutionPermissionRequest?.requested_permissions ?? []
+	)
+		.map((permission) =>
+			permissionDisplayName(
+				permission,
+				permissionCatalog?.find(
+					(entry) =>
+						entry.domain === permissionParts(permission).domain,
+				),
+			),
+		)
+		.join(", ");
 	const busy = setRunIdentity.isPending || creating || granting;
 	const workflowName = workflow.display_name || workflow.name;
 
@@ -527,6 +552,33 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						? "Full Access adds every permission, including Secrets, within the run user's organization reach."
 						: "Declared Permissions adds the workflow's configured permissions to the run user's own roles. It does not add organizations to their reach."}
 				</p>
+				{solutionPermissionRequest && (
+					<div className="space-y-1 border-t border-border/70 pt-3 text-sm">
+						<div className="flex flex-wrap items-center gap-2">
+							<h4 className="font-medium">
+								Solution Permission Request
+							</h4>
+							<Badge variant="outline">
+								{requestStatusLabel(
+									solutionPermissionRequest.status,
+								)}
+							</Badge>
+						</div>
+						<p className="text-xs text-muted-foreground">
+							Requested mode:{" "}
+							{solutionPermissionRequest.requested_mode ===
+							"restricted"
+								? "Declared Permissions"
+								: "Full Access"}
+						</p>
+						<p className="text-xs text-muted-foreground">
+							{solutionPermissionRequest.requested_mode ===
+							"restricted"
+								? `Declared permissions: ${declaredPermissionNames || "None"}`
+								: "Full Access does not declare individual permissions."}
+						</p>
+					</div>
+				)}
 				{authorization.isPlatformAdmin && (
 					<Button
 						asChild
@@ -536,7 +588,9 @@ export function WorkflowAccessPanel({ workflow }: { workflow: Workflow }) {
 						<Link
 							to={`/workflows/convert?workflows=${encodeURIComponent(workflow.id)}`}
 						>
-							Review conversion proposal
+							{hasUnapprovedSolutionPermissionRequest
+								? "Review Permission Request"
+								: "Review conversion proposal"}
 						</Link>
 					</Button>
 				)}

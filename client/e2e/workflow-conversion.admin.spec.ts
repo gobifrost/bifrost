@@ -6,13 +6,76 @@
  */
 import { randomUUID } from "node:crypto";
 
-import { test, expect } from "./fixtures/api-fixture";
+import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
+import { buildSolutionZip } from "./fixtures/solution-zip";
 
 const suffix = randomUUID().replaceAll("-", "").slice(0, 12);
 const workflowName = `synthetic_conversion_${suffix}`;
 const workflowPath = `${workflowName}.py`;
 const helperModule = `${workflowName}_helper`;
 const helperPath = `${helperModule}.py`;
+
+function solutionPermissionRequestZip(slug: string, workflowName: string) {
+	const workflowId = randomUUID();
+	return buildSolutionZip([
+		{
+			path: "bifrost.solution.yaml",
+			content: JSON.stringify({
+				slug,
+				name: slug.toUpperCase(),
+				global_repo_access: false,
+			}),
+		},
+		{
+			path: "workflows/solution_request.py",
+			content: "async def run():\n    return None\n",
+		},
+		{
+			path: ".bifrost/workflows.yaml",
+			content: JSON.stringify({
+				workflows: {
+					[workflowId]: {
+						id: workflowId,
+						name: workflowName,
+						function_name: "run",
+						path: "workflows/solution_request.py",
+						requested_permissions: {
+							mode: "restricted",
+							grants: [
+								{ permission: "organizations.read" },
+								{ permission: "configs.read" },
+								{ permission: "integrations.read" },
+								{ permission: "tables.read" },
+							],
+						},
+					},
+				},
+			}),
+		},
+	]);
+}
+
+async function waitForDeploy(api: AuthedApi, jobId: string) {
+	await expect
+		.poll(
+			async () => {
+				const response = await api.get(
+					`/api/solutions/deploy-jobs/${jobId}`,
+				);
+				expect(response.ok(), await response.text()).toBe(true);
+				const status = (await response.json()) as {
+					status: string;
+					error?: string | null;
+				};
+				if (status.status === "failed") {
+					throw new Error(status.error || "solution deploy failed");
+				}
+				return status.status;
+			},
+			{ timeout: 30_000 },
+		)
+		.toBe("succeeded");
+}
 
 test.describe("Workflow conversion", () => {
 	test.beforeAll(async ({ api }) => {
@@ -247,5 +310,300 @@ test.describe("Workflow conversion", () => {
 				exact: true,
 			}),
 		).toBeVisible();
+	});
+
+	test("WORKFLOW-CONVERSION-02 approves a pending Solution permission request", async ({
+		page,
+		api,
+	}, testInfo) => {
+		test.setTimeout(120_000);
+		const requestSuffix = randomUUID().replaceAll("-", "").slice(0, 12);
+		const slug = `e2e-permission-request-${requestSuffix}`;
+		const requestWorkflowName = `solution_permission_request_${requestSuffix}`;
+		const setTheme = async (theme: "light" | "dark") => {
+			await page.evaluate(
+				(value) => localStorage.setItem("theme", value),
+				theme,
+			);
+			await page.reload();
+			if (theme === "dark")
+				await expect(page.locator("html")).toHaveClass(/dark/);
+			else await expect(page.locator("html")).not.toHaveClass(/dark/);
+		};
+		const openAccess = async () => {
+			await page.goto("/workflows");
+			await page
+				.getByPlaceholder("Search by name, description, or category...")
+				.fill(requestWorkflowName);
+			await page
+				.getByRole("button", {
+					name: `${requestWorkflowName} actions`,
+					exact: true,
+				})
+				.click();
+			await page
+				.getByRole("menuitem", { name: "View Settings", exact: true })
+				.click();
+			const settings = page.getByRole("dialog", {
+				name: "Edit Workflow Settings",
+			});
+			await settings
+				.getByRole("tab", { name: "Access", exact: true })
+				.click();
+			return settings;
+		};
+		await page.goto("/workflows");
+		await setTheme("light");
+		const created = await api.post("/api/solutions", {
+			data: {
+				slug,
+				name: slug.toUpperCase(),
+				organization_id: null,
+				global_repo_access: false,
+			},
+		});
+		expect(created.ok(), await created.text()).toBe(true);
+		const solutionId = (await created.json()).id as string;
+
+		try {
+			const deploy = await api.post(
+				`/api/solutions/${solutionId}/deploy?force=true`,
+				{
+					multipart: {
+						file: {
+							name: "solution.zip",
+							mimeType: "application/zip",
+							buffer: solutionPermissionRequestZip(
+								slug,
+								requestWorkflowName,
+							),
+						},
+					},
+				},
+			);
+			expect(deploy.status(), await deploy.text()).toBe(202);
+			await waitForDeploy(
+				api,
+				(await deploy.json()).deploy_job_id as string,
+			);
+
+			const dialog = await openAccess();
+			await expect(
+				dialog.getByRole("heading", {
+					name: "Solution Permission Request",
+				}),
+			).toBeVisible();
+			await expect(
+				dialog.getByText("Pending", { exact: true }),
+			).toBeVisible();
+			await expect(
+				dialog.getByText(
+					"Declared permissions: Read Configuration, Read Integrations, Read Organizations, Read Tables",
+				),
+			).toBeVisible();
+			await expect(
+				dialog.getByRole("link", { name: "Review Permission Request" }),
+			).toHaveAttribute(
+				"href",
+				expect.stringContaining("/workflows/convert?workflows="),
+			);
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-access-desktop-light.png",
+				),
+				fullPage: true,
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			expect(
+				await page.evaluate(
+					() =>
+						document.documentElement.scrollWidth <=
+						window.innerWidth,
+				),
+			).toBe(true);
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-access-mobile-light.png",
+				),
+				fullPage: true,
+			});
+			await setTheme("dark");
+			await openAccess();
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-access-mobile-dark.png",
+				),
+				fullPage: true,
+			});
+			await page.setViewportSize({ width: 1440, height: 900 });
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-access-desktop-dark.png",
+				),
+				fullPage: true,
+			});
+			await setTheme("light");
+			await openAccess();
+			await dialog
+				.getByRole("link", { name: "Review Permission Request" })
+				.click();
+			await page
+				.getByRole("button", { name: "Analyze selected workflows" })
+				.click();
+			await page
+				.getByRole("heading", { name: "Review proposals" })
+				.waitFor();
+			await page
+				.getByRole("button", {
+					name: `Review ${requestWorkflowName}`,
+					exact: true,
+				})
+				.click();
+			await expect(
+				page.getByRole("heading", {
+					name: "Solution Permission Request",
+				}),
+			).toBeVisible();
+			await expect(
+				page.getByText("Pending", { exact: true }),
+			).toBeVisible();
+			await expect(
+				page.getByText(
+					"Declared permissions: Read Configuration, Read Integrations, Read Organizations, Read Tables",
+				),
+			).toBeVisible();
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-review-desktop-light.png",
+				),
+				fullPage: true,
+			});
+			await page.setViewportSize({ width: 390, height: 844 });
+			await page
+				.getByRole("button", {
+					name: `Review ${requestWorkflowName}`,
+					exact: true,
+				})
+				.click();
+			const details = page.getByRole("dialog", {
+				name: "Workflow details",
+			});
+			await expect(details).toBeVisible();
+			expect(
+				await page.evaluate(
+					() =>
+						document.documentElement.scrollWidth <=
+						window.innerWidth,
+				),
+			).toBe(true);
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-review-mobile-light.png",
+				),
+				fullPage: true,
+			});
+			await setTheme("dark");
+			await page
+				.getByRole("button", {
+					name: `Review ${requestWorkflowName}`,
+					exact: true,
+				})
+				.click();
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-review-mobile-dark.png",
+				),
+				fullPage: true,
+			});
+			await details
+				.getByRole("button", { name: "Close", exact: true })
+				.click();
+			await setTheme("light");
+			await page.setViewportSize({ width: 1440, height: 900 });
+			await page
+				.getByRole("checkbox", {
+					name: `Select ${requestWorkflowName}`,
+				})
+				.check();
+			await page.getByRole("button", { name: /Review selected/ }).click();
+			const confirmation = page.getByRole("alertdialog", {
+				name: "Confirm reviewed changes",
+			});
+			await expect(confirmation).toContainText(
+				"Apply approves the exact requested mode and permissions shown in review. It does not approve analyzer suggestions.",
+			);
+			await confirmation
+				.getByRole("checkbox", {
+					name: "I approve the exact requested Solution permissions.",
+				})
+				.check();
+			await confirmation
+				.getByRole("button", { name: "Apply reviewed changes" })
+				.click();
+			await page.getByText(/requested change completed/i).waitFor();
+			await page
+				.getByRole("button", { name: "Return to review" })
+				.click();
+			await page
+				.getByRole("heading", { name: "Review proposals" })
+				.waitFor();
+			await page
+				.getByRole("button", {
+					name: `Review ${requestWorkflowName}`,
+					exact: true,
+				})
+				.click();
+			await expect(
+				page.getByText("Approved", { exact: true }),
+			).toBeVisible();
+			await page.screenshot({
+				animations: "disabled",
+				path: testInfo.outputPath(
+					"solution-request-review-approved-desktop-light.png",
+				),
+				fullPage: true,
+			});
+			await page.goto("/workflows");
+			await page
+				.getByPlaceholder("Search by name, description, or category...")
+				.fill(requestWorkflowName);
+			await page
+				.getByRole("button", {
+					name: `${requestWorkflowName} actions`,
+					exact: true,
+				})
+				.click();
+			await page
+				.getByRole("menuitem", { name: "View Settings", exact: true })
+				.click();
+			const approvedDialog = page.getByRole("dialog", {
+				name: "Edit Workflow Settings",
+			});
+			await approvedDialog
+				.getByRole("tab", { name: "Access", exact: true })
+				.click();
+			await expect(
+				approvedDialog.getByText("Approved", { exact: true }),
+			).toBeVisible();
+			await expect(
+				approvedDialog.getByRole("link", {
+					name: "Review conversion proposal",
+				}),
+			).toBeVisible();
+		} finally {
+			const removed = await api.delete(`/api/solutions/${solutionId}`, {
+				params: { confirm: slug },
+			});
+			expect([200, 204, 404], await removed.text()).toContain(
+				removed.status(),
+			);
+		}
 	});
 });

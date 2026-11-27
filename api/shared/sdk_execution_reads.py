@@ -136,7 +136,7 @@ def convert_workflow_orm_to_schema(
 
     from src.models import WorkflowMetadata, WorkflowParameter
     from src.models.contracts.workflows import ExecutableType
-    from src.services.workflow_permissions import resolve_workflow_permission_mode
+    from src.services.workflow_permissions import permission_request_summary, resolve_workflow_permission_mode
     from src.services.workflow_validation import _extract_relative_path
 
     parameters = []
@@ -163,6 +163,7 @@ def convert_workflow_orm_to_schema(
         solution_id=workflow.solution_id,
         run_identity_id=workflow.run_identity_id,
         permission_mode=resolve_workflow_permission_mode(workflow, default_permission_mode, permission_request),
+        solution_permission_request=permission_request_summary(permission_request),
         access_level=workflow.access_level or "role_based",
         role_ids=[str(role_id) for role_id in (role_ids or [])],
         parameters=parameters,

@@ -6,6 +6,10 @@ import {
 	type WorkflowListItem,
 } from "./WorkflowListSurface";
 
+vi.mock("@/contexts/AuthContext", () => ({
+	useAuth: () => ({ isPlatformAdmin: true }),
+}));
+
 function LocationProbe() {
 	const location = useLocation();
 	return (
@@ -16,6 +20,37 @@ function LocationProbe() {
 }
 
 describe("workflow recovery actions", () => {
+	it("opens read-only settings for a managed workflow without offering Edit", async () => {
+		const workflow = {
+			id: "managed-workflow",
+			name: "managed_workflow",
+			type: "workflow",
+			is_solution_managed: true,
+		} as WorkflowListItem;
+		const onEditScope = vi.fn();
+		const { user } = renderWithProviders(
+			<WorkflowListSurface
+				workflows={[workflow]}
+				viewMode="grid"
+				isPlatformAdmin
+				canManageWorkflows
+				getOrgName={() => "Global"}
+				onEditScope={onEditScope}
+				onExecute={vi.fn()}
+			/>,
+		);
+		await user.click(
+			screen.getByRole("button", { name: "managed_workflow actions" }),
+		);
+		expect(
+			screen.queryByRole("menuitem", { name: "Edit" }),
+		).not.toBeInTheDocument();
+		await user.click(
+			screen.getByRole("menuitem", { name: "View Settings" }),
+		);
+		expect(onEditScope).toHaveBeenCalledExactlyOnceWith(workflow);
+	});
+
 	it("keeps a selected checkbox from opening the workflow row", async () => {
 		const workflow = {
 			id: "selected-workflow",

@@ -51,6 +51,8 @@ import {
 	useWorkflowConversionOperation,
 } from "@/hooks/useWorkflowConversionJob";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
+import { permissionDisplayName, permissionParts } from "@/lib/permission-words";
+import { usePermissionCatalog } from "@/services/access";
 import {
 	analyzeWorkflowConversions,
 	applyWorkflowConversion,
@@ -65,6 +67,7 @@ type Selection = {
 	source_fingerprint: string;
 	acknowledged_unknowns: boolean;
 	requires_solution_ack: boolean;
+	requires_solution_request_ack: boolean;
 };
 const PAGE_SIZE = 25;
 const ACTIVE = new Set(["queued", "running", "waiting", "cancel_requested"]);
@@ -188,6 +191,9 @@ function WorkflowConversionWizard() {
 	const solutionRequired = entries.some(
 		([, value]) => value.requires_solution_ack,
 	);
+	const solutionRequestRequired = entries.some(
+		([, value]) => value.requires_solution_request_ack,
+	);
 	const selectionReady =
 		entries.length > 0 &&
 		!entries.some(([, value]) => !value.acknowledged_unknowns);
@@ -201,6 +207,8 @@ function WorkflowConversionWizard() {
 					acknowledged_unknowns: (item.unknowns ?? []).length === 0,
 					requires_solution_ack:
 						item.solution_id != null ||
+						item.solution_permission_request != null,
+					requires_solution_request_ack:
 						item.solution_permission_request != null,
 				};
 			else delete next[item.workflow_id];
@@ -672,7 +680,14 @@ function WorkflowConversionWizard() {
 													"full"
 														? "Full Access"
 														: "Declared Permissions"}{" "}
-													→ Declared Permissions ·{" "}
+													→{" "}
+													{item
+														.solution_permission_request
+														?.requested_mode ===
+													"full"
+														? "Full Access"
+														: "Declared Permissions"}{" "}
+													·{" "}
 													{item.identity?.shared
 														? "Shared identity"
 														: "Dedicated identity"}
@@ -785,14 +800,24 @@ function WorkflowConversionWizard() {
 								Confirm reviewed changes
 							</AlertDialogTitle>
 							<AlertDialogDescription>
-								Apply declared-permission proposals to{" "}
+								Apply reviewed proposals to{" "}
 								{entries.length} selected workflow
 								{entries.length === 1 ? "" : "s"}. Their current
-								run identities and reach are preserved.
-								{" "}Preview: suggested permissions may be incomplete or broader
-								than necessary. Conversion does not run your workflows.
-								Review uncertainties and test important workflows after
-								conversion.
+								run identities and reach are preserved. Preview:
+								suggested permissions may be incomplete or
+								broader than necessary. Conversion does not run
+								your workflows. Review uncertainties and test
+								important workflows after conversion.
+								{solutionRequestRequired && (
+									<>
+										{" "}
+										For selected Solution permission
+										requests, Apply approves the exact
+										requested mode and permissions shown in
+										review. It does not approve analyzer
+										suggestions.
+									</>
+								)}
 							</AlertDialogDescription>
 						</AlertDialogHeader>
 						<ul className="max-h-40 space-y-1 overflow-auto text-sm">
@@ -808,7 +833,9 @@ function WorkflowConversionWizard() {
 										setSolutionAck(value === true)
 									}
 								/>
-								I reviewed selected Solution declarations.
+								{solutionRequestRequired
+									? "I approve the exact requested Solution permissions."
+									: "I reviewed selected Solution declarations."}
 							</label>
 						)}
 						<AlertDialogFooter>
@@ -968,24 +995,71 @@ function Inspector({
 	selection?: Selection;
 	update: (change: Partial<Selection>) => void;
 }) {
+	const solutionPermissionRequest = item.solution_permission_request;
+	const permissionCatalog = usePermissionCatalog().data;
+	const declaredPermissionNames = (
+		solutionPermissionRequest?.requested_permissions ?? []
+	)
+		.map((permission) =>
+			permissionDisplayName(
+				permission,
+				permissionCatalog?.find(
+					(entry) =>
+						entry.domain === permissionParts(permission).domain,
+				),
+			),
+		)
+		.join(", ");
 	return (
 		<div className="space-y-5">
 			<div>
-				<Badge
-					variant={item.status === "ready" ? "secondary" : "outline"}
-				>
-					{statusLabel(item.status)}
-				</Badge>
-				<p className="mt-2 text-sm">
-					{item.current_permission_mode === "full"
-						? "Full Access"
-						: "Declared Permissions"}{" "}
-					→ Declared Permissions
-				</p>
-				<p className="mt-1 text-sm text-muted-foreground">
-					{(item.proposed_permissions ?? []).join(", ") ||
-						"No SDK permissions found"}
-				</p>
+				{solutionPermissionRequest ? (
+					<>
+						<div className="flex flex-wrap items-center gap-2">
+							<h4 className="font-medium">
+								Solution Permission Request
+							</h4>
+							<Badge variant="outline">
+								{statusLabel(solutionPermissionRequest.status)}
+							</Badge>
+						</div>
+						<p className="mt-2 text-sm">
+							Requested mode:{" "}
+							{solutionPermissionRequest.requested_mode ===
+							"restricted"
+								? "Declared Permissions"
+								: "Full Access"}
+						</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							{solutionPermissionRequest.requested_mode ===
+							"restricted"
+								? `Declared permissions: ${declaredPermissionNames || "None"}`
+								: "Full Access does not declare individual permissions."}
+						</p>
+					</>
+				) : (
+					<>
+						<Badge
+							variant={
+								item.status === "ready"
+									? "secondary"
+									: "outline"
+							}
+						>
+							{statusLabel(item.status)}
+						</Badge>
+						<p className="mt-2 text-sm">
+							{item.current_permission_mode === "full"
+								? "Full Access"
+								: "Declared Permissions"}{" "}
+							→ Declared Permissions
+						</p>
+						<p className="mt-1 text-sm text-muted-foreground">
+							{(item.proposed_permissions ?? []).join(", ") ||
+								"No SDK permissions found"}
+						</p>
+					</>
+				)}
 			</div>
 			<div className="border-t pt-4">
 				<h4 className="font-medium">Run identity</h4>
