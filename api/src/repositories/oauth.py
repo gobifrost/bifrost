@@ -321,6 +321,7 @@ class OAuthProviderRepository(OrgScopedRepository[OAuthProvider]):
             token_url=provider.token_url or "",
             scopes=scopes_str,
             audience=provider.audience,
+            tenant_id=(provider.provider_metadata or {}).get("tenant_id"),
             status=status,
             status_message=provider.status_message,
             integration_id=(

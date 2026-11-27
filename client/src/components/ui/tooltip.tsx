@@ -44,7 +44,7 @@ function TooltipContent({
 				data-slot="tooltip-content"
 				sideOffset={sideOffset}
 				className={cn(
-					"z-50 w-fit origin-(--radix-tooltip-content-transform-origin) rounded-[var(--bf-radius-surface)] border border-border/10 bg-foreground px-3 py-1.5 text-xs text-background text-balance shadow-[0_12px_28px_-12px_rgba(15,23,42,0.55)] animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 motion-reduce:animate-none motion-reduce:transition-none",
+					"z-50 w-fit max-w-[min(20rem,calc(100vw-2rem))] whitespace-normal [overflow-wrap:anywhere] origin-(--radix-tooltip-content-transform-origin) rounded-[var(--bf-radius-surface)] border border-border/10 bg-foreground px-3 py-1.5 text-xs text-background text-balance shadow-[0_12px_28px_-12px_rgba(15,23,42,0.55)] animate-in fade-in-0 zoom-in-95 data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=closed]:zoom-out-95 data-[side=bottom]:slide-in-from-top-2 data-[side=left]:slide-in-from-right-2 data-[side=right]:slide-in-from-left-2 data-[side=top]:slide-in-from-bottom-2 motion-reduce:animate-none motion-reduce:transition-none",
 					className,
 				)}
 				{...props}

@@ -1,0 +1,15 @@
+{
+  "key": "pr:1505",
+  "classification": "highlight",
+  "entry_ids": [
+    "9ab8d4a1-1167-4c5b-8e6f-4ec6cce99276"
+  ],
+  "reason": "Host-only SDK-managed Workload Identity option for integrations.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1505",
+      "Maintainer approved the scoped build and exact Product Updates prose in the native conversation on 2026-11-27."
+    ]
+  }
+}

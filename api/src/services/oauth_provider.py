@@ -626,6 +626,12 @@ async def refresh_oauth_token_http(td: dict[str, Any]) -> dict[str, Any]:
         "success": False,
     }
 
+    if td.get("oauth_flow_type") == "workload_identity":
+        outcome["error"] = (
+            "Workload Identity is SDK managed and does not obtain or refresh OAuth tokens"
+        )
+        return outcome
+
     try:
         if td.get("context_error"):
             outcome["error"] = td["context_error"]

@@ -185,6 +185,92 @@ def _human_size(num_bytes: int) -> str:
     return f"{num_bytes:.1f}TB"
 
 
+_MAX_CAPTURED_VARIABLE_SIZE = 10_000
+
+
+class _CapturedVariableTooLarge(Exception):
+    """The variable already exceeds the existing capture output limit."""
+
+
+def _serialize_captured_variable(value: Any) -> Any:
+    """Preserve small locals without traversing an entire discarded value.
+
+    Charge a lower bound on JSON size while visiting the graph. Strings and
+    nodes alone bound traversal; numeric encodings also charge their full size.
+    The final encoder retains the exact existing 10 KB limit for escaping and
+    container punctuation. Pydantic models retain their model_dump semantics;
+    their returned containers share the same bounded traversal.
+    """
+    from src.core.secret_string import REDACTED, SecretString
+
+    remaining = _MAX_CAPTURED_VARIABLE_SIZE
+    ancestors: set[int] = set()
+
+    def charge(size: int) -> None:
+        nonlocal remaining
+        remaining -= size
+        if remaining < 0:
+            raise _CapturedVariableTooLarge
+
+    def clean(item: Any) -> Any:
+        charge(1)
+        if isinstance(item, SecretString):
+            charge(len(REDACTED))
+            return REDACTED
+        if isinstance(item, str):
+            # A str subclass may override __len__; count the stored characters.
+            charge(str.__len__(item))
+            return item
+        if item is None or isinstance(item, (bool, int, float)):
+            try:
+                encoded = json.dumps(item)
+            except (TypeError, ValueError):
+                return f"<{type(item).__name__}>"
+            charge(len(encoded) - 1)
+            return item
+
+        identity = id(item)
+        if identity in ancestors:
+            charge(len("[Circular Reference]"))
+            return "[Circular Reference]"
+        ancestors.add(identity)
+        try:
+            if isinstance(item, dict):
+                result = {}
+                for key, child in item.items():
+                    if isinstance(key, str):
+                        charge(str.__len__(key))
+                    elif key is None or isinstance(key, (bool, int, float)):
+                        charge(len(json.dumps(key)))
+                    result[key] = clean(child)
+                return result
+            if isinstance(item, (list, tuple, set)):
+                values = [clean(child) for child in item]
+                return tuple(values) if isinstance(item, tuple) else values
+            if isinstance(item, BaseModel):
+                return clean(item.model_dump())
+            json.dumps(item)
+            return item
+        except (TypeError, ValueError):
+            return f"<{type(item).__name__}>"
+        finally:
+            ancestors.remove(identity)
+
+    try:
+        cleaned = clean(value)
+        serialized = json.dumps(cleaned, default=str)
+    except _CapturedVariableTooLarge:
+        return (
+            f"<{type(value).__name__}: larger than "
+            f"{_human_size(_MAX_CAPTURED_VARIABLE_SIZE)}, truncated>"
+        )
+    except (TypeError, ValueError):
+        return f"<{type(value).__name__}>"
+    if len(serialized) > _MAX_CAPTURED_VARIABLE_SIZE:
+        return f"<{type(value).__name__}: {_human_size(len(serialized))}, truncated>"
+    return cleaned
+
+
 # Attribute naming the code object whose locals are captured when it returns,
 # for callables that run user code in an inner function (inline scripts).
 _CAPTURE_CODE_ATTR = "_bifrost_capture_code"
@@ -1540,50 +1626,6 @@ async def _execute_workflow_with_trace(
     )
     root_logger.addHandler(handler)
 
-    def remove_circular_refs(obj, seen=None):
-        """
-        Remove circular references from objects to make them JSON serializable.
-
-        Recursively walks through dicts/lists/tuples and replaces circular references
-        with a string marker. Non-serializable objects are converted to string repr.
-        """
-        if seen is None:
-            seen = set()
-
-        obj_id = id(obj)
-        if obj_id in seen:
-            return "[Circular Reference]"
-
-        seen = seen.copy()  # Copy seen set for this branch
-        seen.add(obj_id)
-
-        try:
-            # Redact SecretString before serialization — json.dumps bypasses __str__
-            from src.core.secret_string import SecretString, REDACTED
-            if isinstance(obj, SecretString):
-                return REDACTED
-
-            if isinstance(obj, dict):
-                return {k: remove_circular_refs(v, seen) for k, v in obj.items()}
-            elif isinstance(obj, (list, tuple)):
-                cleaned = [remove_circular_refs(item, seen) for item in obj]
-                return cleaned if isinstance(obj, list) else tuple(cleaned)
-            elif isinstance(obj, set):
-                return [remove_circular_refs(item, seen) for item in obj]
-            elif isinstance(obj, BaseModel):
-                # Convert Pydantic models to dict and recursively clean
-                return remove_circular_refs(obj.model_dump(), seen)
-            else:
-                # Test if primitive type is JSON serializable
-                json.dumps(obj)
-                return obj
-        except (TypeError, ValueError):
-            # Not serializable - return type name
-            return f"<{type(obj).__name__}>"
-
-    # Max size per variable before truncation (10KB)
-    MAX_VARIABLE_SIZE = 10_000
-
     # Helper to capture variables from locals
     def capture_variables_from_locals(local_vars: dict[str, Any]) -> None:
         """Capture variables from a frame's local variables, excluding params and internals."""
@@ -1595,18 +1637,7 @@ async def _execute_workflow_with_trace(
                 and k not in param_names
                 and not callable(v)
                 and not isinstance(v, type(sys))):
-                # Remove circular references to make JSON serializable
-                cleaned_value = remove_circular_refs(v)
-                # Truncate large values to avoid freezing the UI
-                try:
-                    serialized = json.dumps(cleaned_value, default=str)
-                    if len(serialized) > MAX_VARIABLE_SIZE:
-                        size_desc = _human_size(len(serialized))
-                        captured_vars[k] = f"<{type(v).__name__}: {size_desc}, truncated>"
-                    else:
-                        captured_vars[k] = cleaned_value
-                except (TypeError, ValueError):
-                    captured_vars[k] = f"<{type(v).__name__}>"
+                captured_vars[k] = _serialize_captured_variable(v)
 
     exception_to_raise = None
 
@@ -1648,7 +1679,7 @@ async def _execute_workflow_with_trace(
         context.parameters = dict(parameters)
         # Also add to captured_vars so they appear in execution details
         for key, value in parameters.items():
-            captured_vars[key] = remove_circular_refs(value)
+            captured_vars[key] = _serialize_captured_variable(value)
 
         # Check if first parameter is for context (by type annotation OR by name as fallback)
         first_param_is_context = False

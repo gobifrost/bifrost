@@ -46,7 +46,6 @@ class Bridge:
         self.reconciliation_ready = asyncio.Event()
         self.reconciliation_ready.set()
         self.transport_changed = asyncio.Event()
-        self.compute_changed = asyncio.Event()
         self.status = {
             **binding.to_dict(),
             "state": "unknown",
@@ -315,7 +314,7 @@ async def test_chat_event_ack_waits_for_consumer_advance_then_returns_terminal_r
                 "empty_output_guard": None,
             },
         }
-        bridge.compute_changed.set()
+        host.handle_state({"event": "agent_compute_state", **host._bound_binding()})
         final = await anext(events)
         assert isinstance(final, RuntimeComputeResultEvent)
         assert final.result.output == "done"
@@ -438,3 +437,158 @@ def test_failed_compute_restores_guard_from_retained_terminal_result():
         })
     assert guard.handoff_triggered
     assert guard.fallbacks_used == 1
+
+
+@pytest.mark.asyncio
+async def test_state_notification_wakes_only_its_bound_stage():
+    """A busy sibling cannot cause status/authorization reads or steal a wake."""
+    from collections import Counter
+
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("done")]))
+    runtime_plan = plan()
+    first_binding = binding_for(runtime_plan, model)
+    bridge = Bridge(first_binding)
+    first = runtime(runtime_plan, bridge, first_binding, model)
+    second = runtime(runtime_plan, bridge, binding_for(runtime_plan, model), model)
+    calls = Counter()
+    observed = {host.binding.stage_id: asyncio.Queue() for host in (first, second)}
+    terminal = {}
+
+    async def request(action, payload, *, authorization):
+        assert action == "agent_compute_status"
+        async with authorization:
+            stage = payload["stage_id"]
+            calls[stage] += 1
+            observed[stage].put_nowait(None)
+            return {
+                **payload, "state": "terminal" if stage in terminal else "running",
+                "terminal": terminal.get(stage),
+            }
+
+    bridge.request = request
+    for host in (first, second):
+        host._input_sha256 = "a" * 64
+    tasks = [asyncio.create_task(host._wait_terminal()) for host in (first, second)]
+    try:
+        async with asyncio.timeout(5):
+            for queue in observed.values():
+                await queue.get()
+            first.handle_state({"event": "agent_compute_state", **first._bound_binding()})
+            await observed[first.binding.stage_id].get()
+            assert calls[first.binding.stage_id] == 2
+            assert calls[second.binding.stage_id] == 1
+            # Both notifications remain pending independently.
+            for host in (first, second):
+                terminal[host.binding.stage_id] = {"ok": True}
+                host.handle_state({"event": "agent_compute_state", **host._bound_binding()})
+            assert await asyncio.gather(*tasks) == [{"ok": True}, {"ok": True}]
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_chat_stream_keeps_one_terminal_watch_across_ui_events():
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("done")]))
+    runtime_plan = plan(surface="chat")
+    bridge = Bridge(binding_for(runtime_plan, model))
+    host = runtime(runtime_plan, bridge, bridge.binding, model)
+    callbacks = []
+    try:
+        async with asyncio.timeout(5), host.run_stream_events("go") as events:
+            for index in range(3):
+                callbacks.append(asyncio.create_task(host.handle_rpc(rpc(
+                    host._bound_binding(), str(uuid4()), "runtime_event",
+                    encode_runtime_event(PartStartEvent(index=index, part=TextPart(str(index)))),
+                ))))
+                assert isinstance(await anext(events), PartStartEvent)
+                if index == 0:
+                    status_reads = bridge.calls.count("agent_compute_status")
+                else:
+                    assert bridge.calls.count("agent_compute_status") == status_reads
+            bridge.status["terminal"] = {
+                "ok": True,
+                "result": {"output": "done", "usage": asdict(RunUsage()), "empty_output_guard": None},
+            }
+            host.handle_state({"event": "agent_compute_state", **host._bound_binding()})
+            assert isinstance(await anext(events), RuntimeComputeResultEvent)
+            await asyncio.gather(*callbacks)
+        assert bridge.calls.count("agent_compute_status") == status_reads + 1
+    finally:
+        for task in callbacks:
+            task.cancel()
+        await asyncio.gather(*callbacks, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_leaving_stream_context_cancels_and_joins_terminal_watcher(monkeypatch):
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("unused")]))
+    runtime_plan = plan(surface="chat")
+    bridge = Bridge(binding_for(runtime_plan, model))
+    host = runtime(runtime_plan, bridge, bridge.binding, model)
+    entered, exited = asyncio.Event(), asyncio.Event()
+
+    async def watch():
+        entered.set()
+        try:
+            await asyncio.Future()
+        finally:
+            exited.set()
+
+    monkeypatch.setattr(host, "_wait_terminal", watch)
+    async with asyncio.timeout(5):
+        async with host.run_stream_events("go"):
+            await entered.wait()
+        assert exited.is_set()
+        assert not host._run_lock.locked()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["stage_id", "route_id", "run_id", "dispatch_id", "input_sha256"])
+async def test_unbound_state_notification_cannot_wake_stage(field):
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("unused")]))
+    runtime_plan = plan()
+    bridge = Bridge(binding_for(runtime_plan, model))
+    host = runtime(runtime_plan, bridge, bridge.binding, model)
+    await host._start("go", [])
+    notification = {"event": "agent_compute_state", **host._bound_binding()}
+    notification[field] = "b" * 64 if field == "input_sha256" else str(uuid4())
+
+    with pytest.raises(RemoteAgentRuntimeError, match="notification is invalid"):
+        host.handle_state(notification)
+    assert not host.state_changed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("lost_reply", [False, True])
+async def test_confirmed_start_uses_its_status_and_uncertain_start_reads_back(lost_reply):
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("unused")]))
+    runtime_plan = plan()
+    bridge = Bridge(binding_for(runtime_plan, model), lose_start_reply=lost_reply)
+    host = runtime(runtime_plan, bridge, bridge.binding, model)
+
+    await host._start("go", [])
+
+    assert host._started
+    assert bridge.calls.count("agent_compute_start") == 1
+    assert bridge.calls.count("agent_compute_status") == (2 if lost_reply else 1)
+
+
+@pytest.mark.asyncio
+async def test_invalid_confirmed_start_reply_fails_without_status_fallback():
+    model = FunctionModel(lambda *_: ModelResponse(parts=[TextPart("unused")]))
+    runtime_plan = plan()
+    bridge = Bridge(binding_for(runtime_plan, model))
+    host = runtime(runtime_plan, bridge, bridge.binding, model)
+    original = bridge.request
+
+    async def request(action, payload, *, authorization):
+        reply = await original(action, payload, authorization=authorization)
+        return {**reply, "run_id": str(uuid4())} if action == "agent_compute_start" else reply
+
+    bridge.request = request
+    with pytest.raises(RemoteAgentRuntimeError, match="binding changed"):
+        await host._start("go", [])
+    assert not host._started
+    assert bridge.calls == ["agent_compute_status", "agent_compute_start"]

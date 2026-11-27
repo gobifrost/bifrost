@@ -37,6 +37,7 @@
       "openid",
       "email"
     ],
+    "tenant_id": null,
     "token_url": "https://auth.example.com/token",
     "token_url_defaults": null
   },

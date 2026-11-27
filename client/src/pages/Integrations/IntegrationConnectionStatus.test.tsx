@@ -24,6 +24,19 @@ function integrationWith(statusCounts: Record<string, number>): Integration {
 }
 
 describe("IntegrationConnectionStatus", () => {
+	it("shows SDK Managed instead of stale OAuth health for Workload Identity", () => {
+		render(
+			<IntegrationConnectionStatus
+				integration={{
+					...integrationWith({ completed: 1, failed: 1 }),
+					oauth_flow_type: "workload_identity",
+				}}
+			/>,
+		);
+		expect(screen.getByText("SDK Managed")).toBeInTheDocument();
+		expect(screen.queryByRole("button")).not.toBeInTheDocument();
+	});
+
 	it.each([
 		[{ completed: 2 }, "Connected"],
 		[{ connected: 1 }, "Connected"],
