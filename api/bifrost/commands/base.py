@@ -228,11 +228,12 @@ def _handle_exception(exc: Exception) -> _ExitCode:
     if isinstance(exc, BifrostUnavailableError):
         # Distinguish "the platform is down" from "you are not signed in": the
         # remedy is to retry, not to run 'bifrost login' against a dead server.
+        hint = "Retry once the platform is reachable; credentials were kept."
         _emit_error(
-            {"error": "server_unavailable", "message": str(exc)},
-            [str(exc), "Retry once the platform is reachable; credentials were kept."],
+            {"error": "server_unavailable", "message": str(exc), "hint": hint},
+            [str(exc), hint],
         )
-        return 1
+        return 3
     if isinstance(exc, RefNotFoundError):
         _emit_error(
             {"error": "ref_not_found", "kind": exc.kind, "value": exc.value},

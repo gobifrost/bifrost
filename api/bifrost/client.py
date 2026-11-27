@@ -93,6 +93,7 @@ class BifrostUnavailableError(RuntimeError):
     invalid, and the two demand opposite responses (retry versus re-login).
     """
 
+
 # Retry config for transient 5xx — see workstream E of issue #171.
 # SDK is machine-to-machine, so the retry budget is more generous than
 # the user-facing client.
@@ -408,7 +409,7 @@ async def _refresh_locked(
             # the credentials. Conflating the two surfaced as "Not logged in. Run
             # 'bifrost login'" during a brief outage, which is advice that cannot
             # work while the server is down.
-            if response.status_code >= 500:
+            if 500 <= response.status_code < 600:
                 raise BifrostUnavailableError(
                     f"token refresh for {normalized_url} returned HTTP "
                     f"{response.status_code}; the platform is unavailable and the "
@@ -451,6 +452,8 @@ async def _refresh_locked(
         coordinator.latest_access_token = access_token
         coordinator.latest_refresh_token = new_refresh_token
         return access_token
+    except BifrostUnavailableError:
+        raise
     except Exception as exc:
         logger.warning(
             "Bifrost token refresh failed for %s using %s credentials: %s",

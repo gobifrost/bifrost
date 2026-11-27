@@ -43,7 +43,7 @@ from packaging.version import InvalidVersion, Version
 # Import credentials module directly (it's standalone)
 import bifrost.credentials as credentials
 from bifrost._workspace_lock import WorkspaceLock, WorkspaceLockError
-from bifrost.client import BifrostClient
+from bifrost.client import BifrostClient, BifrostUnavailableError
 from bifrost.windows_credentials import CredentialStorageError
 from bifrost.ignore_patterns import (
     DEFAULT_IGNORE_PATTERNS as _CANONICAL_IGNORE_PATTERNS,
@@ -1621,6 +1621,10 @@ def handle_git(args: list[str]) -> int:
 
     try:
         client = BifrostClient.get_instance(require_auth=True)
+    except BifrostUnavailableError as e:
+        from bifrost.commands.base import _handle_exception
+
+        return _handle_exception(e)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         return EXIT_ERROR
@@ -1942,6 +1946,10 @@ Examples:
         # (refresh_tokens() uses asyncio.run() internally, which fails inside a running loop)
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -2021,6 +2029,10 @@ Examples:
         # Authenticate BEFORE entering asyncio.run()
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -2109,6 +2121,10 @@ Examples:
         # Authenticate
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -2217,6 +2233,10 @@ Examples:
         # Authenticate
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -2267,6 +2287,10 @@ async def _push_with_precheck(
     if client is None:
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
@@ -3707,6 +3731,10 @@ Examples:
     # Authenticate BEFORE entering asyncio.run() so token refresh works
     try:
         client = BifrostClient.get_instance(require_auth=True)
+    except BifrostUnavailableError as e:
+        from bifrost.commands.base import _handle_exception
+
+        return _handle_exception(e)
     except RuntimeError as e:
         print(f"Error: {e}", file=sys.stderr)
         return 1
@@ -3718,6 +3746,10 @@ async def _api_request(method: str, endpoint: str, body: Any | None, client: "Bi
     if client is None:
         try:
             client = BifrostClient.get_instance(require_auth=True)
+        except BifrostUnavailableError as e:
+            from bifrost.commands.base import _handle_exception
+
+            return _handle_exception(e)
         except RuntimeError as e:
             print(f"Error: {e}", file=sys.stderr)
             return 1
