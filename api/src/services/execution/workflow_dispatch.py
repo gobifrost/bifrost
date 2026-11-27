@@ -24,6 +24,7 @@ from src.models.enums import ExecutionStatus
 from src.models.orm.execution_workers import ExecutionWorkerClaim
 from src.models.orm.executions import Execution
 from src.models.orm.workflows import Workflow
+from src.repositories.executions import owned_workflow_run_predicates
 from src.services.durable_impersonation import pending_durable_impersonation
 from src.services.memory_requests import workflow_request_bytes
 from shared.execution_lanes import resolve_admitted_execution_lane
@@ -209,11 +210,19 @@ async def release_workflow_run(
     claim deadline, and loses this executor's claim record, so another
     executor takes it as if it had never been claimed.
     """
+    from src.worker.remote.fencing import fence_remote_owner
+
     execution_id = UUID(payload["execution_id"])
     async with get_db_context() as db:
+        if not await fence_remote_owner(db):
+            return
         released = await db.scalar(
             update(Execution)
-            .where(Execution.id == execution_id, Execution.status == ExecutionStatus.RUNNING)
+            .where(
+                Execution.id == execution_id,
+                Execution.status == ExecutionStatus.RUNNING,
+                *owned_workflow_run_predicates(worker_id),
+            )
             .values(status=ExecutionStatus.PENDING, started_at=None)
             .returning(Execution.id)
         )

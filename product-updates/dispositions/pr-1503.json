@@ -1,0 +1,13 @@
+{
+  "key": "pr:1503",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Restores printed workflow logs and protects execution setup writes with the existing ownership check.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1503",
+      "Routine bug fixes use omit under docs/product-updates-authoring.md."
+    ]
+  }
+}
