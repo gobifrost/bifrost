@@ -892,7 +892,6 @@ class EventProcessor:
             "source_ip": event.source_ip,
         }
 
-        from src.core.telemetry import is_enabled
         from src.sdk.context import EventContext
 
         event_context = EventContext(
@@ -912,8 +911,8 @@ class EventProcessor:
             org_id=str(workflow.organization_id) if workflow.organization_id else None,
             event=event_context,
             event_source_type=(
-                event.event_source.source_type
-                if is_enabled() and event.event_source is not None else None
+                EventSourceType(event.event_source.source_type)
+                if event.event_source is not None else None
             ),
             lineage=await unattended_lineage(self.session, workflow.id),
         )

@@ -387,3 +387,35 @@ async def test_routed_context_carries_the_dispatch_trace_context_only_when_traci
     with trace.use_span(span):
         context = await routed_context()
     assert context["traceparent"] == f"00-{'ab' * 16}-{'cd' * 8}-01"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("source_type", "pending_context", "expected"),
+    [
+        ("webhook", {"event": {"type": "custom.topic"}}, "webhook"),
+        ("schedule", {"event": {}}, "schedule"),
+        ("topic", {"event": {}}, "topic"),
+        (None, {"event": {}}, "event"),
+        (None, {"form_id": RUN_USER_ID}, "form"),
+        (None, {"agent_id": RUN_USER_ID}, "agent"),
+        (None, {"api_key_id": RUN_USER_ID}, "api_key"),
+        (None, {}, "direct"),
+    ],
+)
+async def test_trigger_source_reaches_the_worker_with_telemetry_off(
+    monkeypatch, source_type, pending_context, expected
+):
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    message = {**MESSAGE, "event_source_type": source_type} if source_type else MESSAGE
+    consumer = _consumer()
+
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock()),
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()),
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()),
+        patch("src.services.execution.queue_tracker.request_queue_position_refresh", new=Mock()),
+    ):
+        await consumer.process_message(message, _claimed(**pending_context))  # type: ignore[arg-type]
+
+    assert consumer._pool.route_execution.await_args.kwargs["context"]["trigger_source"] == expected

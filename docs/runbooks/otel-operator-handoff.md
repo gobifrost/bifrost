@@ -35,11 +35,6 @@ OTEL_PYTHON_FASTAPI_EXCLUDED_URLS='^https?://[^/]+/health(?:/|$),^https?://[^/]+
 ```
 
 Leave `OTEL_EXPORTER_OTLP_ENDPOINT` unset or empty to disable telemetry.
-Set `BIFROST_OTEL_INCLUDE_WORKFLOW_NAME=true` in the workflow worker
-environment (including remote launchers) to export `bifrost.workflow.name`
-on run spans. This defaults to off because workflow names can contain
-customer names. Enable telemetry on the event producer and the workflow
-worker to retain event source types across dispatch.
 This is an endpoint string, not a Boolean flag: `false` and `0` are nonempty
 and therefore enable initialization. Configure it before starting the process;
 changing it does not uninstall an already initialized SDK.
@@ -97,11 +92,11 @@ never filters.
    `workflow.startup` span and the run's outbound calls nest under it. On a
    remote worker a `workflow.launch` span sits between the two, covering
    the launcher's fork. Child spans are exported by the worker, not the
-   child. Run spans also carry `bifrost.workflow.id` and `bifrost.trigger`
-   (`webhook`, `schedule`, `topic`, `form`, `agent`, `api_key`, or `direct`).
-   Org-scoped runs carry `bifrost.organization.id`. Solution workflows add
-   `bifrost.solution.id` (definition slug) and `bifrost.solution.install.id`
-   (install UUID).
+   child.
+   On the run span, check `bifrost.trigger` against the way you started the
+   run. For an organization-scoped Solution workflow, also verify
+   `bifrost.organization.id` and `bifrost.solution.install.id` match the
+   organization and install UUIDs.
 3. Trigger a failing run; confirm `workflow.run` has status `ERROR` with a
    bare exception-type description and no message, stack, or events.
 4. Confirm HTTP spans carry route templates without query strings, and

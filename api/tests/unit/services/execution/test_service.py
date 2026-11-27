@@ -30,7 +30,7 @@ class TestGetWorkflowForExecution:
 
         # Single execute: select(Workflow) -> returns workflow
         mock_wf_result = MagicMock()
-        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64, None)
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64)
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
 
         result = await get_workflow_for_execution(workflow_id, db=mock_session)
@@ -58,7 +58,7 @@ class TestGetWorkflowForExecution:
 
         # Single execute: select(Workflow) -> returns workflow
         mock_wf_result = MagicMock()
-        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64, None)
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64)
 
         mock_session = AsyncMock()
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
@@ -98,7 +98,7 @@ class TestGetWorkflowForExecution:
         mock_workflow.cache_ttl_seconds = 0
 
         mock_wf_result = MagicMock()
-        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64, None)
+        mock_wf_result.one_or_none.return_value = (mock_workflow, True, "a" * 64)
         mock_session.execute = AsyncMock(return_value=mock_wf_result)
 
         result = await get_workflow_for_execution(workflow_id, db=mock_session)
@@ -106,7 +106,7 @@ class TestGetWorkflowForExecution:
         expected_keys = {
             "name", "function_name", "path", "timeout_seconds",
             "time_saved", "value", "execution_mode", "organization_id",
-            "solution_id", "solution_slug", "can_access_global_repo", "type", "cache_ttl_seconds", "content_hash",
+            "solution_id", "can_access_global_repo", "type", "cache_ttl_seconds", "content_hash",
         }
         assert set(result.keys()) == expected_keys
         assert "code" not in result
@@ -120,28 +120,12 @@ class TestGetWorkflowForExecution:
         assert result["content_hash"] == "a" * 64
 
     @pytest.mark.asyncio
-    async def test_returns_solution_definition_and_install_identity(self):
-        from src.services.execution.service import get_workflow_for_execution
-
-        install_id = uuid4()
-        workflow = MagicMock(solution_id=install_id)
-        db = AsyncMock()
-        db.execute.return_value.one_or_none = MagicMock(
-            return_value=(workflow, True, None, "nightly-sync")
-        )
-
-        result = await get_workflow_for_execution(str(uuid4()), db=db)
-
-        assert result["solution_id"] == str(install_id)
-        assert result["solution_slug"] == "nightly-sync"
-
-    @pytest.mark.asyncio
     async def test_workspace_without_source_digest_is_refused(self):
         from src.services.execution.service import WorkflowLoadError, get_workflow_for_execution
 
         record = MagicMock(solution_id=None, path="workflows/missing.py")
         db = AsyncMock()
-        db.execute.return_value.one_or_none = MagicMock(return_value=(record, None, None, None))
+        db.execute.return_value.one_or_none = MagicMock(return_value=(record, None, None))
 
         with pytest.raises(WorkflowLoadError, match="source digest is unavailable"):
             await get_workflow_for_execution(str(uuid4()), db=db)

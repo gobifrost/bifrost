@@ -73,7 +73,8 @@ async def test_queue_service_target_fails_loudly():
 @pytest.mark.asyncio
 async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
     """No person started it: the run is for the workflow's identity."""
-    monkeypatch.setenv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://collector.invalid:4318")
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    from src.models.enums import EventSourceType
     from shared.run_lineage import RunLineage
 
     session = AsyncMock()
@@ -108,7 +109,7 @@ async def test_queued_workflow_runs_for_the_workflow_identity(monkeypatch):
 
     resolve.assert_awaited_once_with(session, workflow_id)
     assert enqueue.await_args.kwargs["lineage"] == lineage
-    assert enqueue.await_args.kwargs["event_source_type"] == "schedule"
+    assert enqueue.await_args.kwargs["event_source_type"] is EventSourceType.SCHEDULE
 
 
 @pytest.mark.asyncio
@@ -133,6 +134,7 @@ async def test_queued_workflow_receives_trusted_byte_exact_raw_webhook_body(monk
     event = SimpleNamespace(
         id=uuid.uuid4(),
         event_type="webhook.received",
+        event_source=SimpleNamespace(source_type="webhook"),
         data={"_event": {"raw_body_base64": "caller-spoofed"}, "z": 1, "a": [3, 2, 1]},
         raw_body=raw_body,
         headers=None,
@@ -177,6 +179,7 @@ async def test_queued_workflow_encodes_an_empty_accepted_body(monkeypatch):
     event = SimpleNamespace(
         id=uuid.uuid4(),
         event_type="webhook.received",
+        event_source=SimpleNamespace(source_type="webhook"),
         data={},
         raw_body=b"",
         headers=None,

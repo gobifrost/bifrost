@@ -1,0 +1,10 @@
+{
+  "key": "pr:1483",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Adds diagnostic attributes to opt-in operator traces without changing the product experience.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1483"]
+  }
+}

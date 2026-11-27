@@ -870,7 +870,6 @@ class WorkflowExecutionConsumer:
             workflow_type = "workflow"
             cache_ttl_seconds = 300
             solution_id: str | None = None  # Install id if solution-managed
-            solution_slug: str | None = None
             solution_global_repo_access = False  # Whether solution code may import _repo/
 
             if not is_script and workflow_id:
@@ -907,7 +906,6 @@ class WorkflowExecutionConsumer:
                     # the install's global_repo_access here so the worker can set
                     # the per-execution import root. See module_cache_sync.
                     solution_id = workflow_data.get("solution_id")
-                    solution_slug = workflow_data.get("solution_slug")
                     # global_repo_access now rides on workflow_data from the same
                     # DB grab as the metadata (get_workflow_for_execution). The
                     # engine subprocess has no DB; this is the last enrichment.
@@ -1080,6 +1078,22 @@ class WorkflowExecutionConsumer:
                 # but cannot claim a direct-human policy exception.
                 logger.warning("Execution %s has no current runtime authority", execution_id)
 
+            # Use the source from the durable dispatch. Older event dispatches
+            # still identify themselves as events even without a source type.
+            event_source_type = message_data.get("event_source_type")
+            if event_source_type in ("webhook", "schedule", "topic"):
+                trigger_source = event_source_type
+            elif event_data is not None:
+                trigger_source = "event"
+            elif form_id:
+                trigger_source = "form"
+            elif agent_id:
+                trigger_source = "agent"
+            elif api_key_id:
+                trigger_source = "api_key"
+            else:
+                trigger_source = "direct"
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -1114,6 +1128,7 @@ class WorkflowExecutionConsumer:
                 "file_path": file_path,  # Path for __file__ injection and fallback loading
                 "content_hash": content_hash,  # Pinned hash at dispatch time
                 "event": event_data,  # EventContext dict (None if not event-triggered)
+                "trigger_source": trigger_source,
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
                 "artifact_workspace_id": artifact_workspace_id,
@@ -1124,19 +1139,9 @@ class WorkflowExecutionConsumer:
             if credentials.refresh_token is not None:
                 context_data["engine_refresh_token"] = credentials.refresh_token
 
-            # The forked child parents its run span on the active dispatch
-            # span; nothing is written when telemetry is off.
-            from src.core.telemetry import inject_traceparent, is_enabled
+            # The forked child parents its run span on the active dispatch span.
+            from src.core.telemetry import inject_traceparent
 
-            if is_enabled():
-                context_data["run_identity"] = {
-                    "organization_id": org_id,
-                    "solution_slug": solution_slug,
-                    "event_source_type": message_data.get("event_source_type"),
-                    "form_id": form_id,
-                    "agent_id": agent_id,
-                    "api_key_id": api_key_id,
-                }
             inject_traceparent(context_data)
 
             # Route to process pool
