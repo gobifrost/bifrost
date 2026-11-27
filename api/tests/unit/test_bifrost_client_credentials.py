@@ -9,32 +9,6 @@ import httpx
 import pytest
 
 
-@pytest.fixture
-def isolated_credentials(tmp_path, monkeypatch):
-    from bifrost import client as client_mod
-    from bifrost import credentials as creds_mod
-
-    if hasattr(client_mod._thread_local, "bifrost_client"):
-        delattr(client_mod._thread_local, "bifrost_client")
-    client_mod._reset_refresh_coordinators_for_tests()
-    monkeypatch.setattr(
-        creds_mod,
-        "get_credentials_path",
-        lambda: tmp_path / "credentials.json",
-    )
-    monkeypatch.setattr(creds_mod, "get_config_path", lambda: tmp_path / "config.json")
-    creds_mod._reset_persistent_backend_for_tests()
-    monkeypatch.setattr(creds_mod, "_persistent_backend", creds_mod.JsonBackend())
-    monkeypatch.delenv("BIFROST_API_URL", raising=False)
-    monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
-    monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
-    yield creds_mod
-    if hasattr(client_mod._thread_local, "bifrost_client"):
-        delattr(client_mod._thread_local, "bifrost_client")
-    client_mod._reset_refresh_coordinators_for_tests()
-    creds_mod._reset_persistent_backend_for_tests()
-
-
 def test_get_instance_does_not_report_default_ambiguity_when_env_selects_url(
     isolated_credentials, monkeypatch
 ) -> None:
@@ -761,14 +735,10 @@ async def test_transient_refresh_failures_remain_recoverable(
         await client_mod.refresh_connection_access_token(api_url, "stale-access")
         is None
     )
-    assert (
+    with pytest.raises(client_mod.BifrostUnavailableError):
         await client_mod.refresh_connection_access_token(api_url, "stale-access")
-        is None
-    )
-    assert (
+    with pytest.raises(client_mod.BifrostUnavailableError):
         await client_mod.refresh_connection_access_token(api_url, "stale-access")
-        is None
-    )
     assert (
         await client_mod.refresh_connection_access_token(api_url, "stale-access")
         == "fresh-access"

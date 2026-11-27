@@ -745,30 +745,35 @@ class Launcher:
         try:
             response: dict[str, Any] = {}
             if action in ("workflow", "service"):
-                self.check_fork_pressure()
-                route_id = payload["route_id"]
-                if route_id in self.children or route_id in self.jobs:
-                    raise ValueError("Duplicate route")
-                if generation != self.session_generation:
-                    return
-                async with self._template_lock:
+                from src.core.telemetry import launch_span
+
+                context = payload["context"]
+                # Parented by the dispatch, so the trace accounts for the
+                # template wait and fork between hand-off and the child.
+                with launch_span(payload["execution_id"], context):
+                    self.check_fork_pressure()
+                    route_id = payload["route_id"]
+                    if route_id in self.children or route_id in self.jobs:
+                        raise ValueError("Duplicate route")
                     if generation != self.session_generation:
                         return
-                    pid, work, result = await asyncio.to_thread(
-                        self.template.fork, worker_id=route_id, sdk_socket_path=None,
-                    )
-                context = payload["context"]
-                timeout = context.get("timeout_seconds", 300) if action == "workflow" else 0
-                child = Child(route_id, payload["execution_id"], pid, work, result,
-                              time.monotonic(), timeout,
-                              service=payload.get("service"),
-                              memory_kill_growth_bytes=payload.get("memory_kill_growth_bytes", 0),
-                              grace=payload.get("graceful_shutdown_seconds", 5),
-                              active_execution=payload.get("active_execution"),
-                              started_at=payload.get("started_at"),
-                              memory_request_bytes=payload.get("memory_request_bytes"))
-                self.track_child(child)
-                work.put_nowait((child.execution_id, context))
+                    async with self._template_lock:
+                        if generation != self.session_generation:
+                            return
+                        pid, work, result = await asyncio.to_thread(
+                            self.template.fork, worker_id=route_id, sdk_socket_path=None,
+                        )
+                    timeout = context.get("timeout_seconds", 300) if action == "workflow" else 0
+                    child = Child(route_id, payload["execution_id"], pid, work, result,
+                                  time.monotonic(), timeout,
+                                  service=payload.get("service"),
+                                  memory_kill_growth_bytes=payload.get("memory_kill_growth_bytes", 0),
+                                  grace=payload.get("graceful_shutdown_seconds", 5),
+                                  active_execution=payload.get("active_execution"),
+                                  started_at=payload.get("started_at"),
+                                  memory_request_bytes=payload.get("memory_request_bytes"))
+                    self.track_child(child)
+                    work.put_nowait((child.execution_id, context))
                 response["pid"] = pid
             elif action in ("agent_run", "agent_summary"):
                 if self.agent_template is None:
@@ -1194,6 +1199,11 @@ class Launcher:
                 "duration_ms": int((time.monotonic() - child.started) * 1000)}
 
     async def finish(self, child: Child, result: dict[str, Any]) -> None:
+        # A traced child returns its spans with the result. Export them here
+        # so they never cross the route socket.
+        from src.core.telemetry import CHILD_SPANS_KEY, relay_child_spans
+
+        relay_child_spans(result.pop(CHILD_SPANS_KEY, None))
         if self.children.pop(child.route_id, None) is None:
             return
         if child.terminal_reason is not None:
@@ -1428,12 +1438,17 @@ async def run_launcher(
 ) -> int:
     """Keep optional private networking alive through physical worker drain."""
     from src.core.storage import close_shared_storage_clients
+    from src.core.telemetry import init_telemetry, shutdown_telemetry
     from src.worker.network import worker_network
 
+    # Operator telemetry for the launcher process (spans, run metrics).
+    # No-op unless OTEL_EXPORTER_OTLP_ENDPOINT is set.
+    init_telemetry(role="worker")
     try:
         async with worker_network():
             return await _run_launcher(on_ready=on_ready, on_stop=on_stop)
     finally:
+        shutdown_telemetry()
         await close_shared_storage_clients()
 
 

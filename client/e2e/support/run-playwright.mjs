@@ -45,7 +45,7 @@ function createLocalOrigin(port) {
 			for (const [name, value] of Object.entries(request.headers)) {
 				if (value !== undefined) {
 					upstream.write(
-						`${name}: ${name === "host" ? target.host : value}\r\n`,
+						`${name}: ${value}\r\n`,
 					);
 				}
 			}

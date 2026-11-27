@@ -1,0 +1,13 @@
+{
+  "key": "pr:1497",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine execution ownership repair; restores owner-fenced setup failure writes without a new feature or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1497",
+      "Routine bug fixes use omit under docs/product-updates-authoring.md."
+    ]
+  }
+}

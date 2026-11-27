@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import { LogOut, Settings } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -16,6 +17,7 @@ export function AccountMenuContent({
 	onSettings,
 	onLogout,
 	showVersion = true,
+	children,
 }: {
 	name: string;
 	email: string;
@@ -24,6 +26,7 @@ export function AccountMenuContent({
 	onSettings: () => void;
 	onLogout: () => void;
 	showVersion?: boolean;
+	children?: ReactNode;
 }) {
 	return (
 		<DropdownMenuContent
@@ -59,6 +62,7 @@ export function AccountMenuContent({
 				<Settings aria-hidden="true" className="size-4" />
 				Settings
 			</DropdownMenuItem>
+			{children}
 			<DropdownMenuSeparator />
 			<DropdownMenuItem
 				variant="destructive"

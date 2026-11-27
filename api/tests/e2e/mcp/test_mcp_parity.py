@@ -705,15 +705,18 @@ class TestMcpParityIntegrations:
 
         # create integration
         name = f"mcp-parity-int-{uuid4().hex[:8]}"
+        links = [{"workflow_id": str(uuid4()), "label": "Sync Now", "pinned": True}]
         create_result = await bifrost_integration_create(
             admin_context,
             name=name,
+            workflow_links=links,
             entity_id_name="Tenant",
             notes="## Before You Begin\nUse the tenant ID.",
         )
         created = create_result.structured_content or {}
         assert "error" not in created, created
         assert created["notes"] == "## Before You Begin\nUse the tenant ID."
+        assert created["workflow_links"] == links
         integration_id = str(created["id"])
 
         # update integration (rename)
@@ -722,11 +725,14 @@ class TestMcpParityIntegrations:
             admin_context,
             integration_ref=integration_id,
             name=renamed,
+            workflow_links=[],
             notes="Use the revised tenant setup.",
         )
         updated = update_result.structured_content or {}
         assert "error" not in updated, updated
         assert updated["notes"] == "Use the revised tenant setup."
+
+        assert updated["workflow_links"] == []
 
         # add mapping (by org name ref)
         add_result = await bifrost_integration_mapping_create(

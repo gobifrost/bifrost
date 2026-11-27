@@ -26,7 +26,8 @@ const data = vi.hoisted(() => ({
 }));
 
 vi.mock("@xyflow/react", () => ({
-	useStore: (selector: (state: typeof data) => unknown) => selector(data),
+	useNodesStore: (selector: (state: typeof data) => unknown) => selector(data),
+	useViewportStore: (selector: (state: typeof data) => unknown) => selector(data),
 	useNodesInitialized: () => data.initialized,
 	useReactFlow: () => ({ fitView: data.fitView, setCenter: data.setCenter }),
 }));
@@ -64,7 +65,7 @@ it("fits readable graph data once without overriding user zoom on resize-only ch
 	rerender(<DependencyGraphViewport />);
 	expect(data.fitView).toHaveBeenCalledTimes(2);
 	expect(data.fitView).toHaveBeenLastCalledWith({
-		padding: 0.2,
+		padding: "8.34%",
 		maxZoom: 1.5,
 		duration: 0,
 	});

@@ -551,6 +551,7 @@ def validate_content(
     base: str | None = None,
     draft_dir: Path | None = None,
     allow_draft: bool = False,
+    build_inventory: dict[str, Any] | None = None,
 ) -> list[str]:
     errors: list[str] = []
     try:
@@ -565,6 +566,13 @@ def validate_content(
     errors.extend(
         schema_errors(schema_path, "dispositions", dispositions, str(dispositions_path))
     )
+    if dispositions.get("inventory") != {
+        "base_ref": inventory.get("base_ref"),
+        "target_ref": inventory.get("target_ref"),
+    }:
+        errors.append("dispositions inventory range does not match inventory.json")
+    if build_inventory is not None:
+        inventory = build_inventory
     known_commits = {
         item.get("sha")
         for item in inventory.get("commits", [])
@@ -588,11 +596,6 @@ def validate_content(
         errors.append(
             "target must be a cached commit or a verified descendant of the frozen inventory target_ref"
         )
-    if dispositions.get("inventory") != {
-        "base_ref": inventory.get("base_ref"),
-        "target_ref": inventory.get("target_ref"),
-    }:
-        errors.append("dispositions inventory range does not match inventory.json")
     prs, commits = _metadata_indexes(inventory)
     commit_prs = {
         item["sha"]: set(item.get("prs", []))
@@ -721,6 +724,7 @@ def build_bundle(
     draft_dir: Path | None = None,
     allow_draft: bool = False,
     include_staged: bool = False,
+    build_inventory: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     errors = validate_content(
         content_dir,
@@ -731,6 +735,7 @@ def build_bundle(
         base=base,
         draft_dir=draft_dir,
         allow_draft=allow_draft,
+        build_inventory=build_inventory,
     )
     if errors:
         raise ValueError("\n".join(errors))
@@ -743,7 +748,9 @@ def build_bundle(
     content_ref = content_ref or target
     if not SHA.fullmatch(content_ref):
         raise ValueError("content_ref must be a 40-character commit SHA")
-    inventory = read_json(inventory_path)
+    inventory = (
+        build_inventory if build_inventory is not None else read_json(inventory_path)
+    )
     base = base or str(inventory["base_ref"])
     dispositions = load_dispositions(dispositions_path)
     prs, _ = _metadata_indexes(inventory)
@@ -1224,7 +1231,9 @@ def asset_map(content_dir: Path) -> str:
     )
 
 
-def collect_inventory(base: str, target: str, repository: str) -> dict[str, Any]:
+def collect_inventory(
+    base: str, target: str, repository: str, *, landed_branch: str | None = None
+) -> dict[str, Any]:
     """Explicit preparation command; rendering never invokes GitHub or ``gh``."""
     commits = subprocess.run(
         ["git", "rev-list", "--reverse", f"{base}..{target}"],
@@ -1262,6 +1271,13 @@ def collect_inventory(base: str, target: str, repository: str) -> dict[str, Any]
                 capture_output=True,
             ).stdout
         )
+        if landed_branch is not None and (
+            raw["base"]["ref"] != landed_branch
+            or raw["base"]["repo"]["full_name"] != repository
+            or not raw["merged_at"]
+            or raw["merge_commit_sha"] not in commits
+        ):
+            continue
         details.append(
             {
                 "number": number,
@@ -1277,6 +1293,14 @@ def collect_inventory(base: str, target: str, repository: str) -> dict[str, Any]
                 "metadata_ref": f"https://api.github.com/repos/{repository}/pulls/{number}",
             }
         )
+    if landed_branch is not None:
+        merge_commits = {row["number"]: row["merge_commit"] for row in details}
+        for row in rows:
+            row["prs"] = [
+                number
+                for number in row["prs"]
+                if merge_commits.get(number) == row["sha"]
+            ]
     return {
         "schema_version": 1,
         "repository": repository,

@@ -1,3 +1,4 @@
+import { IntegrationWorkflowLinks } from "@/components/integrations/IntegrationWorkflowLinks";
 import { IntegrationReadError } from "@/components/integrations/IntegrationReadError";
 import { failedMappings } from "@/components/integrations/mapping-save";
 import { IntegrationPageHeader } from "@/components/integrations/IntegrationPageHeader";
@@ -916,6 +917,7 @@ export function IntegrationDetail() {
 				}
 				canManageDefinitions={canManageDefinitions}
 				status={<IntegrationStatusChips {...overviewProps} />}
+				workflowActions={<IntegrationWorkflowLinks key={integrationId} integrationName={integration.name} integrationId={integration.id} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
 			/>
 			<PageScrollArea className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (

@@ -1,0 +1,17 @@
+{
+  "key": "pr:1478",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Container dependency maintenance; no customer-facing feature or announcement.",
+  "security_review": {
+    "status": "required",
+    "review_ref": "https://github.com/gobifrost/bifrost/pull/1478"
+  },
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1478",
+      "Maintainer-requested dependency patch; pinned official digest and actual binary verified. Existing configuration passes syntax and container static/proxy checks."
+    ]
+  }
+}

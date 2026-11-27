@@ -1,11 +1,11 @@
 /**
- * Header affordance for setting up a passkey without occupying page content.
+ * Account-menu prompt for setting up a passkey.
  */
 
 import { useNavigate } from "react-router-dom";
 import { Fingerprint } from "lucide-react";
 
-import { Button } from "@/components/ui/button";
+import { DropdownMenuItem } from "@/components/ui/dropdown-menu";
 import { usePasskeyList } from "@/hooks/usePasskeys";
 import { supportsPasskeys } from "@/services/passkeys";
 
@@ -34,20 +34,17 @@ export function PasskeySetupBadge() {
 	}
 
 	return (
-		<Button
-			variant="ghost"
-			size="icon-lg"
-			className="relative mr-1 sm:mr-2"
-			onClick={() => navigate("/user-settings/security")}
-			title="Set up passkey"
-			aria-label="Set up passkey"
+		<DropdownMenuItem
+			className="min-h-11"
+			onSelect={() => navigate("/user-settings/security")}
 		>
-			<Fingerprint className="h-5 w-5" />
+			<Fingerprint className="size-4" />
+			Set Up Passkey
 			<span
 				aria-hidden="true"
 				data-slot="passkey-setup-indicator"
-				className="absolute right-1.5 top-1.5 h-2 w-2 rounded-full bg-primary ring-2 ring-background"
+				className="ml-auto size-2 rounded-full bg-primary"
 			/>
-		</Button>
+		</DropdownMenuItem>
 	);
 }

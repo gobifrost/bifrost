@@ -243,3 +243,22 @@ async def test_unattended_enqueue_uses_the_pinned_identity_as_actor(db_session: 
     assert pending["user_email"] == identity.email
     assert not pending["is_platform_admin"]
     assert pending["lineage"] == lineage.bound(pending["execution_id"])
+
+@pytest.mark.asyncio
+async def test_unattended_enqueue_records_source_on_the_dispatch(db_session: AsyncSession, monkeypatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from src.models.enums import EventSourceType
+    from src.services.execution import async_executor
+
+    monkeypatch.delenv("OTEL_EXPORTER_OTLP_ENDPOINT", raising=False)
+    stage = AsyncMock()
+    monkeypatch.setattr(async_executor, "stage_workflow_run", stage)
+    lineage = await identity_lineage(db_session, None)
+
+    await async_executor.stage_system_workflow_execution(
+        db_session, workflow_id=str(uuid4()), parameters={}, lineage=lineage,
+        event_source_type=EventSourceType.WEBHOOK,
+    )
+
+    assert stage.await_args.args[2]["event_source_type"] == "webhook"

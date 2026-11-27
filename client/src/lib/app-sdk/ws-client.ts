@@ -50,7 +50,14 @@ export function buildWsUrl(): string {
 	// A same-origin app uses the browser's session cookie. Only a configured
 	// provider transport needs its bearer in the WebSocket URL because the
 	// browser API cannot attach Authorization to a cross-origin handshake.
-	if (t.baseUrl && token) url.searchParams.set("token", token);
+	const frameSession = base.origin === window.location.origin
+		? getPlatformAuth()?.getFrameSessionId?.()
+		: null;
+	if (frameSession) {
+		url.searchParams.set("frame", frameSession);
+	} else if (t.baseUrl && token) {
+		url.searchParams.set("token", token);
+	}
   return url.toString();
 }
 

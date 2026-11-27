@@ -1,0 +1,10 @@
+{
+  "key": "pr:1481",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Workflow permission analyzer fixes improve existing migration reports without changing workflow runtime behavior.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1481"]
+  }
+}

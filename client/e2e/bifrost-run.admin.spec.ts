@@ -6,8 +6,9 @@ test.describe("Bifrost Agent", () => {
 	}) => {
 		await page.goto("/agents");
 
+		await page.getByRole("button", { name: "Account menu", exact: true }).click();
 		await page
-			.getByRole("button", { name: "Connect AI assistants" })
+			.getByRole("menuitem", { name: "Connect AI Assistants" })
 			.click();
 
 		await expect(page.getByText("Use Bifrost with AI")).toBeVisible();
