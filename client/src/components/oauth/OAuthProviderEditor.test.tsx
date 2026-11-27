@@ -145,6 +145,51 @@ describe("OAuthProviderEditor", () => {
 			}),
 		);
 	});
+
+	it("offers workload identity only when explicitly enabled", async () => {
+		const { user } = renderWithProviders(
+			<OAuthProviderEditor
+				flowType="authorization_code"
+				allowWorkloadIdentity
+				onSubmit={vi.fn()}
+			/>,
+		);
+
+		await user.click(screen.getByRole("combobox"));
+		expect(
+			screen.getByRole("option", { name: "Workload Identity" }),
+		).toBeInTheDocument();
+		await user.click(screen.getByRole("option", { name: "Workload Identity" }));
+
+		expect(screen.getByLabelText("Tenant ID")).toBeInTheDocument();
+		expect(screen.queryByLabelText(/client secret/i)).not.toBeInTheDocument();
+		expect(screen.queryByLabelText(/token url/i)).not.toBeInTheDocument();
+		expect(
+			screen.getByRole("button", {
+				name: "Authentication is handled by your workflow’s provider SDK using a configured runtime identity. Configure identity trust and permissions externally. Bifrost does not obtain or refresh tokens in this mode.",
+			}),
+		).toBeInTheDocument();
+	});
+
+	it("warns before an existing connection switches to workload identity", async () => {
+		const { user } = renderWithProviders(
+			<OAuthProviderEditor
+				flowType="authorization_code"
+				allowWorkloadIdentity
+				isEditMode
+				onSubmit={vi.fn()}
+			/>,
+		);
+		await user.click(screen.getByRole("combobox"));
+		await user.click(
+			screen.getByRole("option", { name: "Workload Identity" }),
+		);
+		expect(
+			screen.getByText(
+				"Switching to Workload Identity removes this connection’s stored OAuth credentials. Workflows must use their provider SDK.",
+			),
+		).toBeInTheDocument();
+	});
 	it("ignores a clipboard operation completing after unmount", async () => {
 		let finish!: (value: boolean) => void;
 		vi.mocked(copyToClipboard).mockImplementationOnce(() => new Promise<boolean>(resolve => { finish = resolve; }));

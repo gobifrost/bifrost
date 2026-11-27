@@ -668,6 +668,7 @@ class ManifestOAuthProvider(EntityCodec, BaseModel):
     token_url_defaults: dict | None = Field(default=None, description="Default params for token request", **classify(FieldClass.CONTENT))
     scopes: list[str] = Field(default_factory=list, description="OAuth scopes", **classify(FieldClass.CONTENT))
     redirect_uri: str | None = Field(default=None, description="OAuth redirect URI", **classify(FieldClass.CONTENT))
+    tenant_id: str | None = Field(default=None, description="Runtime identity tenant ID", **classify(FieldClass.REFERENCE))
 
     @classmethod
     def from_row(cls, op) -> "ManifestOAuthProvider":
@@ -679,12 +680,17 @@ class ManifestOAuthProvider(EntityCodec, BaseModel):
             provider_name=op.provider_name,
             display_name=op.display_name,
             oauth_flow_type=op.oauth_flow_type,
-            client_id=op.client_id or "__NEEDS_SETUP__",
+            client_id=(
+                op.client_id
+                if op.oauth_flow_type == "workload_identity"
+                else op.client_id or "__NEEDS_SETUP__"
+            ),
             authorization_url=op.authorization_url,
             token_url=op.token_url,
             token_url_defaults=op.token_url_defaults or None,
             scopes=op.scopes or [],
             redirect_uri=op.redirect_uri,
+            tenant_id=(op.provider_metadata or {}).get("tenant_id"),
         )
 
     def to_orm_values(self, dest: Destination) -> ImportFields:

@@ -2410,6 +2410,10 @@ class ManifestResolver:
                 token_url_defaults=op_data.token_url_defaults or {},
                 scopes=op_data.scopes or [],
                 redirect_uri=op_data.redirect_uri,
+                provider_metadata=(
+                    {"tenant_id": op_data.tenant_id}
+                    if op_data.tenant_id is not None else {}
+                ),
                 integration_id=integ_id,
             ).on_conflict_do_update(
                 constraint="uq_oauth_providers_integration_id",
@@ -2418,7 +2422,13 @@ class ManifestResolver:
                     "oauth_flow_type": op_data.oauth_flow_type,
                     **(
                         {"client_id": op_data.client_id}
-                        if op_data.client_id and op_data.client_id != "__NEEDS_SETUP__"
+                        if (
+                            op_data.oauth_flow_type == "workload_identity"
+                            or (
+                                op_data.client_id
+                                and op_data.client_id != "__NEEDS_SETUP__"
+                            )
+                        )
                         else {}
                     ),
                     "authorization_url": op_data.authorization_url,
@@ -2426,6 +2436,15 @@ class ManifestResolver:
                     "token_url_defaults": op_data.token_url_defaults or {},
                     "scopes": op_data.scopes or [],
                     "redirect_uri": op_data.redirect_uri,
+                    **(
+                        {
+                            "provider_metadata": OAuthProvider.provider_metadata.op(
+                                "||"
+                            )({"tenant_id": op_data.tenant_id})
+                        }
+                        if op_data.tenant_id is not None
+                        else {}
+                    ),
                     "updated_at": datetime.now(timezone.utc),
                 },
             )

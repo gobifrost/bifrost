@@ -17057,10 +17057,11 @@ export interface components {
              * @description OAuth 2.0 flow type
              * @enum {string}
              */
-            oauth_flow_type: "authorization_code" | "client_credentials" | "refresh_token";
+            oauth_flow_type: "authorization_code" | "client_credentials" | "refresh_token" | "workload_identity";
             /**
              * Client Id
              * @description OAuth client ID (not sensitive)
+             * @default
              */
             client_id: string;
             /**
@@ -17077,7 +17078,7 @@ export interface components {
              * Token Url
              * @description OAuth token endpoint URL (must be HTTPS, may include {placeholders} for templating)
              */
-            token_url: string;
+            token_url?: string | null;
             /**
              * Token Url Defaults
              * @description Default values for token_url placeholders (e.g., {'entity_id': 'common'})
@@ -17101,6 +17102,11 @@ export interface components {
              * @description OAuth redirect URI (defaults to /oauth/callback/{connection_name})
              */
             redirect_uri?: string | null;
+            /**
+             * Tenant Id
+             * @description Optional runtime identity tenant ID (not secret)
+             */
+            tenant_id?: string | null;
         };
         /**
          * CreateRepoRequest
@@ -22761,6 +22767,11 @@ export interface components {
              */
             has_oauth_config: boolean;
             /**
+             * Oauth Flow Type
+             * @description OAuth flow type when this integration has a provider
+             */
+            oauth_flow_type?: string | null;
+            /**
              * Logo Url
              * @description URL for the uploaded integration logo thumbnail/original
              */
@@ -25054,6 +25065,11 @@ export interface components {
              */
             scopes?: string[];
             /**
+             * Tenant Id
+             * @description Optional runtime identity tenant ID (not secret)
+             */
+            tenant_id?: string | null;
+            /**
              * Status
              * @description Connection status
              * @default not_connected
@@ -25163,7 +25179,7 @@ export interface components {
              * Oauth Flow Type
              * @enum {string}
              */
-            oauth_flow_type: "authorization_code" | "client_credentials" | "refresh_token";
+            oauth_flow_type: "authorization_code" | "client_credentials" | "refresh_token" | "workload_identity";
             /**
              * Client Id
              * @description OAuth client ID (safe to expose)
@@ -25183,6 +25199,11 @@ export interface components {
              * @description OAuth audience parameter for token requests
              */
             audience?: string | null;
+            /**
+             * Tenant Id
+             * @description Optional runtime identity tenant ID (not secret)
+             */
+            tenant_id?: string | null;
             /**
              * Status
              * @enum {string}
@@ -31565,7 +31586,7 @@ export interface components {
              * Oauth Flow Type
              * @description OAuth 2.0 flow type
              */
-            oauth_flow_type?: ("authorization_code" | "client_credentials" | "refresh_token") | null;
+            oauth_flow_type?: ("authorization_code" | "client_credentials" | "refresh_token" | "workload_identity") | null;
             /** Client Id */
             client_id?: string | null;
             /** Client Secret */
@@ -31591,6 +31612,8 @@ export interface components {
              * @description OAuth audience parameter
              */
             audience?: string | null;
+            /** Tenant Id */
+            tenant_id?: string | null;
         };
         /**
          * UpdatePropertiesRequest

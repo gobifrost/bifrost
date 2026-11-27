@@ -194,6 +194,30 @@ class TestAuthorizationCodeFlow:
         assert "refresh token" in outcome["error"].lower()
 
 
+class TestWorkloadIdentity:
+    @pytest.mark.asyncio
+    async def test_rejects_stale_token_context_without_decrypting_or_calling_provider(self):
+        """Host-managed identity must never turn stale OAuth material into a token call."""
+        from src.services.oauth_provider import refresh_oauth_token_http
+
+        td = _context_client_credentials()
+        td["oauth_flow_type"] = "workload_identity"
+
+        with (
+            patch("src.services.oauth_provider.decrypt_secret") as decrypt,
+            patch("src.services.oauth_provider.OAuthProviderClient") as client,
+        ):
+            outcome = await refresh_oauth_token_http(td)
+
+        assert outcome["success"] is False
+        assert (
+            outcome["error"]
+            == "Workload Identity is SDK managed and does not obtain or refresh OAuth tokens"
+        )
+        decrypt.assert_not_called()
+        client.assert_not_called()
+
+
 class TestOutcomeShape:
     @pytest.mark.asyncio
     async def test_success_outcome_contains_encrypted_access_token(self):

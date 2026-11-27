@@ -142,6 +142,9 @@ function oauthStatus({
 	if (!integration.has_oauth_config) {
 		return { label: "Not Set Up", tone: "outline" };
 	}
+	if (oauthConfig?.oauth_flow_type === "workload_identity") {
+		return { label: "SDK Managed", tone: "outline" };
+	}
 	if (isOAuthExpired) {
 		return {
 			label: "Expired",
@@ -219,6 +222,7 @@ function OAuthPrimaryAction({
 	isRefreshPending,
 }: IntegrationOverviewProps) {
 	if (!integration.has_oauth_config || !oauthConfig) return null;
+	if (oauthConfig.oauth_flow_type === "workload_identity") return null;
 	if (canUseAuthCodeFlow) {
 		return (
 			<Button
@@ -403,7 +407,8 @@ function DefaultsStatusChip(props: IntegrationOverviewProps) {
 						<dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-sm">
 							<dt className="text-muted-foreground">Flow</dt>
 							<dd>{flowLabel(oauthConfig.oauth_flow_type)}</dd>
-							{oauthConfig.expires_at && (
+							{oauthConfig.oauth_flow_type !== "workload_identity" &&
+								oauthConfig.expires_at && (
 								<>
 									<dt className="text-muted-foreground">
 										{status.label === "Expired"
@@ -441,7 +446,8 @@ function DefaultsStatusChip(props: IntegrationOverviewProps) {
 							) : (
 								<>
 									<OAuthPrimaryAction {...props} />
-									{isOAuthConnected &&
+									{oauthConfig?.oauth_flow_type !== "workload_identity" &&
+										isOAuthConnected &&
 										oauthConfig?.expires_at && (
 											<Button
 												variant="outline"

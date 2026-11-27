@@ -298,15 +298,23 @@ export function IntegrationDetail() {
 	const oauthConfig = integration?.oauth_config;
 
 	// OAuth status helpers using the oauth_config from integration
-	const isOAuthConnected = oauthConfig?.status === "completed";
+	const isWorkloadIdentity =
+		oauthConfig?.oauth_flow_type === "workload_identity";
+	const isOAuthConnected =
+		!isWorkloadIdentity && oauthConfig?.status === "completed";
 	const isOAuthExpired =
-		oauthConfig?.expires_at && isExpired(oauthConfig.expires_at);
+		!isWorkloadIdentity &&
+		oauthConfig?.expires_at &&
+		isExpired(oauthConfig.expires_at);
 	const isOAuthExpiringSoon =
+		!isWorkloadIdentity &&
 		oauthConfig?.expires_at &&
 		!isOAuthExpired &&
 		expiresSoon(oauthConfig.expires_at, 15); // 15 minutes matches the refresh scheduler interval
 	const canUseAuthCodeFlow =
-		!!oauthConfig && oauthConfig.oauth_flow_type !== "client_credentials";
+		!!oauthConfig &&
+		oauthConfig.oauth_flow_type !== "client_credentials" &&
+		!isWorkloadIdentity;
 
 	// Combine organizations with their mappings using useMemo
 	const orgsWithMappings = useMemo((): OrgWithMapping[] => {
@@ -1149,7 +1157,9 @@ export function IntegrationDetail() {
 									hasDataProvider={
 										!!integration.list_entities_data_provider_id
 									}
-									hasOAuth={!!integration.has_oauth_config}
+									hasOAuth={
+										!!integration.has_oauth_config && !isWorkloadIdentity
+									}
 									configSchema={
 										integration?.config_schema || []
 									}

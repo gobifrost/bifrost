@@ -416,6 +416,10 @@ class IntegrationResponse(BaseModel):
         default=False,
         description="Whether OAuth configuration is set up for this integration",
     )
+    oauth_flow_type: str | None = Field(
+        default=None,
+        description="OAuth flow type when this integration has a provider",
+    )
     logo_url: str | None = Field(
         default=None,
         description="URL for the uploaded integration logo thumbnail/original",
@@ -541,6 +545,10 @@ class OAuthConfigSummary(BaseModel):
     authorization_url: str | None = Field(default=None, description="Authorization URL")
     token_url: str = Field(..., description="Token URL")
     scopes: list[str] = Field(default_factory=list, description="OAuth scopes")
+    tenant_id: str | None = Field(
+        default=None,
+        description="Optional runtime identity tenant ID (not secret)",
+    )
 
     # Connection status
     status: str = Field(default="not_connected", description="Connection status")
