@@ -333,6 +333,7 @@ async def seed_integration(db: AsyncSession, work_dir: Path) -> str:
     db.add(Integration(
         id=iid,
         name=f"rt-integration-{iid.hex[:6]}",
+        authentication_method="oauth",
         entity_id="tenant_id",
         entity_id_name="Tenant",
         default_entity_id="default-tenant",

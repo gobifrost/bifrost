@@ -120,6 +120,7 @@ describe("CreateIntegrationDialog — create mode", () => {
 		await waitFor(() => expect(mockCreate).toHaveBeenCalledTimes(1));
 		expect(mockCreate.mock.calls[0]![0].body).toEqual({
 			name: "Synthetic integration",
+		authentication_method: "config",
 			description: null,
 			config_schema: [
 				{

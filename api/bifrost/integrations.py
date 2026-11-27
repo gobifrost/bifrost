@@ -8,6 +8,8 @@ All methods are async and must be awaited.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from .client import get_client, raise_for_status_with_detail
 from .models import IntegrationData, IntegrationMappingFindResult, IntegrationMappingResponse
 from ._context import resolve_scope, _execution_context
@@ -39,6 +41,15 @@ def _parse_integration_data(result: dict) -> IntegrationData:
     return data
 
 
+def _validate_mapping_instance(
+    mapping: IntegrationMappingResponse, instance: str | None
+) -> IntegrationMappingResponse:
+    """Reject old-server/default responses for an explicitly named request."""
+    if instance is not None and mapping.instance_key != instance:
+        raise RuntimeError("Integration response did not resolve the requested instance")
+    return mapping
+
+
 class integrations:
     """
     Integration management operations.
@@ -50,7 +61,12 @@ class integrations:
 
     @staticmethod
     async def get(
-        name: str, scope: str | None = None, oauth_scope: str | None = None
+        name: str,
+        scope: str | None = None,
+        oauth_scope: str | None = None,
+        *,
+        instance: str | None = None,
+        on_missing: Literal["fail", "default"] = "fail",
     ) -> IntegrationData | None:
         """
         Get integration configuration for an organization.
@@ -115,6 +131,9 @@ class integrations:
         effective_scope = resolve_scope(scope)
         client = get_client()
         request_data = {"name": name, "scope": effective_scope}
+        if instance is not None:
+            request_data["instance"] = instance
+            request_data["on_missing"] = on_missing
         if oauth_scope:
             request_data["oauth_scope"] = oauth_scope
         # Carry the solution install id (F2 pattern, mirrors tables.py): when this
@@ -126,7 +145,7 @@ class integrations:
             request_data["solution"] = str(solution_id)
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/get",
+            "/api/sdk/integrations/instances/get" if instance is not None else "/api/sdk/integrations/get",
             json=request_data,
             retry_transient=True,
         )
@@ -135,7 +154,13 @@ class integrations:
             result = response.json()
             if result is None:
                 return None
-            return _parse_integration_data(result)
+            data = _parse_integration_data(result)
+            # Old servers ignore unknown selectors. Never accept their default
+            # connection as a named connection's credentials.
+            expected_key = "default" if on_missing == "default" and data.instance_key == "default" else instance
+            if instance is not None and data.instance_key != expected_key:
+                raise RuntimeError("Integration response did not resolve the requested instance")
+            return data
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 
@@ -143,6 +168,8 @@ class integrations:
     async def list_mappings(
         name: str,
         scope: str | None = None,
+        *,
+        instance: str | None = None,
     ) -> list[IntegrationMappingResponse] | None:
         """
         List the mappings for an integration that you may read.
@@ -176,8 +203,8 @@ class integrations:
         client = get_client()
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/list_mappings",
-            json={"name": name},
+            "/api/sdk/integrations/instances/list_mappings" if instance is not None else "/api/sdk/integrations/list_mappings",
+            json={"name": name, **({"instance": instance} if instance is not None else {})},
             retry_transient=True,
         )
 
@@ -188,7 +215,10 @@ class integrations:
             # API returns {"items": [...]} structure
             items = json_result.get("items", [])
             # Convert to IntegrationMappingResponse models
-            return [IntegrationMappingResponse.model_validate(item) for item in items]
+            return [
+                _validate_mapping_instance(IntegrationMappingResponse.model_validate(item), instance)
+                for item in items
+            ]
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 
@@ -197,6 +227,8 @@ class integrations:
         name: str,
         scope: str | None = None,
         entity_id: str | None = None,
+        *,
+        instance: str | None = None,
     ) -> IntegrationMappingResponse | None:
         """
         Get a specific mapping by organization scope or entity ID.
@@ -237,8 +269,8 @@ class integrations:
         client = get_client()
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/get_mapping",
-            json={"name": name, "scope": effective_scope, "entity_id": entity_id},
+            "/api/sdk/integrations/instances/get_mapping" if instance is not None else "/api/sdk/integrations/get_mapping",
+            json={"name": name, "scope": effective_scope, "entity_id": entity_id, **({"instance": instance} if instance is not None else {})},
             retry_transient=True,
         )
 
@@ -246,7 +278,9 @@ class integrations:
             result = response.json()
             if result is None:
                 return None
-            return IntegrationMappingResponse.model_validate(result)
+            return _validate_mapping_instance(
+                IntegrationMappingResponse.model_validate(result), instance
+            )
         raise_for_status_with_detail(response)
         raise AssertionError("unreachable")
 
@@ -254,6 +288,8 @@ class integrations:
     async def find_mapping(
         name: str,
         entity_id: str,
+        *,
+        instance: str | None = None,
     ) -> IntegrationMappingFindResult | None:
         """
         Find one mapping by exact entity ID within authorized reach.
@@ -287,8 +323,8 @@ class integrations:
         client = get_client()
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/find_mapping",
-            json={"name": name, "entity_id": entity_id},
+            "/api/sdk/integrations/instances/find_mapping" if instance is not None else "/api/sdk/integrations/find_mapping",
+            json={"name": name, "entity_id": entity_id, **({"instance": instance} if instance is not None else {})},
             retry_transient=True,
         )
 
@@ -307,6 +343,8 @@ class integrations:
         entity_id: str,
         entity_name: str | None = None,
         config: dict | None = None,
+        *,
+        instance: str | None = None,
     ) -> IntegrationMappingResponse:
         """
         Create or update a mapping for an organization.
@@ -352,24 +390,27 @@ class integrations:
         client = get_client()
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/upsert_mapping",
+            "/api/sdk/integrations/instances/upsert_mapping" if instance is not None else "/api/sdk/integrations/upsert_mapping",
             json={
                 "name": name,
                 "scope": effective_scope,
                 "entity_id": entity_id,
                 "entity_name": entity_name,
                 "config": config,
+                **({"instance": instance} if instance is not None else {}),
             }
         )
 
         if response.status_code == 200:
-            return IntegrationMappingResponse.model_validate(response.json())
+            return _validate_mapping_instance(
+                IntegrationMappingResponse.model_validate(response.json()), instance
+            )
         else:
             error_detail = response.text
             raise RuntimeError(f"Failed to upsert mapping: {response.status_code} - {error_detail}")
 
     @staticmethod
-    async def delete_mapping(name: str, scope: str) -> bool:
+    async def delete_mapping(name: str, scope: str, *, instance: str | None = None) -> bool:
         """
         Delete a mapping for an organization.
 
@@ -395,8 +436,8 @@ class integrations:
         client = get_client()
         response = await client.engine_request(
             "POST",
-            "/api/sdk/integrations/delete_mapping",
-            json={"name": name, "scope": effective_scope},
+            "/api/sdk/integrations/instances/delete_mapping" if instance is not None else "/api/sdk/integrations/delete_mapping",
+            json={"name": name, "scope": effective_scope, **({"instance": instance} if instance is not None else {})},
         )
 
         if response.status_code == 200:

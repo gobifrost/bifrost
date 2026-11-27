@@ -46,6 +46,8 @@ from bifrost.contracts.forms import FormCreate, FormUpdate
 from bifrost.contracts.integrations import (
     ConfigSchemaItem,
     IntegrationCreate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     IntegrationUpdate,
@@ -90,6 +92,8 @@ __all__ = [
     "ConfigSchemaItem",
     "IntegrationCreate",
     "IntegrationUpdate",
+    "IntegrationInstanceCreate",
+    "IntegrationInstanceUpdate",
     "IntegrationMappingCreate",
     "IntegrationMappingUpdate",
     # Configs

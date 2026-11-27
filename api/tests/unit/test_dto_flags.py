@@ -39,6 +39,8 @@ from src.models.contracts.events import (  # noqa: E402
 from src.models.contracts.forms import FormCreate, FormUpdate  # noqa: E402
 from src.models.contracts.integrations import (  # noqa: E402
     IntegrationCreate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     IntegrationUpdate,
@@ -70,6 +72,8 @@ COVERED_DTOS: list[type] = [
     ApplicationUpdate,
     IntegrationCreate,
     IntegrationUpdate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     ConfigCreate,

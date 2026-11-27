@@ -55,6 +55,8 @@ from bifrost.dto_flags import (
 from bifrost.refs import RefResolver
 from bifrost.contracts import (
     IntegrationCreate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     IntegrationUpdate,
@@ -158,6 +160,18 @@ _UPDATE_FLAGS = build_cli_flags(
     IntegrationUpdate,
     exclude=DTO_EXCLUDES.get("IntegrationUpdate", set()),
     verb_ref_lookups=DTO_REF_LOOKUPS.get("IntegrationUpdate", {}),
+)
+
+_INSTANCE_CREATE_FLAGS = build_cli_flags(
+    IntegrationInstanceCreate,
+    exclude=DTO_EXCLUDES.get("IntegrationInstanceCreate", set()),
+    verb_ref_lookups=DTO_REF_LOOKUPS.get("IntegrationInstanceCreate", {}),
+)
+
+_INSTANCE_UPDATE_FLAGS = build_cli_flags(
+    IntegrationInstanceUpdate,
+    exclude=DTO_EXCLUDES.get("IntegrationInstanceUpdate", set()),
+    verb_ref_lookups=DTO_REF_LOOKUPS.get("IntegrationInstanceUpdate", {}),
 )
 
 _MAPPING_CREATE_FLAGS = build_cli_flags(
@@ -302,6 +316,98 @@ async def update_integration(
             sys.exit(1)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
+
+
+@integrations_group.command("list-instances")
+@click.argument("definition_ref")
+@click.pass_context
+@pass_resolver
+@run_async
+async def list_integration_instances(
+    ctx: click.Context,
+    definition_ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """List connection instances for an integration definition."""
+    definition_id = await resolver.resolve("integration", definition_ref)
+    response = await client.get(f"/api/integrations/{definition_id}/instances")
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@integrations_group.command("create-instance")
+@click.argument("definition_ref")
+@_apply_flags(_INSTANCE_CREATE_FLAGS)
+@click.pass_context
+@pass_resolver
+@run_async
+async def create_integration_instance(
+    ctx: click.Context,
+    definition_ref: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+    **fields: Any,
+) -> None:
+    """Create a named connection instance under an integration definition."""
+    definition_id = await resolver.resolve("integration", definition_ref)
+    body = await assemble_body(IntegrationInstanceCreate, fields, resolver=resolver)
+    response = await client.post(
+        f"/api/integrations/{definition_id}/instances", json=body
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@integrations_group.command("update-instance")
+@click.argument("definition_ref")
+@click.argument("instance_id")
+@_apply_flags(_INSTANCE_UPDATE_FLAGS)
+@click.pass_context
+@pass_resolver
+@run_async
+async def update_integration_instance(
+    ctx: click.Context,
+    definition_ref: str,
+    instance_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+    **fields: Any,
+) -> None:
+    """Update a connection instance by UUID."""
+    definition_id = await resolver.resolve("integration", definition_ref)
+    body = await assemble_body(IntegrationInstanceUpdate, fields, resolver=resolver)
+    response = await client.patch(
+        f"/api/integrations/{definition_id}/instances/{instance_id}", json=body
+    )
+    response.raise_for_status()
+    output_result(response.json(), ctx=ctx)
+
+
+@integrations_group.command("delete-instance")
+@click.argument("definition_ref")
+@click.argument("instance_id")
+@click.pass_context
+@pass_resolver
+@run_async
+async def delete_integration_instance(
+    ctx: click.Context,
+    definition_ref: str,
+    instance_id: str,
+    *,
+    client: BifrostClient,
+    resolver: RefResolver,
+) -> None:
+    """Delete a non-default connection instance by UUID."""
+    definition_id = await resolver.resolve("integration", definition_ref)
+    response = await client.delete(
+        f"/api/integrations/{definition_id}/instances/{instance_id}"
+    )
+    response.raise_for_status()
+    output_result({"deleted": True}, ctx=ctx)
 
 
 @integrations_group.command("add-mapping")

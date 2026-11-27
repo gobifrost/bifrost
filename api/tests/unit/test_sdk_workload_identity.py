@@ -17,6 +17,7 @@ def _mapping_with_workload_identity():
     integration = SimpleNamespace(
         id=uuid4(),
         default_entity_id=None,
+        instance_key="default",
         config_schema=[],
         oauth_provider=provider,
     )
@@ -34,7 +35,9 @@ async def test_mapping_configuration_overrides_workload_identity_defaults(monkey
 
     mapping = _mapping_with_workload_identity()
     repo = SimpleNamespace(
-        get_integration_for_org=AsyncMock(return_value=mapping),
+        get_integration_by_name=AsyncMock(return_value=mapping.integration),
+        get_instance_by_key=AsyncMock(return_value=mapping.integration),
+        get_mapping_by_org=AsyncMock(return_value=mapping),
         get_config_for_mapping=AsyncMock(
             return_value={"client_id": "mapping-client-id", "tenant_id": "mapping-tenant-id"}
         ),
@@ -68,7 +71,9 @@ async def test_external_mapping_does_not_receive_global_workload_identity_defaul
 
     mapping = _mapping_with_workload_identity()
     repo = SimpleNamespace(
-        get_integration_for_org=AsyncMock(return_value=mapping),
+        get_integration_by_name=AsyncMock(return_value=mapping.integration),
+        get_instance_by_key=AsyncMock(return_value=mapping.integration),
+        get_mapping_by_org=AsyncMock(return_value=mapping),
         get_config_for_mapping=AsyncMock(return_value={"org_only": "value"}),
     )
     monkeypatch.setattr(

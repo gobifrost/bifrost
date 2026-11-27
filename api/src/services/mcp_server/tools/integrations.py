@@ -77,6 +77,8 @@ async def _assemble_integration_body(
     from bifrost.refs import RefResolver
     from src.models.contracts.integrations import (
         IntegrationCreate,
+        IntegrationInstanceCreate,
+        IntegrationInstanceUpdate,
         IntegrationMappingCreate,
         IntegrationMappingUpdate,
         IntegrationUpdate,
@@ -85,6 +87,8 @@ async def _assemble_integration_body(
     model_map = {
         "IntegrationCreate": IntegrationCreate,
         "IntegrationUpdate": IntegrationUpdate,
+        "IntegrationInstanceCreate": IntegrationInstanceCreate,
+        "IntegrationInstanceUpdate": IntegrationInstanceUpdate,
         "IntegrationMappingCreate": IntegrationMappingCreate,
         "IntegrationMappingUpdate": IntegrationMappingUpdate,
     }
@@ -143,6 +147,7 @@ async def bifrost_integration_create(
     entity_id: str | None = None,
     entity_id_name: str | None = None,
     default_entity_id: str | None = None,
+    authentication_method: str = "config",
     workflow_links: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
     """Create an integration — ``POST /api/integrations``.
@@ -162,6 +167,7 @@ async def bifrost_integration_create(
         "entity_id": entity_id,
         "entity_id_name": entity_id_name,
         "default_entity_id": default_entity_id,
+        "authentication_method": authentication_method,
     }
     try:
         body = await _assemble_integration_body(
@@ -194,6 +200,7 @@ async def bifrost_integration_update(
     entity_id: str | None = None,
     entity_id_name: str | None = None,
     default_entity_id: str | None = None,
+    authentication_method: str | None = None,
     force_remove_keys: bool = False,
     workflow_links: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
@@ -233,6 +240,7 @@ async def bifrost_integration_update(
         "entity_id": entity_id,
         "entity_id_name": entity_id_name,
         "default_entity_id": default_entity_id,
+        "authentication_method": authentication_method,
     }
     try:
         body = await _assemble_integration_body(
@@ -251,6 +259,177 @@ async def bifrost_integration_update(
         )
     return success_result(
         f"Updated integration {integration_uuid}",
+        resp if isinstance(resp, dict) else {"body": resp},
+    )
+
+
+async def bifrost_integration_instance_list(
+    context: Any, definition_ref: str
+) -> ToolResult:
+    """List connection instances — ``GET /api/integrations/{id}/instances``."""
+    if not definition_ref:
+        return error_result("definition_ref is required")
+
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        try:
+            definition_id = await resolver.resolve("integration", definition_ref)
+        except Exception as exc:
+            return error_result(
+                f"could not resolve integration {definition_ref!r}",
+                _ref_error_payload(exc),
+            )
+
+    status_code, body = await call_rest(
+        context, "GET", f"/api/integrations/{definition_id}/instances"
+    )
+    if status_code != 200:
+        return error_result(
+            f"bifrost_integration_instance_list failed: HTTP {status_code}",
+            {"body": body},
+        )
+    instances = body.get("instances", []) if isinstance(body, dict) else []
+    return success_result(
+        f"Found {len(instances)} connection instance(s)",
+        {"instances": instances, "count": len(instances)},
+    )
+
+
+async def bifrost_integration_instance_create(
+    context: Any,
+    definition_ref: str,
+    name: str,
+    key: str,
+    authentication_method: str = "config",
+) -> ToolResult:
+    """Create a connection instance — ``POST /api/integrations/{id}/instances``."""
+    if not definition_ref:
+        return error_result("definition_ref is required")
+
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        try:
+            definition_id = await resolver.resolve("integration", definition_ref)
+        except Exception as exc:
+            return error_result(
+                f"could not resolve integration {definition_ref!r}",
+                _ref_error_payload(exc),
+            )
+
+    try:
+        body = await _assemble_integration_body(
+            context,
+            {"name": name, "key": key, "authentication_method": authentication_method},
+            model_name="IntegrationInstanceCreate",
+        )
+    except Exception as exc:
+        return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
+
+    status_code, resp = await call_rest(
+        context,
+        "POST",
+        f"/api/integrations/{definition_id}/instances",
+        json_body=body,
+    )
+    if status_code not in (200, 201):
+        return error_result(
+            f"bifrost_integration_instance_create failed: HTTP {status_code}",
+            {"body": resp},
+        )
+    return success_result(
+        f"Created connection instance: {name}",
+        resp if isinstance(resp, dict) else {"body": resp},
+    )
+
+
+async def bifrost_integration_instance_update(
+    context: Any,
+    definition_ref: str,
+    instance_id: str,
+    name: str | None = None,
+    authentication_method: str | None = None,
+) -> ToolResult:
+    """Update a connection instance — ``PATCH /api/integrations/{id}/instances/{instance_id}``."""
+    if not definition_ref:
+        return error_result("definition_ref is required")
+    if not instance_id:
+        return error_result("instance_id is required")
+
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        try:
+            definition_id = await resolver.resolve("integration", definition_ref)
+        except Exception as exc:
+            return error_result(
+                f"could not resolve integration {definition_ref!r}",
+                _ref_error_payload(exc),
+            )
+
+    try:
+        body = await _assemble_integration_body(
+            context,
+            {"name": name, "authentication_method": authentication_method},
+            model_name="IntegrationInstanceUpdate",
+        )
+    except Exception as exc:
+        return error_result(f"invalid input: {exc}", _ref_error_payload(exc))
+
+    status_code, resp = await call_rest(
+        context,
+        "PATCH",
+        f"/api/integrations/{definition_id}/instances/{instance_id}",
+        json_body=body,
+    )
+    if status_code != 200:
+        return error_result(
+            f"bifrost_integration_instance_update failed: HTTP {status_code}",
+            {"body": resp},
+        )
+    return success_result(
+        f"Updated connection instance {instance_id}",
+        resp if isinstance(resp, dict) else {"body": resp},
+    )
+
+
+async def bifrost_integration_instance_delete(
+    context: Any, definition_ref: str, instance_id: str
+) -> ToolResult:
+    """Delete a non-default connection instance by UUID."""
+    if not definition_ref:
+        return error_result("definition_ref is required")
+    if not instance_id:
+        return error_result("instance_id is required")
+
+    from bifrost.refs import RefResolver
+
+    async with rest_client(context) as http:
+        resolver = RefResolver(http)
+        try:
+            definition_id = await resolver.resolve("integration", definition_ref)
+        except Exception as exc:
+            return error_result(
+                f"could not resolve integration {definition_ref!r}",
+                _ref_error_payload(exc),
+            )
+
+    status_code, resp = await call_rest(
+        context,
+        "DELETE",
+        f"/api/integrations/{definition_id}/instances/{instance_id}",
+    )
+    if status_code not in (200, 204):
+        return error_result(
+            f"bifrost_integration_instance_delete failed: HTTP {status_code}",
+            {"body": resp},
+        )
+    return success_result(
+        f"Deleted connection instance {instance_id}",
         resp if isinstance(resp, dict) else {"body": resp},
     )
 
@@ -388,6 +567,10 @@ TOOLS = [
     ("bifrost_integration_get", "Get Integration", "Get integration detail (mappings, OAuth config, schema) by UUID or name."),
     ("bifrost_integration_create", "Create Integration", "Create a new integration (platform admin)."),
     ("bifrost_integration_update", "Update Integration", "Update an integration by UUID or name."),
+    ("bifrost_integration_instance_list", "List Connection Instances", "List connection instances for an integration definition."),
+    ("bifrost_integration_instance_create", "Create Connection Instance", "Create a named connection instance under an integration definition."),
+    ("bifrost_integration_instance_update", "Update Connection Instance", "Update a connection instance by UUID."),
+    ("bifrost_integration_instance_delete", "Delete Connection Instance", "Delete a non-default connection instance by UUID."),
     ("bifrost_integration_mapping_create", "Add Integration Mapping", "Create an integration↔organization mapping."),
     ("bifrost_integration_mapping_update", "Update Integration Mapping", "Update an integration mapping by ID."),
 ]
@@ -402,6 +585,10 @@ def register_tools(mcp: Any, get_context_fn: Any) -> None:
         "bifrost_integration_get": bifrost_integration_get,
         "bifrost_integration_create": bifrost_integration_create,
         "bifrost_integration_update": bifrost_integration_update,
+        "bifrost_integration_instance_list": bifrost_integration_instance_list,
+        "bifrost_integration_instance_create": bifrost_integration_instance_create,
+        "bifrost_integration_instance_update": bifrost_integration_instance_update,
+        "bifrost_integration_instance_delete": bifrost_integration_instance_delete,
         "bifrost_integration_mapping_create": bifrost_integration_mapping_create,
         "bifrost_integration_mapping_update": bifrost_integration_mapping_update,
     }

@@ -1,7 +1,7 @@
 import { useUpdateIntegration } from "@/services/integrations";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
-import { Pin, Play, ChevronDown, Plus, X, Settings2 } from "lucide-react";
+import { Pin, Play, ChevronDown, Plus, X, Settings2, Workflow } from "lucide-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -80,11 +80,13 @@ export function IntegrationWorkflowLinks({
 	integrationId,
 	savedLinks,
 	canManage,
+	compactOnMobile = false,
 }: {
 	integrationId: string;
 	savedLinks: WorkflowLink[];
 	integrationName: string;
 	canManage: boolean;
+	compactOnMobile?: boolean;
 }) {
 	const { data } = useWorkflowsMetadata();
 	const workflows = (data?.workflows || []).filter(
@@ -266,14 +268,18 @@ export function IntegrationWorkflowLinks({
 						<Button
 							ref={menuRef}
 							variant="outline"
+							size="sm"
+							className={compactOnMobile ? "size-8 sm:w-auto" : undefined}
+							aria-label="Workflows"
 							title={
 								pinned.length > visiblePins
 									? `${pinned.length - visiblePins} pinned actions are available in this menu`
 									: "All linked workflows"
 							}
 						>
-							<ChevronDown className="size-4" />
-							Workflows
+							{compactOnMobile && <Workflow className="size-4 sm:hidden" />}
+							<ChevronDown className={compactOnMobile ? "hidden size-4 sm:block" : "size-4"} />
+							<span className={compactOnMobile ? "hidden sm:inline" : undefined}>Workflows</span>
 							{links.length > 0 && (
 								<span className="text-muted-foreground">
 									{links.length}

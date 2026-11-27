@@ -66,6 +66,12 @@ INTEGRATION_ROUTE_PATHS: frozenset[str] = frozenset(
         "/api/sdk/integrations/find_mapping",
         "/api/sdk/integrations/upsert_mapping",
         "/api/sdk/integrations/delete_mapping",
+        "/api/sdk/integrations/instances/get",
+        "/api/sdk/integrations/instances/list_mappings",
+        "/api/sdk/integrations/instances/get_mapping",
+        "/api/sdk/integrations/instances/find_mapping",
+        "/api/sdk/integrations/instances/upsert_mapping",
+        "/api/sdk/integrations/instances/delete_mapping",
         "/api/sdk/integrations/refresh_token",
     }
 )

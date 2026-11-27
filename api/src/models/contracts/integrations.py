@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 # ==================== TYPE DEFINITIONS ====================
 
 ConfigItemType = Literal["string", "int", "bool", "json", "secret"]
+IntegrationAuthenticationMethod = Literal["config", "oauth"]
 
 
 # ==================== CONFIG SCHEMA MODELS ====================
@@ -130,6 +131,9 @@ class IntegrationCreate(BaseModel):
         max_length=255,
         description="Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)",
     )
+    authentication_method: IntegrationAuthenticationMethod = Field(
+        default="config", description="How the default connection authenticates"
+    )
 
     @model_validator(mode="after")
     def unique_workflow_links(self):
@@ -187,6 +191,9 @@ class IntegrationUpdate(BaseModel):
         max_length=255,
         description="Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)",
     )
+    authentication_method: IntegrationAuthenticationMethod | None = Field(
+        default=None, description="How the default connection authenticates"
+    )
 
     @model_validator(mode="after")
     def unique_workflow_links(self):
@@ -194,6 +201,39 @@ class IntegrationUpdate(BaseModel):
         if len(ids) != len(set(ids)):
             raise ValueError("A workflow can only be linked once per integration")
         return self
+
+
+class IntegrationInstanceCreate(BaseModel):
+    """Create a named connection instance under an integration definition."""
+
+    name: str = Field(..., min_length=1, max_length=255)
+    key: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    authentication_method: IntegrationAuthenticationMethod = "config"
+
+
+class IntegrationInstanceUpdate(BaseModel):
+    """Update mutable connection-instance metadata."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    authentication_method: IntegrationAuthenticationMethod | None = None
+
+
+class IntegrationInstanceResponse(BaseModel):
+    """Public metadata for a connection instance."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    definition_id: UUID
+    key: str
+    name: str
+    is_default: bool
+    authentication_method: IntegrationAuthenticationMethod
+    has_oauth_config: bool
+
+
+class IntegrationInstanceListResponse(BaseModel):
+    instances: list[IntegrationInstanceResponse]
 
 
 class IntegrationMappingCreate(BaseModel):
@@ -338,6 +378,9 @@ class IntegrationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID = Field(..., description="Integration ID")
+    authentication_method: IntegrationAuthenticationMethod = Field(
+        default="config", description="How the default connection authenticates"
+    )
     workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
 
     name: str = Field(..., description="Integration name")
@@ -530,6 +573,13 @@ class IntegrationDetailResponse(BaseModel):
 
     # Core integration fields
     id: UUID = Field(..., description="Integration ID")
+    definition_id: UUID = Field(..., description="Shared integration definition ID")
+    instance_key: str = Field(..., description="Stable connection instance key")
+    instance_name: str = Field(..., description="Connection instance display name")
+    is_default_instance: bool = Field(..., description="Whether this is the default connection")
+    authentication_method: IntegrationAuthenticationMethod = Field(
+        ..., description="How this connection instance authenticates"
+    )
     workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
 
     name: str = Field(..., description="Integration name")

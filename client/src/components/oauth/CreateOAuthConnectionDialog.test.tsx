@@ -112,6 +112,20 @@ describe("CreateOAuthConnectionDialog", () => {
 		expect(onOpenChange).toHaveBeenCalledWith(false);
 	});
 
+	it("names the connection instance whose OAuth credentials will change", () => {
+		renderWithProviders(
+			<CreateOAuthConnectionDialog
+				open
+				onOpenChange={vi.fn()}
+				integrationId="integration-1"
+				instanceContext="Microsoft 365 · Acme Production"
+			/>,
+		);
+		expect(
+			screen.getByText(/for Microsoft 365 · Acme Production/i),
+		).toBeInTheDocument();
+	});
+
 	it("seeds edit mode from the existing connection and submits updates", async () => {
 		const onOpenChange = vi.fn();
 		const updateMutation = vi.fn().mockResolvedValue({ integration_id: "int-1" });

@@ -120,6 +120,50 @@ class TestCliIntegrations:
                 headers=platform_admin.headers,
             )
 
+    def test_connection_instance_commands_round_trip(
+        self, cli_client, _invoke, e2e_client, platform_admin
+    ) -> None:
+        """CLI manages non-default instances through the shared REST routes."""
+        definition = e2e_client.post(
+            "/api/integrations",
+            headers=platform_admin.headers,
+            json={"name": f"cli-instance-{uuid4().hex[:8]}"},
+        )
+        assert definition.status_code == 201, definition.text
+        definition_id = definition.json()["id"]
+
+        try:
+            created = _invoke([
+                "--json", "create-instance", definition_id,
+                "--name", "Europe", "--key", "eu",
+                "--authentication-method", "oauth",
+            ])
+            assert created.exit_code == 0, created.output
+            instance = json.loads(created.output)
+
+            listed = _invoke(["--json", "list-instances", definition_id])
+            assert listed.exit_code == 0, listed.output
+            assert {item["id"] for item in json.loads(listed.output)["instances"]} >= {
+                instance["id"]
+            }
+
+            updated = _invoke([
+                "--json", "update-instance", definition_id, instance["id"],
+                "--name", "Europe Production",
+            ])
+            assert updated.exit_code == 0, updated.output
+            assert json.loads(updated.output)["name"] == "Europe Production"
+
+            deleted = _invoke([
+                "--json", "delete-instance", definition_id, instance["id"],
+            ])
+            assert deleted.exit_code == 0, deleted.output
+        finally:
+            e2e_client.delete(
+                f"/api/integrations/{definition_id}",
+                headers=platform_admin.headers,
+            )
+
     def test_get_prints_redacted_secret_config(
         self, cli_client, _invoke, e2e_client, platform_admin
     ) -> None:

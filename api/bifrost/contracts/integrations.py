@@ -9,6 +9,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 ConfigItemType = Literal["string", "int", "bool", "json", "secret"]
+IntegrationAuthenticationMethod = Literal["config", "oauth"]
 
 
 class ConfigSchemaItem(BaseModel):
@@ -60,6 +61,7 @@ class IntegrationCreate(BaseModel):
     entity_id: str | None = Field(default=None, min_length=1, max_length=255)
     entity_id_name: str | None = Field(default=None, max_length=255)
     default_entity_id: str | None = Field(default=None, max_length=255)
+    authentication_method: IntegrationAuthenticationMethod = Field(default="config")
 
 
 class IntegrationUpdate(BaseModel):
@@ -74,6 +76,22 @@ class IntegrationUpdate(BaseModel):
     entity_id: str | None = Field(default=None, min_length=1, max_length=255)
     entity_id_name: str | None = Field(default=None, max_length=255)
     default_entity_id: str | None = Field(default=None, max_length=255)
+    authentication_method: IntegrationAuthenticationMethod | None = Field(default=None)
+
+
+class IntegrationInstanceCreate(BaseModel):
+    """Request model for a named connection instance (CLI mirror)."""
+
+    name: str = Field(min_length=1, max_length=255)
+    key: str = Field(min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    authentication_method: IntegrationAuthenticationMethod = Field(default="config")
+
+
+class IntegrationInstanceUpdate(BaseModel):
+    """Request model for connection-instance metadata (CLI mirror)."""
+
+    name: str | None = Field(default=None, min_length=1, max_length=255)
+    authentication_method: IntegrationAuthenticationMethod | None = Field(default=None)
 
 
 class IntegrationMappingCreate(BaseModel):

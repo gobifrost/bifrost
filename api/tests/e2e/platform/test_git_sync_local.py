@@ -2273,14 +2273,14 @@ class TestSplitManifestFormat:
         assert await db_session.get(EventSubscription, subscription_id) is None
         assert await db_session.get(Workflow, workflow_id) is None
 
-    async def test_pull_integration_config_links_config_schema_id(
+    async def test_pull_instance_config_links_root_config_schema_id(
         self,
         db_session: AsyncSession,
         sync_service,
         working_clone,
     ):
-        """Integration configs imported from split manifests must link to
-        their IntegrationConfigSchema rows and keep that link after export.
+        """Instance configs must link to their root definition's shared schema
+        and retain that linkage after export and import.
         """
         from uuid import UUID as UUIDType
 
@@ -2288,7 +2288,8 @@ class TestSplitManifestFormat:
         from src.models.orm.integrations import Integration, IntegrationConfigSchema
 
         work_dir = Path(working_clone.working_dir)
-        integ_id = str(uuid4())
+        definition_id = str(uuid4())
+        instance_id = str(uuid4())
         config_id = str(uuid4())
         notes = "## Setup\n\n[Runbook](https://example.com/runbook)\n"
 
@@ -2297,7 +2298,7 @@ class TestSplitManifestFormat:
         (bifrost_dir / "integrations.yaml").write_text(yaml.dump({
             "integrations": {
                 "TestIntegConfigSchemaLink": {
-                    "id": integ_id,
+                    "id": definition_id,
                     "notes": notes,
                     "config_schema": [
                         {
@@ -2308,13 +2309,20 @@ class TestSplitManifestFormat:
                         },
                     ],
                 },
+                "TestIntegConfigSchemaLink Europe": {
+                    "id": instance_id,
+                    "parent_integration_id": definition_id,
+                    "instance_key": "eu",
+                    "instance_name": "Europe",
+                    "authentication_method": "config",
+                },
             },
         }, default_flow_style=False))
         (bifrost_dir / "configs.yaml").write_text(yaml.dump({
             "configs": {
                 "EXAMPLE_TOKEN": {
                     "id": config_id,
-                    "integration_id": integ_id,
+                    "integration_id": instance_id,
                     "key": "EXAMPLE_TOKEN",
                     "config_type": "secret",
                     "value": {"value": ""},
@@ -2335,7 +2343,7 @@ class TestSplitManifestFormat:
         schema = (
             await db_session.execute(
                 select(IntegrationConfigSchema).where(
-                    IntegrationConfigSchema.integration_id == UUIDType(integ_id),
+                    IntegrationConfigSchema.integration_id == UUIDType(definition_id),
                     IntegrationConfigSchema.key == "EXAMPLE_TOKEN",
                 )
             )
@@ -2355,16 +2363,19 @@ class TestSplitManifestFormat:
         assert cfg.value == {"value": ""}
         assert cfg.config_schema_id == schema.id
 
-        # Export should preserve the portable shape: schema lives under the
-        # integration and the config references that integration by UUID.
+        # Export keeps schema only on the root and references the child UUID
+        # from the instance-owned config value.
         commit_result = await sync_service.desktop_commit("round trip integration config")
         assert commit_result.success is True
         exported = read_manifest_from_dir(sync_service._persistent_dir / ".bifrost")
-        exported_integ = exported.integrations[integ_id]
-        assert exported_integ.notes == notes
-        assert [cs.key for cs in exported_integ.config_schema] == ["EXAMPLE_TOKEN"]
+        exported_definition = exported.integrations[definition_id]
+        exported_instance = exported.integrations[instance_id]
+        assert exported_definition.notes == notes
+        assert [cs.key for cs in exported_definition.config_schema] == ["EXAMPLE_TOKEN"]
+        assert exported_instance.parent_integration_id == definition_id
+        assert exported_instance.config_schema == []
         exported_cfg = exported.configs[config_id]
-        assert exported_cfg.integration_id == integ_id
+        assert exported_cfg.integration_id == instance_id
         assert exported_cfg.key == "EXAMPLE_TOKEN"
 
         # Re-import the exported manifest into an empty DB state; the schema
@@ -2372,11 +2383,11 @@ class TestSplitManifestFormat:
         await db_session.execute(delete(Config).where(Config.id == UUIDType(config_id)))
         await db_session.execute(
             delete(IntegrationConfigSchema).where(
-                IntegrationConfigSchema.integration_id == UUIDType(integ_id)
+                IntegrationConfigSchema.integration_id == UUIDType(definition_id)
             )
         )
         await db_session.execute(
-            delete(Integration).where(Integration.id == UUIDType(integ_id))
+            delete(Integration).where(Integration.id == UUIDType(definition_id))
         )
         await db_session.commit()
 
@@ -2386,7 +2397,7 @@ class TestSplitManifestFormat:
         roundtrip_schema = (
             await db_session.execute(
                 select(IntegrationConfigSchema).where(
-                    IntegrationConfigSchema.integration_id == UUIDType(integ_id),
+                    IntegrationConfigSchema.integration_id == UUIDType(definition_id),
                     IntegrationConfigSchema.key == "EXAMPLE_TOKEN",
                 )
             )
@@ -2394,9 +2405,12 @@ class TestSplitManifestFormat:
         roundtrip_cfg = await db_session.get(Config, UUIDType(config_id))
         assert roundtrip_cfg is not None
         assert roundtrip_cfg.config_schema_id == roundtrip_schema.id
-        roundtrip_integration = await db_session.get(Integration, UUIDType(integ_id))
-        assert roundtrip_integration is not None
-        assert roundtrip_integration.notes == notes
+        roundtrip_definition = await db_session.get(Integration, UUIDType(definition_id))
+        roundtrip_instance = await db_session.get(Integration, UUIDType(instance_id))
+        assert roundtrip_definition is not None
+        assert roundtrip_definition.notes == notes
+        assert roundtrip_instance is not None
+        assert roundtrip_instance.parent_integration_id == UUIDType(definition_id)
 
     async def test_pull_table_from_manifest(
         self,

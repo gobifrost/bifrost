@@ -27,6 +27,7 @@ export interface IntegrationDefaultsDialogProps {
 	isSaving: boolean;
 	error?: string | null;
 	notes?: string | null;
+	instanceContext?: string;
 }
 
 export function IntegrationDefaultsDialog({
@@ -39,6 +40,7 @@ export function IntegrationDefaultsDialog({
 	isSaving,
 	error,
 	notes,
+	instanceContext,
 }: IntegrationDefaultsDialogProps) {
 	return (
 		<Dialog
@@ -58,7 +60,7 @@ export function IntegrationDefaultsDialog({
 					<DialogHeader className="shrink-0">
 						<DialogTitle>Edit Configuration Defaults</DialogTitle>
 						<DialogDescription>
-							Set default values for new organization mappings
+							Set default values for new organization mappings{instanceContext ? ` for ${instanceContext}` : ""}.
 						</DialogDescription>
 					</DialogHeader>
 					<div className="min-h-0 flex-1 overflow-y-auto py-4">

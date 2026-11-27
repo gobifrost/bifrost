@@ -77,6 +77,8 @@ from src.models.contracts.executions import (  # noqa: E402
 from src.models.contracts.forms import FormCreate, FormUpdate  # noqa: E402
 from src.models.contracts.integrations import (  # noqa: E402
     IntegrationCreate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     IntegrationUpdate,
@@ -130,6 +132,8 @@ _COMMAND_DTOS: list[type] = [
     PlatformJobPublic,
     IntegrationCreate,
     IntegrationUpdate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
     ConfigCreate,
@@ -203,6 +207,8 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
 # Optional integration workflow shortcuts are additive; existing CLI callers remain compatible.
+# Instance selectors/auth metadata are additive; named operations use new routes,
+# while omitted selectors preserve Default behavior. CLI minimum is unchanged.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -434,7 +440,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
     # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
-    "bcc313841033d8484cf4c62b0e6af6365c2a0706a206104eb744bf4a2072c1a2"
+    "8aac6486b8059b134f11a09401a194910c87ba1e5f57f514eb4811bf11974ade"
 )
 
 

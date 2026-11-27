@@ -5709,6 +5709,159 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/sdk/integrations/instances/get": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance Get
+         * @description Get integration mapping data for an organization via SDK.
+         *
+         *     Supports three modes:
+         *     1. Global scope (scope="global"): Returns integration defaults only (no org mapping)
+         *     2. Org-specific mapping: Returns mapping entity_id, config, and OAuth data
+         *     3. Fallback to integration defaults: When no org mapping exists, returns
+         *        integration.default_entity_id, integration-level config, and OAuth data
+         *
+         *     Scope resolution and response construction live in the shared
+         *     integrations service (``shared.sdk_integrations``), which the
+         *     worker-local engine child calls for the same inputs.
+         */
+        post: operations["sdk_integrations_instance_get_api_sdk_integrations_instances_get_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/instances/list_mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance List Mappings
+         * @description List all mappings for an integration via SDK.
+         *
+         *     Reach filtering and response construction live in the shared
+         *     integrations service (``shared.sdk_integrations``), which the
+         *     worker-local engine child calls for the same inputs. ``request.scope``
+         *     is ignored: the list returns every mapping the caller may read.
+         */
+        post: operations["sdk_integrations_instance_list_mappings_api_sdk_integrations_instances_list_mappings_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/instances/get_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance Get Mapping
+         * @description Get a specific integration mapping by org_id or entity_id via SDK.
+         *
+         *     Scope resolution and response construction live in the shared
+         *     integrations service (``shared.sdk_integrations``), which the
+         *     worker-local engine child calls for the same inputs.
+         */
+        post: operations["sdk_integrations_instance_get_mapping_api_sdk_integrations_instances_get_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/instances/find_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance Find Mapping
+         * @description Find one mapping by exact entity ID within authorized reach via SDK.
+         *
+         *     Searches the same permitted set ``list_mappings`` returns, with no
+         *     caller-supplied organization. Returns a discriminated
+         *     unique/ambiguous/not_found_in_authorized_scope result whose receipt
+         *     never claims global absence. Unresolved outcomes perform zero tenant
+         *     actions. ``get_mapping`` behavior is unchanged.
+         */
+        post: operations["sdk_integrations_instance_find_mapping_api_sdk_integrations_instances_find_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/instances/upsert_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance Upsert Mapping
+         * @description Create or update an integration mapping for an organization via SDK.
+         *
+         *     Mutation rules live in the shared integrations service
+         *     (``shared.sdk_integrations``), which the worker-local engine child calls
+         *     for the same inputs.
+         */
+        post: operations["sdk_integrations_instance_upsert_mapping_api_sdk_integrations_instances_upsert_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/sdk/integrations/instances/delete_mapping": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Sdk Integrations Instance Delete Mapping
+         * @description Delete an integration mapping for an organization via SDK.
+         *
+         *     Mutation rules live in the shared integrations service
+         *     (``shared.sdk_integrations``), which the worker-local engine child calls
+         *     for the same inputs.
+         */
+        post: operations["sdk_integrations_instance_delete_mapping_api_sdk_integrations_instances_delete_mapping_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/cli/download": {
         parameters: {
             query?: never;
@@ -7488,6 +7641,45 @@ export interface paths {
         options?: never;
         head?: never;
         patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{definition_id}/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List integration connection instances
+         * @description List the default and named connections for one shared definition.
+         */
+        get: operations["integrations.instances.list"];
+        put?: never;
+        /** Create integration connection instance */
+        post: operations["integrations.instances.create"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/integrations/{definition_id}/instances/{instance_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete integration connection instance */
+        delete: operations["integrations.instances.delete"];
+        options?: never;
+        head?: never;
+        /** Update integration connection instance */
+        patch: operations["integrations.instances.update"];
         trace?: never;
     };
     "/api/integrations/{integration_id}": {
@@ -22044,6 +22236,13 @@ export interface components {
              * @description Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)
              */
             default_entity_id?: string | null;
+            /**
+             * Authentication Method
+             * @description How the default connection authenticates
+             * @default config
+             * @enum {string}
+             */
+            authentication_method: "config" | "oauth";
         };
         /**
          * IntegrationDetailResponse
@@ -22058,6 +22257,33 @@ export interface components {
              * @description Integration ID
              */
             id: string;
+            /**
+             * Definition Id
+             * Format: uuid
+             * @description Shared integration definition ID
+             */
+            definition_id: string;
+            /**
+             * Instance Key
+             * @description Stable connection instance key
+             */
+            instance_key: string;
+            /**
+             * Instance Name
+             * @description Connection instance display name
+             */
+            instance_name: string;
+            /**
+             * Is Default Instance
+             * @description Whether this is the default connection
+             */
+            is_default_instance: boolean;
+            /**
+             * Authentication Method
+             * @description How this connection instance authenticates
+             * @enum {string}
+             */
+            authentication_method: "config" | "oauth";
             /** Workflow Links */
             workflow_links?: components["schemas"]["IntegrationWorkflowLink"][];
             /**
@@ -22178,6 +22404,66 @@ export interface components {
             mappings?: components["schemas"]["IntegrationMappingResponse"][];
             /** @description OAuth provider configuration and connection status */
             oauth_config?: components["schemas"]["OAuthConfigSummary"] | null;
+        };
+        /**
+         * IntegrationInstanceCreate
+         * @description Create a named connection instance under an integration definition.
+         */
+        IntegrationInstanceCreate: {
+            /** Name */
+            name: string;
+            /** Key */
+            key: string;
+            /**
+             * Authentication Method
+             * @default config
+             * @enum {string}
+             */
+            authentication_method: "config" | "oauth";
+        };
+        /** IntegrationInstanceListResponse */
+        IntegrationInstanceListResponse: {
+            /** Instances */
+            instances: components["schemas"]["IntegrationInstanceResponse"][];
+        };
+        /**
+         * IntegrationInstanceResponse
+         * @description Public metadata for a connection instance.
+         */
+        IntegrationInstanceResponse: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Definition Id
+             * Format: uuid
+             */
+            definition_id: string;
+            /** Key */
+            key: string;
+            /** Name */
+            name: string;
+            /** Is Default */
+            is_default: boolean;
+            /**
+             * Authentication Method
+             * @enum {string}
+             */
+            authentication_method: "config" | "oauth";
+            /** Has Oauth Config */
+            has_oauth_config: boolean;
+        };
+        /**
+         * IntegrationInstanceUpdate
+         * @description Update mutable connection-instance metadata.
+         */
+        IntegrationInstanceUpdate: {
+            /** Name */
+            name?: string | null;
+            /** Authentication Method */
+            authentication_method?: ("config" | "oauth") | null;
         };
         /**
          * IntegrationListResponse
@@ -22425,6 +22711,13 @@ export interface components {
              * @description Integration ID
              */
             id: string;
+            /**
+             * Authentication Method
+             * @description How the default connection authenticates
+             * @default config
+             * @enum {string}
+             */
+            authentication_method: "config" | "oauth";
             /** Workflow Links */
             workflow_links?: components["schemas"]["IntegrationWorkflowLink"][];
             /**
@@ -22635,6 +22928,11 @@ export interface components {
              * @description Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)
              */
             default_entity_id?: string | null;
+            /**
+             * Authentication Method
+             * @description How the default connection authenticates
+             */
+            authentication_method?: ("config" | "oauth") | null;
         };
         /**
          * IntegrationWorkflowLink
@@ -27896,6 +28194,11 @@ export interface components {
              */
             name: string;
             /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
+            /**
              * Scope
              * @description Organization ID (required for delete)
              */
@@ -27938,6 +28241,11 @@ export interface components {
              */
             name: string;
             /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
+            /**
              * Entity Id
              * @description External entity ID (exact match)
              */
@@ -27970,6 +28278,11 @@ export interface components {
              */
             name: string;
             /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
+            /**
              * Scope
              * @description Organization scope: None=context default, UUID=specific org
              */
@@ -27990,6 +28303,18 @@ export interface components {
              * @description Integration name
              */
             name: string;
+            /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
+            /**
+             * On Missing
+             * @description How an explicit missing instance is handled
+             * @default fail
+             * @enum {string}
+             */
+            on_missing: "fail" | "default";
             /**
              * Scope
              * @description Organization scope: None=context default, UUID=specific org, 'global'=global scope
@@ -28016,6 +28341,16 @@ export interface components {
              * @description Integration UUID
              */
             integration_id: string;
+            /**
+             * Definition Id
+             * @description Shared integration definition UUID
+             */
+            definition_id: string;
+            /**
+             * Instance Key
+             * @description Resolved connection instance key
+             */
+            instance_key: string;
             /**
              * Entity Id
              * @description Mapped external entity ID (e.g., tenant ID)
@@ -28052,6 +28387,11 @@ export interface components {
              */
             name: string;
             /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
+            /**
              * Scope
              * @description Accepted from older SDK callers and ignored: the list always returns every mapping the caller may read with Integrations Read.
              */
@@ -28083,6 +28423,16 @@ export interface components {
              * @description Integration UUID
              */
             integration_id: string;
+            /**
+             * Definition Id
+             * @description Shared integration definition UUID
+             */
+            definition_id: string;
+            /**
+             * Instance Key
+             * @description Connection instance key
+             */
+            instance_key: string;
             /**
              * Organization Id
              * @description Organization UUID
@@ -28214,6 +28564,11 @@ export interface components {
              * @description Integration name
              */
             name: string;
+            /**
+             * Instance
+             * @description Named connection instance key
+             */
+            instance?: string | null;
             /**
              * Scope
              * @description Organization ID (required for upsert)
@@ -43475,6 +43830,206 @@ export interface operations {
             };
         };
     };
+    sdk_integrations_instance_get_api_sdk_integrations_instances_get_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsGetRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsGetResponse"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_instance_list_mappings_api_sdk_integrations_instances_list_mappings_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsListMappingsRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsListMappingsResponse"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_instance_get_mapping_api_sdk_integrations_instances_get_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsGetMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsMappingItem"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_instance_find_mapping_api_sdk_integrations_instances_find_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsFindMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsFindMappingResponse"] | null;
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_instance_upsert_mapping_api_sdk_integrations_instances_upsert_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsUpsertMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SDKIntegrationsMappingItem"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    sdk_integrations_instance_delete_mapping_api_sdk_integrations_instances_delete_mapping_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["SDKIntegrationsDeleteMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     download_cli_api_cli_download_get: {
         parameters: {
             query?: never;
@@ -46752,6 +47307,138 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["IntegrationResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "integrations.instances.list": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationInstanceListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "integrations.instances.create": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                definition_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationInstanceCreate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationInstanceResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "integrations.instances.delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                definition_id: string;
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    "integrations.instances.update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                definition_id: string;
+                instance_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IntegrationInstanceUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IntegrationInstanceResponse"];
                 };
             };
             /** @description Validation Error */

@@ -3,7 +3,7 @@
 from datetime import datetime, timezone
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class ExportMetadata(BaseModel):
@@ -64,6 +64,7 @@ class ConfigExportItem(BaseModel):
     organization_id: str | None = None
     organization_name: str | None = None
     integration_name: str | None = None  # Reference by name, not ID
+    instance_key: str | None = None
 
 
 class ConfigExportFile(ExportMetadata):
@@ -108,6 +109,10 @@ class OAuthProviderExportItem(BaseModel):
 
 class IntegrationExportItem(BaseModel):
     name: str
+    parent_integration_name: str | None = None
+    instance_key: str = Field(default="default", min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    instance_name: str | None = None
+    authentication_method: Literal["config", "oauth"] | None = None
     description: str | None = None
     notes: str | None = None
     entity_id: str | None = None
@@ -118,6 +123,15 @@ class IntegrationExportItem(BaseModel):
     mappings: list[IntegrationMappingExportItem] = Field(default_factory=list)
     oauth_provider: OAuthProviderExportItem | None = None
     default_config: dict[str, Any] = Field(default_factory=dict)
+
+
+    @model_validator(mode="after")
+    def validate_instance_identity(self):
+        if not self.parent_integration_name and self.instance_key != "default":
+            raise ValueError("A named instance requires its parent integration name")
+        if self.parent_integration_name and self.instance_key == "default":
+            raise ValueError("The default instance cannot have a parent integration")
+        return self
 
 
 class IntegrationExportFile(ExportMetadata):

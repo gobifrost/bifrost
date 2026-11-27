@@ -305,3 +305,30 @@ class TestReadsUseSchemaType:
         )
 
         assert config == {"api_key": "k"}
+
+
+class TestInstanceSettings:
+    async def test_put_persists_authentication_method(self):
+        instance = SimpleNamespace(authentication_method="config", oauth_provider=None)
+        repo = IntegrationsRepository(_session())
+        repo.get_integration_by_id = AsyncMock(return_value=instance)
+        await repo.update_integration(uuid4(), IntegrationUpdate(authentication_method="oauth"))
+        assert instance.authentication_method == "oauth"
+
+    async def test_put_cannot_hide_an_existing_oauth_provider(self):
+        instance = SimpleNamespace(authentication_method="oauth", oauth_provider=object())
+        repo = IntegrationsRepository(_session())
+        repo.get_integration_by_id = AsyncMock(return_value=instance)
+        with pytest.raises(ConfigValueError, match="Disconnect OAuth"):
+            await repo.update_integration(uuid4(), IntegrationUpdate(authentication_method="config"))
+        assert instance.authentication_method == "oauth"
+
+    async def test_put_explicit_null_clears_instance_lookup_and_entity_defaults(self):
+        instance = SimpleNamespace(list_entities_data_provider_id=uuid4(), default_entity_id="old")
+        repo = IntegrationsRepository(_session())
+        repo.get_integration_by_id = AsyncMock(return_value=instance)
+        await repo.update_integration(uuid4(), IntegrationUpdate(
+            list_entities_data_provider_id=None, default_entity_id=None,
+        ))
+        assert instance.list_entities_data_provider_id is None
+        assert instance.default_entity_id is None

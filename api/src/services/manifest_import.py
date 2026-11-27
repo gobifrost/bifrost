@@ -121,10 +121,37 @@ def filter_partial_manifest(manifest: Manifest, selection: PartialImportSelectio
         # (notably configs), so selection must be based on the entity UUID.
         return {key: entry for key, entry in entries.items() if entry.id in ids}
 
+    selected_integrations = selected(manifest.integrations)
+    selected_integration_ids = {entry.id for entry in selected_integrations.values()}
+    # Connection instances require their root definition for shared schema
+    # resolution. Include that parent rather than letting a bounded import
+    # create a child whose values cannot be schema-linked.
+    while True:
+        missing_parent_ids = {
+            entry.parent_integration_id
+            for entry in selected_integrations.values()
+            if entry.parent_integration_id
+            and entry.parent_integration_id not in selected_integration_ids
+        }
+        if not missing_parent_ids:
+            break
+        parents = {
+            key: entry
+            for key, entry in manifest.integrations.items()
+            if entry.id in missing_parent_ids
+        }
+        if len(parents) != len(missing_parent_ids):
+            raise ValueError(
+                "Selected integration instance references a root definition "
+                "that is absent from the manifest"
+            )
+        selected_integrations.update(parents)
+        selected_integration_ids.update(entry.id for entry in parents.values())
+
     return Manifest(
         organizations=[entry for entry in manifest.organizations if entry.id in ids],
         roles=[entry for entry in manifest.roles if entry.id in ids],
-        workflows=selected(manifest.workflows), integrations=selected(manifest.integrations),
+        workflows=selected(manifest.workflows), integrations=selected_integrations,
         configs=selected(manifest.configs), claims=selected(manifest.claims),
         policy_rules=selected(manifest.policy_rules), tables=selected(manifest.tables),
         file_policies=selected(manifest.file_policies), events=selected(manifest.events),
@@ -295,6 +322,12 @@ def _diff_and_collect(
 
     # When an integration changes, include all its dependent configs
     if changed_integration_ids:
+        # Child instance import depends on the root-owned schema. Include its
+        # parent whenever a child changes so the resolver always applies roots
+        # before children in a filtered sync.
+        for integ in incoming.integrations.values():
+            if integ.id in changed_integration_ids and integ.parent_integration_id:
+                changed_ids.add(integ.parent_integration_id)
         for mcfg in incoming.configs.values():
             if mcfg.integration_id in changed_integration_ids:
                 changed_ids.add(mcfg.id)
@@ -635,15 +668,29 @@ class ManifestResolver:
         )
         cache["wf_run_identity"] = {row[0]: row[1] for row in identity_result.all()}
 
-        # Integrations: {name: id} + {id} set
+        # Integrations: roots resolve by public name; instances by their root
+        # definition + stable key. Child ``name`` is an internal unique value
+        # and is deliberately never a portability natural key.
         integ_result = await self.db.execute(
-            select(Integration.id, Integration.name).where(Integration.is_deleted.is_(False))
+            select(
+                Integration.id,
+                Integration.name,
+                Integration.parent_integration_id,
+                Integration.instance_key,
+            ).where(Integration.is_deleted.is_(False))
         )
         cache["integ_ids"] = set()
         cache["integ_by_name"] = {}
+        cache["integ_by_parent_key"] = {}
+        cache["integ_definition_id"] = {}
         for row in integ_result.all():
             cache["integ_ids"].add(row[0])
-            cache["integ_by_name"][row[1]] = row[0]
+            if row[2] is None:
+                cache["integ_by_name"][row[1]] = row[0]
+                cache["integ_definition_id"][row[0]] = row[0]
+            else:
+                cache["integ_by_parent_key"][(row[2], row[3])] = row[0]
+                cache["integ_definition_id"][row[0]] = row[2]
 
         # IntegrationConfigSchema: {integ_id: {key: schema_obj}}
         cs_result = await self.db.execute(select(IntegrationConfigSchema))
@@ -938,10 +985,31 @@ class ManifestResolver:
                 await self._apply_ops(wf_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("wf_ids", set()))
                 imported_wf_ids.add(mwf.id)
 
-        # 2. Resolve integrations (with config_schema, oauth_provider, mappings)
-        for key, minteg in manifest.integrations.items():
+        # 2. Resolve integrations (with config_schema, oauth_provider, mappings).
+        # Roots must be present before instances because config schema lives on
+        # the root while each instance owns its Config values.
+        integration_entries = sorted(
+            manifest.integrations.items(),
+            key=lambda item: (
+                item[1].parent_integration_id is not None,
+                item[1].name,
+                item[1].instance_key,
+            ),
+        )
+        for key, minteg in integration_entries:
             if changed_ids is not None and minteg.id not in changed_ids:
                 continue
+            if minteg.parent_integration_id and (
+                minteg.parent_integration_id not in {
+                    entry.id for _entry_key, entry in integration_entries
+                    if changed_ids is None or entry.id in changed_ids
+                }
+                and UUID(minteg.parent_integration_id) not in cache["integ_ids"]
+            ):
+                raise ValueError(
+                    f"Integration instance {minteg.id} requires root definition "
+                    f"{minteg.parent_integration_id} in this import selection"
+                )
             await _prog(f"Importing integration: {minteg.name or key}")
             integ_ops = await self._resolve_integration(minteg.name or key, minteg, cache)
             await self._apply_ops(integ_ops, all_ops, dry_run=dry_run, existing_ids=cache.get("integ_ids", set()))
@@ -2102,20 +2170,54 @@ class ManifestResolver:
         integ_id = UUID(minteg.id)
         fields = minteg.to_orm_values(Destination.GIT_SYNC).direct
 
-        # Check by natural key (name) — use cache if available
+        parent_integration_id = (
+            UUID(minteg.parent_integration_id)
+            if minteg.parent_integration_id else None
+        )
+        is_root = parent_integration_id is None
+
+        # Roots resolve by public name. Child names are intentionally opaque;
+        # their portability identity is the root definition plus instance key.
         if cache is not None:
-            existing_by_name = cache["integ_by_name"].get(integ_name)
-        else:
-            by_name = await self.db.execute(
-                select(Integration.id).where(
-                    Integration.name == integ_name,
-                    Integration.is_deleted.is_(False),
+            existing_by_name = (
+                cache["integ_by_name"].get(integ_name)
+                if is_root
+                else cache["integ_by_parent_key"].get(
+                    (parent_integration_id, minteg.instance_key)
                 )
             )
+        else:
+            lookup = [Integration.is_deleted.is_(False)]
+            if is_root:
+                lookup.extend([
+                    Integration.parent_integration_id.is_(None),
+                    Integration.name == integ_name,
+                ])
+            else:
+                lookup.extend([
+                    Integration.parent_integration_id == parent_integration_id,
+                    Integration.instance_key == minteg.instance_key,
+                ])
+            by_name = await self.db.execute(select(Integration.id).where(*lookup))
             existing_by_name = by_name.scalar_one_or_none()
 
+        # Manifests created before connection instances did not carry an
+        # authentication_method. Preserve their established OAuth shape rather
+        # than silently converting an OAuth definition into config auth.
+        authentication_method = minteg.authentication_method
+        if "authentication_method" not in minteg.model_fields_set:
+            authentication_method = "oauth" if minteg.oauth_provider else "config"
+
         integ_values: dict = {
-            "name": integ_name,
+            "name": (
+                integ_name
+                if is_root
+                else f"{parent_integration_id}::{minteg.instance_key}"
+            ),
+            "parent_integration_id": parent_integration_id,
+            "instance_key": minteg.instance_key,
+            "instance_name": minteg.instance_name or integ_name,
+            "authentication_method": authentication_method,
             "description": fields.get("description"),
             "notes": fields.get("notes"),
             "workflow_links": fields["workflow_links"],
@@ -2132,6 +2234,10 @@ class ManifestResolver:
         # Upsert integration row FIRST (must exist before config schema / mapping FKs)
         id_was_rewritten = existing_by_name is not None and existing_by_name != integ_id
         if existing_by_name is not None:
+            # The database-only child name is generated on creation. Do not
+            # replace it with a manifest value during a portable upsert.
+            if not is_root:
+                integ_values.pop("name")
             upsert_op = Upsert(
                 model=Integration,
                 id=existing_by_name,
@@ -2186,12 +2292,56 @@ class ManifestResolver:
                 for old_key in stale_keys:
                     cfg_natural[(old_key[0], integ_id, old_key[2])] = cfg_natural.pop(old_key)
 
-        # Sync config schema items: upsert by (integration_id, key) to preserve IDs
-        # (Config rows reference schema IDs via FK — deleting schema cascades to configs)
+            # A root ID rewrite cascades into child rows in Postgres. Rekey the
+            # instance natural-key cache and every child's schema-owner map so
+            # a following child import resolves the now-rekeyed root schema
+            # instead of inserting a duplicate connection instance.
+            cache["integ_ids"].discard(existing_by_name)
+            cache["integ_ids"].add(integ_id)
+            parent_key_cache = cache["integ_by_parent_key"]
+            for old_key, old_value in list(parent_key_cache.items()):
+                parent_id, instance_key = old_key
+                new_key = (
+                    integ_id if parent_id == existing_by_name else parent_id,
+                    instance_key,
+                )
+                new_value = integ_id if old_value == existing_by_name else old_value
+                if new_key != old_key or new_value != old_value:
+                    parent_key_cache.pop(old_key)
+                    parent_key_cache[new_key] = new_value
+
+            definition_ids = cache["integ_definition_id"]
+            if is_root:
+                for child_id, definition_id in list(definition_ids.items()):
+                    if definition_id == existing_by_name:
+                        definition_ids[child_id] = integ_id
+                definition_ids.pop(existing_by_name, None)
+                definition_ids[integ_id] = integ_id
+            else:
+                definition_id = definition_ids.pop(
+                    existing_by_name, parent_integration_id
+                )
+                definition_ids[integ_id] = definition_id
+
+        if cache is not None:
+            if is_root:
+                cache["integ_by_name"][integ_name] = integ_id
+                cache["integ_definition_id"][integ_id] = integ_id
+            else:
+                cache["integ_by_parent_key"][(
+                    parent_integration_id, minteg.instance_key
+                )] = integ_id
+                cache["integ_definition_id"][integ_id] = parent_integration_id
+
+        # Sync shared schema on roots only. Instances retain independent
+        # Config/OAuth/mapping rows but must never clone schema rows.
+        # Root schema upserts preserve IDs because Config rows reference them.
         from sqlalchemy import delete as sa_delete
 
         from src.repositories.integrations import retype_integration_config_values
-        if cache is not None:
+        if not is_root:
+            existing_cs_by_key = {}
+        elif cache is not None:
             existing_cs_by_key = dict(cache["integ_cs"].get(integ_id, {}))
         else:
             existing_cs_result = await self.db.execute(
@@ -2200,9 +2350,9 @@ class ManifestResolver:
                 )
             )
             existing_cs_by_key = {cs.key: cs for cs in existing_cs_result.scalars().all()}
-        manifest_cs_keys = {cs.key for cs in minteg.config_schema}
+        manifest_cs_keys = {cs.key for cs in minteg.config_schema} if is_root else set()
 
-        for cs in minteg.config_schema:
+        for cs in minteg.config_schema if is_root else []:
             if cs.key in existing_cs_by_key:
                 existing_cs = existing_cs_by_key[cs.key]
                 retyped = existing_cs.type != cs.type
@@ -2236,7 +2386,7 @@ class ManifestResolver:
                 )
             )
 
-        if cache is not None:
+        if cache is not None and is_root:
             cs_refresh = await self.db.execute(
                 select(IntegrationConfigSchema).where(
                     IntegrationConfigSchema.integration_id == integ_id
@@ -2377,7 +2527,12 @@ class ManifestResolver:
         cache_hit = cache["config_by_natural"].get((vals["key"], integ_id, org_id))
         schema = None
         if integ_id is not None:
-            schema = cache.get("integ_cs", {}).get(integ_id, {}).get(vals["key"])
+            definition_id = cache.get("integ_definition_id", {}).get(
+                integ_id, integ_id
+            )
+            schema = cache.get("integ_cs", {}).get(definition_id, {}).get(
+                vals["key"]
+            )
         schema_id = schema.id if schema is not None else None
 
         from src.models.enums import ConfigType

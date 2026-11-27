@@ -234,6 +234,28 @@ SIGNATURE_PARITY_SPECS: list[dict] = [
     },
     {
         "model_path": (
+            "src.models.contracts.integrations:IntegrationInstanceCreate"
+        ),
+        "tool_path": (
+            "src.services.mcp_server.tools.integrations:"
+            "bifrost_integration_instance_create"
+        ),
+        "extra_args": {"definition_ref"},
+        "field_renames": {},
+    },
+    {
+        "model_path": (
+            "src.models.contracts.integrations:IntegrationInstanceUpdate"
+        ),
+        "tool_path": (
+            "src.services.mcp_server.tools.integrations:"
+            "bifrost_integration_instance_update"
+        ),
+        "extra_args": {"definition_ref", "instance_id"},
+        "field_renames": {},
+    },
+    {
+        "model_path": (
             "src.models.contracts.integrations:IntegrationMappingCreate"
         ),
         "tool_path": (

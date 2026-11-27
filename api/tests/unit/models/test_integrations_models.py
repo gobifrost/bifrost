@@ -12,6 +12,7 @@ from pydantic import ValidationError
 from src.models.contracts.integrations import (
     ConfigSchemaItem,
     IntegrationCreate,
+    IntegrationInstanceCreate,
     IntegrationUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
@@ -83,6 +84,16 @@ class TestIntegrationCreate:
 
     def test_integration_create_accepts_setup_notes(self):
         assert IntegrationCreate(name="Acme", notes="## Connect").notes == "## Connect"
+
+
+class TestIntegrationInstanceCreate:
+    def test_instance_create_requires_a_stable_key_and_allows_config_auth(self):
+        instance = IntegrationInstanceCreate(
+            name="Production", key="production", authentication_method="config"
+        )
+
+        assert instance.key == "production"
+        assert instance.authentication_method == "config"
 
 class TestIntegrationUpdate:
     """Tests for IntegrationUpdate model."""

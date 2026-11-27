@@ -50,6 +50,8 @@ interface CreateIntegrationDialogProps {
 	 * This avoids duplicate API calls when the parent already has the data.
 	 */
 	initialData?: IntegrationDetail;
+	/** Limits editing to shared definition fields or the selected connection. */
+	scope?: "definition" | "instance";
 }
 
 /**
@@ -62,12 +64,14 @@ function CreateIntegrationForm({
 	existingIntegration,
 	isSaving,
 	setIsSaving,
+	scope,
 }: {
 	onOpenChange: (open: boolean) => void;
 	editIntegrationId?: string;
 	existingIntegration?: IntegrationDetail;
 	isSaving: boolean;
 	setIsSaving: (saving: boolean) => void;
+	scope?: "definition" | "instance";
 }) {
 	const queryClient = useQueryClient();
 
@@ -103,6 +107,9 @@ function CreateIntegrationForm({
 	const [defaultEntityId, setDefaultEntityId] = useState<string>(
 		existingIntegration?.default_entity_id || "",
 	);
+	const [authenticationMethod, setAuthenticationMethod] = useState<
+		"config" | "oauth"
+	>(existingIntegration?.authentication_method ?? "config");
 
 	// Track original values for confirmation dialogs
 	const originalName = existingIntegration?.name || "";
@@ -182,19 +189,34 @@ function CreateIntegrationForm({
 		setSaveError(null);
 		try {
 			if (isEditing && editIntegrationId) {
+				const body =
+					scope === "definition"
+						? {
+								name,
+								description: description.trim() || null,
+								config_schema: configSchema,
+							}
+						: scope === "instance"
+							? {
+								list_entities_data_provider_id:
+									dataProviderId || null,
+								default_entity_id: defaultEntityId || null,
+								authentication_method: authenticationMethod,
+							}
+							: {
+								name,
+								description: description.trim() || null,
+								list_entities_data_provider_id:
+									dataProviderId || undefined,
+								config_schema: configSchema,
+								default_entity_id: defaultEntityId || undefined,
+							};
 				await updateMutation.mutateAsync({
 					params: {
 						path: { integration_id: editIntegrationId },
 						query: { force_remove_keys: forceRemoveKeys },
 					},
-					body: {
-						name,
-						description: description.trim() || null,
-						list_entities_data_provider_id:
-							dataProviderId || undefined,
-						config_schema: configSchema,
-						default_entity_id: defaultEntityId || undefined,
-					},
+					body,
 				});
 				toast.success("Integration updated successfully");
 			} else {
@@ -205,6 +227,7 @@ function CreateIntegrationForm({
 						config_schema:
 							configSchema.length > 0 ? configSchema : undefined,
 						default_entity_id: defaultEntityId || undefined,
+						authentication_method: authenticationMethod,
 					},
 				});
 				toast.success("Integration created successfully");
@@ -288,10 +311,20 @@ function CreateIntegrationForm({
 			>
 				<DialogHeader className="shrink-0">
 					<DialogTitle>
-						{isEditing ? "Edit Integration" : "Create Integration"}
+						{scope === "definition"
+							? "Edit Integration"
+							: scope === "instance"
+								? `Configure ${existingIntegration?.instance_name ?? "Instance"}`
+								: isEditing
+									? "Edit Integration"
+									: "Create Integration"}
 					</DialogTitle>
 					<DialogDescription>
-						{isEditing
+						{scope === "definition"
+							? "Schema, logo, and setup changes apply to every connection instance."
+							: scope === "instance"
+								? "Update this connection's entity provider, defaults, and authentication method."
+								: isEditing
 							? "Update integration settings and configuration schema"
 							: "Create a new integration to map organizations to external entities"}
 					</DialogDescription>
@@ -303,7 +336,7 @@ function CreateIntegrationForm({
 						disabled={isLoading}
 						className="min-w-0 space-y-4"
 					>
-						{editIntegrationId && (
+						{scope !== "instance" && editIntegrationId && (
 							<div className="flex items-center gap-4">
 								<LogoDropZone
 									uploadUrl={`/api/integrations/${editIntegrationId}/logo`}
@@ -345,6 +378,7 @@ function CreateIntegrationForm({
 								</div>
 							</div>
 						)}
+						{scope !== "instance" && <>
 						{/* Name */}
 						<div className="space-y-2">
 							<Label htmlFor="name">Integration Name *</Label>
@@ -369,8 +403,10 @@ function CreateIntegrationForm({
 								onChange={(e) => setDescription(e.target.value)}
 							/>
 						</div>
+						</>}
 
 						{/* Data Provider Selection */}
+						{scope !== "definition" && <>
 						<div className="space-y-2">
 							<Label htmlFor="dataProvider">
 								Entity Data Provider
@@ -413,9 +449,10 @@ function CreateIntegrationForm({
 								options for organization mappings
 							</p>
 						</div>
+						</>}
 
 						{/* Entity ID source (read-only; reset via trash icon) */}
-						{isEditing && existingIntegration?.oauth_config && (
+						{scope !== "definition" && isEditing && existingIntegration?.oauth_config && (
 							<div className="space-y-2">
 								<Label htmlFor="entityIdSource">
 									Entity ID source
@@ -450,6 +487,7 @@ function CreateIntegrationForm({
 							</div>
 						)}
 
+						{scope !== "definition" && <>
 						{/* Default Entity ID */}
 						<div className="space-y-2">
 							<Label htmlFor="defaultEntityId">
@@ -469,13 +507,29 @@ function CreateIntegrationForm({
 								(used when org mapping doesn't specify one)
 							</p>
 						</div>
+						{scope === "instance" && (
+							<div className="space-y-2">
+								<Label htmlFor="authenticationMethod">Authentication</Label>
+								<select
+									id="authenticationMethod"
+									className="h-11 w-full rounded-[var(--bf-radius-control)] border border-border/70 bg-background px-3 text-sm"
+									value={authenticationMethod}
+									onChange={(event) => setAuthenticationMethod(event.target.value as "config" | "oauth")}
+								>
+									<option value="config">API Key / Custom Credentials</option>
+									<option value="oauth">OAuth</option>
+								</select>
+								<p className="text-xs text-muted-foreground">Choose OAuth to set up this instance's provider and connection.</p>
+							</div>
+						)}
+						</>}
 
-						<IntegrationSchemaEditor
+						{scope !== "instance" && <IntegrationSchemaEditor
 							fields={configSchema}
 							onAdd={addConfigField}
 							onUpdate={updateConfigField}
 							onRemove={removeConfigField}
-						/>
+						/>}
 					</fieldset>
 					</IntegrationSetupNotesContext>
 				</div>
@@ -713,6 +767,7 @@ function CreateIntegrationDialogContent({
 	initialData,
 	isSaving,
 	setIsSaving,
+	scope,
 }: Omit<CreateIntegrationDialogProps, "open"> & {
 	isSaving: boolean;
 	setIsSaving: (saving: boolean) => void;
@@ -783,6 +838,7 @@ function CreateIntegrationDialogContent({
 			onOpenChange={onOpenChange}
 			editIntegrationId={editIntegrationId}
 			existingIntegration={existingIntegration}
+			scope={scope}
 		/>
 	);
 }
@@ -793,6 +849,7 @@ export function CreateIntegrationDialog({
 	onOpenChange,
 	editIntegrationId,
 	initialData,
+	scope,
 }: CreateIntegrationDialogProps) {
 	// Create a stable key that changes when dialog opens or when editing a different integration
 	// This forces a remount of the inner component, resetting all form state
@@ -815,6 +872,7 @@ export function CreateIntegrationDialog({
 						onOpenChange={onOpenChange}
 						editIntegrationId={editIntegrationId}
 						initialData={initialData}
+						scope={scope}
 					/>
 				)}
 			</DialogContent>

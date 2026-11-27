@@ -27,6 +27,10 @@ from src.models import (
     Integration,
     IntegrationCreate,
     IntegrationDetailResponse,
+    IntegrationInstanceCreate,
+    IntegrationInstanceListResponse,
+    IntegrationInstanceResponse,
+    IntegrationInstanceUpdate,
     IntegrationListResponse,
     IntegrationMapping,
     IntegrationMappingBatchRequest,
@@ -158,6 +162,21 @@ def _integration_to_response(
     return response
 
 
+def _instance_to_response(
+    definition: Integration, instance: Integration
+) -> IntegrationInstanceResponse:
+    """Expose a connection without leaking the child row's synthetic name."""
+    return IntegrationInstanceResponse(
+        id=instance.id,
+        definition_id=definition.id,
+        key=instance.instance_key,
+        name=instance.instance_name or definition.name,
+        is_default=instance.parent_integration_id is None,
+        authentication_method=instance.authentication_method,
+        has_oauth_config=instance.has_oauth_config,
+    )
+
+
 # =============================================================================
 # Response Models
 # =============================================================================
@@ -257,6 +276,111 @@ async def list_integrations(
 
 
 @router.get(
+    "/{definition_id}/instances",
+    response_model=IntegrationInstanceListResponse,
+    summary="List integration connection instances",
+    **operation_route("integrations.instances.list"),
+)
+async def list_integration_instances(
+    definition_id: UUID,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> IntegrationInstanceListResponse:
+    """List the default and named connections for one shared definition."""
+    await _catalog_reader(ctx, user, operation="integrations.instances.list")
+    repo = IntegrationsRepository(ctx.db)
+    definition = await repo.get_integration_by_id(definition_id)
+    if not definition or definition.parent_integration_id is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Integration definition not found")
+    instances = await repo.list_instances(definition.id)
+    return IntegrationInstanceListResponse(
+        instances=[_instance_to_response(definition, instance) for instance in instances]
+    )
+
+
+@router.post(
+    "/{definition_id}/instances",
+    response_model=IntegrationInstanceResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Create integration connection instance",
+    **operation_route("integrations.instances.create"),
+)
+async def create_integration_instance(
+    definition_id: UUID,
+    request: IntegrationInstanceCreate,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> IntegrationInstanceResponse:
+    await _global_definition_writer(ctx, user, operation="integrations.instances.create")
+    repo = IntegrationsRepository(ctx.db)
+    definition = await repo.get_integration_by_id(definition_id)
+    if not definition or definition.parent_integration_id is not None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Integration definition not found")
+    try:
+        instance = await repo.create_instance(definition, request)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    await emit_audit(
+        ctx.db, "integration.instance.create", resource_type="integration",
+        resource_id=instance.id, details={"definition_id": str(definition.id), "key": instance.instance_key},
+    )
+    response = _instance_to_response(definition, instance)
+    await ctx.db.commit()
+    return response
+
+
+@router.patch(
+    "/{definition_id}/instances/{instance_id}",
+    response_model=IntegrationInstanceResponse,
+    summary="Update integration connection instance",
+    **operation_route("integrations.instances.update"),
+)
+async def update_integration_instance(
+    definition_id: UUID,
+    instance_id: UUID,
+    request: IntegrationInstanceUpdate,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> IntegrationInstanceResponse:
+    await _global_definition_writer(ctx, user, operation="integrations.instances.update")
+    repo = IntegrationsRepository(ctx.db)
+    definition = await repo.get_integration_by_id(definition_id)
+    instance = await repo.get_instance(definition_id, instance_id)
+    if not definition or definition.parent_integration_id is not None or not instance:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Integration instance not found")
+    try:
+        instance = await repo.update_instance(instance, request)
+    except ValueError as exc:
+        raise HTTPException(status.HTTP_409_CONFLICT, str(exc)) from exc
+    response = _instance_to_response(definition, instance)
+    await ctx.db.commit()
+    return response
+
+
+@router.delete(
+    "/{definition_id}/instances/{instance_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete integration connection instance",
+    **operation_route("integrations.instances.delete"),
+)
+async def delete_integration_instance(
+    definition_id: UUID,
+    instance_id: UUID,
+    ctx: Context,
+    user: CurrentActiveUser,
+) -> None:
+    await _global_definition_writer(ctx, user, operation="integrations.instances.delete")
+    if definition_id == instance_id:
+        raise HTTPException(status.HTTP_409_CONFLICT, "The default integration instance cannot be deleted")
+    repo = IntegrationsRepository(ctx.db)
+    instance = await repo.get_instance(definition_id, instance_id)
+    if not instance:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Integration instance not found")
+    await repo.delete_integration(instance_id)
+    await ctx.db.commit()
+
+
+@router.get(
     "/{integration_id}",
     response_model=IntegrationDetailResponse,
     summary="Get integration by ID",
@@ -278,6 +402,9 @@ async def get_integration(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Integration not found",
         )
+    definition = await repo.get_definition_by_id(integration_id)
+    if not definition:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, detail="Integration not found")
 
     # Build OAuth config summary if OAuth provider exists
     oauth_config = None
@@ -318,10 +445,10 @@ async def get_integration(
 
     # Convert ORM config_schema items to Pydantic models
     config_schema_items = None
-    if integration.config_schema:
+    if definition.config_schema:
         config_schema_items = [
             ConfigSchemaItem.model_validate(item)
-            for item in integration.config_schema
+            for item in definition.config_schema
         ]
 
     # Get integration-level default config values
@@ -331,25 +458,30 @@ async def get_integration(
 
     return IntegrationDetailResponse(
         id=integration.id,
-        name=integration.name,
-        description=integration.description,
-        notes=integration.notes,
-        workflow_links=integration.workflow_links,
+        definition_id=definition.id,
+        instance_key=integration.instance_key,
+        instance_name=integration.instance_name or definition.name,
+        is_default_instance=integration.parent_integration_id is None,
+        authentication_method=integration.authentication_method,
+        name=definition.name,
+        description=definition.description,
+        notes=definition.notes,
+        workflow_links=definition.workflow_links,
         list_entities_data_provider_id=integration.list_entities_data_provider_id,
         config_schema=config_schema_items,
         config_defaults=config_defaults if config_defaults else None,
-        entity_id=integration.entity_id,
-        entity_id_name=integration.entity_id_name,
+        entity_id=definition.entity_id,
+        entity_id_name=definition.entity_id_name,
         default_entity_id=integration.default_entity_id,
         has_oauth_config=integration.has_oauth_config,
-        logo_url=_integration_logo_url(integration),
+        logo_url=_integration_logo_url(definition),
         logo=_logo_data_url(
-            integration.logo_thumbnail_data or integration.logo_data,
-            integration.logo_thumbnail_content_type or integration.logo_content_type,
+            definition.logo_thumbnail_data or definition.logo_data,
+            definition.logo_thumbnail_content_type or definition.logo_content_type,
         ),
         logo_version=(
-            integration.logo_thumbnail_version
-            if is_logo_thumbnail_version(integration.logo_thumbnail_version)
+            definition.logo_thumbnail_version
+            if is_logo_thumbnail_version(definition.logo_thumbnail_version)
             else None
         ),
         mapping_count=len(mapping_responses),
@@ -435,6 +567,21 @@ async def update_integration(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Integration not found",
         )
+
+    if current.parent_integration_id is not None:
+        shared_fields = {
+            "name", "description", "notes", "workflow_links", "config_schema",
+            "entity_id", "entity_id_name",
+        }
+        attempted = sorted(shared_fields & request.model_fields_set)
+        if attempted:
+            raise HTTPException(
+                status.HTTP_409_CONFLICT,
+                detail=(
+                    "Shared definition fields must be edited on the root integration: "
+                    + ", ".join(attempted)
+                ),
+            )
 
     if request.config_schema is not None:
         current_by_key = {item.key: item for item in current.config_schema}
@@ -530,7 +677,7 @@ async def upload_integration_logo(
     """Upload a square logo for an integration."""
     await _global_definition_writer(ctx, user, operation="POST /api/integrations/{integration_id}/logo")
     repo = IntegrationsRepository(ctx.db)
-    integration = await repo.get_integration_by_id(integration_id)
+    integration = await repo.get_definition_by_id(integration_id)
     if not integration:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -576,9 +723,7 @@ async def get_integration_logo(
     user: CurrentActiveUser,
 ) -> Response:
     await _catalog_reader(ctx, user, operation="GET /api/integrations/{integration_id}/logo")
-    integration = (
-        await ctx.db.execute(select(Integration).where(Integration.id == integration_id))
-    ).scalar_one_or_none()
+    integration = await IntegrationsRepository(ctx.db).get_definition_by_id(integration_id)
     if integration is None or integration.is_deleted or not integration.logo_data:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -619,7 +764,7 @@ async def delete_integration_logo(
 ) -> Response:
     await _global_definition_writer(ctx, user, operation="DELETE /api/integrations/{integration_id}/logo")
     repo = IntegrationsRepository(ctx.db)
-    integration = await repo.get_integration_by_id(integration_id)
+    integration = await repo.get_definition_by_id(integration_id)
     if not integration:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,

@@ -34,6 +34,7 @@ interface CreateOAuthConnectionDialogProps {
 	integrationId: string;
 	editConnectionName?: string | undefined;
 	notes?: string | null;
+	instanceContext?: string;
 }
 
 const FORM_ID = "oauth-connection-form";
@@ -44,6 +45,7 @@ export function CreateOAuthConnectionDialog({
 	integrationId,
 	editConnectionName,
 	notes,
+	instanceContext,
 }: CreateOAuthConnectionDialogProps) {
 	const isEditMode = !!editConnectionName;
 	const createMutation = useCreateOAuthConnection();
@@ -189,8 +191,10 @@ export function CreateOAuthConnectionDialog({
 						</DialogTitle>
 						<DialogDescription className="text-sm leading-6 text-muted-foreground">
 							{isEditMode
-								? "Update OAuth 2.0 connection details."
-								: "Set up OAuth 2.0 credentials for this integration."}
+								? instanceContext
+									? `Update OAuth 2.0 connection details for ${instanceContext}.`
+									: "Update OAuth 2.0 connection details."
+								: `Set up OAuth 2.0 credentials for ${instanceContext ?? "this integration"}.`}
 						</DialogDescription>
 					</DialogHeader>
 				</div>

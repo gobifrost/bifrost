@@ -1,4 +1,5 @@
 {
+  "authentication_method": "oauth",
   "config_schema": [
     {
       "description": "API key for auth",
@@ -15,6 +16,8 @@
   "entity_id": "tenant_id",
   "entity_id_name": "Tenant ID",
   "id": "<volatile>",
+  "instance_key": "default",
+  "instance_name": null,
   "list_entities_data_provider_id": null,
   "mappings": [
     {
@@ -41,5 +44,6 @@
     "token_url": "https://auth.example.com/token",
     "token_url_defaults": null
   },
+  "parent_integration_id": null,
   "workflow_links": []
 }

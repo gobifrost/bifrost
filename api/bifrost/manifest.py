@@ -20,7 +20,7 @@ from typing import Any, Literal
 from uuid import UUID
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from bifrost.field_classes import FieldClass, classify
 from bifrost.manifest_codec import Destination, EntityCodec, ImportFields
@@ -739,6 +739,26 @@ class ManifestIntegration(EntityCodec, BaseModel):
     """Integration entry in manifest."""
     id: str = Field(description="Integration UUID", **classify(FieldClass.IDENTITY))
     name: str = Field(default="", description="Integration display name", **classify(FieldClass.CONTENT, match_key=True))
+    parent_integration_id: str | None = Field(
+        default=None,
+        description="Root integration definition UUID for a non-default instance",
+        **classify(FieldClass.REFERENCE),
+    )
+    instance_key: str = Field(
+        default="default", min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$",
+        description="Stable connection-instance key within its definition",
+        **classify(FieldClass.CONTENT, match_key=True),
+    )
+    instance_name: str | None = Field(
+        default=None,
+        description="Connection-instance display name",
+        **classify(FieldClass.CONTENT),
+    )
+    authentication_method: Literal["config", "oauth"] = Field(
+        default="config",
+        description="How this connection instance authenticates",
+        **classify(FieldClass.CONTENT),
+    )
     description: str | None = Field(default=None, description="Integration description", **classify(FieldClass.CONTENT))
     notes: str | None = Field(default=None, description="Markdown setup notes", **classify(FieldClass.CONTENT))
     entity_id: str | None = Field(default=None, description="Field name for entity identifier", **classify(FieldClass.REFERENCE))
@@ -749,6 +769,15 @@ class ManifestIntegration(EntityCodec, BaseModel):
     config_schema: list[ManifestIntegrationConfigSchema] = Field(default_factory=list, description="Configuration fields", **classify(FieldClass.CONTENT))
     oauth_provider: ManifestOAuthProvider | None = Field(default=None, description="OAuth provider config", **classify(FieldClass.CONTENT))
     mappings: list[ManifestIntegrationMapping] = Field(default_factory=list, description="Per-org entity mappings", **classify(FieldClass.CONTENT))
+
+    @model_validator(mode="after")
+    def validate_instance_ownership(self):
+        if self.parent_integration_id is None and self.instance_key != "default":
+            raise ValueError("Integration definitions must retain the default instance key")
+        if self.parent_integration_id is not None:
+            if self.instance_key == "default":
+                raise ValueError("The default instance key is reserved for the definition")
+        return self
 
     @classmethod
     def from_row(
@@ -763,6 +792,21 @@ class ManifestIntegration(EntityCodec, BaseModel):
         return cls(
             id=str(integ.id),
             name=integ.name,
+            parent_integration_id=(
+                str(getattr(integ, "parent_integration_id", None))
+                if getattr(integ, "parent_integration_id", None) else None
+            ),
+            instance_key=getattr(integ, "instance_key", "default"),
+            # The default instance's display name is its definition name.
+            # Omitting that duplicate preserves old manifests while child
+            # instances retain their independent display name.
+            instance_name=(
+                getattr(integ, "instance_name", None)
+                if getattr(integ, "parent_integration_id", None)
+                or getattr(integ, "instance_name", None) != integ.name
+                else None
+            ),
+            authentication_method=getattr(integ, "authentication_method", "config"),
             description=integ.description,
             notes=integ.notes,
             workflow_links=integ.workflow_links or [],
@@ -798,6 +842,10 @@ class ManifestIntegration(EntityCodec, BaseModel):
             direct={
                 "id": self.id,
                 "name": self.name,
+                "parent_integration_id": self.parent_integration_id,
+                "instance_key": self.instance_key,
+                "instance_name": self.instance_name,
+                "authentication_method": self.authentication_method,
                 "description": self.description,
                 "notes": self.notes,
                 "workflow_links": [link.model_dump() for link in self.workflow_links],
@@ -1623,11 +1671,33 @@ def filter_manifest_by_ids(manifest: Manifest, entity_ids: set[str]) -> Manifest
     Dict-based entities (workflows, integrations, etc.) are filtered by key.
     List-based entities (organizations, roles) are filtered by id attribute.
     """
+    selected_integration_ids = {
+        integ.id
+        for integ in manifest.integrations.values()
+        if integ.id in entity_ids
+    }
+    # An instance cannot be imported without its root definition, because the
+    # definition owns its shared config schema. Carry parents through a scoped
+    # import instead of producing a partial manifest that looks authoritative.
+    while True:
+        parents = {
+            integ.parent_integration_id
+            for integ in manifest.integrations.values()
+            if integ.id in selected_integration_ids and integ.parent_integration_id
+        }
+        new_ids = parents - selected_integration_ids
+        if not new_ids:
+            break
+        selected_integration_ids.update(new_ids)
+
     return Manifest(
         organizations=[o for o in manifest.organizations if o.id in entity_ids],
         roles=[r for r in manifest.roles if r.id in entity_ids],
         workflows={k: v for k, v in manifest.workflows.items() if k in entity_ids},
-        integrations={k: v for k, v in manifest.integrations.items() if k in entity_ids},
+        integrations={
+            k: v for k, v in manifest.integrations.items()
+            if v.id in selected_integration_ids
+        },
         configs={k: v for k, v in manifest.configs.items() if k in entity_ids},
         claims={k: v for k, v in manifest.claims.items() if k in entity_ids},
         policy_rules={k: v for k, v in manifest.policy_rules.items() if k in entity_ids},
@@ -1851,6 +1921,29 @@ def validate_manifest(manifest: Manifest) -> list[str]:
     # Integrations: data_provider must be a known workflow
     for _key, integ in manifest.integrations.items():
         integ_label = integ.name or integ.id
+        if integ.parent_integration_id:
+            parent = next(
+                (
+                    candidate
+                    for candidate in manifest.integrations.values()
+                    if candidate.id == integ.parent_integration_id
+                ),
+                None,
+            )
+            if parent is None:
+                errors.append(
+                    f"Integration '{integ_label}' references unknown parent integration: "
+                    f"{integ.parent_integration_id}"
+                )
+            elif parent.parent_integration_id:
+                errors.append(
+                    f"Integration '{integ_label}' must reference a root integration, not an instance"
+                )
+            if integ.config_schema:
+                errors.append(
+                    f"Integration instance '{integ_label}' must not declare config_schema; "
+                    "the root definition owns shared schema"
+                )
         if integ.list_entities_data_provider_id and integ.list_entities_data_provider_id not in wf_ids:
             errors.append(
                 f"Integration '{integ_label}' references unknown data provider workflow: "
@@ -1862,6 +1955,18 @@ def validate_manifest(manifest: Manifest) -> list[str]:
                     f"Integration '{integ_label}' mapping references unknown organization: "
                     f"{mapping.organization_id}"
                 )
+
+    instance_keys: set[tuple[str, str]] = set()
+    for integ in manifest.integrations.values():
+        if not integ.parent_integration_id:
+            continue
+        key = (integ.parent_integration_id, integ.instance_key)
+        if key in instance_keys:
+            errors.append(
+                f"Integration instance key '{integ.instance_key}' is duplicated for definition "
+                f"{integ.parent_integration_id}"
+            )
+        instance_keys.add(key)
 
     # Configs: integration_id and organization_id
     for key, cfg in manifest.configs.items():

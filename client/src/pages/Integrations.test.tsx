@@ -104,6 +104,7 @@ function makeIntegration(
 	const { id, name, ...rest } = overrides;
 	return {
 		...rest,
+		authentication_method: overrides.authentication_method ?? "config",
 		mapping_count: overrides.mapping_count ?? 0,
 		connected_count: overrides.connected_count ?? 0,
 		needs_reconnection_count: overrides.needs_reconnection_count ?? 0,

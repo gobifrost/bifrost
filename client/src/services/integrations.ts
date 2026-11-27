@@ -25,6 +25,36 @@ export type IntegrationMappingUpdate =
 	components["schemas"]["IntegrationMappingUpdate"];
 export type MappingAuthorizeResponse =
 	components["schemas"]["MappingAuthorizeResponse"];
+export type IntegrationInstance =
+	components["schemas"]["IntegrationInstanceResponse"];
+export type IntegrationInstanceCreate =
+	components["schemas"]["IntegrationInstanceCreate"];
+export type IntegrationInstanceUpdate =
+	components["schemas"]["IntegrationInstanceUpdate"];
+
+function invalidateIntegrationInstanceQueries(
+	queryClient: ReturnType<typeof useQueryClient>,
+	definitionId: string,
+	instanceId?: string,
+) {
+	queryClient.invalidateQueries({
+		queryKey: [
+			"get",
+			"/api/integrations/{definition_id}/instances",
+			{ params: { path: { definition_id: definitionId } } },
+		],
+	});
+	for (const integrationId of new Set([definitionId, instanceId])) {
+		if (!integrationId) continue;
+		queryClient.invalidateQueries({
+			queryKey: [
+				"get",
+				"/api/integrations/{integration_id}",
+				{ params: { path: { integration_id: integrationId } } },
+			],
+		});
+	}
+}
 
 /**
  * Hook to fetch all integrations
@@ -42,6 +72,71 @@ export function useIntegration(integrationId: string) {
 			path: { integration_id: integrationId },
 		},
 	});
+}
+
+/** Fetch the default and named connection instances for one definition. */
+export function useIntegrationInstances(definitionId: string) {
+	return $api.useQuery(
+		"get",
+		"/api/integrations/{definition_id}/instances",
+		{
+			params: { path: { definition_id: definitionId } },
+		},
+	);
+}
+
+/** Create a blank named connection instance. */
+export function useCreateIntegrationInstance() {
+	const queryClient = useQueryClient();
+	return $api.useMutation(
+		"post",
+		"/api/integrations/{definition_id}/instances",
+		{
+			onSuccess: (instance, variables) => {
+				invalidateIntegrationInstanceQueries(
+					queryClient,
+					variables.params.path.definition_id,
+					instance.id,
+				);
+			},
+		},
+	);
+}
+
+/** Rename a connection instance or change its authentication method. */
+export function useUpdateIntegrationInstance() {
+	const queryClient = useQueryClient();
+	return $api.useMutation(
+		"patch",
+		"/api/integrations/{definition_id}/instances/{instance_id}",
+		{
+			onSuccess: (_, variables) => {
+				invalidateIntegrationInstanceQueries(
+					queryClient,
+					variables.params.path.definition_id,
+					variables.params.path.instance_id,
+				);
+			},
+		},
+	);
+}
+
+/** Delete a named connection instance. */
+export function useDeleteIntegrationInstance() {
+	const queryClient = useQueryClient();
+	return $api.useMutation(
+		"delete",
+		"/api/integrations/{definition_id}/instances/{instance_id}",
+		{
+			onSuccess: (_, variables) => {
+				invalidateIntegrationInstanceQueries(
+					queryClient,
+					variables.params.path.definition_id,
+					variables.params.path.instance_id,
+				);
+			},
+		},
+	);
 }
 
 /**
