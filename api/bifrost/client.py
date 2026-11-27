@@ -94,6 +94,29 @@ class BifrostUnavailableError(RuntimeError):
     """
 
 
+async def _device_login_post(
+    client: httpx.AsyncClient,
+    api_url: str,
+    path: str,
+    *,
+    json: dict[str, str] | None = None,
+) -> httpx.Response:
+    """Bound device-login requests and preserve the shared outage signal."""
+    try:
+        response = await client.post(path, json=json, timeout=5.0)
+    except httpx.TransportError as exc:
+        raise BifrostUnavailableError(
+            f"device login for {api_url} could not reach the platform "
+            f"({type(exc).__name__})"
+        ) from exc
+    if 500 <= response.status_code < 600:
+        raise BifrostUnavailableError(
+            f"device login for {api_url} returned HTTP {response.status_code}; "
+            "the platform is unavailable"
+        )
+    return response
+
+
 # Retry config for transient 5xx — see workstream E of issue #171.
 # SDK is machine-to-machine, so the retry budget is more generous than
 # the user-facing client.
@@ -561,6 +584,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
 
     Returns:
         True if login successful, False otherwise
+
+    Raises:
+        BifrostUnavailableError: A device-login request failed or timed out.
     """
     # Get API URL
     if not api_url:
@@ -575,7 +601,7 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
     try:
         async with httpx.AsyncClient(base_url=api_url, timeout=30.0) as client:
             # Step 1: Request device code
-            response = await client.post("/auth/device/code")
+            response = await _device_login_post(client, api_url, "/auth/device/code")
             if response.status_code != 200:
                 print(f"Error requesting device code: {response.status_code}", file=sys.stderr)
                 return False
@@ -606,7 +632,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
                 print(".", end="", flush=True)
                 attempts += 1
 
-                poll_response = await client.post(
+                poll_response = await _device_login_post(
+                    client,
+                    api_url,
                     "/auth/device/token",
                     json={"device_code": device_code}
                 )
@@ -664,6 +692,9 @@ async def login_flow(api_url: str | None = None, auto_open: bool = True) -> bool
             print("\nTimeout waiting for authorization.", file=sys.stderr)
             return False
 
+    except BifrostUnavailableError:
+        print(file=sys.stderr)
+        raise
     except Exception as e:
         print(f"\nLogin failed: {e}", file=sys.stderr)
         return False
