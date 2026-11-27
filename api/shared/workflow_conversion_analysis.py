@@ -29,7 +29,7 @@ from shared.workflow_conversion_sdk import (
     sdk_object_methods,
 )
 
-ANALYZER_VERSION = "28"
+ANALYZER_VERSION = "29"
 MAX_SOURCE_BYTES = 2_000_000
 MAX_AST_NODES = 256_000
 # Oversized sources fall back to a streaming token scan, which is bounded
@@ -490,7 +490,13 @@ def _is_callable_annotation(annotation: ast.AST | None) -> bool:
         return annotation.id == "Callable"
     if isinstance(annotation, ast.Attribute):
         return annotation.attr == "Callable"
+    if isinstance(annotation, ast.BinOp) and isinstance(annotation.op, ast.BitOr):
+        return _is_callable_annotation(annotation.left) or _is_callable_annotation(
+            annotation.right
+        )
     if isinstance(annotation, ast.Subscript):
+        if isinstance(annotation.value, ast.Name) and annotation.value.id == "Optional":
+            return _is_callable_annotation(annotation.slice)
         return _is_callable_annotation(annotation.value)
     return False
 
@@ -2276,6 +2282,17 @@ def _function_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[
     )
 
 
+def _parameter_local_classes(
+    node: ast.FunctionDef | ast.AsyncFunctionDef, class_names: set[str]
+) -> dict[str, str]:
+    return {
+        argument.arg: class_name
+        for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
+        if (class_name := _annotation_local_class(argument.annotation, class_names))
+        is not None
+    }
+
+
 def _is_dataclass_decorator(node: ast.AST) -> bool:
     return (isinstance(node, ast.Name) and node.id == "dataclass") or (
         isinstance(node, ast.Attribute) and node.attr == "dataclass"
@@ -3286,6 +3303,7 @@ def summarize_source(source: str) -> dict[str, Any]:
             "bindings": function_bindings,
             "imports": function_imports,
             "parameters": list(_function_parameters(node)),
+            "parameter_classes": _parameter_local_classes(node, set(class_nodes)),
             "context_parameter": context_parameter,
             "uncertain_context_parameter": uncertain_context_parameter,
             "return_shape": _return_shape(node, function_bindings, set(class_nodes)),
@@ -3311,6 +3329,7 @@ def summarize_source(source: str) -> dict[str, Any]:
                 "bindings": nested_bindings,
                 "imports": nested_imports,
                 "parameters": list(_function_parameters(nested)),
+                "parameter_classes": _parameter_local_classes(nested, set(class_nodes)),
                 "context_parameter": None,
                 "uncertain_context_parameter": None,
                 "return_shape": _return_shape(
@@ -4144,8 +4163,10 @@ async def analyze_workflow(
         events: list[dict[str, Any]],
         via: list[str],
         parameter_context: dict[str, str] | None = None,
+        parameter_classes: dict[str, str] | None = None,
     ) -> None:
         parameter_context = parameter_context or {}
+        parameter_classes = parameter_classes or {}
         for event in events:
             kind = event["kind"]
             if kind == "sdk":
@@ -4359,6 +4380,19 @@ async def analyze_workflow(
                             },
                         )
                     continue
+                class_name = parameter_classes.get(event["receiver"])
+                if class_name is not None:
+                    summary = await load(source_file)
+                    class_summary = summary.get("classes", {}).get(class_name, {})
+                    method = event["method"]
+                    if method in class_summary.get("callable_fields", ()):
+                        add_unknown(
+                            source_file,
+                            {
+                                "line": event["line"],
+                                "reason": f"unresolved callable field: {class_name}.{method}",
+                            },
+                        )
             elif kind == "imported":
                 await resolve_binding(
                     source_file,
@@ -4737,6 +4771,7 @@ async def analyze_workflow(
                 function.get("events", []),
                 via,
                 parameter_context,
+                function.get("parameter_classes"),
             )
         finally:
             active_functions.remove(marker)
