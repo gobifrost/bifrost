@@ -1,3 +1,4 @@
+import { useUpdateIntegration } from "@/services/integrations";
 import { useQueryClient } from "@tanstack/react-query";
 import { useLayoutEffect, useRef, useState } from "react";
 import { Pin, Play, ChevronDown, Plus, X, Settings2 } from "lucide-react";
@@ -43,11 +44,7 @@ import {
 	DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
 
-interface WorkflowLink {
-	workflowId: string;
-	label: string;
-	pinned: boolean;
-}
+type WorkflowLink = components["schemas"]["IntegrationWorkflowLink"];
 
 function LinkedRun({
 	workflow,
@@ -77,28 +74,58 @@ function LinkedRun({
 	);
 }
 
-/** Review spike: integration-owned links are kept in page-session state. */
+/** Integration definitions own their persisted workflow shortcuts. */
 export function IntegrationWorkflowLinks({
 	integrationName,
+	integrationId,
+	savedLinks,
 	canManage,
 }: {
+	integrationId: string;
+	savedLinks: WorkflowLink[];
 	integrationName: string;
 	canManage: boolean;
 }) {
 	const { data } = useWorkflowsMetadata();
 	const workflows = (data?.workflows || []).filter(
-		(w) => w.type !== "service",
+		(w) => w.type === "workflow",
 	);
-	const [links, setLinks] = useState<WorkflowLink[]>([]);
+	const [draft, setDraft] = useState<WorkflowLink[] | null>(null);
+	const links = draft ?? savedLinks;
+	const setLinks = (update: (current: WorkflowLink[]) => WorkflowLink[]) =>
+		setDraft((current) => update(current ?? savedLinks));
+	const updateIntegration = useUpdateIntegration();
+	const [saveError, setSaveError] = useState<string | null>(null);
+	const save = async () => {
+		if (updateIntegration.isPending || !canManage) return;
+		setSaveError(null);
+		try {
+			await updateIntegration.mutateAsync({
+				params: { path: { integration_id: integrationId } },
+				body: { workflow_links: links },
+			});
+			await queryClient.invalidateQueries({
+				queryKey: [
+					"get",
+					"/api/integrations/{integration_id}",
+					{ params: { path: { integration_id: integrationId } } },
+				],
+			});
+			setDraft(null);
+			setManageOpen(false);
+		} catch (e) {
+			setSaveError(getErrorMessage(e, "Could not save linked workflows"));
+		}
+	};
 	const [manageOpen, setManageOpen] = useState(false);
 	const [workflowId, setWorkflowId] = useState("");
 	const [label, setLabel] = useState("");
 	const available = workflows.filter(
-		(w) => !links.some((link) => link.workflowId === w.id),
+		(w) => !links.some((link) => link.workflow_id === w.id),
 	);
 	const linked = links.map((link) => ({
 		...link,
-		workflow: workflows.find((w) => w.id === link.workflowId),
+		workflow: workflows.find((w) => w.id === link.workflow_id),
 	}));
 	const toolbarRef = useRef<HTMLDivElement>(null);
 	const measurementRef = useRef<HTMLDivElement>(null);
@@ -142,7 +169,7 @@ export function IntegrationWorkflowLinks({
 	const editLink = (id: string, values: Partial<WorkflowLink>) =>
 		setLinks((current) =>
 			current.map((link) =>
-				link.workflowId === id ? { ...link, ...values } : link,
+				link.workflow_id === id ? { ...link, ...values } : link,
 			),
 		);
 	const { user } = useAuth();
@@ -203,7 +230,7 @@ export function IntegrationWorkflowLinks({
 				>
 					{pinned.map((link) => (
 						<Button
-							key={link.workflowId}
+							key={link.workflow_id}
 							variant="outline"
 							tabIndex={-1}
 						>
@@ -216,7 +243,7 @@ export function IntegrationWorkflowLinks({
 				</div>
 				{pinned.slice(0, visiblePins).map((link) => (
 					<Button
-						key={link.workflowId}
+						key={link.workflow_id}
 						variant="outline"
 						disabled={
 							!link.workflow ||
@@ -225,7 +252,7 @@ export function IntegrationWorkflowLinks({
 								orgTarget(link.workflow.organization_id),
 							)
 						}
-						onClick={() => launch(link.workflowId)}
+						onClick={() => launch(link.workflow_id)}
 						title={link.workflow?.name}
 					>
 						<Play className="size-4" />
@@ -262,7 +289,7 @@ export function IntegrationWorkflowLinks({
 						<div className="max-h-72 overflow-auto">
 							{menuLinks.map((link) => (
 								<DropdownMenuItem
-									key={link.workflowId}
+									key={link.workflow_id}
 									className="min-h-11"
 									disabled={
 										!link.workflow ||
@@ -273,7 +300,7 @@ export function IntegrationWorkflowLinks({
 											),
 										)
 									}
-									onSelect={() => launch(link.workflowId)}
+									onSelect={() => launch(link.workflow_id)}
 								>
 									<Play className="size-4" />
 									<span className="min-w-0 flex-1">
@@ -301,7 +328,13 @@ export function IntegrationWorkflowLinks({
 								<DropdownMenuSeparator />
 								<DropdownMenuItem
 									className="min-h-11"
-									onSelect={() => setManageOpen(true)}
+									onSelect={() => {
+										setDraft(savedLinks);
+										setWorkflowId("");
+										setLabel("");
+										setSaveError(null);
+										setManageOpen(true);
+									}}
 								>
 									<Settings2 className="size-4" />
 									Manage Linked Workflows
@@ -311,7 +344,15 @@ export function IntegrationWorkflowLinks({
 					</DropdownMenuContent>
 				</DropdownMenu>
 			</div>
-			<Dialog open={manageOpen} onOpenChange={setManageOpen}>
+			<Dialog
+				open={manageOpen}
+				onOpenChange={(open) => {
+					if (!updateIntegration.isPending) {
+						setManageOpen(open);
+						if (!open) setDraft(null);
+					}
+				}}
+			>
 				<DialogContent className="sm:max-w-2xl max-h-[85dvh] overflow-auto">
 					<DialogHeader>
 						<DialogTitle>Linked Workflows</DialogTitle>
@@ -321,134 +362,179 @@ export function IntegrationWorkflowLinks({
 							button at the top.
 						</DialogDescription>
 					</DialogHeader>
-					{linked.length > 0 && (
-						<div className="max-h-80 space-y-4 overflow-auto">
-							{linked.map((link) => (
-								<div
-									key={link.workflowId}
-									className="space-y-2 border-b pb-4"
-								>
-									<div className="flex items-end gap-2">
-										<div className="min-w-0 flex-1 space-y-2">
-											<Label
-												htmlFor={`label-${link.workflowId}`}
+					<fieldset
+						disabled={updateIntegration.isPending}
+						className="contents"
+					>
+						{linked.length > 0 && (
+							<div className="max-h-80 space-y-4 overflow-auto">
+								{linked.map((link) => (
+									<div
+										key={link.workflow_id}
+										className="space-y-2 border-b pb-4"
+									>
+										<div className="flex items-end gap-2">
+											<div className="min-w-0 flex-1 space-y-2">
+												<Label
+													htmlFor={`label-${link.workflow_id}`}
+												>
+													Label
+												</Label>
+												<Input
+													id={`label-${link.workflow_id}`}
+													maxLength={80}
+													value={link.label}
+													onChange={(e) =>
+														editLink(
+															link.workflow_id,
+															{
+																label: e.target
+																	.value,
+															},
+														)
+													}
+												/>
+												<p className="break-all text-xs text-muted-foreground">
+													{link.workflow?.name ||
+														"Workflow Unavailable"}
+												</p>
+											</div>
+											<Button
+												variant="ghost"
+												size="icon"
+												aria-label={`Unlink ${link.label}`}
+												onClick={() =>
+													setLinks((current) =>
+														current.filter(
+															(l) =>
+																l.workflow_id !==
+																link.workflow_id,
+														),
+													)
+												}
 											>
-												Label
-											</Label>
-											<Input
-												id={`label-${link.workflowId}`}
-												value={link.label}
-												onChange={(e) =>
-													editLink(link.workflowId, {
-														label: e.target.value,
-													})
-												}
-											/>
-											<p className="break-all text-xs text-muted-foreground">
-												{link.workflow?.name ||
-													"Workflow Unavailable"}
-											</p>
+												<X className="size-4" />
+											</Button>
 										</div>
-										<Button
-											variant="ghost"
-											size="icon"
-											aria-label={`Unlink ${link.label}`}
-											onClick={() =>
-												setLinks((current) =>
-													current.filter(
-														(l) =>
-															l.workflowId !==
-															link.workflowId,
-													),
-												)
-											}
-										>
-											<X className="size-4" />
-										</Button>
+										<div className="flex flex-wrap items-center justify-between gap-2">
+											<label className="inline-flex min-h-11 items-center gap-2 text-sm">
+												<Checkbox
+													checked={link.pinned}
+													onCheckedChange={(
+														checked,
+													) =>
+														editLink(
+															link.workflow_id,
+															{
+																pinned:
+																	checked ===
+																	true,
+															},
+														)
+													}
+												/>
+												Pin as Top Button
+											</label>
+											{link.workflow && (
+												<LinkedRun
+													workflow={link.workflow}
+													label={link.label}
+													onWatch={(id) => {
+														setManageOpen(false);
+														setExecutionId(id);
+													}}
+												/>
+											)}
+										</div>
 									</div>
-									<div className="flex flex-wrap items-center justify-between gap-2">
-										<label className="inline-flex min-h-11 items-center gap-2 text-sm">
-											<Checkbox
-												checked={link.pinned}
-												onCheckedChange={(checked) =>
-													editLink(link.workflowId, {
-														pinned:
-															checked === true,
-													})
-												}
-											/>
-											Pin as Top Button
-										</label>
-										{link.workflow && (
-											<LinkedRun
-												workflow={link.workflow}
-												label={link.label}
-												onWatch={(id) => {
-													setManageOpen(false);
-													setExecutionId(id);
-												}}
-											/>
-										)}
-									</div>
-								</div>
-							))}
-						</div>
-					)}
-					<div className="space-y-3 border-t pt-4">
-						<h3 className="text-sm font-medium">Link a Workflow</h3>
-						<Label htmlFor="linked-workflow">Workflow</Label>
-						<Select
-							value={workflowId}
-							onValueChange={setWorkflowId}
-						>
-							<SelectTrigger
-								id="linked-workflow"
-								className="w-full"
-							>
-								<SelectValue placeholder="Choose a workflow" />
-							</SelectTrigger>
-							<SelectContent>
-								{available.map((w) => (
-									<SelectItem key={w.id} value={w.id}>
-										{w.name}
-									</SelectItem>
 								))}
-							</SelectContent>
-						</Select>
-						<Label htmlFor="new-workflow-label">Button Label</Label>
-						<Input
-							id="new-workflow-label"
-							placeholder="For example, Sync Now"
-							value={label}
-							onChange={(e) => setLabel(e.target.value)}
-						/>
-						<Button
-							disabled={!workflowId || !label.trim()}
-							onClick={() => {
-								setLinks((current) => [
-									...current,
-									{
-										workflowId,
-										label: label.trim(),
-										pinned: false,
-									},
-								]);
-								setWorkflowId("");
-								setLabel("");
-							}}
-						>
-							<Plus className="size-4" />
-							Link Workflow
-						</Button>
-					</div>
-					<div className="flex justify-end">
-						<Button
-							variant="outline"
-							onClick={() => setManageOpen(false)}
-						>
-							Done
-						</Button>
-					</div>
+							</div>
+						)}
+						<div className="space-y-3 border-t pt-4">
+							<h3 className="text-sm font-medium">
+								Link a Workflow
+							</h3>
+							<Label htmlFor="linked-workflow">Workflow</Label>
+							<Select
+								value={workflowId}
+								onValueChange={setWorkflowId}
+							>
+								<SelectTrigger
+									id="linked-workflow"
+									className="w-full"
+								>
+									<SelectValue placeholder="Choose a workflow" />
+								</SelectTrigger>
+								<SelectContent>
+									{available.map((w) => (
+										<SelectItem key={w.id} value={w.id}>
+											{w.name}
+										</SelectItem>
+									))}
+								</SelectContent>
+							</Select>
+							<Label htmlFor="new-workflow-label">
+								Button Label
+							</Label>
+							<Input
+								id="new-workflow-label"
+								maxLength={80}
+								placeholder="For example, Sync Now"
+								value={label}
+								onChange={(e) => setLabel(e.target.value)}
+							/>
+							<Button
+								disabled={!workflowId || !label.trim()}
+								onClick={() => {
+									setLinks((current) => [
+										...current,
+										{
+											workflow_id: workflowId,
+											label: label.trim(),
+											pinned: false,
+										},
+									]);
+									setWorkflowId("");
+									setLabel("");
+								}}
+							>
+								<Plus className="size-4" />
+								Link Workflow
+							</Button>
+						</div>
+						{saveError && (
+							<p
+								role="alert"
+								className="text-sm text-destructive"
+							>
+								{saveError}
+							</p>
+						)}
+						<div className="flex justify-end gap-2">
+							<Button
+								variant="outline"
+								disabled={updateIntegration.isPending}
+								onClick={() => {
+									setDraft(null);
+									setManageOpen(false);
+								}}
+							>
+								Cancel
+							</Button>
+							<Button
+								variant="outline"
+								disabled={
+									updateIntegration.isPending ||
+									links.some((link) => !link.label.trim())
+								}
+								onClick={() => void save()}
+							>
+								{updateIntegration.isPending
+									? "Saving…"
+									: "Save Changes"}
+							</Button>
+						</div>
+					</fieldset>
 				</DialogContent>
 			</Dialog>
 			<Dialog

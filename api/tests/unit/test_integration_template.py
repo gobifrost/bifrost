@@ -79,3 +79,12 @@ def test_template_carries_static_choices_without_connection_credentials():
     assert template["config_schema"][0]["options"] == ["us", "eu", "apac"]
     assert template["config_schema"][0]["option_labels"] == {"us": "United States", "eu": "Europe"}
     assert "client_id" not in template["oauth"]
+
+
+def test_template_preserves_workflow_shortcuts():
+    from uuid import uuid4
+
+    class LinkedIntegration(_Integration):
+        workflow_links = [{"workflow_id": str(uuid4()), "label": "Sync Now", "pinned": True}]
+
+    assert build_integration_template(LinkedIntegration())["workflow_links"] == LinkedIntegration.workflow_links

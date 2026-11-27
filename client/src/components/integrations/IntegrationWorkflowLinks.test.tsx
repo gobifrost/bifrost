@@ -1,13 +1,48 @@
-import { act } from "react";
+import { act, useState, useEffect } from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
+import type { components } from "@/lib/v1";
 import { IntegrationWorkflowLinks } from "./IntegrationWorkflowLinks";
+type WorkflowLink = components["schemas"]["IntegrationWorkflowLink"];
 const mocks = vi.hoisted(() => ({
 	execute: vi.fn(),
+	update: vi.fn(),
+	setSaved: (_links: WorkflowLink[]) => {},
 	canRun: true,
 	width: 1000,
 	resize: [] as (() => void)[],
 }));
+vi.mock("@/services/integrations", () => ({
+	useUpdateIntegration: () => ({
+		isPending: false,
+		mutateAsync: async (request: {
+			body: { workflow_links: WorkflowLink[] };
+		}) => {
+			await mocks.update(request);
+			mocks.setSaved(request.body.workflow_links);
+		},
+	}),
+}));
+function Fixture({
+	integrationName,
+	canManage,
+}: {
+	integrationName: string;
+	canManage: boolean;
+}) {
+	const [saved, setSaved] = useState<WorkflowLink[]>([]);
+	useEffect(() => {
+		mocks.setSaved = setSaved;
+	}, []);
+	return (
+		<IntegrationWorkflowLinks
+			integrationId="integration"
+			integrationName={integrationName}
+			canManage={canManage}
+			savedLinks={saved}
+		/>
+	);
+}
 vi.stubGlobal(
 	"ResizeObserver",
 	class {
@@ -79,6 +114,7 @@ vi.mock("@/pages/ExecutionHistory/components/ExecutionDrawer", () => ({
 }));
 beforeEach(() => {
 	mocks.execute.mockReset();
+	mocks.update.mockReset();
 	mocks.canRun = true;
 	mocks.width = 1000;
 	mocks.resize = [];
@@ -117,7 +153,7 @@ async function link(
 describe("integration-owned workflow links", () => {
 	it("keeps all labeled links in the menu and promotes only pinned links to top buttons", async () => {
 		const { user } = renderWithProviders(
-			<IntegrationWorkflowLinks integrationName="Partner" canManage />,
+			<Fixture integrationName="Partner" canManage />,
 		);
 		await openManage(user);
 		await link(
@@ -133,7 +169,7 @@ describe("integration-owned workflow links", () => {
 			"Refresh Tokens for Each Linked Organization",
 			"Refresh Tokens",
 		);
-		await user.click(screen.getByRole("button", { name: "Done" }));
+		await user.click(screen.getByRole("button", { name: "Save Changes" }));
 		const top = screen.getByRole("group", {
 			name: "Integration workflows",
 		});
@@ -156,7 +192,7 @@ describe("integration-owned workflow links", () => {
 	it("launches the actual linked workflow and opens the shared execution drawer", async () => {
 		mocks.execute.mockResolvedValue({ execution_id: "accepted-run" });
 		const { user } = renderWithProviders(
-			<IntegrationWorkflowLinks integrationName="Partner" canManage />,
+			<Fixture integrationName="Partner" canManage />,
 		);
 		await openManage(user);
 		await link(
@@ -167,7 +203,7 @@ describe("integration-owned workflow links", () => {
 		await user.click(
 			screen.getByRole("checkbox", { name: "Pin as Top Button" }),
 		);
-		await user.click(screen.getByRole("button", { name: "Done" }));
+		await user.click(screen.getByRole("button", { name: "Save Changes" }));
 		await user.click(screen.getByRole("button", { name: "Sync Now" }));
 		await user.click(screen.getByRole("button", { name: "Run Workflow" }));
 		expect(mocks.execute.mock.calls[0][0].body).toMatchObject({
@@ -182,10 +218,7 @@ describe("integration-owned workflow links", () => {
 	});
 	it("does not expose relationship management to a reader", async () => {
 		const { user } = renderWithProviders(
-			<IntegrationWorkflowLinks
-				integrationName="Partner"
-				canManage={false}
-			/>,
+			<Fixture integrationName="Partner" canManage={false} />,
 		);
 		await user.click(screen.getByRole("button", { name: "Workflows" }));
 		expect(
@@ -196,7 +229,7 @@ describe("integration-owned workflow links", () => {
 
 it("moves pinned buttons into the existing menu when space runs out and restores them on resize", async () => {
 	const { user } = renderWithProviders(
-		<IntegrationWorkflowLinks integrationName="Partner" canManage />,
+		<Fixture integrationName="Partner" canManage />,
 	);
 	await openManage(user);
 	await link(
@@ -215,7 +248,7 @@ it("moves pinned buttons into the existing menu when space runs out and restores
 	await user.click(
 		screen.getAllByRole("checkbox", { name: "Pin as Top Button" })[1],
 	);
-	await user.click(screen.getByRole("button", { name: "Done" }));
+	await user.click(screen.getByRole("button", { name: "Save Changes" }));
 	const top = screen.getByRole("group", { name: "Integration workflows" });
 	expect(
 		within(top).getByRole("button", { name: "Refresh Tokens" }),
@@ -254,7 +287,7 @@ it("moves pinned buttons into the existing menu when space runs out and restores
 
 it("lists pinned workflows before earlier unpinned links in the dropdown", async () => {
 	const { user } = renderWithProviders(
-		<IntegrationWorkflowLinks integrationName="Partner" canManage />,
+		<Fixture integrationName="Partner" canManage />,
 	);
 	await openManage(user);
 	await link(
@@ -270,11 +303,57 @@ it("lists pinned workflows before earlier unpinned links in the dropdown", async
 	await user.click(
 		screen.getAllByRole("checkbox", { name: "Pin as Top Button" })[1],
 	);
-	await user.click(screen.getByRole("button", { name: "Done" }));
+	await user.click(screen.getByRole("button", { name: "Save Changes" }));
 	await user.click(
-		within(screen.getByRole("group", { name: "Integration workflows" })).getByRole("button", { name: /Workflows/ }),
+		within(
+			screen.getByRole("group", { name: "Integration workflows" }),
+		).getByRole("button", { name: /Workflows/ }),
 	);
 	const items = screen.getAllByRole("menuitem");
 	expect(items[0]).toHaveTextContent("Refresh Tokens");
 	expect(items[1]).toHaveTextContent("Sync Now");
+});
+
+it("keeps failed saves visible and retains edits for correction", async () => {
+	mocks.update.mockRejectedValueOnce(new Error("Save rejected"));
+	const { user } = renderWithProviders(
+		<Fixture integrationName="Partner" canManage />,
+	);
+	await openManage(user);
+	await link(
+		user,
+		"A Very Long Customer Synchronization Workflow Name",
+		"Sync Now",
+	);
+	await user.click(screen.getByRole("button", { name: "Save Changes" }));
+	expect(await screen.findByRole("alert")).toHaveTextContent("Save rejected");
+	expect(
+		screen.getByRole("dialog", { name: "Linked Workflows" }),
+	).toBeVisible();
+	expect(screen.getByRole("textbox", { name: "Label" })).toHaveValue(
+		"Sync Now",
+	);
+	await user.click(screen.getByRole("button", { name: "Cancel" }));
+	await openManage(user);
+	expect(
+		screen.queryByRole("textbox", { name: "Label" }),
+	).not.toBeInTheDocument();
+});
+
+it("retains missing workflow labels but disables their shortcuts", async () => {
+	const { user } = renderWithProviders(
+		<IntegrationWorkflowLinks
+			integrationId="integration"
+			integrationName="Partner"
+			canManage={false}
+			savedLinks={[
+				{ workflow_id: "deleted", label: "Retired Sync", pinned: true },
+			]}
+		/>,
+	);
+	expect(screen.getByRole("button", { name: "Retired Sync" })).toBeDisabled();
+	await user.click(screen.getByRole("button", { name: /Workflows/ }));
+	expect(
+		screen.getByRole("menuitem", { name: /Retired Sync/ }),
+	).toHaveAttribute("aria-disabled", "true");
 });

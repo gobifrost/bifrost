@@ -143,6 +143,7 @@ async def bifrost_integration_create(
     entity_id: str | None = None,
     entity_id_name: str | None = None,
     default_entity_id: str | None = None,
+    workflow_links: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
     """Create an integration — ``POST /api/integrations``.
 
@@ -153,6 +154,7 @@ async def bifrost_integration_create(
         return error_result("name is required")
 
     fields: dict[str, Any] = {
+        "workflow_links": workflow_links,
         "name": name,
         "description": description,
         "notes": notes,
@@ -193,6 +195,7 @@ async def bifrost_integration_update(
     entity_id_name: str | None = None,
     default_entity_id: str | None = None,
     force_remove_keys: bool = False,
+    workflow_links: list[dict[str, Any]] | None = None,
 ) -> ToolResult:
     """Update an integration — ``PUT /api/integrations/{uuid}``.
 
@@ -221,6 +224,7 @@ async def bifrost_integration_update(
             )
 
     fields: dict[str, Any] = {
+        "workflow_links": workflow_links,
         "name": name,
         "description": description,
         "notes": notes,

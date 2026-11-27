@@ -104,6 +104,22 @@ def load_schema_file(raw: str | None) -> list[dict[str, Any]] | None:
     return items
 
 
+def _extract_workflow_links(fields: dict[str, Any]) -> list[dict[str, Any]] | None:
+    """Decode repeated JSON objects/lists or @YAML files; [] explicitly clears."""
+    import json
+    from bifrost.contracts.integrations import IntegrationWorkflowLink
+
+    raw = fields.pop("workflow_links", None)
+    if not raw:
+        return None
+    links: list[dict[str, Any]] = []
+    for value in raw:
+        parsed = yaml.safe_load(Path(value[1:]).read_text()) if value.startswith("@") else json.loads(value)
+        items = parsed if isinstance(parsed, list) else [parsed]
+        links.extend(IntegrationWorkflowLink.model_validate(item).model_dump(mode="json") for item in items)
+    return links
+
+
 def _extract_config_schema(fields: dict[str, Any]) -> list[dict[str, Any]] | None:
     """Pull ``config_schema`` out of the Click-parsed flags and materialize it.
 
@@ -211,9 +227,12 @@ async def create_integration(
     ``schema`` / ``config_schema`` / ``items`` list.
     """
     schema_items = _extract_config_schema(fields)
+    workflow_links = _extract_workflow_links(fields)
     body = await assemble_body(IntegrationCreate, fields, resolver=resolver)
     if schema_items is not None:
         body["config_schema"] = schema_items
+    if workflow_links is not None:
+        body["workflow_links"] = workflow_links
     response = await client.post("/api/integrations", json=body)
     response.raise_for_status()
     output_result(response.json(), ctx=ctx)
@@ -253,9 +272,12 @@ async def update_integration(
     """
     integration_uuid = await resolver.resolve("integration", ref)
     schema_items = _extract_config_schema(fields)
+    workflow_links = _extract_workflow_links(fields)
     body = await assemble_body(IntegrationUpdate, fields, resolver=resolver)
     if schema_items is not None:
         body["config_schema"] = schema_items
+    if workflow_links is not None:
+        body["workflow_links"] = workflow_links
 
     params = {"force_remove_keys": "true"} if force_remove_keys else {}
     response = await client.put(

@@ -917,7 +917,7 @@ export function IntegrationDetail() {
 				}
 				canManageDefinitions={canManageDefinitions}
 				status={<IntegrationStatusChips {...overviewProps} />}
-				workflowActions={<IntegrationWorkflowLinks key={integrationId} integrationName={integration.name} canManage={canManageDefinitions} />}
+				workflowActions={<IntegrationWorkflowLinks key={integrationId} integrationName={integration.name} integrationId={integration.id} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
 			/>
 			<PageScrollArea className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (

@@ -19,3 +19,10 @@ export async function toggleHeaderAppearance(
 		.click();
 	await page.getByRole("menuitemcheckbox", { name, exact: true }).click();
 }
+
+export async function openHeaderEditor(page: Page) {
+	await page
+		.getByRole("button", { name: "Account menu", exact: true })
+		.click();
+	await page.getByRole("menuitem", { name: /Open Editor \/ Shell/ }).click();
+}
