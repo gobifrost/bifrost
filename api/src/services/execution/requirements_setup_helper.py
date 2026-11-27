@@ -36,11 +36,11 @@ def _requirement_name(line: str) -> str:
     return canonicalize_name(Requirement(line).name)
 
 
-def _update_requirements_status(result: RequirementsInstallResult) -> None:
-    from src.core.requirements_cache import get_requirements_sync
+def _update_requirements_status_from_content(
+    result: RequirementsInstallResult, content: str | None
+) -> None:
     from src.services.execution.simple_worker import _parse_requirement_lines
 
-    content = get_requirements_sync()
     if not content:
         result.requirements_total = 0
         result.requirements_installed = 0
@@ -71,20 +71,45 @@ def _update_requirements_status(result: RequirementsInstallResult) -> None:
         logger.info(f"[pool] All {result.requirements_total} required packages installed")
 
 
-def run_requirements_setup() -> RequirementsInstallResult:
-    from src.services.execution.simple_worker import install_requirements
+def run_requirements_setup_for_content(content: str | None) -> RequirementsInstallResult:
+    """Install and inventory explicitly supplied content without backend IO."""
+    from src.services.execution.simple_worker import install_requirements_from_content
 
-    result = install_requirements()
+    result = install_requirements_from_content(content)
     try:
-        _update_requirements_status(result)
+        _update_requirements_status_from_content(result, content)
     except Exception as e:  # noqa: BLE001 - status counts are heartbeat-only
         logger.warning(f"Failed to check requirements status: {e}")
     return result
 
 
-def main() -> int:
+def run_requirements_setup() -> RequirementsInstallResult:
+    """Run the existing cache-backed setup path for local bootstrap callers."""
+    from src.core.requirements_cache import get_requirements_sync
+
+    return run_requirements_setup_for_content(get_requirements_sync())
+
+
+def _requirements_content_from_stdin() -> str | None:
+    """Read the remote helper's explicit requirements payload from stdin."""
+    payload = json.load(sys.stdin)
+    if not isinstance(payload, dict) or "content" not in payload:
+        raise ValueError("requirements setup input must be an object with content")
+    content = payload["content"]
+    if content is not None and not isinstance(content, str):
+        raise ValueError("requirements setup input content must be a string or null")
+    return content
+
+
+def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-    result = run_requirements_setup()
+    arguments = sys.argv[1:] if argv is None else argv
+    if arguments == ["--local"]:
+        result = run_requirements_setup()
+    elif arguments:
+        raise ValueError("Unknown requirements setup arguments")
+    else:
+        result = run_requirements_setup_for_content(_requirements_content_from_stdin())
     sys.stdout.write(json.dumps(result.to_json_dict(), separators=(",", ":")))
     sys.stdout.write("\n")
     sys.stdout.flush()

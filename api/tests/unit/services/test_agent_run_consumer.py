@@ -685,7 +685,10 @@ async def test_agentless_chat_skips_agent_lookup_and_socket_dependencies(
         },
     }
 
-    process_chat = AsyncMock()
+    async def released_claim_before_chat(**_kwargs):
+        mock_session.close.assert_awaited_once()
+
+    process_chat = AsyncMock(side_effect=released_claim_before_chat)
     runtime_principal = UserPrincipal(
         user_id=actor_user_id,
         email="actor@example.com",

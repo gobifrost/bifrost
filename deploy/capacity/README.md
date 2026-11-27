@@ -22,6 +22,15 @@ the protocol.
 
 ## Adapter contract
 
+The API-only worker spike derives each external launcher's control key from the
+dedicated CAPACITY_TOKEN and its canonical worker/resource identities. The three
+Floci adapters reuse api/shared/worker_control_auth.py; run them from a complete
+checkout. WORKER_ENV_JSON supplies the API URL and runtime paths, not database,
+Redis, storage or installation signing credentials. Privileged platform fields
+are rejected. Environment construction is covered by
+api/tests/unit/test_capacity_adapter_worker_env.py; that unit coverage does not
+qualify any adapter against a real cloud.
+
 ```python
 prepare(ctx, spec) -> handle      # MUST NOT start a process
 start(ctx, handle) -> Observation  # at most ONE launcher per incarnation
@@ -42,7 +51,9 @@ Rules the core relies on:
 - **A lost start reply fails closed.** A `prepared` observation after an
   interrupted start is ambiguous and must never cause another launch. Only an
   adapter observation with `start_fact="never_started"` may authorize that
-  retry; otherwise the caller must delete the incarnation.
+  retry; otherwise the caller must delete the incarnation. An unconfirmed delete
+  also fences further starts. A reference adapter must retain uncertainty when
+  a task-list read has not yet exposed an accepted start.
 - **Handles are opaque JSON.** Cloud identifiers belong here, never in
   `resource_uid`: that field is `^[a-zA-Z0-9._:-]+$`, which excludes `/`, so ECS
   ARNs and ACI/Cloud Run resource paths are invalid UIDs.
@@ -53,6 +64,8 @@ Rules the core relies on:
 CAPACITY_TOKEN=...            # 32-512 non-space ASCII
 CAPACITY_SCOPE=demo
 WORKER_VERSION=<image build>
+# The provider reports hardware/build only. The version-matched image registers
+# its capabilities automatically during authenticated worker hello.
 WORKER_IMAGE=<registry digest>
 TLS_CERT_FILE=... TLS_KEY_FILE=...   # required: the API dials HTTPS only
 STORE_PATH=/var/lib/capacity/ledger.json  # durable ledger; omit for memory-only
@@ -74,11 +87,15 @@ python deploy/capacity/conformance/conformance.py \
   --hook-command "python deploy/capacity/conformance/hooks/control_http.py"
 ```
 
-Exit 0 means every executed case passed. `SKIP` is never a pass.
+Exit 0 requires every required case to pass with zero skips. Failures exit 1;
+missing/unsupported observation or fault hooks exit 2 (incomplete). Restart and
+physical cases stay in the report even when no hook is configured.
 
 The suite covers capabilities, prepare idempotency, conflicting reservations,
 UID fencing, duplicate and stopped-incarnation starts, tombstones, scope and auth
-isolation, provider-restart durability, and physical launch identity.
+isolation, provider-restart durability, uncertain accepted starts across restart, and
+physical launch identity. The self-test rejects both ordinary and uncertain-only
+duplicate launches and verifies that missing hooks cannot produce success.
 
 The hook is required for the physical cases. It must return the **cumulative set
 of launch identities ever observed** — a boolean or a count cannot distinguish
@@ -88,7 +105,9 @@ one long-lived launcher from two sequential ones.
 
 The Floci adapters are reference implementations for the shared protocol. Their
 SDK-fake checks cover a repeated AWS prepare using a stable worker/operation
-identity and deletion readback before they report `deleted`. They do not prove
+identity, accepted-but-invisible ECS starts over the HTTP capacity API, and
+deletion readback before they report `deleted`. These SDK-fake regressions do not
+run the Floci emulator containers. They do not prove
 real-cloud eventual-consistency, IAM, or provider idempotency beyond the Floci
 emulator; qualify those properties against each production provider separately.
 

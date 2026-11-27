@@ -354,6 +354,7 @@ def external_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
         protocol_version=1, scope="test-provider", worker_version="test-worker",
         memory_limit_bytes=4096 * 2**20, max_workers=2, max_lifetime_seconds=900,
     )
+    monkeypatch.setattr("src.services.worker_pool.external_policy.get_version", lambda: profile.worker_version)
     fetch = AsyncMock(return_value=profile)
     monkeypatch.setattr(kube.ExternalCapacityClient, "profile", fetch)
     return fetch

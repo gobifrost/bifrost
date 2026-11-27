@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 from src.jobs.platform.policy import PlatformJobPolicy
+from shared.worker_compute import APP_COMPILE_CAPABILITY_NAME
 
 
 @dataclass(frozen=True)
@@ -22,6 +24,8 @@ class PlatformJobMetadata:
     encrypt_payload: bool = False
     display_name: str | None = None
     description: str | None = None
+    compute_capability: str | None = None
+    execution_owner: Literal["api", "executor"] = "executor"
 
 
 def _metadata(
@@ -34,6 +38,8 @@ def _metadata(
     encrypt_payload: bool = False,
     display_name: str | None = None,
     description: str | None = None,
+    compute_capability: str | None = None,
+    execution_owner: Literal["api", "executor"] = "executor",
 ) -> PlatformJobMetadata:
     return PlatformJobMetadata(
         job_type=job_type,
@@ -44,6 +50,8 @@ def _metadata(
         encrypt_payload=encrypt_payload,
         display_name=display_name,
         description=description,
+        compute_capability=compute_capability,
+        execution_owner=execution_owner,
     )
 
 
@@ -63,6 +71,7 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="App Deploys",
+                compute_capability=APP_COMPILE_CAPABILITY_NAME,
                 description="Compiles and publishes independent apps (npm install and vite build) in an isolated pod.",
             ),
             _metadata(
@@ -77,6 +86,7 @@ _METADATA = MappingProxyType(
                     execution_class="build",
                 ),
                 display_name="App SDK Rebuilds",
+                compute_capability=APP_COMPILE_CAPABILITY_NAME,
                 payload_version=3,
                 description="Rebuilds the web SDK and republishes affected apps in an isolated pod.",
             ),
@@ -96,6 +106,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=128,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "webhook.renew",
@@ -107,6 +118,7 @@ _METADATA = MappingProxyType(
                     max_concurrency=1,
                     min_memory_headroom_mb=128,
                 ),
+                execution_owner="api",
             ),
             _metadata(
                 "solution.update_check",
@@ -114,12 +126,14 @@ _METADATA = MappingProxyType(
                 "SOLUTION_UPDATE_CHECK_DEFINITION",
                 PlatformJobPolicy(30 * 60, max_attempts=2, max_concurrency=1),
                 payload_version=2,
+                execution_owner="api",
             ),
             _metadata(
                 "workspace.file_index_reconcile",
                 "src.jobs.platform.system_maintenance",
                 "FILE_INDEX_RECONCILIATION_DEFINITION",
                 PlatformJobPolicy(60 * 60, max_attempts=2, max_concurrency=1),
+                execution_owner="api",
             ),
             _metadata(
                 "artifact.retention_cleanup",
@@ -165,6 +179,7 @@ _METADATA = MappingProxyType(
                 "src.jobs.platform.system_maintenance",
                 "MODEL_CATALOG_REFRESH_DEFINITION",
                 PlatformJobPolicy(5 * 60, max_attempts=2, max_concurrency=1),
+                execution_owner="api",
             ),
             _metadata(
                 "files.move",
@@ -277,6 +292,7 @@ _METADATA = MappingProxyType(
                 "SUMMARY_BACKFILL_DEFINITION",
                 PlatformJobPolicy(15 * 60, max_attempts=2, min_memory_headroom_mb=128),
                 encrypt_payload=True,
+                execution_owner="api",
             ),
             _metadata(
                 "chat.video_generation",
@@ -351,3 +367,25 @@ def get_platform_job_metadata(job_type: str) -> PlatformJobMetadata | None:
 
 def list_platform_job_metadata() -> list[PlatformJobMetadata]:
     return list(_METADATA.values())
+
+
+def api_platform_job_types() -> frozenset[str]:
+    """Job types the API control host executes without a physical worker."""
+    return frozenset(
+        item.job_type
+        for item in _METADATA.values()
+        if item.execution_owner == "api"
+    )
+
+
+def executor_platform_job_types() -> frozenset[str]:
+    """Job types admitted to physical worker executors."""
+    return frozenset(
+        item.job_type
+        for item in _METADATA.values()
+        if item.execution_owner == "executor"
+    )
+
+
+def platform_job_types_for_compute(capability: str) -> frozenset[str]:
+    return frozenset(item.job_type for item in _METADATA.values() if item.compute_capability == capability)

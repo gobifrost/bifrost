@@ -8,11 +8,16 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import importlib
 import json
 import logging
 import time
+from collections.abc import Awaitable
 from typing import Any
 from uuid import UUID, uuid4
+
+from shared.worker_control_auth import external_worker_control_key
+from shared.worker_compute import APP_COMPILE_CAPABILITY
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import func, select
@@ -21,8 +26,10 @@ from starlette.websockets import WebSocketState
 
 from src.config import get_settings
 from src.core.database import get_db_context, get_liveness_db_context
+from src.core.requirements_cache import get_requirements
 from src.jobs.consumers.package_install import PackageInstallConsumer
 from src.jobs.schedulers.platform_jobs import claim_platform_job, run_claimed_platform_job
+from src.jobs.platform.catalog import executor_platform_job_types
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.execution.template_process import TEMPLATE_START_TIMEOUT_SECONDS
 from src.services.memory_requests import MemoryBudget
@@ -35,6 +42,9 @@ from src.services.worker_pool.claims import (
 )
 from src.worker.pool_main import PoolWorker
 from src.worker.remote.agent_route import AgentRoute, RemoteAgentConsumer
+from src.worker.remote.app_compile_host import (
+    APP_COMPILE_JOB_TYPES, ApiAppBuildBackend, reconcile_app_compiles,
+)
 from src.worker.remote.fencing import LeaseRef, current_remote_lease_ref, fence_remote_owner, remote_owner_context
 from src.worker.remote.ownership import (
     DEFAULT_OWNER_LEASE_SECONDS,
@@ -49,6 +59,7 @@ from src.worker.remote.protocol import (
     ControlEnvelope,
     CredentialRouteChanged,
     FragmentAssembler,
+    hello_compute_capabilities,
     LEGACY_EXECUTION_HANDLERS,
     ProtocolError,
     SignedHello,
@@ -77,6 +88,18 @@ def _reply_timeout(action: str) -> float:
         # It may wait while the launcher replaces a dead agent template.
         return TEMPLATE_START_TIMEOUT_SECONDS + COMMAND_REPLY_SECONDS
     return COMMAND_REPLY_SECONDS
+
+
+async def _external_reserved_capabilities(
+    incarnation_id: UUID,
+) -> tuple[frozenset[str], frozenset[str]]:
+    """Load the immutable capability declaration for an external worker."""
+
+    async with get_liveness_db_context() as db:
+        worker = await db.get(ExecutionWorker, incarnation_id)
+    if worker is None or worker.form != "external":
+        raise AuthenticationError("external launcher has no reserved worker profile")
+    return frozenset(worker.supported_handlers), frozenset(worker.supported_compute)
 
 
 class RemoteProcess:
@@ -111,6 +134,8 @@ class Bridge:
         self.hostname = hello["hostname"]
         self.execution_lane = hello.get("execution_lane", "normal")
         self.handlers = hello.get("handlers", LEGACY_EXECUTION_HANDLERS)
+        self.supports_platform_jobs = hello.get("supports_platform_jobs", False)
+        self.compute_capabilities = hello.get("compute_capabilities", ())
         self.sample_at = time.monotonic()
         self.pending: dict[str, asyncio.Future[dict[str, Any]]] = {}
         self.jobs: dict[str, RemoteProcess] = {}
@@ -123,6 +148,9 @@ class Bridge:
         self.inventory: dict[str, Any] | None = None
         self.inventory_ready = asyncio.Event()
         self.reconciliation_ready = asyncio.Event()
+        self.transport_changed = asyncio.Event()
+        self.app_compilers: dict[str, Any] = {}
+        self.agent_compute_runtimes: dict[str, Any] = {}
         self._deferred_terminal: list[dict[str, Any]] = []
         self.lease = lease
         self.handoff = False
@@ -137,7 +165,8 @@ class Bridge:
         return self.current, self.limit
 
     async def request(
-        self, action: str, payload: dict[str, Any], *, expected_generation: int | None = None
+        self, action: str, payload: dict[str, Any], *, expected_generation: int | None = None,
+        authorization: contextlib.AbstractAsyncContextManager[None] | None = None,
     ) -> dict[str, Any]:
         """Send one acknowledged command to the launcher.
 
@@ -153,7 +182,9 @@ class Bridge:
         self.pending[request_id] = future
         try:
             try:
-                async with self.lock:
+                async with self.lock, contextlib.AsyncExitStack() as stack:
+                    if authorization is not None:
+                        await stack.enter_async_context(authorization)
                     if expected_generation is not None and self.lease.session_generation != expected_generation:
                         raise CredentialRouteChanged(
                             f"launcher session {expected_generation} was replaced by "
@@ -324,6 +355,25 @@ class Bridge:
                 self.requirements = requirements
             self.inventory = inventory
             self.inventory_ready.set()
+        elif event.get("event") == "app_compile_state":
+            if not isinstance(event.get("stage_id"), str):
+                raise ProtocolError("App compile notification requires a stage UUID")
+            UUID(event["stage_id"])
+            compute = self.app_compilers.get(event["stage_id"])
+            if compute is not None:
+                compute.state_changed.set()
+        elif event.get("event") == "agent_compute_state":
+            runtime = self.agent_compute_runtimes.get(event.get("stage_id"))
+            if runtime is not None:
+                runtime.handle_state(event)
+        elif event.get("event") == "agent_compute_rpc":
+            runtime = self.agent_compute_runtimes.get(event.get("stage_id"))
+            if runtime is None:
+                raise ProtocolError("unknown agent compute stage")
+            task = asyncio.create_task(runtime.handle_rpc(event))
+            self.results.add(task)
+            task.add_done_callback(self.results.discard)
+            task.add_done_callback(_observe_task)
         elif event.get("event") in {"result", "job_exit", "agent_exit"}:
             # Inventory is authoritative when an API takes over. In
             # particular, a terminal replay can arrive before the old route
@@ -354,6 +404,8 @@ class Bridge:
     async def reconciliation_complete(self) -> None:
         """Permit terminal replay only after canonical routes were restored."""
         self.reconciliation_ready.set()
+        self.transport_changed.set()
+        self._notify_compute_change()
         deferred, self._deferred_terminal = self._deferred_terminal, []
         for event in deferred:
             if await self._deliver_terminal(event):
@@ -453,11 +505,21 @@ class Bridge:
         self.inventory = None
         self.inventory_ready.clear()
         self.reconciliation_ready.clear()
+        self.transport_changed.set()
+
+    def _notify_compute_change(self) -> None:
+        """Transport changes affect every retained stage, not only one recipe."""
+        for stages in (self.agent_compute_runtimes, self.app_compilers):
+            for runtime in stages.values():
+                runtime.state_changed.set()
 
     def disconnect(self, socket: WebSocket | None = None) -> None:
         if socket is not None and socket is not self.socket:
             return
         self.connected = False
+        self.reconciliation_ready.clear()
+        self.transport_changed.set()
+        self._notify_compute_change()
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(ConnectionError("Launcher disconnected"))
@@ -490,7 +552,8 @@ class PackageProxy(PackageInstallConsumer):
         return await self._package_tool("uninstall", package=package)
 
     async def _pip_install_requirements(self) -> str | None:
-        return await self._package_tool("requirements")
+        cached = await get_requirements()
+        return await self._package_tool("requirements", content=cached["content"] if cached else None)
 
     async def _recycle_workers(self) -> None:
         await self.bridge.pool.drain_and_restart_template()
@@ -508,6 +571,11 @@ class PackageProxy(PackageInstallConsumer):
             )
         except Exception as exc:
             logging.getLogger(__name__).warning("Failed to update packages in Redis: %s", exc)
+
+
+def _preload_agent_orchestration() -> None:
+    importlib.import_module("src.worker.remote.agent_orchestration")
+    importlib.import_module("src.worker.remote.summary_orchestration")
 
 
 class ApiExecutor(PoolWorker):
@@ -535,11 +603,23 @@ class ApiExecutor(PoolWorker):
     async def _initialize_runtime(self) -> bool:
         return await report_worker_handlers(
             self.incarnation_id, [handler for handler, _version in self._handlers],
+            compute=[f"{name}.v{version}" for name, version in self.bridge.compute_capabilities],
         )
 
     async def _start_executor(self) -> None:
         """Keep the canonical heartbeat alive while the launcher bootstraps."""
-        await self.bridge.inventory_ready.wait()
+        preparations: list[Awaitable[Any]] = [self.bridge.inventory_ready.wait()]
+        if self.bridge.agents is None and any(
+            capability in self.bridge.compute_capabilities
+            for capability in (("agent.loop", 1), ("summary.compute", 1))
+        ):
+            # Preload during physical bootstrap, without freezing API requests.
+            # Admission still waits for both the real inventory and the import.
+            preparations.append(asyncio.to_thread(_preload_agent_orchestration))
+        outcomes = await asyncio.gather(*preparations, return_exceptions=True)
+        for outcome in outcomes:
+            if isinstance(outcome, (Exception, asyncio.CancelledError)):
+                raise outcome
         from src.services.execution.process_pool import _notify_requirements_failures
         from src.services.execution.requirements_setup_result import RequirementsInstallResult
 
@@ -571,7 +651,12 @@ class ApiExecutor(PoolWorker):
 
     def _make_agent_consumer(self) -> RemoteAgentConsumer:
         if self.bridge.agents is None:
-            self.bridge.agents = RemoteAgentConsumer(self.bridge, worker_id=self.incarnation_id)
+            if any(capability in self.bridge.compute_capabilities for capability in (("agent.loop", 1), ("summary.compute", 1))):
+                from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
+                self.bridge.agents = ApiComputeAgentConsumer(self.bridge, worker_id=self.incarnation_id)
+            else:
+                self.bridge.agents = RemoteAgentConsumer(self.bridge, worker_id=self.incarnation_id)
         return self.bridge.agents
 
     async def _execute_summary(self, claim: PoolClaim) -> None:
@@ -601,11 +686,28 @@ class ApiExecutor(PoolWorker):
         return self.bridge.reconciliation_ready.is_set()
 
     async def _execute_platform_job(self, claim: Any) -> bool:
-        return await run_claimed_platform_job(claim, backend=self.bridge)
+        backend = (
+            ApiAppBuildBackend(self.bridge)
+            if claim.job_type in APP_COMPILE_JOB_TYPES
+            and APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+            else self.bridge
+        )
+        return await run_claimed_platform_job(claim, backend=backend)
+
+    @property
+    def supports_platform_jobs(self) -> bool:
+        return super().supports_platform_jobs and (
+            self.bridge.supports_platform_jobs or APP_COMPILE_CAPABILITY in self.bridge.compute_capabilities
+        )
 
     async def _claim_platform_job(self, fits_bytes: int) -> Any:
-        return await claim_platform_job(backend="local", fits_bytes=fits_bytes,
-                                        memory_sample=self.bridge.memory())
+        job_types = executor_platform_job_types()
+        if not self.bridge.supports_platform_jobs:
+            job_types = job_types.intersection(APP_COMPILE_JOB_TYPES)
+        return await claim_platform_job(
+            backend="local", fits_bytes=fits_bytes, memory_sample=self.bridge.memory(),
+            job_types=job_types,
+        )
 
     async def _prepare_admission(self) -> None:
         """Adopt physical routes after memory admission exists, before claims run."""
@@ -657,8 +759,18 @@ class ApiExecutor(PoolWorker):
             if expected_generation is not None and self.bridge.lease.session_generation != generation:
                 return None
             self.bridge.reject_missing_platform_routes(self.bridge.inventory)
-            assert self.bridge.agents is not None
-            await self.bridge.agents.reject_missing(self.bridge.inventory)
+            if self.bridge.agents is not None:
+                await self.bridge.agents.reject_missing(self.bridge.inventory)
+            await reconcile_app_compiles(self.bridge)
+            if (self.bridge.inventory.get("agent_compute_stages", []) != []
+                    or self.bridge.agent_compute_runtimes):
+                from src.worker.remote.agent_orchestration import reconcile_agent_computes
+                from src.worker.remote.summary_orchestration import reconcile_summary_computes
+
+                await reconcile_agent_computes(self.bridge)
+                await reconcile_summary_computes(self.bridge)
+            if self.bridge.inventory.get("compute_retirement_requested") is True:
+                self.request_stop()
             self._reconciled_generation = generation
             return snapshot
 
@@ -669,13 +781,14 @@ class ApiExecutor(PoolWorker):
             self.admission.started(execution_id)
             self._remember_started(execution_id)
         agents = self.bridge.agents
-        assert agents is not None
         for route_id, (run_id, request_bytes) in snapshot["agent_runs"].items():
+            assert agents is not None
             if agents.tracks(route_id):
                 # A same-owner reconnect: its original wait still runs.
                 continue
             self._wait_for_adopted_agent_run(agents.adopt(route_id, run_id), request_bytes)
         for route_id, (run_id, request_bytes, handler, claim_id) in snapshot.get("summaries", {}).items():
+            assert agents is not None
             if not agents.tracks(route_id):
                 self._wait_for_adopted_agent_run(
                     agents.adopt(route_id, run_id, handler=handler, claim_id=claim_id), request_bytes,
@@ -740,7 +853,7 @@ class ApiExecutor(PoolWorker):
 
         await super()._drain()
         agents = self.bridge.agents
-        if agents is None or not agents.routes or self._lost or self.bridge.handoff:
+        if agents is None or self._lost or self.bridge.handoff:
             return
         try:
             owns = await owns_remote_session(self.bridge.lease)
@@ -950,6 +1063,12 @@ class RemoteSession:
     async def lose_ownership(self, reason: str) -> None:
         self.owned_until = 0.0
         self.worker._lost = True
+        if self.bridge.agents is not None:
+            from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
+            if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
+                await self.release_lease()
+                await self.bridge.agents.abandon_orchestrations()
         if self.bridge.pool is not None:
             await self.bridge.pool.ownership_lost(reason)
         self.worker.request_stop()
@@ -969,8 +1088,16 @@ class RemoteSession:
         """Drop an API owner after transport closure without killing children."""
         self.begin_handoff()
         if self.bridge.agents is not None:
-            self.bridge.agents.detach()
-        await self.release_lease()
+            from src.worker.remote.agent_orchestration import ApiComputeAgentConsumer
+
+            if isinstance(self.bridge.agents, ApiComputeAgentConsumer):
+                await self.release_lease()
+                await self.bridge.agents.abandon_orchestrations()
+            else:
+                self.bridge.agents.detach()
+                await self.release_lease()
+        else:
+            await self.release_lease()
         self.renewal.cancel()
         await asyncio.gather(self.renewal, return_exceptions=True)
         for task in tuple(self.reconciliation_tasks):
@@ -982,16 +1109,38 @@ class RemoteSession:
 
 
 class RemoteControlHost:
+    async def _welcome(self, socket: WebSocket, bridge: Bridge, lease: RemoteOwnerLease) -> None:
+        """Send startup inputs through the existing bounded control transport."""
+        cached = await get_requirements()
+        async with bridge.lock:
+            await socket.send_text(json.dumps({
+                "event": "welcome", "session_generation": lease.session_generation,
+            }))
+            startup = ControlEnvelope(
+                session_generation=lease.session_generation, sequence=bridge._sequence + 1,
+                kind="bootstrap", payload={"requirements_content": cached["content"] if cached else None},
+            )
+            for frame in fragment(startup):
+                await socket.send_text(frame.to_json())
+                bridge._sequence += 1
+
     """Per-API-replica remote control state; no cluster-wide singleton."""
 
     def __init__(self) -> None:
         self.owner_id = uuid4()
         self.sessions: dict[UUID, RemoteSession] = {}
         self.stopping = False
+        from src.jobs.platform.api_maintenance import ApiMaintenanceExecutor
+
+        self.maintenance = ApiMaintenanceExecutor()
+
+    async def start(self) -> None:
+        await self.maintenance.start()
 
     async def stop(self) -> None:
         """Begin canonical drains before the lifespan closes control sockets."""
         self.stopping = True
+        await self.maintenance.stop()
         await asyncio.gather(*(
             session.stop() if session.bridge.connected else session.detach()
             for session in self.sessions.values()
@@ -1005,7 +1154,21 @@ class RemoteControlHost:
             if not isinstance(initial, dict) or initial.get("event") != "hello":
                 raise AuthenticationError("expected signed hello")
             signed = SignedHello.from_dict(initial.get("hello", {}))
-            hello = verify_hello(get_settings().secret_key, signed)
+            settings = get_settings()
+            control_key = settings.secret_key
+            if signed.form == "external":
+                if signed.resource_uid is None or not settings.worker_capacity_token:
+                    raise AuthenticationError("External worker control is not configured")
+                control_key = external_worker_control_key(
+                    settings.worker_capacity_token.get_secret_value(), signed.incarnation_id, signed.resource_uid,
+                )
+            hello = verify_hello(control_key, signed)
+            # This image implements the implicit Linux process contract only.
+            # Never silently discard an explicit profile and grant PID/fork
+            # semantics to an unsupported runtime. No alternate profile is admitted.
+            if (initial.get("runtime_profile") is not None
+                    or initial.get("hello", {}).get("runtime_profile") is not None):
+                raise AuthenticationError("Explicit physical runtime profiles are unsupported")
             if hello.form == "external" and hello.execution_lane != "normal":
                 raise AuthenticationError("External capacity workers only support the Normal lane")
             sample = initial.get("sample")
@@ -1022,6 +1185,8 @@ class RemoteControlHost:
                 "requirements": initial.get("requirements", {}),
                 "hostname": hello.hostname,
                 "handlers": hello_execution_handlers(initial),
+                "supports_platform_jobs": initial.get("supports_platform_jobs") is True,
+                "compute_capabilities": hello_compute_capabilities(initial),
                 "execution_lane": hello.execution_lane,
             }
             if hello.execution_lane == "fast_path" and ("workflow.execute", 2) not in bootstrap["handlers"]:
@@ -1030,6 +1195,21 @@ class RemoteControlHost:
         except (AuthenticationError, ProtocolError, KeyError, TypeError, ValueError, json.JSONDecodeError):
             await socket.close(code=1008)
             raise
+
+        if hello.form == "external":
+            reserved_handlers, reserved_compute = await _external_reserved_capabilities(
+                hello.incarnation_id
+            )
+            bootstrap["handlers"] = [
+                handler
+                for handler in bootstrap["handlers"]
+                if handler[0] in reserved_handlers
+            ]
+            bootstrap["compute_capabilities"] = [
+                capability
+                for capability in bootstrap["compute_capabilities"]
+                if f"{capability[0]}.v{capability[1]}" in reserved_compute
+            ]
 
         # Authentication precedes canonical admission. Reconnects naturally
         # get None here because their pod was already admitted.
@@ -1064,6 +1244,8 @@ class RemoteControlHost:
                 hello.incarnation_id, resource_uid=hello.resource_uid,
                 launcher_id=hello.launcher_id, version=version if isinstance(version, str) else None,
                 hostname=hello.hostname,
+                actual_handlers=[name for name, _version in bootstrap["handlers"]],
+                actual_compute=[f"{name}.v{version}" for name, version in bootstrap["compute_capabilities"]],
             )
             if admitted is None:
                 async with get_liveness_db_context() as db:
@@ -1076,6 +1258,12 @@ class RemoteControlHost:
                             ExecutionWorker.remote_launcher_id == hello.launcher_id,
                             ExecutionWorker.version.is_not(None),
                             ExecutionWorker.version == version,
+                            ExecutionWorker.supported_handlers.contained_by(
+                                [name for name, _version in bootstrap["handlers"]],
+                            ),
+                            ExecutionWorker.supported_compute.contained_by(
+                                [f"{name}.v{version}" for name, version in bootstrap["compute_capabilities"]],
+                            ),
                         )
                     )
                 if bound_resource is None:
@@ -1119,11 +1307,11 @@ class RemoteControlHost:
             existing.owned_until = acquiring_at + DEFAULT_OWNER_LEASE_SECONDS
             existing.last_sequence = 0
             existing.bridge.replace_socket(socket, lease)
-            await socket.send_text(json.dumps({"event": "welcome", "session_generation": lease.session_generation}))
+            await self._welcome(socket, existing.bridge, lease)
             return existing, FragmentAssembler()
         bridge = Bridge(socket, bootstrap, lease)
         worker = ApiExecutor(bridge, lease.worker_id, remote_static=hello.form == "static")
-        await socket.send_text(json.dumps({"event": "welcome", "session_generation": lease.session_generation}))
+        await self._welcome(socket, bridge, lease)
         session = RemoteSession(
             bridge, worker, lease, owned_until=acquiring_at + DEFAULT_OWNER_LEASE_SECONDS
         )
@@ -1161,6 +1349,7 @@ async def start_remote_control_host(_application: Any) -> None:
     global _host
     if _host is None:
         _host = RemoteControlHost()
+        await _host.start()
 
 
 async def stop_remote_control_host() -> None:

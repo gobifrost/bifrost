@@ -20,6 +20,11 @@ from dataclasses import asdict, dataclass, field
 from collections.abc import Iterator
 from typing import Any, Mapping
 from uuid import UUID
+from shared.worker_compute import (
+    COMPUTE_CAPABILITIES,
+    LEGACY_WORKER_IMAGE_EXECUTION_HANDLERS,
+    WORKER_IMAGE_EXECUTION_HANDLERS,
+)
 
 
 AUTH_DOMAIN = b"bifrost.remote-control.hello.v1\0"
@@ -41,21 +46,54 @@ CREDENTIAL_PROTOCOL = 2
 
 # Exact handler versions a physical launcher can execute. Older launchers
 # advertised no list and implemented only workflow and agent-run commands.
-LEGACY_EXECUTION_HANDLERS = (("workflow.execute", 1), ("agent.run", 1))
-EXECUTION_HANDLERS = (
-    *LEGACY_EXECUTION_HANDLERS,
-    # Version 2 is lane-aware. Fast Path dispatches use it so an executor
-    # running a pre-lane build (which only advertises version 1) can never
-    # claim reserved work during a rolling upgrade.
-    ("workflow.execute", 2),
+LEGACY_EXECUTION_HANDLERS = LEGACY_WORKER_IMAGE_EXECUTION_HANDLERS
+EXECUTION_HANDLERS = WORKER_IMAGE_EXECUTION_HANDLERS
+SUMMARY_CLAIM_PROTOCOL = 1
+# Shared execution and capacity policy. Agent claims must respect the physical
+# compute-stage budget; excess work stays queued for another executor. Live
+# summaries keep their own slot so backfills cannot delay them.
+MAX_AGENT_COMPUTE_STAGES = 4
+HANDLER_CONCURRENCY_LIMITS = (
+    ("agent.run", MAX_AGENT_COMPUTE_STAGES),
     ("agent.summarize", 1),
     ("agent.summarize_backfill", 1),
 )
-SUMMARY_CLAIM_PROTOCOL = 1
-# Shared execution and capacity policy: live summaries never wait behind a
-# backfill, and adding physical workers adds one slot for each handler.
-HANDLER_CONCURRENCY_LIMITS = (("agent.summarize", 1), ("agent.summarize_backfill", 1))
 WORKER_DRAIN_GRACE_SECONDS = 300
+AGENT_COMPUTE_HANDLERS = frozenset({"agent.run", "agent.summarize", "agent.summarize_backfill"})
+
+
+def handler_slot_available(handler: str | None, slots: Mapping[str, int]) -> bool:
+    """Fit per-handler policy and the shared physical compute-stage budget."""
+    limits = dict(HANDLER_CONCURRENCY_LIMITS)
+    if handler not in limits:
+        return True
+    if slots.get(handler, 0) <= 0:
+        return False
+    if handler not in AGENT_COMPUTE_HANDLERS:
+        return True
+    occupied = sum(
+        limit - slots.get(name, 0)
+        for name, limit in HANDLER_CONCURRENCY_LIMITS
+        if name in AGENT_COMPUTE_HANDLERS
+    )
+    return occupied < MAX_AGENT_COMPUTE_STAGES
+
+
+def hello_compute_capabilities(frame: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:
+    """Negotiate compute stages independently of privileged job runners."""
+    advertised = frame.get("compute_capabilities", [])
+    if not isinstance(advertised, list) or len(advertised) > 64:
+        raise ProtocolError("launcher compute capabilities must be a bounded list")
+    pairs: list[tuple[str, int]] = []
+    for pair in advertised:
+        if (not isinstance(pair, list) or len(pair) != 2 or not isinstance(pair[0], str)
+                or type(pair[1]) is not int or pair[1] < 1):
+            raise ProtocolError("invalid compute capability version")
+        value = (pair[0], pair[1])
+        if value in pairs:
+            raise ProtocolError("duplicate compute capability")
+        pairs.append(value)
+    return tuple(capability for capability in COMPUTE_CAPABILITIES if capability in pairs)
 
 
 def hello_execution_handlers(frame: Mapping[str, Any]) -> tuple[tuple[str, int], ...]:

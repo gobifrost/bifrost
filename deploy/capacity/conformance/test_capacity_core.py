@@ -20,6 +20,7 @@ from capacity_core import (  # noqa: E402
     ProviderConfig,
     START_FACT_NEVER_STARTED,
     STATE_PREPARED,
+    profile_doc,
 )
 
 
@@ -146,6 +147,16 @@ class CapacityCoreConcurrencyTests(unittest.TestCase):
             max_lifetime_seconds=3600,
             starting_grace_seconds=0,
         )
+
+    def test_profile_is_hardware_and_build_only(self) -> None:
+        self.assertEqual(profile_doc(self.config()), {
+            "protocol_version": 1,
+            "scope": "test-scope",
+            "worker_version": "test-worker",
+            "memory_limit_bytes": 1024 * 1024 * 1024,
+            "max_workers": 2,
+            "max_lifetime_seconds": 3600,
+        })
 
     def reservation(self, worker_id: str) -> dict[str, object]:
         return {

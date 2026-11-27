@@ -11,9 +11,82 @@ import base64
 import functools
 import sys
 
+import pytest
+
 from src.models.enums import ExecutionStatus
 from src.sdk.context import Caller, Organization
 from src.services.execution.engine import ExecutionRequest, execute
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_oversized_local_stops_traversal_on_success_and_failure(fails):
+    """The output limit must bound work before a large local is discarded."""
+    _visited = [0]
+
+    class CountingList(list):
+        def __iter__(self):
+            for item in super().__iter__():
+                _visited[0] += 1
+                yield item
+
+    async def workflow():
+        values = CountingList(range(50_000))
+        if fails:
+            raise RuntimeError("expected workflow failure")
+        return len(values)
+
+    result = await execute(_request(func=workflow))
+
+    assert result.status == (ExecutionStatus.FAILED if fails else ExecutionStatus.SUCCESS)
+    assert result.variables["values"].endswith("truncated>")
+    assert _visited[0] < 10_000
+
+
+def test_small_variable_values_keep_types_shared_references_and_redaction():
+    from pydantic import BaseModel
+
+    from src.core.secret_string import REDACTED, SecretString
+    from src.services.execution.engine import _serialize_captured_variable
+
+    class Payload(BaseModel):
+        value: int
+
+    shared = {"value": 7}
+    cyclic = []
+    cyclic.append(cyclic)
+    value = {
+        "scalars": [None, True, 42, 1.5, "snowman \u2603"],
+        "tuple": (1, 2),
+        "shared": [shared, shared],
+        "cycle": cyclic,
+        "model": Payload(value=3),
+        "secret": SecretString("private-value"),
+        "unsupported": b"not-json",
+    }
+
+    assert _serialize_captured_variable(value) == {
+        "scalars": [None, True, 42, 1.5, "snowman \u2603"],
+        "tuple": (1, 2),
+        "shared": [{"value": 7}, {"value": 7}],
+        "cycle": ["[Circular Reference]"],
+        "model": {"value": 3},
+        "secret": REDACTED,
+        "unsupported": "<bytes>",
+    }
+
+
+@pytest.mark.parametrize("value", ["x" * 9_998, '"' * 4_999], ids=["plain_at_limit", "escaped_at_limit"])
+def test_variable_at_existing_json_size_limit_is_preserved(value):
+    from src.services.execution.engine import _serialize_captured_variable
+
+    assert _serialize_captured_variable(value) == value
+
+
+def test_oversized_secret_is_redacted_before_size_classification():
+    from src.core.secret_string import REDACTED, SecretString
+    from src.services.execution.engine import _serialize_captured_variable
+
+    assert _serialize_captured_variable(SecretString("s" * 50_000)) == REDACTED
 
 
 def _request(**overrides) -> ExecutionRequest:
@@ -207,3 +280,16 @@ async def test_monitoring_tool_id_is_freed_after_failing_workflow():
     assert result.status == ExecutionStatus.FAILED
     assert result.variables == {"marker": "captured from the traceback"}
     assert {t for t in range(6) if monitoring.get_tool(t) is not None} == tools_before
+
+
+async def test_large_parameter_capture_is_bounded_without_changing_execution_input():
+    async def workflow(payload: str):
+        return len(payload)
+
+    parameters = {"payload": "x" * 50_000}
+    result = await execute(_request(func=workflow, parameters=parameters))
+
+    assert result.status == ExecutionStatus.SUCCESS
+    assert result.result == 50_000
+    assert result.variables["payload"].endswith("truncated>")
+    assert len(parameters["payload"]) == 50_000

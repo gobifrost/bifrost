@@ -2,7 +2,7 @@
 
 from pydantic_ai.usage import RunUsage
 
-from src.services.agent_runtime import AgentRunBudget
+from src.services.agent_runtime.budgets import AgentRunBudget
 
 
 def test_child_wind_down_is_measured_from_its_inherited_usage_baseline() -> None:

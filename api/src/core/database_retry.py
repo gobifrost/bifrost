@@ -163,6 +163,7 @@ async def run_with_database_retry(
     *,
     description: str,
     budget: RetryBudget,
+    authorize: Callable[[S], Awaitable[None]] | None = None,
 ) -> T:
     """Run ``unit`` in a fresh session, retrying while the database is away
     or after PostgreSQL aborted it to resolve a conflict.
@@ -190,6 +191,8 @@ async def run_with_database_retry(
         db = session_factory()
         try:
             async with asyncio.timeout_at(deadline):
+                if authorize is not None:
+                    await authorize(db)
                 result = await unit(db)
         except BaseException as exc:
             await _release(db, discard=True)

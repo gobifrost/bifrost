@@ -2,7 +2,7 @@
 
 from pydantic_ai.usage import RunUsage
 
-from src.services.agent_runtime import AgentRunBudget
+from src.services.agent_runtime.budgets import AgentRunBudget
 
 
 def test_small_budget_reserves_a_final_request() -> None:

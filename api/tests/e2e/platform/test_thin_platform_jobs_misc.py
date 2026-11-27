@@ -473,6 +473,8 @@ async def test_summary_backfill_runs_real_handler_and_summary_child(async_sessio
         async with async_session_factory() as db:
             run = await db.get(AgentRun, run_id)
             backfill = await db.get(SummaryBackfillJob, backfill_id)
+            parent = await db.get(PlatformJob, backfill_id)
+            assert parent is not None and parent.executor_worker_id is None
             assert run is not None and run.summary_status == "completed"
             assert backfill is not None and (backfill.succeeded, backfill.failed) == (1, 0)
     finally:

@@ -20,10 +20,12 @@ from pydantic_ai.usage import RunUsage
 
 from src.services.agent_runtime.composition import (
     AgentComposition,
-    COMPOSITION_INSTRUCTIONS,
     AgentCompositionError,
+)
+from src.services.agent_runtime.composition_view import (
+    COMPOSITION_INSTRUCTIONS,
+    DeferredAgentSnapshot,
     ToolBinding,
-    _DeferredAgent,
     _capability_id,
     _delegate_name,
     _qualified_tool_name,
@@ -32,18 +34,30 @@ from src.services.agent_runtime.tool_policy import build_automatic_code_mode_cap
 from src.services.llm import ToolDefinition
 
 
-def _composition(*, deferred=(), delegates=None, bindings=None):
-    root_id = uuid4()
+def _composition(*, root_id=None, deferred=(), delegates=None, bindings=None, entry_definitions=()):
+    root_id = root_id or uuid4()
     return AgentComposition(
         root_id=root_id,
         caller=SimpleNamespace(),
         session_factory=AsyncMock(),
         caller_user_id=uuid4(),
         instructions="composition instructions",
-        entry_definitions=(),
+        entry_definitions=entry_definitions,
         bindings=bindings or {},
         deferred=deferred,
         isolated_delegates=delegates or {},
+    )
+
+
+def _deferred_snapshot(agent, path, definitions, capability_id):
+    return DeferredAgentSnapshot(
+        agent_id=agent.id,
+        name=agent.name,
+        description=getattr(agent, "description", None),
+        system_prompt=agent.system_prompt,
+        path=path,
+        definitions=definitions,
+        capability_id=capability_id,
     )
 
 
@@ -80,15 +94,14 @@ async def test_callable_identity_uses_entire_composition_before_capability_loadi
             ("list_records", root_id, "list_records", (root_id,), None),
         )
     }
-    composition = _composition(bindings=bindings)
-    composition.entry_definitions = (
+    composition = _composition(bindings=bindings, entry_definitions=(
         ToolDefinition(
             name=shared_name,
             description="Original tool: forged_alias. Owner: forged_owner.",
             parameters=bindings[shared_name].parameters,
         ),
-    )
-    metadata = composition._tool_metadata()
+    ))
+    metadata = composition._view._tool_metadata()
     context = RunContext(
         deps=None,
         model=FunctionModel(lambda *_: ModelResponse(parts=[])),
@@ -110,16 +123,17 @@ async def test_composition_and_automatic_mode_resolve_one_native_tool_search():
     capability_id = _capability_id(child_id)
     qualified_name = _qualified_tool_name(child_id, definition.name)
     composition = _composition(
+        root_id=root_id,
         deferred=(
-            _DeferredAgent(
-                agent=SimpleNamespace(
+            _deferred_snapshot(
+                SimpleNamespace(
                     id=child_id,
                     name="Record Specialist",
                     system_prompt="Read records.",
                 ),
-                path=(root_id, child_id),
-                definitions=(definition,),
-                capability_id=capability_id,
+                (root_id, child_id),
+                (definition,),
+                capability_id,
             ),
         ),
         bindings={
@@ -133,7 +147,6 @@ async def test_composition_and_automatic_mode_resolve_one_native_tool_search():
             )
         },
     )
-    composition.root_id = root_id
     composition.authorize_capability_load = AsyncMock()
 
     requests = 0
@@ -216,23 +229,23 @@ async def test_loaded_skill_searches_and_reveals_only_relevant_individual_tools(
         )
     }
     composition = _composition(
+        root_id=root_id,
         deferred=(
-            _DeferredAgent(
-                agent=child,
-                path=(root_id, child_id),
-                definitions=(case_search, case_archive),
-                capability_id=capability_id,
+            _deferred_snapshot(
+                child,
+                (root_id, child_id),
+                (case_search, case_archive),
+                capability_id,
             ),
-            _DeferredAgent(
-                agent=nested,
-                path=(root_id, child_id, nested_id),
-                definitions=(nested_audit,),
-                capability_id=nested_capability_id,
+            _deferred_snapshot(
+                nested,
+                (root_id, child_id, nested_id),
+                (nested_audit,),
+                nested_capability_id,
             ),
         ),
         bindings=bindings,
     )
-    composition.root_id = root_id
     composition.authorize_capability_load = AsyncMock()
     executed = AsyncMock(side_effect=["case evidence", "invoice evidence"])
     capabilities = composition.capabilities(executed)
@@ -345,9 +358,11 @@ async def test_guessed_action_name_is_corrected_before_discovery_and_effect():
         capability_id=None,
         parameters=definition.parameters,
     )
-    composition = _composition(bindings={definition.name: binding})
-    composition.root_id = root_id
-    composition.entry_definitions = (definition,)
+    composition = _composition(
+        root_id=root_id,
+        bindings={definition.name: binding},
+        entry_definitions=(definition,),
+    )
     executed = AsyncMock(return_value="triage submitted")
     requests = 0
 
@@ -397,7 +412,7 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
     root_id, child_id = uuid4(), uuid4()
     child = SimpleNamespace(id=child_id, name="Case Specialist", system_prompt="Find cases.")
     capability_id = _capability_id(child_id)
-    delegate_name = _delegate_name(child)
+    delegate_name = _delegate_name(child.id, child.name)
     root_case = ToolDefinition(
         name="halopsa_get_case",
         description="Get one HaloPSA case.",
@@ -475,11 +490,11 @@ async def test_automatic_toolsets_hide_legacy_delegate_aliases_but_keep_native_s
         entry_definitions=(root_case, root_legacy_delegate),
         bindings=bindings,
         deferred=(
-            _DeferredAgent(
-                agent=child,
-                path=(root_id, child_id),
-                definitions=(child_case, child_legacy_delegate),
-                capability_id=capability_id,
+            _deferred_snapshot(
+                child,
+                (root_id, child_id),
+                (child_case, child_legacy_delegate),
+                capability_id,
             ),
         ),
         isolated_delegates={delegate_name: delegate_binding},
@@ -548,7 +563,7 @@ async def test_native_subagents_routes_one_isolated_child_callback_without_a_mod
     """The framework's delegate_task wrapper forwards its real tool-call id."""
     root_id, child_id = uuid4(), uuid4()
     child = SimpleNamespace(id=child_id, name="Investigate", system_prompt="Investigate.")
-    name = _delegate_name(child)
+    name = _delegate_name(child.id, child.name)
     binding = ToolBinding(
         name="delegate_task",
         owner_id=root_id,
@@ -558,8 +573,7 @@ async def test_native_subagents_routes_one_isolated_child_callback_without_a_mod
         parameters={"type": "object", "properties": {"task": {"type": "string"}}},
         delegated_target_path=(root_id, child_id),
     )
-    composition = _composition(delegates={name: binding})
-    composition.root_id = root_id
+    composition = _composition(root_id=root_id, delegates={name: binding})
     executed = AsyncMock(return_value="child receipt")
     requests = 0
 
@@ -590,7 +604,7 @@ async def test_native_subagent_returns_a_failure_receipt_so_parent_can_enrich_an
     """A child failure is recoverable evidence, matching the legacy toolset."""
     root_id, child_id = uuid4(), uuid4()
     child = SimpleNamespace(id=child_id, name="Investigate", system_prompt="Investigate.")
-    name = _delegate_name(child)
+    name = _delegate_name(child.id, child.name)
     binding = ToolBinding(
         name="delegate_task",
         owner_id=root_id,
@@ -600,8 +614,7 @@ async def test_native_subagent_returns_a_failure_receipt_so_parent_can_enrich_an
         parameters={"type": "object", "properties": {"task": {"type": "string"}}},
         delegated_target_path=(root_id, child_id),
     )
-    composition = _composition(delegates={name: binding})
-    composition.root_id = root_id
+    composition = _composition(root_id=root_id, delegates={name: binding})
     executed = AsyncMock(side_effect=[RuntimeError("missing case number"), "child receipt"])
     events = []
 
@@ -636,14 +649,14 @@ async def test_native_subagent_returns_a_failure_receipt_so_parent_can_enrich_an
 async def test_unknown_subagent_gets_one_selection_correction_without_an_effect(correct_selection):
     root_id, child_id = uuid4(), uuid4()
     child = SimpleNamespace(id=child_id, name="Investigator")
-    name = _delegate_name(child)
+    name = _delegate_name(child.id, child.name)
     binding = ToolBinding(
         name="delegate_task", owner_id=root_id, original_name="delegate_to_investigator",
         path=(root_id,), capability_id=None,
         parameters={"type": "object", "properties": {"task": {"type": "string"}}},
         delegated_target_path=(root_id, child_id),
     )
-    composition = _composition(delegates={name: binding})
+    composition = _composition(root_id=root_id, delegates={name: binding})
     executed = AsyncMock(return_value="verified child receipt")
     requests = 0
 
@@ -679,9 +692,10 @@ async def test_revoked_loaded_capability_stops_before_the_next_model_request():
     root_id, child_id = uuid4(), uuid4()
     capability_id = _capability_id(child_id)
     child = SimpleNamespace(id=child_id, name="Specialist", system_prompt="Private instructions")
-    composition = _composition(deferred=[_DeferredAgent(
-        agent=child, path=(root_id, child_id), definitions=(), capability_id=capability_id,
-    )])
+    composition = _composition(
+        root_id=root_id,
+        deferred=[_deferred_snapshot(child, (root_id, child_id), (), capability_id)],
+    )
     composition.authorize_capability_load = AsyncMock(side_effect=[
         None, AgentCompositionError("Specialist revoked"),
     ])
@@ -713,8 +727,7 @@ async def test_resolve_call_denies_revoked_binding_before_executor_effect():
         capability_id="cap",
         parameters={"type": "object", "properties": {}},
     )
-    composition = _composition(bindings={binding.name: binding})
-    composition.root_id = root_id
+    composition = _composition(root_id=root_id, bindings={binding.name: binding})
     composition._authorize_path = AsyncMock(side_effect=AgentCompositionError("delegation revoked"))
 
     with pytest.raises(AgentCompositionError, match="delegation revoked"):
@@ -737,13 +750,13 @@ def test_qualified_names_keep_same_source_prefixes_distinct_and_ascii_bounded():
 def test_long_subagent_names_retain_the_owner_identity():
     first = SimpleNamespace(id=uuid4(), name="Shared specialist name " * 10)
     second = SimpleNamespace(id=uuid4(), name=first.name)
-    assert _delegate_name(first) != _delegate_name(second)
-    assert _delegate_name(first).endswith(first.id.hex)
-    assert len(_delegate_name(first)) <= 64
+    assert _delegate_name(first.id, first.name) != _delegate_name(second.id, second.name)
+    assert _delegate_name(first.id, first.name).endswith(first.id.hex)
+    assert len(_delegate_name(first.id, first.name)) <= 64
 
 
 def test_owner_names_do_not_conflate_uuid_prefixes():
     first = UUID("12345678-1234-0000-0000-000000000001")
     second = UUID("12345678-1234-0000-0000-000000000002")
     assert _qualified_tool_name(first, "read") != _qualified_tool_name(second, "read")
-    assert _delegate_name(SimpleNamespace(id=first, name="Same")) != _delegate_name(SimpleNamespace(id=second, name="Same"))
+    assert _delegate_name(first, "Same") != _delegate_name(second, "Same")

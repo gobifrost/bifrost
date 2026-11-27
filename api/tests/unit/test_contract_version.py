@@ -431,10 +431,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Inline-code permission clarification only changes an existing field description.
-    # CLI shapes and MIN_CLI_VERSION remain unchanged.
+    # Hardware-only capacity profiles and optional PlatformJob attribution
+    # preserve the CLI/SDK wire shapes and MIN_CLI_VERSION.
+    # Inline-code permission clarification is description-only.
     # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
-    "bcc313841033d8484cf4c62b0e6af6365c2a0706a206104eb744bf4a2072c1a2"
+    "0a2823174ef129f3cf1b0f52f745856749a9233f2cc38369b4f25df7ba6c1bb0"
 )
 
 

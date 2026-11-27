@@ -1012,8 +1012,10 @@ async def _backfill_job_in_reach(db, caller, job: SummaryBackfillJob, reach) -> 
     """A backfill job inherits the actual organization of its selected Agent."""
     if job.agent_id is None:
         return reach.everything or job.requested_by == caller_user_id(caller)
-    organization_id = await db.scalar(select(Agent.organization_id).where(Agent.id == job.agent_id))
-    return organization_id is not None and reach.covers(organization_id) and user_reach(caller).covers(organization_id)
+    agent = await db.get(Agent, job.agent_id)
+    if agent is None:
+        return False
+    return reach.covers(agent.organization_id) and user_reach(caller).covers(agent.organization_id)
 
 
 async def _estimate_per_run_cost(db, *, reach) -> tuple[Decimal, str]:  # type: ignore[no-untyped-def]

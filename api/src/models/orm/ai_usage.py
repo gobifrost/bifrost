@@ -80,6 +80,11 @@ class AIUsage(Base):
     __tablename__ = "ai_usage"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    # A provider-operation receipt makes a retried remote acknowledgement
+    # idempotent without changing ordinary usage recording.
+    receipt_id: Mapped[UUID | None] = mapped_column(
+        PG_UUID(as_uuid=True), nullable=True, default=None
+    )
 
     # Context - at least one must be set
     # Plain stamp, no FK: usage outlives its run (run retention).
@@ -149,6 +154,7 @@ class AIUsage(Base):
     user: Mapped["User | None"] = relationship()
 
     __table_args__ = (
+        UniqueConstraint("receipt_id", name="uq_ai_usage_receipt_id"),
         CheckConstraint(
             "execution_id IS NOT NULL OR conversation_id IS NOT NULL OR agent_run_id IS NOT NULL",
             name="ai_usage_context_check",

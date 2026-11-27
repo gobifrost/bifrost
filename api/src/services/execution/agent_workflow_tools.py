@@ -123,7 +123,7 @@ async def execute_agent_workflow_tool(
         elif caller_solution_id is not None and not await solution_allows_global(db, caller_solution_id):
             raise AgentWorkflowAuthorizationError("Workflow tool is not available to this Solution")
 
-        response = await execute_tool(
+        execution_kwargs: dict[str, Any] = dict(
             workflow_id=str(workflow.id),
             workflow_name=workflow.name,
             parameters=parameters,
@@ -142,4 +142,7 @@ async def execute_agent_workflow_tool(
             lineage=await principal_lineage(db, refreshed.principal),
         )
         await db.commit()
-        return response
+
+    # Waiting for a workflow must not retain an API database connection: its
+    # worker needs that same pool to resolve SDK requests and publish results.
+    return await execute_tool(**execution_kwargs)

@@ -286,6 +286,9 @@ async def test_background_transport_logging_respects_control_authentication(
     with (
         patch("src.worker.remote.launcher.connect_control", new=connected),
         patch("src.worker.remote.launcher.load_launcher_identity", return_value=Mock()),
+        # This transport test owns no physical template processes. Isolate all
+        # profiles, including agent warmups that precede Launcher.start().
+        patch("src.worker.remote.launcher.TemplateProcess"),
         patch.object(Launcher, "hello", new=hello),
         patch.object(Launcher, "start", new=AsyncMock()),
         patch.object(Launcher, "stop", new=AsyncMock()),

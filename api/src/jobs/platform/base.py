@@ -4,13 +4,21 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Awaitable, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, Mapping
 from uuid import UUID
 
 from pydantic import BaseModel
 
 from src.jobs.platform.catalog import get_platform_job_metadata
 from src.jobs.platform.policy import PlatformJobPolicy
+
+if TYPE_CHECKING:
+    from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+
+AppBuildCompute = Callable[["AppBuildInputs"], Awaitable["AppBuildResult"]]
+AppBuildAuthorization = Callable[["AsyncSession"], Awaitable[bool]]
 
 
 class PlatformJobFailure(Exception):
@@ -62,6 +70,35 @@ class PlatformJobContext:
     impersonated_by_user_id: UUID | None = None
     impersonation_session_id: UUID | None = None
     checkpoint: dict[str, Any] | None = None
+    # The API host injects this only for the supported remote App build stage.
+    # Job handlers retain their ordinary local compiler path when it is absent.
+    app_build_compute: AppBuildCompute | None = field(
+        default=None, repr=False, compare=False
+    )
+
+    async def authorize_effect(self, db: "AsyncSession") -> bool:
+        """Fence an App activation to this still-running job attempt.
+
+        The remote-worker owner is locked first, then this PlatformJob lease,
+        so the caller can take the App row lock only after both remain current.
+        """
+        from sqlalchemy import select
+
+        from src.models.orm.platform_jobs import PlatformJob
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(db):
+            return False
+        job_id = await db.scalar(
+            select(PlatformJob.id)
+            .where(
+                PlatformJob.id == self.job_id,
+                PlatformJob.lease_token == self.lease_token,
+                PlatformJob.status == "running",
+            )
+            .with_for_update()
+        )
+        return job_id is not None
 
     async def report(
         self,

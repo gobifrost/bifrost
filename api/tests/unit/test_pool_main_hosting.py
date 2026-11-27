@@ -91,7 +91,9 @@ async def test_a_platform_job_holds_its_memory_only_while_it_runs(monkeypatch) -
     seen: list[tuple[bool, int]] = []
     fits: list[int] = []
 
-    async def claim_platform_job(*, backend, fits_bytes):  # type: ignore[no-untyped-def]
+    async def claim_platform_job(*, backend, fits_bytes, job_types, executor_worker_id):  # type: ignore[no-untyped-def]
+        assert "oauth.refresh" not in job_types
+        assert executor_worker_id == worker.incarnation_id
         fits.append(fits_bytes)
         return claim if len(fits) == 1 else None
 

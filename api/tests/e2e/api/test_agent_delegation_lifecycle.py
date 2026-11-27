@@ -25,7 +25,7 @@ from src.core.principal import UserPrincipal
 from src.models.orm.agents import Agent, AgentDelegation, Conversation
 from src.models.orm.agent_runs import AgentRun
 from src.services.agent_executor import AgentExecutor
-from src.services.agent_runtime.composition import _delegate_name
+from src.services.agent_runtime.composition_view import _delegate_name
 from src.services.authorization.callers import load_human_caller
 from src.services.authorization.enforce import load_caller
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
@@ -517,7 +517,9 @@ async def test_chat_executor_receives_durable_child_callback(
                 for item in conversation.agent.delegated_agents
                 if item.id == UUID(child["id"])
             )
-            parent_model = DelegatingTestModel(_delegate_name(delegated_child))
+            parent_model = DelegatingTestModel(
+                _delegate_name(delegated_child.id, delegated_child.name)
+            )
 
             assert platform_admin.user_id is not None
             principal = UserPrincipal(

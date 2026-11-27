@@ -6,8 +6,9 @@ Records every step as an AgentRunStep for full observability.
 Connection management: This executor uses a Redis-first pattern — steps and AI
 usage are buffered in memory/Redis during execution. DB connections are only
 acquired briefly for reads (tool resolution, LLM config, knowledge search) and
-released immediately. All buffered data is flushed to Postgres in a single
-batch after the run completes via flush_to_db().
+released immediately. Local runs flush buffered data after completion. Remote
+compute checkpoints each completed event to Postgres before acknowledging it,
+so an API ownership handoff preserves known provider usage and effect receipts.
 """
 import asyncio
 import json
@@ -26,7 +27,6 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.orm import selectinload
-from pydantic_ai import Agent as PydanticAgent
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.usage import RunUsage
 
@@ -52,22 +52,21 @@ from src.services.execution.agent_workflow_tools import (
     execute_agent_workflow_tool,
     workflow_failure_receipt,
 )
-from src.services.agent_runtime import (
+from src.services.agent_runtime.budgets import (
     AgentRunBudget,
-    AgentRunCancelled,
-    BifrostToolset,
-    ModelCallEvent,
+)
+from src.services.agent_runtime.errors import AgentRunCancelled
+from src.services.agent_runtime.model_failover import build_chain_model
+from src.services.agent_runtime.observed_model import ModelCallEvent
+from src.services.agent_runtime.toolset import (
     ToolEvent,
     bound_tool_result_for_model,
-    build_chain_model,
-    build_runtime_capabilities,
-    provider_reported_cost,
-    reasoning_tokens,
 )
+from src.services.agent_runtime.usage import provider_reported_cost, reasoning_tokens
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
-from src.services.agent_runtime.composition import build_agent_composition
-from src.services.agent_runtime.tool_policy import build_automatic_code_mode_capabilities
-from src.services.agent_runtime.toolset import code_mode_safe_name_map
+from src.services.agent_runtime.composition import AgentCompositionError, build_agent_composition
+from src.services.agent_runtime.compute import AgentRuntimePlan
+from src.services.agent_runtime.compute_execution import build_agent_runtime, is_agent_compute_execution
 from src.services.ai_behavior_service import (
     AGENT_EXECUTION_MODE_METADATA_KEY,
     AgentExecutionMode,
@@ -369,6 +368,7 @@ class AutonomousAgentExecutor:
         # Buffers for Redis-first pattern (flushed to DB after run completes)
         self._pending_steps: list[dict[str, Any]] = []
         self._pending_ai_usage: list[dict[str, Any]] = []
+        self._checkpoint_lock = asyncio.Lock()
         # Terminal child outcomes belonging to this executor. This closes the
         # cancellation gap where a nested child is finalized but its parent
         # never receives a BifrostToolset result event before cancellation.
@@ -727,24 +727,6 @@ class AutonomousAgentExecutor:
             self._agent_execution_mode == "automatic"
             and (tool_definitions or composition is not None)
         )
-        toolset = (
-            composition.entry_toolset(
-                execute_tool,
-                event_handler=record_tool_event,
-                toolset_id=f"bifrost-{agent.id}",
-            )
-            if composition is not None
-            else BifrostToolset(
-                tool_definitions,
-                execute_tool,
-                event_handler=record_tool_event,
-                toolset_id=f"bifrost-{agent.id}",
-            )
-        )
-        if automatic_code_mode and composition is None:
-            toolset = toolset.renamed(
-                code_mode_safe_name_map(tuple(definition.name for definition in tool_definitions))
-            )
         # Blank / repetitive no-tool completions are billed like real output
         # (observed: 131072 output tokens with zero visible content and zero
         # tool calls). Pydantic AI treats them as valid final output, so the
@@ -753,33 +735,30 @@ class AutonomousAgentExecutor:
         # Usage for every attempt — including rejected ones — is already
         # charged to the shared UsageLimits ledger by ObservedModel.
         empty_output_guard = EmptyOutputCircuitBreaker()
-        automatic_code_mode_capabilities = (
-            build_automatic_code_mode_capabilities()
-                if automatic_code_mode
-            else []
-        )
-        runtime = PydanticAgent(
-            chain.model,
-            system_prompt=build_agent_system_prompt(
-                agent,
-                execution_context={"mode": "autonomous"},
+        plan = AgentRuntimePlan.from_budget(
+            surface="autonomous",
+            prompt=build_agent_system_prompt(
+                agent, execution_context={"mode": "autonomous"},
             ) + (composition.instructions if composition is not None else ""),
-            toolsets=[toolset] if tool_definitions else [],
-            capabilities=[
-                *build_runtime_capabilities(budget, context_window=context_window),
-                empty_output_guard,
-                *(composition.capabilities(
-                    execute_tool,
-                    record_tool_event,
-                ) if composition is not None else []),
-                *automatic_code_mode_capabilities,
-            ],
-            model_settings=chain.primary_settings,
-            # One bounded correction for malformed tool names/arguments. The
-            # shared UsageLimits ledger charges the retry to the parent run.
-            retries=1,
-            end_strategy="exhaustive",
+            definitions=tool_definitions,
+            composition_snapshot=composition.snapshot if composition is not None else None,
+            budget=budget,
+            context_window=context_window,
+            automatic_code_mode=bool(automatic_code_mode),
+            runtime_id=run_id,
+            toolset_id=f"bifrost-{agent.id}",
+            empty_output_guard=True,
         )
+        built = build_agent_runtime(
+            plan, model=chain.model, executor=execute_tool,
+            event_handler=record_tool_event, model_settings=chain.primary_settings,
+            usage=usage, empty_output_guard=empty_output_guard,
+            capability_load_authorizer=(
+                composition.authorize_capability_load if composition is not None else None
+            ),
+            composition_error_type=AgentCompositionError,
+        )
+        runtime = built.runtime
 
         user_content = json.dumps(input_data) if input_data else "Run your task."
         if output_schema:
@@ -907,9 +886,13 @@ class AutonomousAgentExecutor:
         The buffers are kept, so a transaction that fails can be retried;
         a retrying caller checks :meth:`is_flushed` first.
         """
-        # Flush steps from this executor
-        if self._pending_steps:
-            for step_data in self._pending_steps:
+        await self._flush_rows(session, self._pending_steps, self._pending_ai_usage)
+
+    async def _flush_rows(
+        self, session: AsyncSession, steps: list[dict[str, Any]], usages: list[dict[str, Any]],
+    ) -> None:
+        if steps:
+            for step_data in steps:
                 step = AgentRunStep(
                     id=UUID(step_data["id"]),
                     run_id=UUID(step_data["run_id"]),
@@ -922,10 +905,10 @@ class AutonomousAgentExecutor:
                 session.add(step)
 
         # Flush AI usage from this executor
-        if self._pending_ai_usage and self.redis_client:
+        if usages and self.redis_client:
             from src.services.ai_usage_service import record_ai_usage
 
-            for usage in self._pending_ai_usage:
+            for usage in usages:
                 try:
                     await record_ai_usage(
                         session=session,
@@ -1739,6 +1722,61 @@ class AutonomousAgentExecutor:
     # ------------------------------------------------------------------
 
     async def _record_step(
+        self, run_id: str, step_number: int, step_type: str,
+        content: dict | None = None, *, tokens_used: int | None = None,
+        duration_ms: int | None = None,
+    ) -> None:
+        if not is_agent_compute_execution():
+            await self._record_step_buffered(
+                run_id, step_number, step_type, content,
+                tokens_used=tokens_used, duration_ms=duration_ms,
+            )
+            return
+        async with self._checkpoint_lock:
+            await self._record_step_buffered(
+                run_id, step_number, step_type, content,
+                tokens_used=tokens_used, duration_ms=duration_ms,
+            )
+            await self._persist_compute_checkpoint()
+
+    async def _persist_compute_checkpoint(self) -> None:
+        """Persist known provider/effect evidence before acknowledging compute.
+
+        These rows describe operations already authorized and performed. They
+        remain valid if an API owner loses its lease while inference finishes;
+        terminal run state and future effects retain their separate fences.
+        """
+        from src.core.database_retry import RetryBudget, run_with_database_retry
+
+        steps, usages = list(self._pending_steps), list(self._pending_ai_usage)
+        if not steps:
+            return
+        first_id = UUID(steps[0]["id"])
+
+        async def persist(db: AsyncSession) -> None:
+            if await db.scalar(select(AgentRunStep.id).where(AgentRunStep.id == first_id)):
+                return
+            await self._flush_rows(db, steps, usages)
+            await db.commit()
+
+        async def checkpoint() -> None:
+            await run_with_database_retry(
+                self._session_factory, persist,
+                description=f"agent compute evidence {first_id}", budget=RetryBudget(),
+            )
+            del self._pending_steps[:len(steps)]
+            del self._pending_ai_usage[:len(usages)]
+
+        pending = asyncio.create_task(checkpoint())
+        try:
+            await asyncio.shield(pending)
+        except asyncio.CancelledError:
+            # The retry budget bounds this drain. Completed inference/effects
+            # still need their evidence committed when the owner is cancelled.
+            await pending
+            raise
+
+    async def _record_step_buffered(
         self,
         run_id: str,
         step_number: int,

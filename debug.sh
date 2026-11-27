@@ -205,6 +205,11 @@ apply_netbird_public_url() {
     export BIFROST_PUBLIC_URL BIFROST_WEBAUTHN_ORIGIN BIFROST_WEBAUTHN_RP_ID
 
     for service in api scheduler worker; do
+        # A provider-only rehearsal intentionally has no local executors.
+        if [ -z "$(docker ps -q --filter "label=com.docker.compose.project=$COMPOSE_PROJECT_NAME" \
+            --filter "label=com.docker.compose.service=$service")" ]; then
+            continue
+        fi
         if [ "$(service_public_url "$service")" != "$public_url" ]; then
             needs_recreate="true"
             break

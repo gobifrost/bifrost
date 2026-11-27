@@ -22,7 +22,7 @@ from sqlalchemy import delete, select
 
 from src.models.orm.agent_runs import AgentRun, AgentRunStep
 from src.models.orm.executions import Execution
-from src.services.agent_runtime.composition import _qualified_tool_name
+from src.services.agent_runtime.composition_view import _qualified_tool_name
 from src.services.execution.autonomous_agent_executor import AutonomousAgentExecutor
 from src.services.llm.base import LLMConfig
 from tests.e2e.api.test_agent_capability_composition import (

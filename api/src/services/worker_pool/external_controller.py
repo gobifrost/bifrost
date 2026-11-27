@@ -11,15 +11,19 @@ import httpx
 from sqlalchemy import and_, select, update
 
 from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
+from shared.worker_compute import (
+    WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES,
+    WORKER_IMAGE_HANDLER_NAMES,
+)
 from src.config import Settings
 from src.core.database import get_db_context
 from src.models.orm.execution_workers import ExecutionWorker
 from src.services.kubernetes_execution import KubernetesPolicy
 from src.services.worker_pool.controller import (
-    LIVE_STATES, RECONCILE_SECONDS, SWEEP_SECONDS, LiveControllers, WorkerCapacityController, _now,
-    _withdraw_live,
+    LIVE_STATES, RECONCILE_SECONDS, SWEEP_SECONDS, WorkerCapacityController, _now, _withdraw_live,
 )
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
+from src.services.worker_pool.demand import APP_COMPILE_CAPABILITY, EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
 from src.services.worker_pool.external_policy import validate_external_policy
 from src.services.worker_pool.liveness import silent_executor
 from src.services.worker_pool.recovery import announce_lost_runs, end_runs_of_lost_worker
@@ -46,10 +50,10 @@ class _ProfileRefreshRequired(Exception):
 class ExternalWorkerPoolController(WorkerCapacityController):
     def __init__(self, client: ExternalCapacityClient, settings: Settings, profile: WorkerCapacityProfile) -> None:
         super().__init__(settings, worker_form="external")
+        if profile.worker_version != self.version:
+            raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.client = client
         self.profile = profile
-        self.version = profile.worker_version
-        self.live = LiveControllers(ids=frozenset({self.id}), versions=frozenset({self.version}))
         self.cleanup_states = ("lost", "retired")
         # Whether this pass has read the provider's capabilities.
         self._profile_read = False
@@ -59,6 +63,12 @@ class ExternalWorkerPoolController(WorkerCapacityController):
 
     def _managed_scope(self) -> Any:
         return and_(ExecutionWorker.form == "external", ExecutionWorker.capacity_scope == self.profile.scope)
+
+    def _live_scope(self) -> str:
+        return f"external:{self.profile.scope}"
+
+    def _owns_managed_worker(self, worker: ExecutionWorker) -> bool:
+        return worker.form == "external" and worker.capacity_scope == self.profile.scope
 
     def _cleanup_scope(self) -> Any:
         # An outage must not turn an unconfirmed physical deletion into an orphan.
@@ -71,6 +81,24 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         if not self._profile_read:
             raise _ProfileRefreshRequired
         return {"capacity_scope": self.profile.scope, "version": self.profile.worker_version}
+
+    def _planner_execution_handlers(self) -> tuple[str, ...]:
+        return WORKER_IMAGE_HANDLER_NAMES
+
+    def _planner_compute_capabilities(self) -> tuple[str, ...]:
+        return WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
+
+    def _planner_platform_job_types(self) -> frozenset[str]:
+        return EXTERNAL_COMPUTE_PLATFORM_JOB_TYPES
+
+    def _platform_request_capability(self) -> str | None:
+        return APP_COMPILE_CAPABILITY
+
+    def _worker_contributes_to_planner(self, worker: ExecutionWorker) -> bool:
+        return bool(
+            set(worker.supported_handlers).intersection(WORKER_IMAGE_HANDLER_NAMES)
+            or set(worker.supported_compute).intersection(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
+        )
 
     def _sizing(self, policy: KubernetesPolicy, workers: Any) -> JobSizing:
         try:
@@ -99,8 +127,9 @@ class ExternalWorkerPoolController(WorkerCapacityController):
         current = await self.client.profile()
         if current.scope != self.profile.scope:
             raise CapacityProtocolError("Capacity provider scope changed; drain the original provider first")
+        if current.worker_version != self.version:
+            raise CapacityProtocolError("Capacity provider build must match the running API build")
         self.profile = current
-        self.version = current.worker_version
         self._profile_read = True
 
     async def launch_for_demand(self, policy: KubernetesPolicy) -> list[UUID]:
@@ -196,7 +225,20 @@ class ExternalWorkerPoolController(WorkerCapacityController):
             return
         reason = None
         if resource is None or resource.state in ("deleted", "stopped"):
-            reason = "provider_resource_stopped"
+            if resource is None and state == "starting":
+                if _now() - created_at >= timedelta(seconds=self.settings.pool_start_timeout_seconds):
+                    reason = "start_timeout"
+                elif _now() - created_at < timedelta(
+                    seconds=self.settings.pool_provisioning_grace_seconds
+                ):
+                    # A provider read can lag a successful start. Only an
+                    # absent resource during its bounded visibility window is
+                    # ambiguous; explicit terminal reports still fence now.
+                    return
+                else:
+                    reason = "provider_resource_stopped"
+            else:
+                reason = "provider_resource_stopped"
         elif state == "starting":
             if _now() - created_at >= timedelta(seconds=self.settings.pool_start_timeout_seconds):
                 reason = "start_timeout"

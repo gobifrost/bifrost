@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import select
 
-from src.jobs.platform.base import PlatformJobFailure
+from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 
 
 def test_sdk_update_definition_is_registered_with_expected_policy() -> None:
@@ -55,6 +55,7 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         sdk_built_at=built_at,
     )
     events: list[tuple[str, object]] = []
+    compute = object()
 
     class DB:
         async def get(self, _model, requested_id):
@@ -63,6 +64,10 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
 
     class Context:
         job_id = uuid4()
+        app_build_compute = compute
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, message: str, *, percent: int | None = None):
             events.append(("report", (message, percent)))
@@ -94,6 +99,7 @@ async def test_sdk_update_resolves_source_and_uses_shared_build_service(
         assert kwargs["target_sdk_binding_api_major"] == 1
         assert kwargs["automatic_upgrade"] is False
         assert kwargs["retain_previous_deployment"] is False
+        assert kwargs["app_build_compute"] is compute
         return {"application_id": str(app_id), "deployment_id": str(new_id)}
 
     monkeypatch.setattr(job, "get_db_context", lambda: db_context())
@@ -154,6 +160,11 @@ async def test_legacy_sdk_update_uses_original_manual_build_arguments(
     class Context:
         async def report(self, *_args, **_kwargs):
             pass
+
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
     @asynccontextmanager
     async def db_context():
@@ -219,6 +230,10 @@ async def test_sdk_update_source_unavailable_is_platform_job_failure(
 
     class Context:
         job_id = uuid4()
+        app_build_compute = None
+
+        async def authorize_effect(self, _db):
+            return True
 
         async def report(self, *_args, **_kwargs):
             pass
@@ -320,6 +335,94 @@ async def test_shared_rebuild_preserves_active_on_failure_and_cleans_new_artifac
         ("delete_source", (app_id, new_id)),
         ("delete_dist", (app_id, new_id)),
     ]
+
+
+@pytest.mark.asyncio
+async def test_shared_rebuild_refuses_stale_authorization_before_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from src.services import application_build
+    from src.services.application_source_resolver import ResolvedApplicationSource
+
+    app_id, old_id, new_id = uuid4(), uuid4(), uuid4()
+    app = SimpleNamespace(
+        id=app_id,
+        solution_id=None,
+        app_model="standalone_v2",
+        active_deployment_id=old_id,
+        deployed_at=None,
+        sdk_package_version="old",
+        sdk_fingerprint="old-fp",
+        sdk_contract_version=1,
+        sdk_binding_api_major=None,
+        sdk_built_at=datetime(2026, 1, 1, tzinfo=timezone.utc),
+    )
+    events: list[str] = []
+
+    class Builder:
+        last_build_identity = None
+
+        def compile_dist(self, *_args):
+            return {"index.html": b"built"}
+
+        async def upload_deployment(self, *_args):
+            events.append("upload")
+
+        async def delete_deployment(self, *_args):
+            events.append("delete_dist")
+
+    class SourceArtifacts:
+        async def write_deployment_source(self, *_args):
+            events.append("write_source")
+
+        async def delete_deployment_source(self, *_args):
+            events.append("delete_source")
+
+    class DB:
+        async def get(self, *_args):
+            raise AssertionError("stale attempt must not lock or activate the App")
+
+    db = DB()
+
+    @asynccontextmanager
+    async def db_context():
+        yield db
+
+    async def stale_attempt(received_db):
+        assert received_db is db
+        events.append("authorize")
+        return False
+
+    monkeypatch.setattr(application_build, "SolutionAppBuilder", Builder)
+    monkeypatch.setattr(
+        application_build, "ApplicationSourceArtifactStorage", SourceArtifacts
+    )
+    monkeypatch.setattr(application_build, "get_db_context", lambda: db_context())
+    monkeypatch.setattr(
+        application_build,
+        "current_sdk_metadata",
+        lambda: SimpleNamespace(
+            package_version="1.2.3",
+            fingerprint="new-fp",
+            contract_version=7,
+            binding_api_major=None,
+        ),
+    )
+
+    with pytest.raises(PlatformJobCancelled):
+        await application_build.rebuild_application_from_source(
+            application=app,
+            deployment_id=new_id,
+            source=ResolvedApplicationSource(
+                files={"package.json": b"{}", "index.html": b"<div id='root'></div>"},
+                dependencies={},
+                source_kind="independent",
+            ),
+            app_build_authorization=stale_attempt,
+        )
+
+    assert app.active_deployment_id == old_id
+    assert events == ["upload", "write_source", "authorize", "delete_source", "delete_dist"]
 
 
 @pytest.mark.asyncio

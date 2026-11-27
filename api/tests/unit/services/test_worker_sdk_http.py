@@ -1461,7 +1461,7 @@ class TestEngineLocalTransportSelection:
     @pytest.mark.asyncio
     async def test_ai_stream_serves_real_sse_route_over_socket(self):
         """``ai.stream`` reads the mounted SSE route over the injected socket."""
-        import src.services.llm as llm_pkg
+        import src.services.llm.factory as llm_factory
         from bifrost.ai import ai as ai_facade
 
         provider_stream = _ProviderStream(
@@ -1491,7 +1491,7 @@ class TestEngineLocalTransportSelection:
             _set_client(client)
             with (
                 patch.object(
-                    llm_pkg,
+                    llm_factory,
                     "get_llm_client",
                     new=AsyncMock(return_value=provider),
                 ),
@@ -3219,7 +3219,6 @@ def _patch_ai_provider(monkeypatch, *, content="socket hello", delay=0.0):
     """Patch the provider leaf with a fake client; no real key is used."""
     from types import SimpleNamespace
 
-    import src.services.llm as llm_pkg
     import src.services.llm.factory as llm_factory
 
     async def _complete(**_kwargs):
@@ -3240,7 +3239,7 @@ def _patch_ai_provider(monkeypatch, *, content="socket hello", delay=0.0):
     fake_client.model_name = "gpt-4o"
     fake_client.complete = AsyncMock(side_effect=_complete)
     monkeypatch.setattr(
-        llm_pkg, "get_llm_client", AsyncMock(return_value=fake_client)
+        llm_factory, "get_llm_client", AsyncMock(return_value=fake_client)
     )
     monkeypatch.setattr(
         llm_factory,

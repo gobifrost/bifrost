@@ -361,7 +361,7 @@ run_pytest() {
     if [[ "${1:-}" == tests/unit/* ]]; then
         unit_only=1
         for target in "$@"; do
-            if [[ "$target" == tests/e2e/* ]]; then
+            if [[ "$target" == tests/e2e/* || "$target" == tests/performance/* ]]; then
                 unit_only=0
                 break
             fi

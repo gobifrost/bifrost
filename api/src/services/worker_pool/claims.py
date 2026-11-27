@@ -90,6 +90,7 @@ async def admit_worker(
 
 async def admit_external_worker(
     incarnation_id: UUID, *, resource_uid: str, launcher_id: UUID, version: str | None, hostname: str,
+    actual_handlers: list[str], actual_compute: list[str],
 ) -> UUID | None:
     """Bind the first physical process to a prepared external incarnation."""
     async with get_db_context() as db:
@@ -105,6 +106,8 @@ async def admit_external_worker(
                 ExecutionWorker.remote_launcher_id.is_(None),
                 ExecutionWorker.version.is_not(None),
                 ExecutionWorker.version == version,
+                ExecutionWorker.supported_handlers.contained_by(actual_handlers),
+                ExecutionWorker.supported_compute.contained_by(actual_compute),
             )
             .values(
                 state="ready", remote_launcher_id=launcher_id, version=version, hostname=hostname,
@@ -170,7 +173,9 @@ async def mark_static_ready(incarnation_id: UUID, *, memory_budget_bytes: int) -
     return ready is not None
 
 
-async def report_worker_handlers(incarnation_id: UUID, handlers: list[str]) -> bool:
+async def report_worker_handlers(
+    incarnation_id: UUID, handlers: list[str], *, compute: list[str] | None = None,
+) -> bool:
     """Persist negotiated physical capabilities under the current owner fence."""
     async with get_db_context() as db:
         if not await fence_remote_owner(db, for_update=True):
@@ -181,7 +186,8 @@ async def report_worker_handlers(incarnation_id: UUID, handlers: list[str]) -> b
                 ExecutionWorker.id == incarnation_id,
                 ExecutionWorker.state.in_(("starting", "ready", "draining")),
             )
-            .values(supported_handlers=list(dict.fromkeys(handlers)))
+            .values(supported_handlers=list(dict.fromkeys(handlers)),
+                    supported_compute=list(dict.fromkeys(compute or [])))
             .returning(ExecutionWorker.id)
         ) is not None
 

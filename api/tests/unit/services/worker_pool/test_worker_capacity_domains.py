@@ -221,6 +221,7 @@ async def test_launched_jobs_advertise_all_execution_handlers(db) -> None:
         assert worker.supported_handlers == [
             "workflow.execute", "agent.run", "agent.summarize", "agent.summarize_backfill",
         ]
+        assert worker.supported_compute == []
 
 
 async def test_waiting_agent_work_with_no_free_worker_launches_one(db) -> None:

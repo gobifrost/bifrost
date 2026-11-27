@@ -1,7 +1,8 @@
 """Dynamic profile resolution for summarization + tuning."""
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.services.llm import BaseLLMClient, get_llm_client
+from src.services.llm import BaseLLMClient
+from src.services.llm.factory import get_llm_client
 
 
 async def get_summarization_client(db: AsyncSession) -> tuple[BaseLLMClient, str]:

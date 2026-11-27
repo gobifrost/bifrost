@@ -42,6 +42,7 @@ from src.jobs.schedulers.platform_jobs import (
     recover_expired_platform_jobs,
     run_claimed_platform_job,
 )
+from src.jobs.platform.catalog import executor_platform_job_types
 from src.scheduler.control import replica_heartbeat_loop
 from src.services.kubernetes_control import start_kubernetes_loops
 from src.services.kubernetes_execution import (
@@ -77,6 +78,7 @@ from src.services.worker_pool.claims import (
 from src.services.worker_pool.recovery import UNSTARTED_CLAIM_WINDOW, release_unstarted_claims
 from src.worker.remote.protocol import (
     HANDLER_CONCURRENCY_LIMITS,
+    handler_slot_available,
     WORKER_DRAIN_GRACE_SECONDS as DRAIN_GRACE_SECONDS,
 )
 
@@ -248,10 +250,14 @@ class PoolWorker:
         request fits the free budget (``Admission``). One live summary plus
         one backfill summary at a time is policy, so a large backfill never
         delays live summaries."""
-        handlers = [pair for pair in self._handlers if pair[0] in {"workflow.execute", "agent.run"}]
-        for summary_handler, limit in HANDLER_CONCURRENCY_LIMITS:
-            if (summary_handler, 1) in self._handlers and len(self._tasks[summary_handler]) < limit:
-                handlers.append((summary_handler, 1))
+        handlers = [pair for pair in self._handlers if pair[0] == "workflow.execute"]
+        slots = {
+            handler: limit - len(self._tasks.get(handler, ()))
+            for handler, limit in HANDLER_CONCURRENCY_LIMITS
+        }
+        for handler, _limit in HANDLER_CONCURRENCY_LIMITS:
+            if (handler, 1) in self._handlers and handler_slot_available(handler, slots):
+                handlers.append((handler, 1))
         return tuple(handlers)
 
     def active_handler_counts(self) -> dict[str, int]:
@@ -330,7 +336,16 @@ class PoolWorker:
         return await run_claimed_platform_job(claim)
 
     async def _claim_platform_job(self, fits_bytes: int) -> ClaimedPlatformJob | None:
-        return await claim_platform_job(backend="local", fits_bytes=fits_bytes)
+        return await claim_platform_job(
+            backend="local",
+            fits_bytes=fits_bytes,
+            job_types=executor_platform_job_types(),
+            executor_worker_id=self.incarnation_id,
+        )
+
+    @property
+    def supports_platform_jobs(self) -> bool:
+        return self.hosts_remote_work and self.execution_lane == "normal"
 
     async def run(self) -> int:
         if not await self._initialize_runtime():
@@ -360,7 +375,7 @@ class PoolWorker:
                 replica_heartbeat_loop(
                     replica_id=str(self.incarnation_id),
                     runs_platform_jobs=(
-                        self.hosts_remote_work and self.execution_lane == "normal"
+                        self.supports_platform_jobs
                     ),
                     stop_event=self._platform_stop,
                 ),
@@ -371,7 +386,7 @@ class PoolWorker:
             # Runtime package generations apply to every executor. They are
             # maintenance of its workflow environment, not borrowed work.
             background.append(asyncio.create_task(self._package_loop(), name="pool-packages"))
-            if self.execution_lane == "normal":
+            if self.supports_platform_jobs:
                 background.append(asyncio.create_task(self._platform_job_loop(), name="pool-platform-jobs"))
             background.extend(await self._start_background_control())
         if self._on_ready is not None:

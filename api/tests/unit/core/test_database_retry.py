@@ -241,3 +241,21 @@ async def test_cancellation_during_backoff_propagates():
             await task
 
     assert len(seen) == 1
+
+
+@pytest.mark.asyncio
+async def test_revoked_write_authority_stops_before_mutation_and_is_not_retried():
+    factory = FakeSessionFactory()
+    unit = AsyncMock()
+    authorize = AsyncMock(side_effect=PermissionError("Previous worker owner"))
+
+    with pytest.raises(PermissionError, match="Previous worker owner"):
+        await run_with_database_retry(
+            factory, unit, description="fenced execution write",
+            budget=RetryBudget(), authorize=authorize,
+        )
+
+    assert len(factory.sessions) == 1
+    authorize.assert_awaited_once_with(factory.sessions[0])
+    unit.assert_not_awaited()
+    assert factory.sessions[0].released == "invalidated"

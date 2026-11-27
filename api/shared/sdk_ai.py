@@ -194,7 +194,7 @@ async def complete_sdk_ai(
         raise
 
     try:
-        from src.services.llm import get_llm_client
+        from src.services.llm.factory import get_llm_client
 
         client = await get_llm_client(session, profile_name=profile)
     except ValueError as e:
@@ -385,7 +385,7 @@ async def stream_sdk_ai(
         and no partial usage is recorded — cancellation propagates
         without an error event.
     """
-    from src.services.llm import get_llm_client
+    from src.services.llm.factory import get_llm_client
 
     user_id = principal.user_id
     try:

@@ -14,7 +14,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.usage import RequestUsage
 
-from src.services.agent_runtime import AgentRunBudget, build_runtime_capabilities
+from src.services.agent_runtime.budgets import AgentRunBudget, build_runtime_capabilities
 
 # Provider-reported input of a production ticket run's first request: system
 # prompt, tool catalog, and ticket. A fixed 24k context target flagged every

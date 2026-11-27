@@ -1,6 +1,8 @@
 """Unit tests for install_requirements resilient install + result reporting."""
 from __future__ import annotations
 
+import io
+import json
 import subprocess
 from unittest.mock import patch, MagicMock
 
@@ -8,6 +10,7 @@ import pytest
 
 from src.services.execution.simple_worker import (
     install_requirements,
+    install_requirements_from_content,
     RequirementsInstallResult,
 )
 
@@ -44,6 +47,46 @@ def test_batch_success_marks_all_installed():
     assert result.ok is True
     assert set(result.installed) == {"anthropic", "litellm", "reportlab"}
     assert result.failed == []
+
+
+def test_explicit_content_install_never_reads_requirements_cache():
+    content = "anthropic\n"
+    with patch(
+        "src.core.requirements_cache.get_requirements_sync",
+        side_effect=AssertionError("explicit worker input must not read the requirements cache"),
+    ), patch(
+        "src.services.execution.simple_worker.subprocess.run",
+        return_value=_completed(0),
+    ):
+        result = install_requirements_from_content(content)
+
+    assert result.attempted == result.installed == ["anthropic"]
+
+
+def test_requirements_setup_helper_reads_explicit_content_from_stdin(monkeypatch):
+    from src.services.execution import requirements_setup_helper as helper
+
+    captured: list[str | None] = []
+    stdout = io.StringIO()
+    monkeypatch.setattr(helper.sys, "stdin", io.StringIO(json.dumps({"content": "anthropic\n"})))
+    monkeypatch.setattr(helper.sys, "stdout", stdout)
+    monkeypatch.setattr(
+        helper,
+        "run_requirements_setup_for_content",
+        lambda content: captured.append(content)
+        or RequirementsInstallResult(installed=["anthropic"]),
+    )
+    monkeypatch.setattr(
+        helper,
+        "run_requirements_setup",
+        lambda: (_ for _ in ()).throw(AssertionError("remote helper must not use cache-backed setup")),
+    )
+
+    assert helper.main([]) == 0
+    assert captured == ["anthropic\n"]
+    assert json.loads(stdout.getvalue()) == RequirementsInstallResult(
+        installed=["anthropic"]
+    ).to_json_dict()
 
 
 def test_batch_failure_falls_back_to_per_package_and_isolates_bad_dep():
@@ -176,10 +219,11 @@ def test_failed_nested_batch_never_relaxes_sibling_hash_policy():
 
 def test_status_counts_distribution_names_without_counting_source_directives(monkeypatch):
     from src.services.execution import requirements_setup_helper as helper
-    monkeypatch.setattr("src.core.requirements_cache.get_requirements_sync", lambda: 'some_pkg[extra]==1\n-e /tmp/source\n-r nested.txt\n')
     monkeypatch.setattr(helper, "_get_installed_packages", lambda: [{"name": "Some-Pkg"}])
     result = RequirementsInstallResult()
-    helper._update_requirements_status(result)
+    helper._update_requirements_status_from_content(
+        result, 'some_pkg[extra]==1\n-e /tmp/source\n-r nested.txt\n'
+    )
     assert result.requirements_total == result.requirements_installed == 1
 
 
