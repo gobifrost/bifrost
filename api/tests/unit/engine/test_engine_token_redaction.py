@@ -213,3 +213,35 @@ async def test_runtime_context_snapshot_scrubs_registered_tokens_on_both_outcome
     assert _ENGINE_TOKEN not in json.dumps(result.execution_context)
     assert result.execution_context["parameters"] == {"auth": "Bearer [REDACTED]", "count": 42}
     assert live["context"].parameters["auth"] == f"Bearer {_ENGINE_TOKEN}"
+
+
+@pytest.mark.parametrize("fails", [False, True])
+async def test_printed_output_is_redacted_before_streaming_and_retention(monkeypatch, fails):
+    import sys
+
+    from bifrost._context import get_execution_context
+    from src.services.execution import engine
+
+    original_streams = sys.stdout, sys.stderr
+    sent = []
+    secret = "multiline-first\nmultiline-second"
+
+    def write_log(level, message):
+        assert (sys.stdout, sys.stderr) == original_streams
+        sent.append((level, message))
+
+    monkeypatch.setattr(engine, "write_log", write_log)
+
+    async def workflow():
+        print(f"printed {secret}")
+        print("Authorization: Bearer private-header", file=sys.stderr, end="")
+        get_execution_context()._register_dynamic_secret(secret)
+        if fails:
+            raise RuntimeError("failed after printing")
+
+    result = await execute(_request(workflow))
+    assert result.status == (ExecutionStatus.FAILED if fails else ExecutionStatus.SUCCESS)
+    assert sent == [("INFO", "printed [REDACTED]"), ("ERROR", "Authorization: [REDACTED]")]
+    assert [(row["level"], row["message"]) for row in result.logs[:2]] == [
+        (level.lower(), message) for level, message in sent
+    ]
