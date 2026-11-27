@@ -58,6 +58,14 @@ DTO_PAIRS: list[tuple[type, type]] = [
     (cli_contracts.IntegrationCreate, server_integrations.IntegrationCreate),
     (cli_contracts.IntegrationUpdate, server_integrations.IntegrationUpdate),
     (
+        cli_contracts.IntegrationInstanceCreate,
+        server_integrations.IntegrationInstanceCreate,
+    ),
+    (
+        cli_contracts.IntegrationInstanceUpdate,
+        server_integrations.IntegrationInstanceUpdate,
+    ),
+    (
         cli_contracts.IntegrationMappingCreate,
         server_integrations.IntegrationMappingCreate,
     ),

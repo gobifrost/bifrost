@@ -60,6 +60,27 @@ const connected = {
 };
 
 describe("IntegrationStatusChips — OAuth", () => {
+	it("shows configuration completeness instead of an OAuth warning for config authentication", () => {
+		renderOverview({
+			integration: {
+				...connected,
+				authentication_method: "config",
+				config_schema: [{ key: "api_key", type: "secret", required: true }],
+				config_defaults: {},
+			},
+		});
+
+		expect(
+			screen.getByRole("button", {
+				name: "Configuration: Needs Configuration",
+			}),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: /OAuth: Not Set Up/i }),
+		).not.toBeInTheDocument();
+		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+	});
+
 	it("offers set-up from the chip when OAuth is not configured", async () => {
 		const { user, onCreateOAuthConfig } = renderOverview();
 

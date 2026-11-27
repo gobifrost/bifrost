@@ -13,12 +13,15 @@ from uuid import UUID
 
 from sqlalchemy import and_, delete, func, or_, select, union, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import defer, joinedload, selectinload
 
 from src.core.log_safety import log_safe
 from src.core.security import SECRET_PLACEHOLDER, decrypt_secret
 from src.models.contracts.integrations import (
     IntegrationCreate,
+    IntegrationInstanceCreate,
+    IntegrationInstanceUpdate,
     IntegrationUpdate,
     IntegrationMappingCreate,
     IntegrationMappingUpdate,
@@ -31,6 +34,7 @@ from src.repositories.base import BaseRepository
 from src.repositories.org_scoped import OrgScopedRepository
 from src.services.authorization.reach import OrgReach
 from src.services.config_values import (
+    ConfigValueError,
     config_type_for_schema_type,
     new_config_row,
     unwrap,
@@ -105,7 +109,12 @@ async def retype_integration_config_values(
     rows = (
         await session.execute(
             select(Config).where(
-                Config.integration_id == integration_id,
+                Config.integration_id.in_(
+                    select(Integration.id).where(
+                        (Integration.id == integration_id)
+                        | (Integration.parent_integration_id == integration_id)
+                    )
+                ),
                 Config.key == key,
             )
         )
@@ -132,10 +141,11 @@ class IntegrationsRepository(BaseRepository[Integration]):
     # =========================================================================
 
     async def list_integrations(self) -> list[Integration]:
-        """List all integrations (excluding deleted)."""
+        """List integration definitions, not their connection instances."""
         query = (
             select(Integration)
             .where(Integration.is_deleted.is_(False))
+            .where(Integration.parent_integration_id.is_(None))
             .options(
                 selectinload(Integration.config_schema),
                 defer(Integration.logo_data),
@@ -249,11 +259,12 @@ class IntegrationsRepository(BaseRepository[Integration]):
         return result.unique().scalar_one_or_none()
 
     async def get_integration_by_name(self, name: str) -> Integration | None:
-        """Get a non-deleted integration by name with relationships loaded."""
+        """Get a public definition name's default connection (the root row)."""
         result = await self.session.execute(
             select(Integration)
             .where(
                 Integration.name == name,
+                Integration.parent_integration_id.is_(None),
                 Integration.is_deleted.is_(False),
             )
             .options(
@@ -264,10 +275,119 @@ class IntegrationsRepository(BaseRepository[Integration]):
         )
         return result.unique().scalar_one_or_none()
 
+    async def get_definition_by_id(self, integration_id: UUID) -> Integration | None:
+        """Return the canonical definition for a root or child connection ID."""
+        integration = await self.get_integration_by_id(integration_id)
+        if integration is None:
+            return None
+        if integration.parent_integration_id is None:
+            return integration
+        return await self.get_integration_by_id(integration.parent_integration_id)
+
+    async def get_instance(
+        self, definition_id: UUID, instance_id: UUID
+    ) -> Integration | None:
+        """Get one live connection instance belonging to ``definition_id``."""
+        result = await self.session.execute(
+            select(Integration)
+            .where(
+                Integration.id == instance_id,
+                Integration.is_deleted.is_(False),
+                (
+                    (Integration.id == definition_id)
+                    | (Integration.parent_integration_id == definition_id)
+                ),
+            )
+            .options(joinedload(Integration.oauth_provider), selectinload(Integration.mappings))
+        )
+        return result.unique().scalar_one_or_none()
+
+    async def get_instance_by_key(
+        self, definition: Integration, key: str
+    ) -> Integration | None:
+        """Resolve the default/root or a named instance by its stable key."""
+        if key == "default":
+            return definition
+        result = await self.session.execute(
+            select(Integration)
+            .where(
+                Integration.parent_integration_id == definition.id,
+                Integration.instance_key == key,
+                Integration.is_deleted.is_(False),
+            )
+            .options(joinedload(Integration.oauth_provider), selectinload(Integration.mappings))
+        )
+        return result.unique().scalar_one_or_none()
+
+    async def list_instances(self, definition_id: UUID) -> list[Integration]:
+        """List the root default and every active named child instance."""
+        result = await self.session.execute(
+            select(Integration)
+            .where(
+                Integration.is_deleted.is_(False),
+                (
+                    (Integration.id == definition_id)
+                    | (Integration.parent_integration_id == definition_id)
+                ),
+            )
+            .options(joinedload(Integration.oauth_provider))
+            .order_by(Integration.parent_integration_id.nullsfirst(), Integration.instance_name)
+        )
+        return list(result.unique().scalars().all())
+
+    async def create_instance(
+        self, definition: Integration, request: IntegrationInstanceCreate
+    ) -> Integration:
+        """Create a child connection without copying shared definition metadata."""
+        if request.key == "default":
+            raise ValueError("'default' is reserved for the original connection")
+        existing = await self.get_instance_by_key(definition, request.key)
+        if existing is not None:
+            raise ValueError(f"Integration instance key '{request.key}' already exists")
+        instance = Integration(
+            name=f"{definition.id}::{request.key}",
+            parent_integration_id=definition.id,
+            instance_key=request.key,
+            instance_name=request.name,
+            authentication_method=request.authentication_method,
+            oauth_provider=None,
+            is_deleted=False,
+        )
+        try:
+            async with self.session.begin_nested():
+                self.session.add(instance)
+                await self.session.flush()
+        except IntegrityError as exc:
+            raise ValueError(
+                f"Integration instance key '{request.key}' is already reserved"
+            ) from exc
+        return instance
+
+    @staticmethod
+    def _set_authentication_method(instance: Integration, method: str) -> None:
+        if method == "config" and instance.oauth_provider:
+            raise ConfigValueError("Disconnect OAuth before changing authentication method to config")
+        instance.authentication_method = method
+
+    async def update_instance(
+        self, instance: Integration, request: IntegrationInstanceUpdate
+    ) -> Integration:
+        """Update only instance-owned metadata; shared metadata lives on root."""
+        if request.name is not None:
+            instance.instance_name = request.name
+        if request.authentication_method is not None:
+            self._set_authentication_method(instance, request.authentication_method)
+        instance.updated_at = datetime.now(timezone.utc)
+        await self.session.flush()
+        return instance
+
     async def create_integration(self, request: IntegrationCreate) -> Integration:
         """Create a new integration with normalized config schema."""
         integration = Integration(
             name=request.name,
+            instance_key="default",
+            instance_name=request.name,
+            authentication_method=request.authentication_method,
             description=request.description,
             notes=request.notes,
             workflow_links=[link.model_dump(mode="json") for link in request.workflow_links],
@@ -310,6 +430,8 @@ class IntegrationsRepository(BaseRepository[Integration]):
         if not integration:
             return None
 
+        if request.authentication_method is not None:
+            self._set_authentication_method(integration, request.authentication_method)
         if request.workflow_links is not None:
             integration.workflow_links = [link.model_dump(mode="json") for link in request.workflow_links]
         if request.name is not None:
@@ -318,7 +440,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
             integration.description = request.description
         if "notes" in request.model_fields_set:
             integration.notes = request.notes
-        if request.list_entities_data_provider_id is not None:
+        if "list_entities_data_provider_id" in request.model_fields_set:
             integration.list_entities_data_provider_id = (
                 request.list_entities_data_provider_id
             )
@@ -326,7 +448,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
             integration.entity_id = request.entity_id
         if request.entity_id_name is not None:
             integration.entity_id_name = request.entity_id_name
-        if request.default_entity_id is not None:
+        if "default_entity_id" in request.model_fields_set:
             # An empty string clears the value.
             integration.default_entity_id = request.default_entity_id or None
 
@@ -386,11 +508,19 @@ class IntegrationsRepository(BaseRepository[Integration]):
         if not integration:
             return False
 
-        integration.is_deleted = True
-        integration.updated_at = datetime.now(timezone.utc)
+        integration_ids = select(Integration.id).where(
+            (Integration.id == integration_id)
+            | (Integration.parent_integration_id == integration_id)
+        )
+        now = datetime.now(timezone.utc)
+        await self.session.execute(
+            update(Integration)
+            .where(Integration.id.in_(integration_ids))
+            .values(is_deleted=True, updated_at=now)
+        )
 
         provider_ids = select(OAuthProvider.id).where(
-            OAuthProvider.integration_id == integration_id
+            OAuthProvider.integration_id.in_(integration_ids)
         )
         token_ids = select(OAuthToken.id).where(OAuthToken.provider_id.in_(provider_ids))
         await self.session.execute(
@@ -402,7 +532,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
             delete(OAuthToken).where(OAuthToken.provider_id.in_(provider_ids))
         )
         await self.session.execute(
-            delete(OAuthProvider).where(OAuthProvider.integration_id == integration_id)
+            delete(OAuthProvider).where(OAuthProvider.integration_id.in_(integration_ids))
         )
         await self.session.flush()
         return True
@@ -637,17 +767,27 @@ class IntegrationsRepository(BaseRepository[Integration]):
         await self.session.flush()
 
     async def _schema_items(self, integration_id: UUID) -> dict[str, IntegrationConfigSchema]:
+        definition_id = select(Integration.parent_integration_id).where(
+            Integration.id == integration_id
+        ).scalar_subquery()
         result = await self.session.execute(
             select(IntegrationConfigSchema).where(
-                IntegrationConfigSchema.integration_id == integration_id
+                IntegrationConfigSchema.integration_id == func.coalesce(
+                    definition_id, integration_id
+                )
             )
         )
         return {item.key: item for item in result.scalars().all()}
 
     async def _secret_keys(self, integration_id: UUID) -> set[str]:
+        definition_id = select(Integration.parent_integration_id).where(
+            Integration.id == integration_id
+        ).scalar_subquery()
         result = await self.session.execute(
             select(IntegrationConfigSchema.key).where(
-                IntegrationConfigSchema.integration_id == integration_id,
+                IntegrationConfigSchema.integration_id == func.coalesce(
+                    definition_id, integration_id
+                ),
                 IntegrationConfigSchema.type == "secret",
             )
         )

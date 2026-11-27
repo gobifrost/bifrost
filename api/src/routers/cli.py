@@ -429,6 +429,8 @@ async def sdk_integrations_get(
             db,
             name=request.name,
             org_id=org_uuid,
+            instance=request.instance,
+            on_missing=request.on_missing,
             oauth_scope=request.oauth_scope,
             solution_id=request.solution,
             caller=caller,
@@ -476,6 +478,7 @@ async def sdk_integrations_list_mappings(
         items = await list_sdk_integration_mappings(
             db,
             name=request.name,
+            instance=request.instance,
             caller=caller,
         )
     except HTTPException:
@@ -516,6 +519,7 @@ async def sdk_integrations_get_mapping(
         result = await get_sdk_integration_mapping_dict(
             db,
             name=request.name,
+            instance=request.instance,
             scope=request.scope,
             caller=caller,
             entity_id=request.entity_id,
@@ -561,6 +565,7 @@ async def sdk_integrations_find_mapping(
         result = await find_sdk_integration_mapping_dict(
             db,
             name=request.name,
+            instance=request.instance,
             entity_id=request.entity_id,
             caller=caller,
         )
@@ -605,6 +610,7 @@ async def sdk_integrations_upsert_mapping(
         result = await upsert_sdk_integration_mapping(
             db,
             name=request.name,
+            instance=request.instance,
             scope=request.scope,
             caller=caller,
             entity_id=request.entity_id,
@@ -652,6 +658,7 @@ async def sdk_integrations_delete_mapping(
         return await delete_sdk_integration_mapping(
             db,
             name=request.name,
+            instance=request.instance,
             scope=request.scope,
             caller=caller,
         )
@@ -1547,3 +1554,32 @@ async def cli_list_tables(
     )
 
     return [SDKTableInfo(**item) for item in items]
+
+
+# Named-instance calls deliberately use separate paths. An older API does not
+# know these paths and therefore fails loudly instead of accepting a selector
+# as an ignored extra field and operating on the default connection.
+router.add_api_route(
+    "/integrations/instances/get", sdk_integrations_get, methods=["POST"],
+    response_model=SDKIntegrationsGetResponse | None, name="sdk_integrations_instance_get",
+)
+router.add_api_route(
+    "/integrations/instances/list_mappings", sdk_integrations_list_mappings, methods=["POST"],
+    response_model=SDKIntegrationsListMappingsResponse | None, name="sdk_integrations_instance_list_mappings",
+)
+router.add_api_route(
+    "/integrations/instances/get_mapping", sdk_integrations_get_mapping, methods=["POST"],
+    response_model=SDKIntegrationsMappingItem | None, name="sdk_integrations_instance_get_mapping",
+)
+router.add_api_route(
+    "/integrations/instances/find_mapping", sdk_integrations_find_mapping, methods=["POST"],
+    response_model=SDKIntegrationsFindMappingResponse | None, name="sdk_integrations_instance_find_mapping",
+)
+router.add_api_route(
+    "/integrations/instances/upsert_mapping", sdk_integrations_upsert_mapping, methods=["POST"],
+    response_model=SDKIntegrationsMappingItem, name="sdk_integrations_instance_upsert_mapping",
+)
+router.add_api_route(
+    "/integrations/instances/delete_mapping", sdk_integrations_delete_mapping, methods=["POST"],
+    name="sdk_integrations_instance_delete_mapping",
+)

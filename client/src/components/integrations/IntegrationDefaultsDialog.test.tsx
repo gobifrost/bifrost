@@ -43,6 +43,13 @@ describe("IntegrationDefaultsDialog — fields", () => {
 		expect(screen.getByText("*")).toBeInTheDocument();
 	});
 
+	it("names the connection instance whose defaults will change", () => {
+		renderDialog({ instanceContext: "Microsoft 365 · Acme Production" });
+		expect(
+			screen.getByText(/for Microsoft 365 · Acme Production/i),
+		).toBeInTheDocument();
+	});
+
 	it("bubbles up text edits through onFormValuesChange", () => {
 		const { onFormValuesChange } = renderDialog();
 		fireEvent.change(screen.getByLabelText(/tenant_id/i), {

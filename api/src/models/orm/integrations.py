@@ -9,7 +9,7 @@ from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 from uuid import UUID, uuid4
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, DateTime, ForeignKey, Index, LargeBinary, String, Text, text
 from sqlalchemy.dialects.postgresql import ARRAY, JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -32,6 +32,18 @@ class Integration(Base):
 
     id: Mapped[UUID] = mapped_column(primary_key=True, default=uuid4)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
+    parent_integration_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("integrations.id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True,
+        default=None,
+    )
+    instance_key: Mapped[str] = mapped_column(
+        String(80), nullable=False, default="default", server_default=text("'default'")
+    )
+    instance_name: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    authentication_method: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="config", server_default=text("'config'")
+    )
     description: Mapped[str | None] = mapped_column(Text, default=None)
     workflow_links: Mapped[list[dict]] = mapped_column(JSONB, default=list, server_default=text("'[]'::jsonb"), nullable=False)
     notes: Mapped[str | None] = mapped_column(Text, default=None)
@@ -72,9 +84,30 @@ class Integration(Base):
         cascade="all, delete-orphan",
         order_by="IntegrationConfigSchema.position",
     )
+    parent: Mapped["Integration | None"] = relationship(
+        "Integration",
+        remote_side=[id],
+        back_populates="instances",
+    )
+    instances: Mapped[list["Integration"]] = relationship(
+        "Integration",
+        back_populates="parent",
+        cascade="all, delete-orphan",
+    )
 
     __table_args__ = (
         Index("ix_integrations_name", "name"),
+        Index("ix_integrations_parent_integration_id", "parent_integration_id"),
+        Index("uq_integration_instance_key", "parent_integration_id", "instance_key", unique=True),
+        CheckConstraint(
+            "(parent_integration_id IS NULL AND instance_key = 'default') OR "
+            "(parent_integration_id IS NOT NULL AND instance_key <> 'default')",
+            name="ck_integrations_default_instance",
+        ),
+        CheckConstraint(
+            "authentication_method IN ('config', 'oauth')",
+            name="ck_integrations_authentication_method",
+        ),
         Index(
             "uq_integrations_active_name",
             "name",

@@ -250,6 +250,7 @@ async def create_connection(
     )
 
     ctx.db.add(provider)
+    integration.authentication_method = "oauth"
     await ctx.db.flush()
     await ctx.db.refresh(provider)
 

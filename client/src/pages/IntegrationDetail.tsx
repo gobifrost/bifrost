@@ -3,7 +3,7 @@ import { IntegrationReadError } from "@/components/integrations/IntegrationReadE
 import { failedMappings } from "@/components/integrations/mapping-save";
 import { IntegrationPageHeader } from "@/components/integrations/IntegrationPageHeader";
 import { useState, useEffect, useMemo, useRef } from "react";
-import { useParams, Link } from "react-router-dom";
+import { useParams, Link, useNavigate, useSearchParams } from "react-router-dom";
 import { XCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -33,6 +33,10 @@ import {
 	useDisconnectMapping,
 	useRefreshMapping,
 	useUpdateIntegration,
+	useIntegrationInstances,
+	useCreateIntegrationInstance,
+	useUpdateIntegrationInstance,
+	useDeleteIntegrationInstance,
 	planOrgConfigSave,
 	type IntegrationTestResponse,
 } from "@/services/integrations";
@@ -70,6 +74,14 @@ import {
 import { GLOBAL_TARGET, orgTarget } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
 import { exportEntities } from "@/services/exportImport";
+import {
+	IntegrationInstanceSelector,
+	type IntegrationInstanceOption,
+} from "@/components/integrations/IntegrationInstanceSelector";
+import {
+	AddIntegrationInstanceDialog,
+	ManageIntegrationInstancesDialog,
+} from "@/components/integrations/IntegrationInstanceDialogs";
 
 interface MappingFormData {
 	organization_id: string;
@@ -80,7 +92,9 @@ interface MappingFormData {
 }
 
 export function IntegrationDetail() {
-	const { id: integrationId } = useParams<{ id: string }>();
+	const { id: routeIntegrationId } = useParams<{ id: string }>();
+	const navigate = useNavigate();
+	const [searchParams, setSearchParams] = useSearchParams();
 	const authorization = useAuthorization();
 	const canManageDefinitions = authorization.canAt(
 		"integrations.readwrite",
@@ -117,18 +131,51 @@ export function IntegrationDetail() {
 	const [testEndpoint, setTestEndpoint] = useState<string>("/");
 	const [testResult, setTestResult] =
 		useState<IntegrationTestResponse | null>(null);
+	const [addInstanceOpen, setAddInstanceOpen] = useState(false);
+	const [manageInstancesOpen, setManageInstancesOpen] = useState(false);
+	const [instanceSettingsOpen, setInstanceSettingsOpen] = useState(false);
 
 	const queryClient = useQueryClient();
 	const updateIntegrationMutation = useUpdateIntegration();
 
-	// Fetch integration details (includes mappings and OAuth config)
+	// Resolve a direct legacy child URL before loading its definition's instance list.
+	const {
+		data: routedIntegration,
+	} = useIntegration(routeIntegrationId || "");
+	const definitionId = routedIntegration?.definition_id ?? routeIntegrationId ?? "";
+	const requestedInstanceId = searchParams.get("instance");
+	const selectedInstanceId =
+		requestedInstanceId ?? routedIntegration?.id ?? definitionId;
+	const integrationId = selectedInstanceId;
 	const {
 		data: integration,
 		isLoading: isLoadingIntegration,
 		isError: isIntegrationError,
 		isFetching: isFetchingIntegration,
 		refetch: refetchIntegration,
-	} = useIntegration(integrationId || "");
+	} = useIntegration(selectedInstanceId);
+	const {
+		data: instancesData,
+		isLoading: isLoadingInstances,
+	} = useIntegrationInstances(definitionId);
+	const instances = (instancesData?.instances ?? []) as IntegrationInstanceOption[];
+	const createInstanceMutation = useCreateIntegrationInstance();
+	const updateInstanceMutation = useUpdateIntegrationInstance();
+	const deleteInstanceMutation = useDeleteIntegrationInstance();
+
+	useEffect(() => {
+		if (
+			routeIntegrationId &&
+			routedIntegration &&
+			routedIntegration.definition_id !== routeIntegrationId
+		) {
+			const next = new URLSearchParams(searchParams);
+			next.set("instance", routedIntegration.id);
+			navigate(`/integrations/${routedIntegration.definition_id}?${next.toString()}`, {
+				replace: true,
+			});
+		}
+	}, [navigate, routeIntegrationId, routedIntegration, searchParams]);
 
 	// Fetch organizations
 	const {
@@ -151,6 +198,16 @@ export function IntegrationDetail() {
 	const authorizeMappingMutation = useAuthorizeMapping();
 	const disconnectMappingMutation = useDisconnectMapping();
 	const refreshMappingMutation = useRefreshMapping();
+	const isSavingInstanceData =
+		updateMutation.isPending ||
+		deleteMutation.isPending ||
+		updateConfigMutation.isPending ||
+		batchMutation.isPending ||
+		createMappingMutation.isPending ||
+		authorizeMappingMutation.isPending ||
+		disconnectMappingMutation.isPending ||
+		refreshMappingMutation.isPending ||
+		testMutation.isPending;
 	const [pendingMappingAction, setPendingMappingActionState] =
 		useState<PendingMappingAction | null>(null);
 	const pendingMappingActionRef = useRef<PendingMappingAction | null>(null);
@@ -293,6 +350,41 @@ export function IntegrationDetail() {
 		orgsWithMappings.every((organization) =>
 			canManageMapping(organization.id),
 		);
+	const selectInstance = (instanceId: string) => {
+		const next = new URLSearchParams(searchParams);
+		if (instanceId === definitionId) next.delete("instance");
+		else next.set("instance", instanceId);
+		setSearchParams(next);
+	};
+
+	const createInstance = async (input: {
+		name: string;
+		key: string;
+		authentication_method: "config" | "oauth";
+	}) => {
+		const created = await createInstanceMutation.mutateAsync({
+			params: { path: { definition_id: definitionId } },
+			body: input,
+		});
+		toast.success(`${created.name} instance added`);
+		selectInstance(created.id);
+	};
+
+	const renameInstance = async (instanceId: string, name: string) => {
+		await updateInstanceMutation.mutateAsync({
+			params: { path: { definition_id: definitionId, instance_id: instanceId } },
+			body: { name },
+		});
+		toast.success("Instance renamed");
+	};
+
+	const deleteInstance = async (instanceId: string) => {
+		await deleteInstanceMutation.mutateAsync({
+			params: { path: { definition_id: definitionId, instance_id: instanceId } },
+		});
+		if (instanceId === selectedInstanceId) selectInstance(definitionId);
+		toast.success("Instance deleted");
+	};
 
 	// Listen for OAuth success messages from popup window
 	useEffect(() => {
@@ -799,9 +891,9 @@ export function IntegrationDetail() {
 	};
 
 	const handleSaveNotes = async (notes: string | null) => {
-		if (!integrationId || !canManageDefinitions) return;
+		if (!definitionId || !canManageDefinitions) return;
 		await updateIntegrationMutation.mutateAsync({
-			params: { path: { integration_id: integrationId } },
+			params: { path: { integration_id: definitionId } },
 			body: { notes },
 		});
 		setNotesDialogOpen(false);
@@ -809,10 +901,10 @@ export function IntegrationDetail() {
 	};
 
 	const handleExport = async () => {
-		if (!integrationId || !canExport || isExporting) return;
+		if (!definitionId || !canExport || isExporting) return;
 		setIsExporting(true);
 		try {
-			await exportEntities("integrations", [integrationId]);
+			await exportEntities("integrations", [definitionId]);
 			toast.success("Export downloaded");
 		} catch {
 			toast.error("Export failed");
@@ -821,7 +913,7 @@ export function IntegrationDetail() {
 		}
 	};
 
-	const isLoading = isLoadingIntegration || isLoadingOrgs;
+	const isLoading = isLoadingIntegration || isLoadingOrgs || isLoadingInstances;
 
 	if (isLoading) {
 		return (
@@ -870,6 +962,28 @@ export function IntegrationDetail() {
 		);
 	}
 
+	const isSelectedInstanceInDefinition =
+		integration.definition_id === definitionId &&
+		instances.some((instance) => instance.id === integration.id);
+	if (!isSelectedInstanceInDefinition) {
+		return (
+			<div className="flex flex-col items-center justify-center py-12">
+				<XCircle className="h-12 w-12 text-destructive" />
+				<h3 className="mt-4 text-lg font-semibold">
+					Connection instance not found
+				</h3>
+				<p className="mt-2 text-sm text-muted-foreground">
+					This connection instance does not belong to this integration.
+				</p>
+				<Button asChild variant="outline" className="mt-4 min-h-11">
+					<Link to={`/integrations/${definitionId}`}>
+						Back to the default instance
+					</Link>
+				</Button>
+			</div>
+		);
+	}
+
 	const overviewProps: IntegrationOverviewProps = {
 		integration,
 		oauthConfig,
@@ -887,11 +1001,30 @@ export function IntegrationDetail() {
 		isRefreshPending: refreshMutation.isPending,
 		canManageDefinitions,
 	};
+	const instanceContext = `${integration.name} · ${integration.is_default_instance ? "Default" : integration.instance_name}`;
 
 	return (
 		<PageWorkspace>
 			<IntegrationPageHeader
 				name={integration.name}
+				instanceSelector={
+					instances.length > 0 ? (
+						<IntegrationInstanceSelector
+							instances={instances}
+							selectedInstanceId={selectedInstanceId}
+							onSelect={selectInstance}
+							onAddInstance={() => setAddInstanceOpen(true)}
+							onManageInstances={() => setManageInstancesOpen(true)}
+							canManageInstances={canManageDefinitions}
+							disabled={isSavingInstanceData}
+						/>
+					) : undefined
+				}
+				sharedDefinitionDescription={
+					instances.length > 1
+						? `Shared schema, logo, and setup instructions apply to all ${integration.name} instances.`
+						: undefined
+				}
 				description={
 					(
 						integration as typeof integration & {
@@ -906,6 +1039,9 @@ export function IntegrationDetail() {
 				onEdit={() => {
 					if (canManageDefinitions) setEditDialogOpen(true);
 				}}
+				onConfigureInstance={() => {
+					if (canManageDefinitions) setInstanceSettingsOpen(true);
+				}}
 				onExport={() => void handleExport()}
 				canExport={canExport}
 				hasSetupNotes={Boolean(integration.notes)}
@@ -917,9 +1053,9 @@ export function IntegrationDetail() {
 				}
 				canManageDefinitions={canManageDefinitions}
 				status={<IntegrationStatusChips {...overviewProps} />}
-				workflowActions={<IntegrationWorkflowLinks key={integrationId} integrationName={integration.name} integrationId={integration.id} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
+				workflowActions={<IntegrationWorkflowLinks key={definitionId} integrationName={integration.name} integrationId={definitionId} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
 			/>
-			<PageScrollArea className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
+			<PageScrollArea key={selectedInstanceId} className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (
 					<IntegrationReadError
 						resource="integration"
@@ -1094,6 +1230,7 @@ export function IntegrationDetail() {
 					onOpenChange={setOAuthConfigDialogOpen}
 					integrationId={integrationId}
 					notes={integration.notes}
+					instanceContext={instanceContext}
 				/>
 			)}
 
@@ -1105,6 +1242,7 @@ export function IntegrationDetail() {
 					integrationId={integrationId}
 					editConnectionName={integrationId}
 					notes={integration.notes}
+					instanceContext={instanceContext}
 				/>
 			)}
 
@@ -1113,8 +1251,19 @@ export function IntegrationDetail() {
 				<CreateIntegrationDialog
 					open={editDialogOpen}
 					onOpenChange={setEditDialogOpen}
+					editIntegrationId={definitionId}
+					initialData={integration}
+					scope="definition"
+				/>
+			)}
+
+			{canManageDefinitions && (
+				<CreateIntegrationDialog
+					open={instanceSettingsOpen}
+					onOpenChange={setInstanceSettingsOpen}
 					editIntegrationId={integrationId}
 					initialData={integration}
+					scope="instance"
 				/>
 			)}
 
@@ -1155,6 +1304,7 @@ export function IntegrationDetail() {
 					onSave={handleSaveDefaults}
 					isSaving={updateConfigMutation.isPending}
 					notes={integration?.notes}
+					instanceContext={instanceContext}
 				/>
 			)}
 
@@ -1188,11 +1338,11 @@ export function IntegrationDetail() {
 			)}
 
 			{/* Generate SDK Dialog */}
-			{canManageDefinitions && integrationId && (
+			{canManageDefinitions && definitionId && (
 				<GenerateSDKDialog
 					open={generateSDKDialogOpen}
 					onOpenChange={setGenerateSDKDialogOpen}
-					integrationId={integrationId}
+					integrationId={definitionId}
 					integrationName={integration?.name || ""}
 					hasOAuth={integration?.has_oauth_config || false}
 				/>
@@ -1213,6 +1363,22 @@ export function IntegrationDetail() {
 				canTestAt={canTestAt}
 				testableOrganizations={testableOrganizations}
 			/>
+			{canManageDefinitions && (
+				<AddIntegrationInstanceDialog
+					open={addInstanceOpen}
+					onOpenChange={setAddInstanceOpen}
+					onCreate={createInstance}
+				/>
+			)}
+			{canManageDefinitions && (
+				<ManageIntegrationInstancesDialog
+					open={manageInstancesOpen}
+					onOpenChange={setManageInstancesOpen}
+					instances={instances}
+					onRename={renameInstance}
+					onDelete={deleteInstance}
+				/>
+			)}
 		</PageWorkspace>
 	);
 }

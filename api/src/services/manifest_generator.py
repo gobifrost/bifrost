@@ -425,7 +425,11 @@ async def generate_manifest(
     integ_result = await db.execute(
         select(Integration)
         .where(*export_criteria(Integration))
-        .order_by(Integration.name)
+        .order_by(
+            Integration.parent_integration_id.nullsfirst(),
+            Integration.name,
+            Integration.instance_key,
+        )
     )
     integrations_list = integ_result.scalars().unique().all()
 
@@ -612,7 +616,13 @@ async def generate_manifest(
         integrations={
             str(integ.id): serialize_integration(
                 integ,
-                config_schema=config_schema_by_integ.get(str(integ.id), []),
+                # Schema belongs to the root definition. Config values and
+                # OAuth/mapping state remain on each actual instance row.
+                config_schema=(
+                    config_schema_by_integ.get(str(integ.id), [])
+                    if integ.parent_integration_id is None
+                    else []
+                ),
                 oauth_provider=oauth_by_integ.get(str(integ.id)),
                 mappings=mappings_by_integ.get(str(integ.id), []),
             )

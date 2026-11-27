@@ -573,6 +573,7 @@ async def test_integration_git_sync_parity(db_session):
     integ = Integration(
         id=integ_id,
         name="rt-integration-golden",
+        authentication_method="oauth",
         entity_id="tenant_id",
         entity_id_name="Tenant ID",
         default_entity_id=None,

@@ -99,6 +99,7 @@ interface IntegrationData {
 	config_defaults?: Record<string, unknown> | null;
 	default_entity_id?: string | null;
 	entity_id_name?: string | null;
+	authentication_method?: "config" | "oauth";
 }
 
 export interface IntegrationOverviewProps {
@@ -273,6 +274,80 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 		integration,
 		oauthConfig,
 		isOAuthConnected,
+		canManageDefinitions,
+		onOpenDefaultsDialog,
+	} = props;
+	const status = oauthStatus(props);
+	const schema = integration.config_schema ?? [];
+	const requiredConfiguration = schema.filter((field) => field.required);
+	const hasCompleteConfiguration = requiredConfiguration.every((field) => {
+		const value = integration.config_defaults?.[field.key];
+		return value !== null && value !== undefined && value !== "";
+	});
+
+	if (integration.authentication_method === "config") {
+		const label = hasCompleteConfiguration
+			? "Configured"
+			: "Needs Configuration";
+		return (
+			<div className="flex min-w-0 flex-wrap items-center gap-2">
+				<Popover>
+					<PopoverTrigger asChild>
+						<Button
+							variant="outline"
+							size="sm"
+							className="min-h-11 sm:min-h-8"
+							aria-label={`Configuration: ${label}`}
+						>
+							{hasCompleteConfiguration ? (
+								<CheckCircle2 className="size-4 text-success" />
+							) : (
+								<AlertTriangle className="size-4 text-warning" />
+							)}
+							<span>Configuration: {label}</span>
+							<ChevronDown className="size-3 opacity-60" />
+						</Button>
+					</PopoverTrigger>
+					<PopoverContent align="start" className="w-80 space-y-3">
+						<div>
+							<h2 className="text-sm font-medium">Configuration</h2>
+							<p className="text-xs text-muted-foreground">
+								{hasCompleteConfiguration
+									? "Required default values are configured for this instance. Test the connection to verify the credentials."
+									: "Configure the required default values for this instance before testing the connection."}
+							</p>
+						</div>
+						{canManageDefinitions && (
+							<div className="border-t border-border/60 pt-3">
+								<Button
+									variant="outline"
+									size="sm"
+									className="min-h-11 sm:min-h-8"
+									onClick={onOpenDefaultsDialog}
+								>
+									<Pencil className="size-3" />
+									Configure
+								</Button>
+							</div>
+						)}
+					</PopoverContent>
+				</Popover>
+			</div>
+		);
+	}
+
+	return (
+		<div className="flex min-w-0 flex-wrap items-center gap-2">
+			<DefaultsStatusChip {...props} />
+		</div>
+	);
+}
+
+function DefaultsStatusChip(props: IntegrationOverviewProps) {
+	const {
+		integration,
+		oauthConfig,
+		isOAuthConnected,
 		isRefreshPending,
 		canManageDefinitions,
 		onOAuthRefresh,
@@ -293,9 +368,8 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 		isOAuthConnected && oauthConfig?.expires_at && status.tone === "success"
 			? ` · expires ${formatDateTime(oauthConfig.expires_at)}`
 			: "";
-
 	return (
-		<div className="flex min-w-0 flex-wrap items-center gap-2">
+		<>
 			<Popover>
 				<PopoverTrigger asChild>
 					<Button
@@ -496,12 +570,13 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 					)}
 				</PopoverContent>
 			</Popover>
-		</div>
+		</>
 	);
 }
 
 /** Shown only when the default connection is broken and needs action. */
 export function IntegrationOAuthAlert(props: IntegrationOverviewProps) {
+	if (props.integration.authentication_method === "config") return null;
 	const status = oauthStatus(props);
 	if (status.tone !== "destructive") return null;
 	return (

@@ -110,6 +110,10 @@ PARITY_HANDLERS: dict[str, set[str]] = {
         "bifrost_integration_get",
         "bifrost_integration_create",
         "bifrost_integration_update",
+        "bifrost_integration_instance_list",
+        "bifrost_integration_instance_create",
+        "bifrost_integration_instance_update",
+        "bifrost_integration_instance_delete",
         "bifrost_integration_mapping_create",
         "bifrost_integration_mapping_update",
     },
@@ -491,6 +495,58 @@ async def test_update_integration_forwards_description_and_notes_when_provided()
     assert fields["description"] == "Updated card description"
     assert fields["notes"] == "Updated setup instructions"
     assert call_rest_mock.await_args.args[2] == f"/api/integrations/{integration_id}"
+    assert call_rest_mock.await_args.kwargs["json_body"] == assembled_body
+
+
+@pytest.mark.asyncio
+async def test_create_integration_instance_uses_the_instance_rest_route() -> None:
+    """Connection-instance mutations stay behind the integrations REST API."""
+    from src.services.mcp_server.tools.integrations import (
+        bifrost_integration_instance_create,
+    )
+
+    class _RestClient:
+        async def __aenter__(self):
+            return MagicMock()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+    ctx = _make_mcp_context()
+    definition_id = "11111111-2222-3333-4444-555555555555"
+    assembled_body = {
+        "name": "Europe",
+        "key": "eu",
+        "authentication_method": "oauth",
+    }
+
+    with (
+        patch(
+            "src.services.mcp_server.tools.integrations.rest_client",
+            MagicMock(return_value=_RestClient()),
+        ),
+        patch(
+            "src.services.mcp_server.tools.integrations._assemble_integration_body",
+            AsyncMock(return_value=assembled_body),
+        ) as assemble_mock,
+        patch(
+            "src.services.mcp_server.tools.integrations.call_rest",
+            AsyncMock(return_value=(201, {"id": "instance-id", **assembled_body})),
+        ) as call_rest_mock,
+    ):
+        await bifrost_integration_instance_create(
+            ctx,
+            definition_ref=definition_id,
+            name="Europe",
+            key="eu",
+            authentication_method="oauth",
+        )
+
+    assert assemble_mock.await_args.kwargs["model_name"] == "IntegrationInstanceCreate"
+    assert call_rest_mock.await_args.args[1:3] == (
+        "POST",
+        f"/api/integrations/{definition_id}/instances",
+    )
     assert call_rest_mock.await_args.kwargs["json_body"] == assembled_body
 
 

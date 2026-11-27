@@ -1188,6 +1188,14 @@ WORKSPACE_FILE_OPERATIONS = {
     ),
 }
 
+INTEGRATION_INSTANCE_OPERATIONS = {
+    "integrations.instances.list": ("GET", "/api/integrations/{definition_id}/instances", ("integrations", "list-instances"), "bifrost_integration_instance_list", False),
+    "integrations.instances.create": ("POST", "/api/integrations/{definition_id}/instances", ("integrations", "create-instance"), "bifrost_integration_instance_create", False),
+    "integrations.instances.update": ("PATCH", "/api/integrations/{definition_id}/instances/{instance_id}", ("integrations", "update-instance"), "bifrost_integration_instance_update", False),
+    "integrations.instances.delete": ("DELETE", "/api/integrations/{definition_id}/instances/{instance_id}", ("integrations", "delete-instance"), "bifrost_integration_instance_delete", False),
+}
+
+
 CANONICAL_OPERATIONS = {
     "users.defaults.get": (
         "GET", "/api/base-role-defaults", ("users", "defaults", "get"),
@@ -1238,6 +1246,7 @@ CANONICAL_OPERATIONS = {
     **EVENT_OPERATIONS,
     **ORGANIZATION_OPERATIONS,
     **INTEGRATION_OPERATIONS,
+    **INTEGRATION_INSTANCE_OPERATIONS,
     **WORKSPACE_FILE_OPERATIONS,
     **PLATFORM_JOB_OPERATIONS,
     **SOLUTION_OPERATIONS,

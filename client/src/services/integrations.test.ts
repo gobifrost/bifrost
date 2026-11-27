@@ -13,11 +13,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 // Capture the last useMutation call so we can inspect the route and options.
 const mockUseMutation = vi.fn();
+const mockUseQuery = vi.fn();
 const mockInvalidateQueries = vi.fn();
 
 vi.mock("@/lib/api-client", () => ({
 	$api: {
 		useMutation: (...args: unknown[]) => mockUseMutation(...args),
+		useQuery: (...args: unknown[]) => mockUseQuery(...args),
 	},
 	apiClient: { POST: vi.fn() },
 }));
@@ -30,11 +32,16 @@ vi.mock("@tanstack/react-query", () => ({
 import {
 	useAuthorizeMapping,
 	useDisconnectMapping,
+	useIntegrationInstances,
+	useCreateIntegrationInstance,
+	useUpdateIntegrationInstance,
+	useDeleteIntegrationInstance,
 	planOrgConfigSave,
 } from "./integrations";
 
 beforeEach(() => {
 	mockUseMutation.mockReset();
+	mockUseQuery.mockReset();
 	mockInvalidateQueries.mockReset();
 	// Return a stable object so hooks don't throw on destructuring.
 	mockUseMutation.mockReturnValue({ mutate: vi.fn(), isPending: false });
@@ -178,5 +185,30 @@ describe("useDisconnectMapping", () => {
 				{ params: { path: { integration_id: "integ-2" } } },
 			],
 		});
+	});
+});
+
+describe("integration instance hooks", () => {
+	it("uses the generated instance routes and refreshes the definition detail after mutations", () => {
+		useIntegrationInstances("definition-1");
+		useCreateIntegrationInstance();
+		useUpdateIntegrationInstance();
+		useDeleteIntegrationInstance();
+
+		expect(mockUseMutation).toHaveBeenCalledWith(
+			"post",
+			"/api/integrations/{definition_id}/instances",
+			expect.any(Object),
+		);
+		expect(mockUseMutation).toHaveBeenCalledWith(
+			"patch",
+			"/api/integrations/{definition_id}/instances/{instance_id}",
+			expect.any(Object),
+		);
+		expect(mockUseMutation).toHaveBeenCalledWith(
+			"delete",
+			"/api/integrations/{definition_id}/instances/{instance_id}",
+			expect.any(Object),
+		);
 	});
 });

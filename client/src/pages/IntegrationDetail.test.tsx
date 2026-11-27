@@ -7,6 +7,7 @@ vi.mock("@/components/integrations/IntegrationWorkflowLinks", () => ({
 
 const mockUseAuthorization = vi.fn();
 const mockUseIntegration = vi.fn();
+const mockUseIntegrationInstances = vi.fn();
 const mockUseOrganizations = vi.fn();
 const mockExportEntities = vi.fn();
 
@@ -28,6 +29,10 @@ vi.mock("@/lib/api-client", () => ({
 
 vi.mock("@/services/integrations", () => ({
 	useIntegration: () => mockUseIntegration(),
+	useIntegrationInstances: () => mockUseIntegrationInstances(),
+	useCreateIntegrationInstance: () => ({ isPending: false, mutateAsync: vi.fn() }),
+	useUpdateIntegrationInstance: () => ({ isPending: false, mutateAsync: vi.fn() }),
+	useDeleteIntegrationInstance: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useUpdateMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useDeleteMapping: () => ({ isPending: false, mutateAsync: vi.fn() }),
 	useUpdateIntegrationConfig: () => ({
@@ -201,6 +206,11 @@ describe("IntegrationDetail authorization", () => {
 		mockUseIntegration.mockReturnValue({
 			data: {
 				id: "integration-1",
+				definition_id: "integration-1",
+				instance_key: "default",
+				instance_name: "Default",
+				is_default_instance: true,
+				authentication_method: "config",
 				name: "Slack",
 				mappings: [],
 				config_schema: [],
@@ -210,6 +220,22 @@ describe("IntegrationDetail authorization", () => {
 			isError: false,
 			isFetching: false,
 			refetch: vi.fn(),
+		});
+		mockUseIntegrationInstances.mockReturnValue({
+			data: {
+				instances: [
+					{
+						id: "integration-1",
+						definition_id: "integration-1",
+						key: "default",
+						name: "Default",
+						is_default: true,
+						authentication_method: "config",
+						has_oauth_config: false,
+					},
+				],
+			},
+			isLoading: false,
 		});
 		mockUseOrganizations.mockReturnValue({
 			data: [
@@ -285,5 +311,51 @@ describe("IntegrationDetail authorization", () => {
 		expect(mockExportEntities).toHaveBeenCalledWith("integrations", [
 			"integration-1",
 		]);
+	});
+
+	it("refuses to render a selected instance outside the routed definition", () => {
+		mockUseIntegration.mockReturnValue({
+			data: {
+				id: "other-instance",
+				definition_id: "other-definition",
+				instance_key: "other",
+				instance_name: "Other",
+				is_default_instance: false,
+				authentication_method: "config",
+				name: "Other Integration",
+				mappings: [],
+				config_schema: [],
+				has_oauth_config: false,
+			},
+			isLoading: false,
+			isError: false,
+			isFetching: false,
+			refetch: vi.fn(),
+		});
+		mockUseIntegrationInstances.mockReturnValue({
+			data: {
+				instances: [
+					{
+						id: "integration-1",
+						definition_id: "integration-1",
+						key: "default",
+						name: "Default",
+						is_default: true,
+						authentication_method: "config",
+						has_oauth_config: false,
+					},
+				],
+			},
+			isLoading: false,
+		});
+		setAuthorization({ globalRead: true });
+		renderDetail();
+
+		expect(
+			screen.getByRole("heading", { name: "Connection instance not found" }),
+		).toBeInTheDocument();
+		expect(
+			screen.queryByRole("button", { name: "Test Connection" }),
+		).not.toBeInTheDocument();
 	});
 });

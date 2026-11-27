@@ -6,7 +6,7 @@ import zipfile
 from uuid import UUID
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
@@ -204,11 +204,17 @@ async def _build_configs_export(
     items = []
     for cfg in configs:
         integration_name = None
+        instance_key = None
         if cfg.integration_id:
-            int_result = await db.execute(
-                select(Integration.name).where(Integration.id == cfg.integration_id)
-            )
-            integration_name = int_result.scalar_one_or_none()
+            integration = await db.get(Integration, cfg.integration_id)
+            if integration is not None:
+                definition = (
+                    await db.get(Integration, integration.parent_integration_id)
+                    if integration.parent_integration_id else integration
+                )
+                if definition is not None:
+                    integration_name = definition.name
+                    instance_key = integration.instance_key
 
         raw_value = cfg.value.get("value") if cfg.value else None
         if cfg.config_type == ConfigType.SECRET:
@@ -222,6 +228,7 @@ async def _build_configs_export(
             organization_id=str(cfg.organization_id) if cfg.organization_id else None,
             organization_name=org_names.get(cfg.organization_id) if cfg.organization_id else None,
             integration_name=integration_name,
+            instance_key=instance_key,
         ))
 
     return ConfigExportFile(
@@ -250,7 +257,14 @@ async def _build_integrations_export(
     )
     if ids:
         uuids = [UUID(id_str) for id_str in ids]
-        query = query.where(Integration.id.in_(uuids))
+        # A definition export includes its connections. Exporting one connection
+        # also includes its shared definition so it can be imported independently.
+        parents = select(Integration.parent_integration_id).where(Integration.id.in_(uuids))
+        query = query.where(
+            Integration.id.in_(uuids)
+            | Integration.parent_integration_id.in_(uuids)
+            | Integration.id.in_(parents)
+        )
 
     result = await db.execute(query)
     integrations = result.scalars().unique().all()
@@ -361,8 +375,16 @@ async def _build_integrations_export(
                 organization_name=org_names.get(op.organization_id) if op.organization_id else None,
             )
 
+        definition = (
+            await db.get(Integration, integ.parent_integration_id)
+            if integ.parent_integration_id else integ
+        )
         items.append(IntegrationExportItem(
-            name=integ.name,
+            name=(integ.instance_name or definition.name) if integ.parent_integration_id else integ.name,
+            parent_integration_name=definition.name if integ.parent_integration_id else None,
+            instance_key=integ.instance_key,
+            instance_name=integ.instance_name,
+            authentication_method=integ.authentication_method,
             description=integ.description,
             notes=integ.notes,
             entity_id=integ.entity_id,
@@ -575,36 +597,41 @@ async def import_configs(
                     db, caller, "configs.readwrite", item.organization_id, item.organization_name,
                     target_override, force_global, result.warnings, item.key,
                 )
-                await _require_config_secret_write(db, caller, org_id, item.key, item.config_type == "secret")
-                value = item.value
-
-                # Secret exports are encrypted with the source instance key.
-                # Never persist that ciphertext into this instance unchanged.
-                if item.config_type == "secret" and value and not source_secret_key:
-                    raise HTTPException(
-                        400,
-                        "Provide source_secret_key to re-encrypt imported secrets",
+                # Resolve the public definition name and connection key, never
+                # a child's internal storage name or another connection's value.
+                integration_id = None
+                schema_item = None
+                if item.instance_key is not None and not item.integration_name:
+                    raise HTTPException(400, "An instance key requires an integration name")
+                if item.integration_name:
+                    from src.repositories.integrations import IntegrationsRepository
+                    repo = IntegrationsRepository(db)
+                    definition = await repo.get_integration_by_name(item.integration_name)
+                    connection = (
+                        await repo.get_instance_by_key(definition, item.instance_key or "default")
+                        if definition else None
                     )
-                if item.config_type == "secret" and value and source_secret_key:
+                    if connection is None:
+                        raise HTTPException(400, f"Integration connection '{item.integration_name}/{item.instance_key or 'default'}' not found")
+                    integration_id = connection.id
+                    schema_item = next((field for field in definition.config_schema if field.key == item.key), None)
+                    if schema_item is None:
+                        raise HTTPException(400, f"Integration field '{item.key}' not found")
+
+                valid_types = [e.value for e in ConfigType]
+                config_type_enum = (
+                    config_type_for_schema_type(schema_item.type) if schema_item else
+                    ConfigType(item.config_type) if item.config_type in valid_types else ConfigType.STRING
+                )
+                await _require_config_secret_write(db, caller, org_id, item.key, config_type_enum == ConfigType.SECRET)
+                value = item.value
+                if config_type_enum == ConfigType.SECRET and value:
+                    if not source_secret_key:
+                        raise HTTPException(400, "Provide source_secret_key to re-encrypt imported secrets")
                     try:
                         value = decrypt_with_key(value, source_secret_key)
                     except Exception as exc:
                         raise ValueError("Could not re-encrypt the imported secret") from exc
-
-                # Resolve integration_id from name
-                integration_id = None
-                if item.integration_name:
-                    int_result = await db.execute(
-                        select(Integration.id).where(
-                            Integration.name == item.integration_name,
-                            Integration.is_deleted == False,  # noqa: E712
-                        )
-                    )
-                    integration_id = int_result.scalar_one_or_none()
-                    if not integration_id:
-                        result.warnings.append(
-                            f"Integration '{item.integration_name}' not found for config '{item.key}'"
-                        )
 
                 # Check existing
                 existing_query = select(Config).where(Config.key == item.key)
@@ -612,14 +639,10 @@ async def import_configs(
                     existing_query = existing_query.where(Config.organization_id == org_id)
                 else:
                     existing_query = existing_query.where(Config.organization_id.is_(None))
-                if integration_id:
-                    existing_query = existing_query.where(Config.integration_id == integration_id)
+                existing_query = existing_query.where(Config.integration_id == integration_id)
 
                 existing_result = await db.execute(existing_query)
                 existing = existing_result.scalar_one_or_none()
-
-                valid_types = [e.value for e in ConfigType]
-                config_type_enum = ConfigType(item.config_type) if item.config_type in valid_types else ConfigType.STRING
 
                 if existing:
                     if replace_existing:
@@ -627,6 +650,8 @@ async def import_configs(
                             db, existing, config_type=config_type_enum, value=value
                         )
                         existing.description = item.description
+                        if schema_item is not None:
+                            existing.config_schema_id = schema_item.id
                         existing.updated_by = str(caller.principal.user_id)
                         result.updated += 1
                         result.details.append(ImportResultItem(name=item.key, status="updated"))
@@ -642,6 +667,7 @@ async def import_configs(
                         description=item.description,
                         organization_id=org_id,
                         integration_id=integration_id,
+                        config_schema_id=schema_item.id if schema_item else None,
                         updated_by=str(caller.principal.user_id),
                     )
                     result.created += 1
@@ -676,12 +702,27 @@ async def import_integrations(
     target_override, force_global = _parse_target_org(target_organization_id)
     result = ImportResult(entity_type="integrations")
 
-    for item in export_data.items:
+    for item in sorted(export_data.items, key=lambda entry: entry.parent_integration_name is not None):
         previous_counts = (result.created, result.updated, result.skipped, len(result.details))
         try:
             async with db.begin_nested():
                 await _preflight_integration(db, caller, item, target_override, force_global)
-                # Check for existing integration
+                parent = None
+                if item.parent_integration_name:
+                    parent = (await db.execute(select(Integration).where(
+                        Integration.name == item.parent_integration_name,
+                        Integration.parent_integration_id.is_(None),
+                        Integration.is_deleted.is_(False),
+                    ))).unique().scalar_one_or_none()
+                    if parent is None or item.instance_key == "default":
+                        raise HTTPException(400, "Named instance requires an existing parent and a non-default key")
+                    if item.config_schema:
+                        raise HTTPException(400, "Instance schemas belong to the shared definition")
+                # Match a root by name and a child by parent/key.
+                identity = (
+                    (Integration.parent_integration_id == parent.id) & (Integration.instance_key == item.instance_key)
+                    if parent else (Integration.name == item.name) & Integration.parent_integration_id.is_(None)
+                )
                 existing_result = await db.execute(
                     select(Integration)
                     .options(
@@ -689,7 +730,7 @@ async def import_integrations(
                         selectinload(Integration.mappings),
                         selectinload(Integration.oauth_provider).defer(OAuthProvider.encrypted_client_secret),
                     )
-                    .where(Integration.name == item.name, Integration.is_deleted == False)  # noqa: E712
+                    .where(identity, Integration.is_deleted.is_(False))
                 )
                 existing = existing_result.scalar_one_or_none()
 
@@ -699,6 +740,8 @@ async def import_integrations(
                         result.details.append(ImportResultItem(name=item.name, status="skipped"))
                         continue
 
+                    if item.authentication_method == "config" and existing.oauth_provider:
+                        raise HTTPException(409, "Disconnect OAuth before changing authentication method to config")
                     # Update basic fields
                     existing.description = item.description
                     if "notes" in item.model_fields_set:
@@ -713,8 +756,11 @@ async def import_integrations(
                         if dp_id:
                             existing.list_entities_data_provider_id = dp_id
 
-                    # Sync config schema
-                    await _sync_config_schema(db, existing, item.config_schema)
+                    # Named connections use their parent's fields.
+                    if parent is None:
+                        await _sync_config_schema(db, existing, item.config_schema)
+                    existing.instance_name = item.instance_name or item.name
+                    existing.authentication_method = item.authentication_method or ("oauth" if item.oauth_provider or existing.oauth_provider else "config")
 
                     result.updated += 1
                     result.details.append(ImportResultItem(name=item.name, status="updated"))
@@ -722,7 +768,11 @@ async def import_integrations(
                 else:
                     # Create new integration
                     integ = Integration(
-                        name=item.name,
+                        name=f"{parent.id}::{item.instance_key}" if parent else item.name,
+                        parent_integration_id=parent.id if parent else None,
+                        instance_key=item.instance_key if parent else "default",
+                        instance_name=item.instance_name or item.name,
+                        authentication_method=item.authentication_method or ("oauth" if item.oauth_provider else "config"),
                         description=item.description,
                         notes=item.notes,
                         entity_id=item.entity_id,
@@ -945,7 +995,9 @@ async def _import_config_value(
     # The schema field decides an integration value's type.
     schema_result = await db.execute(
         select(IntegrationConfigSchema).where(
-            IntegrationConfigSchema.integration_id == integration_id,
+            IntegrationConfigSchema.integration_id == select(
+                func.coalesce(Integration.parent_integration_id, Integration.id)
+            ).where(Integration.id == integration_id).scalar_subquery(),
             IntegrationConfigSchema.key == key,
         )
     )
@@ -980,6 +1032,7 @@ async def _import_config_value(
     if existing:
         await write_config_value(db, existing, config_type=config_type, value=value)
         existing.updated_by = user_id
+        existing.config_schema_id = config_schema_id
     else:
         await new_config_row(
             db,
@@ -1109,7 +1162,7 @@ async def _preflight_integration(db, caller: Caller, item: IntegrationExportItem
     # Existing schema still classifies values if the archive changes its type.
     old_types = (await db.execute(select(IntegrationConfigSchema.key, IntegrationConfigSchema.type)
                     .join(Integration, Integration.id == IntegrationConfigSchema.integration_id)
-                    .where(Integration.name == item.name, Integration.is_deleted.is_(False)))).all()
+                    .where(Integration.name == (item.parent_integration_name or item.name), Integration.parent_integration_id.is_(None), Integration.is_deleted.is_(False)))).all()
     secret_keys = {key for key, kind in old_types if kind == "secret"} | {key for key, kind in types.items() if kind == "secret"}
     for mapping in item.mappings:
         org_id = await _resolve_org_id(db, caller, "integrations.readwrite", mapping.organization_id, mapping.organization_name,
@@ -1123,8 +1176,13 @@ async def _preflight_integration(db, caller: Caller, item: IntegrationExportItem
         org_id = await _resolve_org_id(db, caller, "integrations.readwrite", oauth.organization_id, oauth.organization_name,
                                       target_override, force_global, [], item.name)
         require_permission(caller, "secrets.read", org_id)
-        existing_scope = (await db.execute(select(OAuthProvider.organization_id).join(Integration, Integration.id == OAuthProvider.integration_id)
-                            .where(Integration.name == item.name, Integration.is_deleted.is_(False)))).one_or_none()
+        from src.repositories.integrations import IntegrationsRepository
+        repo = IntegrationsRepository(db)
+        definition = await repo.get_integration_by_name(item.parent_integration_name or item.name)
+        connection = await repo.get_instance_by_key(definition, item.instance_key) if definition else None
+        existing_scope = (await db.execute(select(OAuthProvider.organization_id).where(
+            OAuthProvider.integration_id == connection.id
+        ))).one_or_none() if connection else None
         if existing_scope is not None:
             require_permission(caller, "integrations.readwrite", existing_scope.organization_id)
             require_permission(caller, "secrets.read", existing_scope.organization_id)

@@ -23,6 +23,7 @@ export function IntegrationPageHeader({
 	onTest,
 	onGenerateSDK,
 	onEdit,
+	onConfigureInstance,
 	onExport,
 	canExport,
 	hasSetupNotes,
@@ -33,12 +34,15 @@ export function IntegrationPageHeader({
 	canManageDefinitions,
 	status,
 	workflowActions,
+	instanceSelector,
+	sharedDefinitionDescription,
 }: {
 	name: string;
 	description?: string;
 	onTest: () => void;
 	onGenerateSDK: () => void;
 	onEdit: () => void;
+	onConfigureInstance?: () => void;
 	onExport: () => void;
 	canExport: boolean;
 	hasSetupNotes: boolean;
@@ -50,6 +54,10 @@ export function IntegrationPageHeader({
 	/** Status chips shown under the name. */
 	status?: ReactNode;
 	workflowActions?: ReactNode;
+	/** Connection-instance selector, kept in the detail breadcrumb. */
+	instanceSelector?: ReactNode;
+	/** Explains the scope of definition edits when an integration has instances. */
+	sharedDefinitionDescription?: string;
 }) {
 	const canAddSetupNotes = !hasSetupNotes && canManageDefinitions;
 	const hasMoreActions =
@@ -70,6 +78,12 @@ export function IntegrationPageHeader({
 				<span aria-current="page" className="[overflow-wrap:anywhere]">
 					{name}
 				</span>
+				{instanceSelector && (
+					<>
+						<span aria-hidden="true">/</span>
+						{instanceSelector}
+					</>
+				)}
 			</nav>
 			<div className="flex min-w-0 flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
 				<div className="min-w-0 space-y-3">
@@ -80,6 +94,11 @@ export function IntegrationPageHeader({
 						{description && (
 							<p className="mt-1 max-w-2xl text-sm text-muted-foreground [overflow-wrap:anywhere]">
 								{description}
+							</p>
+						)}
+						{sharedDefinitionDescription && (
+							<p className="mt-1 text-sm text-muted-foreground">
+								{sharedDefinitionDescription}
 							</p>
 						)}
 					</div>
@@ -116,10 +135,20 @@ export function IntegrationPageHeader({
 							type="button"
 							variant="outline"
 							className="min-h-11"
+							onClick={onConfigureInstance}
+						>
+							Configure Instance
+						</Button>
+					)}
+					{canManageDefinitions && (
+						<Button
+							type="button"
+							variant="outline"
+							className="min-h-11"
 							onClick={onEdit}
 						>
 							<Pencil className="size-4" />
-							Edit
+							Edit Shared Definition
 						</Button>
 					)}
 					{hasMoreActions && (

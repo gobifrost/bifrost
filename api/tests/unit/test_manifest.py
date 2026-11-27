@@ -959,6 +959,93 @@ class TestIntegrationManifest:
         assert integ_id in restored.integrations
         assert restored.integrations[integ_id].id == integ_id
 
+    def test_instance_entries_round_trip_with_shared_definition_schema(self):
+        """An instance keeps its own identity while schema remains on its root."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestIntegration,
+            ManifestIntegrationConfigSchema,
+            parse_manifest,
+            serialize_manifest,
+        )
+
+        definition_id = str(uuid4())
+        instance_id = str(uuid4())
+        manifest = Manifest(
+            integrations={
+                definition_id: ManifestIntegration(
+                    id=definition_id,
+                    name="HaloPSA",
+                    instance_key="default",
+                    instance_name="HaloPSA",
+                    authentication_method="oauth",
+                    config_schema=[
+                        ManifestIntegrationConfigSchema(key="api_key", type="secret")
+                    ],
+                ),
+                instance_id: ManifestIntegration(
+                    id=instance_id,
+                    name="HaloPSA EU",
+                    parent_integration_id=definition_id,
+                    instance_key="eu",
+                    instance_name="Europe",
+                    authentication_method="config",
+                ),
+            }
+        )
+
+        restored = parse_manifest(serialize_manifest(manifest))
+        child = restored.integrations[instance_id]
+        assert child.parent_integration_id == definition_id
+        assert child.instance_key == "eu"
+        assert child.instance_name == "Europe"
+        assert child.authentication_method == "config"
+        assert child.config_schema == []
+
+    def test_instance_manifest_rejects_nested_schema_and_missing_root(self):
+        """Instances never own schema and must point to an exported root."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestIntegration,
+            ManifestIntegrationConfigSchema,
+            validate_manifest,
+        )
+
+        child = ManifestIntegration(
+            id=str(uuid4()),
+            parent_integration_id=str(uuid4()),
+            instance_key="eu",
+            config_schema=[
+                ManifestIntegrationConfigSchema(key="should_not_exist", type="string")
+            ],
+        )
+
+        errors = validate_manifest(Manifest(integrations={child.id: child}))
+        assert any("unknown parent integration" in error for error in errors)
+        assert any("must not declare config_schema" in error for error in errors)
+
+    def test_filtering_instance_keeps_its_root_definition(self):
+        """A filtered manifest never detaches an instance from its schema root."""
+        from bifrost.manifest import (
+            Manifest,
+            ManifestIntegration,
+            filter_manifest_by_ids,
+        )
+
+        definition_id = str(uuid4())
+        instance_id = str(uuid4())
+        manifest = Manifest(integrations={
+            definition_id: ManifestIntegration(id=definition_id, name="HaloPSA"),
+            instance_id: ManifestIntegration(
+                id=instance_id,
+                parent_integration_id=definition_id,
+                instance_key="eu",
+            ),
+        })
+
+        filtered = filter_manifest_by_ids(manifest, {instance_id})
+        assert set(filtered.integrations) == {definition_id, instance_id}
+
 
 class TestConfigManifest:
     """Tests for config manifest models."""
@@ -3275,3 +3362,12 @@ def test_integration_notes_round_trip_from_row_through_yaml_to_import_values():
     manifest = Manifest(integrations={str(row.id): ManifestIntegration.from_row(row)})
     restored = parse_manifest(serialize_manifest(manifest)).integrations[str(row.id)]
     assert restored.to_orm_values(Destination.GIT_SYNC).direct["notes"] == notes
+
+
+@pytest.mark.parametrize("parent,key", [(None, "pbxs"), (str(uuid4()), "default")])
+def test_integration_manifest_preserves_fixed_default_identity(parent, key):
+    from pydantic import ValidationError
+    from bifrost.manifest import ManifestIntegration
+
+    with pytest.raises(ValidationError, match="default instance key"):
+        ManifestIntegration(id=str(uuid4()), parent_integration_id=parent, instance_key=key)

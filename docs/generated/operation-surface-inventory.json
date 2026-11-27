@@ -3719,6 +3719,256 @@
     {
       "observed": {
         "cli": {
+          "path": [
+            "integrations",
+            "list-instances"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": null,
+          "status": "intentionally_unsupported"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_list",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "integrations.instances.list",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.read"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "integrations.read at the selected catalog boundary",
+        "cli": {
+          "path": [
+            "integrations",
+            "list-instances"
+          ]
+        },
+        "exclusions": {
+          "manifest": "The read does not mutate the Integration manifest.",
+          "native_builder": "Instances are managed from the Integration page.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": null,
+        "mcp": {
+          "name": "bifrost_integration_instance_list"
+        },
+        "native_builder": false,
+        "operation_id": "integrations.instances.list",
+        "rest": {
+          "method": "GET",
+          "path": "/api/integrations/{definition_id}/instances",
+          "request_model": null,
+          "response_model": "IntegrationInstanceListResponse"
+        },
+        "side_effects": [],
+        "summary": "List Integration connection instances",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "create-instance"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_create",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "integrations.instances.create",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": "integration.instance.create",
+        "authorization_resolver": "integrations.readwrite at the explicit Platform boundary",
+        "cli": {
+          "path": [
+            "integrations",
+            "create-instance"
+          ]
+        },
+        "exclusions": {
+          "native_builder": "Instances are managed from the Integration page.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_create"
+        },
+        "native_builder": false,
+        "operation_id": "integrations.instances.create",
+        "rest": {
+          "method": "POST",
+          "path": "/api/integrations/{definition_id}/instances",
+          "request_model": "IntegrationInstanceCreate",
+          "response_model": "IntegrationInstanceResponse"
+        },
+        "side_effects": [],
+        "summary": "Create Integration connection instance",
+        "target_kind": "collection"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "update-instance"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_update",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "integrations.instances.update",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "integrations.readwrite at the explicit Platform boundary",
+        "cli": {
+          "path": [
+            "integrations",
+            "update-instance"
+          ]
+        },
+        "exclusions": {
+          "native_builder": "Instances are managed from the Integration page.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_update"
+        },
+        "native_builder": false,
+        "operation_id": "integrations.instances.update",
+        "rest": {
+          "method": "PATCH",
+          "path": "/api/integrations/{definition_id}/instances/{instance_id}",
+          "request_model": "IntegrationInstanceUpdate",
+          "response_model": "IntegrationInstanceResponse"
+        },
+        "side_effects": [],
+        "summary": "Update Integration connection instance",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
+          "path": [
+            "integrations",
+            "delete-instance"
+          ],
+          "status": "exact_parity"
+        },
+        "manifest": {
+          "entity": "integrations",
+          "status": "exact_parity"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_delete",
+          "status": "exact_parity"
+        },
+        "rest": {
+          "operation_id": "integrations.instances.delete",
+          "status": "exact_parity"
+        },
+        "sdk": {
+          "binding": null,
+          "status": "intentionally_unsupported"
+        }
+      },
+      "operation": {
+        "action_scopes": [
+          "integrations.readwrite"
+        ],
+        "async_policy": "synchronous",
+        "audit_event": null,
+        "authorization_resolver": "integrations.readwrite at the explicit Platform boundary",
+        "cli": {
+          "path": [
+            "integrations",
+            "delete-instance"
+          ]
+        },
+        "exclusions": {
+          "native_builder": "Instances are managed from the Integration page.",
+          "sdk": "Integration administration is separate from the application SDK's runtime mapping lookup."
+        },
+        "manifest": {
+          "behavior": "reconcile",
+          "entity": "integrations"
+        },
+        "mcp": {
+          "name": "bifrost_integration_instance_delete"
+        },
+        "native_builder": false,
+        "operation_id": "integrations.instances.delete",
+        "rest": {
+          "method": "DELETE",
+          "path": "/api/integrations/{definition_id}/instances/{instance_id}",
+          "request_model": null,
+          "response_model": null
+        },
+        "side_effects": [],
+        "summary": "Delete Integration connection instance",
+        "target_kind": "resource"
+      }
+    },
+    {
+      "observed": {
+        "cli": {
           "path": null,
           "status": "intentionally_unsupported"
         },
@@ -11421,10 +11671,10 @@
     }
   ],
   "counts": {
-    "cli": 180,
+    "cli": 184,
     "manifest": 16,
-    "mcp": 101,
-    "rest": 761,
+    "mcp": 105,
+    "rest": 771,
     "sdk": 21
   },
   "schema_version": 1,
@@ -15247,6 +15497,48 @@
         "method": "POST",
         "operation_id": "",
         "path": "/api/sdk/integrations/get_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/delete_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/find_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/get",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/get_mapping",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/list_mappings",
+        "reason": "REST operation has not entered the canonical operation catalog yet.",
+        "status": "missing_surface"
+      },
+      {
+        "method": "POST",
+        "operation_id": "",
+        "path": "/api/sdk/integrations/instances/upsert_mapping",
         "reason": "REST operation has not entered the canonical operation catalog yet.",
         "status": "missing_surface"
       },

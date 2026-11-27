@@ -197,6 +197,8 @@ class IntegrationData(BaseModel):
     """Integration configuration data."""
 
     integration_id: str
+    definition_id: str | None = None
+    instance_key: str | None = None
     entity_id: str | None
     entity_name: str | None
     config: dict
@@ -265,6 +267,8 @@ class IntegrationMappingResponse(BaseModel):
 
     id: str
     integration_id: str
+    definition_id: str | None = None
+    instance_key: str | None = None
     organization_id: str | None = None  # NULL for global mappings
     entity_id: str
     entity_name: str | None

@@ -66,6 +66,25 @@ class TestFacadeEngineRequest:
             clear_execution_context()
 
     @pytest.mark.asyncio
+    async def test_named_get_rejects_an_old_server_default_response(self):
+        """A selector must never silently receive Default credentials."""
+        from bifrost.integrations import integrations
+
+        client = AsyncMock()
+        client.engine_request = AsyncMock(return_value=httpx.Response(
+            200,
+            json={
+                "integration_id": "default-id", "entity_id": None,
+                "entity_name": None, "config": {}, "oauth": None,
+                "config_secret_keys": [],
+            },
+            request=httpx.Request("POST", "http://api/api/sdk/integrations/instances/get"),
+        ))
+        with patch("bifrost.integrations.get_client", return_value=client):
+            with pytest.raises(RuntimeError, match="requested instance"):
+                await integrations.get("P", instance="production")
+
+    @pytest.mark.asyncio
     async def test_list_mappings_sends_no_scope(self):
         """The list is every mapping the run user can read; a scope argument
         is accepted for existing callers and never sent."""

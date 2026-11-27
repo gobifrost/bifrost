@@ -68,6 +68,17 @@ class IntegrationServiceError(Exception):
         self.detail = detail
 
 
+async def _resolve_instance(repo: Any, name: str, instance: str | None) -> tuple[Any, Any] | None:
+    """Resolve a public definition name and optional instance key to one row."""
+    definition = await repo.get_integration_by_name(name)
+    if definition is None:
+        return None
+    selected = await repo.get_instance_by_key(definition, instance or "default")
+    if selected is None:
+        return None
+    return definition, selected
+
+
 def should_auto_refresh_token(
     provider: Any, entity_id: str | None, oauth_scope: str | None = None
 ) -> bool:
@@ -322,6 +333,8 @@ async def get_sdk_integration_dict(
     *,
     name: str,
     org_id: UUID | None,
+    instance: str | None = None,
+    on_missing: str = "fail",
     oauth_scope: str | None = None,
     solution_id: UUID | str | None = None,
     caller: Caller,
@@ -361,16 +374,34 @@ async def get_sdk_integration_dict(
     external = external_credential_restrictions(caller)
     repo = IntegrationsRepository(session)
 
+    definition = await repo.get_integration_by_name(name)
+    if not definition:
+        if solution_id and await connection_is_declared(session, solution_id, name):
+            raise IntegrationServiceError(
+                424,
+                f"Required integration '{name}' is not set up. Set it up in the Integrations settings, or in the solution's Setup tab.",
+            )
+        return None
+    integration = await repo.get_instance_by_key(definition, instance or "default")
+    if integration is None:
+        if instance and on_missing == "default":
+            integration = definition
+            logger.info(
+                "SDK integration instance fallback: definition=%s requested=%s resolved=default",
+                log_safe(name),
+                log_safe(instance),
+            )
+        else:
+            raise IntegrationServiceError(404, f"Integration instance '{instance}' is not configured")
+
     # Real helpers for the shared OAuth builder (unit tests inject fakes).
     from src.core.security import decrypt_secret as _decrypt_secret
     from src.services.oauth_provider import (
         resolve_url_template as _resolve_url_template,
     )
 
-    # Try to get org-specific mapping first
-    mapping = None
-    if org_id:
-        mapping = await repo.get_integration_for_org(name, org_id)
+    # Try to get an org-specific mapping on the selected connection first.
+    mapping = await repo.get_mapping_by_org(integration.id, org_id) if org_id else None
 
     if mapping:
         # Org-specific mapping found. EXTERNAL callers (OPEN-E) drop the
@@ -381,15 +412,12 @@ async def get_sdk_integration_dict(
             external=external,
             reveal_secrets=can_read_secrets,
         )
-        integration = mapping.integration
         entity_id = mapping.entity_id or (
             integration.default_entity_id if integration else None
         )
 
         secret_keys = (
-            [s.key for s in integration.config_schema if s.type == "secret"]
-            if integration
-            else []
+            [s.key for s in definition.config_schema if s.type == "secret"]
         )
         oauth: dict[str, Any] | None = None
 
@@ -423,6 +451,8 @@ async def get_sdk_integration_dict(
         logger.info(f"SDK retrieved integration '{log_safe(name)}' (org mapping)")
         return {
             "integration_id": str(mapping.integration_id),
+            "definition_id": str(definition.id),
+            "instance_key": integration.instance_key,
             "entity_id": entity_id,
             "entity_name": mapping.entity_name,
             "config": config or {},
@@ -430,24 +460,8 @@ async def get_sdk_integration_dict(
             "config_secret_keys": secret_keys,
         }
 
-    # Fall back to integration defaults
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
-        # RequiredConnectionUnset: if the missing integration was DECLARED by
-        # the calling solution, escalate to a loud 424 (mirrors
-        # RequiredConfigUnset) instead of a silent None. Loose (non-solution
-        # or non-declared) calls keep the silent-None behavior.
-        if solution_id and await connection_is_declared(session, solution_id, name):
-            raise IntegrationServiceError(
-                424,
-                f"Required integration '{name}' is not set up. "
-                f"Set it up in the Integrations settings, or in the "
-                f"solution's Setup tab.",
-            )
-        logger.debug(f"SDK integrations.get('{log_safe(name)}'): integration not found")
-        return None
-
-    entity_id = integration.default_entity_id or integration.entity_id
+    # Fall back to the selected connection's defaults.
+    entity_id = integration.default_entity_id or definition.entity_id
     # Integration DEFAULTS are the global (org_id=NULL) tier — an EXTERNAL
     # caller (OPEN-E) reading them would receive decrypted global secrets,
     # so external=True returns no defaults at all.
@@ -455,7 +469,7 @@ async def get_sdk_integration_dict(
         integration.id, external=external, reveal_secrets=can_read_secrets
     )
 
-    secret_keys = [s.key for s in integration.config_schema if s.type == "secret"]
+    secret_keys = [s.key for s in definition.config_schema if s.type == "secret"]
     oauth = None
 
     # Build OAuth data if provider exists. This is the DEFAULTS path: the
@@ -485,6 +499,8 @@ async def get_sdk_integration_dict(
     logger.info(f"SDK retrieved integration '{log_safe(name)}' (defaults)")
     return {
         "integration_id": str(integration.id),
+        "definition_id": str(definition.id),
+        "instance_key": integration.instance_key,
         "entity_id": entity_id,
         "entity_name": None,  # No mapping = no entity name
         "config": config or {},
@@ -499,6 +515,8 @@ async def _mapping_item_dict(
     mapping: Any,
     *,
     caller: Caller,
+    definition_id: UUID | None = None,
+    instance_key: str | None = None,
 ) -> dict[str, Any]:
     """One JSON-serializable mapping dict (merged config + echo fields)."""
     # Get merged config (integration defaults + org overrides).
@@ -514,6 +532,8 @@ async def _mapping_item_dict(
     return {
         "id": str(mapping.id),
         "integration_id": str(mapping.integration_id),
+        "definition_id": str(definition_id or mapping.integration_id),
+        "instance_key": instance_key or "default",
         "organization_id": str(mapping.organization_id),
         "entity_id": mapping.entity_id,
         "entity_name": mapping.entity_name,
@@ -530,6 +550,7 @@ async def list_sdk_integration_mappings(
     session: AsyncSession,
     *,
     name: str,
+    instance: str | None = None,
     caller: Caller,
 ) -> list[dict[str, Any]] | None:
     """List mappings for an integration (shared by both paths).
@@ -552,9 +573,10 @@ async def list_sdk_integration_mappings(
 
     reach = operation_reach(caller, "integrations.mappings.list")
     repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
+    resolved = await _resolve_instance(repo, name, instance)
+    if not resolved:
         return None
+    definition, integration = resolved
 
     mappings = await repo.list_mappings(integration.id, reach=reach)
 
@@ -564,7 +586,8 @@ async def list_sdk_integration_mappings(
 
     return [
         await _mapping_item_dict(
-            repo, integration.id, mapping, caller=caller
+            repo, integration.id, mapping, caller=caller,
+            definition_id=definition.id, instance_key=integration.instance_key,
         )
         for mapping in mappings
     ]
@@ -579,6 +602,7 @@ async def get_sdk_integration_mapping_dict(
     session: AsyncSession,
     *,
     name: str,
+    instance: str | None = None,
     scope: str | None,
     caller: Caller,
     entity_id: str | None = None,
@@ -604,9 +628,10 @@ async def get_sdk_integration_mapping_dict(
     org_id = await resolve_sdk_scope(scope, caller=caller)
     require_permission(caller, "integrations.read", org_id)
     repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
+    resolved = await _resolve_instance(repo, name, instance)
+    if not resolved:
         return None
+    definition, integration = resolved
 
     mapping = None
 
@@ -637,7 +662,8 @@ async def get_sdk_integration_mapping_dict(
     # tier (NEW-G).
     logger.info(f"SDK retrieved mapping for integration '{log_safe(name)}'")
     return await _mapping_item_dict(
-        repo, integration.id, mapping, caller=caller
+        repo, integration.id, mapping, caller=caller,
+        definition_id=definition.id, instance_key=integration.instance_key,
     )
 
 
@@ -645,6 +671,7 @@ async def find_sdk_integration_mapping_dict(
     session: AsyncSession,
     *,
     name: str,
+    instance: str | None = None,
     entity_id: str,
     caller: Caller,
 ) -> dict[str, Any] | None:
@@ -667,9 +694,10 @@ async def find_sdk_integration_mapping_dict(
 
     reach = operation_reach(caller, "integrations.mappings.list")
     repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
+    resolved = await _resolve_instance(repo, name, instance)
+    if not resolved:
         return None
+    definition, integration = resolved
 
     candidates = await repo.list_mappings(integration.id, reach=reach)
     matches = [m for m in candidates if m.entity_id == entity_id]
@@ -685,7 +713,8 @@ async def find_sdk_integration_mapping_dict(
         return {
             "status": "unique",
             "mapping": await _mapping_item_dict(
-                repo, integration.id, matches[0], caller=caller
+                repo, integration.id, matches[0], caller=caller,
+                definition_id=definition.id, instance_key=integration.instance_key,
             ),
             "receipt": receipt,
         }
@@ -706,6 +735,7 @@ async def upsert_sdk_integration_mapping(
     session: AsyncSession,
     *,
     name: str,
+    instance: str | None = None,
     scope: str | None,
     caller: Caller,
     entity_id: str,
@@ -771,9 +801,10 @@ async def upsert_sdk_integration_mapping(
         )
     actor_email = caller.principal.email
     repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
+    resolved = await _resolve_instance(repo, name, instance)
+    if not resolved:
         raise IntegrationServiceError(404, f"Integration '{name}' not found")
+    definition, integration = resolved
 
     existing_mapping = await repo.get_mapping_by_org(integration.id, org_id)
 
@@ -814,7 +845,8 @@ async def upsert_sdk_integration_mapping(
     await session.commit()
 
     return await _mapping_item_dict(
-        repo, integration.id, mapping, caller=caller
+        repo, integration.id, mapping, caller=caller,
+        definition_id=definition.id, instance_key=integration.instance_key,
     )
 
 
@@ -822,6 +854,7 @@ async def delete_sdk_integration_mapping(
     session: AsyncSession,
     *,
     name: str,
+    instance: str | None = None,
     scope: str | None,
     caller: Caller,
 ) -> dict[str, bool]:
@@ -857,9 +890,10 @@ async def delete_sdk_integration_mapping(
     if org_id is None:
         return {"deleted": False}
     repo = IntegrationsRepository(session)
-    integration = await repo.get_integration_by_name(name)
-    if not integration:
+    resolved = await _resolve_instance(repo, name, instance)
+    if not resolved:
         return {"deleted": False}
+    _, integration = resolved
 
     mapping = await repo.get_mapping_by_org(integration.id, org_id)
 

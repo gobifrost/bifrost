@@ -221,3 +221,144 @@ async def test_unresolved_import_org_refuses_instead_of_writing_global(db_sessio
         await service.import_configs(db_session, caller, content)
     assert error.value.status_code == 404
     assert (await db_session.execute(select(Config).where(Config.key == "endpoint"))).scalars().all() == []
+
+
+async def test_integration_archive_roundtrips_named_instance_and_shared_schema(db_session, authority):
+    """The UI export keeps connections grouped without cloning their schema."""
+    from src.models.orm.integrations import IntegrationConfigSchema
+    from src.repositories.integrations import IntegrationsRepository
+
+    caller, home, _foreign = await authority(
+        "integrations.read", "integrations.readwrite", "configs.read", "configs.readwrite"
+    )
+    name = f"Instance Archive {uuid4().hex}"
+    copied_name = f"{name} Copy"
+    definition = Integration(name=name, config_schema=[IntegrationConfigSchema(key="region", type="string")])
+    db_session.add(definition)
+    await db_session.flush()
+    child = Integration(name=f"{definition.id}::pbxs", parent_integration_id=definition.id,
+                        instance_key="pbxs", instance_name="PBXs")
+    db_session.add(child)
+    await db_session.flush()
+    repo = IntegrationsRepository(db_session)
+    await repo.save_config(definition.id, None, {"region": "eu-west-1"}, "test")
+    await repo.save_config(child.id, None, {"region": "us-east-1"}, "test")
+    db_session.add(IntegrationMapping(integration_id=child.id, organization_id=home.id, entity_id="pbx-account"))
+    await db_session.flush()
+    try:
+        archive = await service._build_integrations_export(db_session, caller, [str(definition.id)])
+        assert len(archive.items) == 2
+        named = next(item for item in archive.items if item.parent_integration_name)
+        assert named.parent_integration_name == name
+        assert named.instance_key == "pbxs"
+        assert named.name == "PBXs"
+        assert named.config_schema == []
+        for item in archive.items:
+            if item.parent_integration_name:
+                item.parent_integration_name = copied_name
+            else:
+                item.name = copied_name
+        archive.items.reverse()  # Import must order the definition before children.
+        restored = await service.import_integrations(db_session, caller, archive.model_dump_json().encode())
+        assert restored.errors == 0
+        assert restored.created == 2
+        copied = await repo.get_integration_by_name(copied_name)
+        connection = await repo.get_instance_by_key(copied, "pbxs")
+        assert (await repo.get_integration_defaults(copied.id, external=False, reveal_secrets=False))["region"] == "eu-west-1"
+        assert (await repo.get_integration_defaults(connection.id, external=False, reveal_secrets=False))["region"] == "us-east-1"
+        mapping = await repo.get_mapping_by_org(connection.id, home.id)
+        assert mapping.entity_id == "pbx-account"
+        config = (await db_session.execute(select(Config).where(Config.integration_id == connection.id))).scalar_one()
+        assert config.config_schema_id == copied.config_schema[0].id
+        assert connection.config_schema == []
+    finally:
+        await db_session.rollback()
+        roots = select(Integration.id).where(Integration.name.in_([name, copied_name]))
+        await db_session.execute(delete(Integration).where(
+            Integration.parent_integration_id.in_(roots) | Integration.name.in_([name, copied_name])
+        ))
+        await db_session.commit()
+
+
+async def test_named_instance_archive_import_uses_parent_secret_classification(db_session, authority):
+    """A child cannot import encrypted secret text as an ordinary string."""
+    from src.models.contracts.export_import import ImportResult
+    from src.models.orm.integrations import IntegrationConfigSchema
+
+    caller, _home, _foreign = await authority("integrations.readwrite", "secrets.read")
+    definition = Integration(name=f"Secret Parent {uuid4().hex}", config_schema=[IntegrationConfigSchema(key="key", type="secret")])
+    db_session.add(definition)
+    await db_session.flush()
+    child = Integration(name=f"{definition.id}::pbxs", parent_integration_id=definition.id,
+                        instance_key="pbxs", instance_name="PBXs")
+    db_session.add(child)
+    await db_session.flush()
+    with pytest.raises(HTTPException) as error:
+        await service._import_config_value(db_session, caller, child.id, None, "key",
+                                           "encrypted-source-value", None, "test", ImportResult(entity_type="integrations"))
+    assert error.value.status_code == 400
+    assert "source_secret_key" in error.value.detail
+
+
+async def test_config_archive_selects_named_instance_without_overwriting_other_values(db_session, authority):
+    from src.models.orm.integrations import IntegrationConfigSchema
+    from src.repositories.integrations import IntegrationsRepository
+    from src.services.config_values import new_config_row
+
+    caller, _home, _foreign = await authority("configs.read", "configs.readwrite")
+    name = f"Config Archive {uuid4().hex}"
+    key = f"region_{uuid4().hex}"
+    definition = Integration(name=name, config_schema=[IntegrationConfigSchema(key=key, type="string")])
+    db_session.add(definition)
+    await db_session.flush()
+    child = Integration(name=f"{definition.id}::pbxs", parent_integration_id=definition.id,
+                        instance_key="pbxs", instance_name="PBXs")
+    db_session.add(child)
+    await db_session.flush()
+    repo = IntegrationsRepository(db_session)
+    await repo.save_config(definition.id, None, {key: "eu-west-1"}, "test")
+    await repo.save_config(child.id, None, {key: "us-east-1"}, "test")
+    standalone = await new_config_row(db_session, key=key, value="global-value", config_type=ConfigType.STRING,
+                                      organization_id=None, updated_by="test")
+    await db_session.flush()
+    try:
+        config = (await db_session.execute(select(Config).where(Config.integration_id == child.id))).scalar_one()
+        exported = await service._build_configs_export(db_session, caller, [str(config.id)])
+        assert exported.items[0].integration_name == name
+        assert exported.items[0].instance_key == "pbxs"
+        exported.items[0].value = "ap-south-1"
+        result = await service.import_configs(db_session, caller, exported.model_dump_json().encode())
+        assert result.errors == 0
+        assert (await repo.get_integration_defaults(child.id, external=False, reveal_secrets=False))[key] == "ap-south-1"
+        assert (await repo.get_integration_defaults(definition.id, external=False, reveal_secrets=False))[key] == "eu-west-1"
+        await db_session.refresh(standalone)
+        assert standalone.value == {"value": "global-value"}
+        assert config.config_schema_id == definition.config_schema[0].id
+        exported.items[0].instance_key = "missing"
+        with pytest.raises(HTTPException) as error:
+            await service.import_configs(db_session, caller, exported.model_dump_json().encode())
+        assert error.value.status_code == 400
+    finally:
+        await db_session.rollback()
+        await db_session.execute(delete(Config).where(Config.key == key))
+        roots = select(Integration.id).where(Integration.name == name)
+        await db_session.execute(delete(Integration).where(
+            Integration.parent_integration_id.in_(roots) | (Integration.name == name)
+        ))
+        await db_session.commit()
+
+
+async def test_archive_rejects_named_instance_without_parent_before_updating_root(db_session, authority):
+    import json
+
+    caller, _home, _foreign = await authority("integrations.readwrite")
+    root = Integration(name=f"Archive Root {uuid4().hex}", description="keep this")
+    db_session.add(root)
+    await db_session.flush()
+    archive = {"items": [{"name": root.name, "instance_key": "pbxs", "description": "wrong target"}]}
+    with pytest.raises(HTTPException) as error:
+        await service.import_integrations(db_session, caller, json.dumps(archive).encode())
+    assert error.value.status_code == 400
+    assert "parent integration name" in error.value.detail
+    await db_session.refresh(root)
+    assert root.description == "keep this"

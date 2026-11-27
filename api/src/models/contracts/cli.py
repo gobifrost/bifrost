@@ -153,6 +153,10 @@ class SDKIntegrationsGetRequest(BaseModel):
     """Request to get integration configuration via SDK."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
+    on_missing: Literal["fail", "default"] = Field(
+        default="fail", description="How an explicit missing instance is handled"
+    )
     scope: str | None = Field(
         default=None,
         description="Organization scope: None=context default, UUID=specific org, 'global'=global scope",
@@ -198,6 +202,8 @@ class SDKIntegrationsGetResponse(BaseModel):
     """Integration data response from SDK."""
 
     integration_id: str = Field(..., description="Integration UUID")
+    definition_id: str = Field(..., description="Shared integration definition UUID")
+    instance_key: str = Field(..., description="Resolved connection instance key")
     entity_id: str | None = Field(
         None, description="Mapped external entity ID (e.g., tenant ID)"
     )
@@ -223,6 +229,7 @@ class SDKIntegrationsListMappingsRequest(BaseModel):
     """Request to list integration mappings via SDK."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
     scope: str | None = Field(
         default=None,
         description=(
@@ -239,6 +246,8 @@ class SDKIntegrationsMappingItem(BaseModel):
 
     id: str = Field(..., description="Mapping UUID")
     integration_id: str = Field(..., description="Integration UUID")
+    definition_id: str = Field(..., description="Shared integration definition UUID")
+    instance_key: str = Field(..., description="Connection instance key")
     organization_id: str = Field(..., description="Organization UUID")
     entity_id: str = Field(..., description="External entity ID")
     entity_name: str | None = Field(None, description="Display name")
@@ -266,6 +275,7 @@ class SDKIntegrationsGetMappingRequest(BaseModel):
     """Request to get a specific mapping via SDK."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
     scope: str | None = Field(
         default=None,
         description="Organization scope: None=context default, UUID=specific org",
@@ -279,6 +289,7 @@ class SDKIntegrationsUpsertMappingRequest(BaseModel):
     """Request to create or update a mapping via SDK."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
     scope: str = Field(..., description="Organization ID (required for upsert)")
     entity_id: str = Field(..., description="External entity ID")
     entity_name: str | None = Field(
@@ -295,6 +306,7 @@ class SDKIntegrationsDeleteMappingRequest(BaseModel):
     """Request to delete a mapping via SDK."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
     scope: str = Field(..., description="Organization ID (required for delete)")
 
     model_config = ConfigDict(from_attributes=True)
@@ -304,6 +316,7 @@ class SDKIntegrationsFindMappingRequest(BaseModel):
     """Request to find one mapping by exact entity ID within authorized reach."""
 
     name: str = Field(..., description="Integration name")
+    instance: str | None = Field(default=None, description="Named connection instance key")
     entity_id: str = Field(..., description="External entity ID (exact match)")
 
     model_config = ConfigDict(from_attributes=True)
