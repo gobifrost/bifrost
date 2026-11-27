@@ -13,7 +13,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Query, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models import (
@@ -30,6 +30,7 @@ from src.core.auth import Context, CurrentActiveUser
 from src.core.log_safety import log_safe
 from src.models import OAuthProvider, OAuthToken
 from src.models.orm.integrations import IntegrationMapping
+from src.models.orm.external_mcp import MCPConnection, UserMCPCredential
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.contracts.platform_jobs import PlatformJobAccepted
 from src.jobs.platform.system_maintenance import (
@@ -69,6 +70,13 @@ def _not_found(connection_name: str) -> HTTPException:
     return HTTPException(
         status_code=status.HTTP_404_NOT_FOUND,
         detail=f"OAuth connection '{connection_name}' not found",
+    )
+
+
+def _workload_identity_error() -> HTTPException:
+    return HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
     )
 
 
@@ -247,6 +255,9 @@ async def create_connection(
         status="not_connected",
         created_by=ctx.user.email,
         integration_id=integration_id,
+        provider_metadata={
+            "tenant_id": request.tenant_id,
+        } if request.tenant_id else {},
     )
 
     ctx.db.add(provider)
@@ -281,21 +292,100 @@ async def update_connection(
     )
     if request.name is not None:
         provider.display_name = request.name
-    if request.oauth_flow_type is not None:
-        provider.oauth_flow_type = request.oauth_flow_type
-    if request.client_id is not None:
-        provider.client_id = request.client_id
-    if request.client_secret is not None:
-        from src.core.security import encrypt_secret
-        provider.encrypted_client_secret = encrypt_secret(request.client_secret).encode()
-    if request.authorization_url is not None:
-        provider.authorization_url = request.authorization_url
-    if request.token_url is not None:
-        provider.token_url = request.token_url
-    if request.scopes is not None:
-        provider.scopes = request.scopes
-    if request.audience is not None:
-        provider.audience = request.audience
+    effective_flow = request.oauth_flow_type or provider.oauth_flow_type
+    if effective_flow == "workload_identity":
+        if provider.oauth_flow_type != "workload_identity":
+            token_ids = list(
+                (await ctx.db.execute(
+                    select(OAuthToken.id).where(OAuthToken.provider_id == provider.id)
+                )).scalars()
+            )
+            if token_ids:
+                shared_service_token = await ctx.db.scalar(
+                    select(MCPConnection.id).where(
+                        MCPConnection.service_oauth_token_id.in_(token_ids)
+                    ).limit(1)
+                )
+                shared_user_token = await ctx.db.scalar(
+                    select(UserMCPCredential.id).where(
+                        UserMCPCredential.oauth_token_id.in_(token_ids)
+                    ).limit(1)
+                )
+                if shared_service_token or shared_user_token:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=(
+                            "Cannot switch to Workload Identity while this OAuth "
+                            "connection's tokens are used by MCP credentials"
+                        ),
+                    )
+                await ctx.db.execute(
+                    update(IntegrationMapping)
+                    .where(IntegrationMapping.oauth_token_id.in_(token_ids))
+                    .values(oauth_token_id=None)
+                )
+                await ctx.db.execute(
+                    delete(OAuthToken).where(OAuthToken.id.in_(token_ids))
+                )
+            provider.encrypted_client_secret = b""
+            provider.authorization_url = None
+            provider.token_url = None
+            provider.token_url_defaults = {}
+            provider.scopes = []
+            provider.audience = None
+            provider.status = "not_connected"
+            provider.status_message = None
+            provider.last_token_refresh = None
+        provider.oauth_flow_type = "workload_identity"
+        if request.client_id is not None:
+            provider.client_id = request.client_id
+    else:
+        client_id = request.client_id if request.client_id is not None else provider.client_id
+        token_url = request.token_url if request.token_url is not None else provider.token_url
+        authorization_url = (
+            request.authorization_url
+            if "authorization_url" in request.model_fields_set
+            else provider.authorization_url
+        )
+        has_client_secret = (
+            request.client_secret is not None or bool(provider.encrypted_client_secret)
+        )
+        if not client_id or not token_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="client_id and token_url are required for OAuth flows",
+            )
+        if effective_flow == "authorization_code" and not authorization_url:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="authorization_url is required for authorization_code flow",
+            )
+        if effective_flow == "client_credentials" and not has_client_secret:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="client_secret is required for client_credentials flow",
+            )
+        provider.oauth_flow_type = effective_flow
+        provider.client_id = client_id
+        if request.client_secret is not None:
+            from src.core.security import encrypt_secret
+            provider.encrypted_client_secret = encrypt_secret(request.client_secret).encode()
+        if "authorization_url" in request.model_fields_set:
+            provider.authorization_url = request.authorization_url
+        if request.token_url is not None:
+            provider.token_url = request.token_url
+        if request.scopes is not None:
+            provider.scopes = request.scopes
+        if request.audience is not None:
+            provider.audience = request.audience
+    if "tenant_id" in request.model_fields_set:
+        provider.provider_metadata = {
+            **(provider.provider_metadata or {}),
+        }
+        if request.tenant_id:
+            provider.provider_metadata["tenant_id"] = request.tenant_id
+        else:
+            provider.provider_metadata.pop("tenant_id", None)
     provider.updated_at = datetime.now(timezone.utc)
     await ctx.db.flush()
     await ctx.db.refresh(provider)
@@ -358,6 +448,8 @@ async def authorize_connection(
         ctx, user, connection_name, "integrations.readwrite"
     )
 
+    if provider.oauth_flow_type == "workload_identity":
+        raise _workload_identity_error()
     if not provider.authorization_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -456,6 +548,9 @@ async def refresh_token(
     # Token refresh decrypts a client or refresh secret.  This comes before
     # token lookup, template expansion, and provider I/O.
     require_permission(caller, "secrets.read", provider.organization_id)
+
+    if provider.oauth_flow_type == "workload_identity":
+        raise _workload_identity_error()
 
     if not provider.token_url:
         raise HTTPException(
@@ -685,6 +780,8 @@ async def oauth_callback(
         raise _not_found(connection_name)
     require_permission(caller, "integrations.readwrite", provider.organization_id)
     require_permission(caller, "secrets.read", provider.organization_id)
+    if provider.oauth_flow_type == "workload_identity":
+        raise _workload_identity_error()
     if mapping_row is not None and mapping_row.integration_id != provider.integration_id:
         raise _not_found(connection_name)
     if token_org_id is None:
@@ -906,6 +1003,15 @@ async def get_credentials(
     _, provider, repo = await _connection_for_caller(
         ctx, user, connection_name, "integrations.read"
     )
+
+    if provider.oauth_flow_type == "workload_identity":
+        return OAuthCredentialsResponse(
+            connection_name=connection_name,
+            credentials=None,
+            status="not_connected",
+            integration_id=str(provider.integration_id) if provider.integration_id else None,
+            expires_at=None,
+        )
 
     token = await repo.get_token(connection_name)
 

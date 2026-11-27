@@ -88,6 +88,9 @@ export function IntegrationConnectionStatus({
 }: {
 	integration: Integration;
 }) {
+	if (integration.oauth_flow_type === "workload_identity") {
+		return <span className="text-muted-foreground">SDK Managed</span>;
+	}
 	if (!integration.has_oauth_config)
 		return <span className="text-muted-foreground">Not monitored</span>;
 

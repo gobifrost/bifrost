@@ -65,12 +65,14 @@ export function CreateOAuthConnectionDialog({
 		Partial<OAuthProviderData> | undefined
 	>(() => {
 		if (isEditMode && existingConnection) {
-			// Backend can return a third flow type ("refresh_token") on legacy
-			// records — narrow to the two flows the editor supports; anything
+			// Backend can return a legacy flow type ("refresh_token"). Narrow to
+			// flows the editor supports; anything
 			// else falls through as authorization_code.
 			const flow =
 				existingConnection.oauth_flow_type === "client_credentials"
 					? "client_credentials"
+					: existingConnection.oauth_flow_type === "workload_identity"
+						? "workload_identity"
 					: "authorization_code";
 			return {
 				oauth_flow_type: flow,
@@ -80,6 +82,7 @@ export function CreateOAuthConnectionDialog({
 				token_url: existingConnection.token_url,
 				scopes: existingConnection.scopes || "",
 				audience: existingConnection.audience || "",
+				tenant_id: existingConnection.tenant_id || "",
 			};
 		}
 		return undefined;
@@ -111,9 +114,10 @@ export function CreateOAuthConnectionDialog({
 					client_id: data.client_id,
 					client_secret: data.client_secret || null,
 					authorization_url: data.authorization_url || null,
-					token_url: data.token_url,
+					token_url: data.token_url || null,
 					scopes: normalizeScopesForUpdate(data.scopes),
 					audience: data.audience || null,
+					tenant_id: data.tenant_id || null,
 				};
 
 				await updateMutation.mutateAsync({
@@ -125,12 +129,13 @@ export function CreateOAuthConnectionDialog({
 					description: "",
 					oauth_flow_type: data.oauth_flow_type,
 					client_id: data.client_id,
-					client_secret: data.client_secret,
+					client_secret: data.client_secret || null,
 					authorization_url: data.authorization_url ?? "",
-					token_url: data.token_url,
+					token_url: data.token_url || null,
 					scopes: data.scopes,
 					integration_id: integrationId,
 					audience: data.audience ?? "",
+					tenant_id: data.tenant_id || null,
 				};
 
 				await createMutation.mutateAsync({ body: createData });
@@ -231,6 +236,7 @@ export function CreateOAuthConnectionDialog({
 								onSubmit={handleSubmit}
 								redirectUri={redirectUri}
 								isEditMode={isEditMode}
+								allowWorkloadIdentity
 								formId={FORM_ID}
 								disabled={isPending}
 							/>
