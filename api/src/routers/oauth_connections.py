@@ -350,17 +350,25 @@ async def update_connection(
         has_client_secret = (
             request.client_secret is not None or bool(provider.encrypted_client_secret)
         )
-        if not client_id or not token_url:
+        changing_flow = effective_flow != provider.oauth_flow_type
+        if request.client_id == "":
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="client_id is required for OAuth flows",
+            )
+        # Existing OAuth shells may be configured incrementally. Require the
+        # complete credential shape when changing modes, not for a name-only edit.
+        if changing_flow and (not client_id or not token_url):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="client_id and token_url are required for OAuth flows",
             )
-        if effective_flow == "authorization_code" and not authorization_url:
+        if changing_flow and effective_flow == "authorization_code" and not authorization_url:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="authorization_url is required for authorization_code flow",
             )
-        if effective_flow == "client_credentials" and not has_client_secret:
+        if changing_flow and effective_flow == "client_credentials" and not has_client_secret:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="client_secret is required for client_credentials flow",
@@ -370,7 +378,7 @@ async def update_connection(
         if request.client_secret is not None:
             from src.core.security import encrypt_secret
             provider.encrypted_client_secret = encrypt_secret(request.client_secret).encode()
-        if "authorization_url" in request.model_fields_set:
+        if request.authorization_url is not None:
             provider.authorization_url = request.authorization_url
         if request.token_url is not None:
             provider.token_url = request.token_url

@@ -1,5 +1,5 @@
-# Workload Identity Draft
+# Workload Identity Product Update
 
-This is unapproved draft Product Updates prose for #1167. It is intentionally
-outside `product-updates/entries/` until a reviewer approves the exact text and
-the PR number/source metadata is available.
+Jack approved the exact title, body and installation-relative link in the native
+conversation on November 27, 2026. This entry stays outside the active feed until
+the implementing PR exists and its source metadata can be recorded.

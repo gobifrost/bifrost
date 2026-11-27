@@ -255,7 +255,9 @@ export function IntegrationDetail() {
 		!isOAuthExpired &&
 		expiresSoon(oauthConfig.expires_at, 15); // 15 minutes matches the refresh scheduler interval
 	const canUseAuthCodeFlow =
-		oauthConfig?.oauth_flow_type !== "client_credentials" && !isWorkloadIdentity;
+		!!oauthConfig &&
+		oauthConfig.oauth_flow_type !== "client_credentials" &&
+		!isWorkloadIdentity;
 
 	// Combine organizations with their mappings using useMemo
 	const orgsWithMappings = useMemo((): OrgWithMapping[] => {

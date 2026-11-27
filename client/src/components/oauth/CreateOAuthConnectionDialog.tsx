@@ -117,7 +117,9 @@ export function CreateOAuthConnectionDialog({
 					token_url: data.token_url || null,
 					scopes: normalizeScopesForUpdate(data.scopes),
 					audience: data.audience || null,
-					tenant_id: data.tenant_id || null,
+					...(data.oauth_flow_type === "workload_identity"
+						? { tenant_id: data.tenant_id || null }
+						: {}),
 				};
 
 				await updateMutation.mutateAsync({
@@ -135,7 +137,9 @@ export function CreateOAuthConnectionDialog({
 					scopes: data.scopes,
 					integration_id: integrationId,
 					audience: data.audience ?? "",
-					tenant_id: data.tenant_id || null,
+					...(data.oauth_flow_type === "workload_identity"
+						? { tenant_id: data.tenant_id || null }
+						: {}),
 				};
 
 				await createMutation.mutateAsync({ body: createData });
