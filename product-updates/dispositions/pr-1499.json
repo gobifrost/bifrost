@@ -1,0 +1,14 @@
+{
+  "key": "pr:1499",
+  "classification": "highlight",
+  "entry_ids": [
+    "645884cd-9dfe-4c02-b63c-45defdaad1c1"
+  ],
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1499",
+      "Pending exact announcement-copy review; implementation and merge are authorized."
+    ]
+  }
+}
