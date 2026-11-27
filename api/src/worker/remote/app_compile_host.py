@@ -144,6 +144,7 @@ class RemoteAppCompiler:
     def __init__(self, bridge: Any, claim: ClaimedPlatformJob):
         self.bridge, self.claim = bridge, claim
         self.stage_id = str(uuid4())
+        self.state_changed = asyncio.Event()
         self.binding = {"stage_id": self.stage_id, "job_id": str(claim.id),
                         "lease_token": str(claim.lease_token)}
         self.input_sha256: str | None = None
@@ -236,7 +237,7 @@ class RemoteAppCompiler:
                     raise PlatformJobFailure("compile_transfer_invalid", "App compilation input offset changed unexpectedly.")
             await self._mutate("app_compile_start")
             while True:
-                self.bridge.compute_changed.clear()
+                self.state_changed.clear()
                 status = await self._read("app_compile_status")
                 if status["state"] == "prepared":
                     # A lost start reply is resolved by this readback. The
@@ -245,7 +246,7 @@ class RemoteAppCompiler:
                     continue
                 if status["state"] != "running":
                     break
-                await self.bridge.compute_changed.wait()
+                await self.state_changed.wait()
             if status["state"] != "succeeded":
                 error = status.get("error", {})
                 category = error.get("category", "buildfailure")
