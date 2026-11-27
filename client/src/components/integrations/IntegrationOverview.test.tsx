@@ -60,8 +60,8 @@ const connected = {
 };
 
 describe("IntegrationStatusChips — OAuth", () => {
-	it("shows configuration completeness instead of an OAuth warning for config authentication", () => {
-		renderOverview({
+	it("shows configuration completeness instead of an OAuth warning for config authentication", async () => {
+		const { user } = renderOverview({
 			integration: {
 				...connected,
 				authentication_method: "config",
@@ -78,6 +78,10 @@ describe("IntegrationStatusChips — OAuth", () => {
 		expect(
 			screen.queryByRole("button", { name: /OAuth: Not Set Up/i }),
 		).not.toBeInTheDocument();
+        const statusButton = screen.getByRole("button", { name: "Configuration: Needs Configuration" });
+        expect(statusButton.textContent).toBe("");
+        await user.click(statusButton);
+        expect(screen.getByText(/An organization may still be configured through its overrides/)).toBeInTheDocument();
 		expect(screen.queryByRole("alert")).not.toBeInTheDocument();
 	});
 

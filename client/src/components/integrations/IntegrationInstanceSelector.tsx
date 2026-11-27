@@ -49,7 +49,7 @@ export function IntegrationInstanceSelector({
 					type="button"
 					variant="ghost"
 					size="sm"
-					className="min-h-11 max-w-full gap-1 px-2 text-muted-foreground hover:text-foreground"
+					className="max-w-full"
 					aria-label={`Selected instance: ${selected.is_default ? "Default" : selected.name}`}
 					disabled={disabled}
 				>

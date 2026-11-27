@@ -149,7 +149,7 @@ export function AddIntegrationInstanceDialog({
 							}
 							className="gap-3"
 						>
-							<Label htmlFor="instance-auth-config" className="items-start rounded-[var(--bf-radius-surface)] border border-border/70 p-3">
+							<div className="rounded-lg border border-border/70 p-3"><Label htmlFor="instance-auth-config" className="items-start">
 								<RadioGroupItem
 									id="instance-auth-config"
 									value="config"
@@ -160,8 +160,8 @@ export function AddIntegrationInstanceDialog({
 										Configure values for this instance after it is created.
 									</span>
 								</span>
-							</Label>
-							<Label htmlFor="instance-auth-oauth" className="items-start rounded-[var(--bf-radius-surface)] border border-border/70 p-3">
+							</Label></div>
+							<div className="rounded-lg border border-border/70 p-3"><Label htmlFor="instance-auth-oauth" className="items-start">
 								<RadioGroupItem
 									id="instance-auth-oauth"
 									value="oauth"
@@ -172,7 +172,7 @@ export function AddIntegrationInstanceDialog({
 										Set up OAuth settings and connect after the instance is created.
 									</span>
 								</span>
-							</Label>
+							</Label></div>
 						</RadioGroup>
 					</fieldset>
 					{error && <p role="alert" className="text-sm text-destructive">{error}</p>}

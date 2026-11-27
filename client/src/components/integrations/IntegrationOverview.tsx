@@ -272,12 +272,9 @@ function OAuthPrimaryAction({
 export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 	const {
 		integration,
-		oauthConfig,
-		isOAuthConnected,
 		canManageDefinitions,
 		onOpenDefaultsDialog,
 	} = props;
-	const status = oauthStatus(props);
 	const schema = integration.config_schema ?? [];
 	const requiredConfiguration = schema.filter((field) => field.required);
 	const hasCompleteConfiguration = requiredConfiguration.every((field) => {
@@ -295,26 +292,25 @@ export function IntegrationStatusChips(props: IntegrationOverviewProps) {
 					<PopoverTrigger asChild>
 						<Button
 							variant="outline"
-							size="sm"
-							className="min-h-11 sm:min-h-8"
+							size="icon-sm"
+							className="size-8"
 							aria-label={`Configuration: ${label}`}
+							title={`Default values: ${hasCompleteConfiguration ? "configured" : "required values missing"}`}
 						>
 							{hasCompleteConfiguration ? (
 								<CheckCircle2 className="size-4 text-success" />
 							) : (
 								<AlertTriangle className="size-4 text-warning" />
 							)}
-							<span>Configuration: {label}</span>
-							<ChevronDown className="size-3 opacity-60" />
 						</Button>
 					</PopoverTrigger>
 					<PopoverContent align="start" className="w-80 space-y-3">
 						<div>
-							<h2 className="text-sm font-medium">Configuration</h2>
+							<h2 className="text-sm font-medium">Default Configuration</h2>
 							<p className="text-xs text-muted-foreground">
 								{hasCompleteConfiguration
 									? "Required default values are configured for this instance. Test the connection to verify the credentials."
-									: "Configure the required default values for this instance before testing the connection."}
+									: "Some required default values are missing. An organization may still be configured through its overrides."}
 							</p>
 						</div>
 						{canManageDefinitions && (

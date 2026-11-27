@@ -1020,18 +1020,6 @@ export function IntegrationDetail() {
 						/>
 					) : undefined
 				}
-				sharedDefinitionDescription={
-					instances.length > 1
-						? `Shared schema, logo, and setup instructions apply to all ${integration.name} instances.`
-						: undefined
-				}
-				description={
-					(
-						integration as typeof integration & {
-							description?: string;
-						}
-					).description
-				}
 				onTest={handleOpenTestDialog}
 				onGenerateSDK={() => {
 					if (canManageDefinitions) setGenerateSDKDialogOpen(true);
@@ -1053,7 +1041,7 @@ export function IntegrationDetail() {
 				}
 				canManageDefinitions={canManageDefinitions}
 				status={<IntegrationStatusChips {...overviewProps} />}
-				workflowActions={<IntegrationWorkflowLinks key={definitionId} integrationName={integration.name} integrationId={definitionId} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
+				workflowActions={<IntegrationWorkflowLinks compactOnMobile key={definitionId} integrationName={integration.name} integrationId={definitionId} savedLinks={integration.workflow_links ?? []} canManage={canManageDefinitions} />}
 			/>
 			<PageScrollArea key={selectedInstanceId} className="space-y-6 lg:flex lg:flex-col lg:gap-6 lg:space-y-0">
 				{isIntegrationError && (

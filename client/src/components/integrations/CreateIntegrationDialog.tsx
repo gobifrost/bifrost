@@ -312,7 +312,7 @@ function CreateIntegrationForm({
 				<DialogHeader className="shrink-0">
 					<DialogTitle>
 						{scope === "definition"
-							? "Edit Shared Definition"
+							? "Edit Integration"
 							: scope === "instance"
 								? `Configure ${existingIntegration?.instance_name ?? "Instance"}`
 								: isEditing
