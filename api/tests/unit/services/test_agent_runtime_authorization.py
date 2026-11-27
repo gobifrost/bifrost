@@ -277,11 +277,12 @@ async def test_reauthorization_reloads_native_tool_binding_after_external_revoca
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("boundary", ["definition", "continuation"])
 async def test_typed_agent_run_reauthorization_uses_original_current_foreign_grants(
-    db_session,
+    db_session, boundary,
 ):
     """Revoking the original user's foreign Agent grants blocks the live run."""
-    from sqlalchemy import delete
+    from sqlalchemy import delete, inspect
 
     from src.models.orm.agent_runs import AgentRun
     from src.models.orm.agents import Agent
@@ -296,6 +297,7 @@ async def test_typed_agent_run_reauthorization_uses_original_current_foreign_gra
     from src.services.authorization.agent_runtime import (
         AgentRuntimeAuthorizationError,
         authorize_agent_execution,
+        authorize_agent_run_continuation,
     )
     from src.services.authorization.enforce import load_caller
     from src.services.authorization.runtime_auth import load_runtime_principal
@@ -349,7 +351,7 @@ async def test_typed_agent_run_reauthorization_uses_original_current_foreign_gra
     await db_session.flush()
     run = AgentRun(
         agent_id=agent.id,
-        trigger_type="chat",
+        trigger_type="event",
         status="running",
         org_id=foreign.id,
         run_user_id=original.id,
@@ -367,11 +369,91 @@ async def test_typed_agent_run_reauthorization_uses_original_current_foreign_gra
     assert caller.principal.user_id == actor.id
     assert caller.ctx is not None and caller.ctx.user_id == original.id
 
-    _, authorized_agent = await authorize_agent_execution(db_session, caller, agent.id)
-    assert authorized_agent.id == agent.id
+    async def authorize():
+        if boundary == "definition":
+            _, authorized_agent = await authorize_agent_execution(db_session, caller, agent.id)
+            assert authorized_agent.id == agent.id
+        else:
+            authorized = await authorize_agent_run_continuation(db_session, run.id)
+            assert authorized is not None and authorized.ctx is not None
+            assert authorized.principal.user_id == actor.id
+            assert authorized.ctx.user_id == original.id
+
+    db_session.expire(agent, ["tools", "delegated_agents", "mcp_connections", "roles"])
+    await authorize()
+    graph = {"tools", "delegated_agents", "mcp_connections"}
+    if boundary == "continuation":
+        assert graph <= inspect(agent).unloaded
+    else:
+        assert not graph.intersection(inspect(agent).unloaded)
+    assert "roles" not in inspect(agent).unloaded
 
     await db_session.execute(delete(RolePermission).where(RolePermission.role_id == role.id))
     await db_session.flush()
 
     with pytest.raises(AgentRuntimeAuthorizationError):
-        await authorize_agent_execution(db_session, caller, agent.id)
+        await authorize()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("revoked_permission", [None, "chat.execute", "ai.execute"])
+async def test_agentless_continuation_reloads_authority_for_each_boundary(
+    monkeypatch, revoked_permission,
+):
+    from src.services.authorization import agent_runtime as auth
+
+    home, run_id = uuid4(), uuid4()
+    user_id = uuid4()
+    permissions = {"chat.execute", "ai.execute"}
+    current = _caller(
+        original_user_id=user_id, home=home,
+        permissions=frozenset(permissions), boundary=home,
+    )
+    after = _caller(
+        original_user_id=user_id, home=home,
+        permissions=frozenset(permissions - {revoked_permission}), boundary=home,
+    )
+    run = SimpleNamespace(status="running", trigger_type="chat", agent_id=None)
+    db = SimpleNamespace(get=AsyncMock(return_value=run))
+    principal = object()
+    principal_load = AsyncMock(return_value=principal)
+    caller_load = AsyncMock(side_effect=[current, after])
+    monkeypatch.setattr(auth, "load_runtime_principal", principal_load)
+    monkeypatch.setattr(auth, "load_caller", caller_load)
+
+    assert await auth.authorize_agent_run_continuation(db, run_id) is current
+    if revoked_permission is None:
+        assert await auth.authorize_agent_run_continuation(db, run_id) is after
+    else:
+        with pytest.raises(auth.AgentRuntimeAuthorizationError):
+            await auth.authorize_agent_run_continuation(db, run_id)
+    assert principal_load.await_count == 2
+    assert caller_load.await_count == 2
+    principal_load.assert_awaited_with(
+        db, {"credential_kind": "agent_run", "sub": str(run_id)},
+    )
+    db.get.assert_awaited_with(auth.AgentRun, run_id, populate_existing=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("unavailable", ["run", "terminal", "principal", "caller"])
+async def test_continuation_fails_closed_when_current_authority_is_unavailable(
+    monkeypatch, unavailable,
+):
+    from src.services.authorization import agent_runtime as auth
+
+    run = None if unavailable == "run" else SimpleNamespace(
+        status="completed" if unavailable == "terminal" else "running",
+        trigger_type="chat", agent_id=None,
+    )
+    db = SimpleNamespace(get=AsyncMock(return_value=run))
+    principal_load = AsyncMock(return_value=None if unavailable == "principal" else object())
+    caller_load = AsyncMock(return_value=SimpleNamespace(ctx=None))
+    monkeypatch.setattr(auth, "load_runtime_principal", principal_load)
+    monkeypatch.setattr(auth, "load_caller", caller_load)
+
+    assert await auth.authorize_agent_run_continuation(db, uuid4()) is None
+    if unavailable in {"run", "terminal"}:
+        principal_load.assert_not_awaited()
+    if unavailable != "caller":
+        caller_load.assert_not_awaited()

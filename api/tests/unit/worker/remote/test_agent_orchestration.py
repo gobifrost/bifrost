@@ -108,20 +108,17 @@ async def test_rpc_authorization_refuses_revoked_agent_before_provider_work(monk
     async def database():
         yield db
 
-    principal = object()
     monkeypatch.setattr(orchestration, "get_db_context", database)
     monkeypatch.setattr(orchestration, "require_remote_owner", AsyncMock())
-    monkeypatch.setattr(orchestration, "load_runtime_principal", AsyncMock(return_value=principal))
-    monkeypatch.setattr(orchestration, "load_caller", AsyncMock(return_value=SimpleNamespace(ctx=object())))
     revoked = AsyncMock(side_effect=RemoteOwnerLost("agent permission revoked"))
-    monkeypatch.setattr(orchestration, "authorize_agent_execution", revoked)
+    monkeypatch.setattr(orchestration, "authorize_agent_run_continuation", revoked)
 
     with pytest.raises(RemoteOwnerLost, match="revoked"):
         await orchestration._authorize_rpc(
             bridge, root_run_id=root, active_run_id=root
         )
 
-    revoked.assert_awaited_once()
+    revoked.assert_awaited_once_with(db, root)
 
 
 @pytest.mark.asyncio

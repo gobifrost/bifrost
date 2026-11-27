@@ -25,13 +25,7 @@ from src.models.orm.agent_runs import AgentRun
 from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.services.agent_runtime.compute import AgentRuntimePlan, BuiltAgentRuntime
 from src.services.agent_runtime.empty_output import EmptyOutputCircuitBreaker
-from src.services.authorization.agent_runtime import (
-    authorize_agent_execution,
-    authorize_agentless_ai,
-    authorize_chat_execution,
-)
-from src.services.authorization.enforce import load_caller
-from src.services.authorization.runtime_auth import load_runtime_principal
+from src.services.authorization.agent_runtime import authorize_agent_run_continuation
 from src.services.execution.agent_run_dispatch import FAMILY as AGENT_RUN_FAMILY
 from src.services.execution.agent_run_service import announce_ended_agent_run
 from src.services.execution.autonomous_agent_executor import MAX_DELEGATION_DEPTH
@@ -104,12 +98,10 @@ async def _authorized_lineage(
     await require_remote_owner(db)
     lineage: list[UUID] = []
     current_id = active_run_id
-    active: AgentRun | None = None
     while True:
         run = await db.get(AgentRun, current_id)
         if run is None or run.status != "running":
             raise RemoteOwnerLost("Agent compute run is no longer running")
-        active = active or run
         lineage.append(run.id)
         if run.parent_run_id is None:
             break
@@ -130,21 +122,9 @@ async def _authorized_lineage(
         raise RemoteOwnerLost("Agent compute root run is no longer claimed by this worker")
 
     if authorize_caller:
-        assert active is not None
-        principal = await load_runtime_principal(
-            db, {"credential_kind": "agent_run", "sub": str(active_run_id)}
-        )
-        if principal is None:
+        caller = await authorize_agent_run_continuation(db, active_run_id)
+        if caller is None:
             raise RemoteOwnerLost("Agent compute runtime authority is unavailable")
-        caller = await load_caller(db, principal)
-        if caller.ctx is None:
-            raise RemoteOwnerLost("Agent compute caller is unavailable")
-        if active.trigger_type == "chat":
-            caller = await authorize_chat_execution(db, caller)
-        if active.agent_id is None:
-            await authorize_agentless_ai(db, caller)
-        else:
-            await authorize_agent_execution(db, caller, active.agent_id)
     return tuple(lineage)
 
 
