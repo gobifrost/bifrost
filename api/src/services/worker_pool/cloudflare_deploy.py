@@ -7,6 +7,7 @@ every Cloudflare mutation is made through the injected ``httpx`` client.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -22,7 +23,8 @@ CLOUDFLARE_WORKER_ARTIFACT_DIRECTORY = Path("/app/artifacts/worker-capacity/clou
 MIGRATION_TAG = "v1"
 CONTAINER_CLASS = "WorkerContainer"
 CLOUDFLARE_COMPATIBILITY_DATE = "2026-11-10"
-CONTAINER_INSTANCE_TYPE = "standard-1"
+IMAGE_PREPARATION_TIMEOUT_SECONDS = 15 * 60
+IMAGE_PREPARATION_POLL_SECONDS = 2
 MAX_CONFIGURED_WORKERS = 50
 QUALIFIED_MEMORY_LIMIT_BYTES = 4096 * 2**20
 SQLITE_DURABLE_OBJECT_CLASSES = ("WorkerLedger", "ScopeRegistry", CONTAINER_CLASS)
@@ -156,6 +158,21 @@ class CloudflareDeploymentAdapter:
         )
         include_migration = self._needs_initial_migration(service)
 
+        # Scheduling policy is immutable. Refuse a legacy application before
+        # uploading code that would otherwise break its existing containers.
+        applications = await self._list_applications(deployment, headers)
+        matching = [app for app in applications if app.get("name") == deployment.container_application_name]
+        if len(matching) > 1:
+            raise CloudflareProvisioningError("container_application_readback")
+        if matching:
+            if matching[0].get("scheduling_policy") != "durable_object":
+                raise CloudflareProvisioningError("container_application_requires_replacement")
+            namespace_id = await self._container_namespace(deployment, headers)
+            durable_objects = matching[0].get("durable_objects")
+            if not isinstance(durable_objects, dict) or durable_objects.get("namespace_id") != namespace_id:
+                raise CloudflareProvisioningError("container_application_different durable object namespace")
+
+        await self._prepare_image(deployment, headers)
         await self._upload_worker(deployment, headers, include_migration)
         await self._checkpoint_step("worker_uploaded", {"migration_tag": MIGRATION_TAG})
 
@@ -196,6 +213,33 @@ class CloudflareDeploymentAdapter:
             worker_url=f"https://{deployment.script_name}.{subdomain}.workers.dev",
         )
 
+    async def _prepare_image(self, deployment: CloudflareDeployment, headers: dict[str, str]) -> None:
+        """Gate publication on native image preparation, never on a start retry.
+
+        The pinned Wrangler SDK uses this idempotent endpoint to both initiate
+        preparation and observe its pending/ready/error state. Poll only pending;
+        transport errors, refusals and unknown states fail closed immediately.
+        """
+        try:
+            async with asyncio.timeout(IMAGE_PREPARATION_TIMEOUT_SECONDS):
+                while True:
+                    response = await self._request(
+                        "POST", self._url(deployment, f"/accounts/{deployment.account_id}/containers/image-preparations"),
+                        headers=headers, json={"image": deployment.registry_image},
+                        step="container_image_preparation", mutation=True,
+                    )
+                    result = self._result(response, "container_image_preparation")
+                    status = result.get("status") if isinstance(result, dict) else None
+                    if status == "ready":
+                        await self._checkpoint_step("container_image_ready", {})
+                        return
+                    if status != "pending":
+                        raise CloudflareProvisioningError("container_image_preparation")
+                    await self._checkpoint_step("container_image_preparing", {})
+                    await asyncio.sleep(IMAGE_PREPARATION_POLL_SECONDS)
+        except TimeoutError:
+            raise CloudflareProvisioningError("container_image_preparation_timeout") from None
+
     async def _upload_worker(
         self, deployment: CloudflareDeployment, headers: dict[str, str], include_migration: bool,
     ) -> None:
@@ -205,7 +249,10 @@ class CloudflareDeploymentAdapter:
             "compatibility_date": CLOUDFLARE_COMPATIBILITY_DATE,
             "observability": {"enabled": True},
             "bindings": self._worker_bindings(deployment),
-            "containers": [{"name": deployment.container_application_name, "class_name": CONTAINER_CLASS}],
+            "containers": [{
+                "name": deployment.container_application_name, "class_name": CONTAINER_CLASS,
+                "images": {"worker": deployment.registry_image},
+            }],
             "keep_bindings": ["secret_text"],
         }
         if include_migration:
@@ -269,13 +316,8 @@ class CloudflareDeploymentAdapter:
         ) else None
         if not isinstance(application_id, str) or current_namespace != namespace_id:
             raise CloudflareProvisioningError("container_application_different durable object namespace")
-        patch = self._application_patch(existing, desired)
-        if patch:
-            response = await self._request(
-                "PATCH", self._url(deployment, f"/accounts/{deployment.account_id}/containers/applications/{application_id}"),
-                headers=headers, json=patch, step="container_application_patch", mutation=True,
-            )
-            self._result(response, "container_application_patch")
+        if existing.get("scheduling_policy") != "durable_object":
+            raise CloudflareProvisioningError("container_application_requires_replacement")
         return application_id, False
 
     async def _list_applications(
@@ -407,21 +449,9 @@ class CloudflareDeploymentAdapter:
     def _application_body(deployment: CloudflareDeployment, namespace_id: str) -> dict[str, object]:
         return {
             "name": deployment.container_application_name,
-            "scheduling_policy": "default",
-            "configuration": {"image": deployment.registry_image, "instance_type": CONTAINER_INSTANCE_TYPE},
-            "instances": 0,
-            "max_instances": deployment.limits.max_workers,
+            "scheduling_policy": "durable_object",
             "durable_objects": {"namespace_id": namespace_id},
         }
-
-    @staticmethod
-    def _application_patch(existing: dict[str, object], desired: dict[str, object]) -> dict[str, object]:
-        patch = {
-            key: desired[key]
-            for key in ("scheduling_policy", "configuration", "max_instances")
-            if existing.get(key) != desired[key]
-        }
-        return patch
 
     @staticmethod
     def _url(deployment: CloudflareDeployment, path: str) -> str:

@@ -376,6 +376,7 @@ function fakeContainer({ running = false, destroyFails = false, monitor = null }
     const storage = new Map();
     const container = {
         running,
+        images: { worker: Object.freeze({ image: "prepared-worker-digest" }) },
         start(options) {
             calls.start += 1;
             calls.options = options;
@@ -477,6 +478,8 @@ test("start launches once and holds the container open", async () => {
     const response = await worker.fetch(startRequest());
     assert.equal(response.status, 200);
     assert.equal(calls.start, 1);
+    assert.equal(calls.options.image, ctx.container.images.worker);
+    assert.equal(calls.options.instance, "standard-1");
     // Without this the container is stopped as soon as the DO goes idle.
     assert.deepEqual(calls.holds, [inactivityTimeoutMs(3600)]);
     assert.equal(calls.monitors, 1);
@@ -575,13 +578,22 @@ test("settings refuse a deployment with no capacity token", () => {
     assert.doesNotThrow(() => readSettings(ENV));
 });
 
-test("the shipped template declares an instance type that can unpack the image", async () => {
+test("the shipped template uses prepared named images and the shared admission cap", async () => {
     const { readFile } = await import("node:fs/promises");
     const toml = await readFile(new URL("./wrangler.toml", import.meta.url), "utf8");
-    // Omitting instance_type creates a 256 MiB / 2 GB app that fails to pull.
-    assert.match(toml, /instance_type\s*=\s*"standard-1"/);
-    assert.match(toml, /max_instances\s*=\s*[1-9]/);
+    assert.match(toml, /scheduling_policy\s*=\s*"durable_object"/);
+    assert.match(toml, /\[containers.images.worker\]/);
+    assert.doesNotMatch(toml, /^\s*(instance_type|max_instances)\s*=/m);
     assert.match(toml, /MAX_LIFETIME_SECONDS\s*=\s*"21600"/);
+});
+
+test("missing prepared image fails before recording launch intent or starting", async () => {
+    const { ctx, calls, storage } = fakeContainer();
+    delete ctx.container.images.worker;
+    const worker = new WorkerContainer(ctx, ENV);
+    assert.equal((await worker.fetch(startRequest())).status, 502);
+    assert.equal(calls.start, 0);
+    assert.equal(storage.has("lifecycle"), false);
 });
 
 test("the ledger launches the container with the identity it needs", async () => {

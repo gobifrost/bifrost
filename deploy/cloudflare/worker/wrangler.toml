@@ -33,18 +33,12 @@ class_name = "WorkerContainer"
 # own Durable Object id, so one binding serves N workers.
 [[containers]]
 class_name = "WorkerContainer"
-# Pin by digest. The API fences any reservation whose reported build differs
-# from WORKER_VERSION, so a floating tag can strand enrollments.
-image = "ghcr.io/CHANGEME/bifrost-worker@sha256:CHANGEME"
-# Omitting this selects the `lite` instance (256 MiB memory, 2 GB disk), which
-# cannot unpack a worker image and is 16x below the memory advertised in
-# MEMORY_LIMIT_BYTES. The app is therefore created with a size that cannot run
-# the workload, and every instance fails with ImagePullError. It must be at
-# least as large as MEMORY_LIMIT_BYTES, with disk space for the unpacked image.
-instance_type = "standard-1"
-# Must be at least MAX_WORKERS: a start beyond the application's instance count
-# is refused even when the scope registry would admit it.
-max_instances = 4
+scheduling_policy = "durable_object"
+# Wrangler prepares this managed-registry image before publishing the Worker.
+# WorkerContainer selects standard-1 (4 GiB) explicitly at start. ScopeRegistry
+# owns admission and retains uncertain launches against MAX_WORKERS.
+[containers.images.worker]
+image = "registry.cloudflare.com/CHANGEME/bifrost-worker@sha256:CHANGEME"
 
 [[migrations]]
 tag = "v1"

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from unittest.mock import AsyncMock
 from dataclasses import replace
 
 import httpx
@@ -48,6 +49,10 @@ def deployment():
     )
 
 
+def deployment_image() -> str:
+    return "registry.cloudflare.com/bifrost/worker@sha256:" + "a" * 64
+
+
 def _ok(result: object) -> httpx.Response:
     return httpx.Response(200, json={"success": True, "errors": [], "result": result})
 
@@ -73,6 +78,10 @@ def _response_for_complete_reconcile(
         if migration_tag is None:
             return _not_found()
         return _ok({"default_environment": {"script": {"migration_tag": migration_tag}}})
+    if path.endswith("/containers/image-preparations"):
+        assert request.method == "POST"
+        assert json.loads(request.content) == {"image": "registry.cloudflare.com/bifrost/worker@sha256:" + "a" * 64}
+        return _ok({"status": "ready"})
     if path == "/client/v4/accounts/account-id/workers/scripts/bifrost-capacity":
         assert request.method == "PUT"
         assert request.headers["content-type"].startswith("multipart/form-data;")
@@ -81,7 +90,8 @@ def _response_for_complete_reconcile(
         assert '"name":"WORKER_LEDGER"' in body
         assert '"type":"durable_object_namespace"' in body
         assert '"name":"WORKER_CONTAINER"' in body
-        assert '"containers":[{"name":"bifrost-capacity-worker-container","class_name":"WorkerContainer"}]' in body
+        assert '"containers":[{"name":"bifrost-capacity-worker-container","class_name":"WorkerContainer","images":{"worker":' in body
+        assert deployment_image() in body
         assert '"compatibility_date":"2026-11-10"' in body
         assert '"observability":{"enabled":true}' in body
         assert '"keep_bindings":["secret_text"]' in body
@@ -113,13 +123,7 @@ def _response_for_complete_reconcile(
         assert request.method == "POST"
         assert json.loads(request.content) == {
             "name": "bifrost-capacity-worker-container",
-            "scheduling_policy": "default",
-            "configuration": {
-                "image": "registry.cloudflare.com/bifrost/worker@sha256:" + "a" * 64,
-                "instance_type": "standard-1",
-            },
-            "instances": 0,
-            "max_instances": max_workers,
+            "scheduling_policy": "durable_object",
             "durable_objects": {"namespace_id": "container-ns"},
         }
         return _ok({"id": "application-id"})
@@ -158,7 +162,7 @@ async def test_reconcile_uploads_worker_then_owns_container_resources_over_cloud
     assert result.container_namespace_id == "container-ns"
     assert result.worker_url == "https://bifrost-capacity.account-subdomain.workers.dev"
     assert result.migration_tag == "v1"
-    assert steps == ["worker_uploaded", "container_application_created", "capacity_secret_upserted", "worker_route_enabled"]
+    assert steps == ["container_image_ready", "worker_uploaded", "container_application_created", "capacity_secret_upserted", "worker_route_enabled"]
 
 
 @pytest.mark.asyncio
@@ -173,7 +177,7 @@ async def test_reconcile_does_not_repeat_an_already_applied_migration(artifact_d
 
 
 @pytest.mark.asyncio
-async def test_reconcile_uses_the_qualified_deployment_worker_limit_for_container_instances(
+async def test_reconcile_embeds_the_qualified_worker_limit_in_registry_admission(
     artifact_directory, deployment,
 ) -> None:
     one_worker = replace(deployment, limits=replace(deployment.limits, max_workers=1))
@@ -219,6 +223,7 @@ async def test_reconcile_fails_closed_when_existing_application_has_another_name
             assert request.method == "GET"
             return _ok([{
                 "id": "application-id", "name": "bifrost-capacity-worker-container",
+                "scheduling_policy": "durable_object",
                 "durable_objects": {"namespace_id": "foreign-namespace"},
             }])
         pytest.fail(f"unexpected Cloudflare request: {request.method} {request.url}")
@@ -231,47 +236,150 @@ async def test_reconcile_fails_closed_when_existing_application_has_another_name
 
 
 @pytest.mark.asyncio
-async def test_reconcile_rolls_an_existing_matched_container_application_to_the_pinned_image(
+async def test_reconcile_updates_prepared_image_without_patching_immutable_application(
     artifact_directory, deployment,
 ) -> None:
+    methods: list[tuple[str, str]] = []
+
     def handler(request: httpx.Request) -> httpx.Response:
-        path = request.url.path
-        if path.endswith("/workers/services/bifrost-capacity"):
-            return _ok({"default_environment": {"script": {"migration_tag": "v1"}}})
-        if path.endswith("/workers/scripts/bifrost-capacity"):
-            return _ok({})
-        if path.endswith("/workers/durable_objects/namespaces"):
-            return _ok(_namespaces())
-        if path.endswith("/containers/applications"):
+        methods.append((request.method, request.url.path))
+        if request.url.path.endswith("/containers/applications"):
             assert request.method == "GET"
             return _ok([{
                 "id": "application-id", "name": "bifrost-capacity-worker-container",
-                "scheduling_policy": "default", "max_instances": 2,
-                "configuration": {"image": "registry.cloudflare.com/bifrost/worker@sha256:old", "instance_type": "standard-1"},
+                "scheduling_policy": "durable_object",
                 "durable_objects": {"namespace_id": "container-ns"},
             }])
-        if path.endswith("/containers/applications/application-id"):
-            assert request.method == "PATCH"
-            assert json.loads(request.content) == {
-                "configuration": {
-                    "image": "registry.cloudflare.com/bifrost/worker@sha256:" + "a" * 64,
-                    "instance_type": "standard-1",
-                },
-            }
-            return _ok({"id": "application-id"})
-        if path.endswith("/workers/scripts/bifrost-capacity/secrets"):
-            return _ok({})
-        if path.endswith("/workers/scripts/bifrost-capacity/subdomain"):
-            return _ok({})
-        if path.endswith("/workers/subdomain"):
-            return _ok({"subdomain": "account-subdomain"})
-        pytest.fail(f"unexpected Cloudflare request: {request.method} {request.url}")
+        return _response_for_complete_reconcile(request, migration_tag="v1")
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         result = await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
             deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
         )
     assert result.application_id == "application-id"
+    assert not any(method == "PATCH" for method, _ in methods)
+
+
+@pytest.mark.asyncio
+async def test_reconcile_refuses_legacy_application_before_any_mutation(artifact_directory, deployment) -> None:
+    methods: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        methods.append(request.method)
+        if request.url.path.endswith("/containers/applications"):
+            return _ok([{
+                "id": "application-id", "name": "bifrost-capacity-worker-container",
+                "scheduling_policy": "default",
+            }])
+        return _response_for_complete_reconcile(request, migration_tag="v1")
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(CloudflareProvisioningError, match="requires_replacement"):
+            await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
+                deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
+            )
+    assert methods == ["GET", "GET"]
+
+
+@pytest.mark.asyncio
+async def test_image_preparation_pending_gates_worker_publication(artifact_directory, deployment, monkeypatch) -> None:
+    from src.services.worker_pool import cloudflare_deploy
+
+    observed: list[str] = []
+    statuses = iter(["pending", "ready"])
+    wait = AsyncMock()
+    monkeypatch.setattr(cloudflare_deploy.asyncio, "sleep", wait)
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/containers/image-preparations"):
+            status = next(statuses)
+            observed.append(status)
+            return _ok({"status": status})
+        if request.method == "PUT" and request.url.path.endswith("/scripts/bifrost-capacity"):
+            assert observed == ["pending", "ready"]
+        return _response_for_complete_reconcile(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
+            deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
+        )
+    wait.assert_awaited_once_with(2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("status", ["error", "unrecognized", None])
+async def test_image_preparation_failure_never_publishes_worker(artifact_directory, deployment, status) -> None:
+    writes: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method != "GET":
+            writes.append(request.url.path)
+        if request.url.path.endswith("/containers/image-preparations"):
+            return _ok({"status": status, "reason": CAPACITY_TOKEN})
+        return _response_for_complete_reconcile(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(CloudflareProvisioningError, match="container_image_preparation") as caught:
+            await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
+                deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
+            )
+    assert writes == ["/client/v4/accounts/account-id/containers/image-preparations"]
+    assert CAPACITY_TOKEN not in str(caught.value)
+
+
+@pytest.mark.asyncio
+async def test_pending_image_preparation_has_a_deadline_without_worker_upload(
+    artifact_directory, deployment, monkeypatch,
+) -> None:
+    from src.services.worker_pool import cloudflare_deploy
+
+    # Deliver the deadline deterministically rather than depending on the host
+    # scheduler racing a millisecond timer under Docker/CI load.
+    deadline = AsyncMock(side_effect=TimeoutError)
+    monkeypatch.setattr(cloudflare_deploy.asyncio, "sleep", deadline)
+    preparations = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal preparations
+        if request.url.path.endswith("/containers/image-preparations"):
+            preparations += 1
+            return _ok({"status": "pending"})
+        assert request.method == "GET"
+        return _response_for_complete_reconcile(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(CloudflareProvisioningError, match="preparation_timeout"):
+            await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
+                deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
+            )
+    assert preparations == 1
+    deadline.assert_awaited_once_with(2)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("failure", ["forbidden", "uncertain"])
+async def test_image_preparation_refusal_or_lost_response_never_retries_or_publishes(
+    artifact_directory, deployment, failure,
+) -> None:
+    preparations = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal preparations
+        if request.url.path.endswith("/containers/image-preparations"):
+            preparations += 1
+            if failure == "uncertain":
+                raise httpx.ReadError("lost preparation response", request=request)
+            return httpx.Response(403, json={"success": False})
+        assert request.method == "GET"
+        return _response_for_complete_reconcile(request)
+
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
+        with pytest.raises(CloudflareProvisioningError, match="container_image_preparation") as caught:
+            await CloudflareDeploymentAdapter(http, artifact_directory).reconcile(
+                deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
+            )
+    assert isinstance(caught.value, CloudflareProvisioningUncertain) == (failure == "uncertain")
+    assert preparations == 1
 
 
 @pytest.mark.asyncio
@@ -281,8 +389,8 @@ async def test_lost_mutation_response_is_reported_uncertain_without_a_retry(arti
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal calls
         calls += 1
-        if request.method == "GET":
-            return _not_found()
+        if request.method == "GET" or request.url.path.endswith("/image-preparations"):
+            return _response_for_complete_reconcile(request)
         raise httpx.ReadError("connection lost after upstream accepted request", request=request)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
@@ -291,7 +399,7 @@ async def test_lost_mutation_response_is_reported_uncertain_without_a_retry(arti
                 deployment, api_token=CloudflareApiToken(TOKEN), capacity_token=CapacityToken(CAPACITY_TOKEN),
             )
     assert caught.value.step == "worker_upload"
-    assert calls == 2
+    assert calls == 4
     assert TOKEN not in str(caught.value)
     assert CAPACITY_TOKEN not in str(caught.value)
 
@@ -299,8 +407,8 @@ async def test_lost_mutation_response_is_reported_uncertain_without_a_retry(arti
 @pytest.mark.asyncio
 async def test_provider_errors_and_tokens_are_redacted(artifact_directory, deployment) -> None:
     def handler(request: httpx.Request) -> httpx.Response:
-        if request.method == "GET":
-            return _not_found()
+        if request.method == "GET" or request.url.path.endswith("/image-preparations"):
+            return _response_for_complete_reconcile(request)
         return httpx.Response(400, json={
             "success": False,
             "errors": [{"code": 10021, "message": f"rejected {CAPACITY_TOKEN}"}],

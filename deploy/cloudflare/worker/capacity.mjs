@@ -379,6 +379,9 @@ export class WorkerContainer {
                     if (this.container.running) {
                         throw new LifecycleError(502, "running container has no bound lifecycle fact");
                     }
+                    if (!this.container.images?.worker) {
+                        throw new LifecycleError(502, "prepared worker image is unavailable");
+                    }
                     await this.ctx.storage.put("lifecycle", {
                         version: 1,
                         binding,
@@ -388,6 +391,8 @@ export class WorkerContainer {
                     });
                     stage = "container_start";
                     this.container.start({
+                        image: this.container.images.worker,
+                        instance: "standard-1",
                         env: body.env ?? {},
                         entrypoint: body.entrypoint ?? [],
                         enableInternet: true,

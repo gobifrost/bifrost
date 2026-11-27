@@ -107,7 +107,8 @@ Wrangler `4.162.0`; do not substitute a floating Wrangler release.
    the API policy's standard and
    largest worker memory; `MAX_WORKERS` and `MAX_LIFETIME_SECONDS` must cover
    the API policy's worker-count, warm-minimum, and lifetime bounds; and
-   `max_instances` must be at least `MAX_WORKERS`. Set
+   `ScopeRegistry` enforces `MAX_WORKERS` across reservations, including
+   uncertain starts. The `durable_object` policy has no `max_instances`. Set
    `WORKER_CONTAINER_ENV` to a trusted public `BIFROST_API_URL` and required
    runtime paths only. Do not set `BIFROST_VERSION` there: the pinned image's
    reported build is the admission identity.
@@ -168,8 +169,8 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 | `SCOPE` | Opaque provider scope. Must match the API side exactly. |
 | `WORKER_VERSION` | Must equal the image's embedded build version. |
 | `MEMORY_LIMIT_BYTES` | Fixed worker memory matching the container profile; independent of Kubernetes sizing. |
-| `instance_type` (in `[[containers]]`) | Real memory and disk for each container; must be at least `MEMORY_LIMIT_BYTES` and large enough for the unpacked image. |
-| `max_instances` (in `[[containers]]`) | Must be at least `MAX_WORKERS`: a start beyond the application's instance count is refused even when the scope registry would admit it. |
+| `containers.images.worker.image` | Digest-pinned image in the Cloudflare managed registry; must be prepared before Worker publication. |
+| `MAX_WORKERS` | ScopeRegistry's serialized admission cap; uncertain starts retain their slot until deletion is proven. |
 | `MAX_WORKERS` | Ceiling this provider will run. |
 | `MAX_LIFETIME_SECONDS` | Upper bound the API may request; cannot exceed six hours, which is the platform's inactivity-timeout maximum. |
 | `WORKER_CONTAINER_ENV` | JSON object containing the API URL and runtime paths. Platform credentials are refused. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. |
@@ -187,47 +188,31 @@ automatically registers the image's actual capabilities. Upgrade and deploy
 the Worker and its pinned image together. UI overflow rules decide which jobs
 may use this capacity; they are not provider configuration.
 
-The second most common is a container smaller than the workload. The Containers
-application's size comes from `instance_type` in the `[[containers]]` block, not
-from `MEMORY_LIMIT_BYTES`: omit it and Cloudflare creates the application as
-`lite` (256 MiB memory, 2 GB disk). A worker image is larger than that disk
-unpacked, so every instance fails immediately with `ImagePullError` and never
-reaches a location. Instances that never schedule, with `LOCATION` blank in
-`wrangler containers instances`, are the symptom. Check the application record
-before reading instance logs:
+Fresh deployments use Cloudflare's `durable_object` scheduling policy. The
+Worker selects the prepared `ctx.container.images.worker` handle and
+`instance: "standard-1"` at start, preserving the qualified 4 GiB memory and
+8 GB disk tier. `MEMORY_LIMIT_BYTES` advertises memory; it does not choose
+hardware. ScopeRegistry retains the worker-count bound because this policy
+has no application-level `max_instances`.
 
-```bash
-python3 - <<'PY'
-import json
-import os
-from urllib.request import Request, urlopen
+API setup initiates native image preparation and observes only its documented
+`pending` state until `ready`, bounded to fifteen minutes as in pinned Wrangler.
+An error, unknown state, account refusal or transport failure stops setup; no
+worker starts or upload retries hide a failure. The shared PlatformJob records
+preparation progress before publishing Worker code or activating capacity.
+Manual Wrangler deployment performs this preparation itself.
 
-account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
-application_id = os.environ["APP_ID"]
-token = os.environ["CLOUDFLARE_API_TOKEN"]
-url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/containers/applications/{application_id}"
-request = Request(url, headers={"Authorization": f"Bearer {token}"})
-with urlopen(request, timeout=10) as response:
-    result = json.load(response)["result"]
-configuration = result.get("configuration") or {}
-print(json.dumps({"image": configuration.get("image"),
-                  "instance_type": configuration.get("instance_type"),
-                  "health": result.get("health")}, sort_keys=True))
-PY
-```
+Scheduling policy is immutable. An existing `default` application cannot be
+updated in place, and its namespace cannot attach to a replacement application.
+API setup refuses it before Worker upload. Drain the existing installation and
+provision a fresh dedicated provider scope/script; do not delete active
+containers or reuse their namespace. This migration does not transfer container
+filesystems or Durable Object state.
 
-The token is read from the child process environment and exists only in memory;
-it is never placed in a command argument or printed. The command intentionally
-prints only the image reference, instance type and health fields. Do not redirect
-provider request or response bodies to a log.
-
-Cloudflare documents image and `instance_type` changes on the `default`
-scheduling policy as application rollouts, and the scheduling policy itself is
-immutable per application. With Wrangler 4.162.0 a redeploy did not apply either
-change to an existing application — the record kept the original size and image —
-while deleting and recreating the application did. So treat this as
-version-dependent: check `wrangler containers applications get` after a deploy,
-and if the configuration did not move, recreate the application.
+See Cloudflare's [scheduling policies](https://developers.cloudflare.com/containers/configuration/scheduling-policy/)
+and [migration guide](https://developers.cloudflare.com/containers/guides/migrate-to-durable-object-scheduling-policy/).
+Native image readiness is a deployment prerequisite; worker enrollment and job
+execution still require separate live qualification.
 
 ## Diagnosing a container that never enrolls
 
