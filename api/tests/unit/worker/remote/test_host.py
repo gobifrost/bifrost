@@ -1228,3 +1228,22 @@ async def test_agent_import_keeps_the_api_loop_responsive_before_admission(monke
         if not pending.done():
             pending.cancel()
             await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("transition", ["disconnect", "reconcile"])
+async def test_transport_transition_wakes_every_retained_compute_stage(transition):
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE,
+    )
+    stages = [SimpleNamespace(state_changed=asyncio.Event()) for _ in range(2)]
+    bridge.agent_compute_runtimes.update({str(index): stage for index, stage in enumerate(stages)})
+
+    if transition == "disconnect":
+        bridge.disconnect()
+    else:
+        await bridge.reconciliation_complete()
+
+    assert all(stage.state_changed.is_set() for stage in stages)
+    assert bridge.compute_changed.is_set()
+    assert bridge.transport_changed.is_set()

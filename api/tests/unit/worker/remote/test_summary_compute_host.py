@@ -33,7 +33,7 @@ async def test_summary_api_callback_and_real_compute_child_share_one_completion(
     binding = AgentComputeBinding(*(str(uuid4()) for _ in range(4)))
     bridge = SimpleNamespace(
         connected=True, reconciliation_ready=asyncio.Event(),
-        transport_changed=asyncio.Event(), compute_changed=asyncio.Event(),
+        transport_changed=asyncio.Event(),
         agent_compute_runtimes={},
     )
     bridge.reconciliation_ready.set()

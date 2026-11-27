@@ -17,6 +17,7 @@ class _Prov:
     redirect_uri = None
     client_id = "SECRET-CLIENT"
     encrypted_client_secret = b"SECRET"
+    provider_metadata = {"tenant_id": "environment-tenant"}
 
 
 class _Schema:
@@ -51,6 +52,8 @@ def test_template_carries_safe_fields_and_scrubs_secrets():
     assert "SECRET-CLIENT" not in blob and "SECRET" not in blob
     assert "client_id" not in t["oauth"]
     assert "client_secret" not in t["oauth"]
+    assert "tenant_id" not in t["oauth"]
+    assert "environment-tenant" not in blob
 
 
 def test_template_no_oauth_when_provider_absent():

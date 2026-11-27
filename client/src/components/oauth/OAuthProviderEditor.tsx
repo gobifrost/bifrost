@@ -26,10 +26,19 @@ import {
 	SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import {
+	Tooltip,
+	TooltipContent,
+	TooltipProvider,
+	TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { copyToClipboard } from "@/lib/clipboard";
 import { toast } from "sonner";
 
-export type OAuthFlowType = "authorization_code" | "client_credentials";
+export type OAuthFlowType =
+	| "authorization_code"
+	| "client_credentials"
+	| "workload_identity";
 
 export interface OAuthProviderData {
 	oauth_flow_type: OAuthFlowType;
@@ -39,6 +48,7 @@ export interface OAuthProviderData {
 	token_url: string;
 	scopes: string;
 	audience: string | null;
+	tenant_id: string | null;
 }
 
 export interface OAuthProviderEditorProps {
@@ -55,6 +65,8 @@ export interface OAuthProviderEditorProps {
 	formId?: string;
 	/** Disable all inputs (e.g. while parent mutation pending) */
 	disabled?: boolean;
+	/** Integration-only: host runtime supplies the provider identity. */
+	allowWorkloadIdentity?: boolean;
 }
 
 const DEFAULT_VALUES: OAuthProviderData = {
@@ -65,6 +77,7 @@ const DEFAULT_VALUES: OAuthProviderData = {
 	token_url: "",
 	scopes: "",
 	audience: "",
+	tenant_id: "",
 };
 
 /**
@@ -80,6 +93,7 @@ export function OAuthProviderEditor({
 	flowTypeSwitchable = true,
 	formId,
 	disabled = false,
+	allowWorkloadIdentity = false,
 }: OAuthProviderEditorProps) {
 	const computedInitial = useMemo<OAuthProviderData>(
 		() => ({
@@ -146,10 +160,17 @@ export function OAuthProviderEditor({
 				data.oauth_flow_type === "authorization_code"
 					? data.authorization_url
 					: null,
+			client_secret:
+				data.oauth_flow_type === "workload_identity" ? "" : data.client_secret,
+			token_url:
+				data.oauth_flow_type === "workload_identity" ? "" : data.token_url,
 		});
 	};
 
 	const isAuthCode = data.oauth_flow_type === "authorization_code";
+	const isWorkloadIdentity = data.oauth_flow_type === "workload_identity";
+	const workloadIdentityHelp =
+		"Authentication is handled by your workflow’s provider SDK using a configured runtime identity. Configure identity trust and permissions externally. Bifrost does not obtain or refresh tokens in this mode.";
 
 	return (
 		<form
@@ -226,19 +247,61 @@ export function OAuthProviderEditor({
 							<SelectItem value="client_credentials">
 								Client Credentials (Service-to-Service)
 							</SelectItem>
+							{allowWorkloadIdentity && (
+								<SelectItem value="workload_identity">
+									Workload Identity
+								</SelectItem>
+							)}
 						</SelectContent>
 					</Select>
 					<p className="text-xs leading-5 text-muted-foreground">
-						{isAuthCode
+						{isWorkloadIdentity
+							? "The workflow provider SDK uses the Bifrost host runtime identity."
+							: isAuthCode
 							? "Requires user authorization. Use for delegated permissions."
 							: "No user authorization required. Use for application permissions."}
 					</p>
 				</div>
 			)}
 
+			{isWorkloadIdentity && (
+				<Alert className="border-[var(--bf-info)]/20 bg-[var(--bf-info-soft)]/60 text-foreground">
+					<Info className="h-4 w-4 text-[var(--bf-info)]" />
+					<AlertDescription className="flex items-start gap-2">
+						<span>SDK Managed</span>
+						<TooltipProvider>
+							<Tooltip>
+								<TooltipTrigger asChild>
+									<Button
+										type="button"
+										variant="ghost"
+										size="icon"
+										className="size-6 shrink-0"
+										aria-label={workloadIdentityHelp}
+									>
+										<Info className="size-4" />
+									</Button>
+								</TooltipTrigger>
+								<TooltipContent>{workloadIdentityHelp}</TooltipContent>
+							</Tooltip>
+						</TooltipProvider>
+					</AlertDescription>
+				</Alert>
+			)}
+			{isWorkloadIdentity && isEditMode && (
+				<Alert variant="destructive">
+					<AlertDescription>
+						Switching to Workload Identity removes this connection’s stored
+						OAuth credentials. Workflows must use their provider SDK.
+					</AlertDescription>
+				</Alert>
+			)}
+
 			<div className="grid gap-4 md:grid-cols-2">
 				<div className="space-y-2">
-					<Label htmlFor="client_id">Client ID *</Label>
+					<Label htmlFor="client_id">
+						Client ID {isWorkloadIdentity ? "(optional)" : "*"}
+					</Label>
 					<Input
 						id="client_id"
 						value={data.client_id}
@@ -246,13 +309,13 @@ export function OAuthProviderEditor({
 							setData({ ...data, client_id: e.target.value })
 						}
 						placeholder="abc123..."
-						required
+						required={!isWorkloadIdentity}
 						className="h-11 font-mono text-xs"
 						disabled={disabled}
 					/>
 				</div>
 
-				<div className="space-y-2">
+				{!isWorkloadIdentity && <div className="space-y-2">
 					<Label htmlFor="client_secret">
 						Client Secret{" "}
 						{data.oauth_flow_type === "client_credentials" && "*"}
@@ -285,8 +348,22 @@ export function OAuthProviderEditor({
 								? "Required: Client credentials flow requires a client secret"
 								: "Optional: Leave empty for PKCE (Proof Key for Code Exchange) flow"}
 					</p>
-				</div>
+				</div>}
 			</div>
+
+			{isWorkloadIdentity && (
+				<div className="space-y-2">
+					<Label htmlFor="tenant_id">Tenant ID</Label>
+					<Input
+						id="tenant_id"
+						value={data.tenant_id ?? ""}
+						onChange={(e) => setData({ ...data, tenant_id: e.target.value })}
+						placeholder="tenant-id"
+						className="h-11 font-mono text-xs"
+						disabled={disabled}
+					/>
+				</div>
+			)}
 
 			{isAuthCode && (
 				<div className="space-y-2">
@@ -309,57 +386,61 @@ export function OAuthProviderEditor({
 				</div>
 			)}
 
-			<div className="space-y-2">
-				<Label htmlFor="token_url">Token URL *</Label>
-				<Input
-					id="token_url"
-					value={data.token_url}
-					onChange={(e) =>
-						setData({ ...data, token_url: e.target.value })
-					}
-					placeholder="https://provider.com/oauth/token"
-					pattern="https://.*"
-					required
-					className="h-11 font-mono text-xs"
-					disabled={disabled}
-				/>
-			</div>
+			{!isWorkloadIdentity && (
+				<>
+					<div className="space-y-2">
+						<Label htmlFor="token_url">Token URL *</Label>
+						<Input
+							id="token_url"
+							value={data.token_url}
+							onChange={(e) =>
+								setData({ ...data, token_url: e.target.value })
+							}
+							placeholder="https://provider.com/oauth/token"
+							pattern="https://.*"
+							required
+							className="h-11 font-mono text-xs"
+							disabled={disabled}
+						/>
+					</div>
 
-			<div className="space-y-2">
-				<Label htmlFor="audience">Audience</Label>
-				<Input
-					id="audience"
-					value={data.audience ?? ""}
-					onChange={(e) =>
-						setData({ ...data, audience: e.target.value })
-					}
-					placeholder="https://api.example.com"
-					className="h-11 font-mono text-xs"
-					disabled={disabled}
-				/>
-				<p className="text-xs leading-5 text-muted-foreground">
-					Target API identifier sent with token requests. Required by
-					some providers (e.g., Pax8, Auth0).
-				</p>
-			</div>
+					<div className="space-y-2">
+						<Label htmlFor="audience">Audience</Label>
+						<Input
+							id="audience"
+							value={data.audience ?? ""}
+							onChange={(e) =>
+								setData({ ...data, audience: e.target.value })
+							}
+							placeholder="https://api.example.com"
+							className="h-11 font-mono text-xs"
+							disabled={disabled}
+						/>
+						<p className="text-xs leading-5 text-muted-foreground">
+							Target API identifier sent with token requests. Required by
+							some providers (e.g., Pax8, Auth0).
+						</p>
+					</div>
 
-			<div className="space-y-2">
-				<Label htmlFor="scopes">Scopes (comma or space separated)</Label>
-				<Textarea
-					id="scopes"
-					value={data.scopes}
-					onChange={(e) =>
-						setData({ ...data, scopes: e.target.value })
-					}
-					placeholder="read,write or https://graph.microsoft.com/.default"
-					rows={2}
-					className="font-mono text-xs"
-					disabled={disabled}
-				/>
-				<p className="text-xs leading-5 text-muted-foreground">
-					OAuth permissions to request. Leave empty for default scopes.
-				</p>
-			</div>
+					<div className="space-y-2">
+						<Label htmlFor="scopes">Scopes (comma or space separated)</Label>
+						<Textarea
+							id="scopes"
+							value={data.scopes}
+							onChange={(e) =>
+								setData({ ...data, scopes: e.target.value })
+							}
+							placeholder="read,write or https://graph.microsoft.com/.default"
+							rows={2}
+							className="font-mono text-xs"
+							disabled={disabled}
+						/>
+						<p className="text-xs leading-5 text-muted-foreground">
+							OAuth permissions to request. Leave empty for default scopes.
+						</p>
+					</div>
+				</>
+			)}
 		</form>
 	);
 }

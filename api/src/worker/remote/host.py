@@ -437,7 +437,7 @@ class Bridge:
         """Permit terminal replay only after canonical routes were restored."""
         self.reconciliation_ready.set()
         self.transport_changed.set()
-        self.compute_changed.set()
+        self._notify_compute_change()
         deferred, self._deferred_terminal = self._deferred_terminal, []
         for event in deferred:
             if await self._deliver_terminal(event):
@@ -539,13 +539,19 @@ class Bridge:
         self.reconciliation_ready.clear()
         self.transport_changed.set()
 
+    def _notify_compute_change(self) -> None:
+        """Transport changes affect every retained stage, not only one recipe."""
+        self.compute_changed.set()
+        for runtime in self.agent_compute_runtimes.values():
+            runtime.state_changed.set()
+
     def disconnect(self, socket: WebSocket | None = None) -> None:
         if socket is not None and socket is not self.socket:
             return
         self.connected = False
         self.reconciliation_ready.clear()
         self.transport_changed.set()
-        self.compute_changed.set()
+        self._notify_compute_change()
         for future in self.pending.values():
             if not future.done():
                 future.set_exception(ConnectionError("Launcher disconnected"))
