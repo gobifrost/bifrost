@@ -264,7 +264,7 @@ export function ManageIntegrationInstancesDialog({
 					</DialogHeader>
 					<div className="space-y-3">
 						{instances.map((instance) => (
-							<div key={instance.id} className="rounded-[var(--bf-radius-surface)] border border-border/70 p-3">
+							<div key={instance.id} className="rounded-lg border border-border/70 p-3">
 								<div className="flex flex-col gap-3 sm:flex-row sm:items-end">
 									<div className="min-w-0 flex-1 space-y-2">
 										<Label htmlFor={`instance-name-${instance.id}`}>
@@ -286,7 +286,7 @@ export function ManageIntegrationInstancesDialog({
 											<Button type="button" variant="outline" onClick={() => void rename(instance)} disabled={savingId === instance.id} aria-label={`Save ${instance.name}`}>
 												{savingId === instance.id ? "Saving…" : "Save"}
 											</Button>
-											<Button type="button" variant="outline" className="text-destructive" onClick={() => setDeleting(instance)} aria-label={`Delete ${instance.name}`}>
+											<Button type="button" variant="destructive" onClick={() => setDeleting(instance)} aria-label={`Delete ${instance.name}`}>
 												<Trash2 className="size-4" />
 												Delete
 											</Button>
