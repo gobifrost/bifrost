@@ -1,0 +1,10 @@
+{
+  "key": "pr:1496",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine repair that surfaces an unresolved callable in existing workflow permission proposals.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1496"]
+  }
+}
