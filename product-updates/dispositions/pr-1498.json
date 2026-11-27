@@ -1,0 +1,10 @@
+{
+  "key": "pr:1498",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine CLI bug fix restoring correct outage reporting during token refresh; no new feature or breaking change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1498"]
+  }
+}

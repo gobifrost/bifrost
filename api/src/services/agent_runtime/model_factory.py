@@ -341,7 +341,14 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
 
         class BifrostAnthropicModel(AnthropicModel):
             async def _messages_create(
-                self, messages, stream, model_settings, model_request_parameters
+                self,
+                messages,
+                stream,
+                model_settings,
+                model_request_parameters,
+                *,
+                compaction=None,
+                thread_record=None,
             ):
                 parent_create = super()._messages_create
 
@@ -351,6 +358,8 @@ def create_agent_model(config: LLMConfig, *, model: str | None = None) -> Model:
                         stream,
                         settings,  # type: ignore[arg-type]
                         model_request_parameters,
+                        compaction=compaction,
+                        thread_record=thread_record,
                     )
 
                 settings = dict(model_settings)

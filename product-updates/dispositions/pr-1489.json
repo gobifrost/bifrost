@@ -1,0 +1,10 @@
+{
+  "key": "pr:1489",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal maintainer skill maintenance. The change documents repository triage and delivery checks without changing the Bifrost product.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1489"]
+  }
+}

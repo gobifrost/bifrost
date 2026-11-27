@@ -25,9 +25,16 @@ from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.app_frame_signin import (
+    consume_app_frame_signin_code,
+    get_app_frame_signin_settings,
+    issue_app_frame_signin_code,
+    save_app_frame_signin_settings,
+)
 from shared.app_connections import decide_app_connection, preview_mcp_connection, require_browser_app_approver
 from shared.models import (
     AppConnectionDecision, AppConnectionDetails, AppConnectionResult,
+    AppFrameSigninCode, AppFrameSigninSettings,
     BrowserImpersonationTokenResponse, DeviceAuthorizeRequest,
 )
 from src.core.cache import get_shared_redis
@@ -91,7 +98,7 @@ from src.core.security import (
 )
 from src.repositories.users import UserRepository
 from src.services.user_provisioning import ensure_user_provisioned
-from shared.auth_cookies import clear_auth_cookies, set_auth_cookies
+from shared.auth_cookies import clear_auth_cookies, clear_frame_transport_cookies, set_auth_cookies, set_frame_transport_cookies
 from shared.human_sessions import (
     HumanSessionUnavailable,
     has_live_refresh_token_jti,
@@ -976,6 +983,81 @@ async def refresh_token(
     )
 
 
+@router.get("/app-frame-signin/settings", response_model=AppFrameSigninSettings)
+async def get_frame_signin_settings(user: CurrentActiveUser, db: DbSession) -> AppFrameSigninSettings:
+    if not user.is_platform_admin or is_browser_impersonation(user) or user.auth_session_id is None:
+        raise HTTPException(status_code=403, detail="Platform admin sign-in required")
+    return await get_app_frame_signin_settings(db)
+
+
+@router.put("/app-frame-signin/settings", response_model=AppFrameSigninSettings)
+async def update_frame_signin_settings(
+    body: AppFrameSigninSettings, user: CurrentActiveUser, db: DbSession,
+) -> AppFrameSigninSettings:
+    before = await get_frame_signin_settings(user, db)
+    await save_app_frame_signin_settings(db, body, user.email)
+    await emit_audit(
+        db,
+        "settings.app_frame_signin.update",
+        resource_type="system_config",
+        details={"before": before.model_dump(), "after": body.model_dump()},
+    )
+    await db.commit()
+    return body
+
+
+@router.post("/app-frame-signin/code", status_code=204)
+async def create_frame_signin_code(
+    body: AppFrameSigninCode, request: Request, user: CurrentActiveUser, db: DbSession,
+) -> None:
+    await auth_limiter.check("app_frame_signin_code", get_client_ip(request))
+    if (
+        user.auth_session_id is None
+        or is_browser_impersonation(user)
+        or request.headers.get("authorization")
+        or request.headers.get("sec-fetch-site") != "same-origin"
+        or not (await get_app_frame_signin_settings(db)).allowed_origins
+    ):
+        raise HTTPException(status_code=403, detail="App frame sign-in is unavailable")
+    await issue_app_frame_signin_code(body.code, user.user_id, user.auth_session_id)
+
+
+@router.post("/app-frame-signin/exchange", response_model=Token)
+async def exchange_frame_signin_code(
+    body: AppFrameSigninCode, request: Request, response: Response, db: DbSession,
+) -> Token | Response:
+    if request.headers.get("sec-fetch-site") != "same-origin":
+        raise HTTPException(status_code=403, detail="App frame sign-in is unavailable")
+    if not (await get_app_frame_signin_settings(db)).allowed_origins:
+        raise HTTPException(status_code=403, detail="App frame sign-in is unavailable")
+    source = await consume_app_frame_signin_code(body.code)
+    if source is None:
+        return Response(status_code=202, headers={"Cache-Control": "no-store"})
+    await auth_limiter.check("app_frame_signin_exchange", get_client_ip(request))
+    user_id, source_session_id = source
+    try:
+        tokens = await issue_human_session(user_id, derived_from_session_id=source_session_id)
+    except HumanSessionUnavailable as exc:
+        raise HTTPException(status_code=401, detail="App frame sign-in expired") from exc
+    set_frame_transport_cookies(response, tokens.access_token)
+    return Token(access_token=tokens.access_token, refresh_token=tokens.refresh_token)
+
+
+@router.post("/app-frame-signin/refresh", response_model=Token)
+async def refresh_frame_signin(
+    body: TokenRefresh, request: Request, response: Response, db: DbSession,
+) -> Token:
+    await auth_limiter.check("app_frame_signin_refresh", get_client_ip(request))
+    if not (await get_app_frame_signin_settings(db)).allowed_origins:
+        raise HTTPException(status_code=403, detail="App frame sign-in is unavailable")
+    try:
+        tokens = await rotate_human_session(body.refresh_token)
+    except HumanSessionUnavailable as exc:
+        raise HTTPException(status_code=401, detail="App frame sign-in expired") from exc
+    set_frame_transport_cookies(response, tokens.access_token)
+    return Token(access_token=tokens.access_token, refresh_token=tokens.refresh_token)
+
+
 @router.get("/me", response_model=UserResponse)
 async def get_current_user_info(
     current_user: CurrentActiveUser,
@@ -1081,6 +1163,18 @@ async def logout(
         details={"email": current_user.email},
     )
 
+    return LogoutResponse()
+
+
+@router.post("/app-frame-signin/logout", response_model=LogoutResponse)
+async def logout_frame_signin(
+    response: Response, user: CurrentActiveUser, db: DbSession,
+) -> LogoutResponse:
+    if user.auth_session_id is None or is_browser_impersonation(user):
+        raise HTTPException(status_code=403, detail="App frame sign-in is unavailable")
+    await revoke_human_session(user.user_id, user.auth_session_id)
+    clear_frame_transport_cookies(response)
+    await emit_audit(db, "auth.logout", resource_type="user", resource_id=user.user_id)
     return LogoutResponse()
 
 

@@ -235,6 +235,14 @@ describe("buildWsUrl", () => {
 		expect(new URL(buildWsUrl()).searchParams.has("token")).toBe(false);
 	});
 
+	it("uses the frame cookie for same-origin embedded Apps", () => {
+		vi.stubGlobal("__BIFROST_PLATFORM_AUTH_V1__", { getFrameSessionId: () => "frame-session" });
+		restore = setBifrostTransport({ baseUrl: window.location.origin, token: "frame-token" });
+		const url = new URL(buildWsUrl());
+		expect(url.searchParams.get("frame")).toBe("frame-session");
+		expect(url.searchParams.has("token")).toBe(false);
+	});
+
   it("maps an http baseUrl to the ws: scheme", () => {
     restore = setBifrostTransport({
       baseUrl: "http://localhost:8000",
