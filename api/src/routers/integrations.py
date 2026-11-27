@@ -1206,17 +1206,6 @@ async def refresh_mapping_oauth(
     mapping = await _mapping_for_operation(
         repo, ctx, user, integration_id, mapping_id, operation="integrations.mappings.refresh"
     )
-    integration = await repo.get_integration_by_id(integration_id)
-    if not integration or not integration.oauth_provider:
-        raise HTTPException(status_code=400, detail="Integration has no OAuth provider")
-    provider = integration.oauth_provider
-
-    if provider.oauth_flow_type == "workload_identity":
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
-        )
-
     if not mapping.oauth_token_id:
         raise HTTPException(
             status_code=400,
@@ -1231,6 +1220,17 @@ async def refresh_mapping_oauth(
         raise HTTPException(
             status_code=404,
             detail="OAuth token row not found (mapping link cleared)",
+        )
+
+    integration = await repo.get_integration_by_id(integration_id)
+    if not integration or not integration.oauth_provider:
+        raise HTTPException(status_code=400, detail="Integration has no OAuth provider")
+    provider = integration.oauth_provider
+
+    if provider.oauth_flow_type == "workload_identity":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
         )
 
     if provider.oauth_flow_type != "client_credentials" and not token.encrypted_refresh_token:
