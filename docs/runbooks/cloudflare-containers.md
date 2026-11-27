@@ -1,5 +1,10 @@
 # Cloudflare Containers worker capacity
 
+Delivery scope for #1400 is Cloudflare Containers only. AWS, Azure and GCP
+provider delivery is deferred to a separate follow-up. Shared runtime contracts
+and existing local/Kubernetes compatibility remain prerequisites; reference
+adapters are not acceptance evidence or supported deliveries for those clouds.
+
 Operator runbook for deploying Bifrost's external-worker capacity provider on
 Cloudflare Containers. The protocol is defined in
 [`docs/architecture/external-worker-capacity.md`](../architecture/external-worker-capacity.md).
