@@ -6,10 +6,12 @@ import subprocess
 import shutil
 import tempfile
 import unittest
+from contextlib import chdir
 from pathlib import Path
 
 from scripts import product_updates
 from scripts.prepare_product_updates_image import prepare
+from scripts.product_updates_build_sources import git
 
 
 BASE = "a" * 40
@@ -151,6 +153,157 @@ class ProductUpdatesTests(unittest.TestCase):
             "reason": "Internal CI work",
             "review": {"status": "approved", "evidence": ["review"]},
         }
+
+    def test_candidate_includes_approved_updates_and_retains_them_after_merge(
+        self,
+    ) -> None:
+        self.write_entry(
+            {
+                **self.entry_data(),
+                "sources": [{"pr": 10}],
+                "eligibility": {"requires_prs": [10], "requires_commits": []},
+            }
+        )
+        (self.root / "api").mkdir()
+        with chdir(self.root):
+            git("init", "--quiet")
+            git("config", "user.name", "Product Updates test")
+            git("config", "user.email", "product-updates@example.invalid")
+            git("commit", "--quiet", "--allow-empty", "-m", "Baseline")
+            baseline = git("rev-parse", "HEAD")
+            frozen = {
+                **self.inventory_data(),
+                "base_ref": baseline,
+                "target_ref": baseline,
+                "commits": [],
+                "prs": [],
+            }
+            self._write_json(self.inventory, frozen)
+            git("add", "product-updates/inventory.json")
+            git("commit", "--quiet", "-m", "Freeze inventory")
+            base = git("rev-parse", "HEAD")
+            dispositions = self.disposition_data()
+            dispositions["inventory"] = {"base_ref": baseline, "target_ref": baseline}
+            dispositions["items"]["commit:" + base] = {
+                "classification": "omit",
+                "entry_ids": [],
+                "review": {"status": "approved", "evidence": ["product review"]},
+                "reason": "Inventory maintenance",
+            }
+            dispositions["items"]["pr:11"] = {
+                "classification": "other",
+                "entry_ids": [],
+                "summary": "Approved alternate sign-in.",
+                "review": {"status": "approved", "evidence": ["product review"]},
+            }
+            dispositions["items"]["pr:12"] = {
+                "classification": "omit",
+                "entry_ids": [],
+                "review": {"status": "approved", "evidence": ["product review"]},
+                "reason": "Maintenance",
+            }
+            self.write_dispositions(dispositions)
+            git("commit", "--quiet", "--allow-empty", "-m", "Merge updates")
+            first = git("rev-parse", "HEAD")
+            first_queued = [
+                {key: row[key] for key in ("number", "title", "url", "author")}
+                for row in self.inventory_data()["prs"]
+            ]
+            first_queued.append(
+                {
+                    **first_queued[0],
+                    "number": 11,
+                    "title": "Alternate sign-in",
+                    "url": "https://github.com/gobifrost/bifrost/pull/11",
+                }
+            )
+            internal_commit = {"sha": base, "subject": "Freeze inventory", "prs": []}
+
+            def metadata(
+                target: str,
+                queue_base: str,
+                queued: list,
+                landed_commits: list,
+                landed_prs: list,
+            ) -> dict:
+                return {
+                    "merge_group": {
+                        "head_sha": target,
+                        "base_sha": queue_base,
+                        "base_ref": "refs/heads/main",
+                        "pull_requests": [
+                            {
+                                "number": row["number"],
+                                "user": {"login": row["author"]["login"]},
+                            }
+                            for row in queued
+                        ],
+                    },
+                    "landed": {
+                        **frozen,
+                        "target_ref": queue_base,
+                        "commits": landed_commits,
+                        "prs": landed_prs,
+                    },
+                    "queued": queued,
+                }
+
+            sources = self.root / "build-sources.json"
+            evidence = metadata(first, base, first_queued, [internal_commit], [])
+            self._write_json(sources, evidence)
+            first_bundle = prepare(self.root, first, sources=sources)
+            self.assertEqual(
+                [entry["id"] for entry in first_bundle["entries"]], [ENTRY_ID]
+            )
+            self.assertEqual(
+                [
+                    (item["source"], item["title"])
+                    for item in first_bundle["other_changes"]
+                ],
+                [("pr:11", "Approved alternate sign-in.")],
+            )
+            frozen_bundle = prepare(self.root, baseline)
+            self.assertEqual(frozen_bundle["entries"], [])
+            self.assertEqual(frozen_bundle["other_changes"], [])
+
+            git("commit", "--quiet", "--allow-empty", "-m", "Next merge")
+            second = git("rev-parse", "HEAD")
+            landed_prs = [
+                {
+                    **row,
+                    "merge_commit": first,
+                    "merged_at": "2026-10-06T12:00:00Z",
+                    "metadata_ref": f"https://api.github.com/repos/gobifrost/bifrost/pulls/{row['number']}",
+                }
+                for row in first_queued
+            ]
+            evidence = metadata(
+                second,
+                first,
+                [{**first_queued[0], "number": 12}],
+                [
+                    internal_commit,
+                    {"sha": first, "subject": "Merge updates", "prs": [10, 11]},
+                ],
+                landed_prs,
+            )
+            self._write_json(sources, evidence)
+            second_bundle = prepare(self.root, second, sources=sources)
+            self.assertEqual(second_bundle["entries"], first_bundle["entries"])
+            self.assertEqual(
+                second_bundle["other_changes"], first_bundle["other_changes"]
+            )
+
+            with self.assertRaisesRegex(
+                ValueError, "does not describe this main candidate"
+            ):
+                prepare(self.root, first, sources=sources)
+            evidence["landed"]["prs"][0]["merge_commit"] = base
+            self._write_json(sources, evidence)
+            with self.assertRaisesRegex(
+                ValueError, "lack exact merge-commit associations"
+            ):
+                prepare(self.root, second, sources=sources)
 
     def test_bundle_is_stable_eligible_and_uses_cached_verified_credits(self) -> None:
         first = product_updates.build_bundle(
