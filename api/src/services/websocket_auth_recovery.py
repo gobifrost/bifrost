@@ -9,13 +9,13 @@ Every protected operation still requires a currently valid access credential.
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
-from urllib.parse import urlsplit
 from uuid import UUID
 
 from fastapi import WebSocket, WebSocketDisconnect
 from sqlalchemy import select
 
 from shared.browser_impersonation import IMPERSONATION_COOKIE_NAME
+from shared.auth_cookies import has_same_origin_websocket_handshake
 from src.core.auth import select_websocket_auth_token
 from src.core.database import get_db_context
 from src.core.pubsub import manager
@@ -90,29 +90,7 @@ def _hosted_query_socket(websocket: WebSocket) -> bool:
         or websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
     ):
         return False
-    # Chromium does not send Fetch Metadata on WebSocket handshakes. Compare
-    # its actual Origin with the public Host preserved by the WS proxy instead.
-    # TLS may terminate upstream, so the internal ws/wss scheme is not the
-    # browser's scheme. This is a hosted retry selector, never authentication:
-    # the signed human credential and current durable family remain required.
-    try:
-        origin = urlsplit(websocket.headers.get("origin", ""))
-        host = urlsplit("//" + websocket.headers.get("host", ""))
-        if (
-            origin.scheme not in ("http", "https")
-            or not origin.hostname or origin.username is not None or origin.password is not None
-            or origin.path or origin.query or origin.fragment
-            or not host.hostname or host.username is not None or host.password is not None
-            or host.path or host.query or host.fragment
-        ):
-            return False
-        default_port = 443 if origin.scheme == "https" else 80
-        return (
-            origin.hostname == host.hostname
-            and (origin.port or default_port) == (host.port or default_port)
-        )
-    except ValueError:
-        return False
+    return has_same_origin_websocket_handshake(websocket)
 
 
 async def request_legacy_websocket_refresh(websocket: WebSocket) -> bool:
@@ -137,6 +115,7 @@ async def consume_auth_refresh_request(
         return False
     if (
         websocket.query_params.get("token")
+        or websocket.query_params.get("frame") is not None
         or websocket.headers.get("authorization")
         or websocket.cookies.get(IMPERSONATION_COOKIE_NAME)
     ):

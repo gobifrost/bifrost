@@ -718,6 +718,17 @@ class ManifestIntegrationMapping(EntityCodec, BaseModel):
         )
 
 
+class ManifestIntegrationWorkflowLink(BaseModel):
+    workflow_id: str = Field(**classify(FieldClass.REFERENCE))
+    label: str = Field(min_length=1, max_length=80, pattern=r".*\S.*", **classify(FieldClass.CONTENT))
+    pinned: bool = Field(default=False, **classify(FieldClass.CONTENT))
+
+    @field_validator("workflow_id")
+    @classmethod
+    def validate_workflow_id(cls, value: str) -> str:
+        return str(UUID(value))
+
+
 class ManifestIntegration(EntityCodec, BaseModel):
     """Integration entry in manifest."""
     id: str = Field(description="Integration UUID", **classify(FieldClass.IDENTITY))
@@ -728,6 +739,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
     entity_id_name: str | None = Field(default=None, description="Display label for entity ID field", **classify(FieldClass.CONTENT))
     default_entity_id: str | None = Field(default=None, description="Default entity ID value", **classify(FieldClass.REFERENCE))
     list_entities_data_provider_id: str | None = Field(default=None, description="Workflow UUID for entity dropdown", **classify(FieldClass.REFERENCE))
+    workflow_links: list[ManifestIntegrationWorkflowLink] = Field(default_factory=list, **classify(FieldClass.CONTENT))
     config_schema: list[ManifestIntegrationConfigSchema] = Field(default_factory=list, description="Configuration fields", **classify(FieldClass.CONTENT))
     oauth_provider: ManifestOAuthProvider | None = Field(default=None, description="OAuth provider config", **classify(FieldClass.CONTENT))
     mappings: list[ManifestIntegrationMapping] = Field(default_factory=list, description="Per-org entity mappings", **classify(FieldClass.CONTENT))
@@ -747,6 +759,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
             name=integ.name,
             description=integ.description,
             notes=integ.notes,
+            workflow_links=integ.workflow_links or [],
             entity_id=integ.entity_id,
             entity_id_name=integ.entity_id_name,
             default_entity_id=integ.default_entity_id,
@@ -781,6 +794,7 @@ class ManifestIntegration(EntityCodec, BaseModel):
                 "name": self.name,
                 "description": self.description,
                 "notes": self.notes,
+                "workflow_links": [link.model_dump() for link in self.workflow_links],
                 "entity_id": self.entity_id,
                 "entity_id_name": self.entity_id_name,
                 "default_entity_id": self.default_entity_id,

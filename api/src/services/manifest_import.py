@@ -2118,6 +2118,7 @@ class ManifestResolver:
             "name": integ_name,
             "description": fields.get("description"),
             "notes": fields.get("notes"),
+            "workflow_links": fields["workflow_links"],
             "entity_id": fields["entity_id"],
             "entity_id_name": fields["entity_id_name"],
             "default_entity_id": fields["default_entity_id"],

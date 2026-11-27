@@ -99,6 +99,22 @@ def _rest_disposition(method: str, path: str) -> dict[str, str]:
                 "owns no entity state."
             ),
         }
+    if path == "/auth/app-frame-signin/settings" and method in {"GET", "PUT"}:
+        return {
+            "status": OperationSurfaceStatus.INTENTIONALLY_UNSUPPORTED.value,
+            "reason": "Platform-admin browser embedding settings have no CLI, SDK, MCP, or manifest operation.",
+        }
+    if (method, path) in {
+        ("POST", "/auth/app-frame-signin/code"),
+        ("POST", "/auth/app-frame-signin/exchange"),
+        ("POST", "/auth/app-frame-signin/refresh"),
+        ("POST", "/auth/app-frame-signin/logout"),
+        ("GET", "/embed/apps/frame-signin/frame-policy"),
+    }:
+        return {
+            "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,
+            "reason": "Applies browser framing policy or manages the browser's frame session; owns no entity state.",
+        }
     if path.startswith("/api/scim/v2/{identity_provider_id}/"):
         return {
             "status": OperationSurfaceStatus.TRANSPORT_ONLY.value,

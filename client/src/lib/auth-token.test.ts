@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
 	ACCESS_TOKEN_KEY,
@@ -11,6 +11,8 @@ import {
 	isImpersonating,
 	setImpersonationToken,
 	getEmbedTokenClaims,
+	getFrameSession,
+	setFrameSession,
 } from "./auth-token";
 
 function tokenFor(payload: Record<string, unknown>): string {
@@ -110,4 +112,31 @@ describe("impersonation token storage", () => {
 			"impersonated-token",
 		);
 	});
+});
+
+it("keeps iframe credentials separate from ordinary Bifrost tabs", () => {
+	const originalPath = window.location.pathname;
+	const top = {};
+	vi.stubGlobal("top", top);
+	try {
+		localStorage.clear();
+		sessionStorage.clear();
+		window.history.replaceState(null, "", "/embedded/apps/dispatch");
+		localStorage.setItem(ACCESS_TOKEN_KEY, "ordinary-session");
+		setImpersonationToken("impersonated-session");
+		setFrameSession({ access_token: "frame-session", refresh_token: "frame-refresh" });
+		expect(getActiveToken()).toBe("frame-session");
+		expect(getFrameSession()?.refresh_token).toBe("frame-refresh");
+		clearAuthTokens();
+		expect(getFrameSession()).toBeNull();
+		window.history.replaceState(null, "", "/apps/dispatch");
+		expect(getActiveToken()).toBe("impersonated-session");
+		clearImpersonationToken();
+		expect(getActiveToken()).toBe("ordinary-session");
+	} finally {
+		window.history.replaceState(null, "", originalPath);
+		vi.unstubAllGlobals();
+		localStorage.clear();
+		sessionStorage.clear();
+	}
 });

@@ -21,6 +21,10 @@ import {
 	clearAuthTokens,
 	consumeEmbedTokenFromHash,
 	getActiveToken,
+	isAppFrame,
+	getFrameSession,
+	getFrameSessionId,
+	setFrameSession,
 	isEmbedSession,
 	isImpersonating,
 } from "./auth-token";
@@ -112,6 +116,7 @@ let refreshPromise: Promise<boolean> | null = null;
 
 interface PlatformAuthBridge {
 	getAccessToken: () => string | null;
+	getFrameSessionId: () => string | null;
 	canRefreshAccessToken: () => boolean;
 	refreshAccessToken: () => Promise<boolean>;
 	handleAuthenticationFailure: () => void;
@@ -138,13 +143,20 @@ async function refreshAccessToken(
 		return refreshPromise;
 	}
 
-	const observedToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+	const frame = isAppFrame();
+	const observedToken = frame ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 	const refresh = async (): Promise<boolean> => {
 		try {
 			// POST to refresh endpoint - browser sends refresh_token cookie automatically
-			const res = await fetch("/api/auth/refresh", {
+			const frameSession = getFrameSession();
+			if (frame && !frameSession) return false;
+			const res = await fetch(frame ? "/api/auth/app-frame-signin/refresh" : "/api/auth/refresh", {
 				method: "POST",
 				credentials: "same-origin",
+				...(frameSession && {
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ refresh_token: frameSession.refresh_token }),
+				}),
 			});
 
 			if (!res.ok) return false;
@@ -154,12 +166,13 @@ async function refreshAccessToken(
 			// in flight. Publish only into the same local token generation that
 			// requested this rotation; bootstrap has no prior token (null) and
 			// retains its existing cookie-recovery behavior.
-			if (localStorage.getItem(ACCESS_TOKEN_KEY) !== observedToken) {
+			if ((frame ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY)) !== observedToken) {
 				return false;
 			}
 			if (data.access_token) {
 				// Store access token in localStorage for proactive expiry checking
-				localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
+				if (frame) setFrameSession(data);
+				else localStorage.setItem(ACCESS_TOKEN_KEY, data.access_token);
 				window.dispatchEvent(new Event("bifrost:access-token-refreshed"));
 				return true;
 			}
@@ -173,6 +186,7 @@ async function refreshAccessToken(
 		// The one-use refresh JTI requires cross-tab serialization. Web Locks is
 		// required in Bifrost's supported secure browser context; without it we
 		// refuse rotation rather than risking a concurrent cookie redemption.
+		if (frame) return refresh();
 		const locks = navigator.locks;
 		if (!locks) return false;
 		return locks.request("bifrost.auth.refresh", async () => {
@@ -227,6 +241,13 @@ function handleAuthFailure(): void {
 	sessionStorage.removeItem("userId");
 	clearAuthTokens();
 
+	if (isAppFrame()) {
+		if (!loginRedirectStarted) {
+			loginRedirectStarted = true;
+			window.location.reload();
+		}
+		return;
+	}
 	const currentPath = window.location.pathname;
 	if (
 		!loginRedirectStarted &&
@@ -249,6 +270,7 @@ function handleAuthFailure(): void {
 // handshake instead of borrowing the signed-in user's refresh cookie.
 (globalThis as PlatformAuthGlobal).__BIFROST_PLATFORM_AUTH_V1__ = {
 	getAccessToken: getActiveToken,
+	getFrameSessionId,
 	canRefreshAccessToken: () => !isEmbedSession() && !isImpersonating(),
 	refreshAccessToken,
 	handleAuthenticationFailure: handleAuthFailure,
@@ -269,7 +291,7 @@ async function ensureValidToken(): Promise<boolean> {
 		return !!token && !isTokenExpiringSoon(token);
 	}
 
-	const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+	const token = getActiveToken();
 
 	// No access token in localStorage, but HttpOnly refresh cookie may be valid
 	if (!token) return refreshAccessToken();

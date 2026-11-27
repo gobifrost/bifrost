@@ -1,3 +1,4 @@
+import { openHeaderEditor } from "./helpers/header";
 import { type Page } from "./fixtures/api-fixture";
 import { readEditorContent } from "./fixtures/monaco-editor";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
@@ -43,7 +44,7 @@ async function deleteEditorPath(api: AuthedApi, path: string) {
 }
 
 async function openGlobalEditor(page: Page) {
-	await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
+	await openHeaderEditor(page);
 	await expect(
 		page.getByRole("dialog", { name: "Code editor" }),
 	).toBeVisible();

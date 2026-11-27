@@ -910,6 +910,10 @@ class EventProcessor:
             parameters=parameters,
             org_id=str(workflow.organization_id) if workflow.organization_id else None,
             event=event_context,
+            event_source_type=(
+                EventSourceType(event.event_source.source_type)
+                if event.event_source is not None else None
+            ),
             lineage=await unattended_lineage(self.session, workflow.id),
         )
         execution_id = accepted.pending["execution_id"]

@@ -21,7 +21,7 @@ import {
 	MarkerType,
 } from "@xyflow/react";
 import dagre from "dagre";
-import "@xyflow/react/dist/style.css";
+import "@xyflow/react/style.css";
 import "./dependency-graph.css";
 
 import {
@@ -226,6 +226,7 @@ function DependencyGraphCanvas({
 				nodesDraggable={false}
 				nodesConnectable={false}
 				elementsSelectable={true}
+				elevateEdgesOnSelect={false}
 				panOnScroll={true}
 				zoomOnScroll={true}
 			>

@@ -78,11 +78,21 @@ class ConfigSchemaItem(BaseModel):
 # ==================== INTEGRATION REQUEST MODELS ====================
 
 
+class IntegrationWorkflowLink(BaseModel):
+    """An integration-owned shortcut; execution retains workflow authorization."""
+
+    workflow_id: UUID
+    label: str = Field(min_length=1, max_length=80, pattern=r".*\S.*")
+    pinned: bool = False
+
+
 class IntegrationCreate(BaseModel):
     """
     Request model for creating a new integration.
     POST /api/integrations
     """
+
+    workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
 
     name: str = Field(
         ...,
@@ -121,12 +131,21 @@ class IntegrationCreate(BaseModel):
         description="Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)",
     )
 
+    @model_validator(mode="after")
+    def unique_workflow_links(self):
+        ids = [link.workflow_id for link in self.workflow_links or []]
+        if len(ids) != len(set(ids)):
+            raise ValueError("A workflow can only be linked once per integration")
+        return self
+
 
 class IntegrationUpdate(BaseModel):
     """
     Request model for updating an integration.
     PUT /api/integrations/{integration_id}
     """
+
+    workflow_links: list[IntegrationWorkflowLink] | None = None
 
     name: str | None = Field(
         default=None,
@@ -168,6 +187,13 @@ class IntegrationUpdate(BaseModel):
         max_length=255,
         description="Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)",
     )
+
+    @model_validator(mode="after")
+    def unique_workflow_links(self):
+        ids = [link.workflow_id for link in self.workflow_links or []]
+        if len(ids) != len(set(ids)):
+            raise ValueError("A workflow can only be linked once per integration")
+        return self
 
 
 class IntegrationMappingCreate(BaseModel):
@@ -312,6 +338,8 @@ class IntegrationResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID = Field(..., description="Integration ID")
+    workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
+
     name: str = Field(..., description="Integration name")
     description: str | None = Field(
         default=None,
@@ -494,6 +522,8 @@ class IntegrationDetailResponse(BaseModel):
 
     # Core integration fields
     id: UUID = Field(..., description="Integration ID")
+    workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
+
     name: str = Field(..., description="Integration name")
     description: str | None = Field(
         default=None,

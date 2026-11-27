@@ -6,7 +6,17 @@ runs:
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
       with:
         python-version: "3.14"
+    - name: Download verified candidate sources
+      if: github.event_name == 'merge_group'
+      uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+      with:
+        name: product-updates-sources-${{ github.sha }}
+        path: ${{ runner.temp }}/product-updates-sources
     - shell: bash
       run: |
         python -m pip install --require-hashes -r requirements-product-updates.lock
-        python -m scripts.prepare_product_updates_image --target "$GITHUB_SHA"
+        build_sources=()
+        if [[ "$GITHUB_EVENT_NAME" == merge_group ]]; then
+          build_sources=(--build-sources "$RUNNER_TEMP/product-updates-sources/product-updates-build-sources.json")
+        fi
+        python -m scripts.prepare_product_updates_image --target "$GITHUB_SHA" "${build_sources[@]}"

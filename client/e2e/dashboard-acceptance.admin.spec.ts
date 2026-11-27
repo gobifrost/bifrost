@@ -1,3 +1,4 @@
+import { openHeaderEditor } from "./helpers/header";
 import { randomUUID } from "node:crypto";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 
@@ -182,7 +183,7 @@ test("DASHBOARD-PRIMARY-01 renders API-backed metrics, refreshes, and drills int
 	page.on("pageerror", (error) => pageErrors.push(error.message));
 	await page.setViewportSize({ width: 1440, height: 900 });
 	await page.goto("/workflows");
-	await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
+	await openHeaderEditor(page);
 	const editor = page.getByRole("dialog", { name: "Code editor" });
 	await editor.getByRole("button", { name: "Files", exact: true }).click();
 	await editor

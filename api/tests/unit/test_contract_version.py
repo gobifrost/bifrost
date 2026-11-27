@@ -202,6 +202,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
+# Optional integration workflow shortcuts are additive; existing CLI callers remain compatible.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -430,12 +431,11 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Preserve the existing hardware-only capacity profile. Unreleased provider
-    # job declarations were removed; worker Hello remains the capability source.
-    # Optional PlatformJob executor attribution is additive, so existing CLI/SDK
-    # command shapes and MIN_CLI_VERSION remain unchanged.
-    # Merged inline-code permission clarification is description-only.
-    "0c88f0b767556c60d7cc84709a64433b66e33133a08f6af14e256f7ee382bd04"
+    # Hardware-only capacity profiles and optional PlatformJob attribution
+    # preserve the CLI/SDK wire shapes and MIN_CLI_VERSION.
+    # Inline-code permission clarification is description-only.
+    # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
+    "0a2823174ef129f3cf1b0f52f745856749a9233f2cc38369b4f25df7ba6c1bb0"
 )
 
 

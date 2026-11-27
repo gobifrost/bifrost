@@ -64,4 +64,22 @@ describe("createPlatformScope useLocation", () => {
 
 		expect(result.current.pathname).toBe("/reports/margins");
 	});
+
+	it("returns app-relative pathnames for Apps running in a signed-in frame", () => {
+		const original = window.location.pathname;
+		vi.stubGlobal("top", {});
+		try {
+			const path = "/embedded/apps/demo-app/reports/margins";
+			history.replaceState(null, "", path);
+			useAppBuilderStore.getState().setAppContext("demo-app", false);
+			setRouterPath(path);
+
+			const { result } = renderScopedLocation();
+			expect(result.current.pathname).toBe("/reports/margins");
+		} finally {
+			history.replaceState(null, "", original);
+			vi.unstubAllGlobals();
+		}
+	});
+
 });

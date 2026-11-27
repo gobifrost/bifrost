@@ -1,5 +1,10 @@
 import { useEffect, useRef } from "react";
-import { useNodesInitialized, useReactFlow, useStore } from "@xyflow/react";
+import {
+	useNodesInitialized,
+	useNodesStore,
+	useReactFlow,
+	useViewportStore,
+} from "@xyflow/react";
 
 const MIN_READABLE_AUTO_ZOOM = 0.5;
 const ROOT_FOCUS_ZOOM = 0.8;
@@ -7,9 +12,9 @@ const FIT_PADDING = 0.2;
 
 /** Fit new graph data without making dense graphs illegible. */
 export function DependencyGraphViewport() {
-	const width = useStore((state) => state.width);
-	const height = useStore((state) => state.height);
-	const nodes = useStore((state) => state.nodes);
+	const width = useViewportStore((state) => state.width);
+	const height = useViewportStore((state) => state.height);
+	const nodes = useNodesStore((state) => state.nodes);
 	const nodeSignature = nodes.map((node) => node.id).join("|");
 	const rootNode = nodes.find(
 		(node) =>
@@ -65,7 +70,7 @@ export function DependencyGraphViewport() {
 		);
 
 		if (fitZoom >= MIN_READABLE_AUTO_ZOOM || !rootNode) {
-			void fitView({ padding: FIT_PADDING, maxZoom: 1.5, duration: 0 });
+			void fitView({ padding: "8.34%", maxZoom: 1.5, duration: 0 });
 			return;
 		}
 

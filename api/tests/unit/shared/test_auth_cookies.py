@@ -5,9 +5,16 @@ from http.cookies import SimpleCookie
 from uuid import uuid4
 
 import pytest
-from fastapi import Response
+from fastapi import Request, Response, WebSocket
 
-from shared.auth_cookies import clear_auth_cookies, read_access_cookie, set_auth_cookies
+from shared.auth_cookies import (
+    clear_auth_cookies,
+    read_access_cookie,
+    read_frame_asset_cookie,
+    read_frame_socket_cookie,
+    set_auth_cookies,
+    set_frame_transport_cookies,
+)
 from src.core.security import create_access_token, create_refresh_token, decode_token
 
 
@@ -89,3 +96,44 @@ def test_rotation_to_fewer_chunks_never_reads_old_unreferenced_fragments() -> No
     set_auth_cookies(response, short, refresh)
     cookies.update(_cookies(response))
     assert read_access_cookie(cookies) == short
+
+
+def test_frame_transport_requires_the_document_and_socket_session_to_match() -> None:
+    session_id = str(uuid4())
+    token = create_access_token({"sub": str(uuid4()), "sid": session_id})
+    issued = Response()
+    set_frame_transport_cookies(issued, token)
+    cookie = b"; ".join(header.split(";", 1)[0].encode() for header in issued.headers.getlist("set-cookie"))
+
+    def asset(frame_session: str) -> Request:
+        return Request({
+            "type": "http",
+            "method": "GET",
+            "path": "/api/applications/app-id/dist/main.js",
+            "headers": [
+                (b"cookie", cookie),
+                (b"referer", f"https://example.com/embedded/apps/app?__bf_frame_session={frame_session}".encode()),
+                (b"sec-fetch-site", b"same-origin"),
+                (b"sec-fetch-dest", b"script"),
+            ],
+        })
+
+    async def receive():
+        return {"type": "websocket.connect"}
+
+    async def send(_message):
+        raise AssertionError("Credential selection does not send WebSocket messages")
+
+    def socket(frame_session: str, origin: bytes = b"https://example.com") -> WebSocket:
+        return WebSocket({
+            "type": "websocket",
+            "path": "/ws/connect",
+            "query_string": f"frame={frame_session}".encode(),
+            "headers": [(b"cookie", cookie), (b"origin", origin), (b"host", b"example.com")],
+        }, receive, send)
+
+    assert read_frame_asset_cookie(asset(session_id)) == (True, token)
+    assert read_frame_asset_cookie(asset(str(uuid4()))) == (True, None)
+    assert read_frame_socket_cookie(socket(session_id)) == token
+    assert read_frame_socket_cookie(socket(str(uuid4()))) is None
+    assert read_frame_socket_cookie(socket(session_id, b"https://parent.example.com")) is None

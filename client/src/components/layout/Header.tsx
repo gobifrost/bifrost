@@ -1,6 +1,7 @@
 import { usePresentationStore } from "@/stores/presentationStore";
+import { AccountMenuSub } from "./AccountMenuSub";
 import { AccountMenuContent } from "./AccountMenuContent";
-import { Suspense } from "react";
+import { Suspense, useState, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import {
 	ChevronDown,
@@ -10,20 +11,23 @@ import {
 	PanelLeftClose,
 	PanelLeft,
 	Terminal,
+	Bot,
+	Palette,
+	Moon,
 	Search,
 } from "lucide-react";
-import {
-	Tooltip,
-	TooltipContent,
-	TooltipTrigger,
-} from "@/components/ui/tooltip";
 import { Button } from "@/components/ui/button";
 import {
 	DropdownMenu,
 	DropdownMenuTrigger,
+	DropdownMenuItem,
+	DropdownMenuLabel,
+	DropdownMenuSeparator,
+	DropdownMenuCheckboxItem,
+	DropdownMenuShortcut,
 } from "@/components/ui/dropdown-menu";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ThemeToggle } from "@/components/theme-toggle";
+import { useTheme } from "@/contexts/ThemeContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { GLOBAL_TARGET } from "@/lib/authorization";
 import { useAuthorization } from "@/services/authorization";
@@ -35,7 +39,10 @@ import { HeaderStatusIndicators } from "./HeaderStatusIndicators";
 import { useMediaQuery } from "@/hooks/useMediaQuery";
 import { useProfile } from "@/hooks/useProfile";
 import { profileService } from "@/services/profile";
-import { BifrostRunMenu } from "@/components/layout/BifrostRunMenu";
+import {
+	BifrostRunMenu,
+	useBifrostRunInfo,
+} from "@/components/layout/BifrostRunMenu";
 import { HelpMenu } from "./HelpMenu";
 import { lazyWithReload } from "@/lib/lazy-with-reload";
 
@@ -56,7 +63,11 @@ export function Header({
 	onSidebarToggle,
 	isSidebarCollapsed = false,
 }: HeaderProps = {}) {
+	const accountTrigger = useRef<HTMLButtonElement>(null);
 	const navigate = useNavigate();
+	const { theme, toggleTheme } = useTheme();
+	const { data: runInfo } = useBifrostRunInfo();
+	const [assistantOpen, setAssistantOpen] = useState(false);
 	const presentationMode = usePresentationStore((state) => state.enabled);
 	const togglePresentation = usePresentationStore((state) => state.toggle);
 	const compactHeader = useMediaQuery("(max-width: 1279px)");
@@ -139,13 +150,8 @@ export function Header({
 				{/* Spacer */}
 				<div className="hidden flex-1 sm:block" />
 
-				<div className="flex min-w-0 flex-1 flex-wrap items-center justify-end sm:flex-none sm:flex-nowrap">
+				<div className="flex min-w-0 flex-1 flex-nowrap items-center justify-end sm:flex-none">
 					{!compactHeader && <HeaderStatusIndicators />}
-
-					{!mobileHeader && <PasskeySetupBadge />}
-
-					{/* AI assistant connection — only renders while MCP is enabled */}
-					<BifrostRunMenu />
 
 					{/* Search Button */}
 					<Button
@@ -158,54 +164,11 @@ export function Header({
 						<Search className="h-4 w-4" />
 					</Button>
 
-					{/* Shell Button */}
-					{canWriteRepository && (
-						<Button
-							variant="ghost"
-							size="icon-lg"
-							className="sm:mr-2"
-							onClick={() => openEditor()}
-							title="Shell (Cmd+/)"
-							data-editor-launcher
-						>
-							<Terminal className="h-4 w-4" />
-						</Button>
-					)}
-
 					{/* Notification Center */}
 					<div className="sm:mr-2">
 						<NotificationCenter triggerClassName="size-11" />
 					</div>
-
-					<Tooltip>
-						<TooltipTrigger asChild>
-							<Button
-								variant="ghost"
-								size="icon-lg"
-								className="sm:mr-2"
-								aria-label="Presentation Mode"
-								aria-pressed={presentationMode}
-								onClick={togglePresentation}
-							>
-								{presentationMode ? (
-									<EyeOff aria-hidden="true" />
-								) : (
-									<Eye aria-hidden="true" />
-								)}
-							</Button>
-						</TooltipTrigger>
-						<TooltipContent>
-							visual masking for demos, not access control
-						</TooltipContent>
-					</Tooltip>
-
-					{/* Theme Toggle */}
-					<div className="sm:mr-2">
-						<ThemeToggle className="size-11" />
-					</div>
 				</div>
-
-				{canReadSettings && <HelpMenu />}
 
 				{/* User Menu */}
 				<DropdownMenu>
@@ -214,6 +177,10 @@ export function Header({
 							variant="ghost"
 							className="min-h-11 min-w-11 shrink-0 gap-2 px-2 sm:px-4"
 							aria-label="Account menu"
+							ref={accountTrigger}
+							data-editor-launcher={
+								canWriteRepository ? "" : undefined
+							}
 						>
 							<Avatar
 								data-pii
@@ -242,7 +209,66 @@ export function Header({
 						onSettings={() => navigate("/user-settings")}
 						onLogout={logout}
 						showVersion
-					/>
+					>
+						<PasskeySetupBadge />
+						<DropdownMenuSeparator />
+						<AccountMenuSub
+							label="Appearance"
+							icon={<Palette className="size-4" />}
+						>
+							<DropdownMenuCheckboxItem
+								className="min-h-11"
+								checked={theme === "dark"}
+								onCheckedChange={toggleTheme}
+							>
+								<Moon className="size-4" />
+								Dark Theme
+							</DropdownMenuCheckboxItem>
+							<DropdownMenuCheckboxItem
+								className="min-h-11"
+								checked={presentationMode}
+								onCheckedChange={togglePresentation}
+								title="Visual masking for demos, not access control"
+							>
+								{presentationMode ? (
+									<EyeOff className="size-4" />
+								) : (
+									<Eye className="size-4" />
+								)}
+								Presentation Mode
+							</DropdownMenuCheckboxItem>
+						</AccountMenuSub>
+						{canReadSettings && <HelpMenu />}
+						{(runInfo?.enabled || canWriteRepository) && (
+							<>
+								<DropdownMenuSeparator />
+								<DropdownMenuLabel>
+									Workspace Tools
+								</DropdownMenuLabel>
+								{runInfo?.enabled && (
+									<DropdownMenuItem
+										className="min-h-11"
+										onSelect={() => setAssistantOpen(true)}
+									>
+										<Bot className="size-4" />
+										Connect AI Assistants
+									</DropdownMenuItem>
+								)}
+								{canWriteRepository && (
+									<DropdownMenuItem
+										className="min-h-11"
+										onSelect={() => openEditor()}
+									>
+										<Terminal className="size-4" />
+										Open Editor / Shell
+										<DropdownMenuShortcut>
+											⌘/
+										</DropdownMenuShortcut>
+									</DropdownMenuItem>
+								)}
+							</>
+						)}
+					</AccountMenuContent>
 				</DropdownMenu>
 			</div>
 			{compactHeader && !mobileHeader && (
@@ -253,6 +279,11 @@ export function Header({
 					<HeaderStatusIndicators />
 				</div>
 			)}
+			<BifrostRunMenu
+				returnFocusRef={accountTrigger}
+				open={assistantOpen}
+				onOpenChange={setAssistantOpen}
+			/>
 			{canWriteSettings && user?.id && (
 				<Suspense fallback={null}>
 					<ProductUpdatesDialog key={user.id} adminId={user.id} />

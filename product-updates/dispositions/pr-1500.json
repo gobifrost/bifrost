@@ -1,0 +1,10 @@
+{
+  "key": "pr:1500",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Routine CLI bug fix restoring prompt outage reporting during device-code login; no new feature or breaking change.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1500"]
+  }
+}

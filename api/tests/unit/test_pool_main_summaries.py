@@ -30,3 +30,23 @@ async def test_a_running_backfill_summary_never_blocks_a_live_one() -> None:
         assert worker.active_handler_counts()["agent.summarize"] == 0
     finally:
         task.cancel()
+
+
+async def test_full_agent_stage_budget_keeps_excess_runs_queued_until_release() -> None:
+    worker = PoolWorker()
+    tasks = [asyncio.create_task(asyncio.sleep(60)) for _ in range(4)]
+    worker._tasks['agent.run'].update(tasks)
+    try:
+        assert ('agent.run', 1) not in worker._claimable()
+        assert ('agent.summarize', 1) not in worker._claimable()
+        assert ('agent.summarize_backfill', 1) not in worker._claimable()
+        assert ('workflow.execute', 1) in worker._claimable()
+        tasks[0].cancel()
+        assert ('agent.run', 1) not in worker._claimable(), 'exiting work still owns its slot'
+        await asyncio.gather(tasks[0], return_exceptions=True)
+        worker._tasks['agent.run'].remove(tasks[0])
+        assert ('agent.run', 1) in worker._claimable()
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)

@@ -35,6 +35,7 @@ if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
     from shared.run_lineage import RunLineage
+    from src.models.enums import EventSourceType
 
 logger = logging.getLogger(__name__)
 
@@ -295,6 +296,7 @@ async def stage_system_workflow_execution(
     event: EventContext | None = None,
     *,
     lineage: RunLineage,
+    event_source_type: EventSourceType | None = None,
 ) -> AcceptedRun:
     """Stage a system-triggered workflow run in the caller's transaction.
 
@@ -309,6 +311,7 @@ async def stage_system_workflow_execution(
         parameters: Workflow parameters
         org_id: Optional organization scope (UUID string, not "ORG:" prefixed)
         event: Optional EventContext populated for event-triggered executions
+        event_source_type: Server-defined source kind for the durable dispatch
         lineage: The identity the run is for (shared.run_lineage.unattended_lineage)
     """
     from shared.unattended_execution import create_unattended_context
@@ -328,4 +331,6 @@ async def stage_system_workflow_execution(
         lineage=lineage.bound(execution_id),
         **_context_fields(context),
     )
+    if event_source_type is not None:
+        message["event_source_type"] = event_source_type.value
     return await stage_workflow_run(db, pending, message, record_exists=False)

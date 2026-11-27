@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { renderWithProviders, screen } from "@/test-utils";
 
+vi.mock("@/components/integrations/IntegrationWorkflowLinks", () => ({
+	IntegrationWorkflowLinks: () => <div aria-label="Integration workflows" />,
+}));
+
 const mockUseAuthorization = vi.fn();
 const mockUseIntegration = vi.fn();
 const mockUseOrganizations = vi.fn();
@@ -94,7 +98,11 @@ vi.mock("@/components/integrations/IntegrationPageHeader", () => ({
 				<button type="button">Test Connection</button>
 			)}
 			{canManageDefinitions && <button type="button">Edit</button>}
-			{canExport && <button type="button" onClick={onExport}>Export</button>}
+			{canExport && (
+				<button type="button" onClick={onExport}>
+					Export
+				</button>
+			)}
 			{canManageDefinitions && (
 				<button type="button">Generate SDK</button>
 			)}
@@ -274,6 +282,8 @@ describe("IntegrationDetail authorization", () => {
 		setAuthorization({ globalRead: true });
 		const { user } = renderDetail();
 		await user.click(screen.getByRole("button", { name: "Export" }));
-		expect(mockExportEntities).toHaveBeenCalledWith("integrations", ["integration-1"]);
+		expect(mockExportEntities).toHaveBeenCalledWith("integrations", [
+			"integration-1",
+		]);
 	});
 });

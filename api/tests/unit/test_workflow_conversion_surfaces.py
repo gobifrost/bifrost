@@ -44,10 +44,17 @@ def test_cli_platform_analysis_refuses_a_partial_selection() -> None:
 
 def test_cli_report_reads_one_page() -> None:
     client = AsyncMock()
-    client.get.return_value = response("GET", "/report", {"items": [], "total": 0}, 200)
+    item = {
+        "status": "needs_review",
+        "proposed_permissions": ["integrations.read"],
+        "warnings": ["modules/vendor.py: Permissions may include unused SDK calls."],
+        "unknowns": ["modules/vendor.py:42: Cannot resolve attribute lookup."],
+    }
+    client.get.return_value = response("GET", "/report", {"items": [item], "total": 51}, 200)
     with patch("bifrost.client.BifrostClient.get_instance", return_value=client):
         result = CliRunner().invoke(workflows_group, ["convert", "report", JOB, "--offset", "50", "--limit", "25", "--json"])
     assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["items"] == [item]
     client.get.assert_awaited_once_with(f"/api/workflow-conversions/{JOB}/report", params={"offset": 50, "limit": 25})
 
 
