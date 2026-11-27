@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from typing import AsyncGenerator
 from uuid import uuid4
 
+import pytest
 import pytest_asyncio
 from sqlalchemy import delete
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -94,3 +95,29 @@ async def seed_user(
         async with async_session_factory() as cleanup:
             await cleanup.execute(delete(User).where(User.id == user_id))
             await cleanup.commit()
+
+
+@pytest.fixture
+def isolated_credentials(tmp_path, monkeypatch):
+    from bifrost import client as client_mod
+    from bifrost import credentials as creds_mod
+
+    if hasattr(client_mod._thread_local, "bifrost_client"):
+        delattr(client_mod._thread_local, "bifrost_client")
+    client_mod._reset_refresh_coordinators_for_tests()
+    monkeypatch.setattr(
+        creds_mod,
+        "get_credentials_path",
+        lambda: tmp_path / "credentials.json",
+    )
+    monkeypatch.setattr(creds_mod, "get_config_path", lambda: tmp_path / "config.json")
+    creds_mod._reset_persistent_backend_for_tests()
+    monkeypatch.setattr(creds_mod, "_persistent_backend", creds_mod.JsonBackend())
+    monkeypatch.delenv("BIFROST_API_URL", raising=False)
+    monkeypatch.delenv("BIFROST_ACCESS_TOKEN", raising=False)
+    monkeypatch.delenv("BIFROST_REFRESH_TOKEN", raising=False)
+    yield creds_mod
+    if hasattr(client_mod._thread_local, "bifrost_client"):
+        delattr(client_mod._thread_local, "bifrost_client")
+    client_mod._reset_refresh_coordinators_for_tests()
+    creds_mod._reset_persistent_backend_for_tests()
