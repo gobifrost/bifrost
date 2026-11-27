@@ -1,0 +1,14 @@
+{
+  "key": "pr:1494",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Technicians can sign in to Bifrost Apps embedded on approved sites. Manage those sites under Settings → Security → App Embedding.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/issues/1493",
+      "https://github.com/gobifrost/bifrost/pull/1494",
+      "Jack approved the exact Product Updates text in the maintainer conversation."
+    ]
+  }
+}

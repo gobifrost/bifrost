@@ -1,0 +1,10 @@
+{
+  "key": "pr:1495",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Internal build and inventory maintenance. The embedded App sign-in announcement is tracked by the approved disposition for PR #1494.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1495"]
+  }
+}

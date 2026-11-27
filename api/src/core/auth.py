@@ -16,7 +16,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from src.core.db_deps import DbSession
 from src.core.principal import UserPrincipal
 from src.core.security import decode_expired_access_token, decode_token
-from shared.auth_cookies import read_access_cookie
+from shared.auth_cookies import read_access_cookie, read_frame_asset_cookie, read_frame_socket_cookie
 from shared.browser_impersonation import (
     BrowserImpersonationError,
     IMPERSONATION_COOKIE_NAME,
@@ -78,6 +78,10 @@ def select_http_auth_token(
     cookies. Typed runtime and embed credentials retain their own authority and
     never become impersonated browser traffic.
     """
+    if bearer_token is None:
+        frame_document, asset_token = read_frame_asset_cookie(request)
+        if frame_document or asset_token is not None:
+            return asset_token
     token = bearer_token or (
         read_access_cookie(request.cookies)
         if "access_token" in request.cookies else request.cookies.get("embed_token")
@@ -670,6 +674,8 @@ async def get_current_user_from_db(
 
 def select_websocket_auth_token(websocket) -> str | None:
     """Select the original handshake credential with HTTP-equivalent precedence."""
+    if websocket.query_params.get("frame") is not None:
+        return read_frame_socket_cookie(websocket)
     explicit_token = None
 
     # Try Authorization header (some WebSocket clients support this)

@@ -1,0 +1,66 @@
+name: Normalize Product Updates merge group
+description: Resolve the exact queued PRs using the validator from the queue base.
+inputs:
+  validator:
+    description: Absolute path to the trusted base checkout.
+    required: true
+  output:
+    description: Absolute path for the normalized event.
+    required: true
+runs:
+  using: composite
+  steps:
+    - uses: actions/github-script@ed597411d8f924073f98dfc5c65a23a2325f34cd # v8.0.0
+      env:
+        PRODUCT_UPDATES_VALIDATOR: ${{ inputs.validator }}
+        PRODUCT_UPDATES_EVENT: ${{ inputs.output }}
+      with:
+        script: |
+          const fs = require("fs");
+          const { normalizeMergeGroup } = require(`${process.env.PRODUCT_UPDATES_VALIDATOR}/scripts/product_updates_scope.cjs`);
+          try {
+            const normalized = await normalizeMergeGroup({
+              mergeGroup: context.payload.merge_group,
+              listQueueEntries: async (base) => {
+                const query = `query($owner: String!, $repo: String!, $base: String!, $cursor: String) {
+                  repository(owner: $owner, name: $repo) {
+                    mergeQueue(branch: $base) {
+                      entries(first: 100, after: $cursor) {
+                        nodes {
+                          headCommit { oid }
+                          baseCommit { oid }
+                          pullRequest { number author { login } }
+                        }
+                        pageInfo { hasNextPage endCursor }
+                      }
+                    }
+                  }
+                }`;
+                const entries = [];
+                let cursor = null;
+                while (true) {
+                  const result = await github.graphql(query, {
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    base,
+                    cursor,
+                  });
+                  const page = result.repository?.mergeQueue?.entries;
+                  if (!page) throw new Error("Merge queue metadata is unavailable");
+                  entries.push(...page.nodes);
+                  if (!page.pageInfo.hasNextPage) return entries;
+                  const nextCursor = page.pageInfo.endCursor;
+                  if (!nextCursor || nextCursor === cursor) {
+                    throw new Error("Merge queue pagination did not advance");
+                  }
+                  cursor = nextCursor;
+                }
+              },
+            });
+            fs.writeFileSync(process.env.PRODUCT_UPDATES_EVENT, JSON.stringify({
+              ...context.payload,
+              merge_group: normalized,
+            }));
+          } catch (error) {
+            core.setFailed(error.message);
+          }

@@ -22,6 +22,7 @@ import { ApplicationUpdateGate } from "@/components/ApplicationUpdateScreen";
 import { RouteTransitionProgress } from "@/components/layout/RouteTransitionProgress";
 import { useEditorStore } from "@/stores/editorStore";
 import { useQuickAccessStore } from "@/stores/quickAccessStore";
+import { AppFrameGate, AppFrameSigninPopup } from "@/pages/AppFrameSignin";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { OrgScopeProvider, useOrgScope } from "@/contexts/OrgScopeContext";
 import { useApplicationName } from "@/lib/applicationName";
@@ -406,6 +407,17 @@ const routeElements = (
 				>
 					<ApplicationRunner />
 				</ProtectedRoute>
+			}
+		/>
+		<Route path="app-frame-signin" element={<AppFrameSigninPopup />} />
+		<Route
+			path="embedded/apps/:applicationId/*"
+			element={
+				<AppFrameGate>
+					<ProtectedRoute requirePermission={{ permission: "apps.readbasic" }}>
+						<ApplicationRunner />
+					</ProtectedRoute>
+				</AppFrameGate>
 			}
 		/>
 		<Route

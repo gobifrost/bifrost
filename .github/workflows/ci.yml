@@ -225,8 +225,57 @@ jobs:
   # can start as soon as its exact client image is ready. Only after the
   # identical SHA reaches main may build-dev promote these digests to :dev.
   # =============================================================================
+  prepare-dev-product-updates:
+    if: github.event_name == 'merge_group'
+    runs-on: ubuntu-latest
+    name: Prepare Dev Product Updates Sources
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Checkout exact merge candidate
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Checkout trusted queue resolver
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.merge_group.base_sha }}
+          path: product-updates-validator
+          sparse-checkout: scripts/product_updates_scope.cjs
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      - name: Resolve the verified merge group
+        uses: ./.github/actions/normalize-product-updates-event
+        with:
+          validator: ${{ github.workspace }}/product-updates-validator
+          output: ${{ runner.temp }}/product-updates-event.json
+      - name: Set up Python
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.14"
+      - name: Install Product Updates validation dependencies
+        run: python -m pip install --require-hashes -r requirements-product-updates.lock
+      - name: Collect verified landed and queued PRs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          python3 -m scripts.product_updates_build_sources \
+            --event "$RUNNER_TEMP/product-updates-event.json" \
+            --repository "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" \
+            --output "$RUNNER_TEMP/product-updates-build-sources.json"
+      - name: Upload candidate Product Updates sources
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: product-updates-sources-${{ github.sha }}
+          path: ${{ runner.temp }}/product-updates-build-sources.json
+          if-no-files-found: error
+          overwrite: true
+
   build-dev-api-candidate:
     if: github.event_name == 'merge_group'
+    needs: [prepare-dev-product-updates]
     runs-on: ubuntu-latest
     name: Build API Dev Candidate
     permissions:
@@ -296,6 +345,7 @@ jobs:
 
   build-dev-client-candidate:
     if: github.event_name == 'merge_group'
+    needs: [prepare-dev-product-updates]
     runs-on: ubuntu-latest
     name: Build Client Dev Candidate
     permissions:

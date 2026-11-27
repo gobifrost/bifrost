@@ -24,6 +24,7 @@ import {
 	clearImpersonationToken,
 	consumeEmbedTokenFromHash,
 	getActiveToken,
+	isAppFrame,
 	isEmbedSession,
 	isImpersonating,
 	setImpersonationToken,
@@ -195,7 +196,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 
 				// A challenge-driven retry can rotate the access token. Re-read with
 				// the new token so a late response for an older identity cannot win.
-				const activeToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+				const activeToken = isAppFrame() ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 				if (!activeToken) return false;
 				if (activeToken !== token) {
 					token = activeToken;
@@ -206,14 +207,14 @@ export function AuthProvider({ children }: AuthProviderProps) {
 					(await response.json()) as components["schemas"]["UserResponse"],
 				);
 				// Logout or another tab can change state while the body is read.
-				const latestToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+				const latestToken = isAppFrame() ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 				if (!latestToken) return false;
 				if (latestToken !== token) {
 					token = latestToken;
 					continue;
 				}
 				setUser(current);
-				localStorage.setItem(USER_KEY, JSON.stringify(current));
+				if (!isAppFrame()) localStorage.setItem(USER_KEY, JSON.stringify(current));
 				sessionStorage.setItem("userId", current.id);
 				return true;
 			} catch {
@@ -239,7 +240,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			// Share the API/SDK refresh lock: rotating the same refresh cookie twice
 			// during bootstrap can invalidate an otherwise valid browser session.
 			if (!(await refreshAccessToken())) return false;
-			const accessToken = localStorage.getItem(ACCESS_TOKEN_KEY);
+			const accessToken = isAppFrame() ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 			if (accessToken) return loadCurrentUser(accessToken);
 			return false;
 		} catch {
@@ -274,7 +275,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 					setIsLoading(false);
 					return;
 				}
-				token = localStorage.getItem(ACCESS_TOKEN_KEY);
+				token = isAppFrame() ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 				if (!token) {
 					setUser(null);
 					setIsLoading(false);
@@ -471,7 +472,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 							headers: { Authorization: `Bearer ${getActiveToken()}` },
 							credentials: "same-origin",
 						})
-					: await authFetch("/api/auth/logout", { method: "POST" });
+					: await authFetch(isAppFrame() ? "/api/auth/app-frame-signin/logout" : "/api/auth/logout", { method: "POST" });
 				if (!response.ok) {
 					const body = await response.json().catch(() => ({}));
 					throw new Error(body.detail || "Could not sign out");
@@ -487,10 +488,10 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			}
 
 			clearAuthTokens();
-			localStorage.removeItem(USER_KEY);
+			if (!isAppFrame()) localStorage.removeItem(USER_KEY);
 			sessionStorage.removeItem("userId");
 			setUser(null);
-			navigate("/login");
+			if (!isAppFrame()) navigate("/login");
 		})();
 	}, [navigate]);
 
@@ -500,7 +501,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	// isolated and retain their per-tab token.
 	useEffect(() => {
 		const handleStorage = (event: StorageEvent) => {
-			if (event.storageArea !== localStorage || isEmbedSession()) return;
+			if (event.storageArea !== localStorage || isAppFrame() || isEmbedSession()) return;
 			if (event.key === ACCESS_TOKEN_KEY && event.newValue) {
 				void loadCurrentUser(event.newValue);
 				return;
@@ -519,7 +520,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 	useEffect(() => {
 		const refreshIdentity = () => {
 			if (isEmbedSession() || isImpersonating()) return;
-			const token = localStorage.getItem(ACCESS_TOKEN_KEY);
+			const token = isAppFrame() ? getActiveToken() : localStorage.getItem(ACCESS_TOKEN_KEY);
 			if (token) void loadCurrentUser(token);
 		};
 		window.addEventListener("bifrost:access-token-refreshed", refreshIdentity);
@@ -604,6 +605,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 		// Public routes that don't require auth
 		const publicRoutes = [
 			"/login",
+			"/app-frame-signin",
 			"/setup",
 			"/accept-invite",
 			"/auth/callback",
@@ -618,7 +620,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
 			return;
 		}
 
-		if (!user && !isPublicRoute && !needsSetup) {
+		if (!user && !isPublicRoute && !needsSetup && !isAppFrame()) {
 			navigate("/login", {
 				state: {
 					from: `${location.pathname}${location.search}${location.hash}`,

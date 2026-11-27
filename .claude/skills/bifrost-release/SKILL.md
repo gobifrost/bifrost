@@ -38,11 +38,12 @@ recommended upgrade steps, and first-time setup of a new capability normally get
 one; ordinary features don't. Follow the authoring guide's Agent Prompts section
 and its template; the prompt is reviewed with the entry.
 
-After a source PR lands, refresh the cumulative verified inventory and commit the
-metadata in a content follow-up PR before considering its announcement delivered.
-Keep its reviewed UUID and prose; cite the actual landed PR/commit. Validate the
-prepared image bundle includes the entry. This activation step applies to dev
-images too and does not require publishing a GitHub release.
+Land approved announcement copy and the canonical disposition in the original
+source PR. Dev merge candidates use the frozen inventory, verified main history,
+and their own verified queue membership to include approved updates in the first
+build. Verify the prepared image bundle includes the approved updates. For a
+versioned release, refresh the cumulative inventory through the pinned target and
+preserve reviewed UUIDs, prose, and contributor evidence.
 
 The in-app trigger is unseen approved entry UUIDs in the running build, checked
 when an authenticated platform admin enters the shell. A displayed batch is

@@ -15,6 +15,7 @@ import { Button } from "@/components/ui/button";
 import { AppLoadingSkeleton } from "@/components/jsx-app/AppLoadingSkeleton";
 import { RouteUnavailableState } from "@/components/layout/RouteUnavailableState";
 import { useApplication } from "@/hooks/useApplications";
+import { isAppFrame } from "@/lib/auth-token";
 import { useAuth } from "@/contexts/AuthContext";
 import { useDocumentChrome } from "@/lib/useDocumentChrome";
 import { useApplicationName } from "@/lib/applicationName";
@@ -33,7 +34,7 @@ export function AppRouter({ preview = false }: AppRouterProps) {
 	const terminology = useTerminology();
 	const applicationName = useApplicationName();
 	const { hasRole } = useAuth();
-	const isEmbed = hasRole("EmbedUser");
+	const isEmbed = hasRole("EmbedUser") || isAppFrame();
 
 	// Fetch application metadata
 	const {
