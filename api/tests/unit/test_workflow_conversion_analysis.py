@@ -3431,6 +3431,46 @@ async def test_reassigned_literal_export_remains_an_sdk_namespace_alias() -> Non
 
 
 @pytest.mark.asyncio
+async def test_dataclass_callable_passed_to_helper_requires_review() -> None:
+    entry = _source(
+        "run.py",
+        """\
+import asyncio
+from dataclasses import dataclass
+from typing import Awaitable, Callable
+
+from bifrost import config
+
+@dataclass(frozen=True)
+class Platform:
+    key: str
+    lister: Callable[[], Awaitable[list[dict]]] | None = None
+
+async def list_ninjaone():
+    return await config.get("ninjaone")
+
+PLATFORMS = {p.key: p for p in (Platform("ninjaone", list_ninjaone),)}
+
+async def listed(platform: Platform):
+    return await platform.lister()
+
+async def run():
+    return await asyncio.gather(*(listed(p) for p in PLATFORMS.values()))
+""",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["unknowns"] == ["run.py:18: unresolved callable field: Platform.lister"]
+
+
+@pytest.mark.asyncio
 async def test_dataclass_sdk_callable_fields_only_inventory_reachable_callbacks() -> None:
     entry = _source(
         "workflows/run.py",
