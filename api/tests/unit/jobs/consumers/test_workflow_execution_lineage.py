@@ -387,3 +387,26 @@ async def test_routed_context_carries_the_dispatch_trace_context_only_when_traci
     with trace.use_span(span):
         context = await routed_context()
     assert context["traceparent"] == f"00-{'ab' * 16}-{'cd' * 8}-01"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("written", [False, True], ids=["ownership-lost", "owned"])
+@pytest.mark.parametrize("owner", [None, UUID("00000000-0000-0000-0000-0000000000dd")])
+async def test_setup_failure_fences_terminal_write_and_notifications(written, owner) -> None:
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock(side_effect=RuntimeError("setup failed"))),
+        patch(f"{MODULE}.update_execution", new=AsyncMock(return_value=written)) as update,
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()) as publish,
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()) as history,
+    ):
+        consumer = _consumer()
+        consumer.owner_worker_id = owner
+        await consumer.process_message({**MESSAGE, "sync": True}, _claimed())  # type: ignore[arg-type]
+
+    update.assert_awaited_once()
+    assert update.await_args.kwargs["owner_worker_id"] == owner
+    assert update.await_args.kwargs["error_message"] == "setup failed"
+    assert publish.await_count == int(written)
+    assert history.await_count == int(written)
+    assert consumer._redis_client.push_result.await_count == int(written)
+    consumer._pool.route_execution.assert_not_awaited()
