@@ -77,6 +77,7 @@ from src.services.worker_pool.claims import (
 from src.services.worker_pool.recovery import UNSTARTED_CLAIM_WINDOW, release_unstarted_claims
 from src.worker.remote.protocol import (
     HANDLER_CONCURRENCY_LIMITS,
+    handler_slot_available,
     WORKER_DRAIN_GRACE_SECONDS as DRAIN_GRACE_SECONDS,
 )
 
@@ -248,10 +249,14 @@ class PoolWorker:
         request fits the free budget (``Admission``). One live summary plus
         one backfill summary at a time is policy, so a large backfill never
         delays live summaries."""
-        handlers = [pair for pair in self._handlers if pair[0] in {"workflow.execute", "agent.run"}]
-        for summary_handler, limit in HANDLER_CONCURRENCY_LIMITS:
-            if (summary_handler, 1) in self._handlers and len(self._tasks[summary_handler]) < limit:
-                handlers.append((summary_handler, 1))
+        handlers = [pair for pair in self._handlers if pair[0] == "workflow.execute"]
+        slots = {
+            handler: limit - len(self._tasks.get(handler, ()))
+            for handler, limit in HANDLER_CONCURRENCY_LIMITS
+        }
+        for handler, _limit in HANDLER_CONCURRENCY_LIMITS:
+            if (handler, 1) in self._handlers and handler_slot_available(handler, slots):
+                handlers.append((handler, 1))
         return tuple(handlers)
 
     def active_handler_counts(self) -> dict[str, int]:

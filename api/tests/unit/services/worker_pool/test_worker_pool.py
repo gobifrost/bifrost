@@ -3000,3 +3000,25 @@ async def test_worker_registration_stores_handler_names_once_across_versions(db)
     async with db.sessions() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker.supported_handlers == ["workflow.execute", "agent.run"]
+
+
+def test_agent_stage_slots_are_capacity_even_with_free_memory() -> None:
+    waiting = [controller.Request(uuid4(), 100, 'agent.run') for _ in range(5)]
+    assert controller._plan_launches(
+        waiting, [], standard_budget=1000, largest_budget=4000,
+    ) == controller.LaunchPlan(standard=2, sized=[])
+    full = controller.FreeBudget(
+        1000, frozenset({'agent.run', 'workflow.execute'}), handler_slots={'agent.run': 0},
+    )
+    assert controller._plan_launches(
+        waiting[:1], [full], standard_budget=1000, largest_budget=4000,
+    ) == controller.LaunchPlan(standard=1, sized=[])
+
+
+def test_agents_and_summaries_share_one_physical_stage_budget() -> None:
+    waiting = [controller.Request(uuid4(), 100, 'agent.run') for _ in range(3)]
+    waiting += [controller.Request(uuid4(), 100, 'agent.summarize'),
+                controller.Request(uuid4(), 100, 'agent.summarize_backfill')]
+    assert controller._plan_launches(
+        waiting, [], standard_budget=1000, largest_budget=4000,
+    ) == controller.LaunchPlan(standard=2, sized=[])

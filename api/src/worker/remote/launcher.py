@@ -36,6 +36,7 @@ from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
 from src.worker.remote.protocol import (
     CREDENTIAL_PROTOCOL,
     EXECUTION_HANDLERS,
+    MAX_AGENT_COMPUTE_STAGES,
     SUMMARY_CLAIM_PROTOCOL,
     ControlEnvelope,
     FragmentAssembler,
@@ -48,7 +49,6 @@ from src.worker.remote.protocol import (
 
 logger = logging.getLogger(__name__)
 LAUNCHER_DRAIN_GRACE_SECONDS = 300.0
-MAX_AGENT_COMPUTE_STAGES = 4
 MAX_AGENT_COMPUTE_STAGE_RECORDS = 4096
 MAX_AGENT_COMPUTE_INFLIGHT_RPCS = 64
 MAX_AGENT_COMPUTE_RPC_BYTES = 64 * 1024 * 1024

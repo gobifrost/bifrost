@@ -83,7 +83,7 @@ from src.services.worker_pool.recovery import (
 )
 from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 from src.services.worker_pool.calibration import measured_budget
-from src.worker.remote.protocol import HANDLER_CONCURRENCY_LIMITS
+from src.worker.remote.protocol import HANDLER_CONCURRENCY_LIMITS, handler_slot_available
 
 logger = logging.getLogger(__name__)
 
@@ -430,7 +430,7 @@ class WorkerCapacityController(ABC):
                         handler_slots = {handler: 0 for handler in handler_slots}
                     else:
                         handler_slots = {
-                            handler: max(0, limit - worker.active_handler_counts.get(handler, 0))
+                            handler: limit - worker.active_handler_counts.get(handler, 0)
                             for handler, limit in HANDLER_CONCURRENCY_LIMITS
                         }
                 if worker.reserved_for_dispatch_id in requests:
@@ -438,7 +438,7 @@ class WorkerCapacityController(ABC):
                     held = requests[worker.reserved_for_dispatch_id]
                     held_handler = request_handlers[worker.reserved_for_dispatch_id]
                     if held_handler in handler_slots:
-                        handler_slots[held_handler] = max(0, handler_slots[held_handler] - 1)
+                        handler_slots[held_handler] -= 1
                 # A Job admitted but still starting its pool has not measured
                 # its budget yet; until it reports, count the one expected.
                 # A static executor counts only once ready and measured.
@@ -1011,7 +1011,7 @@ def _plan_launches(
         for index, budget in enumerate(bins):
             if (
                 rooms[index] >= request and budget.takes(item)
-                and (item.handler not in limited or slots[index].get(item.handler, 0) > 0)
+                and handler_slot_available(item.handler, slots[index])
             ):
                 rooms[index] -= request
                 if item.handler in limited:
