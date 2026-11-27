@@ -685,6 +685,20 @@ async def test_a_run_handed_back_before_it_started_waits_for_another_executor(db
     assert again.queued_at == claim.queued_at, "it keeps its place and claim deadline"
 
 
+    db.live_updates.reset_mock()
+    await workflow_dispatch.release_workflow_run(
+        worker_id=first, message=claim.message, payload=claim.claimed,
+        memory_request_bytes=claim.memory_request_bytes, queued_at=claim.queued_at,
+    )
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+        assert execution.status == ExecutionStatus.RUNNING
+        assert not await session.scalar(
+            select(WorkDispatch.id).where(WorkDispatch.subject_id == UUID(execution_id))
+        )
+    db.live_updates.assert_not_awaited()
+
+
 async def test_silent_worker_is_lost_and_its_unstarted_work_released(db, monkeypatch) -> None:
     """An agent run is claimed by its consumer after assignment; if the worker
     dies in between, the run is still queued and goes to another worker."""
@@ -1316,6 +1330,45 @@ async def test_the_executor_holding_a_run_writes_its_result(db, status) -> None:
         await session.commit()
         execution = await session.get(Execution, UUID(execution_id))
     assert execution.status == status
+
+
+async def test_claimed_setup_cannot_rewrite_another_workers_or_a_terminal_row(db) -> None:
+    from src.repositories.executions import create_execution, update_execution
+    from src.services.execution.workflow_dispatch import claim_workflow_dispatch
+
+    worker = await _static_executor("owner")
+    other = await _static_executor("other")
+    execution_id = await _accept_pool_run()
+    claim = await _claim(worker)
+    assert claim is not None
+    async with db.sessions() as session:
+        await claim_workflow_dispatch(
+            session, dispatch_id=claim.dispatch_id, execution_id=UUID(execution_id)
+        )
+        await session.commit()
+
+    async def prepare(owner: UUID, name: str) -> bool:
+        return await create_execution(
+            execution_id=execution_id,
+            workflow_name=name,
+            parameters={},
+            org_id=None,
+            user_id="00000000-0000-0000-0000-000000000001",
+            user_name="Dev",
+            lineage=None,
+            owner_worker_id=owner,
+        )
+
+    assert not await prepare(other, "foreign")
+    assert await prepare(worker, "owned")
+    assert await update_execution(execution_id, ExecutionStatus.FAILED, owner_worker_id=worker)
+    assert not await prepare(worker, "late")
+
+    async with db.sessions() as session:
+        execution = await session.get(Execution, UUID(execution_id))
+        assert execution is not None
+        assert execution.workflow_name == "owned"
+        assert execution.status == ExecutionStatus.FAILED
 
 
 async def test_stale_remote_owner_cannot_commit_a_workflow_result(db) -> None:
