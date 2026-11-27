@@ -4,9 +4,9 @@ import tailwindcss from "@tailwindcss/vite";
 import path from "path";
 import { bifrostModuleStubs } from "./src/build-plugins/bifrost-module-stubs";
 
-function embeddedFormFramePolicy(): Plugin {
+function embeddedFramePolicy(): Plugin {
 	return {
-		name: "embedded-form-frame-policy",
+		name: "embedded-frame-policy",
 		configureServer(server) {
 			server.middlewares.use(async (request, response, next) => {
 				const pathname = new URL(request.url || "/", "http://localhost")
@@ -17,24 +17,36 @@ function embeddedFormFramePolicy(): Plugin {
 				const hmacMatch = pathname.match(
 					/^\/embedded\/forms\/hmac\/([0-9a-fA-F-]{36})$/,
 				);
-				if (!publicMatch && !hmacMatch) {
+				if (pathname === "/app-frame-signin") {
+					response.setHeader(
+						"Content-Security-Policy",
+						"frame-ancestors 'none'",
+					);
+					next();
+					return;
+				}
+				const appFrame = pathname.startsWith("/embedded/apps/");
+				if (!publicMatch && !hmacMatch && !appFrame) {
 					next();
 					return;
 				}
 
 				const apiBase = process.env.API_URL || "http://localhost:8000";
-				const policyPath = publicMatch
-					? `/embed/forms/public/${encodeURIComponent(publicMatch[1])}/frame-policy`
-					: `/embed/forms/hmac/${hmacMatch![1]}/frame-policy`;
+				const policyPath = appFrame
+					? "/embed/apps/frame-signin/frame-policy"
+					: publicMatch
+						? `/embed/forms/public/${encodeURIComponent(publicMatch[1])}/frame-policy`
+						: `/embed/forms/hmac/${hmacMatch![1]}/frame-policy`;
 				try {
 					const policy = await fetch(`${apiBase}${policyPath}`);
 					if (!policy.ok) {
 						response.statusCode = policy.status;
-						response.end("Form unavailable");
+						response.end("Embed unavailable");
 						return;
 					}
 					const csp = policy.headers.get("content-security-policy");
 					if (csp) response.setHeader("Content-Security-Policy", csp);
+					if (appFrame) response.setHeader("Referrer-Policy", "same-origin");
 					response.setHeader(
 						"Cache-Control",
 						"no-store, must-revalidate",
@@ -51,7 +63,7 @@ function embeddedFormFramePolicy(): Plugin {
 // https://vite.dev/config/
 export default defineConfig({
 	plugins: [
-		embeddedFormFramePolicy(),
+		embeddedFramePolicy(),
 		tailwindcss(),
 		react(),
 		bifrostModuleStubs(),

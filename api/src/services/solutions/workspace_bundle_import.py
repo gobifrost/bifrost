@@ -1,6 +1,8 @@
 """Apply a reviewed workspace bundle plan through the non-destructive adapter."""
 from __future__ import annotations
 
+from uuid import UUID
+
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -131,7 +133,13 @@ class WorkspaceBundleImporter:
             upsert_integration_shells,
         )
 
-        await upsert_integration_shells(self.db, plan.connection_schemas or [])
+        from copy import deepcopy
+        connections = deepcopy(plan.connection_schemas or [])
+        for declaration in connections:
+            for link in (declaration.get("template") or {}).get("workflow_links", []):
+                source_id = UUID(link["workflow_id"])
+                link["workflow_id"] = str(plan.id_map.get(source_id, source_id))
+        await upsert_integration_shells(self.db, connections)
         await self._merge_package_roles(plan, selection)
         await self._set_config_values(
             plan, selected_items, by_id, config_values or {}, updated_by

@@ -1,6 +1,7 @@
 """Small shared request and response models used outside a single API domain."""
 from __future__ import annotations
 
+import re
 from datetime import date, datetime
 from typing import Any, Literal
 from uuid import UUID, uuid4
@@ -227,6 +228,28 @@ class DeviceAuthorizeRequest(BaseModel):
     """The code for a CLI device login being approved or denied."""
 
     user_code: str
+
+
+class AppFrameSigninSettings(BaseModel):
+    allowed_origins: list[str] = Field(default_factory=list, max_length=50)
+
+    @field_validator("allowed_origins")
+    @classmethod
+    def validate_allowed_origins(cls, value: list[str]) -> list[str]:
+        from shared.form_runtime import normalize_allowed_origins
+
+        # Use only exact HTTPS origins and a CSP-safe host spelling.
+        for origin in value:
+            if not re.fullmatch(
+                r"(?:https://(?:[a-zA-Z0-9.-]+|\[[a-fA-F0-9:]+\])|http://(?:localhost|127\.0\.0\.1))(?::[0-9]+)?",
+                origin,
+            ):
+                raise ValueError("Enter exact HTTPS or loopback origins, without paths or wildcards")
+        return normalize_allowed_origins(value)
+
+
+class AppFrameSigninCode(BaseModel):
+    code: str = Field(pattern=r"^[A-Za-z0-9_-]{43}$", repr=False)
 
 
 class AppSdkUpgradeSettings(BaseModel):

@@ -57,6 +57,7 @@ export function getBifrostTransport(): BifrostTransport {
  */
 export interface PlatformAuthBridge {
 	getAccessToken: () => string | null;
+	getFrameSessionId?: () => string | null;
 	canRefreshAccessToken: () => boolean;
 	refreshAccessToken: () => Promise<boolean>;
 	handleAuthenticationFailure: () => void;

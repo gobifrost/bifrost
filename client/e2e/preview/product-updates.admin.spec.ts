@@ -1,3 +1,4 @@
+import { openHeaderHelp } from "../helpers/header";
 import { expect, test } from "../fixtures/api-fixture";
 
 const email = process.env.BIFROST_PREVIEW_EMAIL;
@@ -94,7 +95,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 	await history.getByRole("heading", { name: "Hardening", exact: true }).scrollIntoViewIfNeeded();
 	await history.screenshot({ animations: "disabled", path: testInfo.outputPath("whats-new-hardening-mobile.png") });
 	await history.getByRole("heading", { name: "See a User's Effective Access", exact: true }).scrollIntoViewIfNeeded();
-	await history.getByRole("button", { name: "Help", exact: true }).click();
+	await openHeaderHelp(history);
 	await expect(
 		history.getByRole("menuitem", { name: "Release Notes", exact: true }),
 	).toBeVisible();
@@ -103,13 +104,11 @@ test("admin sees new updates automatically and reopens history from Help", async
 		path: testInfo.outputPath("whats-new-help-mobile.png"),
 	});
 	await history.keyboard.press("Escape");
+	await history.keyboard.press("Escape");
 	await history.setViewportSize({ width: 1440, height: 1000 });
-	await history.getByRole("button", { name: "Help", exact: true }).click();
+	await openHeaderHelp(history);
 	await expect(
 		history.getByRole("menuitem", { name: "Documentation", exact: true }),
-	).toBeVisible();
-	await expect(
-		history.getByRole("menuitem", { name: /Copy version/ }),
 	).toBeVisible();
 	await history.screenshot({
 		animations: "disabled",
@@ -142,7 +141,7 @@ test("admin sees new updates automatically and reopens history from Help", async
 		await freshPage.getByRole("button", { name: "Sign In", exact: true }).click();
 		const feed = await (await feedResponse).json();
 		expect(feed.seen_entry_ids).toHaveLength(16);
-		await expect(freshPage.getByRole("button", { name: "Help", exact: true })).toBeVisible();
+		await expect(freshPage.getByRole("button", { name: "Account menu", exact: true })).toBeVisible();
 		await expect(freshPage.getByRole("dialog", { name: "What's New" })).toHaveCount(0);
 	} finally {
 		await freshContext.close();

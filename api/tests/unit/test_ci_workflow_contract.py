@@ -245,12 +245,21 @@ def test_dev_artifact_is_built_on_merge_candidate_and_promoted_without_rebuild()
     client_candidate = jobs["build-dev-client-candidate"]
     promotion = jobs["build-dev"]
 
+    sources = jobs["prepare-dev-product-updates"]
+    assert _normalized(sources["if"]) == "github.event_name == 'merge_group'"
+    assert sources["permissions"] == {"contents": "read", "pull-requests": "read"}
+    assert "needs" not in sources
+
     for candidate in (api_candidate, client_candidate):
         assert _normalized(candidate["if"]) == "github.event_name == 'merge_group'"
         assert candidate["permissions"]["packages"] == "write"
         assert candidate["permissions"]["id-token"] == "write"
         assert candidate["permissions"]["attestations"] == "write"
-        assert "needs" not in candidate
+        assert candidate["needs"] == ["prepare-dev-product-updates"]
+        assert any(
+            step.get("uses") == "./.github/actions/prepare-product-updates"
+            for step in candidate["steps"]
+        )
     assert api_candidate["name"] == "Build API Dev Candidate"
     assert client_candidate["name"] == "Build Client Dev Candidate"
 

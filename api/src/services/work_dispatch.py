@@ -99,18 +99,41 @@ def stage_dispatch(
     Executors claim it from PostgreSQL.
     """
     dispatch_id = uuid4()
+    from src.core.telemetry import inject_traceparent, is_enabled
+
+    final_message = {
+        **message,
+        "dispatch_id": str(dispatch_id),
+        "handler": handler,
+        "handler_version": handler_version,
+    }
+    # The producer span owns the traceparent the payload carries, so the
+    # trace reads request -> publish -> process -> run. Attributes are IDs
+    # and fixed names only. Nothing at all when telemetry is off.
+    if is_enabled():
+        from opentelemetry import trace
+        from opentelemetry.trace import SpanKind
+
+        with trace.get_tracer(__name__).start_as_current_span(
+            f"{family} publish",
+            kind=SpanKind.PRODUCER,
+            attributes={
+                "messaging.system": "postgresql",
+                "messaging.operation": "publish",
+                "messaging.destination.name": family,
+                "bifrost.dispatch.id": str(dispatch_id),
+            },
+            record_exception=False,
+            set_status_on_exception=False,
+        ):
+            inject_traceparent(final_message)
     dispatch = WorkDispatch(
         id=dispatch_id,
         family=family,
         subject_id=subject_id,
         handler=handler,
         handler_version=handler_version,
-        message={
-            **message,
-            "dispatch_id": str(dispatch_id),
-            "handler": handler,
-            "handler_version": handler_version,
-        },
+        message=final_message,
         payload=payload,
         memory_request_bytes=memory_request_bytes,
         execution_lane=execution_lane,

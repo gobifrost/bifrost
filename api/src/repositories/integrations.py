@@ -270,6 +270,7 @@ class IntegrationsRepository(BaseRepository[Integration]):
             name=request.name,
             description=request.description,
             notes=request.notes,
+            workflow_links=[link.model_dump(mode="json") for link in request.workflow_links],
             entity_id=request.entity_id,
             entity_id_name=request.entity_id_name,
             default_entity_id=request.default_entity_id,
@@ -309,6 +310,8 @@ class IntegrationsRepository(BaseRepository[Integration]):
         if not integration:
             return None
 
+        if request.workflow_links is not None:
+            integration.workflow_links = [link.model_dump(mode="json") for link in request.workflow_links]
         if request.name is not None:
             integration.name = request.name
         if "description" in request.model_fields_set:

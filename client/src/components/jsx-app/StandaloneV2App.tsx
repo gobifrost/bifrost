@@ -15,7 +15,7 @@ import { getAppLoadErrorMessage } from "./app-load-error";
 import { useAuth } from "@/contexts/AuthContext";
 import { useOrgScope } from "@/hooks/useOrgScope";
 import { authFetch } from "@/lib/api-client";
-import { clearAuthTokens, getActiveToken, isEmbedSession, isImpersonating } from "@/lib/auth-token";
+import { clearAuthTokens, getActiveToken, isAppFrame, isEmbedSession, isImpersonating } from "@/lib/auth-token";
 import { ImpersonationBanner } from "@/components/layout/ImpersonationBanner";
 import { webSocketService } from "@/services/websocket";
 import { preloadHostedSdkFactory } from "@/lib/app-sdk/hosted-loader";
@@ -293,7 +293,8 @@ export function StandaloneV2App({
 	const assets = recovery?.sourceKey === sourceKey ? recovery.assets : sourceAssets;
 	const recoveryAttempts = useRef(new Set<string>());
 	const { scope } = useOrgScope();
-	const { isPlatformAdmin } = useAuth();
+	const { isPlatformAdmin, logout } = useAuth();
+	const frame = isAppFrame();
 
 	const token = getActiveToken();
 	const isAuthenticated = Boolean(token);
@@ -326,7 +327,7 @@ export function StandaloneV2App({
 		setLoadError(null);
 		const basename = isPreview
 			? `/apps/${appSlug}/preview`
-			: `/apps/${appSlug}`;
+			: `${frame ? "/embedded" : ""}/apps/${appSlug}`;
 		// Visibility/deployment scope is separate from runtime data scope.
 		// Platform admins use an App's owning organization when present;
 		// global Apps and other users use their selected organization.
@@ -371,6 +372,10 @@ export function StandaloneV2App({
 			appId,
 			solutionId,
 			onLogout: () => {
+				if (frame) {
+					logout();
+					return;
+				}
 				clearAuthTokens();
 				window.location.assign("/login");
 			},
@@ -521,7 +526,7 @@ export function StandaloneV2App({
 			}
 			mountEl.replaceChildren();
 		};
-	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, appOrgId, isPlatformAdmin, isAuthenticated]);
+	}, [appId, solutionId, appSlug, isPreview, assets, sourceKey, scope, appOrgId, isPlatformAdmin, isAuthenticated, frame, logout]);
 
 	if (!isAuthenticated) {
 		return (

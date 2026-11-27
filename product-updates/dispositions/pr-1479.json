@@ -1,0 +1,13 @@
+{
+  "key": "pr:1479",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Operator-only telemetry performance repair narrows default-off instrumentation; no new feature or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1479",
+      "Current Product Updates authoring policy omits routine repairs and performance maintenance."
+    ]
+  }
+}

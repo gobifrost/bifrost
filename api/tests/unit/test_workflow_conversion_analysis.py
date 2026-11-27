@@ -1,5 +1,6 @@
 """Static workflow capability analysis stays conservative and executable-free."""
 
+import builtins as builtins_module
 import hashlib
 
 import pytest
@@ -9,6 +10,7 @@ from shared.workflow_conversion_analysis import (
     analyze_workflow,
     summarize_source,
 )
+from shared.workflow_conversion_sdk import permissions_for_sdk_calls
 
 
 def _source(key: str, source: str) -> SourceFile:
@@ -387,6 +389,375 @@ async def test_reports_source_summary_limits_as_unknown(
     result = await analyze_workflow(entry, "run", resolve_import, summarize)
 
     assert any("source exceeds maximum size" in item for item in result["unknowns"])
+
+
+_OVERSIZED_ENTRY = (
+    "from vendor_sdk import client\n"
+    "from bifrost import config\n"
+    "async def run():\n"
+    "    await config.get('vendor')\n"
+    "    return client.list_items()\n"
+)
+# Generated SDKs exceed the parse limits with one giant class; the padding
+# stands in for that bulk so the limit can be lowered to a test-sized value.
+_OVERSIZED_PADDING = "".join(
+    f"    def operation_{index}(self, value):\n        return self._get('/v{index}', value)\n"
+    for index in range(40)
+)
+
+
+def _oversized_vendor(header: str, body: str = "") -> SourceFile:
+    return _source(
+        "modules/vendor_sdk.py",
+        f"{header}\n"
+        "class _Client:\n"
+        "    def _get(self, path, value):\n"
+        "        return requests.get(path, params=value)\n"
+        f"{_OVERSIZED_PADDING}"
+        f"{body}"
+        "client = _Client()\n",
+    )
+
+
+async def _analyze_with_oversized_vendor(
+    monkeypatch: pytest.MonkeyPatch,
+    vendor: SourceFile,
+    *,
+    entry_source: str = _OVERSIZED_ENTRY,
+    limit: str = "MAX_SOURCE_BYTES",
+    workspace: dict[str, SourceFile] | None = None,
+) -> dict:
+    entry = _source("workflows/run.py", entry_source)
+    if limit == "MAX_SOURCE_BYTES":
+        monkeypatch.setattr(
+            "shared.workflow_conversion_analysis.MAX_SOURCE_BYTES", len(entry.source) + 1
+        )
+    else:
+        monkeypatch.setattr("shared.workflow_conversion_analysis.MAX_AST_NODES", 80)
+    modules = {"vendor_sdk": vendor, **(workspace or {})}
+
+    async def resolve_import(_source_file: SourceFile, module: str, level: int):
+        return modules.get(module) if level == 0 else None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    return await analyze_workflow(entry, "run", resolve_import, summarize)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("limit", ["MAX_SOURCE_BYTES", "MAX_AST_NODES"])
+async def test_oversized_external_only_module_is_scanned_instead_of_unknown(
+    monkeypatch: pytest.MonkeyPatch, limit: str,
+) -> None:
+    vendor = _oversized_vendor(
+        "from __future__ import annotations\n"
+        "import time\n"
+        "from dataclasses import dataclass\n"
+        "from typing import Any\n"
+        "import requests\n"
+    )
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor, limit=limit)
+
+    assert result["sdk_calls"] == ["bifrost.config.get"]
+    assert result["unknowns"] == []
+    assert vendor.key in result["dependencies"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_module_with_lazy_sdk_import_contributes_its_sdk_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _oversized_vendor(
+        "import requests\n",
+        "class _LazyClient:\n"
+        "    _integration_name: str = 'Vendor'\n"
+        "    integrations: list | None = None\n"
+        "    async def _ensure_client(self):\n"
+        "        from bifrost import integrations\n"
+        "\n"
+        "        integration = await integrations.get(self._integration_name)\n"
+        "        config = integration.config or {}\n"
+        "        session = requests.Session()\n"
+        "        if integration.oauth and integration.oauth.access_token:\n"
+        "            session.headers['Authorization'] = (\n"
+        "                f'Bearer {integration.oauth.access_token}'\n"
+        "            )\n"
+        "        return _Client(config.get('base_url', ''), session)\n",
+    )
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert result["sdk_calls"] == ["bifrost.config.get", "bifrost.integrations.get"]
+    assert result["unknowns"] == []
+    lazy_evidence = [item for item in result["evidence"] if item["path"] == vendor.path]
+    assert [item["call"] for item in lazy_evidence] == ["bifrost.integrations.get"]
+    assert result["warnings"] == [
+        f"{vendor.path}: Permissions inferred from this oversized helper may be "
+        "broader than the workflow needs."
+    ]
+    permissions, mapping_unknowns = permissions_for_sdk_calls(
+        result["sdk_calls"], invocations=result["resource_calls"]
+    )
+    assert "integrations.read" in permissions
+    assert mapping_unknowns == []
+
+
+@pytest.mark.asyncio
+async def test_oversized_module_attributes_methods_of_reached_sdk_objects(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _oversized_vendor(
+        "import requests\n",
+        "async def token():\n"
+        "    from bifrost import integrations\n"
+        "    integration = await integrations.get('Vendor')\n"
+        "    await integration.oauth.refresh()\n",
+    )
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert "bifrost.OAuthCredentials.refresh" in result["sdk_calls"]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("expression", "lookup"),
+    [
+        ("getattr(integration.oauth, 'refresh')", "getattr"),
+        ("integration.oauth.__getattribute__('refresh')", "__getattribute__"),
+    ],
+)
+async def test_oversized_module_reports_unresolved_attribute_lookup(
+    monkeypatch: pytest.MonkeyPatch, expression: str, lookup: str,
+) -> None:
+    vendor = _oversized_vendor(
+        "import requests\n",
+        "async def token():\n"
+        "    from bifrost import integrations\n"
+        "    integration = await integrations.get('Vendor')\n"
+        f"    await {expression}()\n",
+    )
+    lookup_line = next(
+        number for number, line in enumerate(vendor.source.splitlines(), 1)
+        if expression in line
+    )
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert "bifrost.integrations.get" in result["sdk_calls"]
+    assert result["unknowns"] == [
+        f"{vendor.path}:{lookup_line}: lexically scanned source cannot resolve "
+        f"attribute lookup ({lookup})"
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("header", "body", "expected"),
+    [
+        ("from . import helpers\n", "", "relative import"),
+        ("import requests\n", "    probe = __import__('bifrost')\n", "__import__"),
+        ("import importlib\n", "", "importlib"),
+        ("import requests\n", "    probe = eval('1')\n", "eval"),
+        ("import sys\n", "    probe = sys.modules\n", "modules"),
+        ("from bifrost import *\n", "", "SDK star import"),
+        ("import requests\nif True: import json\n", "", "compound statement"),
+    ],
+)
+async def test_oversized_module_rejects_constructs_a_lexical_scan_cannot_bound(
+    monkeypatch: pytest.MonkeyPatch, header: str, body: str, expected: str,
+) -> None:
+    vendor = _oversized_vendor(header, body)
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert any(
+        item.startswith(f"{vendor.path}: source exceeds maximum size")
+        and "lexical scan rejected" in item
+        and expected in item
+        for item in result["unknowns"]
+    ), result["unknowns"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected"),
+    [
+        (
+            "def configured():\n    from bifrost import integrations\n"
+            "    alias = integrations\n    return alias\n",
+            "unrecognized SDK reference in lexically scanned source: bifrost.integrations",
+        ),
+        (
+            "def configured():\n    from bifrost.client import get_client\n"
+            "    return get_client().get('/api/anything')\n",
+            "SDK object bifrost.client.BifrostClient used in lexically scanned source",
+        ),
+    ],
+)
+async def test_oversized_module_keeps_untraceable_sdk_uses_unknown(
+    monkeypatch: pytest.MonkeyPatch, body: str, expected: str,
+) -> None:
+    vendor = _oversized_vendor("import requests\n", body)
+
+    result = await _analyze_with_oversized_vendor(monkeypatch, vendor)
+
+    assert any(expected in item for item in result["unknowns"]), result["unknowns"]
+
+
+@pytest.mark.asyncio
+async def test_oversized_module_importing_workspace_code_remains_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _oversized_vendor("import requests\nimport shared_helpers\n")
+    helper = _source(
+        "shared_helpers.py",
+        "from bifrost import tables\ndef purge():\n    return tables.delete('audit')\n",
+    )
+
+    result = await _analyze_with_oversized_vendor(
+        monkeypatch, vendor, workspace={"shared_helpers": helper}
+    )
+
+    assert any(
+        item.startswith(f"{vendor.path}: source exceeds maximum size")
+        and item.endswith("lexical scan cannot follow import: shared_helpers")
+        for item in result["unknowns"]
+    ), result["unknowns"]
+
+
+@pytest.mark.asyncio
+async def test_sdk_handle_passed_into_oversized_module_remains_unknown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _oversized_vendor("import requests\n")
+
+    result = await _analyze_with_oversized_vendor(
+        monkeypatch,
+        vendor,
+        entry_source=(
+            "from vendor_sdk import client\n"
+            "from bifrost import context\n"
+            "def run():\n"
+            "    return client.list_items(context)\n"
+        ),
+    )
+
+    assert (
+        f"workflows/run.py:4: SDK handle passed to lexically scanned module: {vendor.path}"
+        in result["unknowns"]
+    )
+
+
+@pytest.mark.asyncio
+async def test_sdk_data_passed_into_oversized_module_attributes_reachable_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    vendor = _oversized_vendor(
+        "import requests\n",
+        "async def connect(integration):\n"
+        "    await integration.oauth.refresh()\n"
+        "    return integration.oauth.access_token\n",
+    )
+
+    result = await _analyze_with_oversized_vendor(
+        monkeypatch,
+        vendor,
+        entry_source=(
+            "from vendor_sdk import connect\n"
+            "from bifrost import integrations\n"
+            "async def run():\n"
+            "    integration = await integrations.get('Vendor')\n"
+            "    return await connect(integration)\n"
+        ),
+    )
+
+    assert result["sdk_calls"] == [
+        "bifrost.OAuthCredentials.refresh",
+        "bifrost.integrations.get",
+    ]
+    assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_isinstance_data_guard_keeps_sdk_credentials_out_of_dict_access() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import integrations\n\n"
+        "def _field(source, name):\n"
+        "    return source.get(name) if isinstance(source, dict) else getattr(source, name, None)\n\n"
+        "def _statement_field(source, name):\n"
+        "    if isinstance(source, dict):\n"
+        "        return source.get(name)\n"
+        "    return getattr(source, name, None)\n\n"
+        "async def run():\n"
+        "    integration = await integrations.get('contoso')\n"
+        "    oauth_data = integration.oauth\n"
+        "    return _field(oauth_data, 'access_token'), _statement_field(oauth_data, 'scopes')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["sdk_calls"] == ["bifrost.integrations.get"]
+    assert result["unknowns"] == []
+    assert permissions_for_sdk_calls(result["sdk_calls"])[1] == []
+
+
+def test_isinstance_data_narrowing_holds_for_every_shipped_sdk_object() -> None:
+    """Narrowing assumes no SDK object passes ``isinstance`` for a built-in."""
+    import importlib
+
+    from shared.workflow_conversion_analysis import _ISINSTANCE_DATA_KINDS
+    from shared.workflow_conversion_sdk import _sdk_contracts
+
+    built_ins = tuple(getattr(builtins_module, name) for name in _ISINSTANCE_DATA_KINDS)
+    subclasses = []
+    for sdk_type in _sdk_contracts()[1]:
+        module, _, name = sdk_type.rpartition(".")
+        try:
+            cls = getattr(importlib.import_module(module), name)
+        except (AttributeError, ImportError):
+            continue
+        if isinstance(cls, type) and issubclass(cls, built_ins):
+            subclasses.append(sdk_type)
+
+    assert subclasses == []
+
+
+@pytest.mark.asyncio
+async def test_isinstance_guard_does_not_hide_sdk_methods_outside_the_branch() -> None:
+    entry = _source(
+        "workflows/run.py",
+        "from bifrost import integrations\n\n"
+        "def _field(source, name):\n"
+        "    if isinstance(source, dict):\n"
+        "        source = name\n"
+        "        return source.get(name)\n"
+        "    return source.get(name)\n\n"
+        "async def run():\n"
+        "    integration = await integrations.get('contoso')\n"
+        "    oauth_data = integration.oauth\n"
+        "    return _field(oauth_data, 'access_token')\n",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert "bifrost.OAuthCredentials.get" in result["sdk_calls"]
 
 
 @pytest.mark.asyncio
@@ -3057,6 +3428,106 @@ async def test_reassigned_literal_export_remains_an_sdk_namespace_alias() -> Non
 
     assert result["sdk_calls"] == ["bifrost.config.get"]
     assert result["unknowns"] == []
+
+
+@pytest.mark.asyncio
+async def test_dataclass_callable_passed_to_helper_requires_review() -> None:
+    entry = _source(
+        "run.py",
+        """\
+import asyncio
+from dataclasses import dataclass
+from typing import Awaitable, Callable
+
+from bifrost import config
+
+@dataclass(frozen=True)
+class Platform:
+    key: str
+    lister: Callable[[], Awaitable[list[dict]]] | None = None
+
+async def list_ninjaone():
+    return await config.get("ninjaone")
+
+PLATFORMS = {p.key: p for p in (Platform("ninjaone", list_ninjaone),)}
+
+async def listed(platform: Platform):
+    return await platform.lister()
+
+async def run():
+    return await asyncio.gather(*(listed(p) for p in PLATFORMS.values()))
+""",
+    )
+
+    async def resolve_import(_source_file: SourceFile, _module: str, _level: int):
+        return None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["unknowns"] == ["run.py:18: unresolved callable field: Platform.lister"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "separate_module", "call_site"),
+    [
+        (
+            "def dispatch(platform: Platform):\n    return platform.lister()\n"
+            "def run():\n    return dispatch(Platform(load))\n",
+            True,
+            "run.py:8",
+        ),
+        (
+            "class Runner:\n    def dispatch(self, platform: Platform):\n"
+            "        return platform.lister()\n"
+            "def run():\n    runner = Runner()\n    return runner.dispatch(Platform(load))\n",
+            False,
+            "run.py:17",
+        ),
+        (
+            "def run():\n    platform = Platform(load)\n    return platform.dispatch()\n",
+            True,
+            "models.py:9",
+        ),
+    ],
+    ids=["imported-annotation", "method-parameter", "self-call"],
+)
+async def test_unresolved_dataclass_callback_routes_require_review(
+    body: str, separate_module: bool, call_site: str
+) -> None:
+    model = """\
+from dataclasses import dataclass
+from typing import Callable
+
+@dataclass
+class Platform:
+    lister: Callable
+
+    def dispatch(self):
+        return self.lister()
+"""
+    support = _source("models.py", model)
+    prefix = "from models import Platform\n" if separate_module else model
+    entry = _source(
+        "run.py",
+        prefix + "from bifrost import config\n"
+        "\ndef load():\n    return config.get('vendor')\n\n" + body,
+    )
+
+    async def resolve_import(_source_file: SourceFile, module: str, _level: int):
+        return support if module == "models" else None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["unknowns"] == [
+        f"{call_site}: unresolved callable field: Platform.lister"
+    ]
 
 
 @pytest.mark.asyncio

@@ -1081,6 +1081,22 @@ class WorkflowExecutionConsumer:
                 # but cannot claim a direct-human policy exception.
                 logger.warning("Execution %s has no current runtime authority", execution_id)
 
+            # Use the source from the durable dispatch. Older event dispatches
+            # still identify themselves as events even without a source type.
+            event_source_type = message_data.get("event_source_type")
+            if event_source_type in ("webhook", "schedule", "topic"):
+                trigger_source = event_source_type
+            elif event_data is not None:
+                trigger_source = "event"
+            elif form_id:
+                trigger_source = "form"
+            elif agent_id:
+                trigger_source = "agent"
+            elif api_key_id:
+                trigger_source = "api_key"
+            else:
+                trigger_source = "direct"
+
             # Build context for worker process
             context_data = {
                 "execution_id": execution_id,
@@ -1115,6 +1131,7 @@ class WorkflowExecutionConsumer:
                 "file_path": file_path,  # Path for __file__ injection and fallback loading
                 "content_hash": content_hash,  # Pinned hash at dispatch time
                 "event": event_data,  # EventContext dict (None if not event-triggered)
+                "trigger_source": trigger_source,
                 "solution_id": solution_id,  # Install id if solution-managed (else None)
                 "solution_global_repo_access": solution_global_repo_access,
                 "artifact_workspace_id": artifact_workspace_id,
@@ -1124,6 +1141,11 @@ class WorkflowExecutionConsumer:
             }
             if credentials.refresh_token is not None:
                 context_data["engine_refresh_token"] = credentials.refresh_token
+
+            # The forked child parents its run span on the active dispatch span.
+            from src.core.telemetry import inject_traceparent
+
+            inject_traceparent(context_data)
 
             # Route to process pool
             # Results are handled asynchronously via _handle_result callback
@@ -1187,6 +1209,7 @@ class WorkflowExecutionConsumer:
                 owner_worker_id=self.owner_worker_id,
             )
             if not written:
+                self._drop_fenced_result(execution_id)
                 return
 
             await publish_execution_update(

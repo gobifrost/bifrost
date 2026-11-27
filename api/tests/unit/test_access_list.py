@@ -1979,6 +1979,7 @@ _ELEVATED_SITES: dict[str, tuple[int, str | tuple[str, ...]]] = {
     "src.repositories.users.UserRepository.has_any_users": (1, "internal_authorized_resource"),
     "src.routers.agent_runs.execute_agent_run": (2, "actor_facts"),
     "src.routers.agent_runs.rerun_agent_run": (2, "actor_facts"),
+    "src.routers.auth.get_frame_signin_settings": (1, "route"),  # Instance-wide framing policy is Platform Admin only.
     "src.routers.auth.get_current_user_info": (2, "actor_facts"),
     "src.routers.auth.register_user": (4, "actor_facts"),
     "src.routers.endpoints.execute_endpoint": (1, "internal_authorized_resource"),
@@ -2121,6 +2122,7 @@ _REDIS_AUTHORITY_READS: dict[str, tuple[int, str]] = {
     "bifrost._logging.append_log_to_stream": (2, "cutover"),
     "bifrost._logging.append_log_to_stream_async": (2, "cutover"),
     "bifrost._logging.read_logs_from_stream": (1, "cutover"),
+    "shared.app_frame_signin.consume_app_frame_signin_code": (1, "cutover"),  # One-time browser handoff to a durable human session.
     "shared.browser_impersonation.revoke_browser_impersonation_marker": (1, "cutover"),
     "shared.browser_impersonation.validate_browser_impersonation": (1, "cutover"),
     "shared.device_auth.decide_device_login": (2, "cutover"),  # Index GET and atomic decision EVAL.
@@ -3072,6 +3074,8 @@ _REVIEWED_WRITE_ALLOWLIST: dict[tuple[str, str], str] = {
     ("DELETE", "/api/home/collections/{collection_id}"): "Own home-dashboard collection.",
     ("PUT", "/api/home/preferences/{resource_key}"): "Own home-dashboard preference.",
     ("POST", "/auth/logout"): "Own session.",
+    ("POST", "/auth/app-frame-signin/code"): "Own live browser session, bound to a sealed one-time frame approval.",
+    ("POST", "/auth/app-frame-signin/logout"): "Own durable session, identified by the authenticated principal.",
     ("POST", "/auth/impersonation/end"): "Own browser-session marker; revocation is restricted to its original authenticated operator.",
     ("POST", "/auth/revoke-all"): "Own sessions.",
     ("POST", "/auth/device/authorize"): "Own device-code authorization.",

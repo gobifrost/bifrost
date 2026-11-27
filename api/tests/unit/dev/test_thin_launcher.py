@@ -45,6 +45,21 @@ def _launcher(socket):
 
 
 @pytest.mark.asyncio
+async def test_finish_relays_child_spans_without_sending_them():
+    socket = Mock(send=AsyncMock())
+    launcher = _launcher(socket)
+    child = Child("route", "execution", 123, Mock(), Mock(), 0, 10)
+    child.result.fileno.return_value = 456
+    launcher.children[child.route_id] = child
+    spans = [{"name": "workflow.run"}]
+    with patch.object(asyncio.get_running_loop(), "remove_reader"), \
+            patch("src.core.telemetry.relay_child_spans") as relay:
+        await launcher.finish(child, {"success": True, "status": "Success", "_otel_spans": spans})
+    relay.assert_called_once_with(spans)
+    assert "_otel_spans" not in socket.send.await_args.args[0]
+
+
+@pytest.mark.asyncio
 async def test_timeout_owns_result_after_deadline_was_observed():
     socket = Mock(send=AsyncMock())
     launcher = _launcher(socket)

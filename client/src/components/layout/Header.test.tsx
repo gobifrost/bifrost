@@ -11,6 +11,8 @@ const profileState = vi.hoisted(() => ({
 	dataUpdatedAt: 0,
 }));
 const mockCanAt = vi.hoisted(() => vi.fn());
+const runState = vi.hoisted(() => ({ enabled: true }));
+const mockToggleTheme = vi.fn();
 const mockNavigate = vi.fn();
 const mockLogout = vi.fn();
 const mockOpenEditor = vi.fn();
@@ -76,12 +78,14 @@ vi.mock("@/components/layout/NotificationCenter", () => ({
 	NotificationCenter: () => <button type="button">Notifications</button>,
 }));
 
-vi.mock("@/components/theme-toggle", () => ({
-	ThemeToggle: () => <button type="button">Toggle theme</button>,
+vi.mock("@/contexts/ThemeContext", () => ({
+	useTheme: () => ({ theme: "dark", toggleTheme: mockToggleTheme }),
 }));
 
 vi.mock("@/components/layout/BifrostRunMenu", () => ({
-	BifrostRunMenu: () => <button type="button">Connect AI assistants</button>,
+	useBifrostRunInfo: () => ({ data: runState }),
+	BifrostRunMenu: ({ open }: { open: boolean }) =>
+		open ? <div role="dialog" aria-label="Assistant Setup" /> : null,
 }));
 
 vi.mock("@/components/layout/HeaderStatusIndicators", () => ({
@@ -91,6 +95,7 @@ vi.mock("@/components/layout/HeaderStatusIndicators", () => ({
 import { Header } from "./Header";
 
 beforeEach(() => {
+	runState.enabled = true;
 	vi.clearAllMocks();
 	vi.unstubAllGlobals();
 	profileState.has_avatar = false;
@@ -135,28 +140,83 @@ describe("Header", () => {
 		).not.toBeInTheDocument();
 	});
 
-	it("shows Help for an exact Global settings.read holder", () => {
-		const view = renderWithProviders(<Header />);
-		expect(screen.getByRole("button", { name: "Help" })).toBeVisible();
+	it("keeps Help behind the existing Global settings permission", async () => {
+		const { user, rerender } = renderWithProviders(<Header />);
+		await user.click(screen.getByRole("button", { name: "Account menu" }));
+		expect(screen.getByRole("menuitem", { name: "Help" })).toBeVisible();
 		expect(mockCanAt).toHaveBeenCalledWith("settings.read", {
 			kind: "global",
 		});
 		authorizationState.settingsRead = false;
-		view.rerender(<Header />);
+		rerender(<Header />);
 		expect(
-			screen.queryByRole("button", { name: "Help" }),
+			screen.queryByRole("menuitem", { name: "Help" }),
 		).not.toBeInTheDocument();
 	});
 
-	it("shows the shell only to an exact Global repository writer", () => {
-		const view = renderWithProviders(<Header />);
+	it("launches the editor from the account menu only for a Global repository writer", async () => {
+		const { user, rerender } = renderWithProviders(<Header />);
+		await user.click(screen.getByRole("button", { name: "Account menu" }));
 		expect(
-			screen.queryByRole("button", { name: /shell/i }),
+			screen.queryByRole("menuitem", { name: /Open Editor/ }),
 		).not.toBeInTheDocument();
-
 		authorizationState.repositoryReadWrite = true;
-		view.rerender(<Header />);
-		expect(screen.getByRole("button", { name: /shell/i })).toBeVisible();
+		rerender(<Header />);
+		await user.click(screen.getByRole("menuitem", { name: /Open Editor/ }));
+		expect(mockOpenEditor).toHaveBeenCalledOnce();
+	});
+
+	it("opens assistant setup after closing the menu and hides it when MCP is disabled", async () => {
+		const { user, rerender } = renderWithProviders(<Header />);
+		await user.click(screen.getByRole("button", { name: "Account menu" }));
+		await user.click(
+			screen.getByRole("menuitem", { name: "Connect AI Assistants" }),
+		);
+		expect(
+			screen.getByRole("dialog", { name: "Assistant Setup" }),
+		).toBeVisible();
+		expect(screen.queryByRole("menu")).not.toBeInTheDocument();
+		runState.enabled = false;
+		rerender(<Header />);
+		await user.click(screen.getByRole("button", { name: "Account menu" }));
+		expect(
+			screen.queryByRole("menuitem", { name: "Connect AI Assistants" }),
+		).not.toBeInTheDocument();
+	});
+
+	it("keeps appearance controls in the account menu at desktop and mobile widths", async () => {
+		for (const mobile of [false, true]) {
+			mockUseMediaQuery.mockReturnValue(mobile);
+			const { user, unmount } = renderWithProviders(<Header />);
+			expect(
+				screen.queryByRole("button", { name: "Presentation Mode" }),
+			).not.toBeInTheDocument();
+			await user.click(
+				screen.getByRole("button", { name: "Account menu" }),
+			);
+			await user.click(
+				screen.getByRole("menuitem", { name: "Appearance" }),
+			);
+			const dark = screen.getByRole("menuitemcheckbox", {
+				name: "Dark Theme",
+			});
+			expect(dark).toHaveAttribute("aria-checked", "true");
+			dark.focus();
+			await user.keyboard("{Enter}");
+			expect(mockToggleTheme).toHaveBeenCalledTimes(mobile ? 2 : 1);
+			await user.click(
+				screen.getByRole("button", { name: "Account menu" }),
+			);
+			await user.click(
+				screen.getByRole("menuitem", { name: "Appearance" }),
+			);
+			expect(
+				screen.getByRole("menuitemcheckbox", {
+					name: "Presentation Mode",
+				}),
+			).toBeVisible();
+			unmount();
+		}
 	});
 
 	it("shows the stored profile photo on the account button", () => {
@@ -179,7 +239,7 @@ describe("Header", () => {
 		);
 	});
 
-	it("retains secondary header content outside the mobile breakpoint", () => {
+	it("keeps desktop status visible without secondary toolbar buttons", () => {
 		mockUseMediaQuery.mockImplementation((query: string) =>
 			query.includes("1279px"),
 		);
@@ -187,8 +247,8 @@ describe("Header", () => {
 		renderWithProviders(<Header />);
 
 		expect(
-			screen.getByRole("button", { name: /set up passkey/i }),
-		).toBeVisible();
+			screen.queryByRole("button", { name: /set up passkey/i }),
+		).not.toBeInTheDocument();
 		expect(screen.getByLabelText("Workspace status")).toBeVisible();
 	});
 });

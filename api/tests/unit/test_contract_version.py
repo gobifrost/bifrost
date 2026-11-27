@@ -203,6 +203,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
 # Optional PlatformJob executor attribution is additive; older CLIs ignore it.
+# Optional integration workflow shortcuts are additive; existing CLI callers remain compatible.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -438,9 +439,10 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # provider resource identifiers from the CLI-visible response.
     # Other Jobs is an additive Cloudflare overflow rule with a default;
     # existing CLI requests and minimum version remain compatible.
-    "594b3524348d5df92e48f09323f21e85daef7b8697f11fd5d9f12a53e49ccb76"
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
+    # Browser frame sign-in adds compatible shared DTOs.
+    "594b3524348d5df92e48f09323f21e85daef7b8697f11fd5d9f12a53e49ccb76"
 )
 
 

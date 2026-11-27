@@ -85,7 +85,7 @@ from src.services.worker_pool.recovery import (
 )
 from src.services.worker_pool.sizing import LIVE_STATES, JobSizing, job_baseline, launch_limit
 from src.services.worker_pool.calibration import measured_budget
-from src.worker.remote.protocol import HANDLER_CONCURRENCY_LIMITS
+from src.worker.remote.protocol import HANDLER_CONCURRENCY_LIMITS, handler_slot_available
 
 logger = logging.getLogger(__name__)
 
@@ -734,7 +734,7 @@ async def _plan_capacity_launches(
                     handler_slots = {name: 0 for name in handler_slots}
                 else:
                     handler_slots = {
-                        name: max(0, limit - worker.active_handler_counts.get(name, 0))
+                        name: limit - worker.active_handler_counts.get(name, 0)
                         for name, limit in HANDLER_CONCURRENCY_LIMITS
                     }
             owner: WorkerCapacityController | None = None
@@ -754,7 +754,7 @@ async def _plan_capacity_launches(
                 covered.add(held_request.id)
                 held = held_request.bytes
                 if held_request.handler in handler_slots:
-                    handler_slots[held_request.handler] = max(0, handler_slots[held_request.handler] - 1)
+                    handler_slots[held_request.handler] -= 1
             elif worker.reserved_for_dispatch_id is not None:
                 # Cancellation removes a WorkDispatch. Do not leave the
                 # physical worker stranded behind its obsolete reservation.
@@ -1010,7 +1010,7 @@ async def _plan_capacity_launches(
                 if job_type is not None and owner is not None and job_type not in owner._planner_platform_job_types():
                     continue
                 if (rooms[index] >= request.bytes and bin.takes(request)
-                        and (request.handler not in limited or slots[index].get(request.handler, 0) > 0)):
+                        and handler_slot_available(request.handler, slots[index])):
                     rooms[index] -= request.bytes
                     if request.handler in limited:
                         slots[index][request.handler] -= 1
@@ -1353,7 +1353,7 @@ def _plan_launches(
         for index, budget in enumerate(bins):
             if (
                 rooms[index] >= request and budget.takes(item)
-                and (item.handler not in limited or slots[index].get(item.handler, 0) > 0)
+                and handler_slot_available(item.handler, slots[index])
             ):
                 rooms[index] -= request
                 if item.handler in limited:
