@@ -1,3 +1,4 @@
+import { toggleHeaderAppearance } from "./helpers/header";
 import { test, expect, type AuthedApi } from "./fixtures/api-fixture";
 
 const UNIQUE = `${Date.now()}_${Math.floor(Math.random() * 10_000)}`;
@@ -284,7 +285,7 @@ test("[CHAT-PERSIST-01 desktop] admin sends chat through local provider and relo
 		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
 
 		await page.keyboard.press("Escape");
-		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await toggleHeaderAppearance(page, "Dark Theme");
 		await page.getByRole("button", { name: "Context window" }).click();
 		await expect(page.getByText(expectedTokenSummary, { exact: true })).toBeVisible();
 		await page.screenshot({

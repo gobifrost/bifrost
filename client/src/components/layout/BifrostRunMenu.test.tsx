@@ -46,17 +46,17 @@ describe("BifrostRunMenu", () => {
 	it("stays hidden while MCP is disabled", () => {
 		useQueryMock.mockReturnValue({ data: { ...RUN_INFO, enabled: false } });
 
-		const { container } = renderWithProviders(<BifrostRunMenu />);
+		const { container } = renderWithProviders(
+			<BifrostRunMenu open onOpenChange={vi.fn()} />,
+		);
 
 		expect(container.firstChild).toBeNull();
 	});
 
 	it("explains portable and manual setup paths", async () => {
 		useQueryMock.mockReturnValue({ data: RUN_INFO });
-		const { user } = renderWithProviders(<BifrostRunMenu />);
-
-		await user.click(
-			screen.getByRole("button", { name: "Connect AI assistants" }),
+		renderWithProviders(
+			<BifrostRunMenu open onOpenChange={vi.fn()} />,
 		);
 
 		expect(screen.getByText("Use Bifrost with AI")).toBeInTheDocument();
@@ -82,28 +82,31 @@ describe("BifrostRunMenu", () => {
 			.mockResolvedValueOnce(false)
 			.mockResolvedValueOnce(true)
 			.mockResolvedValueOnce(true);
-		const { user } = renderWithProviders(<BifrostRunMenu />);
-
-		await user.click(
-			screen.getByRole("button", { name: "Connect AI assistants" }),
+		const { user } = renderWithProviders(
+			<BifrostRunMenu open onOpenChange={vi.fn()} />,
 		);
+
 		await user.click(screen.getByRole("button", { name: "Copy MCP URL" }));
-		expect(
-			await screen.findByRole("alert"),
-		).toHaveTextContent("Could not copy to the clipboard. Try again.");
+		expect(await screen.findByRole("alert")).toHaveTextContent(
+			"Could not copy to the clipboard. Try again.",
+		);
 		await user.click(
 			screen.getByRole("button", { name: "Copy setup prompt" }),
 		);
-		await user.click(
-			screen.getByRole("button", { name: "Copy MCP URL" }),
-		);
+		await user.click(screen.getByRole("button", { name: "Copy MCP URL" }));
 
-		expect(copyToClipboardMock).toHaveBeenNthCalledWith(1, RUN_INFO.mcp_url);
+		expect(copyToClipboardMock).toHaveBeenNthCalledWith(
+			1,
+			RUN_INFO.mcp_url,
+		);
 		expect(copyToClipboardMock).toHaveBeenNthCalledWith(
 			2,
 			RUN_INFO.setup_prompt,
 		);
-		expect(copyToClipboardMock).toHaveBeenNthCalledWith(3, RUN_INFO.mcp_url);
+		expect(copyToClipboardMock).toHaveBeenNthCalledWith(
+			3,
+			RUN_INFO.mcp_url,
+		);
 		expect(screen.getByRole("status")).toHaveTextContent("MCP URL copied");
 	});
 
@@ -122,11 +125,10 @@ describe("BifrostRunMenu", () => {
 		const click = vi
 			.spyOn(HTMLAnchorElement.prototype, "click")
 			.mockImplementation(() => undefined);
-		const { user } = renderWithProviders(<BifrostRunMenu />);
-
-		await user.click(
-			screen.getByRole("button", { name: "Connect AI assistants" }),
+		const { user } = renderWithProviders(
+			<BifrostRunMenu open onOpenChange={vi.fn()} />,
 		);
+
 		await user.click(
 			screen.getByRole("button", { name: "Download Agent Plugin" }),
 		);
@@ -150,9 +152,8 @@ describe("BifrostRunMenu", () => {
 					reject = fail;
 				}),
 		);
-		const { user } = renderWithProviders(<BifrostRunMenu />);
-		await user.click(
-			screen.getByRole("button", { name: "Connect AI assistants" }),
+		const { user } = renderWithProviders(
+			<BifrostRunMenu open onOpenChange={vi.fn()} />,
 		);
 		await user.click(
 			screen.getByRole("button", { name: "Download Agent Plugin" }),

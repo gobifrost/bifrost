@@ -39,6 +39,7 @@ def build_integration_template(integration: Any) -> dict[str, Any]:
             if getattr(integration, "list_entities_data_provider_id", None)
             else None
         ),
+        "workflow_links": list(getattr(integration, "workflow_links", None) or []),
         "config_schema": config_schema,
         "oauth": oauth,
     }

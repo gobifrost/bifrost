@@ -3266,6 +3266,7 @@ def test_integration_notes_round_trip_from_row_through_yaml_to_import_values():
         name="Service Desk",
         description=None,
         notes=notes,
+        workflow_links=[],
         entity_id=None,
         entity_id_name=None,
         default_entity_id=None,

@@ -19,6 +19,7 @@ async def upsert_integration_shells(
     db: AsyncSession, connection_schemas: list[dict[str, Any]] | tuple[dict[str, Any], ...],
 ) -> int:
     """Create missing global integration shells; return how many were created."""
+    from src.models.contracts.integrations import IntegrationUpdate
     from src.models.orm.integrations import Integration, IntegrationConfigSchema
     from src.models.orm.oauth import OAuthProvider
 
@@ -38,6 +39,7 @@ async def upsert_integration_shells(
             continue  # never clobber a configured integration
         integ = Integration(
             name=name,
+            workflow_links=[link.model_dump(mode="json") for link in (IntegrationUpdate(workflow_links=template.get("workflow_links") or []).workflow_links or [])],
             entity_id_name=template.get("entity_id_name"),
             default_entity_id=template.get("default_entity_id"),
         )

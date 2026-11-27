@@ -32,6 +32,7 @@ export function IntegrationPageHeader({
 	canTestConnection,
 	canManageDefinitions,
 	status,
+	workflowActions,
 }: {
 	name: string;
 	description?: string;
@@ -48,6 +49,7 @@ export function IntegrationPageHeader({
 	canManageDefinitions: boolean;
 	/** Status chips shown under the name. */
 	status?: ReactNode;
+	workflowActions?: ReactNode;
 }) {
 	const canAddSetupNotes = !hasSetupNotes && canManageDefinitions;
 	const hasMoreActions =
@@ -83,7 +85,21 @@ export function IntegrationPageHeader({
 					</div>
 					{status}
 				</div>
-				<div className="flex flex-wrap items-center gap-2 lg:shrink-0">
+				<div
+					className={
+						workflowActions
+							? "flex w-full min-w-0 flex-wrap items-center gap-2 lg:w-[65%] lg:justify-end"
+							: "flex flex-wrap items-center gap-2 lg:shrink-0"
+					}
+				>
+					{workflowActions}
+					{workflowActions && canTestConnection && (
+						<span
+							role="separator"
+							aria-orientation="vertical"
+							className="hidden h-6 w-px shrink-0 bg-border sm:block"
+						/>
+					)}
 					{canTestConnection && (
 						<Button
 							type="button"

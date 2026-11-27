@@ -41,9 +41,18 @@ class ConfigSchemaItem(BaseModel):
 
 
 
+class IntegrationWorkflowLink(BaseModel):
+    """An integration-owned shortcut; execution retains workflow authorization."""
+
+    workflow_id: UUID
+    label: str = Field(min_length=1, max_length=80, pattern=r".*\S.*")
+    pinned: bool = False
+
+
 class IntegrationCreate(BaseModel):
     """Request model for creating an integration (CLI mirror)."""
 
+    workflow_links: list[IntegrationWorkflowLink] = Field(default_factory=list)
     name: str = Field(min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     notes: str | None = Field(default=None, max_length=50000)
@@ -56,6 +65,7 @@ class IntegrationCreate(BaseModel):
 class IntegrationUpdate(BaseModel):
     """Request model for updating an integration (CLI mirror)."""
 
+    workflow_links: list[IntegrationWorkflowLink] | None = None
     name: str | None = Field(default=None, min_length=1, max_length=255)
     description: str | None = Field(default=None, max_length=2000)
     notes: str | None = Field(default=None, max_length=50000)

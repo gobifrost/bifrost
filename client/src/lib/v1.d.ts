@@ -22001,6 +22001,8 @@ export interface components {
          *     POST /api/integrations
          */
         IntegrationCreate: {
+            /** Workflow Links */
+            workflow_links?: components["schemas"]["IntegrationWorkflowLink"][];
             /**
              * Name
              * @description Unique integration name (e.g., 'Microsoft Partner', 'QuickBooks Online')
@@ -22050,6 +22052,8 @@ export interface components {
              * @description Integration ID
              */
             id: string;
+            /** Workflow Links */
+            workflow_links?: components["schemas"]["IntegrationWorkflowLink"][];
             /**
              * Name
              * @description Integration name
@@ -22415,6 +22419,8 @@ export interface components {
              * @description Integration ID
              */
             id: string;
+            /** Workflow Links */
+            workflow_links?: components["schemas"]["IntegrationWorkflowLink"][];
             /**
              * Name
              * @description Integration name
@@ -22576,6 +22582,8 @@ export interface components {
          *     PUT /api/integrations/{integration_id}
          */
         IntegrationUpdate: {
+            /** Workflow Links */
+            workflow_links?: components["schemas"]["IntegrationWorkflowLink"][] | null;
             /**
              * Name
              * @description Integration name
@@ -22616,6 +22624,24 @@ export interface components {
              * @description Default value for entity_id in URL templates (e.g., 'common' for Azure multi-tenant)
              */
             default_entity_id?: string | null;
+        };
+        /**
+         * IntegrationWorkflowLink
+         * @description An integration-owned shortcut; execution retains workflow authorization.
+         */
+        IntegrationWorkflowLink: {
+            /**
+             * Workflow Id
+             * Format: uuid
+             */
+            workflow_id: string;
+            /** Label */
+            label: string;
+            /**
+             * Pinned
+             * @default false
+             */
+            pinned: boolean;
         };
         /**
          * InvitePasskeyOptionsRequest

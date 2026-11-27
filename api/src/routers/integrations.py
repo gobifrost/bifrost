@@ -329,6 +329,7 @@ async def get_integration(
         name=integration.name,
         description=integration.description,
         notes=integration.notes,
+        workflow_links=integration.workflow_links,
         list_entities_data_provider_id=integration.list_entities_data_provider_id,
         config_schema=config_schema_items,
         config_defaults=config_defaults if config_defaults else None,

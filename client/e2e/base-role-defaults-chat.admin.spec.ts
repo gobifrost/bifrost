@@ -1,3 +1,4 @@
+import { toggleHeaderAppearance } from "./helpers/header";
 /**
  * One end-to-end provisioning journey: an organization override supplies a
  * custom no-chat base role, and the new account is denied Chat before the
@@ -95,7 +96,7 @@ test.describe("Base role defaults deny Chat without a token-bearing request", ()
 			fullPage: true,
 		});
 		await page.emulateMedia({ reducedMotion: "reduce" });
-		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await toggleHeaderAppearance(page, "Dark Theme");
 		await expect(page.locator("html")).not.toHaveClass(/dark/);
 		await page.screenshot({
 			path: testInfo.outputPath("defaults-desktop-light.png"),
@@ -114,7 +115,7 @@ test.describe("Base role defaults deny Chat without a token-bearing request", ()
 			path: testInfo.outputPath("defaults-mobile.png"),
 			fullPage: true,
 		});
-		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await toggleHeaderAppearance(page, "Dark Theme");
 		await expect(page.locator("html")).toHaveClass(/dark/);
 		await page.screenshot({
 			path: testInfo.outputPath("defaults-mobile-dark.png"),
