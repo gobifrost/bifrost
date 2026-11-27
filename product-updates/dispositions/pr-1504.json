@@ -1,0 +1,13 @@
+{
+  "key": "pr:1504",
+  "classification": "other",
+  "entry_ids": [],
+  "summary": "Add named connections to an integration, with separate credentials and organization mappings. Existing workflows keep using Default unless they select an instance.",
+  "review": {
+    "status": "draft",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1504",
+      "Exact Product Updates summary awaits maintainer approval; implementation approval does not approve announcement prose."
+    ]
+  }
+}
