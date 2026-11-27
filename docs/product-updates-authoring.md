@@ -151,9 +151,14 @@ and `omit` are visibility decisions, not areas or types.
 A pending source does not prevent structural validation or a development build.
 The renderer withholds its highlight until every cited source and declared
 prerequisite is present in the verified metadata and reachable from the build.
-After landing, refresh the cumulative cached metadata in a content follow-up PR and verify the prepared image bundle contains the entry. This activation is required for dev delivery as well as formal release preparation; it does not publish a GitHub release. Approved
-landed portions of a pending group appear as Other changes using their persisted
-summary (or cached PR title); omitted and unreviewed sources stay excluded.
+Land the approved summary or entry and its canonical disposition in the
+original feature PR. The dev build combines the frozen inventory with verified
+main history and the PRs in its exact merge candidate, so approved updates can
+ship with the feature and remain in later builds. Verify the prepared image
+bundle includes the approved updates. Refresh the cumulative inventory during
+shared versioned release preparation. Approved landed portions of a pending
+group appear as Other changes using their persisted summary or the verified PR
+title.
 Security and action-required sources cannot use this smaller-change treatment
 for a release: their required canonical notice must be eligible.
 

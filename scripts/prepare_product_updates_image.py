@@ -8,19 +8,27 @@ import json
 import shutil
 from pathlib import Path
 
-from scripts.product_updates import build_bundle
+from scripts.product_updates import build_bundle, read_json
+from scripts.product_updates_build_sources import resolve_build_inventory
 
 
-def prepare(root: Path, target: str) -> dict:
+def prepare(root: Path, target: str, *, sources: Path | None = None) -> dict:
     content = root / "product-updates"
+    inventory = content / "inventory.json"
+    build_inventory = None
+    if sources is not None:
+        build_inventory = resolve_build_inventory(
+            read_json(sources), read_json(inventory), target, content / "schema.json"
+        )
     # Runtime history uses the cumulative ledger, independent of release intervals.
     bundle = build_bundle(
         content,
-        content / "inventory.json",
+        inventory,
         content / "dispositions.json",
         target,
         "/product-updates/",
         content_ref=target,
+        build_inventory=build_inventory,
     )
     destination = root / "client/public/product-updates"
     if destination.exists():
@@ -47,8 +55,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--target", required=True)
     parser.add_argument("--root", type=Path, default=Path("."))
+    parser.add_argument("--build-sources", type=Path)
     args = parser.parse_args()
-    prepare(args.root, args.target)
+    prepare(args.root, args.target, sources=args.build_sources)
 
 
 if __name__ == "__main__":
