@@ -122,6 +122,7 @@ class RemoteFileCompute:
 
     def _new_stage(self) -> None:
         self.stage_id = str(uuid4())
+        self.state_changed = asyncio.Event()
         self.binding = {
             "stage_id": self.stage_id,
             "job_id": str(self.claim.id),
@@ -228,14 +229,14 @@ class RemoteFileCompute:
                 raise PlatformJobFailure("file_compute_transfer_invalid", "File compute input offset changed unexpectedly.")
         await self._mutate("start")
         while True:
-            self.bridge.compute_changed.clear()
+            self.state_changed.clear()
             status = await self._read("status")
             if status["state"] == "prepared":
                 await self._mutate("start")
                 continue
             if status["state"] != "running":
                 break
-            await self.bridge.compute_changed.wait()
+            await self.state_changed.wait()
         if status["state"] != "succeeded":
             error = status.get("error", {})
             message = error.get("message", "Remote file compute failed.") if isinstance(error, Mapping) else "Remote file compute failed."

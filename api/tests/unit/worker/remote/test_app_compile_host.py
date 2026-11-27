@@ -50,7 +50,7 @@ class Control:
         self.lease = SimpleNamespace(worker_id=uuid4())
         self.reconciliation_ready = asyncio.Event()
         self.reconciliation_ready.set()
-        self.transport_changed, self.compute_changed = asyncio.Event(), asyncio.Event()
+        self.transport_changed = asyncio.Event()
         self.file_computes = {}
         self.calls, self.state = Counter(), "unknown"
         self.source, self.lose_replies, self.wrong_recipe = source, lose_replies, wrong_recipe
@@ -92,7 +92,7 @@ class Control:
         if self.wrong_recipe:
             self.recipe = {**self.recipe, "sdk": "e" * 64}
         self.state = "succeeded"
-        self.compute_changed.set()
+        next(iter(self.file_computes.values())).state_changed.set()
 
     def close(self):
         if self.receiver:

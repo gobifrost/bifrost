@@ -9,7 +9,7 @@ from contextlib import asynccontextmanager
 from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock, patch
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import pytest
 from pydantic import SecretStr
@@ -1236,8 +1236,9 @@ async def test_transport_transition_wakes_every_retained_compute_stage(transitio
     bridge = Bridge(
         Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE,
     )
-    stages = [SimpleNamespace(state_changed=asyncio.Event()) for _ in range(2)]
-    bridge.agent_compute_runtimes.update({str(index): stage for index, stage in enumerate(stages)})
+    stages = [SimpleNamespace(state_changed=asyncio.Event()) for _ in range(4)]
+    bridge.agent_compute_runtimes.update({str(index): stage for index, stage in enumerate(stages[:2])})
+    bridge.file_computes.update({str(index): stage for index, stage in enumerate(stages[2:])})
 
     if transition == "disconnect":
         bridge.disconnect()
@@ -1245,5 +1246,22 @@ async def test_transport_transition_wakes_every_retained_compute_stage(transitio
         await bridge.reconciliation_complete()
 
     assert all(stage.state_changed.is_set() for stage in stages)
-    assert bridge.compute_changed.is_set()
     assert bridge.transport_changed.is_set()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_type", ["app_compile_state", "file_compute_state"])
+async def test_file_state_notification_does_not_wake_sibling_stages(event_type):
+    bridge = Bridge(
+        Mock(), {"current": 1, "limit": 100, "requirements": {}, "hostname": "runner"}, LEASE,
+    )
+    target_id, sibling_id = str(uuid4()), str(uuid4())
+    target, sibling, agent = [SimpleNamespace(state_changed=asyncio.Event()) for _ in range(3)]
+    bridge.file_computes.update({target_id: target, sibling_id: sibling})
+    bridge.agent_compute_runtimes[str(uuid4())] = agent
+
+    await bridge.receive({"event": event_type, "stage_id": target_id})
+
+    assert target.state_changed.is_set()
+    assert not sibling.state_changed.is_set()
+    assert not agent.state_changed.is_set()

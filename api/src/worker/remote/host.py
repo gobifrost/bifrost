@@ -177,7 +177,6 @@ class Bridge:
         self.inventory_ready = asyncio.Event()
         self.reconciliation_ready = asyncio.Event()
         self.transport_changed = asyncio.Event()
-        self.compute_changed = asyncio.Event()
         self.file_computes: dict[str, Any] = {}
         self.agent_compute_runtimes: dict[str, Any] = {}
         self._deferred_terminal: list[dict[str, Any]] = []
@@ -393,7 +392,9 @@ class Bridge:
             if not isinstance(event.get("stage_id"), str):
                 raise ProtocolError("App compile notification requires a stage UUID")
             UUID(event["stage_id"])
-            self.compute_changed.set()
+            compute = self.file_computes.get(event["stage_id"])
+            if compute is not None:
+                compute.state_changed.set()
         elif event.get("event") == "agent_compute_state":
             runtime = self.agent_compute_runtimes.get(event.get("stage_id"))
             if runtime is not None:
@@ -541,9 +542,9 @@ class Bridge:
 
     def _notify_compute_change(self) -> None:
         """Transport changes affect every retained stage, not only one recipe."""
-        self.compute_changed.set()
-        for runtime in self.agent_compute_runtimes.values():
-            runtime.state_changed.set()
+        for stages in (self.agent_compute_runtimes, self.file_computes):
+            for runtime in stages.values():
+                runtime.state_changed.set()
 
     def disconnect(self, socket: WebSocket | None = None) -> None:
         if socket is not None and socket is not self.socket:
