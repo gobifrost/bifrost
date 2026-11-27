@@ -63,6 +63,7 @@ def test_thumbnail_logo_keeps_immutable_versioned_url() -> None:
 def test_integration_response_includes_logo_url_and_connection_counts() -> None:
     integration = _entity(
         name="Counted Integration",
+        oauth_provider=SimpleNamespace(oauth_flow_type="workload_identity"),
         description="Counts and connection state",
         has_oauth_config=True,
         is_deleted=False,
@@ -86,6 +87,7 @@ def test_integration_response_includes_logo_url_and_connection_counts() -> None:
     assert response.description == "Counts and connection state"
     assert response.logo_url == f"/api/integrations/{integration.id}/logo?v={'b' * 64}"
     assert response.mapping_count == 4
+    assert response.oauth_flow_type == "workload_identity"
     assert response.connected_count == 2
     assert response.needs_reconnection_count == 1
     assert response.connection_status_counts == {"completed": 2, "failed": 1}
