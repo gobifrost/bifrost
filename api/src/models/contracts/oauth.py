@@ -14,7 +14,12 @@ if TYPE_CHECKING:
 
 # ==================== OAUTH TYPE DEFINITIONS ====================
 
-OAuthFlowType = Literal["authorization_code", "client_credentials", "refresh_token"]
+OAuthFlowType = Literal[
+    "authorization_code",
+    "client_credentials",
+    "refresh_token",
+    "workload_identity",
+]
 OAuthStatus = Literal["not_connected", "waiting_callback", "testing", "connected", "completed", "failed"]
 
 
@@ -40,8 +45,7 @@ class CreateOAuthConnectionRequest(BaseModel):
         description="OAuth 2.0 flow type"
     )
     client_id: str = Field(
-        ...,
-        min_length=1,
+        default="",
         description="OAuth client ID (not sensitive)"
     )
     client_secret: str | None = Field(
@@ -53,8 +57,8 @@ class CreateOAuthConnectionRequest(BaseModel):
         pattern=r"^https://",
         description="OAuth authorization endpoint URL (required for authorization_code, not used for client_credentials)"
     )
-    token_url: str = Field(
-        ...,
+    token_url: str | None = Field(
+        default=None,
         pattern=r"^https://",
         description="OAuth token endpoint URL (must be HTTPS, may include {placeholders} for templating)"
     )
@@ -75,6 +79,11 @@ class CreateOAuthConnectionRequest(BaseModel):
         None,
         description="OAuth redirect URI (defaults to /oauth/callback/{connection_name})"
     )
+    tenant_id: str | None = Field(
+        default=None,
+        max_length=255,
+        description="Optional runtime identity tenant ID (not secret)",
+    )
 
     @model_validator(mode='before')
     @classmethod
@@ -90,6 +99,11 @@ class CreateOAuthConnectionRequest(BaseModel):
     @model_validator(mode='after')
     def validate_flow_requirements(self) -> 'CreateOAuthConnectionRequest':
         """Validate field requirements based on OAuth flow type"""
+        if self.oauth_flow_type != "workload_identity":
+            if not self.client_id:
+                raise ValueError("client_id is required for OAuth flows")
+            if not self.token_url:
+                raise ValueError("token_url is required for OAuth flows")
         if self.oauth_flow_type == 'client_credentials':
             # Client credentials: requires client_secret, doesn't need authorization_url
             if not self.client_secret:
@@ -102,6 +116,12 @@ class CreateOAuthConnectionRequest(BaseModel):
             if not self.authorization_url:
                 raise ValueError("authorization_url is required for authorization_code flow")
 
+        elif self.oauth_flow_type == "workload_identity":
+            if self.client_secret or self.authorization_url or self.token_url:
+                raise ValueError(
+                    "workload_identity does not accept OAuth secrets or endpoints"
+                )
+
         return self
 
 
@@ -112,7 +132,7 @@ class UpdateOAuthConnectionRequest(BaseModel):
     """
     name: str | None = Field(default=None, max_length=255, description="Display name")
     oauth_flow_type: OAuthFlowType | None = Field(default=None, description="OAuth 2.0 flow type")
-    client_id: str | None = Field(default=None, min_length=1)
+    client_id: str | None = Field(default=None)
     client_secret: str | None = Field(default=None, min_length=1)
     authorization_url: str | None = Field(default=None, pattern=r"^https://")
     token_url: str | None = Field(default=None, pattern=r"^https://")
@@ -126,6 +146,7 @@ class UpdateOAuthConnectionRequest(BaseModel):
         max_length=500,
         description="OAuth audience parameter"
     )
+    tenant_id: str | None = Field(default=None, max_length=255)
 
     @field_validator('scopes', mode='before')
     @classmethod
@@ -199,6 +220,10 @@ class OAuthConnectionDetail(BaseModel):
     audience: str | None = Field(
         default=None,
         description="OAuth audience parameter for token requests"
+    )
+    tenant_id: str | None = Field(
+        default=None,
+        description="Optional runtime identity tenant ID (not secret)",
     )
 
     # Status information

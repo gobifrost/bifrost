@@ -137,14 +137,18 @@ export function OAuthConnectionCard({
 		}
 	};
 
-	const canConnect = connection.oauth_flow_type !== "client_credentials";
+	const isWorkloadIdentity = connection.oauth_flow_type === "workload_identity";
+	const canConnect =
+		connection.oauth_flow_type !== "client_credentials" && !isWorkloadIdentity;
 	const needsReconnection =
 		connection.status === "not_connected" || connection.status === "failed";
 
 	const expirationWarning =
-		connection.expires_at && expiresSoon(connection.expires_at);
+		!isWorkloadIdentity &&
+		connection.expires_at &&
+		expiresSoon(connection.expires_at);
 	const isTokenExpired =
-		connection.expires_at && isExpired(connection.expires_at);
+		!isWorkloadIdentity && connection.expires_at && isExpired(connection.expires_at);
 
 	const formatDateTime = (dateStr?: string) => {
 		if (!dateStr) return "Never";
@@ -243,11 +247,15 @@ export function OAuthConnectionCard({
 							variant="outline"
 							className="w-fit rounded-[var(--bf-radius-control)] text-xs"
 						>
-							{connection.oauth_flow_type === "client_credentials" ? "Client credentials" : "Authorization code"}
+							{isWorkloadIdentity
+								? "SDK Managed"
+								: connection.oauth_flow_type === "client_credentials"
+									? "Client credentials"
+									: "Authorization code"}
 						</Badge>
 					</div>
 					<div className="flex shrink-0 items-center gap-2">
-						{connection.expires_at && (
+						{!isWorkloadIdentity && connection.expires_at && (
 							<TooltipProvider>
 								<Tooltip>
 									<TooltipTrigger asChild>
@@ -286,7 +294,7 @@ export function OAuthConnectionCard({
 								</Tooltip>
 							</TooltipProvider>
 						)}
-						<TooltipProvider>
+						{!isWorkloadIdentity && <TooltipProvider>
 							<Tooltip>
 								<TooltipTrigger asChild>
 									<div className="cursor-help">
@@ -297,7 +305,7 @@ export function OAuthConnectionCard({
 									<p>{getStatusLabel(connection.status)}</p>
 								</TooltipContent>
 							</Tooltip>
-						</TooltipProvider>
+						</TooltipProvider>}
 					</div>
 				</div>
 			</CardHeader>
@@ -350,7 +358,7 @@ export function OAuthConnectionCard({
 					)}
 
 				{/* Expiration Warning */}
-				{connection.status === "completed" && isTokenExpired && (
+				{!isWorkloadIdentity && connection.status === "completed" && isTokenExpired && (
 					<div className="flex items-start gap-2 rounded-[var(--bf-radius-surface)] border border-[var(--bf-danger)]/20 bg-[var(--bf-danger-soft)]/60 p-3 text-sm leading-6 text-[var(--bf-danger)]">
 						<AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
 						<span>
@@ -360,7 +368,8 @@ export function OAuthConnectionCard({
 					</div>
 				)}
 
-				{connection.status === "completed" &&
+				{!isWorkloadIdentity &&
+					connection.status === "completed" &&
 					!isTokenExpired &&
 					expirationWarning && (
 						<div className="flex items-start gap-2 rounded-[var(--bf-radius-surface)] border border-[var(--bf-warning)]/20 bg-[var(--bf-warning-soft)]/60 p-3 text-sm leading-6 text-[var(--bf-warning)]">
@@ -395,7 +404,8 @@ export function OAuthConnectionCard({
 					)}
 
 					{/* For client_credentials with not_connected/failed status, show Get Token button */}
-					{needsReconnection && !canConnect && (
+					{needsReconnection &&
+						connection.oauth_flow_type === "client_credentials" && (
 						<Button
 							onClick={() => onRefresh(connection.connection_name)}
 							disabled={isRefreshing}
@@ -440,7 +450,7 @@ export function OAuthConnectionCard({
 
 					{/* For client_credentials, show Refresh Token button where Reconnect would be */}
 						{connection.status === "completed" &&
-						!canConnect &&
+						connection.oauth_flow_type === "client_credentials" &&
 						connection.expires_at && (
 							<Button
 								onClick={() =>

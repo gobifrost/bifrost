@@ -151,6 +151,10 @@ def _integration_to_response(
     response.connected_count = connected_mapping_count
     response.needs_reconnection_count = status_counts.get("failed", 0)
     response.connection_status_counts = status_counts
+    response.oauth_flow_type = (
+        integration.oauth_provider.oauth_flow_type
+        if integration.oauth_provider else None
+    )
     return response
 
 
@@ -289,6 +293,7 @@ async def get_integration(
             authorization_url=provider.authorization_url,
             token_url=provider.token_url or "",
             scopes=provider.scopes or [],
+            tenant_id=(provider.provider_metadata or {}).get("tenant_id"),
             status=(provider.status or "not_connected") if mapping_reach.covers(None) else "not_connected",
             status_message=provider.status_message if mapping_reach.covers(None) else None,
             expires_at=token.expires_at if token else None,
@@ -1086,6 +1091,11 @@ async def authorize_mapping(
             detail="Integration or its OAuth provider not found",
         )
     provider = integration.oauth_provider
+    if provider.oauth_flow_type == "workload_identity":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
+        )
     if not provider.authorization_url:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1216,6 +1226,12 @@ async def refresh_mapping_oauth(
     if not integration or not integration.oauth_provider:
         raise HTTPException(status_code=400, detail="Integration has no OAuth provider")
     provider = integration.oauth_provider
+
+    if provider.oauth_flow_type == "workload_identity":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
+        )
 
     if provider.oauth_flow_type != "client_credentials" and not token.encrypted_refresh_token:
         raise HTTPException(
@@ -1372,6 +1388,12 @@ async def get_oauth_authorization_url(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="No OAuth configuration found for this integration",
+        )
+
+    if oauth_provider.oauth_flow_type == "workload_identity":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
         )
 
     # Check if authorization_url is available (not all flows require it)

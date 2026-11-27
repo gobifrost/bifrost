@@ -105,6 +105,21 @@ def should_auto_refresh_token(
     return False
 
 
+def add_workload_identity_config(
+    config: dict[str, Any] | None, provider: Any
+) -> dict[str, Any]:
+    """Expose non-secret runtime identity hints without producing OAuth credentials."""
+    merged = dict(config or {})
+    if provider.oauth_flow_type != "workload_identity":
+        return merged
+    if provider.client_id:
+        merged.setdefault("client_id", provider.client_id)
+    tenant_id = (provider.provider_metadata or {}).get("tenant_id")
+    if tenant_id:
+        merged.setdefault("tenant_id", tenant_id)
+    return merged
+
+
 async def connection_is_declared(
     session: AsyncSession, solution_id: UUID | str | None, name: str
 ) -> bool:
@@ -395,30 +410,35 @@ async def get_sdk_integration_dict(
 
         # Build OAuth data if provider exists
         if integration and integration.oauth_provider:
-            token = mapping.oauth_token
-            if not token:
-                # Cascade: prefer org-scoped token, fall back to global.
-                # See api/src/repositories/README.md for the pattern.
-                # External callers get org-only (no global token — OPEN-E).
-                oauth_token_repo = OAuthTokenRepository(
-                    session,
-                    org_id=org_id,
-                    is_superuser=not external,
-                    is_external=external,
+            provider = integration.oauth_provider
+            if provider.oauth_flow_type == "workload_identity":
+                if not external:
+                    config = add_workload_identity_config(config, provider)
+            else:
+                token = mapping.oauth_token
+                if not token:
+                    # Cascade: prefer org-scoped token, fall back to global.
+                    # See api/src/repositories/README.md for the pattern.
+                    # External callers get org-only (no global token — OPEN-E).
+                    oauth_token_repo = OAuthTokenRepository(
+                        session,
+                        org_id=org_id,
+                        is_superuser=not external,
+                        is_external=external,
+                    )
+                    token = await oauth_token_repo.get_org_level_for_provider(
+                        provider.id
+                    )
+                oauth = await build_oauth_data(
+                    provider,
+                    token,
+                    entity_id,
+                    _resolve_url_template,
+                    _decrypt_secret,
+                    oauth_scope=oauth_scope,
+                    external=external,
+                    can_read_secrets=can_read_secrets,
                 )
-                token = await oauth_token_repo.get_org_level_for_provider(
-                    integration.oauth_provider.id
-                )
-            oauth = await build_oauth_data(
-                integration.oauth_provider,
-                token,
-                entity_id,
-                _resolve_url_template,
-                _decrypt_secret,
-                oauth_scope=oauth_scope,
-                external=external,
-                can_read_secrets=can_read_secrets,
-            )
 
         logger.info(f"SDK retrieved integration '{log_safe(name)}' (org mapping)")
         return {
@@ -464,23 +484,25 @@ async def get_sdk_integration_dict(
     # (OPEN-E) must get NO OAuth block at all — there is no org-tier
     # provider on this branch to fall back to.
     if integration.oauth_provider and not external:
-        # Cascade: prefer org-scoped token, fall back to global.
-        # See api/src/repositories/README.md for the pattern.
-        oauth_token_repo = OAuthTokenRepository(
-            session, org_id=org_id, is_superuser=True
-        )
-        token = await oauth_token_repo.get_org_level_for_provider(
-            integration.oauth_provider.id
-        )
-        oauth = await build_oauth_data(
-            integration.oauth_provider,
-            token,
-            entity_id,
-            _resolve_url_template,
-            _decrypt_secret,
-            oauth_scope=oauth_scope,
-            can_read_secrets=can_read_secrets,
-        )
+        provider = integration.oauth_provider
+        if provider.oauth_flow_type == "workload_identity":
+            config = add_workload_identity_config(config, provider)
+        else:
+            # Cascade: prefer org-scoped token, fall back to global.
+            # See api/src/repositories/README.md for the pattern.
+            oauth_token_repo = OAuthTokenRepository(
+                session, org_id=org_id, is_superuser=True
+            )
+            token = await oauth_token_repo.get_org_level_for_provider(provider.id)
+            oauth = await build_oauth_data(
+                provider,
+                token,
+                entity_id,
+                _resolve_url_template,
+                _decrypt_secret,
+                oauth_scope=oauth_scope,
+                can_read_secrets=can_read_secrets,
+            )
 
     logger.info(f"SDK retrieved integration '{log_safe(name)}' (defaults)")
     return {
@@ -963,6 +985,12 @@ async def refresh_sdk_oauth_token(
     if not provider:
         raise IntegrationServiceError(
             404, f"OAuth provider '{connection_name}' not found"
+        )
+
+    if provider.oauth_flow_type == "workload_identity":
+        raise IntegrationServiceError(
+            400,
+            "Workload Identity is SDK managed and does not obtain or refresh OAuth tokens",
         )
 
     # For authorization_code flow we need the stored token up front so

@@ -113,6 +113,7 @@ async def run_refresh_job(
                 .outerjoin(Integration, Integration.id == OAuthProvider.integration_id)
                 .options(selectinload(OAuthToken.provider))
                 .where(
+                    OAuthProvider.oauth_flow_type != "workload_identity",
                     or_(
                         OAuthToken.encrypted_refresh_token.isnot(None),
                         OAuthProvider.oauth_flow_type == "client_credentials",
