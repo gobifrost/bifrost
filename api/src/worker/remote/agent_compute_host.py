@@ -149,8 +149,11 @@ class RemoteAgentRuntime(ComputeStageHost):
         )
         self._claim_invocation()
         await self._run_lock.acquire()
+        terminal_wait: asyncio.Task[dict[str, Any]] | None = None
         try:
             await self._start(user_prompt, message_history or [])
+            terminal_task = asyncio.create_task(self._wait_terminal())
+            terminal_wait = terminal_task
 
             async def events() -> AsyncIterator[Any]:
                 while True:
@@ -168,20 +171,23 @@ class RemoteAgentRuntime(ComputeStageHost):
                         )
                         return
                     event_wait = asyncio.create_task(self._event_ready.wait())
-                    terminal_wait = asyncio.create_task(self._wait_terminal())
-                    done, pending = await asyncio.wait(
-                        {event_wait, terminal_wait}, return_when=asyncio.FIRST_COMPLETED
-                    )
-                    for task in pending:
-                        task.cancel()
-                    await asyncio.gather(*pending, return_exceptions=True)
-                    if event_wait in done:
-                        self._event_ready.clear()
-                    else:
-                        self._terminal = terminal_wait.result()
+                    try:
+                        done, _ = await asyncio.wait(
+                            {event_wait, terminal_task}, return_when=asyncio.FIRST_COMPLETED
+                        )
+                        if terminal_task in done:
+                            self._terminal = terminal_task.result()
+                        if event_wait in done:
+                            self._event_ready.clear()
+                    finally:
+                        event_wait.cancel()
+                        await asyncio.gather(event_wait, return_exceptions=True)
 
             yield events()
         finally:
+            if terminal_wait is not None:
+                terminal_wait.cancel()
+                await asyncio.gather(terminal_wait, return_exceptions=True)
             self._run_lock.release()
 
     def _validate_run_arguments(

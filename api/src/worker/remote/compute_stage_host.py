@@ -118,6 +118,7 @@ class ComputeStageHost(ABC):
         self._input_sha256: str | None = None
         self._terminal: dict[str, Any] | None = None
         self._run_lock = asyncio.Lock()
+        self.state_changed = asyncio.Event()
         runtimes = getattr(bridge, "agent_compute_runtimes", None)
         if not isinstance(runtimes, dict) or self.binding.stage_id in runtimes:
             raise RemoteAgentRuntimeError("Agent compute bridge stage registration is unavailable")
@@ -155,11 +156,12 @@ class ComputeStageHost(ABC):
         while status["state"] == "unknown":
             try:
                 self._start_attempted = True
-                await self._send("agent_compute_start", {**init, "memory_request_bytes": self.memory_request_bytes})
+                status = await self._send("agent_compute_start", {**init, "memory_request_bytes": self.memory_request_bytes})
+                self._validate_status(status)
             except (ConnectionError, TimeoutError):
-                # The retained status resolves uncertain starts without a second fork.
-                pass
-            status = await self._status()
+                # Read back an uncertain start. A confirmed, bound start reply
+                # already carries the retained status; it needs no second RPC.
+                status = await self._status()
         if status["state"] not in {"starting", "running", "terminal"}:
             raise RemoteAgentRuntimeError("Agent compute stage has an invalid state")
         self._started = True
@@ -220,7 +222,7 @@ class ComputeStageHost(ABC):
             )
         ):
             raise RemoteAgentRuntimeError("Agent compute state notification is invalid")
-        self.bridge.compute_changed.set()
+        self.state_changed.set()
 
     async def release(self) -> None:
         if self._released:
@@ -299,13 +301,13 @@ class ComputeStageHost(ABC):
         if self._terminal is not None:
             return self._terminal
         while True:
-            self.bridge.compute_changed.clear()
+            self.state_changed.clear()
             status = await self._status()
             terminal = status.get("terminal")
             if isinstance(terminal, dict):
                 self._terminal = terminal
                 return terminal
-            await self.bridge.compute_changed.wait()
+            await self.state_changed.wait()
 
     async def _send(self, action: str, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.bridge.request(
