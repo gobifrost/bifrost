@@ -50,6 +50,7 @@ _REQUEST_PARAMETER_FIELDS = frozenset(
         "revealed_tool_names",
         "introduced_tool_names",
         "deferred_capability_ids",
+        "deferred_capabilities",
         "output_mode",
         "output_object",
         "output_tools",
@@ -439,6 +440,8 @@ def _request_envelope(
         raise ModelWireError(f"wire request exceeds {MAX_MESSAGES} messages")
     if len(parameters.function_tools) + len(parameters.output_tools) > MAX_TOOLS:
         raise ModelWireError(f"wire request exceeds {MAX_TOOLS} tools")
+    if len(parameters.deferred_capabilities) > MAX_TOOLS:
+        raise ModelWireError(f"wire request exceeds {MAX_TOOLS} deferred capabilities")
     return {
         "version": WIRE_VERSION,
         "kind": "request",
@@ -488,6 +491,9 @@ def deserialize_model_request(
         raise ModelWireError("wire request parameters have unexpected fields")
     if parameters_raw.get("native_tools"):
         raise ModelWireError("native tools are not supported by the remote model wire")
+    deferred = parameters_raw.get("deferred_capabilities", [])
+    if isinstance(deferred, list) and len(deferred) > MAX_TOOLS:
+        raise ModelWireError(f"wire request exceeds {MAX_TOOLS} deferred capabilities")
     messages = _validate_json_value(ModelMessagesTypeAdapter, messages_raw)
     parameters = _validate_json_value(_MODEL_REQUEST_PARAMETERS, parameters_raw)
     if parameters.native_tools:
