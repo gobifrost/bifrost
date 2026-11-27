@@ -4178,7 +4178,7 @@ async def analyze_workflow(
         # An annotation describes a possible receiver. Inspect its declaration
         # without treating the annotation as a constructor or method call.
         seen: set[tuple[str, str]] = set()
-        while isinstance(annotation, dict):
+        while not isinstance(annotation, str):
             if annotation.get("member") or not consume_graph_step(source_file):
                 return None
             class_name = annotation["symbol"]
@@ -4195,7 +4195,7 @@ async def analyze_workflow(
             summary = await load(source_file)
             if class_name in summary.get("classes", {}):
                 annotation = class_name
-                break
+                continue
             exported = summary.get("bindings", {}).get(class_name, {})
             if not exported.get("symbol"):
                 return None
