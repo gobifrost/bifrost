@@ -442,7 +442,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
     # Browser frame sign-in adds compatible shared DTOs.
-    "594b3524348d5df92e48f09323f21e85daef7b8697f11fd5d9f12a53e49ccb76"
+    "7170aad98b28ea9bd9a8ef5098d2c2659fc2884367cd1b61ae1555231e148e81"
 )
 
 
