@@ -43,6 +43,9 @@
 | PUT | `/api/admin/required-instructions/organizations/{organization_id}` |
 | GET | `/api/admin/roi/settings` |
 | POST | `/api/admin/roi/settings` |
+| GET | `/api/admin/worker-capacity/cloudflare` |
+| POST | `/api/admin/worker-capacity/cloudflare` |
+| PUT | `/api/admin/worker-capacity/cloudflare/rules` |
 | GET | `/api/agent-runs` |
 | GET | `/api/agent-runs/backfill-eligible` |
 | GET | `/api/agent-runs/backfill-jobs` |
