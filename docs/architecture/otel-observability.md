@@ -44,8 +44,8 @@ env var is absent.
    probes don't become spans.
 4. **Two hand-written span kinds, both run boundaries**: workflow-run and
    agent-run server spans (`trace.get_tracer(__name__)` per module,
-   `start_as_current_span`). Attributes are IDs only
-   (`bifrost.execution.id`, `bifrost.workflow.id`, `handler`) — never user content, keys, or tokens,
+   `start_as_current_span`). Attributes use IDs and fixed values,
+   such as `bifrost.execution.id`, `bifrost.workflow.id`, and `handler`,
    with the export privacy boundary below. `log_safe` escapes control
    characters and truncates; it is not secret redaction.
 5. **Propagation rides the dispatch payload.** `stage_dispatch` stores a
@@ -112,9 +112,10 @@ implementation rather than assumed from context propagation.
 ## Export privacy boundary
 
 Audit all enabled automatic instrumentation against an explicit field
-allowlist before enabling export. Manual run spans permit only `run.id`,
-`org.id` and the fixed handler name; automatic spans permit reviewed protocol,
-route-template, status and timing fields. IDs must not become metric labels.
+allowlist before enabling export. Manual run spans permit run and resource
+IDs, fixed handler names, and fixed trigger values. Automatic spans permit
+reviewed protocol, route-template, status and timing fields. IDs must not
+become metric labels.
 Operator resource attributes must also be documented as exported data.
 
 - Database and Redis clients are not instrumented. If they ever are, the
@@ -205,6 +206,11 @@ logs (unchanged path) → Loki, now carrying trace_id/span_id
   HTTP and engine SDK calls nest beneath it. A child's first run starts at
   its telemetry set-up, just after fork, and opens with a
   `workflow.startup` span covering the time before the work began.
+  The run span includes `bifrost.organization.id` for organization-scoped
+  runs and `bifrost.solution.install.id` for Solution workflows.
+  `bifrost.trigger` records `webhook`, `schedule`, `topic`, `form`, `agent`,
+  `api_key`, or `direct`. Older event dispatches without a source type use
+  `event`. Dispatch carries the trigger source even when export is disabled.
 - A remote launcher wraps the fork command in a `workflow.launch` span
   parented on the same context: receipt, any wait for the template, the
   fork and the hand-off to the child. A failure is marked `ERROR` with its

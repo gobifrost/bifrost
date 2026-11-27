@@ -9,6 +9,7 @@ collector, database, or network.
 
 import sys
 import types
+from uuid import uuid4
 
 import pytest
 
@@ -232,6 +233,29 @@ def test_child_run_span_parents_on_the_dispatch_and_marks_failure(monkeypatch):
     assert run2["status"] == (StatusCode.ERROR.value, None)  # message-like types are not exported
     assert run3["status"][0] == StatusCode.UNSET.value
     assert run2["parent"] is None  # no traceparent, so the run starts its own trace
+
+
+def test_child_run_span_exports_only_approved_identity_attributes(monkeypatch):
+    _prepared_child(monkeypatch)
+    org_id, install_id = uuid4(), str(uuid4())
+    context = {
+        "name": "Nightly Sync",
+        "organization": {"id": org_id, "name": "Customer Name"},
+        "solution_id": install_id,
+        "trigger_source": "schedule",
+    }
+
+    with telemetry.child_run_span("exec-1", context):
+        pass
+
+    startup, run = telemetry.take_child_spans()
+    assert run["attributes"] == {
+        "bifrost.execution.id": "exec-1",
+        "bifrost.organization.id": str(org_id),
+        "bifrost.solution.install.id": install_id,
+        "bifrost.trigger": "schedule",
+    }
+    assert startup["attributes"] == {"bifrost.execution.id": "exec-1"}
 
 
 def test_parent_relays_returned_spans_through_its_batch_processor(monkeypatch):

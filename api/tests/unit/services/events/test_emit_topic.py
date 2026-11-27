@@ -24,6 +24,7 @@ def _make_source(topic: str, org_id=None):
     source = MagicMock()
     source.id = uuid.uuid4()
     source.event_type = topic
+    source.source_type = "topic"
     source.organization_id = org_id
     return source
 
@@ -401,6 +402,7 @@ async def test_emit_topic_payload_under_event_key():
         event_mock = MagicMock()
         event_mock.id = uuid.uuid4()
         event_mock.event_type = "user.invited"
+        event_mock.event_source = source
         event_mock.data = payload
         event_mock.headers = None
         event_mock.received_at = datetime(2026, 1, 1, tzinfo=timezone.utc)

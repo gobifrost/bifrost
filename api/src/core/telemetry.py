@@ -552,6 +552,13 @@ def child_run_span(execution_id: str, context: dict[str, Any]) -> Iterator[Any]:
             tracer.start_span(
                 "workflow.startup", start_time=started_ns, attributes=attributes
             ).end()
+        if span.is_recording():
+            if trigger_source := context.get("trigger_source"):
+                span.set_attribute("bifrost.trigger", trigger_source)
+            if organization := context.get("organization"):
+                span.set_attribute("bifrost.organization.id", str(organization["id"]))
+            if install_id := context.get("solution_id"):
+                span.set_attribute("bifrost.solution.install.id", install_id)
         yield span
 
 

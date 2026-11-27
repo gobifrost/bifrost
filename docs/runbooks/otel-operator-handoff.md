@@ -93,6 +93,10 @@ never filters.
    remote worker a `workflow.launch` span sits between the two, covering
    the launcher's fork. Child spans are exported by the worker, not the
    child.
+   On the run span, check `bifrost.trigger` against the way you started the
+   run. For an organization-scoped Solution workflow, also verify
+   `bifrost.organization.id` and `bifrost.solution.install.id` match the
+   organization and install UUIDs.
 3. Trigger a failing run; confirm `workflow.run` has status `ERROR` with a
    bare exception-type description and no message, stack, or events.
 4. Confirm HTTP spans carry route templates without query strings, and
