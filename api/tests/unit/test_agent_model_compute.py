@@ -24,7 +24,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import ModelRequestParameters
+from pydantic_ai.models import DeferredCapabilityEntry, ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import DEFAULT_PROFILE
@@ -37,6 +37,7 @@ from src.services.agent_runtime.empty_output import (
     EmptyOutputCircuitBreaker,
 )
 from shared.agent_model_compute import (
+    MAX_TOOLS,
     MAX_WIRE_BYTES,
     ModelWireError,
     RemoteModel,
@@ -94,6 +95,36 @@ def _parameters() -> ModelRequestParameters:
         revealed_tool_names={"visible_tool"},
         deferred_capability_ids={"files"},
     )
+
+
+def test_request_preserves_deferred_capability_catalog_without_private_telemetry() -> None:
+    parameters = _parameters()
+    parameters.deferred_capabilities = [
+        DeferredCapabilityEntry(id="files", description="Read workspace files", active=True),
+    ]
+    parameters._telemetry_mcp_url_ids = {"private-telemetry-url"}
+    wire = serialize_model_request(_request(), parameters)
+
+    decoded = deserialize_model_request(wire)
+
+    assert decoded.parameters.deferred_capabilities == parameters.deferred_capabilities
+    assert decoded.parameters.deferred_capability_ids == {"files"}
+    assert b"private-telemetry-url" not in wire
+    assert decoded.parameters._telemetry_mcp_url_ids is None
+
+
+def test_deferred_capability_catalog_is_bounded_before_wire_validation() -> None:
+    parameters = _parameters()
+    entry = DeferredCapabilityEntry(id="files", description="Read workspace files")
+    parameters.deferred_capabilities = [entry] * (MAX_TOOLS + 1)
+    with pytest.raises(ModelWireError, match="512 deferred capabilities"):
+        serialize_model_request(_request(), parameters)
+
+    parameters.deferred_capabilities = []
+    envelope = json.loads(serialize_model_request(_request(), parameters))
+    envelope["parameters"]["deferred_capabilities"] = [{"id": "files"}] * (MAX_TOOLS + 1)
+    with pytest.raises(ModelWireError, match="512 deferred capabilities"):
+        deserialize_model_request(json.dumps(envelope).encode())
 
 
 def test_profile_bootstrap_round_trips_full_resolved_profile() -> None:
