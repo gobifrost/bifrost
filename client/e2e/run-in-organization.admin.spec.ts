@@ -1,3 +1,4 @@
+import { toggleHeaderAppearance } from "./helpers/header";
 import { test, expect } from "./fixtures/api-fixture";
 
 // One workflow launch and one form submission prove the two existing launch
@@ -106,12 +107,12 @@ test("runs a workflow and a form in the selected organization", async ({
 			path: testInfo.outputPath("form-organization-desktop.png"),
 		});
 		await page.emulateMedia({ reducedMotion: "reduce" });
-		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await toggleHeaderAppearance(page, "Dark Theme");
 		await expect(page.locator("html")).not.toHaveClass(/dark/);
 		await page.screenshot({
 			path: testInfo.outputPath("form-organization-light.png"),
 		});
-		await page.getByRole("button", { name: "Toggle theme" }).click();
+		await toggleHeaderAppearance(page, "Dark Theme");
 		await expect(page.locator("html")).toHaveClass(/dark/);
 		await page.setViewportSize({ width: 390, height: 844 });
 		await page.screenshot({
