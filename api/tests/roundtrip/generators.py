@@ -33,6 +33,8 @@ def _unwrap_optional(ann: Any) -> Any:
 # These survive the real import/deploy path (not just pydantic validation).
 DOMAIN_VALUES: dict[tuple[str, str] | str, Any] = {
     "access_level": "role_based",
+    # All-fields fixtures populate parent_integration_id, so use a valid named key.
+    ("ManifestIntegration", "instance_key"): "secondary",
     ("ManifestAgent", "channels"): ["chat"],
     ("ManifestEventSource", "source_type"): "schedule",
     ("ManifestEventSource", "overlap_policy"): "skip",

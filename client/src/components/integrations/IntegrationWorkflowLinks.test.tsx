@@ -360,6 +360,6 @@ it("retains missing workflow labels but disables their shortcuts", async () => {
 
  it("keeps the compact workflow control named and its menu available", async () => {
   const { user } = renderWithProviders(<IntegrationWorkflowLinks compactOnMobile integrationId="integration" integrationName="AWS" canManage={false} savedLinks={[]} />);
-  await user.click(screen.getByRole("button", { name: "Workflows", exact: true }));
+  await user.click(screen.getByRole("button", { name: "Workflows" }));
   expect(screen.getByText("Linked Workflows")).toBeInTheDocument();
  });

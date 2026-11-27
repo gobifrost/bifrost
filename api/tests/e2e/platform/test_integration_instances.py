@@ -31,16 +31,18 @@ def test_instance_connection_isolation_and_sdk_selection(
         assert instance.status_code == 201, instance.text
         instance_id = instance.json()["id"]
 
-        assert e2e_client.put(
+        default_config = e2e_client.put(
             f"/api/integrations/{definition_id}/config",
             headers=platform_admin.headers,
             json={"config": {"endpoint": "https://default.example", "api_key": "default-secret"}},
-        ).status_code == 200
-        assert e2e_client.put(
+        )
+        assert default_config.status_code == 200
+        instance_config = e2e_client.put(
             f"/api/integrations/{instance_id}/config",
             headers=platform_admin.headers,
             json={"config": {"endpoint": "https://eu.example", "api_key": "eu-secret"}},
-        ).status_code == 200
+        )
+        assert instance_config.status_code == 200
         mapping = e2e_client.post(
             f"/api/integrations/{instance_id}/mappings",
             headers=platform_admin.headers,
@@ -74,9 +76,10 @@ def test_instance_connection_isolation_and_sdk_selection(
         )
         assert root_logo.status_code == child_logo.status_code == 200
         assert root_logo.content == child_logo.content
-        assert e2e_client.delete(
+        deleted_logo = e2e_client.delete(
             f"/api/integrations/{instance_id}/logo", headers=platform_admin.headers
-        ).status_code == 204
+        )
+        assert deleted_logo.status_code == 204
         assert e2e_client.get(
             f"/api/integrations/{definition_id}/logo", headers=platform_admin.headers
         ).status_code == 404
@@ -110,14 +113,16 @@ def test_instance_connection_isolation_and_sdk_selection(
         assert fallback.json()["instance_key"] == "default"
         assert fallback.json()["config"]["endpoint"] == "https://default.example"
 
-        assert e2e_client.delete(
+        protected_default = e2e_client.delete(
             f"/api/integrations/{definition_id}/instances/{definition_id}",
             headers=platform_admin.headers,
-        ).status_code == 409
-        assert e2e_client.delete(
+        )
+        assert protected_default.status_code == 409
+        deleted_instance = e2e_client.delete(
             f"/api/integrations/{definition_id}/instances/{instance_id}",
             headers=platform_admin.headers,
-        ).status_code == 204
+        )
+        assert deleted_instance.status_code == 204
     finally:
         e2e_client.delete(f"/api/integrations/{definition_id}", headers=platform_admin.headers)
 

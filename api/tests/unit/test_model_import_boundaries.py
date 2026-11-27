@@ -181,7 +181,7 @@ def test_contract_all_resolves_every_public_export_and_alias() -> None:
         """
     )
 
-    assert result["count"] == 488
+    assert result["count"] == 492
     assert result["failed"] == []
     assert result["sdk_alias"] is True
     assert result["authenticated_form_alias"] is True
@@ -213,7 +213,7 @@ def test_root_model_all_preserves_public_exports_and_resolves_every_symbol() -> 
         """
     )
 
-    assert result["count"] == 546
+    assert result["count"] == 550
     assert result["failed"] == []
     assert result["contract_tail_matches"] is True
     assert result["authenticated_form_alias"] is True
