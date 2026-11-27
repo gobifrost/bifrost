@@ -202,6 +202,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
+# Optional integration workflow shortcuts are additive; existing CLI callers remain compatible.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
     # (2026-06-13). CONTRACT_VERSION bumped to 3: an old CLI would default a new
@@ -433,7 +434,7 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
     # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
-    "e851a1d9e7e340811a15ed7923f86319c819ec394bf9a135e147291be68a1093"
+    "bcc313841033d8484cf4c62b0e6af6365c2a0706a206104eb744bf4a2072c1a2"
 )
 
 

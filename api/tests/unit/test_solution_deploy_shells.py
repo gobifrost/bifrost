@@ -30,6 +30,7 @@ class TestSolutionDeployShells:
             "integration_name": name,
             "template": {
                 "name": name,
+                "workflow_links": [{"workflow_id": str(uuid4()), "label": "Sync Now", "pinned": True}],
                 "entity_id_name": "tenant_id",
                 "default_entity_id": "common",
                 "config_schema": [{
@@ -64,6 +65,7 @@ class TestSolutionDeployShells:
         )).scalar_one()
         assert integ.entity_id_name == "tenant_id"
         assert integ.default_entity_id == "common"
+        assert integ.workflow_links == decls[0]["template"]["workflow_links"]
 
         schema = (await db.execute(
             select(IntegrationConfigSchema).where(
@@ -85,7 +87,8 @@ class TestSolutionDeployShells:
     async def test_noop_when_integration_exists(self, db_session) -> None:
         db = db_session
         name = f"Existing-{uuid4().hex[:8]}"
-        existing = Integration(name=name)
+        links = [{"workflow_id": str(uuid4()), "label": "Keep My Shortcut", "pinned": True}]
+        existing = Integration(name=name, workflow_links=links)
         db.add(existing)
         await db.flush()
         schema = IntegrationConfigSchema(
@@ -117,6 +120,7 @@ class TestSolutionDeployShells:
         integ = (await db.execute(
             select(Integration).where(Integration.name == name)
         )).scalar_one()
+        assert integ.workflow_links == links
         schema = (await db.execute(
             select(IntegrationConfigSchema).where(
                 IntegrationConfigSchema.integration_id == integ.id

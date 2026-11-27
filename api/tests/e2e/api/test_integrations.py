@@ -1942,7 +1942,7 @@ class TestIntegrationsAuthorization:
             response = e2e_client.put(
                 f"/api/integrations/{integration['id']}",
                 headers=org1_user.headers,
-                json={"name": "hacked"},
+                json={"name": "hacked", "workflow_links": [{"workflow_id": str(uuid4()), "label": "Unauthorized"}]},
             )
             assert response.status_code == 403
 
@@ -2285,3 +2285,27 @@ def test_integration_choice_labels_persist_on_create_and_update(e2e_client, plat
     finally:
         deleted = e2e_client.delete(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
         assert deleted.status_code in {200, 204}, deleted.text
+
+
+@pytest.mark.e2e
+class TestIntegrationWorkflowLinks:
+    def test_links_survive_independent_reads_updates_and_clear(self, e2e_client, platform_admin):
+        headers = platform_admin.headers
+        links = [{"workflow_id": str(uuid4()), "label": "Sync Now", "pinned": True}]
+        response = e2e_client.post("/api/integrations", headers=headers, json={"name": f"linked-{uuid4()}", "workflow_links": links})
+        assert response.status_code == 201, response.text
+        integration_id = response.json()["id"]
+        url = f"/api/integrations/{integration_id}"
+        try:
+            assert e2e_client.get(url, headers=headers).json()["workflow_links"] == links
+            response = e2e_client.put(url, headers=headers, json={"description": "Updated description"})
+            assert response.status_code == 200, response.text
+            assert e2e_client.get(url, headers=headers).json()["workflow_links"] == links
+            links[0].update(label="Refresh Directory", pinned=False)
+            response = e2e_client.put(url, headers=headers, json={"workflow_links": links})
+            assert response.status_code == 200, response.text
+            assert e2e_client.get(url, headers=headers).json()["workflow_links"] == links
+            assert e2e_client.put(url, headers=headers, json={"workflow_links": []}).status_code == 200
+            assert e2e_client.get(url, headers=headers).json()["workflow_links"] == []
+        finally:
+            e2e_client.delete(url, headers=headers)

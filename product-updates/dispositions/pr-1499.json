@@ -1,0 +1,14 @@
+{
+  "key": "pr:1499",
+  "classification": "highlight",
+  "entry_ids": [
+    "645884cd-9dfe-4c02-b63c-45defdaad1c1"
+  ],
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "https://github.com/gobifrost/bifrost/pull/1499",
+      "Jack approved the exact displayed title and announcement prose with \u201cSend it.\u201d in the existing maintainer conversation on 2026-11-27."
+    ]
+  }
+}

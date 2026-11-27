@@ -1,12 +1,25 @@
 import { expect, it, vi } from "vitest";
 import { renderWithProviders, screen, within } from "@/test-utils";
+import {
+	DropdownMenu,
+	DropdownMenuTrigger,
+	DropdownMenuContent,
+} from "@/components/ui/dropdown-menu";
 import { HelpMenu } from "./HelpMenu";
 vi.mock("@/components/branding/Logo", () => ({
 	Logo: () => <img src="/covi-logo.svg" alt="" />,
 }));
-it("groups documentation, internal release notes, community destinations and the installed version", async () => {
-	const { user } = renderWithProviders(<HelpMenu />);
-	await user.click(screen.getByRole("button", { name: "Help" }));
+it("groups documentation, release notes and community destinations inside the account menu", async () => {
+	const { user } = renderWithProviders(
+		<DropdownMenu>
+			<DropdownMenuTrigger>Account</DropdownMenuTrigger>
+			<DropdownMenuContent>
+				<HelpMenu />
+			</DropdownMenuContent>
+		</DropdownMenu>,
+	);
+	await user.click(screen.getByRole("button", { name: "Account" }));
+	await user.click(screen.getByRole("menuitem", { name: "Help" }));
 	expect(
 		screen.getByRole("menuitem", { name: "Documentation" }),
 	).toHaveAttribute("href", "https://gobifrost.com/docs/");
@@ -18,7 +31,10 @@ it("groups documentation, internal release notes, community destinations and the
 		"https://discord.gg/x84pft2YDa",
 	);
 	const youtube = screen.getByRole("menuitem", { name: "YouTube" });
-	expect(youtube).toHaveAttribute("href", "https://www.youtube.com/@gobifrost");
+	expect(youtube).toHaveAttribute(
+		"href",
+		"https://www.youtube.com/@gobifrost",
+	);
 	expect(youtube).toHaveAttribute("target", "_blank");
 	expect(youtube).toHaveAttribute("rel", "noreferrer");
 	const website = screen.getByRole("menuitem", { name: "Website" });
@@ -29,8 +45,8 @@ it("groups documentation, internal release notes, community destinations and the
 		"/logo.svg",
 	);
 	expect(
-		screen.getByRole("menuitem", { name: /Copy version/ }),
-	).toBeVisible();
+		screen.queryByRole("menuitem", { name: /Copy version/ }),
+	).not.toBeInTheDocument();
 	expect(
 		screen.queryByRole("menuitem", { name: "Settings" }),
 	).not.toBeInTheDocument();

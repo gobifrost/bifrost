@@ -68,6 +68,20 @@ def schema_yaml_one_key(tmp_path):
 class TestCliIntegrations:
     """End-to-end coverage for ``bifrost integrations`` commands."""
 
+    def test_workflow_links_create_and_clear(self, cli_client, _invoke, e2e_client, platform_admin):
+        links = [{"workflow_id": str(uuid4()), "label": "Sync Now", "pinned": True}]
+        result = _invoke(["--json", "create", "--name", f"cli-links-{uuid4()}", "--workflow-links", json.dumps(links)])
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        integration_id = payload["id"]
+        try:
+            assert payload["workflow_links"] == links
+            result = _invoke(["--json", "update", integration_id, "--workflow-links", "[]"])
+            assert result.exit_code == 0, result.output
+            assert e2e_client.get(f"/api/integrations/{integration_id}", headers=platform_admin.headers).json()["workflow_links"] == []
+        finally:
+            e2e_client.delete(f"/api/integrations/{integration_id}", headers=platform_admin.headers)
+
     def test_list_returns_payload(self, cli_client, _invoke) -> None:
         """``integrations list --json`` returns the wrapped ``{items, total}`` payload."""
         result = _invoke(["--json", "list"])

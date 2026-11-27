@@ -1,3 +1,4 @@
+import { openHeaderEditor } from "./helpers/header";
 import { test, expect } from "./fixtures/api-fixture";
 
 const MATCH_COUNT = 130; // more than one 100-match page
@@ -19,7 +20,7 @@ test.describe("Editor source search (admin)", () => {
 
 		try {
 			await page.goto("/");
-			await page.getByRole("button", { name: "Shell (Cmd+/)" }).click();
+			await openHeaderEditor(page);
 			const dialog = page.getByRole("dialog", { name: "Code editor" });
 			// Exact: the seeded folder's tree row also contains "search".
 			await dialog

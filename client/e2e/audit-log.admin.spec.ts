@@ -1,3 +1,4 @@
+import { toggleHeaderAppearance } from "./helpers/header";
 import { randomUUID } from "node:crypto";
 
 import type { Page } from "./fixtures/api-fixture";
@@ -214,7 +215,7 @@ test.describe("Access Checks on a recorded check", () => {
 				animations: "disabled",
 				path: test.info().outputPath("summary-desktop-dark.png"),
 			});
-			await page.getByRole("button", { name: "Toggle theme" }).click();
+			await toggleHeaderAppearance(page, "Dark Theme");
 			await expect(page.locator("html")).not.toHaveClass(/dark/);
 			await page.screenshot({
 				animations: "disabled",
@@ -296,14 +297,13 @@ test.describe("Access Checks on a recorded check", () => {
 		await expect(drawer).toBeHidden();
 		if (process.env.PLAYWRIGHT_SCREENSHOT_ALL === "1")
 			await page.setViewportSize({ width: 1280, height: 720 });
-		const presentationToggle = page.getByRole("button", { name: "Presentation Mode" });
-		await presentationToggle.click();
+		await toggleHeaderAppearance(page, "Presentation Mode");
 		await page.getByRole("button", { name: "Open 1 Recorded Check" }).click();
 		await expect(reachStep("Then")).toContainText("This organization is outside their reach.");
 		await expect(drawer.getByText(identityName, { exact: false })).toBeHidden();
 		await page.keyboard.press("Escape");
 		await expect(drawer).toBeHidden();
-		await presentationToggle.click();
+		await toggleHeaderAppearance(page, "Presentation Mode");
 		await page.getByRole("tab", { name: "Activity", exact: true }).click();
 		await expect(page).toHaveURL(/\/audit$/);
 	});

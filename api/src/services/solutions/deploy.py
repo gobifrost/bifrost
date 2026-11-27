@@ -521,10 +521,10 @@ class SolutionDeployer:
         await self._upsert_config_schemas(solution, rb.config_schemas)
         # Pre-create an empty integration shell for each declared connection that
         # doesn't yet exist globally (never clobbering a configured one). Uses the
-        # ORIGINAL bundle: connection declarations key on integration NAME, which
-        # carries no per-install id and is therefore not part of the remap.
+        # Integration names remain global natural keys; shortcut workflow IDs
+        # are translated through the same map as the installed workflows.
         shells_created = await self._upsert_integration_shells(
-            bundle.connection_schemas
+            rb.connection_schemas
         )
         # Persist the connection DECLARATIONS on the install (keyed by the
         # install's id + integration name) so /setup surfaces a connection item
@@ -532,7 +532,7 @@ class SolutionDeployer:
         # (capture.py::_connection_entries) does this for the source install;
         # this mirrors it for every deploy/zip-install/CLI-deploy target.
         await self._upsert_connection_declarations(
-            solution, bundle.connection_schemas
+            solution, rb.connection_schemas
         )
         from src.services.solutions.file_locations import (
             reconcile_solution_file_locations,
@@ -778,6 +778,11 @@ class SolutionDeployer:
                     solution_entity_id(sid, UUID(str(mpolicy["id"])))
                 )
 
+        connections = copy.deepcopy(bundle.connection_schemas)
+        for declaration in connections:
+            for link in (declaration.get("template") or {}).get("workflow_links", []):
+                link["workflow_id"] = _remap_ref(link["workflow_id"], id_map)
+
         return SolutionBundle(
             solution=bundle.solution,
             python_files=bundle.python_files,
@@ -793,6 +798,7 @@ class SolutionDeployer:
             file_policies=file_policies,
             version=bundle.version,
             readme=bundle.readme,
+            connection_schemas=connections,
         )
 
     @staticmethod

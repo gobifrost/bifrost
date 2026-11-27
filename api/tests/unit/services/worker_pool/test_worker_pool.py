@@ -1288,7 +1288,8 @@ async def test_runs_of_a_lost_worker_end_visibly_and_are_not_replayed(db) -> Non
     assert execution.status == ExecutionStatus.FAILED
 
 
-async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
+@pytest.mark.parametrize("status", [ExecutionStatus.SUCCESS, ExecutionStatus.FAILED])
+async def test_the_executor_holding_a_run_writes_its_result(db, status) -> None:
     from src.repositories.executions import update_execution
     from src.services.execution.workflow_dispatch import claim_workflow_dispatch
 
@@ -1305,16 +1306,16 @@ async def test_the_executor_holding_a_run_writes_its_result(db) -> None:
 
     async with db.sessions() as session:
         assert not await update_execution(
-            execution_id=execution_id, status=ExecutionStatus.SUCCESS, session=session,
+            execution_id=execution_id, status=status, session=session,
             owner_worker_id=other,
         ), "an executor that does not hold the run cannot end it"
         assert await update_execution(
-            execution_id=execution_id, status=ExecutionStatus.SUCCESS, session=session,
+            execution_id=execution_id, status=status, session=session,
             owner_worker_id=worker_id,
         )
         await session.commit()
         execution = await session.get(Execution, UUID(execution_id))
-    assert execution.status == ExecutionStatus.SUCCESS
+    assert execution.status == status
 
 
 async def test_stale_remote_owner_cannot_commit_a_workflow_result(db) -> None:
