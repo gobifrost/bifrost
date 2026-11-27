@@ -161,7 +161,7 @@ async def stage_cloudflare_api_key(
     metadata = dict(previous.metadata) if previous is not None else {
         "scope": f"bifrost:{uuid4()}", "enabled": False,
     }
-    metadata.update(generation=str(uuid4()), status="provisioning")
+    metadata.update(generation=str(uuid4()), status="provisioning", error=None)
     token = previous.capacity_token if previous is not None else secrets.token_urlsafe(48)
     if row is None:
         row = SystemConfig(category=CATEGORY, key=KEY, organization_id=None, created_by=updated_by)
@@ -195,7 +195,7 @@ async def activate_cloudflare_connection(
         raise CapacityConnectionError("Drain the existing Cloudflare account before replacing it")
     row.value_json = {
         **connection.metadata, "endpoint": endpoint, "account_id": account_id,
-        "enabled": True, "status": "ready", "deployment": deployment,
+        "enabled": True, "status": "ready", "error": None, "deployment": deployment,
         "active_generation": str(generation),
     }
     await db.flush()

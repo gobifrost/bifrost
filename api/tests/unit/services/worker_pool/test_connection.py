@@ -162,3 +162,47 @@ async def test_metadata_update_is_generation_fenced_and_refuses_secret_fields(
             db_session, connection.generation, endpoint="https://capacity.example.test",
             account_id="account-a", deployment={"token": "must-not-publish"},
         )
+
+
+async def test_setup_error_clears_on_current_transition_only(db_session: AsyncSession) -> None:
+    from src.services.worker_pool.connection import load_cloudflare_connection
+
+    first = await stage_cloudflare_api_key(db_session, API_KEY, updated_by="admin@example.test")
+    assert await update_cloudflare_connection_metadata(
+        db_session, first.generation, {"status": "failed", "error": "Old setup failed"},
+    )
+    current = await stage_cloudflare_api_key(db_session, API_KEY, updated_by="admin@example.test")
+    assert current.metadata["status"] == "provisioning"
+    assert current.metadata.get("error") is None
+    assert not await update_cloudflare_connection_metadata(
+        db_session, first.generation, {"status": "failed", "error": "Stale failure"},
+    )
+    # A retry within this generation must clear its own previous attempt's
+    # error when verification succeeds, even without staging another key.
+    assert await update_cloudflare_connection_metadata(
+        db_session, current.generation, {"status": "failed", "error": "Attempt failed"},
+    )
+    assert await activate_cloudflare_connection(
+        db_session, current.generation, endpoint="https://capacity.example.test",
+        account_id="account-a", deployment={},
+    )
+    ready = await load_cloudflare_connection(db_session)
+    assert ready is not None
+    assert ready.metadata["status"] == "ready"
+    assert ready.metadata.get("error") is None
+
+    newest = await stage_cloudflare_api_key(db_session, API_KEY, updated_by="admin@example.test")
+    assert await update_cloudflare_connection_metadata(
+        db_session, newest.generation, {"status": "failed", "error": "Current failure"},
+    )
+    assert not await activate_cloudflare_connection(
+        db_session, current.generation, endpoint="https://capacity.example.test",
+        account_id="account-a", deployment={},
+    )
+    assert not await update_cloudflare_connection_metadata(
+        db_session, current.generation, {"error": None},
+    )
+    latest = await load_cloudflare_connection(db_session)
+    assert latest is not None
+    assert latest.metadata["status"] == "failed"
+    assert latest.metadata["error"] == "Current failure"
