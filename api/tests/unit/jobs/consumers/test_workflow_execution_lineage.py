@@ -510,3 +510,51 @@ async def test_setup_failure_fences_terminal_write_and_notifications(written, ow
     assert history.await_count == int(written)
     assert consumer._redis_client.push_result.await_count == int(written)
     consumer._pool.route_execution.assert_not_awaited()
+
+
+@pytest.mark.parametrize("written", [False, True])
+async def test_missing_workflow_notifies_only_after_an_owned_write(written) -> None:
+    from src.services.execution.service import WorkflowNotFoundError
+
+    with (
+        patch(
+            "src.services.execution.service.get_workflow_for_execution",
+            new=AsyncMock(side_effect=WorkflowNotFoundError),
+        ),
+        patch(f"{MODULE}.create_execution", new=AsyncMock()) as create,
+        patch(f"{MODULE}.update_execution", new=AsyncMock(return_value=written)) as update,
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()) as publish,
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()) as history,
+    ):
+        consumer = _consumer()
+        consumer.owner_worker_id = UUID(EXECUTION_ID)
+        await consumer.process_message(
+            {"execution_id": EXECUTION_ID, "workflow_id": RUN_USER_ID, "sync": True},
+            _claimed(),  # type: ignore[arg-type]
+        )
+
+    create.assert_not_awaited()
+    update.assert_awaited_once()
+    assert update.await_args.kwargs["owner_worker_id"] == consumer.owner_worker_id
+    assert update.await_args.kwargs["result"]["error"] == "WorkflowNotFound"
+    assert publish.await_count == history.await_count == int(written)
+    assert consumer._redis_client.push_result.await_count == int(written)
+    consumer._pool.route_execution.assert_not_awaited()
+
+
+async def test_refused_setup_write_does_not_dispatch_or_notify() -> None:
+    with (
+        patch(f"{MODULE}.create_execution", new=AsyncMock(return_value=False)) as create,
+        patch(f"{MODULE}.publish_execution_update", new=AsyncMock()) as publish,
+        patch(f"{MODULE}.publish_history_update", new=AsyncMock()) as history,
+        patch("src.services.execution.queue_tracker.request_queue_position_refresh"),
+    ):
+        consumer = _consumer()
+        consumer.owner_worker_id = UUID(EXECUTION_ID)
+        await consumer.process_message(MESSAGE, _claimed())  # type: ignore[arg-type]
+
+    create.assert_awaited_once()
+    assert create.await_args.kwargs["owner_worker_id"] == consumer.owner_worker_id
+    publish.assert_not_awaited()
+    history.assert_not_awaited()
+    consumer._pool.route_execution.assert_not_awaited()

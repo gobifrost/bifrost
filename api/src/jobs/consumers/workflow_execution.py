@@ -309,8 +309,7 @@ class WorkflowExecutionConsumer:
     @staticmethod
     def _drop_fenced_result(execution_id: str) -> None:
         logger.warning(
-            "Dropped the result of a run this executor no longer holds "
-            "(it was declared lost and the run already ended)",
+            "Dropped a write for a run this executor no longer holds",
             extra={"execution_id": execution_id},
         )
 
@@ -927,24 +926,6 @@ class WorkflowExecutionConsumer:
                     logger.error(f"Workflow not found: {workflow_id}")
                     duration_ms = int((datetime.now(timezone.utc) - start_time).total_seconds() * 1000)
                     error_msg = f"Workflow with ID '{workflow_id}' not found"
-                    await create_execution(
-                        execution_id=execution_id,
-                        workflow_name="unknown",
-                        parameters=parameters,
-                        org_id=org_id,
-                        user_id=user_id,
-                        user_name=user_name,
-                        form_id=form_id,
-                        api_key_id=api_key_id,
-                        status=ExecutionStatus.FAILED,
-                        execution_model="process",
-                        workflow_id=workflow_id,
-                        check_existing=True,
-                        lineage=lineage,
-                        impersonation_provenance=impersonation_provenance,
-                        execution_origin=execution_origin,
-                        agent_id=agent_id,
-                    )
                     written = await update_execution(
                         execution_id=execution_id,
                         status=ExecutionStatus.FAILED,
@@ -953,6 +934,7 @@ class WorkflowExecutionConsumer:
                         owner_worker_id=self.owner_worker_id,
                     )
                     if not written:
+                        self._drop_fenced_result(execution_id)
                         return
                     await publish_execution_update(execution_id, "Failed", {"error": error_msg})
                     await publish_history_update(
@@ -982,8 +964,8 @@ class WorkflowExecutionConsumer:
 
             credential_route = self._pool.credential_route()
 
-            # Create PostgreSQL record with RUNNING status
-            await create_execution(
+            # Populate the claimed execution with resolved metadata.
+            written = await create_execution(
                 execution_id=execution_id,
                 workflow_name=workflow_name,
                 parameters=parameters,
@@ -1001,7 +983,11 @@ class WorkflowExecutionConsumer:
                 execution_origin=execution_origin,
                 agent_id=agent_id,
                 credential_version=credential_version_for(credential_route.protocol),
+                owner_worker_id=self.owner_worker_id,
             )
+            if not written:
+                self._drop_fenced_result(execution_id)
+                return
             execution_created_ms = (time.perf_counter() - dispatch_started) * 1000
             if not is_sync:
                 await publish_execution_update(execution_id, "Running")

@@ -12,7 +12,7 @@ from decimal import Decimal
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-from sqlalchemy import desc, func, select, update
+from sqlalchemy import ColumnElement, desc, func, select, update
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,10 +30,27 @@ from src.models import (
     WorkflowExecution,
 )
 from src.models.enums import ExecutionStatus
+from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
 from src.repositories.base import BaseRepository
 from src.services.durable_impersonation import pending_durable_impersonation
 
 logger = logging.getLogger(__name__)
+
+
+def owned_workflow_run_predicates(worker_id: UUID) -> tuple[ColumnElement[bool], ...]:
+    """Match only live runs still claimed by the writing executor."""
+    return (
+        Execution.status.in_((ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING)),
+        select(ExecutionWorkerClaim.worker_id)
+        .join(ExecutionWorker, ExecutionWorker.id == ExecutionWorkerClaim.worker_id)
+        .where(
+            ExecutionWorkerClaim.worker_id == worker_id,
+            ExecutionWorkerClaim.family == "workflow_execution",
+            ExecutionWorkerClaim.subject_id == Execution.id,
+            ExecutionWorker.state.in_(("ready", "draining")),
+        )
+        .exists(),
+    )
 
 
 def _make_json_safe(value: Any) -> Any:
@@ -84,7 +101,8 @@ class ExecutionRepository(BaseRepository[Execution]):
         execution_origin: str | None = None,
         agent_id: str | None = None,
         credential_version: int | None = None,
-    ) -> Execution:
+        owner_worker_id: UUID | None = None,
+    ) -> Execution | None:
         """
         Create a new execution record.
 
@@ -106,9 +124,11 @@ class ExecutionRepository(BaseRepository[Execution]):
                 None leaves a pre-existing row's lineage as it is.
             credential_version: The format of the credentials this run will
                 receive (``tokens.credential_version_for``); None is legacy.
+            owner_worker_id: When set, update metadata only on a live row
+                already claimed by this worker, preserving its status.
 
         Returns:
-            Created Execution record
+            Created or updated Execution, or None if ownership was lost.
         """
         from shared.execution_provenance import execution_provenance
 
@@ -134,18 +154,31 @@ class ExecutionRepository(BaseRepository[Execution]):
         # Parse workflow_id if present
         parsed_workflow_id = UUID(workflow_id) if workflow_id else None
 
-        # A scheduled execution has a pre-existing row (inserted at schedule
-        # time as SCHEDULED, promoted to PENDING by the scheduler). In that
-        # case update-in-place instead of inserting a duplicate PK.
-        existing = (
-            await self.session.get(Execution, UUID(execution_id))
-            if check_existing
-            else None
-        )
+        from src.worker.remote.fencing import fence_remote_owner
+
+        if not await fence_remote_owner(self.session):
+            return None
+        if owner_worker_id is not None:
+            # A claimed dispatch already has a row. Lock the matching row
+            # through the metadata write so recovery cannot end it in between.
+            existing = await self.session.scalar(
+                select(Execution)
+                .where(Execution.id == UUID(execution_id), *owned_workflow_run_predicates(owner_worker_id))
+                .with_for_update()
+            )
+            if existing is None:
+                return None
+        else:
+            existing = (
+                await self.session.get(Execution, UUID(execution_id))
+                if check_existing
+                else None
+            )
         if existing is not None:
             existing.workflow_name = workflow_name
             existing.workflow_id = parsed_workflow_id
-            existing.status = status
+            if owner_worker_id is None:
+                existing.status = status
             existing.parameters = parameters
             existing.executed_by = parsed_user_id
             existing.executed_by_name = user_name
@@ -316,20 +349,7 @@ class ExecutionRepository(BaseRepository[Execution]):
         # Execute update
         statement = update(Execution).where(Execution.id == UUID(execution_id))
         if owner_worker_id is not None:
-            from src.models.orm.execution_workers import ExecutionWorker, ExecutionWorkerClaim
-
-            statement = statement.where(
-                Execution.status.in_((ExecutionStatus.RUNNING, ExecutionStatus.CANCELLING)),
-                select(ExecutionWorkerClaim.worker_id)
-                .join(ExecutionWorker, ExecutionWorker.id == ExecutionWorkerClaim.worker_id)
-                .where(
-                    ExecutionWorkerClaim.worker_id == owner_worker_id,
-                    ExecutionWorkerClaim.family == "workflow_execution",
-                    ExecutionWorkerClaim.subject_id == Execution.id,
-                    ExecutionWorker.state.in_(("ready", "draining")),
-                )
-                .exists(),
-            )
+            statement = statement.where(*owned_workflow_run_predicates(owner_worker_id))
         written = (
             await self.session.execute(
                 statement.values(**update_values).returning(Execution.workflow_id)
@@ -769,7 +789,8 @@ async def create_execution(
     execution_origin: str | None = None,
     agent_id: str | None = None,
     credential_version: int | None = None,
-) -> None:
+    owner_worker_id: UUID | None = None,
+) -> bool:
     """
     Create a new execution record in PostgreSQL.
 
@@ -784,9 +805,9 @@ async def create_execution(
 
     from src.core.database import get_session_factory
 
-    async def _do_create(db: AsyncSessionType) -> None:
+    async def _do_create(db: AsyncSessionType) -> bool:
         repo = ExecutionRepository(db)
-        await repo.create_execution(
+        execution = await repo.create_execution(
             execution_id=execution_id,
             workflow_name=workflow_name,
             parameters=parameters,
@@ -804,17 +825,20 @@ async def create_execution(
             execution_origin=execution_origin,
             agent_id=agent_id,
             credential_version=credential_version,
+            owner_worker_id=owner_worker_id,
         )
+        return execution is not None
 
     if session is not None:
         # Use provided session (caller manages commit)
-        await _do_create(session)
+        return await _do_create(session)
     else:
         # Backward compatible: create own session
         session_factory = get_session_factory()
         async with session_factory() as db:
-            await _do_create(db)
+            written = await _do_create(db)
             await db.commit()
+            return written
 
 
 async def update_execution(
