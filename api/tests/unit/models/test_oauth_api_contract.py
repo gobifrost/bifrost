@@ -73,12 +73,12 @@ class TestCreateOAuthConnectionRequest:
 
         with pytest.raises(ValidationError) as exc_info:
             CreateOAuthConnectionRequest(
-                # Missing: integration_id, oauth_flow_type, client_id, token_url
-                # authorization_url is optional (not needed for client_credentials)
+                # Missing: integration_id and oauth_flow_type. The selected flow
+                # determines whether client_id and token_url are required.
             )
 
         errors = exc_info.value.errors()
-        required_fields = {"integration_id", "oauth_flow_type", "client_id", "token_url"}
+        required_fields = {"integration_id", "oauth_flow_type"}
         missing_fields = {e["loc"][0] for e in errors if e["type"] == "missing"}
         assert required_fields.issubset(missing_fields)
         # client_secret is optional (for PKCE flow)
@@ -156,6 +156,19 @@ class TestCreateOAuthConnectionRequest:
 
         assert request.oauth_flow_type == "client_credentials"
         assert request.authorization_url is None  # Empty string converted to None
+
+    def test_workload_identity_accepts_optional_identity_configuration(self):
+        """Host-managed credentials need no OAuth endpoints or secret."""
+        request = CreateOAuthConnectionRequest(
+            integration_id="550e8400-e29b-41d4-a716-446655440010",
+            oauth_flow_type="workload_identity",
+            tenant_id="tenant-123",
+        )
+
+        assert request.client_id == ""
+        assert request.tenant_id == "tenant-123"
+        assert request.authorization_url is None
+        assert request.token_url is None
 
 
 class TestOAuthConnectionSummary:
