@@ -30,6 +30,7 @@ from bifrost import workflow, context
     description="Sync workflow for execution tests",
 )
 async def e2e_exec_sync_workflow(message: str, count: int = 1):
+    print(f"Printed: {message}")
     return {
         "status": "success",
         "message": message,
@@ -615,14 +616,11 @@ class TestExecutionDetails:
         )
         assert response.status_code == 200, f"Get logs failed: {response.text}"
 
-        # Verify logs structure
-        logs = response.json()
-        assert isinstance(logs, list), "Logs should be a list"
-        # Each log entry should have expected fields
-        for log in logs:
-            assert "timestamp" in log or "level" in log or "message" in log, (
-                f"Log entry missing expected fields: {log}"
-            )
+        printed = [
+            log["level"] for log in response.json()
+            if log["message"] == "Printed: Logs test"
+        ]
+        assert printed == ["INFO"]
 
 
 @pytest.mark.e2e
