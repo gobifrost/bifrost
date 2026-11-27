@@ -927,3 +927,19 @@ test("a running container without a bound fact is not held or adopted", async ()
     assert.equal(calls.start, 0);
     assert.equal(calls.destroy, 0);
 });
+
+
+test("the default worker command retains the production image privilege drop", async () => {
+    let entrypoint;
+    const ledger = new WorkerLedger({}, {
+        ...ENV,
+        WORKER_CONTAINER: {
+            getByName: () => ({ fetch: async (_url, init) => {
+                entrypoint = JSON.parse(init.body).entrypoint;
+                return new Response("{}", { status: 200 });
+            } }),
+        },
+    });
+    await ledger.runtime(WORKER).start({ worker_id: WORKER, resource_uid: "uid-1" });
+    assert.deepEqual(entrypoint, ["/entrypoint.sh", "python", "-m", "src.worker.main"]);
+});

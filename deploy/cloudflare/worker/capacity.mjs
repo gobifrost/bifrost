@@ -139,7 +139,7 @@ function parseContainerEnv(env) {
 function parseEntrypoint(env) {
     const raw = env.WORKER_ENTRYPOINT_JSON;
     if (typeof raw !== "string" || raw.trim() === "") {
-        return ["python", "-m", "src.worker.main"];
+        return ["/entrypoint.sh", "python", "-m", "src.worker.main"];
     }
     try {
         const parsed = JSON.parse(raw);
