@@ -1,0 +1,10 @@
+{
+  "key": "pr:1501",
+  "classification": "omit",
+  "entry_ids": [],
+  "reason": "Repairs existing Solution permission-request approval and status visibility; no new permission model or breaking contract.",
+  "review": {
+    "status": "approved",
+    "evidence": ["https://github.com/gobifrost/bifrost/pull/1501"]
+  }
+}
