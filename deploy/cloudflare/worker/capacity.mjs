@@ -353,6 +353,7 @@ export class WorkerContainer {
 
     async handle(request) {
         const url = new URL(request.url);
+        let stage = "request_validation";
         try {
             if (url.pathname === "/start") {
                 const body = await request.json();
@@ -379,6 +380,7 @@ export class WorkerContainer {
                         destroyed: false,
                         exit: null,
                     });
+                    stage = "container_start";
                     this.container.start({
                         env: body.env ?? {},
                         entrypoint: body.entrypoint ?? [],
@@ -387,7 +389,9 @@ export class WorkerContainer {
                 }
                 // Set the timeout after accepting startup, including its cold
                 // pending window; a running sample is not a readiness gate.
+                stage = "inactivity_timeout";
                 await this.holdOpen();
+                stage = "exit_observer";
                 this.observeExit(binding);
                 return json(200, { running: this.container.running === true, lifecycle: "accepted" });
             }
@@ -427,7 +431,15 @@ export class WorkerContainer {
             return json(404, { error: "not found" });
         } catch (error) {
             const status = error instanceof LifecycleError ? error.status : 500;
-            return json(status, { error: `${error.name}: ${error.message}`.slice(0, 200) });
+            // Runtime messages can contain startup environment values. Retain
+            // only fixed stage/type labels so provider logs diagnose a failed
+            // launch without leaking worker credentials.
+            const kind = error instanceof TypeError ? "TypeError"
+                : error instanceof RangeError ? "RangeError"
+                : error instanceof LifecycleError ? "LifecycleError" : "Error";
+            const diagnostic = `container:${stage}:${kind}`;
+            console.error(diagnostic);
+            return json(status, { error: diagnostic });
         }
     }
 }
