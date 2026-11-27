@@ -36,6 +36,12 @@ test("an administrator configures workload identity without OAuth token controls
 				"Authentication is handled by your workflow’s provider SDK using a configured runtime identity. Configure identity trust and permissions externally. Bifrost does not obtain or refresh tokens in this mode.",
 			),
 		).toBeVisible();
+		const tooltip = page.locator('[data-slot="tooltip-content"]');
+		await expect(tooltip).toBeVisible();
+		const bounds = await tooltip.boundingBox();
+		expect(bounds).not.toBeNull();
+		expect(bounds!.width).toBeLessThanOrEqual(320);
+		expect(bounds!.height).toBeGreaterThan(40);
 		await expect(page.getByLabel(/token url/i)).toHaveCount(0);
 		await page.getByRole("button", { name: "Create Connection" }).click();
 		await expect(
