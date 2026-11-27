@@ -623,7 +623,11 @@ test("the ledger refuses to record a container destroy that failed", async () =>
 });
 
 test("a restarted container DO re-applies the hold without a full env", async () => {
-    const { ctx, calls } = fakeContainer({ running: true });
+    const { ctx, calls, storage } = fakeContainer({ running: true });
+    storage.set("lifecycle", {
+        version: 1, binding: { worker_id: WORKER, resource_uid: "uid-1" },
+        start_requested: true, destroyed: false, exit: null,
+    });
     // Recovery must depend only on the timeout setting: an unrelated
     // misconfiguration must not stop it from holding a running container.
     new WorkerContainer(ctx, { MAX_LIFETIME_SECONDS: "3600" });
@@ -865,4 +869,61 @@ test("container launch failure exposes a bounded stage without runtime secrets",
     assert.equal(JSON.parse(body).error, "container:container_start:TypeError");
     assert.deepEqual(messages, ["container:container_start:TypeError"]);
     assert.ok(!body.includes("secret-worker-credential"));
+});
+
+
+test("allocation failure is witnessed even when timeout setup rejects", async () => {
+    let rejectMonitor;
+    const monitor = new Promise((_resolve, reject) => { rejectMonitor = reject; });
+    // Keep the negative control from producing a separate unhandled rejection.
+    monitor.catch(() => {});
+    const { ctx, calls } = fakeContainer({ monitor });
+    const observations = [];
+    ctx.waitUntil = (promise) => observations.push(promise);
+    ctx.container.start = function () { calls.start += 1; this.running = false; };
+    ctx.container.setInactivityTimeout = async () => {
+        const error = new Error("There is no container instance that can be provided to this Durable Object, try again later");
+        rejectMonitor(error);
+        throw error;
+    };
+    const worker = new WorkerContainer(ctx, ENV);
+    assert.equal((await worker.fetch(startRequest())).status, 500);
+    assert.equal(calls.monitors, 1);
+    await Promise.all(observations);
+    assert.equal((await (await worker.fetch(lifecycleRequest("status"))).json()).lifecycle, "exited");
+    assert.equal((await worker.fetch(startRequest())).status, 409);
+    assert.equal(calls.start, 1, "the failed incarnation must never be restarted");
+});
+
+test("deleting an accepted pending start cancels the physical request", async () => {
+    const { ctx, calls } = fakeContainer();
+    ctx.container.start = function () { calls.start += 1; this.running = false; };
+    const worker = new WorkerContainer(ctx, ENV);
+    await worker.fetch(startRequest());
+    assert.equal((await worker.fetch(lifecycleRequest("destroy"))).status, 200);
+    assert.equal(calls.destroy, 1, "not-running is not proof that startup was cancelled");
+    assert.equal((await worker.fetch(startRequest())).status, 409);
+});
+
+test("a terminal incarnation cannot hold a late container alive after restart", async () => {
+    const { ctx, calls } = fakeContainer();
+    const first = new WorkerContainer(ctx, ENV);
+    await first.fetch(startRequest());
+    await first.fetch(lifecycleRequest("destroy"));
+    const holds = calls.holds.length;
+    ctx.container.running = true;
+    const restarted = new WorkerContainer(ctx, ENV);
+    assert.equal((await restarted.fetch(startRequest())).status, 409);
+    assert.equal(ctx.container.running, false);
+    assert.equal(calls.holds.length, holds);
+});
+
+
+test("a running container without a bound fact is not held or adopted", async () => {
+    const { ctx, calls } = fakeContainer({ running: true });
+    const worker = new WorkerContainer(ctx, ENV);
+    assert.equal((await worker.fetch(lifecycleRequest("status"))).status, 502);
+    assert.deepEqual(calls.holds, []);
+    assert.equal(calls.start, 0);
+    assert.equal(calls.destroy, 0);
 });
