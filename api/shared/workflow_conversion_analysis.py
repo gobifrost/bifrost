@@ -29,7 +29,7 @@ from shared.workflow_conversion_sdk import (
     sdk_object_methods,
 )
 
-ANALYZER_VERSION = "29"
+ANALYZER_VERSION = "30"
 MAX_SOURCE_BYTES = 2_000_000
 MAX_AST_NODES = 256_000
 # Oversized sources fall back to a streaming token scan, which is bounded
@@ -2282,14 +2282,18 @@ def _function_parameters(node: ast.FunctionDef | ast.AsyncFunctionDef) -> tuple[
     )
 
 
-def _parameter_local_classes(
-    node: ast.FunctionDef | ast.AsyncFunctionDef, class_names: set[str]
-) -> dict[str, str]:
+def _parameter_class_annotations(
+    node: ast.FunctionDef | ast.AsyncFunctionDef,
+    class_names: set[str],
+    bindings: dict[str, dict[str, Any]],
+) -> dict[str, str | dict[str, Any]]:
     return {
-        argument.arg: class_name
+        argument.arg: annotation
         for argument in [*node.args.posonlyargs, *node.args.args, *node.args.kwonlyargs]
-        if (class_name := _annotation_local_class(argument.annotation, class_names))
-        is not None
+        if (
+            annotation := _annotation_local_class(argument.annotation, class_names)
+            or _annotation_imported_class(argument.annotation, bindings)
+        ) is not None
     }
 
 
@@ -3303,7 +3307,9 @@ def summarize_source(source: str) -> dict[str, Any]:
             "bindings": function_bindings,
             "imports": function_imports,
             "parameters": list(_function_parameters(node)),
-            "parameter_classes": _parameter_local_classes(node, set(class_nodes)),
+            "parameter_classes": _parameter_class_annotations(
+                node, set(class_nodes), bindings
+            ),
             "context_parameter": context_parameter,
             "uncertain_context_parameter": uncertain_context_parameter,
             "return_shape": _return_shape(node, function_bindings, set(class_nodes)),
@@ -3329,7 +3335,9 @@ def summarize_source(source: str) -> dict[str, Any]:
                 "bindings": nested_bindings,
                 "imports": nested_imports,
                 "parameters": list(_function_parameters(nested)),
-                "parameter_classes": _parameter_local_classes(nested, set(class_nodes)),
+                "parameter_classes": _parameter_class_annotations(
+                    nested, set(class_nodes), function_bindings
+                ),
                 "context_parameter": None,
                 "uncertain_context_parameter": None,
                 "return_shape": _return_shape(
@@ -3380,6 +3388,9 @@ def summarize_source(source: str) -> dict[str, Any]:
                 "bindings": method_bindings,
                 "imports": method_imports,
                 "parameters": list(_function_parameters(method)),
+                "parameter_classes": _parameter_class_annotations(
+                    method, set(class_nodes), bindings
+                ),
                 "return_shape": _return_shape(
                     method, method_bindings, set(class_nodes),
                     {name: function.get("return_shape", "unknown")
@@ -3404,6 +3415,9 @@ def summarize_source(source: str) -> dict[str, Any]:
                     "bindings": nested_bindings,
                     "imports": nested_imports,
                     "parameters": list(_function_parameters(nested)),
+                    "parameter_classes": _parameter_class_annotations(
+                        nested, set(class_nodes), method_bindings
+                    ),
                     "return_shape": _return_shape(
                         nested, nested_bindings, set(class_nodes)
                     ),
@@ -4158,12 +4172,56 @@ async def analyze_workflow(
             return False
         return await entrypoint_exists(resolved, binding["symbol"], seen)
 
+    async def annotated_callable_class(
+        source_file: SourceFile, annotation: str | dict[str, Any], method: str
+    ) -> str | None:
+        # An annotation describes a possible receiver. Inspect its declaration
+        # without treating the annotation as a constructor or method call.
+        seen: set[tuple[str, str]] = set()
+        while not isinstance(annotation, str):
+            if annotation.get("member") or not consume_graph_step(source_file):
+                return None
+            class_name = annotation["symbol"]
+            resolved = await resolve_import(
+                source_file, annotation["module"], annotation["level"]
+            )
+            if resolved is None:
+                return None
+            marker = (resolved.key, class_name)
+            if marker in seen:
+                return None
+            seen.add(marker)
+            source_file = resolved
+            summary = await load(source_file)
+            if class_name in summary.get("classes", {}):
+                annotation = class_name
+                continue
+            exported = summary.get("bindings", {}).get(class_name, {})
+            if not exported.get("symbol"):
+                return None
+            annotation = exported
+
+        summary = await load(source_file)
+        class_summary = summary.get("classes", {}).get(annotation, {})
+        return annotation if method in class_summary.get("callable_fields", ()) else None
+
+    def add_unknown_callable_field(
+        source_file: SourceFile, line: int, class_name: str, field_name: str
+    ) -> None:
+        add_unknown(
+            source_file,
+            {
+                "line": line,
+                "reason": f"unresolved callable field: {class_name}.{field_name}",
+            },
+        )
+
     async def process_events(
         source_file: SourceFile,
         events: list[dict[str, Any]],
         via: list[str],
         parameter_context: dict[str, str] | None = None,
-        parameter_classes: dict[str, str] | None = None,
+        parameter_classes: dict[str, str | dict[str, Any]] | None = None,
     ) -> None:
         parameter_context = parameter_context or {}
         parameter_classes = parameter_classes or {}
@@ -4380,18 +4438,15 @@ async def analyze_workflow(
                             },
                         )
                     continue
-                class_name = parameter_classes.get(event["receiver"])
-                if class_name is not None:
-                    summary = await load(source_file)
-                    class_summary = summary.get("classes", {}).get(class_name, {})
+                annotation = parameter_classes.get(event["receiver"])
+                if annotation is not None:
                     method = event["method"]
-                    if method in class_summary.get("callable_fields", ()):
-                        add_unknown(
-                            source_file,
-                            {
-                                "line": event["line"],
-                                "reason": f"unresolved callable field: {class_name}.{method}",
-                            },
+                    class_name = await annotated_callable_class(
+                        source_file, annotation, method
+                    )
+                    if class_name is not None:
+                        add_unknown_callable_field(
+                            source_file, event["line"], class_name, method
                         )
             elif kind == "imported":
                 await resolve_binding(
@@ -4779,7 +4834,7 @@ async def analyze_workflow(
 
     async def walk_class_callback(
         source_file: SourceFile, callback: Any, line: int, via: list[str]
-    ) -> None:
+    ) -> bool:
         if isinstance(callback, str):
             if callback.startswith("sdk:"):
                 add_sdk_call(
@@ -4787,9 +4842,10 @@ async def analyze_workflow(
                     {"line": line, "call": callback.removeprefix("sdk:")},
                     via,
                 )
-            return
+                return True
+            return False
         if not isinstance(callback, dict):
-            return
+            return False
         origin = callback.get("source_key")
         callback_source = source_file if origin is None else source_descriptors[origin]
         if callback["kind"] == "sdk":
@@ -4813,6 +4869,9 @@ async def analyze_workflow(
                 line,
                 optional=callback.get("optional", False),
             )
+        else:
+            return False
+        return True
 
     def field_callback_target(
         callback: Any, callable_context: dict[str, Any]
@@ -4825,8 +4884,31 @@ async def analyze_workflow(
             return callable_context.get(callback["name"], callback.get("fallback"))
         return callback
 
+    async def walk_callable_field(
+        source_file: SourceFile,
+        class_name: str,
+        class_summary: dict[str, Any],
+        field_name: str,
+        via: list[str],
+        line: int,
+        callable_context: dict[str, Any],
+    ) -> bool:
+        callbacks = class_summary.get("field_callback_targets", {}).get(field_name, [])
+        if not callbacks:
+            if field_name not in class_summary.get("callable_fields", ()):
+                return False
+            callbacks = [callable_context.get(field_name)]
+        for callback in callbacks:
+            resolved = await walk_class_callback(
+                source_file, field_callback_target(callback, callable_context), line, via
+            )
+            if not resolved:
+                add_unknown_callable_field(source_file, line, class_name, field_name)
+        return True
+
     async def walk_class_field(
         source_file: SourceFile,
+        class_name: str,
         class_summary: dict[str, Any],
         field_path: str,
         via: list[str],
@@ -4860,23 +4942,10 @@ async def analyze_workflow(
                     {"line": line, "reason": "unrecognized SDK call"},
                 )
             return True
-        callbacks = class_summary.get("field_callback_targets", {}).get(
-            field_name, []
-        )
-        if callbacks and not separator:
-            for callback in callbacks:
-                await walk_class_callback(
-                    source_file,
-                    field_callback_target(callback, callable_context),
-                    line,
-                    via,
-                )
+        if not separator and await walk_callable_field(
+            source_file, class_name, class_summary, field_name, via, line, callable_context
+        ):
             return True
-        if field_name in class_summary.get("callable_fields", ()) and not separator:
-            callback = callable_context.get(field_name)
-            if callback is not None:
-                await walk_class_callback(source_file, callback, line, via)
-                return True
         field_kind = class_summary.get("data_fields", {}).get(field_name)
         if field_kind is not None:
             return not separator or continuation in _DATA_METHODS.get(field_kind, ())
@@ -4989,25 +5058,15 @@ async def analyze_workflow(
                     )
                 for event in method.get("events", []):
                     if event["kind"] == "self_method":
-                        callbacks = class_summary.get("field_callback_targets", {}).get(
-                            event["name"], []
-                        )
-                        if not callbacks and event["name"] in class_summary.get(
-                            "callable_fields", ()
+                        if not await walk_callable_field(
+                            source_file,
+                            class_name,
+                            class_summary,
+                            event["name"],
+                            via,
+                            event["line"],
+                            callable_context,
                         ):
-                            callback = callable_context.get(event["name"])
-                            callbacks = [callback] if callback is not None else []
-                        if callbacks:
-                            for callback in callbacks:
-                                await walk_class_callback(
-                                    source_file,
-                                    field_callback_target(
-                                        callback, callable_context
-                                    ),
-                                    event["line"],
-                                    via,
-                                )
-                        else:
                             await walk_class_method(
                                 source_file,
                                 class_name,
@@ -5018,19 +5077,26 @@ async def analyze_workflow(
                     elif event["kind"] == "self_field_method":
                         await walk_class_field(
                             source_file,
+                            class_name,
                             class_summary,
                             event["name"],
                             via,
                             event["line"],
                             callable_context,
                         )
-                await process_events(source_file, method.get("events", []), via)
+                await process_events(
+                    source_file,
+                    method.get("events", []),
+                    via,
+                    parameter_classes=method.get("parameter_classes"),
+                )
             finally:
                 active_functions.remove(marker)
             completed_functions.add(marker)
             return
         if await walk_class_field(
             source_file,
+            class_name,
             class_summary,
             method_name,
             via,

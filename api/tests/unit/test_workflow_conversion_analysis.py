@@ -3471,6 +3471,66 @@ async def run():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "separate_module", "call_site"),
+    [
+        (
+            "def dispatch(platform: Platform):\n    return platform.lister()\n"
+            "def run():\n    return dispatch(Platform(load))\n",
+            True,
+            "run.py:8",
+        ),
+        (
+            "class Runner:\n    def dispatch(self, platform: Platform):\n"
+            "        return platform.lister()\n"
+            "def run():\n    runner = Runner()\n    return runner.dispatch(Platform(load))\n",
+            False,
+            "run.py:17",
+        ),
+        (
+            "def run():\n    platform = Platform(load)\n    return platform.dispatch()\n",
+            True,
+            "models.py:9",
+        ),
+    ],
+    ids=["imported-annotation", "method-parameter", "self-call"],
+)
+async def test_unresolved_dataclass_callback_routes_require_review(
+    body: str, separate_module: bool, call_site: str
+) -> None:
+    model = """\
+from dataclasses import dataclass
+from typing import Callable
+
+@dataclass
+class Platform:
+    lister: Callable
+
+    def dispatch(self):
+        return self.lister()
+"""
+    support = _source("models.py", model)
+    prefix = "from models import Platform\n" if separate_module else model
+    entry = _source(
+        "run.py",
+        prefix + "from bifrost import config\n"
+        "\ndef load():\n    return config.get('vendor')\n\n" + body,
+    )
+
+    async def resolve_import(_source_file: SourceFile, module: str, _level: int):
+        return support if module == "models" else None
+
+    async def summarize(source_file: SourceFile) -> dict:
+        return summarize_source(source_file.source)
+
+    result = await analyze_workflow(entry, "run", resolve_import, summarize)
+
+    assert result["unknowns"] == [
+        f"{call_site}: unresolved callable field: Platform.lister"
+    ]
+
+
+@pytest.mark.asyncio
 async def test_dataclass_sdk_callable_fields_only_inventory_reachable_callbacks() -> None:
     entry = _source(
         "workflows/run.py",
