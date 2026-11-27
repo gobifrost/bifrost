@@ -851,3 +851,18 @@ test("a delete whose release failed is finished by the retry", async () => {
     assert.equal(retry.status, 200);
     assert.deepEqual(slots, []);
 });
+
+
+test("container launch failure exposes a bounded stage without runtime secrets", async (t) => {
+    const { ctx } = fakeContainer();
+    const messages = [];
+    t.mock.method(console, "error", (message) => messages.push(message));
+    ctx.container.start = () => { throw new TypeError("secret-worker-credential"); };
+    const worker = new WorkerContainer(ctx, ENV);
+    const response = await worker.fetch(startRequest());
+    assert.equal(response.status, 500);
+    const body = await response.text();
+    assert.equal(JSON.parse(body).error, "container:container_start:TypeError");
+    assert.deepEqual(messages, ["container:container_start:TypeError"]);
+    assert.ok(!body.includes("secret-worker-credential"));
+});
