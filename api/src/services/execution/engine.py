@@ -465,6 +465,17 @@ def _capture_execution_streams(
             yield
     finally:
         secrets = context._collect_secret_values()
+        # JSON and Python containers print escaped values, especially for
+        # multiline credentials. Match those spellings as well as raw text.
+        secrets |= {
+            escaped
+            for secret in secrets
+            for escaped in (
+                json.dumps(secret)[1:-1],
+                json.dumps(secret, ensure_ascii=False)[1:-1],
+                repr(secret)[1:-1],
+            )
+        }
         for level, stream in (("INFO", stdout), ("ERROR", stderr)):
             # Redact before splitting: a registered credential can span lines.
             output = redact_secrets(stream.getvalue(), secrets)

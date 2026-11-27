@@ -245,3 +245,32 @@ async def test_printed_output_is_redacted_before_streaming_and_retention(monkeyp
     assert [(row["level"], row["message"]) for row in result.logs[:2]] == [
         (level.lower(), message) for level, message in sent
     ]
+
+
+@pytest.mark.parametrize(
+    "format_value",
+    [json.dumps, lambda value: json.dumps(value, ensure_ascii=False), repr],
+    ids=["json-ascii", "json-unicode", "dict-repr"],
+)
+async def test_printed_serialized_secret_is_redacted_before_streaming_and_retention(
+    monkeypatch, format_value,
+):
+    from unittest.mock import Mock
+
+    from bifrost._context import get_execution_context
+    from src.services.execution import engine
+
+    write_log = Mock()
+    monkeypatch.setattr(engine, "write_log", write_log)
+    secret = """clé-'part one"\npart two\x00"""
+
+    async def workflow():
+        get_execution_context()._register_dynamic_secret(secret)
+        print(format_value({"credential": secret, "other": "kept"}))
+
+    result = await execute(_request(workflow))
+    expected = format_value({"credential": "[REDACTED]", "other": "kept"})
+
+    assert result.status == ExecutionStatus.SUCCESS
+    write_log.assert_called_once_with(level="INFO", message=expected)
+    assert [row["message"] for row in result.logs] == [expected]
