@@ -97,22 +97,16 @@ test("integration workflow shortcuts persist across reload and launch the linked
 		await page.keyboard.press("Escape");
 		await page.keyboard.press("Escape");
 
-		await expect(
-			actions.getByRole("button", { name: "Sync Now", exact: true }),
-		).toBeVisible();
-		await expect(
-			actions.getByRole("button", {
-				name: "Verify Settings",
-				exact: true,
-			}),
-		).toHaveCount(0);
-		const first = await actions
-			.getByRole("button", { name: "Sync Now", exact: true })
+		const status = await page
+			.getByRole("button", { name: /^Configuration:/ })
 			.boundingBox();
 		const menu = await actions
-			.getByRole("button", { name: /Workflows/ })
+			.getByRole("button", { name: "Workflows", exact: true })
 			.boundingBox();
-		expect(first?.y).toBe(menu?.y);
+		expect(status).not.toBeNull();
+		expect(menu).not.toBeNull();
+		expect(status!.y).toBe(menu!.y);
+		expect(status!.x + status!.width).toBeLessThanOrEqual(menu!.x);
 		await actions.getByRole("button", { name: /Workflows/ }).click();
 		await expect(
 			page.getByRole("menuitem", { name: /Sync Now/ }),
@@ -123,6 +117,7 @@ test("integration workflow shortcuts persist across reload and launch the linked
 			.getByRole("dialog")
 			.getByRole("button", { name: "Close", exact: true })
 			.click();
+		await page.setViewportSize({ width: 1920, height: 1000 });
 		await actions
 			.getByRole("button", { name: "Sync Now", exact: true })
 			.click();

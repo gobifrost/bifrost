@@ -8,7 +8,7 @@ test("an administrator configures workload identity without OAuth token controls
 	let integrationId: string | undefined;
 	try {
 		const integration = await api.post("/api/integrations", {
-			data: { name },
+			data: { name, authentication_method: "oauth" },
 		});
 		expect(integration.ok(), await integration.text()).toBe(true);
 		integrationId = ((await integration.json()) as { id: string }).id;

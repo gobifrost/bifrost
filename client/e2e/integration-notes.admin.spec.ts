@@ -46,9 +46,9 @@ test("integration setup instructions work across detail, defaults, and phone lay
 			animations: "disabled",
 		});
 
-		await page.getByRole("button", { name: "Defaults", exact: true }).click();
+		await page.getByRole("button", { name: /^Configuration:/ }).click();
 		await page
-			.getByRole("button", { name: "Configure default values" })
+			.getByRole("button", { name: "Configure", exact: true })
 			.click();
 		const defaultsDialog = page.getByRole("dialog", {
 			name: "Edit Configuration Defaults",
