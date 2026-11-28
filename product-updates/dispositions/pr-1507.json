@@ -1,0 +1,14 @@
+{
+  "key": "pr:1507",
+  "classification": "highlight",
+  "entry_ids": [
+    "bfeb8b8b-4cb5-49c6-bf40-e7f9ba52b45e"
+  ],
+  "reason": "New generic workload sign-in capability for existing Bifrost Identities.",
+  "review": {
+    "status": "approved",
+    "evidence": [
+      "Jack approved this exact entry and setup prompt in the private owner conversation on 2026-11-28: \"This is fine. I still need screenshots before I approve the merge.\" Announcement approval only; merge remains pending."
+    ]
+  }
+}
