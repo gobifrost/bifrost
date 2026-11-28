@@ -16,6 +16,8 @@ from uuid import UUID
 MAX_AGENT_COMPUTE_RPCS = 128
 MAX_AGENT_COMPUTE_JOURNAL_BYTES = 64 * 1024 * 1024
 MAX_AGENT_COMPUTE_PAYLOAD_BYTES = 8 * 1024 * 1024
+# Each admitted callback needs room for one bounded failure receipt.
+MAX_AGENT_COMPUTE_ERROR_RESERVE_BYTES = MAX_AGENT_COMPUTE_RPCS * 64 * 1024
 _INIT_FIELDS = frozenset({"plan", "model_name", "model_profile_payload_b64", "usage_initial", "user_prompt", "history"})
 
 class RemoteAgentRuntimeError(RuntimeError):
@@ -135,13 +137,18 @@ class ComputeStageHost(ABC):
         self, request_id: str, op: str, payload: dict[str, Any], stream: bool, _payload_hash: str,
     ) -> None:
         receipt = self._receipts[request_id]
+        next_sequence = 0
         try:
             async for frame in self._reply_frames(request_id, op, payload, stream):
                 self._retain_frame(receipt, frame)
+                if stream:
+                    next_sequence = frame["sequence"] + 1
                 await self._send_reply(request_id, frame)
         except Exception as exc:
-            frame = {"error_type": type(exc).__name__, "error": str(exc)[:4_000]}
-            self._retain_frame(receipt, frame)
+            frame = self._error_frame(
+                type(exc).__name__[:100], str(exc)[:4_000], stream=stream, sequence=next_sequence,
+            )
+            self._retain_frame(receipt, frame, terminal_error=True)
             await self._send_reply(request_id, frame)
         receipt.complete = True
 
@@ -189,14 +196,18 @@ class ComputeStageHost(ABC):
                 await asyncio.shield(receipt.task)
             return
         if len(self._inflight) + len(self._receipts) >= MAX_AGENT_COMPUTE_RPCS:
-            raise RemoteAgentRuntimeError("Agent compute RPC journal is full")
+            await self._send_reply(request_id, self._error_frame(
+                "RemoteAgentRuntimeError", "Agent compute RPC journal is full", stream=stream,
+            ))
+            return
         if (
             self._journal_bytes
             > MAX_AGENT_COMPUTE_JOURNAL_BYTES - MAX_AGENT_COMPUTE_PAYLOAD_BYTES
         ):
-            raise RemoteAgentRuntimeError(
-                "Agent compute RPC journal byte limit is reached"
-            )
+            await self._send_reply(request_id, self._error_frame(
+                "RemoteAgentRuntimeError", "Agent compute RPC journal byte limit is reached", stream=stream,
+            ))
+            return
         receipt = _Receipt(payload_hash, [])
         self._receipts[request_id] = receipt
         task = asyncio.create_task(
@@ -372,9 +383,23 @@ class ComputeStageHost(ABC):
             raise RemoteAgentRuntimeError("Agent compute RPC stream flag is invalid")
         return request_id, op, payload, stream
 
-    def _retain_frame(self, receipt: _Receipt, frame: dict[str, Any]) -> None:
+    @staticmethod
+    def _error_frame(
+        error_type: str, error: str, *, stream: bool, sequence: int = 0,
+    ) -> dict[str, Any]:
+        frame: dict[str, Any] = {"error_type": error_type, "error": error}
+        if stream:
+            frame.update(sequence=sequence, final=True)
+        return frame
+
+    def _retain_frame(
+        self, receipt: _Receipt, frame: dict[str, Any], *, terminal_error: bool = False,
+    ) -> None:
         size = len(_json_bytes(frame, label="RPC receipt"))
-        if self._journal_bytes + size > MAX_AGENT_COMPUTE_JOURNAL_BYTES:
+        limit = MAX_AGENT_COMPUTE_JOURNAL_BYTES
+        if not terminal_error:
+            limit -= MAX_AGENT_COMPUTE_ERROR_RESERVE_BYTES
+        if self._journal_bytes + size > limit:
             raise RemoteAgentRuntimeError(
                 "Agent compute RPC journal byte limit is reached"
             )

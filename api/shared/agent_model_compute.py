@@ -607,7 +607,7 @@ def _serialize_stream_final(response: ModelResponse) -> bytes:
     )
 
 
-def _deserialize_stream_frame(
+def deserialize_model_stream_frame(
     payload: bytes,
 ) -> tuple[str, ModelResponseStreamEvent | ModelResponse]:
     envelope = _load_json(payload)
@@ -715,7 +715,7 @@ class _RemoteStreamedResponse(StreamedResponse):
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         async for payload in self._source:
-            kind, frame = _deserialize_stream_frame(payload)
+            kind, frame = deserialize_model_stream_frame(payload)
             if kind == "stream-event":
                 assert not isinstance(frame, ModelResponse)
                 self._parts_manager.apply_event(frame)
