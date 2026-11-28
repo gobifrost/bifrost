@@ -13,6 +13,7 @@ import { getErrorMessage } from "@/lib/api-error";
 import { QueueBadge } from "./QueueBadge";
 import { MemoryChart } from "./MemoryChart";
 import { ContainerTable } from "./ContainerTable";
+import { WorkerInstances } from "./WorkerInstances";
 import { useWorkerWebSocket } from "../hooks/useWorkerWebSocket";
 
 export function WorkersTab() {
@@ -154,6 +155,8 @@ export function WorkersTab() {
 					</Button>
 				</div>
 			</div>
+
+			<WorkerInstances />
 
 			{/* Memory Chart */}
 			<MemoryChart livePools={pools} />

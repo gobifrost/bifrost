@@ -11879,6 +11879,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/platform/workers/instances": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Worker Instances
+         * @description List active and retained terminal execution worker instances.
+         */
+        get: operations["get_worker_instances_api_platform_workers_instances_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/platform/workers/metrics": {
         parameters: {
             query?: never;
@@ -32413,6 +32433,55 @@ export interface components {
              * @default 0
              */
             rate_limited_count_24h: number;
+        };
+        /** WorkerInstance */
+        WorkerInstance: {
+            /**
+             * Id
+             * Format: uuid
+             */
+            id: string;
+            /**
+             * Form
+             * @enum {string}
+             */
+            form: "external" | "job" | "static";
+            /** State */
+            state: string;
+            /** Capacity Scope */
+            capacity_scope: string | null;
+            /** Capacity Resource Uid */
+            capacity_resource_uid: string | null;
+            /** Version */
+            version: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Ended At */
+            ended_at: string | null;
+            /** End Reason */
+            end_reason: string | null;
+        };
+        /** WorkerInstanceCursor */
+        WorkerInstanceCursor: {
+            /**
+             * Before Created At
+             * Format: date-time
+             */
+            before_created_at: string;
+            /**
+             * Before Id
+             * Format: uuid
+             */
+            before_id: string;
+        };
+        /** WorkerInstancePage */
+        WorkerInstancePage: {
+            /** Items */
+            items: components["schemas"]["WorkerInstance"][];
+            next_cursor: components["schemas"]["WorkerInstanceCursor"] | null;
         };
         /**
          * WorkerMetricPoint
@@ -55763,6 +55832,40 @@ export interface operations {
                 };
                 content: {
                     "text/plain": string;
+                };
+            };
+        };
+    };
+    get_worker_instances_api_platform_workers_instances_get: {
+        parameters: {
+            query?: {
+                form?: ("external" | "job" | "static") | null;
+                limit?: number;
+                before_created_at?: string | null;
+                before_id?: string | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["WorkerInstancePage"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

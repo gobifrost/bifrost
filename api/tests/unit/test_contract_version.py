@@ -440,7 +440,8 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # Inline-code permission clarification only changes an existing field description.
     # CLI shapes and MIN_CLI_VERSION remain unchanged.
     # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
-    "8aac6486b8059b134f11a09401a194910c87ba1e5f57f514eb4811bf11974ade"
+    # #1339 adds read-only worker inventory DTOs; existing CLI contracts are unchanged.
+    "bccbe5a4c2dcf6b9b1135f5c14ce04dc007de678257515efc3a431e7e091b137"
 )
 
 
