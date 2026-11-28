@@ -31,7 +31,7 @@ from src.services.artifacts import ArtifactService, ArtifactAccessError, artifac
 from src.services.authorization.callers import load_human_caller
 from src.services.repo_storage import RepoStorage
 from src.services.solutions.storage import SolutionStorage
-from src.services.workflow_permissions import load_workflow_permissions, request_digest
+from src.services.workflow_permissions import load_workflow_permissions, request_digest, sync_solution_permission_requests
 from tests.e2e.conftest import execute_workflow_sync, poll_until
 
 
@@ -104,12 +104,20 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         function_name="run",
         path=entry_path,
         access_level="authenticated",
-        permission_mode="full",
+        permission_mode="restricted",
         is_active=True,
     )
     db_session.add(workflow)
     db_session.add(solution)
     db_session.add(solution_workflow)
+    await db_session.flush()
+    declared_permissions = ["artifacts.read.all", "roles.read", "tables.readwrite"]
+    declared = RequestedWorkflowPermissions(
+        mode="restricted", grants=[{"permission": p} for p in declared_permissions]
+    )
+    await sync_solution_permission_requests(
+        db_session, solution_id=solution.id, requests={solution_workflow.id: declared}
+    )
     await db_session.commit()
     assert platform_admin.user_id is not None
     existing_identity_ids = {
@@ -233,6 +241,9 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
                 for evidence in candidate["evidence"]
             )
             assert candidate["unknowns"] == []
+        assert solution_item["status"] == "ready"
+        assert solution_item["solution_permission_request"]["status"] == "pending"
+        assert solution_item["solution_permission_request"]["requested_permissions"] == declared_permissions
         assert solution_item["source_permissions"] == solution_permissions
         assert solution_item["proposed_permissions"] == solution_permissions
         assert any(
@@ -240,6 +251,14 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             for evidence in solution_item["evidence"]
         )
 
+        refused = e2e_client.post(
+            f"/api/workflow-conversions/{analysis_job_id}/apply",
+            headers=org1_user.headers,
+            json={"selections": [{"workflow_id": str(solution_workflow.id),
+                "source_fingerprint": solution_item["source_fingerprint"]}],
+                "acknowledged_solution_requests": True},
+        )
+        assert refused.status_code == 403, refused.text
         apply_response = e2e_client.post(
             f"/api/workflow-conversions/{analysis_job_id}/apply",
             headers=platform_admin.headers,
@@ -322,13 +341,13 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
         ).scalar_one()
         expected_request = RequestedWorkflowPermissions(
             mode=WorkflowPermissionMode.RESTRICTED,
-            grants=[WorkflowPermissionGrantSpec(permission=p) for p in solution_permissions],
+            grants=[WorkflowPermissionGrantSpec(permission=p) for p in declared_permissions],
         )
         assert (
             solution_request.status,
             solution_request.requested_mode,
             solution_request.requested_grants,
-        ) == ("approved", "restricted", [{"permission": p} for p in solution_permissions])
+        ) == ("approved", "restricted", [{"permission": p} for p in declared_permissions])
         assert (
             solution_request.request_digest
             == solution_request.approved_digest
@@ -338,7 +357,28 @@ async def test_reviewed_conversion_discovers_helper_sdk_calls_and_applies_restri
             db_session, solution_workflow
         )
         assert mode is WorkflowPermissionMode.RESTRICTED
-        assert [grant.permission for grant in effective_grants] == solution_permissions
+        assert [grant.permission for grant in effective_grants] == declared_permissions
+        metadata = e2e_client.get(
+            f"/api/workflows/{solution_workflow.id}", headers=platform_admin.headers
+        )
+        assert metadata.status_code == 200, metadata.text
+        assert metadata.json()["solution_permission_request"]["status"] == "approved"
+        await sync_solution_permission_requests(
+            db_session, solution_id=solution.id, requests={solution_workflow.id: declared}
+        )
+        assert (await load_workflow_permissions(db_session, solution_workflow))[1] == effective_grants
+        changed = RequestedWorkflowPermissions(
+            mode="restricted", grants=[*declared.grants, {"permission": "tables.read"}]
+        )
+        await sync_solution_permission_requests(
+            db_session, solution_id=solution.id, requests={solution_workflow.id: changed}
+        )
+        assert (await load_workflow_permissions(db_session, solution_workflow))[1] == []
+        # Restore the reviewed declaration before the retained live worker journey.
+        await sync_solution_permission_requests(
+            db_session, solution_id=solution.id, requests={solution_workflow.id: declared}
+        )
+        await db_session.commit()
 
         # A limited identity proves the declaration supplies the required
         # power; a Platform Admin would hide an omitted grant here.

@@ -43,6 +43,15 @@ installation and request digest; revoked or stale approvals add no capabilities.
 Removing a request keeps its existing restriction. Existing Full Access installs
 retain their mode until explicitly restricted.
 
+Open **View Settings** from a managed workflow's actions, then select **Access**
+to see its Solution request and approval status. Managed settings remain read-only.
+A Platform Admin can select **Review Permission Request** to review a pending
+declaration, including a workflow already using Declared Permissions. Applying
+that review approves the exact mode and permissions declared by the installed
+Solution. Analyzer suggestions are shown separately and do not replace the
+declaration. An unchanged declaration keeps its approval on the next deploy;
+changing its mode or permissions requires approval again.
+
 The API and manifest values remain `full` and `restricted`; `restricted` is the
 stored value for Declared Permissions. For example, a Solution workflow can
 request:

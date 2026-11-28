@@ -12,6 +12,7 @@ from collections.abc import Sequence
 from uuid import UUID
 
 from pydantic import ValidationError
+from shared.models import WorkflowConversionSolutionRequestSummary
 from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,6 +33,24 @@ DEFAULT_WORKFLOW_PERMISSION_MODE = WorkflowPermissionMode.FULL
 
 WORKFLOW_PERMISSIONS_CONFIG_CATEGORY = "workflow_permissions"
 DEFAULT_MODE_CONFIG_KEY = "default_mode"
+
+
+def permission_request_summary(
+    request: SolutionWorkflowPermissionRequest | None,
+) -> WorkflowConversionSolutionRequestSummary | None:
+    """Expose consent for the current declaration, never stale approved powers."""
+    if request is None:
+        return None
+    status = request.status
+    if status == RequestStatus.APPROVED.value and _approved_permissions(request) is None:
+        status = RequestStatus.PENDING.value
+    return WorkflowConversionSolutionRequestSummary(
+        status=status,
+        request_digest=request.request_digest,
+        approved_digest=request.approved_digest,
+        requested_mode=request.requested_mode,
+        requested_permissions=[str(grant["permission"]) for grant in request.requested_grants],
+    )
 
 
 async def get_default_workflow_permission_mode(

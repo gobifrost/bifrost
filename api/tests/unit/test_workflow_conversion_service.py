@@ -419,6 +419,46 @@ async def test_apply_requires_solution_review_acknowledgement(
 
 
 @pytest.mark.asyncio
+async def test_changed_solution_declaration_refuses_the_previous_review(monkeypatch):
+    workflow_id = uuid4()
+    workflow = SimpleNamespace(id=workflow_id, solution_id=uuid4())
+    report = SimpleNamespace(source_fingerprint="a" * 64, review=None, status="ready")
+    db = _Database(rows=[workflow, report])
+    _patch_db_context(monkeypatch, db)
+    monkeypatch.setattr(conversion, "load_human_caller", AsyncMock(return_value=_admin()))
+
+    monkeypatch.setattr(conversion, "_report_for_workflow", AsyncMock(return_value={
+        "source_fingerprint": "b" * 64,
+    }))
+    mark_stale = AsyncMock()
+    monkeypatch.setattr(conversion, "_mark_stale", mark_stale)
+    payload = WorkflowConversionApplyPayload(
+        analysis_job_id=uuid4(),
+        selections=[WorkflowConversionSelection(workflow_id=workflow_id, source_fingerprint="a" * 64)],
+        acknowledged_solution_requests=True,
+    )
+    with pytest.raises(PlatformJobFailure) as refusal:
+        await conversion.run_apply(_context(), payload)
+    assert refusal.value.code == "stale_report"
+    mark_stale.assert_awaited_once()
+
+
+def test_review_fingerprint_binds_the_exact_declared_permissions():
+    request = SimpleNamespace(
+        status="pending", requested_mode="restricted", request_digest="a" * 64,
+        approved_digest=None, requested_grants=[{"permission": "roles.readwrite"}],
+    )
+    inputs = dict(
+        source_hash="source", dependencies={}, workflow=_workflow(), grants=[],
+        request=request, authority={}, policies={}, proposed_permissions=["roles.read"],
+        observed_operations=[], unknowns=[],
+    )
+    before = conversion._fingerprint(**inputs)
+    request.requested_grants = [{"permission": "secrets.read"}]
+    assert conversion._fingerprint(**inputs) != before
+
+
+@pytest.mark.asyncio
 async def test_apply_refuses_after_requester_loses_platform_administration(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

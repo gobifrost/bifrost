@@ -77,6 +77,7 @@ from src.services.workflow_permissions import (
     WORKFLOW_PERMISSIONS_CONFIG_CATEGORY,
     effective_workflow_permission_mode,
     get_default_workflow_permission_mode,
+    permission_request_summary,
     request_digest,
 )
 
@@ -316,6 +317,7 @@ def _fingerprint(
             "approved_digest": request.approved_digest,
             "status": request.status,
             "requested_mode": request.requested_mode,
+            "requested_grants": request.requested_grants,
         },
     }
     return hashlib.sha256(
@@ -577,11 +579,15 @@ async def _report_for_workflow(
         *analysis.get("warnings", []),
     ]))
     current_mode = (await effective_workflow_permission_mode(db, workflow)).value
+    declaration = permission_request_summary(request)
     status_value = (
         "blocked"
         if not analysis["entrypoint_found"]
         else "already_declared"
-        if current_mode == "restricted" and not unknowns
+        if (
+            (declaration is not None and declaration.status == "approved")
+            or (declaration is None and current_mode == "restricted")
+        ) and not unknowns
         else ("needs_review" if unknowns else "ready")
     )
     report = {
@@ -614,17 +620,7 @@ async def _report_for_workflow(
         "unknowns": unknowns,
         "warnings": warnings,
         "identity": identity,
-        "solution_permission_request": None
-        if request is None
-        else {
-            "status": request.status,
-            "request_digest": request.request_digest,
-            "approved_digest": request.approved_digest,
-            "requested_mode": request.requested_mode,
-            "requested_permissions": [
-                str(item.get("permission")) for item in request.requested_grants
-            ],
-        },
+        "solution_permission_request": declaration.model_dump() if declaration is not None else None,
         "error": None if analysis["entrypoint_found"] else (
             "The registered workflow entry point is unavailable in its current source."
         ),
@@ -701,6 +697,10 @@ async def _refresh_applied_report(
         await effective_workflow_permission_mode(db, workflow)
     ).value
     report["identity"] = identity
+    declaration = permission_request_summary(request)
+    report["solution_permission_request"] = (
+        declaration.model_dump() if declaration is not None else None
+    )
     report["source_fingerprint"] = _fingerprint(
         source_hash=source_hash,
         dependencies=dependencies,
@@ -1049,13 +1049,23 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                 # The fresh request and approval are one transaction under the
                 # job lease. This is an explicit administrator decision over
                 # the exact reviewed proposal, never a reuse of stale consent.
-                requested = RequestedWorkflowPermissions(
-                    mode=WorkflowPermissionMode.RESTRICTED,
-                    grants=[
-                        WorkflowPermissionGrantSpec(permission=value)
-                        for value in current["proposed_permissions"]
-                    ],
-                )
+                if solution_request is not None:
+                    requested = RequestedWorkflowPermissions.model_validate({
+                        "mode": solution_request.requested_mode,
+                        "grants": solution_request.requested_grants,
+                    })
+                    if request_digest(requested) != solution_request.request_digest:
+                        raise PlatformJobFailure(
+                            "stale_report", "The Solution declaration changed; review it again"
+                        )
+                else:
+                    requested = RequestedWorkflowPermissions(
+                        mode=WorkflowPermissionMode.RESTRICTED,
+                        grants=[
+                            WorkflowPermissionGrantSpec(permission=value)
+                            for value in current["proposed_permissions"]
+                        ],
+                    )
                 digest = request_digest(requested)
                 grants_json = [
                     {"permission": grant.permission} for grant in requested.grants
@@ -1074,9 +1084,6 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                     )
                     db.add(solution_request)
                 else:
-                    solution_request.requested_mode = requested.mode.value
-                    solution_request.requested_grants = grants_json
-                    solution_request.request_digest = digest
                     solution_request.status = RequestStatus.APPROVED.value
                     solution_request.approved_digest = digest
                     solution_request.decided_by = context.requested_by_email
@@ -1089,7 +1096,8 @@ async def run_apply(context: PlatformJobContext, payload) -> dict:
                     details={
                         "solution_id": str(workflow.solution_id),
                         "request_digest": digest,
-                        "permissions": current["proposed_permissions"],
+                        "requested_mode": requested.mode.value,
+                        "permissions": [grant.permission for grant in requested.grants],
                     },
                     actor_override=_conversion_actor(context, caller, requester),
                 )

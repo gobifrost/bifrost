@@ -33095,6 +33095,8 @@ export interface components {
             run_identity_id?: string | null;
             /** @description Effective workflow permission mode: 'full' or 'restricted' */
             permission_mode: components["schemas"]["WorkflowPermissionMode"];
+            /** @description The installed Solution's declared permission request and current approval status. */
+            solution_permission_request?: components["schemas"]["WorkflowConversionSolutionRequestSummary"] | null;
             /**
              * Access Level
              * @description Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)

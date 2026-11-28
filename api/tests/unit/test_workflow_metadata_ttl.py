@@ -18,7 +18,9 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import src.routers.workflows as wf
-from src.models.contracts.workflow_permissions import WorkflowPermissionMode
+from src.models.contracts.workflow_permissions import RequestedWorkflowPermissions, WorkflowPermissionMode
+from src.models.orm.solution_workflow_permission_requests import SolutionWorkflowPermissionRequest
+from src.services.workflow_permissions import request_digest
 
 
 def _orm(**overrides):
@@ -90,13 +92,19 @@ def test_permission_mode_is_the_workflows_own_else_the_platform_default():
 
 def test_metadata_reports_the_install_restriction_instead_of_the_full_default():
     workflow = _orm(solution_id=uuid4())
-    request = SimpleNamespace(
+    request = SolutionWorkflowPermissionRequest(
         workflow_id=workflow.id,
         solution_id=workflow.solution_id,
         requested_mode="restricted",
+        requested_grants=[],
+        request_digest=request_digest(RequestedWorkflowPermissions(mode="restricted")),
+        approved_digest=None,
         status="pending",
     )
     result = wf._convert_workflow_orm_to_schema(
         workflow, WorkflowPermissionMode.FULL, permission_request=request
     )
     assert result.permission_mode is WorkflowPermissionMode.RESTRICTED
+    assert result.solution_permission_request is not None
+    assert result.solution_permission_request.status == "pending"
+    assert result.solution_permission_request.requested_permissions == []

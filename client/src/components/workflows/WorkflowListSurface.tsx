@@ -6,6 +6,7 @@ import {
 	Code,
 	Code2,
 	Database,
+	Eye,
 	Globe,
 	History,
 	Loader2,
@@ -196,17 +197,19 @@ export function WorkflowListSurface({
 					Open in editor
 				</DropdownMenuItem>
 			)}
-			{canManageWorkflow(workflow) &&
-				!workflow.is_solution_managed &&
-				onEditScope && (
-					<DropdownMenuItem
-						className="min-h-11"
-						onSelect={() => onEditScope(workflow)}
-					>
+			{canManageWorkflow(workflow) && onEditScope && (
+				<DropdownMenuItem
+					className="min-h-11"
+					onSelect={() => onEditScope(workflow)}
+				>
+					{workflow.is_solution_managed ? (
+						<Eye aria-hidden="true" className="size-4" />
+					) : (
 						<Pencil aria-hidden="true" className="size-4" />
-						Edit
-					</DropdownMenuItem>
-				)}
+					)}
+					{workflow.is_solution_managed ? "View Settings" : "Edit"}
+				</DropdownMenuItem>
+			)}
 			{workflow.endpoint_enabled && onEditEndpoint && (
 				<DropdownMenuItem
 					className="min-h-11"

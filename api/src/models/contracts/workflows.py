@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
+from shared.models import WorkflowConversionSolutionRequestSummary
 
 from src.models.enums import FormAccessLevel
 from src.models.contracts.base import RetryPolicy
@@ -86,6 +87,9 @@ class WorkflowMetadata(BaseModel):
 
     # Powers a run of this workflow adds to its run user (effective: its own setting, else the platform default)
     permission_mode: WorkflowPermissionMode = Field(description="Effective workflow permission mode: 'full' or 'restricted'")
+    solution_permission_request: WorkflowConversionSolutionRequestSummary | None = Field(
+        default=None, description="The installed Solution's declared permission request and current approval status."
+    )
 
     # Access control
     access_level: str = Field(default="role_based", description="Access level: 'authenticated' (any signed-in user except externals), 'everyone' (any signed-in user incl. externals), or 'role_based' (specific roles required)")

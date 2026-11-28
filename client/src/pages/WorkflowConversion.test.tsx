@@ -18,6 +18,16 @@ vi.mock("@/services/workflowConversions", () => ({
 	cutOverWorkflowConversions: vi.fn(),
 	getWorkflowConversionReport: vi.fn(),
 }));
+vi.mock("@/services/access", () => ({
+	usePermissionCatalog: () => ({
+		data: [
+			{
+				domain: "tickets",
+				names: { "tickets.read": "Read Tickets" },
+			},
+		],
+	}),
+}));
 
 import { WorkflowConversion } from "./WorkflowConversion";
 
@@ -288,6 +298,161 @@ describe("WorkflowConversion", () => {
 		expect(
 			screen.getByText(
 				/No confirmed checks does not mean no permissions are needed/,
+			),
+		).toBeVisible();
+	});
+
+	it("shows and confirms the exact pending Solution declaration instead of analyzer suggestions", async () => {
+		apply.mockResolvedValue({ job_id: "apply-synthetic" });
+		useConversionJob.mockReturnValue({
+			job: {
+				id: "job-solution-request",
+				status: "succeeded",
+				revision: 1,
+			},
+			report: {
+				job_id: "job-solution-request",
+				total: 1,
+				offset: 0,
+				limit: 25,
+				items: [
+					{
+						workflow_id: "workflow-solution-request",
+						workflow_name: "Solution request workflow",
+						solution_id: "solution-synthetic",
+						source_fingerprint: "fingerprint",
+						status: "ready",
+						current_permission_mode: "full",
+						proposed_permissions: ["secrets.read"],
+						solution_permission_request: {
+							status: "pending",
+							request_digest: "request-digest",
+							requested_mode: "restricted",
+							requested_permissions: ["tickets.read"],
+						},
+					},
+				],
+				summary: {
+					platform_cutover: false,
+					observation_window_days: 30,
+					ready: 1,
+					needs_review: 0,
+					blocked: 0,
+					stale: 0,
+					already_declared: 0,
+				},
+			},
+			loading: false,
+			refresh: vi.fn(),
+			setReport: vi.fn(),
+		});
+
+		const { user } = renderWithProviders(<WorkflowConversion />, {
+			initialEntries: ["/workflows/convert?job=job-solution-request"],
+		});
+
+		await user.click(
+			screen.getByRole("button", {
+				name: "Review Solution request workflow",
+			}),
+		);
+		expect(
+			screen.getByRole("heading", {
+				name: "Solution Permission Request",
+			}),
+		).toBeVisible();
+		expect(screen.getByText("Pending", { exact: true })).toBeVisible();
+		expect(
+			screen.getByText("Requested mode: Declared Permissions"),
+		).toBeVisible();
+		expect(
+			screen.getByText("Declared permissions: Read Tickets"),
+		).toBeVisible();
+		expect(
+			screen.queryByText("secrets.read", { exact: true }),
+		).not.toBeInTheDocument();
+
+		await user.click(
+			screen.getByRole("checkbox", {
+				name: "Select Solution request workflow",
+			}),
+		);
+		await user.click(
+			screen.getByRole("button", { name: /Review selected/ }),
+		);
+		const confirmation = screen.getByRole("alertdialog", {
+			name: "Confirm reviewed changes",
+		});
+		expect(confirmation).toHaveTextContent(
+			"Apply approves the exact requested mode and permissions shown in review. It does not approve analyzer suggestions.",
+		);
+		const approve = screen.getByRole("checkbox", {
+			name: "I approve the exact requested Solution permissions.",
+		});
+		expect(
+			screen.getByRole("button", { name: "Apply reviewed changes" }),
+		).toBeDisabled();
+		await user.click(approve);
+		await user.click(
+			screen.getByRole("button", { name: "Apply reviewed changes" }),
+		);
+		expect(apply).toHaveBeenCalledWith("job-solution-request", {
+			selections: [
+				{
+					workflow_id: "workflow-solution-request",
+					source_fingerprint: "fingerprint",
+					acknowledged_unknowns: true,
+				},
+			],
+			acknowledged_solution_requests: true,
+		});
+	});
+
+	it("keeps a Full Access Solution declaration out of the Declared Permissions path", () => {
+		useConversionJob.mockReturnValue({
+			job: { id: "job-full-request", status: "succeeded", revision: 1 },
+			report: {
+				job_id: "job-full-request",
+				total: 1,
+				offset: 0,
+				limit: 25,
+				items: [
+					{
+						workflow_id: "workflow-full-request",
+						workflow_name: "Full request workflow",
+						source_fingerprint: "fingerprint",
+						status: "ready",
+						current_permission_mode: "restricted",
+						solution_permission_request: {
+							status: "pending",
+							request_digest: "request-digest",
+							requested_mode: "full",
+							requested_permissions: [],
+						},
+					},
+				],
+				summary: {
+					platform_cutover: false,
+					observation_window_days: 30,
+					ready: 1,
+					needs_review: 0,
+					blocked: 0,
+					stale: 0,
+					already_declared: 0,
+				},
+			},
+			loading: false,
+			refresh: vi.fn(),
+			setReport: vi.fn(),
+		});
+
+		renderWithProviders(<WorkflowConversion />, {
+			initialEntries: ["/workflows/convert?job=job-full-request"],
+		});
+
+		expect(
+			screen.getByText(
+				/Declared Permissions → Full Access · Dedicated identity/,
 			),
 		).toBeVisible();
 	});
