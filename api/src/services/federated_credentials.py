@@ -18,11 +18,15 @@ from src.models.orm.users import User
 from src.services.audit import emit_audit
 from src.services.authorization.enforce import Caller
 from src.services.identities import (
-    LIST_OPERATION,
-    UPDATE_OPERATION,
     _managed_identity,
     require_delegation,
 )
+
+
+LIST_OPERATION = "GET /api/identities/{identity_id}/federated-credentials"
+CREATE_OPERATION = "POST /api/identities/{identity_id}/federated-credentials"
+UPDATE_OPERATION = "PATCH /api/identities/{identity_id}/federated-credentials/{credential_id}"
+DELETE_OPERATION = "DELETE /api/identities/{identity_id}/federated-credentials/{credential_id}"
 
 
 class FederatedCredentialError(Exception):
@@ -65,7 +69,7 @@ async def list_federated_credentials(
 async def create_federated_credential(
     db: AsyncSession, caller: Caller, identity_id: UUID, body: FederatedCredentialCreate
 ) -> FederatedCredentialPublic:
-    await _managed_identity(db, caller, identity_id, UPDATE_OPERATION)
+    await _managed_identity(db, caller, identity_id, CREATE_OPERATION)
     await require_delegation(db, caller, identity_id)
     row = FederatedCredential(identity_id=identity_id, **body.model_dump())
     db.add(row)
@@ -81,9 +85,9 @@ async def create_federated_credential(
 
 
 async def _managed_credential(
-    db: AsyncSession, caller: Caller, identity_id: UUID, credential_id: UUID
+    db: AsyncSession, caller: Caller, identity_id: UUID, credential_id: UUID, operation: str
 ) -> FederatedCredential:
-    await _managed_identity(db, caller, identity_id, UPDATE_OPERATION)
+    await _managed_identity(db, caller, identity_id, operation)
     await require_delegation(db, caller, identity_id)
     row = await db.scalar(
         select(FederatedCredential)
@@ -102,7 +106,7 @@ async def update_federated_credential(
     credential_id: UUID,
     body: FederatedCredentialUpdate,
 ) -> FederatedCredentialPublic:
-    row = await _managed_credential(db, caller, identity_id, credential_id)
+    row = await _managed_credential(db, caller, identity_id, credential_id, UPDATE_OPERATION)
     changes = body.model_dump(exclude_unset=True)
     if not changes:
         raise FederatedCredentialError(422, "No credential fields were supplied")
@@ -124,7 +128,7 @@ async def update_federated_credential(
 async def delete_federated_credential(
     db: AsyncSession, caller: Caller, identity_id: UUID, credential_id: UUID
 ) -> None:
-    row = await _managed_credential(db, caller, identity_id, credential_id)
+    row = await _managed_credential(db, caller, identity_id, credential_id, DELETE_OPERATION)
     await db.delete(row)
     await db.flush()
     await emit_audit(
