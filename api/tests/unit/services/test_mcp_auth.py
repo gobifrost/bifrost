@@ -112,7 +112,6 @@ class TestAuthorizationServerMetadata:
         response = await auth_provider._authorization_server_metadata(mock_request)
         data = response.body.decode()
 
-        import json
         metadata = json.loads(data)
 
         assert metadata["issuer"] == "https://test.example.com"
@@ -135,7 +134,6 @@ class TestProtectedResourceMetadata:
         response = await auth_provider._protected_resource_metadata(mock_request)
         data = response.body.decode()
 
-        import json
         metadata = json.loads(data)
 
         assert metadata["resource"] == "https://test.example.com/mcp"

@@ -458,6 +458,9 @@ def test_federated_credentials_follow_identity_read_manage_and_delegation_bounda
     created = _ok(e2e_client.post(base, headers=holder, json=body), 201)
     assert created["identity_id"] == identity["id"]
     assert created["subject_token_type"] == "urn:ietf:params:oauth:token-type:id_token"
-    assert _ok(e2e_client.get(base, headers=holder)) == [created]
-    assert e2e_client.patch(f"{base}/{created['id']}", headers=holder, json={"enabled": False}).status_code == 200
-    assert e2e_client.delete(f"{base}/{created['id']}", headers=holder).status_code == 204
+    listed = _ok(e2e_client.get(base, headers=holder))
+    assert listed == [created]
+    updated = e2e_client.patch(f"{base}/{created['id']}", headers=holder, json={"enabled": False})
+    assert updated.status_code == 200
+    deleted = e2e_client.delete(f"{base}/{created['id']}", headers=holder)
+    assert deleted.status_code == 204
