@@ -12,7 +12,6 @@ import base64
 import contextlib
 import json
 import os
-import signal
 import subprocess
 import sys
 import tempfile
@@ -38,6 +37,8 @@ from shared.app_build_errors import AppBuildMemoryError, subprocess_memory_error
 from shared.solution_app_compiler import AppBuildInputs, compile_app, output_tail
 from shared.subprocess_env import package_tool_env
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
+
+from src.worker.remote.process_cleanup import kill_process_group
 
 
 MAX_ACTIVE_STAGES = 4
@@ -138,17 +139,6 @@ async def _spawn_child(*args: Any, **kwargs: Any) -> _Process:
     return await asyncio.create_subprocess_exec(*args, **kwargs)
 
 
-async def _kill_process_group(process: _Process) -> None:
-    if process.returncode is not None or process.pid is None:
-        return
-    with contextlib.suppress(ProcessLookupError):
-        os.killpg(process.pid, signal.SIGTERM)
-    try:
-        await asyncio.wait_for(process.wait(), 5)
-    except TimeoutError:
-        with contextlib.suppress(ProcessLookupError):
-            os.killpg(process.pid, signal.SIGKILL)
-        await process.wait()
 
 
 class AppCompileStages:
@@ -159,7 +149,7 @@ class AppCompileStages:
         *,
         temp_dir: Path | None = None,
         spawn: Spawn = _spawn_child,
-        kill: Kill = _kill_process_group,
+        kill: Kill = kill_process_group,
         terminal_notification: TerminalNotification | None = None,
         max_active: int = MAX_ACTIVE_STAGES,
         max_records: int = MAX_STAGE_RECORDS,
