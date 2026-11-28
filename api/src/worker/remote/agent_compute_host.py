@@ -14,7 +14,13 @@ from typing import Any
 
 from pydantic import TypeAdapter, ValidationError
 from pydantic_ai.exceptions import UsageLimitExceeded
-from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelResponse, UserContent
+from pydantic_ai.messages import (
+    ModelMessagesTypeAdapter,
+    ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
+    UserContent,
+)
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage, RunUsage
@@ -22,6 +28,7 @@ from pydantic_core import to_json
 
 from shared.agent_model_compute import (
     deserialize_model_response,
+    deserialize_model_stream_frame,
     deserialize_run_usage,
     serialize_model_profile,
     serialize_run_usage,
@@ -42,7 +49,6 @@ from src.worker.remote.compute_stage_host import (
 
 _USER_CONTENT = TypeAdapter(UserContent)
 _REQUEST_USAGE = TypeAdapter(RequestUsage)
-_MODEL_RESPONSE = TypeAdapter(ModelResponse)
 
 
 def _wire_bytes(value: Any, *, label: str) -> bytes:
@@ -252,7 +258,7 @@ class RemoteAgentRuntime(ComputeStageHost):
                     self.trusted_model_settings,
                     request,
                 ):
-                    self._meter_stream_frame(wire_frame)
+                    await self._consume_model_stream_frame(wire_frame)
                     frame = {
                         "sequence": sequence,
                         "payload_b64": base64.b64encode(wire_frame).decode(),
@@ -331,18 +337,7 @@ class RemoteAgentRuntime(ComputeStageHost):
                 raise RemoteAgentRuntimeError(
                     "Agent compute runtime events require the chat surface"
                 )
-            event = decode_runtime_event(payload)
-            acknowledged: asyncio.Future[None] = (
-                asyncio.get_running_loop().create_future()
-            )
-            try:
-                self._events.put_nowait((event, acknowledged))
-            except asyncio.QueueFull as exc:
-                raise RemoteAgentRuntimeError(
-                    "Agent compute runtime event queue is full"
-                ) from exc
-            self._event_ready.set()
-            await acknowledged
+            await self._publish_runtime_event(decode_runtime_event(payload))
             return None
         raise RemoteAgentRuntimeError("Agent compute RPC operation is unsupported")
 
@@ -387,23 +382,29 @@ class RemoteAgentRuntime(ComputeStageHost):
         self.plan.budget.usage_limits().check_before_request(projected)
         return _count_wire(counted)
 
-    def _meter_stream_frame(self, wire_frame: bytes) -> None:
+    async def _publish_runtime_event(self, event: Any) -> None:
+        acknowledged: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         try:
-            envelope = json.loads(wire_frame)
-            if envelope.get("kind") != "stream-final":
-                return
-            response = _MODEL_RESPONSE.validate_python(envelope["response"])
-        except (
-            TypeError,
-            ValueError,
-            KeyError,
-            ValidationError,
-            json.JSONDecodeError,
-        ) as exc:
-            raise RemoteAgentRuntimeError(
-                "Agent compute stream response is invalid"
-            ) from exc
-        self.usage.incr(response.usage)
+            self._events.put_nowait((event, acknowledged))
+        except asyncio.QueueFull as exc:
+            raise RemoteAgentRuntimeError("Agent compute runtime event queue is full") from exc
+        self._event_ready.set()
+        await acknowledged
+
+    async def _consume_model_stream_frame(self, wire_frame: bytes) -> None:
+        try:
+            kind, frame = deserialize_model_stream_frame(wire_frame)
+        except (TypeError, ValueError, ValidationError) as exc:
+            raise RemoteAgentRuntimeError("Agent compute stream response is invalid") from exc
+        if kind == "stream-final":
+            assert isinstance(frame, ModelResponse)
+            self.usage.incr(frame.usage)
+        elif self.plan.surface == "chat" and isinstance(frame, (PartStartEvent, PartDeltaEvent)):
+            # This is the same sanitized event delivered to the physical model.
+            # Publish it once at its source instead of echoing every token back
+            # through a separate worker callback and its retained RPC journal.
+            await self.authorize_rpc()
+            await self._publish_runtime_event(frame)
 
     def _terminal_result(self, terminal: Mapping[str, Any]) -> RuntimeComputeResult:
         if terminal.get("ok") is not True:
