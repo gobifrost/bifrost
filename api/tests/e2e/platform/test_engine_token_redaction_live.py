@@ -58,6 +58,7 @@ def engine_token_workflow(e2e_client, platform_admin, org1, local_key):
     content = f'''"""E2E workflow proving the SDK still works and its credential is redacted."""
 import logging
 import os
+import sys
 
 from bifrost import workflow, config
 
@@ -67,6 +68,8 @@ async def {name}():
     # still reaches the API end to end.
     sdk_still_works = await config.get("{local_key}") == "still-works"
 
+    print("stdout-boundary Authorization: Bearer stdout-fixture-secret")
+    print("stderr-boundary Authorization: Bearer stderr-fixture-secret", file=sys.stderr)
     token = os.environ.get("BIFROST_ACCESS_TOKEN", "")
     logging.getLogger(__name__).info("installed token: %s", token)
     logging.getLogger(__name__).debug("user debug survives runtime capture")
@@ -128,6 +131,19 @@ class TestEngineTokenRedactionLive:
         assert not _JWT_RE.search(joined)
         assert "unknown-header-secret" not in joined
         assert "unknown-cookie-secret" not in joined
+
+        assert "stdout-fixture-secret" not in joined
+        assert "stderr-fixture-secret" not in joined
+        assert sum("stdout-boundary" in row["message"] for row in logs) == 1
+        assert sum("stderr-boundary" in row["message"] for row in logs) == 1
+        detail = e2e_client.get(
+            f"/api/executions/{result['execution_id']}", headers=platform_admin.headers,
+        )
+        assert detail.status_code == 200
+        assert detail.json()["execution_id"] == result["execution_id"]
+        assert detail.json()["peak_memory_bytes"] > 0
+        assert detail.json()["cpu_total_seconds"] is not None
+        assert detail.json()["cpu_total_seconds"] >= 0
 
         # DEBUG rows require diagnostic read access; the ordinary caller's
         # view above deliberately hides them.

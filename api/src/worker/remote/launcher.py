@@ -24,7 +24,11 @@ from shared.version import get_version
 from src.services.execution.cpu_sampler import CPUSampler, get_clock_ticks
 from src.services.execution.memory_monitor import effective_memory_sample, memory_pressure_ratio
 from src.services.execution.template_process import TemplateProcess
-from src.worker.remote.app_compile import AppCompileStages
+from src.worker.remote.app_compile import (
+    APP_COMPILE_OPERATION,
+    AppCompileStages,
+    app_compile_operation,
+)
 from shared.worker_compute import (
     AGENT_COMPUTE_CAPABILITY,
     SUMMARY_COMPUTE_CAPABILITY,
@@ -33,6 +37,7 @@ from shared.worker_compute import (
 from src.worker.remote.agent_compute import MAX_AGENT_COMPUTE_FRAME_BYTES
 from src.worker.remote.control_connection import connect_control, load_control_headers
 from src.worker.remote.identity import LauncherIdentity, load_launcher_identity
+from src.worker.remote.file_operation import NamedFileOperationStages
 from src.worker.remote.protocol import (
     CREDENTIAL_PROTOCOL,
     EXECUTION_HANDLERS,
@@ -287,7 +292,8 @@ class Launcher:
         self.requirements_content: str | None = None
         # External launchers begin with scoped workflows. Agent runs become
         # eligible only after their credential-free compute template is warm.
-        self.handlers = tuple(
+        self.compute_only = os.environ.get("BIFROST_WORKER_COMPUTE_ONLY") == "1"
+        self.handlers = () if self.compute_only else tuple(
             pair for pair in EXECUTION_HANDLERS
             if identity.form != "external" or pair[0] == "workflow.execute"
         )
@@ -313,9 +319,35 @@ class Launcher:
         self.job_claims: dict[str, dict[str, str | int]] = {}
         # This owns only file-backed CPU compute; PlatformJob authority stays
         # with the API control host.
-        self.app_compiles = AppCompileStages(
-            terminal_notification=self.send_app_compile_state,
+        # Operation recipes are code-owned.  In particular, control payloads
+        # can select a registered name but can never import a callable or
+        # supply a subprocess command.
+        from src.worker.remote.audit_archive_compute import audit_archive_operation
+        from src.worker.remote.audit_export_compute import audit_export_operation
+        from src.worker.remote.solution_archive_inspect import solution_archive_inspect_operation
+        from src.worker.remote.app_bundle_compute import (
+            APP_BUNDLE_OPERATION,
+            app_bundle_operation,
         )
+
+        from src.worker.remote.app_preview_compile import app_preview_operation
+        from src.worker.remote.workflow_graph_analyze import workflow_graph_operation
+        from src.worker.remote.workspace_preflight import workspace_preflight_operation
+
+        self.file_operations = NamedFileOperationStages(
+            operations={
+                "workspace.preflight.v1": workspace_preflight_operation(),
+                "workflow.graph.analyze.v1": workflow_graph_operation(),
+                "app.preview.compile.v1": app_preview_operation(),
+                APP_COMPILE_OPERATION: app_compile_operation(),
+                APP_BUNDLE_OPERATION: app_bundle_operation(),
+                "audit.archive.v1": audit_archive_operation(),
+                "audit.export.v1": audit_export_operation(),
+                "solution.archive.inspect.v1": solution_archive_inspect_operation(),
+            },
+            terminal_notification=self.send_file_compute_state,
+        )
+        self.app_compiles = AppCompileStages(self.file_operations)
         self.agent_compute_stages: dict[str, AgentComputeStage] = {}
         self._agent_compute_tombstones: dict[str, AgentComputeBinding] = {}
         self._agent_compute_retire_requested = False
@@ -393,6 +425,14 @@ class Launcher:
             asyncio.create_task(self.socket.close(code=1011, reason="Launcher supervision failed"))
 
     async def start(self) -> None:
+        if self.compute_only:
+            from src.services.execution.requirements_setup_result import RequirementsInstallResult
+
+            self.requirements = RequirementsInstallResult().to_json_dict()
+            current, _limit = effective_memory_sample()
+            self.baseline_bytes = current
+            self._monitor_task = self.task(self.monitor())
+            return
         # This existing helper owns requirements IO and exits before ready.
         result = await self.helper(
             "src.services.execution.requirements_setup_helper",
@@ -460,7 +500,7 @@ class Launcher:
             "version": get_version(),
             "credential_protocol": CREDENTIAL_PROTOCOL,
             "handlers": self.handlers,
-            "supports_platform_jobs": self.identity.form != "external",
+            "supports_platform_jobs": self.identity.form != "external" and not self.compute_only,
             "compute_capabilities": [
                 list(capability)
                 for capability in COMPUTE_CAPABILITIES
@@ -472,6 +512,8 @@ class Launcher:
         welcome = json.loads(await self.socket.recv())
         if welcome.get("event") != "welcome" or not isinstance(welcome.get("session_generation"), int):
             raise RuntimeError("remote host refused launcher session")
+        if (self.identity.form == "external" or self.compute_only) and welcome.get("api_version") != get_version():
+            raise RuntimeError("External worker build must match the connected API build")
         self.session_generation = welcome["session_generation"]
         self._sequence = 0
         self._last_command_sequence = 0
@@ -529,8 +571,8 @@ class Launcher:
             "version": 1,
             "baseline_bytes": self.baseline_bytes,
             "routes": routes,
-            "compute_stages": self.app_compiles.inventory(),
-            "compute_retirement_requested": self.app_compiles.retire_requested,
+            "compute_stages": self.file_operations.inventory(),
+            "compute_retirement_requested": self.file_operations.retire_requested,
             "agent_compute_stages": [
                 {
                     **self.agent_compute_status(_agent_compute_binding_dict(stage.binding)),
@@ -744,6 +786,12 @@ class Launcher:
         action, payload = request["action"], request["payload"]
         try:
             response: dict[str, Any] = {}
+            if self.compute_only and action in (
+                "workflow", "service", "agent_run", "agent_summary", "platform_job", "helper",
+                "agent_compute_start", "agent_compute_status", "agent_compute_reply",
+                "agent_compute_release", "package_tool", "recycle",
+            ):
+                raise ValueError("Compute-only workers cannot start privileged execution")
             if action in ("workflow", "service"):
                 from src.core.telemetry import launch_span
 
@@ -844,12 +892,37 @@ class Launcher:
             elif action == "app_compile_release":
                 response = await self.app_compiles.release(payload)
                 if (
-                    self.app_compiles.retire_requested
-                    and not self.app_compiles.has_stages
+                    self.file_operations.retire_requested
+                    and not self.file_operations.has_stages
                     and not self._compute_retirement_drain_sent
                 ):
                     self._compute_retirement_drain_sent = True
                     self.task(self.send_compute_retirement_drain())
+            elif action.startswith("file_compute_"):
+                operation = payload.get("operation")
+                if not isinstance(operation, str):
+                    raise ValueError("File compute operation is required")
+                if action == "file_compute_prepare":
+                    response = self.file_operations.prepare(operation, payload)
+                elif action == "file_compute_chunk":
+                    response = self.file_operations.add_chunk(operation, payload)
+                elif action == "file_compute_start":
+                    response = await self.file_operations.start(operation, payload)
+                elif action == "file_compute_status":
+                    response = self.file_operations.status(operation, payload)
+                elif action == "file_compute_result_chunk":
+                    response = self.file_operations.result_chunk(operation, payload)
+                elif action == "file_compute_release":
+                    response = await self.file_operations.release(operation, payload)
+                    if (
+                        self.file_operations.retire_requested
+                        and not self.file_operations.has_stages
+                        and not self._compute_retirement_drain_sent
+                    ):
+                        self._compute_retirement_drain_sent = True
+                        self.task(self.send_compute_retirement_drain())
+                else:
+                    raise ValueError("Unknown file compute command")
             elif action == "agent_compute_start":
                 response = await self.agent_compute_start(payload)
             elif action == "agent_compute_status":
@@ -969,10 +1042,12 @@ class Launcher:
             self.jobs.pop(route_id, None)
             self.job_claims.pop(route_id, None)
 
-    async def send_app_compile_state(self, binding: dict[str, str]) -> None:
+    async def send_file_compute_state(self, binding: dict[str, str]) -> None:
         """Wake the API to read retained compute state without sending artifacts."""
         with contextlib.suppress(ConnectionError):
-            await self.send({"event": "app_compile_state", "stage_id": binding["stage_id"]})
+            await self.send({"event": "file_compute_state", "stage_id": binding["stage_id"]})
+
+    send_app_compile_state = send_file_compute_state
 
     async def send_agent_compute_rpc(
         self, stage: AgentComputeStage, request_id: str, request: AgentComputeRequest
@@ -1288,7 +1363,7 @@ class Launcher:
             # A package recycle intentionally stops the template while holding
             # this lock. Observe liveness only outside that replacement window.
             async with self._template_lock:
-                if not self.template.is_alive():
+                if not self.compute_only and not self.template.is_alive():
                     # Preserve the canonical pool's template-crash recovery;
                     # live children retain their existing pipes and identities.
                     logger.warning("Execution template died; replacing it")
@@ -1349,7 +1424,7 @@ class Launcher:
                 with contextlib.suppress(ConnectionError):
                     await self.send({"event": "sample", "current": current, "limit": limit,
                                      "pressure_ratio": memory_pressure_ratio(), "runs": samples,
-                                     "compute_stages": self.app_compiles.telemetry(),
+                                     "compute_stages": self.file_operations.telemetry(),
                                      "agent_compute_stages": self.agent_compute_telemetry()})
             tick += 1
             await asyncio.sleep(.25)
@@ -1405,7 +1480,7 @@ class Launcher:
                     asyncio.get_running_loop().remove_reader(stage.result.fileno())
                 stage.result.close()
         self.agent_compute_stages.clear()
-        await self.app_compiles.shutdown()
+        await self.file_operations.shutdown()
         await asyncio.to_thread(self.template.shutdown)
         if self.agent_template is not None:
             await asyncio.to_thread(self.agent_template.shutdown)
@@ -1424,7 +1499,7 @@ class Launcher:
         while (
             self.children
             or self.jobs
-            or self.app_compiles.has_live
+            or self.file_operations.has_live
             or any(stage.state in {"starting", "running"} for stage in self.agent_compute_stages.values())
             or self.pending_terminal
         ) and time.monotonic() < deadline:
@@ -1464,7 +1539,9 @@ async def _run_launcher(
     control_headers = load_control_headers(control_url)
     identity = load_launcher_identity()
     secret = os.environ[
-        "BIFROST_WORKER_CONTROL_SECRET" if identity.form == "external" else "BIFROST_SECRET_KEY"
+        "BIFROST_WORKER_CONTROL_SECRET"
+        if identity.form == "external" or os.environ.get("BIFROST_WORKER_COMPUTE_ONLY") == "1"
+        else "BIFROST_SECRET_KEY"
     ]
     launcher: Launcher | None = None
     candidate: Launcher | None = None
@@ -1490,18 +1567,19 @@ async def _run_launcher(
                             candidate.socket = socket
                         # ``agent.loop.v1`` is advertised only after the
                         # physical pure-compute template is genuinely ready.
-                        # Both profiles preload platform dependencies; the
-                        # legacy agent profile does not consume workspace
-                        # requirements. Warm it alongside pure compute so
-                        # enrollment does not serialize their cold imports.
-                        warmups = [candidate.start_agent_compute_template()]
-                        if candidate.agent_template is not None:
-                            warmups.append(asyncio.to_thread(candidate.agent_template.start))
-                        outcomes = await asyncio.gather(*warmups, return_exceptions=True)
-                        for outcome in outcomes:
-                            if isinstance(outcome, (Exception, asyncio.CancelledError)):
-                                candidate.failed = True
-                                raise outcome
+                        if not candidate.compute_only:
+                            # Both profiles preload platform dependencies; the
+                            # legacy agent profile does not consume workspace
+                            # requirements. Warm it alongside pure compute so
+                            # enrollment does not serialize their cold imports.
+                            warmups = [candidate.start_agent_compute_template()]
+                            if candidate.agent_template is not None:
+                                warmups.append(asyncio.to_thread(candidate.agent_template.start))
+                            outcomes = await asyncio.gather(*warmups, return_exceptions=True)
+                            for outcome in outcomes:
+                                if isinstance(outcome, (Exception, asyncio.CancelledError)):
+                                    candidate.failed = True
+                                    raise outcome
                         # Enroll before the potentially minute-long requirements
                         # install. The API's ordinary worker heartbeat can then
                         # keep the canonical row alive while it waits for the

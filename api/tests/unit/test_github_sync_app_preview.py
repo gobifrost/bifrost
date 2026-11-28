@@ -15,6 +15,8 @@ from src.services.github_sync import AppPreviewSyncError, GitHubSyncService
 
 def _service() -> GitHubSyncService:
     service = object.__new__(GitHubSyncService)
+    service._job_context = None
+    service._job_operation = None
     service.repo_manager = SimpleNamespace(_settings=None)
     return service
 

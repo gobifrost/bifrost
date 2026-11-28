@@ -55,6 +55,41 @@ def empty_app_remote():
         shutil.rmtree(path)
 
 
+@pytest_asyncio.fixture
+async def git_compute_sources(async_session_factory, isolated_git_workspace):
+    """Seed compute input directly; the existing connect journey owns one job."""
+    from src.config import get_settings
+    from src.core.storage import object_pages, object_store
+    from src.models.orm.applications import Application
+    from src.models.orm.file_index import FileIndex
+    from src.services.repo_storage import RepoStorage
+    from tests.e2e.fixtures.github_setup import _publish_workspace_manifest
+
+    app_id = uuid4()
+    app_path = f"apps/git-compute-{app_id.hex}"
+    source_path = f"{app_path}/pages/index.tsx"
+    python_path = f"workflows/git_compute_{app_id.hex}.py"
+    storage = RepoStorage()
+    try:
+        async with async_session_factory() as db:
+            db.add(Application(id=app_id, name=f"git-compute-{app_id.hex}", slug=f"git-compute-{app_id.hex}", repo_path=app_path))
+            await db.commit()
+        await storage.write(source_path, b"export default function Page() {return <div>Git Compute Preview</div>}")
+        await storage.write(python_path, b"SAMPLE_VALUE = 1\n")
+        await _publish_workspace_manifest()
+        yield app_id
+    finally:
+        await storage.delete(source_path)
+        await storage.delete(python_path)
+        async with object_store(get_settings()) as store:
+            async for page in object_pages(store, f"_apps/{app_id}/"):
+                await store.delete_many([item.key for item in page.objects])
+        async with async_session_factory() as db:
+            await db.execute(delete(FileIndex).where(FileIndex.path.in_((source_path, python_path))))
+            await db.execute(delete(Application).where(Application.id == app_id))
+            await db.commit()
+
+
 def start(client, admin):
     response = client.post("/api/github/app/manifest", headers=admin.headers, json={"owner": "thin-git-app", "name": "Bifrost Fixture App"})
     assert response.status_code == 200, response.text
@@ -117,7 +152,7 @@ def test_authorization_callback_is_single_use_and_repository_binding_is_verified
 
 
 @pytest.mark.asyncio
-async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration, empty_app_remote, isolated_git_workspace):
+async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(e2e_client, platform_admin, db_session, preserve_git_configuration, empty_app_remote, git_compute_sources):
     import asyncio
     from src.core.cache.redis_client import get_shared_redis
     from tests.e2e.platform.thin_live_helpers import wait_for_job
@@ -135,6 +170,14 @@ async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(
     try:
         job = await asyncio.to_thread(wait_for_job, e2e_client, platform_admin.headers, queued.json()["job_id"], "workspace.git")
         assert job["attempt"] == 1
+        from src.models.orm.platform_jobs import PlatformJob
+        canonical_job = await db_session.get(PlatformJob, UUID(queued.json()["job_id"]))
+        assert canonical_job.payload_version == 5
+        assert canonical_job.executor_worker_id is not None
+        assert canonical_job.executor_compute_capability == "app.preview.compile.v1"
+        from src.services.app_storage import AppStorageService
+        compiled = await AppStorageService().read_file(str(git_compute_sources), "preview", "pages/index.tsx")
+        assert compiled is not None and b"Git Compute Preview" in compiled and b"<div>" not in compiled
         config = await get_github_config(db_session, preserve_git_configuration)
         assert config.auth_kind == "app" and config.token is None
         assert config.app["repository_id"] == 1618
@@ -145,6 +188,9 @@ async def test_verified_pending_connection_no_longer_needs_the_oauth_user_token(
     finally:
         disconnected = e2e_client.post("/api/github/disconnect", headers=platform_admin.headers)
         assert disconnected.status_code == 200, disconnected.text
+        from src.models.orm.platform_jobs import PlatformJob
+        await db_session.execute(delete(PlatformJob).where(PlatformJob.id == UUID(queued.json()["job_id"])))
+        await db_session.commit()
 
 
 def test_uncertain_registration_does_not_repeat_conversion(e2e_client, platform_admin):

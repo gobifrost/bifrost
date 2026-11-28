@@ -8,6 +8,7 @@ HTTP-handler-only surface. See docs/plans/2026-05-26-org-scoping-consolidation.m
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from collections.abc import Awaitable, Callable
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Any, Literal
@@ -33,6 +34,18 @@ if TYPE_CHECKING:
     from src.services.authorization.enforce import Caller
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ApplicationPublishSnapshot:
+    """API-owned publish input and revision fence captured before CPU work."""
+
+    application_id: UUID
+    organization_id: UUID | None
+    repo_prefix: str
+    dependencies: dict[str, str]
+    source_files: dict[str, bytes]
+    source_versions: dict[str, str]
 
 
 class ApplicationRepository(OrgScopedRepository[Application]):
@@ -570,88 +583,101 @@ class ApplicationRepository(OrgScopedRepository[Application]):
         logger.info(f"Deleted application '{log_safe(app_id)}'")
         return True
 
-    async def publish(
-        self,
-        app_id: UUID,
-        published_by: str,
-        message: str | None = None,
-        progress_callback: (
-            Callable[[str, int, int | None], Awaitable[None]] | None
-        ) = None,
-    ) -> Application | None:
-        """
-        Publish draft to live.
-
-        Copies preview files to live in S3 via AppStorageService, then
-        captures a published_snapshot for backwards compatibility.
-        """
+    async def prepare_publish(self, app_id: UUID) -> ApplicationPublishSnapshot | None:
+        """Migrate and freeze a source snapshot before remote CPU work starts."""
         application = await self.get(id=app_id)
         if not application:
             return None
 
-        # Bundle the app's current source into preview before promoting to
-        # live. This replaces the legacy per-file compiler: the bundler is
-        # the runtime, so `preview/` must contain a fresh bundle (manifest +
-        # hashed chunks) that matches the source being published. A failed
-        # bundle MUST fail the publish — we will not promote a stale or
-        # partial preview into live.
-        from src.services.app_bundler import build_with_migrate
+        # Migration and source storage remain API-owned.  The caller commits
+        # and closes this session before sending the resulting bytes to the
+        # worker, so no database transaction spans CPU compilation.
+        from src.services.app_bundler import BundlerService
+        from src.services.app_bundler.auto_migrate import auto_migrate_repo_prefix
+        await auto_migrate_repo_prefix(str(app_id), application.repo_prefix, self.session)
+        source_files, source_versions = await BundlerService().source_snapshot(
+            application.repo_prefix
+        )
+        if not source_files:
+            raise ValueError(
+                f"No source files for app {app_id} at {application.repo_prefix}"
+            )
+        return ApplicationPublishSnapshot(
+            application_id=application.id,
+            organization_id=application.organization_id,
+            repo_prefix=application.repo_prefix,
+            dependencies=dict(application.dependencies or {}),
+            source_files=source_files,
+            source_versions=source_versions,
+        )
+
+    async def promote_publish_snapshot(
+        self,
+        snapshot: ApplicationPublishSnapshot,
+        bundle_result,
+        artifacts: dict[str, bytes],
+        *,
+        effect_authorization: Callable[[Any], Awaitable[bool]],
+    ) -> Application | None:
+        """Validate a frozen snapshot, then make its manifest live last."""
+        from src.services.app_bundler import BundlerService
         from src.services.app_storage import AppStorageService
+
+        # Lock in the canonical owner -> job -> App order. Progress is
+        # published by the handler outside this transaction: its independent
+        # session must never wait on the job lock this effect holds.
+        if not await effect_authorization(self.session):
+            from src.jobs.platform.base import PlatformJobCancelled
+
+            raise PlatformJobCancelled
+        application = await self.session.scalar(
+            select(Application)
+            .where(Application.id == snapshot.application_id)
+            .with_for_update()
+        )
+        if application is None:
+            return None
+        current_versions = await BundlerService().source_versions(snapshot.repo_prefix)
+        if (
+            application.repo_prefix != snapshot.repo_prefix
+            or dict(application.dependencies or {}) != snapshot.dependencies
+            or current_versions != snapshot.source_versions
+        ):
+            raise ValueError(
+                "Application source or dependencies changed during publish; retry the publish."
+            )
+        if not bundle_result.success or bundle_result.manifest is None:
+            raise ValueError("Cannot promote an unsuccessful App bundle")
+        await BundlerService().write_compilation(
+            str(application.id), "preview", bundle_result, artifacts
+        )
+        # S3 is the source of truth and a source writer can put an object
+        # before its search-index transaction commits. Recheck the opaque
+        # object versions after staging output, immediately before the live
+        # manifest pointer is eligible to move.
+        if await BundlerService().source_versions(snapshot.repo_prefix) != snapshot.source_versions:
+            raise ValueError(
+                "Application source or dependencies changed during publish; retry the publish."
+            )
         app_storage = AppStorageService()
 
-        if progress_callback:
-            await progress_callback("building current source", 0, None)
-
-        # build_with_migrate runs auto-migration first so a publish from a
-        # legacy source tree picks up the rewritten imports before bundling.
-        bundle_result, _migrated = await build_with_migrate(
-            str(app_id),
-            application.repo_prefix,
-            "preview",
-            dependencies=application.dependencies or {},
-            db=self.session,
-        )
-        if not bundle_result.success:
-            first_err = (bundle_result.errors or [None])[0]
-            err_text = first_err.text if first_err else "unknown error"
-            raise ValueError(f"Bundle build failed during publish: {err_text}")
-
-        # Promote the freshly-built preview bundle to live.
-        async def _report_promotion(current: int, total: int) -> None:
-            if progress_callback:
-                await progress_callback(
-                    "promoting current bundle",
-                    current,
-                    total,
-                )
-
-        published_count = await app_storage.publish(
-            str(app_id),
-            progress_callback=_report_promotion,
-        )
+        published_count = await app_storage.publish(str(application.id))
 
         if published_count == 0:
             raise ValueError("No files found to publish")
 
         # Build snapshot for backwards compat
-        preview_files = await app_storage.list_files(str(app_id), "preview")
-        snapshot = {f: "" for f in preview_files}
+        preview_files = await app_storage.list_files(str(application.id), "preview")
+        published_snapshot = {f: "" for f in preview_files}
 
-        application.published_snapshot = snapshot
+        application.published_snapshot = published_snapshot
         application.published_at = datetime.now(timezone.utc)
 
         await self.session.flush()
         await self.session.refresh(application)
-        if progress_callback:
-            await progress_callback(
-                "recording published version",
-                published_count,
-                published_count,
-            )
-
         logger.info(
-            f"Published application {log_safe(app_id)} "
-            f"({published_count} files) by user {log_safe(published_by)}"
+            f"Published application {log_safe(application.id)} "
+            f"({published_count} files)"
         )
         return application
 

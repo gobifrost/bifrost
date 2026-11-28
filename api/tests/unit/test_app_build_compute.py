@@ -10,6 +10,14 @@ import pytest
 
 from shared import app_build_compute as codec
 from shared.solution_app_compiler import AppBuildInputs, AppBuildResult
+from shared.worker_transfer import (
+    FileTransfer,
+    FileTransferError,
+    FileTransferManifest,
+    FileTransferReceiver,
+    MAX_CHUNK_BYTES,
+    ReceivedFileTransfer,
+)
 
 
 def _inputs() -> AppBuildInputs:
@@ -24,8 +32,8 @@ def _inputs() -> AppBuildInputs:
     )
 
 
-def _receive(transfer: codec.AppBuildTransfer, *, temp_dir: Path) -> codec.ReceivedAppBuildTransfer:
-    receiver = codec.AppBuildTransferReceiver(transfer.manifest, temp_dir=temp_dir)
+def _receive(transfer: FileTransfer, *, temp_dir: Path) -> ReceivedFileTransfer:
+    receiver = FileTransferReceiver(transfer.manifest, temp_dir=temp_dir)
     for chunk in transfer.iter_chunks():
         receiver.add_chunk(chunk.to_dict())
     return receiver.finish()
@@ -34,6 +42,16 @@ def _receive(transfer: codec.AppBuildTransfer, *, temp_dir: Path) -> codec.Recei
 def test_input_round_trip_preserves_provenance_but_uses_remote_environment(tmp_path: Path) -> None:
     inputs = _inputs()
     with codec.encode_app_build_inputs(inputs, chunk_size=31) as transfer:
+        assert transfer.manifest.version == 1
+        assert transfer.manifest.kind == "app_build_inputs"
+        assert set(transfer.manifest.to_dict()) == {
+            "version",
+            "kind",
+            "total_size",
+            "sha256",
+            "chunk_size",
+            "chunk_count",
+        }
         chunks = list(transfer.iter_chunks())
         assert all(len(chunk.data_b64) <= 4 * ((31 + 2) // 3) for chunk in chunks)
         with zipfile.ZipFile(transfer.path) as archive:
@@ -68,24 +86,25 @@ def test_receiver_rejects_out_of_order_and_duplicate_chunks(tmp_path: Path) -> N
     with codec.encode_app_build_inputs(_inputs(), chunk_size=20) as transfer:
         chunks = list(transfer.iter_chunks())
         assert len(chunks) > 1
-        with codec.AppBuildTransferReceiver(transfer.manifest, temp_dir=tmp_path) as receiver:
-            with pytest.raises(codec.AppBuildTransferError, match="ordered"):
+        with FileTransferReceiver(transfer.manifest, temp_dir=tmp_path) as receiver:
+            with pytest.raises(FileTransferError, match="ordered"):
                 receiver.add_chunk(chunks[1])
             receiver.add_chunk(chunks[0])
-            with pytest.raises(codec.AppBuildTransferError, match="ordered"):
+            with pytest.raises(FileTransferError, match="ordered"):
                 receiver.add_chunk(chunks[0])
 
 
 def test_receiver_rejects_corrupt_digest_and_removes_partial_temp_file(tmp_path: Path) -> None:
     with codec.encode_app_build_inputs(_inputs(), chunk_size=17) as transfer:
-        bad_manifest = codec.AppBuildTransferManifest(
-            **{**transfer.manifest.to_dict(), "sha256": "0" * 64}
+        bad_manifest = FileTransferManifest(
+            **{**transfer.manifest.to_dict(), "sha256": "0" * 64},
+            max_total_size=codec.MAX_INPUT_TRANSFER_BYTES,
         )
-        receiver = codec.AppBuildTransferReceiver(bad_manifest, temp_dir=tmp_path)
+        receiver = FileTransferReceiver(bad_manifest, temp_dir=tmp_path)
         path = receiver.path
         for chunk in transfer.iter_chunks():
             receiver.add_chunk(chunk)
-        with pytest.raises(codec.AppBuildTransferError, match="digest"):
+        with pytest.raises(FileTransferError, match="digest"):
             receiver.finish()
     assert not path.exists()
 
@@ -98,7 +117,7 @@ def test_decoder_rejects_unsafe_and_duplicate_archive_paths(tmp_path: Path) -> N
             ("artifacts/../escape.js", b"nope"),
         ],
     ) as unsafe:
-        with pytest.raises(codec.AppBuildTransferError, match="unsafe archive path"):
+        with pytest.raises(codec.AppBuildCodecError, match="unsafe archive path"):
             codec.decode_app_build_result(unsafe)
 
     with _received_archive(
@@ -110,13 +129,13 @@ def test_decoder_rejects_unsafe_and_duplicate_archive_paths(tmp_path: Path) -> N
         ],
         expects_duplicate_warning=True,
     ) as duplicate:
-        with pytest.raises(codec.AppBuildTransferError, match="duplicate"):
+        with pytest.raises(codec.AppBuildCodecError, match="duplicate"):
             codec.decode_app_build_result(duplicate)
 
 
 def test_source_and_result_limits_are_enforced(monkeypatch) -> None:
     monkeypatch.setattr(codec, "MAX_SOURCE_EXPANDED_BYTES", 1)
-    with pytest.raises(codec.AppBuildTransferError, match="expanded byte limit"):
+    with pytest.raises(codec.AppBuildCodecError, match="expanded byte limit"):
         codec.encode_app_build_inputs(
             AppBuildInputs(
                 app_id="app",
@@ -129,7 +148,7 @@ def test_source_and_result_limits_are_enforced(monkeypatch) -> None:
         )
 
     monkeypatch.setattr(codec, "MAX_RESULT_EXPANDED_BYTES", 1)
-    with pytest.raises(codec.AppBuildTransferError, match="expanded byte limit"):
+    with pytest.raises(codec.AppBuildCodecError, match="expanded byte limit"):
         codec.encode_app_build_result(AppBuildResult({"index.html": b"xx"}, "identity"))
 
 
@@ -137,7 +156,7 @@ def test_cancel_removes_sender_and_receiver_temp_files(tmp_path: Path) -> None:
     transfer = codec.encode_app_build_inputs(_inputs())
     transfer_path = transfer.path
     assert transfer_path.exists()
-    receiver = codec.AppBuildTransferReceiver(transfer.manifest, temp_dir=tmp_path)
+    receiver = FileTransferReceiver(transfer.manifest, temp_dir=tmp_path)
     receiver_path = receiver.path
     assert receiver_path.exists()
 
@@ -153,7 +172,7 @@ def _received_archive(
     members: list[tuple[str, bytes]],
     *,
     expects_duplicate_warning: bool = False,
-) -> codec.ReceivedAppBuildTransfer:
+) -> ReceivedFileTransfer:
     path = tmp_path / "crafted.zip"
     if expects_duplicate_warning:
         with pytest.warns(UserWarning, match="Duplicate name"):
@@ -165,12 +184,13 @@ def _received_archive(
             for name, content in members:
                 archive.writestr(name, content)
     data = path.read_bytes()
-    manifest = codec.AppBuildTransferManifest(
-        version=codec.APP_BUILD_TRANSFER_VERSION,
+    manifest = FileTransferManifest(
+        version=1,
         kind="app_build_result",
         total_size=len(data),
         sha256=hashlib.sha256(data).hexdigest(),
-        chunk_size=codec.MAX_CHUNK_BYTES,
+        chunk_size=MAX_CHUNK_BYTES,
         chunk_count=1,
+        max_total_size=codec.MAX_RESULT_TRANSFER_BYTES,
     )
-    return codec.ReceivedAppBuildTransfer(manifest, path)
+    return ReceivedFileTransfer(manifest, path)

@@ -5,7 +5,8 @@ Every test passes a 2002 cutoff and seeds rows dated 2001, so only the rows a
 test seeded are eligible, whatever else the shared stack holds.
 """
 
-from dataclasses import dataclass, field
+import hashlib
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -29,6 +30,7 @@ from src.services.audit_retention.format import (
     ArchiveVerifyError,
     Segment,
     build_segments,
+    encode_rows,
     verify_segment,
 )
 from src.services.audit_retention.store import (
@@ -150,7 +152,7 @@ async def _remaining(db: AsyncSession, seeded: Seeded) -> set[UUID]:
 
 
 async def _assert_stored(store: AuditArchiveStore, segment: Segment) -> None:
-    verify_segment(await store.get(segment.key), sha256=segment.sha256, ids=segment.ids)
+    verify_segment(await store.get(segment.key), sha256=segment.sha256, expected_rows=segment.rows)
 
 
 async def _catalog(db: AsyncSession, seeded: Seeded) -> list[AuditArchiveSegment]:
@@ -224,6 +226,24 @@ class TestAuditArchiver:
         assert await _catalog(db_session, old_rows) == []
         # The uncataloged upload stays behind; the fixture removes it.
         await _assert_stored(store, segment)
+
+    async def test_changed_rows_with_matching_checksum_delete_nothing(self, db_session, store, old_rows, lease):
+        segment = (await _segments(db_session, old_rows))[0]
+        altered = encode_rows(
+            [
+                replace(segment.rows[0], details={"n": 9}),
+                *segment.rows[1:],
+            ]
+        )
+        altered_segment = replace(segment, body=altered, sha256=hashlib.sha256(altered).hexdigest())
+        old_rows.keys.remove(segment.key)
+        old_rows.keys.add(altered_segment.key)
+
+        with pytest.raises(ArchiveVerifyError, match="expected canonical rows"):
+            await archive_segment(store, altered_segment, job_id=lease.job_id, lease_token=lease.token)
+
+        assert await _remaining(db_session, old_rows) == set(old_rows.ids)
+        assert await _catalog(db_session, old_rows) == []
 
     async def test_stale_lease_cannot_delete(self, db_session, store, old_rows, lease):
         segment = (await _segments(db_session, old_rows))[0]

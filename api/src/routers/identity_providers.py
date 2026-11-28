@@ -232,4 +232,3 @@ async def unmap_identity_provider_group(
     await db.commit()
     await provisioner.after_commit()
     return Response(status_code=204)
-

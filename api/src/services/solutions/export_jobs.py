@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import zipfile
 import logging
 from collections.abc import AsyncIterator
 from datetime import datetime, timezone
@@ -26,6 +27,8 @@ from src.services.solutions.capture import SolutionCaptureService
 from src.services.solutions.export import (
     add_live_content_to_workspace_zip_file,
     build_workspace_zip_for_export,
+    write_workspace_zip,
+    _copy_source_members,
 )
 from src.services.solutions.source_artifact import SolutionSourceArtifactStorage
 
@@ -58,6 +61,11 @@ def export_artifact_storage_key(solution_id: UUID | str, job_id: UUID | str) -> 
     return f"{SOLUTION_EXPORT_ARTIFACT_PREFIX}/{solution_id}/{job_id}.zip"
 
 
+def export_attempt_artifact_storage_key(solution_id: UUID, job_id: UUID, artifact_id: UUID) -> str:
+    """An immutable upload destination belonging only to this attempt."""
+    return f"{SOLUTION_EXPORT_ARTIFACT_PREFIX}/{solution_id}/{job_id}/{artifact_id}.zip"
+
+
 def export_artifact_filename(solution: Solution) -> str:
     """Return the download filename for a Solution export artifact."""
     return f"{solution.slug}-{solution.version or 'unversioned'}.zip"
@@ -71,7 +79,7 @@ def _is_future(value: datetime | None) -> bool:
     return value > datetime.now(timezone.utc)
 
 
-def public_job(row: SolutionExportJob) -> SolutionExportJobPublic:
+def public_job(row: SolutionExportJob, canonical: PlatformJob | None = None) -> SolutionExportJobPublic:
     """Return the public representation of a durable export job row."""
     download_url = None
     if (
@@ -80,9 +88,14 @@ def public_job(row: SolutionExportJob) -> SolutionExportJobPublic:
         and _is_future(row.expires_at)
     ):
         download_url = f"{SOLUTION_EXPORT_DOWNLOAD_PATH_PREFIX}/{row.id}/download"
-    return SolutionExportJobPublic.model_validate(row).model_copy(
-        update={"download_url": download_url}
-    )
+    result = SolutionExportJobPublic.model_validate(row)
+    if row.status in {"pending", "running"} and canonical is not None and canonical.status in {"failed", "cancelled"}:
+        return result.model_copy(update={
+            "status": "failed", "progress_percent": 100,
+            "message": "Backup failed", "failure_message": canonical.error_message or "Backup export stopped",
+            "completed_at": canonical.completed_at, "download_url": None,
+        })
+    return result.model_copy(update={"download_url": download_url})
 
 
 async def create_export_job(
@@ -123,7 +136,7 @@ async def list_export_jobs(
     """Return recent export jobs for a Solution, newest first."""
     rows = (
         await db.execute(
-            select(SolutionExportJob)
+            select(SolutionExportJob, PlatformJob)
             .join(PlatformJob, PlatformJob.resource_id == cast(SolutionExportJob.id, String))
             .where(
                 SolutionExportJob.solution_id == solution_id,
@@ -134,8 +147,8 @@ async def list_export_jobs(
             .order_by(SolutionExportJob.created_at.desc())
             .limit(limit)
         )
-    ).scalars().all()
-    return [public_job(row) for row in rows]
+    ).all()
+    return [public_job(row, canonical) for row, canonical in rows]
 
 
 def export_options_to_capture_flags(options: SolutionExportOptions) -> dict[str, bool]:
@@ -215,6 +228,30 @@ def validate_export_options_password(options: SolutionExportOptions) -> None:
         raise ValueError("backup export requires a password")
 
 
+async def capture_export_source(db: AsyncSession, solution: Solution, options: SolutionExportOptions, source_path: Path):
+    """Capture authorized values in the API and prepare source-only worker input."""
+    from shared.file_compute import run_owned_file_io
+
+    validate_export_options_password(options)
+    bundle = await SolutionCaptureService(db).bundle_for(solution, **export_options_to_capture_flags(options))
+    bundle.config_values = await apply_config_value_selection(db, solution, options, bundle.config_values)
+    stored = source_path.with_name("stored-source.zip")
+    try:
+        has_source = await SolutionSourceArtifactStorage(solution.id).copy_to_path(stored)
+        if has_source:
+            await run_owned_file_io(_prepare_stored_export_source, stored, source_path, bundle.readme)
+        else:
+            await run_owned_file_io(write_workspace_zip, bundle, source_path, compression=zipfile.ZIP_STORED)
+    finally:
+        stored.unlink(missing_ok=True)
+    return bundle
+
+
+def _prepare_stored_export_source(stored: Path, destination: Path, readme: str | None) -> None:
+    with zipfile.ZipFile(stored) as source, zipfile.ZipFile(destination, "w", zipfile.ZIP_STORED) as target:
+        _copy_source_members(source, target, readme=readme, exclude_runtime=True)
+
+
 async def build_solution_backup_zip_to_path(
     db: AsyncSession,
     solution: Solution,
@@ -271,23 +308,6 @@ async def build_solution_backup_zip_to_path(
         _unlink_best_effort(source_path)
 
 
-async def build_solution_backup_zip_tempfile(
-    db: AsyncSession,
-    solution: Solution,
-    options: SolutionExportOptions,
-) -> Path:
-    """Build a durable backup export zip in a caller-owned temporary file."""
-    tmp = tempfile.NamedTemporaryFile(
-        prefix=f"bifrost-solution-export-{solution.id}-",
-        suffix=".zip",
-        delete=False,
-    )
-    out_path = Path(tmp.name)
-    tmp.close()
-    await build_solution_backup_zip_to_path(db, solution, options, out_path)
-    return out_path
-
-
 async def _path_chunks(path: Path, chunk_size: int = 8 * 1024 * 1024) -> AsyncIterator[bytes]:
     with path.open("rb") as f:
         while chunk := f.read(chunk_size):
@@ -317,25 +337,10 @@ async def delete_solution_export_artifact(db: AsyncSession, storage_key: str | N
 
 
 class SolutionExportArtifactService:
-    """Small facade used by future schedulers/routes to build and store exports."""
+    """API-owned artifact publication and encrypted export-option parsing."""
 
     def __init__(self, db: AsyncSession):
         self.db = db
-
-    async def build_zip_to_path(
-        self,
-        solution: Solution,
-        options: SolutionExportOptions,
-        dest: Path,
-    ) -> None:
-        await build_solution_backup_zip_to_path(self.db, solution, options, dest)
-
-    async def build_zip_tempfile(
-        self,
-        solution: Solution,
-        options: SolutionExportOptions,
-    ) -> Path:
-        return await build_solution_backup_zip_tempfile(self.db, solution, options)
 
     async def upload_artifact(
         self,
@@ -376,7 +381,6 @@ __all__ = [
     "SOLUTION_EXPORT_ARTIFACT_CONTENT_TYPE",
     "SOLUTION_EXPORT_ARTIFACT_PREFIX",
     "SolutionExportArtifactService",
-    "build_solution_backup_zip_tempfile",
     "build_solution_backup_zip_to_path",
     "create_export_job",
     "decrypt_export_options",

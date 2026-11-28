@@ -14,6 +14,8 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
+from shared.models import PlatformWorkerCapacityOverview, PlatformWorkerIncarnation
+
 
 # =============================================================================
 # Worker/Pool Models
@@ -86,6 +88,7 @@ class PoolSummary(BaseModel):
         default=None,
         description="Memory limit of the worker container in bytes (from cgroup, -1 if unlimited)"
     )
+    incarnation: PlatformWorkerIncarnation | None = None
 
 
 class PoolDetail(BaseModel):
@@ -97,6 +100,7 @@ class PoolDetail(BaseModel):
     started_at: str | None = None
     last_heartbeat: str | None = None
     processes: list[ProcessInfo] = Field(default_factory=list)
+    incarnation: PlatformWorkerIncarnation | None = None
 
 
 class PoolsListResponse(BaseModel):
@@ -104,6 +108,7 @@ class PoolsListResponse(BaseModel):
 
     pools: list[PoolSummary]
     total: int
+    capacity_overview: PlatformWorkerCapacityOverview | None = None
 
 
 class PoolStatsResponse(BaseModel):

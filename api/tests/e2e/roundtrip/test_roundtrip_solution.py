@@ -30,7 +30,11 @@ harness support modules live in ``tests/roundtrip/`` and are imported.
 """
 from __future__ import annotations
 
+import asyncio
 import uuid
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID
 
 import pytest
@@ -58,6 +62,81 @@ from tests.roundtrip.paths import (
     solution_export_zip,
     solution_install_zip,
 )
+
+
+async def _install_prebuilt_app_through_prepared_pipeline(
+    db: AsyncSession,
+    archive_bytes: bytes,
+    *,
+    organization_id: UUID,
+    tmp_path: Path,
+) -> Solution:
+    """Exercise archive inspection plus prepared prebuilt-App publication.
+
+    This is intentionally local to the App roundtrip: all other roundtrips are
+    app-free and continue to exercise the raw install helper.  The archive stage
+    executes the registered codec off the event loop; prebuilt output must never
+    request an App compiler invocation.
+    """
+    from shared import solution_archive_compute as archive_codec
+    from shared.file_compute import FileComputeResult
+    from shared.solution_archive_compute import SOLUTION_ARCHIVE_INSPECT_OPERATION
+    from shared.worker_transfer import FileTransfer, ReceivedFileTransfer
+    from src.services.solutions.compute_pipeline import prepare_solution_deployment
+    from src.services.solutions.zip_install import _install_workspace
+
+    archive_path = tmp_path / "roundtrip-app.zip"
+    archive_path.write_bytes(archive_bytes)
+
+    def inspect_stage(transfer: FileTransfer) -> FileComputeResult:
+        inputs = archive_codec.decode_solution_archive_inspect_inputs(
+            ReceivedFileTransfer(transfer.manifest, transfer.path)
+        )
+        output = archive_codec.build_solution_archive_inspect_result(inputs)
+        return FileComputeResult(
+            ReceivedFileTransfer(output.manifest, output.path), {}
+        )
+
+    async def file_compute(
+        operation: str, transfer: FileTransfer
+    ) -> FileComputeResult:
+        assert operation == SOLUTION_ARCHIVE_INSPECT_OPERATION
+        return await asyncio.to_thread(inspect_stage, transfer)
+
+    context = SimpleNamespace(
+        job_id=uuid.uuid4(),
+        file_compute=file_compute,
+        app_build_compute=AsyncMock(
+            side_effect=AssertionError("prebuilt App must not request compilation")
+        ),
+        report=AsyncMock(),
+        authorize_effect=AsyncMock(return_value=True),
+    )
+    async with prepare_solution_deployment(
+        context,
+        archive_path,
+        solution_id=None,
+        organization_id=organization_id,
+    ) as prepared:
+        return await _install_workspace(
+            db,
+            prepared.archive.workspace,
+            organization_id=organization_id,
+            config_values={},
+            deployer_email="roundtrip@test.local",
+            force=False,
+            password=None,
+            replace_secrets=False,
+            replace_data=False,
+            reactivate=False,
+            prepared_preview=prepared.archive.preview,
+            expected_solution_id=prepared.bundle.solution.id,
+            prepared_app_builds=prepared.app_builds,
+            prepared_bundle=prepared.bundle,
+            source_artifact=prepared.source_artifact,
+            lock_already_held=True,
+            context=context,
+        )
 
 
 def _extra_keys_for(model: type) -> set[str]:
@@ -753,11 +832,10 @@ async def test_solution_shareable_roundtrip_form(db_session: AsyncSession):
 
 
 # ---------------------------------------------------------------------------
-# App (standalone_v2) — the one path that touches the app build. Driven via the
-# PREBUILT-DIST fast path: the source app ships a dist/ to S3 (no src files), so
-# capture carries dist_files and deploy's compile_dist returns it verbatim
-# (app_build.py:76 — `if prebuilt_dist: return prebuilt_dist`). No Node/Vite in
-# the test stack is needed, and the REAL export->install->deploy pipeline runs.
+# App (standalone_v2) — the one path that touches App preparation. Driven via
+# the PREBUILT-DIST fast path: the source app ships a dist/ to S3 (no src files),
+# so capture carries dist_files and the canonical prepared pipeline emits a
+# receipt without requesting a compiler. No Node/Vite or queued job is needed.
 # ---------------------------------------------------------------------------
 
 
@@ -794,10 +872,12 @@ async def seed_solution_app(db: AsyncSession, sol: Solution) -> str:
     return str(aid)
 
 
-async def test_solution_shareable_roundtrip_app(db_session: AsyncSession):
-    """ManifestApp obeys SOLUTION_SHAREABLE across a real export->install->deploy,
-    via the prebuilt-dist fast path. The 7 app transport extras (repo_path,
-    logo_*, src/bin/dist files) are accounted by EXTRA_FIELD_POLICY."""
+async def test_solution_shareable_roundtrip_app(db_session: AsyncSession, tmp_path):
+    """ManifestApp survives canonical prepared export->install->capture.
+
+    The 7 app transport extras (repo_path, logo_*, src/bin/dist files) are
+    accounted by EXTRA_FIELD_POLICY.
+    """
     db = db_session
     # App slug is global-unique CONTENT (not remapped), and a global (org=None)
     # source app is visible to EVERY org — so it would collide with the install
@@ -806,12 +886,18 @@ async def test_solution_shareable_roundtrip_app(db_session: AsyncSession):
     src_org = await _fresh_org(db)
     src_sol = await _make_solution(db, org_id=src_org)
     src_app_id = await seed_solution_app(db, src_sol)
+    # The prepared pipeline opens independent short-lived sessions for its
+    # snapshot. Persist source ownership and the target scope before entering it.
+    await db.commit()
     before_rows = await solution_bundle_entries(db, src_sol, "apps")
     assert len(before_rows) == 1, f"expected 1 source app, got {before_rows}"
 
     zip_bytes = await solution_export_zip(db, src_sol)
     target_org = await _fresh_org(db)
-    installed = await solution_install_zip(db, zip_bytes, organization_id=target_org)
+    await db.commit()
+    installed = await _install_prebuilt_app_through_prepared_pipeline(
+        db, zip_bytes, organization_id=target_org, tmp_path=tmp_path
+    )
 
     after_rows = await solution_bundle_entries(db, installed, "apps")
     assert len(after_rows) == 1, f"expected 1 installed app, got {after_rows}"

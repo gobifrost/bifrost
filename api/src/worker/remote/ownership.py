@@ -98,6 +98,22 @@ async def renew_remote_owner(
         raise ValueError("remote owner lease must be positive")
     interval = f"{lease_seconds} seconds"
     async with get_liveness_db_context() as db:
+        # Acquire the canonical owner row before inspecting its expiry. The
+        # update's former ``now()`` predicate could be evaluated before a
+        # wait on this lock, then renew an already-expired lease.
+        locked = await db.scalar(
+            select(ExecutionWorker.id)
+            .where(
+                ExecutionWorker.id == lease.worker_id,
+                ExecutionWorker.remote_owner_id == lease.owner_id,
+                ExecutionWorker.remote_launcher_id == lease.launcher_id,
+                ExecutionWorker.remote_session_generation == lease.session_generation,
+                ExecutionWorker.state.in_(("starting", "ready", "draining")),
+            )
+            .with_for_update()
+        )
+        if locked is None:
+            return False
         renewed = await db.scalar(
             update(ExecutionWorker)
             .where(
@@ -105,9 +121,10 @@ async def renew_remote_owner(
                 ExecutionWorker.remote_owner_id == lease.owner_id,
                 ExecutionWorker.remote_launcher_id == lease.launcher_id,
                 ExecutionWorker.remote_session_generation == lease.session_generation,
-                ExecutionWorker.remote_owner_lease_expires_at > func.now(),
+                ExecutionWorker.state.in_(("starting", "ready", "draining")),
+                ExecutionWorker.remote_owner_lease_expires_at > func.clock_timestamp(),
             )
-            .values(remote_owner_lease_expires_at=func.now() + text(f"INTERVAL '{interval}'"))
+            .values(remote_owner_lease_expires_at=func.clock_timestamp() + text(f"INTERVAL '{interval}'"))
             .returning(ExecutionWorker.id)
         )
     return renewed is not None
@@ -122,7 +139,8 @@ async def owns_remote_session(lease: RemoteOwnerLease) -> bool:
                 ExecutionWorker.remote_owner_id == lease.owner_id,
                 ExecutionWorker.remote_launcher_id == lease.launcher_id,
                 ExecutionWorker.remote_session_generation == lease.session_generation,
-                ExecutionWorker.remote_owner_lease_expires_at > func.now(),
+                ExecutionWorker.state.in_(("starting", "ready", "draining")),
+                ExecutionWorker.remote_owner_lease_expires_at > func.clock_timestamp(),
             )
         )
     return worker_id is not None

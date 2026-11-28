@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -35,6 +36,7 @@ from src.services import kubernetes_execution as kube
 from src.services import platform_jobs as service
 from shared.models import WorkerCapacityProfile
 from src.services.worker_pool.external_client import CapacityProtocolError, CapacityProviderUnavailable
+from src.services.worker_pool.connection import CapacityConnection
 
 
 async def _clear(sessions: async_sessionmaker[AsyncSession]) -> None:
@@ -357,6 +359,18 @@ def external_provider(monkeypatch: pytest.MonkeyPatch) -> AsyncMock:
     monkeypatch.setattr("src.services.worker_pool.external_policy.get_version", lambda: profile.worker_version)
     fetch = AsyncMock(return_value=profile)
     monkeypatch.setattr(kube.ExternalCapacityClient, "profile", fetch)
+    @asynccontextmanager
+    async def connection_db():
+        yield object()
+
+    monkeypatch.setattr(kube, "get_db_context", connection_db)
+    monkeypatch.setattr(
+        kube, "load_capacity_provider_connection", AsyncMock(
+            return_value=CapacityConnection(
+                "https://capacity.invalid", "synthetic-capacity-token-" + "x" * 32,
+            ),
+        ),
+    )
     return fetch
 
 
@@ -383,7 +397,53 @@ async def test_external_policy_is_checked_before_lock_and_can_repair_incompatibl
     external_provider.assert_awaited_once()
 
 
-async def test_external_policy_fetches_fresh_limits_and_rejects_without_changing_storage(
+async def test_external_policy_closes_the_connection_session_before_fetching_provider_limits(
+    db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = SimpleNamespace(
+        pool_worker_memory_request_mib=512,
+        worker_capacity_url=None,
+        worker_capacity_token=None,
+        pool_max_lifetime_seconds=900,
+    )
+    monkeypatch.setattr("src.config.get_settings", lambda: settings)
+    connection_session_closed = False
+
+    @asynccontextmanager
+    async def connection_db():
+        nonlocal connection_session_closed
+        yield object()
+        connection_session_closed = True
+
+    profile = WorkerCapacityProfile(
+        protocol_version=1, scope="test-provider", worker_version="test-worker",
+        memory_limit_bytes=4096 * 2**20, max_workers=2, max_lifetime_seconds=900,
+    )
+
+    monkeypatch.setattr("src.services.worker_pool.external_policy.get_version", lambda: profile.worker_version)
+
+    async def fetch() -> WorkerCapacityProfile:
+        assert connection_session_closed, "provider I/O must not hold the connection read session"
+        return profile
+
+    monkeypatch.setattr(kube, "get_db_context", connection_db)
+    monkeypatch.setattr(
+        kube, "load_capacity_provider_connection", AsyncMock(
+            return_value=CapacityConnection("https://capacity.invalid", "dedicated-token-" + "x" * 40),
+        ),
+    )
+    monkeypatch.setattr(kube.ExternalCapacityClient, "profile", AsyncMock(side_effect=fetch))
+
+    await kube.KubernetesExecutionService(db_session).update_policy(
+        {
+            "idle_seconds": 60, "worker_memory_mib": 4096,
+            "largest_worker_mib": 4096, "max_workers": 2,
+        },
+        updated_by="admin@example.test",
+    )
+
+
+async def test_external_policy_fetches_fresh_limits_without_rejecting_global_hybrid_capacity(
     db_session: AsyncSession, external_provider: AsyncMock,
 ) -> None:
     svc = kube.KubernetesExecutionService(db_session)
@@ -392,9 +452,8 @@ async def test_external_policy_fetches_fresh_limits_and_rejects_without_changing
     }, updated_by="admin")
     before = await kube._stored_payload(db_session)
     external_provider.return_value = external_provider.return_value.model_copy(update={"max_workers": 1})
-    with pytest.raises(ValueError, match="max_workers.*provider limit"):
-        await svc.update_policy({"idle_seconds": 30}, updated_by="admin")
-    assert await kube._stored_payload(db_session) == before
+    await svc.update_policy({"idle_seconds": 30}, updated_by="admin")
+    assert await kube._stored_payload(db_session) == {**before, "idle_seconds": 30}
     assert external_provider.await_count == 2
 
 

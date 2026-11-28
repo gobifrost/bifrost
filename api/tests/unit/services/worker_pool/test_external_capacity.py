@@ -13,9 +13,9 @@ import httpx
 import pytest
 import pytest_asyncio
 from pydantic import ValidationError
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 
-from shared.models import WorkerCapacityProfile, WorkerCapacityReservation
+from shared.models import CloudflareCapacityRules, WorkerCapacityProfile, WorkerCapacityReservation
 from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES, WORKER_IMAGE_HANDLER_NAMES
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.executions import Execution
@@ -25,6 +25,7 @@ from src.services import work_dispatch
 from src.services.worker_pool import claims, controller, external_controller, external_policy
 from src.services.worker_pool.external_client import CapacityProtocolError, ExternalCapacityClient
 from src.services.worker_pool.external_controller import ExternalWorkerPoolController
+from src.services.worker_pool.coordinator import HybridWorkerPoolCoordinator
 from tests.unit.services.worker_pool.test_worker_pool import (
     GIB, POLICY, SETTINGS, _accept_pool_run, _clean as _clean, _job_worker,
     _store_policy, db as db_fixture,
@@ -183,6 +184,66 @@ async def test_external_warm_pool_does_not_count_kubernetes_capacity(db, capacit
     assert (worker.form, worker.capacity_scope) == ("external", "test-provider")
 
 
+async def test_hybrid_planner_reserves_once_under_the_global_cap(db, capacity):
+    """Primary Kubernetes and Cloud overflow share one queue snapshot."""
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, MIB, SPEC, _set_request
+
+    first, second = await _accept_pool_run(), await _accept_pool_run()
+    await _set_request(db.sessions, first, 1024 * MIB)
+    await _set_request(db.sessions, second, 1024 * MIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(capacity.policy, warm_workers=0, max_workers=2))
+
+    async with db.context() as session:
+        workers = (await session.scalars(select(ExecutionWorker).where(
+            ExecutionWorker.state.in_(("reserved", "starting", "ready")),
+        ))).all()
+    assert len(workers) == 2
+    assert {worker.form for worker in workers} == {"job", "external"}
+
+
+async def test_hybrid_fast_path_is_kubernetes_only(db, capacity):
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, SPEC
+
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(
+        capacity.policy, warm_workers=0, max_workers=1, reserved_fast_path_workers=1,
+    ))
+
+    async with db.context() as session:
+        workers = (await session.scalars(select(ExecutionWorker))).all()
+    assert [(worker.form, worker.execution_lane) for worker in workers] == [("job", "fast_path")]
+
+
+async def test_hybrid_cloud_cap_never_exceeds_its_profile(db, capacity):
+    from src.services.worker_pool.controller import WorkerPoolController
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, MIB, SPEC, _set_request
+
+    runs = [await _accept_pool_run() for _ in range(3)]
+    for run in runs:
+        await _set_request(db.sessions, run, 1024 * MIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    profile = capacity.provider.profile.model_copy(update={"max_workers": 1})
+    cloud = ExternalWorkerPoolController(capacity.client, SETTINGS, profile, hybrid=True)
+    coordinator = HybridWorkerPoolCoordinator(kubernetes, AsyncMock(return_value=cloud))
+
+    await coordinator.reconcile(replace(capacity.policy, warm_workers=0, max_workers=3))
+
+    async with db.context() as session:
+        cloud_count = await session.scalar(select(func.count()).select_from(
+            ExecutionWorker
+        ).where(ExecutionWorker.form == "external"))
+    assert cloud_count == 1
+
+
 async def test_external_capacity_plans_agent_work_and_excludes_privileged_jobs(db, capacity):
     async with db.context() as session:
         work_dispatch.stage_dispatch(
@@ -210,7 +271,7 @@ async def test_external_app_compile_demand_uses_the_worker_image_compute_contrac
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
         assert worker is not None
-        assert set(worker.supported_compute) == {"app.compile.v2", "agent.loop.v1", "summary.compute.v1"}
+        assert set(worker.supported_compute) == set(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)
 
 
 async def test_lost_start_response_is_observed_without_resending_the_start(db, capacity):
@@ -371,12 +432,14 @@ async def test_provider_cannot_replace_an_existing_resource_uid(db, capacity):
     assert not any(method == "DELETE" for method, _path in capacity.provider.requests)
 
 
-async def test_policy_exceeding_provider_capability_cannot_reserve(db, capacity):
+async def test_provider_capacity_is_independent_from_the_global_worker_ceiling(db, capacity):
     await _accept_pool_run()
-    with pytest.raises(CapacityProtocolError, match="capabilities"):
-        await capacity.pool.launch_for_demand(replace(capacity.policy, max_workers=3))
+    [worker_id] = await capacity.pool.launch_for_demand(replace(capacity.policy, max_workers=3))
+
     async with db.context() as session:
-        assert list(await session.scalars(select(ExecutionWorker.id).where(ExecutionWorker.form == "external"))) == []
+        worker = await session.get(ExecutionWorker, worker_id)
+    assert worker is not None
+    assert worker.memory_limit_bytes == capacity.provider.profile.memory_limit_bytes
 
 
 async def test_provider_failure_never_ends_a_fresh_heartbeat_as_silent(db, capacity):
@@ -574,33 +637,48 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
     await _accept_pool_run()
     [worker_id] = await capacity.pool.launch_for_demand(capacity.policy)
     preparing, release = asyncio.Event(), asyncio.Event()
+    sealing, release_seal = asyncio.Event(), asyncio.Event()
     prepare = capacity.client.prepare
+    calls = 0
 
     async def delayed_prepare(reservation, scope):
-        preparing.set()
-        await release.wait()
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            preparing.set()
+            await release.wait()
+        else:
+            sealing.set()
+            await release_seal.wait()
         return await prepare(reservation, scope)
 
     monkeypatch.setattr(capacity.client, "prepare", delayed_prepare)
     pending = asyncio.create_task(capacity.pool.reconcile_worker(worker_id, capacity.policy))
+    cleanup = None
     try:
         await preparing.wait()
         await capacity.pool._record_loss(worker_id, None, "provider_version_changed", False)
         restarted = ExternalWorkerPoolController(capacity.client, SETTINGS, capacity.provider.profile)
-        await restarted.reconcile_worker(worker_id, capacity.policy)
+        cleanup = asyncio.create_task(restarted.reconcile_worker(worker_id, capacity.policy))
+        await sealing.wait()
         async with db.context() as session:
             worker = await session.get(ExecutionWorker, worker_id)
             assert worker.capacity_resource_deleted_at is None, "absence cannot fence a delayed prepare"
+        release.set()
+        await pending
+        assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
+        assert capacity.provider.starts == []
+        release_seal.set()
+        await cleanup
     finally:
         release.set()
-        await asyncio.gather(pending)
+        release_seal.set()
+        await asyncio.gather(pending, *([] if cleanup is None else [cleanup]), return_exceptions=True)
 
-    assert capacity.provider.resources[str(worker_id)]["state"] == "prepared"
+    assert capacity.provider.resources[str(worker_id)]["state"] == "deleted"
     assert capacity.provider.starts == []
     monkeypatch.setattr(restarted, "launch_for_demand", AsyncMock(return_value=[]))
     monkeypatch.setattr(restarted, "replace_outdated", AsyncMock())
-    later = controller._now() + external_controller.UNBOUND_LOSS_CLEANUP_GRACE
-    monkeypatch.setattr(external_controller, "_now", lambda: later)
     await restarted.reconcile()
 
     assert capacity.provider.resources[str(worker_id)]["state"] == "deleted"
@@ -611,7 +689,7 @@ async def test_absence_during_delayed_prepare_does_not_confirm_cleanup(db, capac
 
 
 @pytest.mark.parametrize("terminal_state", ["lost", "retired"])
-async def test_unbound_absence_finality_is_limited_to_lost_rows(db, capacity, monkeypatch, terminal_state):
+async def test_unbound_cleanup_seals_resource_before_finality_and_then_becomes_idle(db, capacity, monkeypatch, terminal_state):
     ended_at = controller._now()
     async with db.context() as session:
         worker = ExecutionWorker(
@@ -623,15 +701,6 @@ async def test_unbound_absence_finality_is_limited_to_lost_rows(db, capacity, mo
         worker_id = worker.id
     monkeypatch.setattr(capacity.pool, "launch_for_demand", AsyncMock(return_value=[]))
     monkeypatch.setattr(capacity.pool, "replace_outdated", AsyncMock())
-    grace = external_controller.UNBOUND_LOSS_CLEANUP_GRACE
-    assert grace > timedelta(seconds=10 + controller.SWEEP_SECONDS)
-    later = ended_at + grace - timedelta(microseconds=1)
-    monkeypatch.setattr(external_controller, "_now", lambda: later)
-    await capacity.pool.reconcile()
-    async with db.context() as session:
-        assert (await session.get(ExecutionWorker, worker_id)).capacity_resource_deleted_at is None
-
-    later = ended_at + grace
     get = capacity.client.get
     monkeypatch.setattr(capacity.client, "get", AsyncMock(side_effect=httpx.ReadTimeout("provider unavailable")))
     await capacity.pool.reconcile()
@@ -642,14 +711,15 @@ async def test_unbound_absence_finality_is_limited_to_lost_rows(db, capacity, mo
     await capacity.pool.reconcile()
     async with db.context() as session:
         worker = await session.get(ExecutionWorker, worker_id)
-        assert worker.capacity_resource_deleted_at == (later if terminal_state == "lost" else None)
-        assert worker.capacity_resource_uid is None
+        assert worker.capacity_resource_deleted_at is not None
+        resource = capacity.provider.resources[str(worker_id)]
+        assert worker.capacity_resource_uid == resource["resource_uid"]
+        assert resource["state"] == "deleted"
+        assert worker.state == terminal_state
+        assert capacity.provider.starts == []
     capacity.provider.requests.clear()
     await capacity.pool.reconcile()
-    if terminal_state == "lost":
-        assert capacity.provider.requests == []
-    else:
-        assert capacity.provider.requests
+    assert capacity.provider.requests == []
 
 
 async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db, capacity):
@@ -689,6 +759,72 @@ async def test_fixed_size_provider_measures_one_cold_worker_before_admission(db,
     assert await _claim(worker_id, fits=512 * MIB, budget=512 * MIB) is not None
 
 
+async def test_fixed_external_profile_covers_large_workflow_without_requesting_a_larger_worker(db, capacity):
+    """Cloud capacity uses its declared fixed profile, not Kubernetes sizing."""
+    from src.services.worker_pool.controller import WorkerPoolController, plan_capacity_launches
+    from tests.unit.services.worker_pool.test_worker_pool import FakeCluster, SPEC, _set_request
+
+    profile = capacity.provider.profile.model_copy(update={"memory_limit_bytes": 4 * GIB})
+    capacity.provider.profile = profile
+    run = await _accept_pool_run()
+    await _set_request(db.sessions, run, 2 * GIB)
+    kubernetes = WorkerPoolController(FakeCluster(), SETTINGS, SPEC)  # type: ignore[arg-type]
+    cloud = ExternalWorkerPoolController(
+        capacity.client, SETTINGS, profile, hybrid=True,
+        rules=CloudflareCapacityRules(workflows=True),
+    )
+    await cloud.refresh_profile()
+
+    launched = await plan_capacity_launches(
+        replace(capacity.policy, warm_workers=0), (kubernetes, cloud),
+    )
+
+    assert launched[kubernetes] == []
+    [worker_id] = launched[cloud]
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.memory_limit_bytes == 4 * GIB
+        assert worker.resource_class == "standard"
+        assert worker.reserved_for_dispatch_id is None
+
+
+async def test_fixed_external_profile_calibrates_only_its_declared_limit_before_refusing_unfit_work(db, capacity):
+    """Unknown capacity may measure once, but never asks the provider for more."""
+    from src.services.worker_pool.controller import plan_capacity_launches
+    from tests.unit.services.worker_pool.test_worker_pool import _report_budget, _set_request
+
+    run = await _accept_pool_run()
+    await _set_request(db.sessions, run, 3 * GIB)
+
+    await capacity.pool.refresh_profile()
+    [worker_id] = (await plan_capacity_launches(
+        replace(capacity.policy, warm_workers=0), (capacity.pool,),
+    ))[capacity.pool]
+
+    async with db.context() as session:
+        worker = await session.get(ExecutionWorker, worker_id)
+        assert worker is not None
+        assert worker.memory_limit_bytes == capacity.provider.profile.memory_limit_bytes
+        assert worker.resource_class == "standard"
+        assert worker.reserved_for_dispatch_id is None
+
+    await capacity.pool.reconcile_worker(worker_id, capacity.policy)
+    uid = capacity.provider.resources[str(worker_id)]["resource_uid"]
+    assert await claims.admit_external_worker(
+        worker_id, resource_uid=uid, launcher_id=uuid4(),
+        version=capacity.provider.profile.worker_version, hostname="calibrated-provider-worker",
+        actual_handlers=ACTUAL_HANDLERS, actual_compute=ACTUAL_COMPUTE,
+    ) is not None
+    await _report_budget(worker_id, GIB)
+
+    launched = await plan_capacity_launches(replace(capacity.policy, warm_workers=0), (capacity.pool,))
+
+    assert launched[capacity.pool] == []
+    async with db.context() as session:
+        assert await session.scalar(select(func.count()).select_from(ExecutionWorker).where(
+            ExecutionWorker.form == "external",
+        )) == 1
 def _capability_reads(provider) -> int:
     return sum(path == "/v1/capabilities" for _method, path in provider.requests)
 
@@ -771,21 +907,18 @@ async def test_rollout_while_idle_refuses_an_incompatible_build_without_reservin
         assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
 
 
-async def test_provider_shrink_while_idle_leaves_no_reservation_and_recovers(db, capacity):
+async def test_provider_shrink_while_idle_uses_the_current_fixed_profile(db, capacity):
     await capacity.pool.reconcile()
-    original = capacity.provider.profile
-    capacity.provider.profile = original.model_copy(update={"memory_limit_bytes": GIB})
+    capacity.provider.profile = capacity.provider.profile.model_copy(update={"memory_limit_bytes": GIB})
     await _accept_pool_run()
 
-    with pytest.raises(CapacityProtocolError, match="fixed worker memory"):
-        await capacity.pool.reconcile()
-
-    async with db.context() as session:
-        assert (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all() == []
-    assert capacity.provider.resources == {}
-    capacity.provider.profile = original
     await capacity.pool.reconcile()
-    assert len(capacity.provider.starts) == 1
+
+    [resource] = capacity.provider.resources.values()
+    assert resource["worker_version"] == capacity.provider.profile.worker_version
+    async with db.context() as session:
+        [worker] = (await session.scalars(select(ExecutionWorker).where(ExecutionWorker.form == "external"))).all()
+        assert worker.memory_limit_bytes == GIB
 
 
 async def test_warm_minimum_refreshes_capabilities_before_reserving(db, capacity):

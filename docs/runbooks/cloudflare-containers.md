@@ -1,28 +1,38 @@
 # Cloudflare Containers worker capacity
 
+Delivery scope for #1400 is Cloudflare Containers only. AWS, Azure and GCP
+provider delivery is deferred to a separate follow-up. Shared runtime contracts
+and existing local/Kubernetes compatibility remain prerequisites; reference
+adapters are not acceptance evidence or supported deliveries for those clouds.
+
 Operator runbook for deploying Bifrost's external-worker capacity provider on
 Cloudflare Containers. The protocol is defined in
 [`docs/architecture/external-worker-capacity.md`](../architecture/external-worker-capacity.md).
 
 ## What this deploys
 
-### API-only runtime candidate
+### API-owned execution
 
-This candidate uses the native Cloudflare provider with an isolated runtime
-extension. Earlier #1331 material is historical evidence only; it is not the
-current deployment reference.
+The native Cloudflare provider runs the API-only compute adapters. Earlier
+#1331 material is historical evidence, not the current deployment reference.
 It derives each launcher's control credential from the dedicated capacity token,
 incarnation UUID and resource UID. The installation signing key never leaves
 the API. Requirements reach the worker through authenticated control bootstrap.
 Do not supply database, Redis, S3 or installation signing credentials in
 WORKER_CONTAINER_ENV; this candidate rejects them.
 
-The checked-in template does not declare job types. The pinned image registers
-its capabilities through the authenticated worker hello; the provider only
-advertises its hardware and build profile. Overflow rules choose eligible work
-elsewhere and are not image configuration. Agents, summaries, and privileged
-platform-job runners are not implied by sharing an image; qualify their
-API-only adapters separately.
+The template does not declare job types. The matching image registers its
+capabilities through authenticated worker hello; the provider reports only
+hardware and build. Settings rules choose which work may trigger overflow.
+Workflows, agents, summaries and the current platform-job catalog use shared
+API-owned orchestration and API-only compute stages. Maintenance and control
+handlers that need no physical compute stay in the API; they need no worker.
+Workers receive only the inputs for registered compute recipes. Authorization,
+credentials and durable effects remain API-owned.
+
+This candidate remains unqualified on Cloudflare. Provider readiness and local
+correctness do not establish real-container workloads, fault/scaling behavior,
+latency or cost; historical deployment receipts are not current-image acceptance.
 
 API and launcher must be upgraded together for the bootstrap exchange; the
 external handshake deliberately does not accept the installation signing key.
@@ -31,6 +41,45 @@ The provider resource protocol is version 1.
 A Worker that implements the five capacity endpoints and starts container
 incarnations on request. The API remains canonical: it decides demand, admits
 workers, and fences enrollment. This Worker never sees job payloads.
+
+## Connect Through Settings
+
+1. Set the installation's deployment-owned `BIFROST_PUBLIC_URL` to its public
+   HTTPS origin. Cloudflare containers need HTTPS and WebSocket access to it.
+   The setup API rejects an alternative control origin.
+2. Open **Settings → Workers → Scaling & Isolation → Cloudflare Workers**.
+   Enter a Cloudflare API token with account access to deploy Worker scripts,
+   manage Containers, and obtain registry push/pull credentials. See
+   [Cloudflare's token permission reference](https://developers.cloudflare.com/fundamentals/api/reference/permissions/).
+3. Choose a small maximum worker count and select **Connect Cloudflare**. If the
+   token spans several accounts, choose the intended account when prompted.
+4. Follow the shared job progress. The API stores the token encrypted, copies
+   its matching published image into the account's registry, and reconciles the
+   Worker, Durable Objects, container application, and workers.dev route through
+   Cloudflare's APIs. Docker and Wrangler are not required inside the API.
+5. **Provider Ready** confirms the provider configuration; submit a supported
+   Normal job to verify the first physical worker. Use the capacity overview
+   and Diagnostics to distinguish Starting, Ready, Lost, and cleanup pending.
+6. Set the Cloudflare start categories. Ready local capacity is reused first;
+   selected work can start Cloudflare before adding Kubernetes workers unless
+   **Let Kubernetes Scale First** is enabled. With no local or Kubernetes capacity,
+   Cloudflare handles all supported Normal work. Fast Path stays local.
+
+Onboarding requests a fixed 4 GiB profile per worker. Its provider maximum and the
+global managed-worker limit both apply; Kubernetes memory settings do not resize
+Cloudflare. Start categories control provisioning, not affinity: an existing
+Cloudflare worker may execute any supported Normal work.
+
+Unpublished builds need a deployment-owned `BIFROST_WORKER_CAPACITY_IMAGE`
+reference pinned by digest. Its embedded version must exactly match the API.
+There is no alternate-image fallback. Legacy environment-based provider
+configuration and the stored connection cannot be active together.
+
+Running App deployment cancellation remains unavailable by its existing job
+policy. API process loss stops untracked compute and settles the fenced claim;
+it does not restore agent or App orchestration into a replacement API process.
+
+## Manual Provider Deployment
 
 ## Prerequisites
 
@@ -58,7 +107,8 @@ Wrangler `4.162.0`; do not substitute a floating Wrangler release.
    the API policy's standard and
    largest worker memory; `MAX_WORKERS` and `MAX_LIFETIME_SECONDS` must cover
    the API policy's worker-count, warm-minimum, and lifetime bounds; and
-   `max_instances` must be at least `MAX_WORKERS`. Set
+   `ScopeRegistry` enforces `MAX_WORKERS` across reservations, including
+   uncertain starts. The `durable_object` policy has no `max_instances`. Set
    `WORKER_CONTAINER_ENV` to a trusted public `BIFROST_API_URL` and required
    runtime paths only. Do not set `BIFROST_VERSION` there: the pinned image's
    reported build is the admission identity.
@@ -118,9 +168,9 @@ Edit `deploy/cloudflare/worker/wrangler.toml`:
 |---|---|
 | `SCOPE` | Opaque provider scope. Must match the API side exactly. |
 | `WORKER_VERSION` | Must equal the image's embedded build version. |
-| `MEMORY_LIMIT_BYTES` | Fixed worker memory; the API's scaling policy must match. |
-| `instance_type` (in `[[containers]]`) | Real memory and disk for each container; must be at least `MEMORY_LIMIT_BYTES` and large enough for the unpacked image. |
-| `max_instances` (in `[[containers]]`) | Must be at least `MAX_WORKERS`: a start beyond the application's instance count is refused even when the scope registry would admit it. |
+| `MEMORY_LIMIT_BYTES` | Fixed worker memory matching the container profile; independent of Kubernetes sizing. |
+| `containers.images.worker.image` | Digest-pinned image in the Cloudflare managed registry; must be prepared before Worker publication. |
+| `MAX_WORKERS` | ScopeRegistry's serialized admission cap; uncertain starts retain their slot until deletion is proven. |
 | `MAX_WORKERS` | Ceiling this provider will run. |
 | `MAX_LIFETIME_SECONDS` | Upper bound the API may request; cannot exceed six hours, which is the platform's inactivity-timeout maximum. |
 | `WORKER_CONTAINER_ENV` | JSON object containing the API URL and runtime paths. Platform credentials are refused. Do not set `BIFROST_VERSION`: the pinned image carries its own build, and the reported build is what admission fences on. |
@@ -138,47 +188,31 @@ automatically registers the image's actual capabilities. Upgrade and deploy
 the Worker and its pinned image together. UI overflow rules decide which jobs
 may use this capacity; they are not provider configuration.
 
-The second most common is a container smaller than the workload. The Containers
-application's size comes from `instance_type` in the `[[containers]]` block, not
-from `MEMORY_LIMIT_BYTES`: omit it and Cloudflare creates the application as
-`lite` (256 MiB memory, 2 GB disk). A worker image is larger than that disk
-unpacked, so every instance fails immediately with `ImagePullError` and never
-reaches a location. Instances that never schedule, with `LOCATION` blank in
-`wrangler containers instances`, are the symptom. Check the application record
-before reading instance logs:
+Fresh deployments use Cloudflare's `durable_object` scheduling policy. The
+Worker selects the prepared `ctx.container.images.worker` handle and
+`instance: "standard-1"` at start, preserving the qualified 4 GiB memory and
+8 GB disk tier. `MEMORY_LIMIT_BYTES` advertises memory; it does not choose
+hardware. ScopeRegistry retains the worker-count bound because this policy
+has no application-level `max_instances`.
 
-```bash
-python3 - <<'PY'
-import json
-import os
-from urllib.request import Request, urlopen
+API setup initiates native image preparation and observes only its documented
+`pending` state until `ready`, bounded to fifteen minutes as in pinned Wrangler.
+An error, unknown state, account refusal or transport failure stops setup; no
+worker starts or upload retries hide a failure. The shared PlatformJob records
+preparation progress before publishing Worker code or activating capacity.
+Manual Wrangler deployment performs this preparation itself.
 
-account_id = os.environ["CLOUDFLARE_ACCOUNT_ID"]
-application_id = os.environ["APP_ID"]
-token = os.environ["CLOUDFLARE_API_TOKEN"]
-url = f"https://api.cloudflare.com/client/v4/accounts/{account_id}/containers/applications/{application_id}"
-request = Request(url, headers={"Authorization": f"Bearer {token}"})
-with urlopen(request, timeout=10) as response:
-    result = json.load(response)["result"]
-configuration = result.get("configuration") or {}
-print(json.dumps({"image": configuration.get("image"),
-                  "instance_type": configuration.get("instance_type"),
-                  "health": result.get("health")}, sort_keys=True))
-PY
-```
+Scheduling policy is immutable. An existing `default` application cannot be
+updated in place, and its namespace cannot attach to a replacement application.
+API setup refuses it before Worker upload. Drain the existing installation and
+provision a fresh dedicated provider scope/script; do not delete active
+containers or reuse their namespace. This migration does not transfer container
+filesystems or Durable Object state.
 
-The token is read from the child process environment and exists only in memory;
-it is never placed in a command argument or printed. The command intentionally
-prints only the image reference, instance type and health fields. Do not redirect
-provider request or response bodies to a log.
-
-Cloudflare documents image and `instance_type` changes on the `default`
-scheduling policy as application rollouts, and the scheduling policy itself is
-immutable per application. With Wrangler 4.162.0 a redeploy did not apply either
-change to an existing application — the record kept the original size and image —
-while deleting and recreating the application did. So treat this as
-version-dependent: check `wrangler containers applications get` after a deploy,
-and if the configuration did not move, recreate the application.
+See Cloudflare's [scheduling policies](https://developers.cloudflare.com/containers/configuration/scheduling-policy/)
+and [migration guide](https://developers.cloudflare.com/containers/guides/migrate-to-durable-object-scheduling-policy/).
+Native image readiness is a deployment prerequisite; worker enrollment and job
+execution still require separate live qualification.
 
 ## Diagnosing a container that never enrolls
 

@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 from sqlalchemy import delete
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from shared.app_build_errors import APP_BUILD_JOB_TYPES, app_build_memory_message
@@ -24,16 +25,19 @@ from src.jobs.platform.application_publish import (
     ApplicationPublishPayload,
 )
 from src.jobs.platform.kubernetes_client import _lease_token_fingerprint
+from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
 from src.jobs.schedulers import platform_jobs as scheduler
 from src.models.orm.execution_workers import ExecutionWorker
 from src.models.orm.platform_job_memory_profiles import PlatformJobMemoryProfile
 from src.models.orm.platform_jobs import PlatformJob
 from src.models.orm.solution_export_jobs import SolutionExportJob
 from src.models.orm.solutions import Solution
+from src.services import platform_jobs as platform_job_service
 from src.services.memory_requests import MIB, sized_job_limit_bytes
 from src.services.platform_job_memory_profiles import MEMORY_PROFILE_SAFETY_MARGIN_BYTES
 from src.services.platform_jobs import enqueue_platform_job
 from src.services.worker_pool.sizing import JobSizing
+from src.worker.remote.ownership import RemoteOwnerLease
 
 
 
@@ -108,6 +112,36 @@ async def _queued_remote_build_job(
     job.execution_backend = "kubernetes"
     await db_session.flush()
     return job
+
+
+async def _ready_external_isolated_worker(
+    db_session: AsyncSession,
+    job: PlatformJob,
+    *,
+    capability: str = "app.compile.v2",
+) -> tuple[ExecutionWorker, RemoteOwnerLease]:
+    """Make the one ready, owner-fenced worker reserved for ``job``."""
+    worker_id, owner_id, launcher_id = uuid4(), uuid4(), uuid4()
+    worker = ExecutionWorker(
+        id=worker_id,
+        form="external",
+        state="ready",
+        resource_class="isolated",
+        capacity_scope="cloudflare:test",
+        capacity_resource_uid="exclusive-resource",
+        remote_launcher_id=launcher_id,
+        remote_owner_id=owner_id,
+        remote_session_generation=1,
+        remote_owner_lease_expires_at=datetime.now(timezone.utc) + timedelta(minutes=1),
+        supported_handlers=[],
+        supported_compute=[capability],
+        memory_budget_bytes=AMPLE,
+        isolated_platform_job_id=job.id,
+        isolated_platform_job_attempt=job.attempt + 1,
+    )
+    db_session.add(worker)
+    await db_session.commit()
+    return worker, RemoteOwnerLease(worker_id, owner_id, launcher_id, 1)
 
 
 def _unlimited_deploy() -> PlatformJobMetadata:
@@ -415,6 +449,199 @@ async def test_expired_remote_owner_cannot_claim_a_queued_platform_job(db_sessio
 
 
 @pytest.mark.asyncio
+async def test_external_isolated_claims_its_exact_queued_reservation_once(
+    db_session: AsyncSession,
+) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    job = await _queued_remote_build_job(db_session)
+    job.execution_backend = "external_isolated"
+    worker, lease = await _ready_external_isolated_worker(db_session, job)
+
+    with remote_owner_context(LeaseRef(lease)):
+        claim = await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=1,
+            executor_worker_id=worker.id,
+            fits_bytes=AMPLE,
+            memory_sample=(0, AMPLE),
+        )
+        assert claim is not None
+        stage_id = uuid4()
+        assert await platform_job_service.record_platform_job_executor_attribution(
+            job.id,
+            claim.lease_token,
+            worker_id=worker.id,
+            compute_capability="app.compile.v2",
+            stage_id=stage_id,
+            input_sha256="a" * 64,
+        )
+        duplicate = await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=1,
+            executor_worker_id=worker.id,
+            fits_bytes=AMPLE,
+            memory_sample=(0, AMPLE),
+        )
+
+    assert claim is not None
+    assert claim.id == job.id
+    assert duplicate is None
+    await db_session.refresh(job)
+    assert job.status == "running"
+    assert job.attempt == 1
+    assert job.executor_attempt == 1
+    assert job.executor_worker_id == worker.id
+    assert job.executor_compute_capability == "app.compile.v2"
+    assert job.executor_stage_id == stage_id
+    assert job.executor_input_sha256 == "a" * 64
+    assert job.lease_token == claim.lease_token
+
+
+@pytest.mark.asyncio
+async def test_external_isolated_claim_rejects_nonmatching_reservation(
+    db_session: AsyncSession,
+) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    job = await _queued_remote_build_job(db_session)
+    job.execution_backend = "external_isolated"
+    worker, lease = await _ready_external_isolated_worker(db_session, job)
+
+    # Ordinary workers cannot claim this internal backend, and an exact
+    # claimant must be the owner-fenced, reserved worker for its next attempt.
+    assert await scheduler.claim_platform_job(backend="local", fits_bytes=AMPLE) is None
+    with pytest.raises(ValueError, match="free budget"):
+        await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=1,
+            executor_worker_id=worker.id,
+        )
+    assert await scheduler.claim_platform_job(
+        backend="external_isolated",
+        job_id=job.id,
+        expected_attempt=1,
+        executor_worker_id=worker.id,
+        fits_bytes=AMPLE,
+    ) is None
+    with remote_owner_context(LeaseRef(lease)):
+        assert await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=uuid4(),
+            expected_attempt=1,
+            executor_worker_id=worker.id,
+            fits_bytes=AMPLE,
+        ) is None
+        assert await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=2,
+            executor_worker_id=worker.id,
+            fits_bytes=AMPLE,
+        ) is None
+        assert await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=1,
+            executor_worker_id=uuid4(),
+            fits_bytes=AMPLE,
+        ) is None
+
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.attempt == 0
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("state", "draining"),
+        ("resource_class", "standard"),
+        ("execution_lane", "fast_path"),
+        ("capacity_resource_uid", None),
+        ("memory_budget_bytes", 0),
+        ("supported_handlers", ["workflow.execute"]),
+    ),
+)
+async def test_external_isolated_claim_requires_a_ready_exclusive_worker(
+    db_session: AsyncSession,
+    field: str,
+    value: object,
+) -> None:
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    job = await _queued_remote_build_job(db_session)
+    job.execution_backend = "external_isolated"
+    worker, lease = await _ready_external_isolated_worker(db_session, job)
+    setattr(worker, field, value)
+    await db_session.commit()
+
+    with remote_owner_context(LeaseRef(lease)):
+        assert await scheduler.claim_platform_job(
+            backend="external_isolated",
+            job_id=job.id,
+            expected_attempt=1,
+            executor_worker_id=worker.id,
+            fits_bytes=AMPLE,
+        ) is None
+
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.lease_token is None
+
+
+@pytest.mark.asyncio
+async def test_external_isolated_reservation_waits_for_physical_deletion_receipt(
+    db_session: AsyncSession,
+) -> None:
+    reserved_job_id = uuid4()
+    first = ExecutionWorker(
+        id=uuid4(),
+        form="external",
+        state="lost",
+        resource_class="isolated",
+        isolated_platform_job_id=reserved_job_id,
+        isolated_platform_job_attempt=1,
+    )
+    db_session.add(first)
+    await db_session.commit()
+
+    def duplicate(state: str) -> ExecutionWorker:
+        return ExecutionWorker(
+            id=uuid4(),
+            form="external",
+            state=state,
+            resource_class="isolated",
+            isolated_platform_job_id=reserved_job_id,
+            isolated_platform_job_attempt=1,
+        )
+
+    db_session.add(duplicate("retired"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+    await db_session.refresh(first)
+    first.state = "retired"
+    await db_session.commit()
+    db_session.add(duplicate("lost"))
+    with pytest.raises(IntegrityError):
+        await db_session.commit()
+    await db_session.rollback()
+
+    await db_session.refresh(first)
+    first.capacity_resource_deleted_at = datetime.now(timezone.utc)
+    await db_session.commit()
+    db_session.add(duplicate("reserved"))
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
 async def test_stale_remote_owner_cannot_requeue_a_live_platform_job(
     db_session: AsyncSession,
 ) -> None:
@@ -505,10 +732,13 @@ async def test_expired_recovery_ignores_kubernetes_backend_jobs(
 
 
 @pytest.mark.asyncio
-async def test_expired_recovery_keeps_a_local_job_with_a_live_lease(
+@pytest.mark.parametrize("backend", ["local", EXTERNAL_ISOLATED_BACKEND])
+async def test_expired_recovery_keeps_an_api_owned_job_with_a_live_lease(
     db_session: AsyncSession,
+    backend: str,
 ) -> None:
     job = await _queued_job(db_session)
+    job.execution_backend = backend
     now = datetime.now(timezone.utc)
     job.status = "running"
     job.attempt = 1
@@ -587,9 +817,11 @@ async def test_concurrent_replicas_claim_each_row_once(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("backend", ["local", EXTERNAL_ISOLATED_BACKEND])
 async def test_expired_lease_requeues_then_fails_at_attempt_limit(
     db_session: AsyncSession,
     monkeypatch: pytest.MonkeyPatch,
+    backend: str,
 ) -> None:
     # Keep the lease valid to the live scheduler container while advancing only
     # this test process beyond it. Otherwise the live scheduler can recover the
@@ -603,6 +835,7 @@ async def test_expired_lease_requeues_then_fails_at_attempt_limit(
     )
 
     job = await _queued_job(db_session)
+    job.execution_backend = backend
     job.status = "running"
     job.attempt = 1
     job.lease_token = uuid4()
@@ -1334,3 +1567,26 @@ async def test_settings_concurrency_override_replaces_policy_default(
         "application.deploy", None, updated_by="test"
     )
     await db_session.commit()
+
+
+@pytest.mark.asyncio
+async def test_draining_executor_cannot_claim_another_normal_platform_job(db_session: AsyncSession):
+    from src.worker.remote.fencing import LeaseRef, remote_owner_context
+
+    job = await _queued_remote_build_job(db_session)
+    job.execution_backend = "local"
+    worker, lease = await _ready_external_isolated_worker(db_session, job)
+    worker.resource_class = "standard"
+    worker.isolated_platform_job_id = None
+    worker.isolated_platform_job_attempt = None
+    worker.state = "draining"
+    await db_session.commit()
+
+    with remote_owner_context(LeaseRef(lease)):
+        assert await scheduler.claim_platform_job(
+            fits_bytes=AMPLE, executor_worker_id=worker.id,
+        ) is None
+    await db_session.refresh(job)
+    assert job.status == "queued"
+    assert job.attempt == 0
+    assert job.lease_token is None

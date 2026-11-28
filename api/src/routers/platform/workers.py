@@ -13,17 +13,25 @@ only ever report two states in their heartbeat:
 import json
 import logging
 from datetime import datetime, timedelta, timezone
+from uuid import UUID
 
 import redis.asyncio as aioredis
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from sqlalchemy import case, desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from shared.models import (
+    PlatformWorkerCapacityOverview,
+    PlatformWorkerFormCapacity,
+    PlatformWorkerIncarnation,
+)
 from src.core.auth import CurrentActiveUser
 from src.core.database import get_db
 from src.core.db_deps import DbSession
 from src.core.log_safety import log_safe
 from src.models import Execution, Workflow
+from src.models.orm.config import SystemConfig
+from src.models.orm.execution_workers import MANAGED_WORKER_FORMS, ExecutionWorker
 from src.models.contracts.platform import (
     PoolDetail,
     PoolsListResponse,
@@ -43,6 +51,7 @@ from src.models.contracts.platform import (
 )
 from src.services.authorization.enforce import authorize_operation
 from src.services.authorization.evaluator import GLOBAL
+from src.services.kubernetes_execution import load_kubernetes_policy
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +95,10 @@ router = APIRouter(
 
 _redis: aioredis.Redis | None = None
 
+_TERMINAL_WORKER_STATES = ("lost", "retired")
+_ACTIVE_WORKER_STATES = ("reserved", "starting", "ready", "draining")
+_WORKER_FORMS = ("job", "external", "static")
+
 
 async def _get_redis() -> aioredis.Redis:
     """Get Redis client for worker data."""
@@ -99,6 +112,108 @@ async def _get_redis() -> aioredis.Redis:
             socket_timeout=5.0,
         )
     return _redis
+
+
+def _worker_incarnation(worker: ExecutionWorker) -> PlatformWorkerIncarnation:
+    """Project canonical worker state without deployment identities or secrets."""
+    return PlatformWorkerIncarnation(
+        worker_id=worker.id,
+        form=worker.form,
+        state=worker.state,
+        execution_lane=worker.execution_lane,
+        version=worker.version,
+        capacity_scope=worker.capacity_scope,
+        created_at=worker.created_at,
+        ready_at=worker.ready_at,
+        ended_at=worker.ended_at,
+        end_reason=worker.end_reason,
+        memory_budget_bytes=worker.memory_budget_bytes,
+        memory_reserved_bytes=worker.memory_reserved_bytes,
+        cleanup_confirmed=(
+            worker.capacity_resource_deleted_at is not None
+            if worker.form == "external"
+            else None
+        ),
+    )
+
+
+def _canonical_pool(worker: ExecutionWorker) -> PoolSummary:
+    """Represent an unregistered canonical executor as an empty process pool."""
+    return PoolSummary(
+        worker_id=str(worker.id),
+        hostname=worker.hostname,
+        status=worker.state,
+        started_at=worker.created_at.isoformat(),
+        last_heartbeat=worker.heartbeat_at.isoformat() if worker.heartbeat_at else None,
+        incarnation=_worker_incarnation(worker),
+    )
+
+
+async def _worker_capacity_overview(db: AsyncSession) -> PlatformWorkerCapacityOverview:
+    """Read canonical limits and lifecycle counts without contacting providers."""
+    count_rows = (await db.execute(
+        select(ExecutionWorker.form, ExecutionWorker.state, func.count())
+        .group_by(ExecutionWorker.form, ExecutionWorker.state)
+    )).all()
+    counts = {(form, state): count for form, state, count in count_rows}
+    forms = [
+        PlatformWorkerFormCapacity(
+            form=form,
+            active=sum(counts.get((form, state), 0) for state in _ACTIVE_WORKER_STATES),
+            reserved=counts.get((form, "reserved"), 0),
+            starting=counts.get((form, "starting"), 0),
+            ready=counts.get((form, "ready"), 0),
+            draining=counts.get((form, "draining"), 0),
+        )
+        for form in _WORKER_FORMS
+    ]
+    cleanup_pending_count = await db.scalar(
+        select(func.count()).select_from(ExecutionWorker).where(
+            ExecutionWorker.form == "external",
+            ExecutionWorker.state.in_(_TERMINAL_WORKER_STATES),
+            ExecutionWorker.capacity_resource_deleted_at.is_(None),
+        )
+    )
+    cloudflare = await db.scalar(
+        select(SystemConfig).where(
+            SystemConfig.organization_id.is_(None),
+            SystemConfig.category == "worker_capacity",
+            SystemConfig.key == "cloudflare",
+        )
+    )
+    metadata = cloudflare.value_json if cloudflare is not None and isinstance(cloudflare.value_json, dict) else {}
+    deployment = metadata.get("deployment") if isinstance(metadata.get("deployment"), dict) else {}
+    cloudflare_limit = deployment.get("max_workers")
+    if not isinstance(cloudflare_limit, int) or isinstance(cloudflare_limit, bool):
+        cloudflare_limit = None
+    policy = await load_kubernetes_policy(db)
+    return PlatformWorkerCapacityOverview(
+        global_managed_limit=policy.max_workers,
+        managed_in_use=sum(
+            counts.get((form, state), 0)
+            for form in MANAGED_WORKER_FORMS
+            for state in _ACTIVE_WORKER_STATES
+        ),
+        cloudflare_profile_limit=cloudflare_limit,
+        cleanup_pending_count=cleanup_pending_count or 0,
+        forms=forms,
+    )
+
+
+async def _canonical_workers_for_diagnostics(db: AsyncSession) -> list[ExecutionWorker]:
+    """Return all active incarnations plus a bounded newest terminal history."""
+    active = (await db.scalars(
+        select(ExecutionWorker)
+        .where(ExecutionWorker.state.not_in(_TERMINAL_WORKER_STATES))
+        .order_by(desc(ExecutionWorker.created_at))
+    )).all()
+    terminal = (await db.scalars(
+        select(ExecutionWorker)
+        .where(ExecutionWorker.state.in_(_TERMINAL_WORKER_STATES))
+        .order_by(desc(ExecutionWorker.ended_at).nullslast(), desc(ExecutionWorker.created_at))
+        .limit(100)
+    )).all()
+    return [*active, *terminal]
 
 
 # =============================================================================
@@ -266,6 +381,11 @@ async def get_pool_stats(
 )
 async def list_pools(
     _user: CurrentActiveUser,
+    include_incarnations: bool = Query(
+        default=False,
+        description="Include canonical execution-worker lifecycle records and capacity overview",
+    ),
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PoolsListResponse:
     """
     List all registered process pools from Redis.
@@ -325,7 +445,23 @@ async def list_pools(
 
         pools.append(pool_info)
 
-    return PoolsListResponse(pools=pools, total=len(pools))
+    if include_incarnations is not True:
+        return PoolsListResponse(pools=pools, total=len(pools))
+
+    canonical_workers = await _canonical_workers_for_diagnostics(db)
+    canonical_by_id = {str(worker.id): worker for worker in canonical_workers}
+    merged: list[PoolSummary] = []
+    for pool in pools:
+        worker = canonical_by_id.pop(pool.worker_id, None)
+        if worker is not None:
+            pool.incarnation = _worker_incarnation(worker)
+        merged.append(pool)
+    merged.extend(_canonical_pool(worker) for worker in canonical_by_id.values())
+    return PoolsListResponse(
+        pools=merged,
+        total=len(merged),
+        capacity_overview=await _worker_capacity_overview(db),
+    )
 
 
 @router.get(
@@ -337,6 +473,7 @@ async def list_pools(
 async def get_pool(
     worker_id: str,
     _user: CurrentActiveUser,
+    db: AsyncSession = Depends(get_db, scope="function"),
 ) -> PoolDetail:
     """
     Get detailed pool information.
@@ -350,6 +487,24 @@ async def get_pool(
     pool_key = f"bifrost:pool:{worker_id}"
     exists = await r.exists(pool_key)
     if not exists:
+        try:
+            canonical_worker_id = UUID(worker_id)
+        except ValueError:
+            canonical_worker_id = None
+        if canonical_worker_id is not None and isinstance(db, AsyncSession):
+            worker = await db.scalar(
+                select(ExecutionWorker).where(ExecutionWorker.id == canonical_worker_id)
+            )
+            if worker is not None:
+                canonical = _canonical_pool(worker)
+                return PoolDetail(
+                    worker_id=canonical.worker_id,
+                    hostname=canonical.hostname,
+                    status=canonical.status,
+                    started_at=canonical.started_at,
+                    last_heartbeat=canonical.last_heartbeat,
+                    incarnation=canonical.incarnation,
+                )
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Pool {worker_id} not found",

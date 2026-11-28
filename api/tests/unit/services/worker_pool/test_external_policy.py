@@ -29,11 +29,16 @@ def test_provider_build_must_match_the_running_api(monkeypatch):
 
 
 @pytest.mark.parametrize(("changes", "lifetime", "message"), [
-    ({"worker_memory_mib": 2048}, 900, "worker_memory_mib.*fixed worker memory"),
-    ({"largest_worker_mib": 8192}, 900, "largest_worker_mib.*fixed worker memory"),
-    ({"max_workers": 3}, 900, "max_workers.*provider limit"),
     ({}, 901, "BIFROST_POOL_MAX_LIFETIME_SECONDS.*provider limit"),
 ])
 def test_incompatible_provider_limits_are_rejected(changes, lifetime, message):
     with pytest.raises(ValueError, match=message):
         validate_external_policy(replace(POLICY, **changes), PROFILE, max_lifetime_seconds=lifetime)
+
+
+def test_provider_uses_its_own_fixed_memory_and_caps_its_own_count():
+    """Kubernetes settings remain meaningful when Cloud capacity is selected."""
+    validate_external_policy(
+        replace(POLICY, worker_memory_mib=1024, largest_worker_mib=2048, max_workers=8),
+        PROFILE, max_lifetime_seconds=900,
+    )

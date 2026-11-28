@@ -59,6 +59,8 @@ function getMemoryPercent(memoryMb: number, maxMem: number) {
 interface ForkTableProps {
 	workerId: string;
 	processes: ProcessInfo[];
+	/** Redis process controls are safe only for a ready canonical worker. */
+	actionsEnabled?: boolean;
 	/** Map of process_id -> execution info for busy processes */
 	executions?: Map<string, ExecutionRowData>;
 	/** Max memory for this container in bytes (for progress bar scale) */
@@ -68,6 +70,7 @@ interface ForkTableProps {
 export function ForkTable({
 	workerId,
 	processes,
+	actionsEnabled = true,
 	executions,
 	containerMemoryMax,
 }: ForkTableProps) {
@@ -312,6 +315,7 @@ export function ForkTable({
 							variant="outline"
 							size="sm"
 							className="h-11 min-h-11 w-full border-destructive/20 text-destructive hover:bg-destructive/10 hover:text-destructive sm:w-auto"
+							disabled={!actionsEnabled}
 						>
 							<RotateCw className="mr-2 h-4 w-4" />
 							Recycle All

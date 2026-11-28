@@ -66,30 +66,32 @@ async def may_manage_jobs(settings: Any) -> bool:
 async def start_kubernetes_loops(
     stop_event: asyncio.Event, settings: Any
 ) -> list[asyncio.Task[None]]:
-    """Select one worker provider and any permitted isolated-build controller."""
+    """Select capacity providers and any permitted isolated-build controller."""
     tasks: list[asyncio.Task[None]] = []
-    capacity_url = getattr(settings, "worker_capacity_url", None)
-    capacity_token = getattr(settings, "worker_capacity_token", None)
-    token = capacity_token.get_secret_value() if capacity_token is not None else None
-    if capacity_url or token:
-        if not capacity_url or not token:
-            raise ValueError("External worker capacity requires both endpoint and dedicated token")
-        from src.services.worker_pool.external_client import ExternalCapacityClient
-        from src.services.worker_pool.external_controller import external_worker_pool_loop
+    from src.core.database import get_db_context
+    from src.services.worker_pool.connection import load_capacity_provider_connection
 
-        ExternalCapacityClient.check_configuration(capacity_url, token)
+    # Connection selection is read briefly from its canonical encrypted store
+    # before any provider HTTP begins.  The hybrid loop refreshes it each pass.
+    async with get_db_context() as db:
+        await load_capacity_provider_connection(db, settings)
+    if not await may_manage_jobs(settings):
+        # Keep the resolver alive before onboarding too: an operator can add
+        # capacity in Settings without restarting the API or scheduler.
+        from src.services.worker_pool.external_controller import external_worker_pool_loop
         tasks.append(asyncio.create_task(
             external_worker_pool_loop(stop_event, settings), name="external-worker-pool-controller",
         ))
-    if not await may_manage_jobs(settings):
         return tasks
     from src.jobs.schedulers.kubernetes_jobs import kubernetes_build_loop
-    from src.services.worker_pool.controller import worker_pool_loop
+    from src.services.worker_pool.coordinator import hybrid_worker_pool_loop
 
-    if not capacity_url:
-        tasks.append(asyncio.create_task(
-            worker_pool_loop(stop_event, settings), name="worker-pool-controller"
-        ))
+    # Keep one coordinator alive for Kubernetes deployments even before a
+    # Cloud connection is activated; its resolver adds or removes overflow on
+    # the next pass without starting a competing planner loop.
+    tasks.append(asyncio.create_task(
+        hybrid_worker_pool_loop(stop_event, settings), name="hybrid-worker-pool-controller",
+    ))
     tasks.append(asyncio.create_task(
         kubernetes_build_loop(stop_event), name="kubernetes-build-controller",
     ))

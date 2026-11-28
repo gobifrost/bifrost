@@ -1238,7 +1238,9 @@ def _collect_python_files(workspace: pathlib.Path, *, definition=None) -> dict[s
     return files
 
 
-def _collect_workflows(workspace: pathlib.Path, *, definition=None) -> list[dict]:
+def _collect_workflows(
+    workspace: pathlib.Path, *, definition=None, include_source: bool = True
+) -> list[dict]:
     """Read workflow entries from .bifrost/workflows.yaml (the descriptor indexes it)."""
     from bifrost.solution_definition import read_solution_definition
 
@@ -1259,7 +1261,7 @@ def _collect_workflows(workspace: pathlib.Path, *, definition=None) -> list[dict
         # source simply omits the field; preflight skips entries without source.
         source: str | None = None
         wf_path = body.get("path")
-        if wf_path:
+        if include_source and wf_path:
             # ``body["path"]`` is manifest-controlled; confine it to the
             # workspace (realpath + startswith — the recognized traversal
             # barrier) so a crafted path can't read outside the bundle.
@@ -1422,7 +1424,9 @@ _LOGO_CONTENT_TYPES = {
 }
 
 
-def _collect_apps(workspace: pathlib.Path, *, definition=None) -> list[dict]:
+def _collect_apps(
+    workspace: pathlib.Path, *, definition=None, include_source: bool = True
+) -> list[dict]:
     """Read app entries from .bifrost/apps.yaml (keyed by UUID) + their source.
 
     Each app's source dir (``path``, e.g. ``apps/dash``) is read into
@@ -1472,11 +1476,12 @@ def _collect_apps(workspace: pathlib.Path, *, definition=None) -> list[dict]:
                     continue
                 rel = f.relative_to(app_dir).as_posix()
                 if f.suffix in _APP_TEXT_SUFFIXES:
-                    src_files[rel] = pathlib.Path(f_real).read_text(encoding="utf-8")
+                    src_files[rel] = pathlib.Path(f_real).read_text(encoding="utf-8") if include_source else ""
                 else:
-                    bin_files[rel] = base64.b64encode(
-                        pathlib.Path(f_real).read_bytes()
-                    ).decode("ascii")
+                    bin_files[rel] = (
+                        base64.b64encode(pathlib.Path(f_real).read_bytes()).decode("ascii")
+                        if include_source else ""
+                    )
 
         # App LOGO: the manifest may point `logo:` at an image file relative to
         # the app dir (e.g. "public/logo.svg"). Read + carry it base64 so the
@@ -1495,7 +1500,8 @@ def _collect_apps(workspace: pathlib.Path, *, definition=None) -> list[dict]:
                 )
             logo_file = pathlib.Path(_logo)
             if logo_file.is_file():
-                logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
+                if include_source:
+                    logo_b64 = base64.b64encode(logo_file.read_bytes()).decode("ascii")
                 logo_content_type = _LOGO_CONTENT_TYPES.get(logo_file.suffix.lower())
             else:
                 raise click.ClickException(

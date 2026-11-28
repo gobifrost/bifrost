@@ -139,7 +139,7 @@ function parseContainerEnv(env) {
 function parseEntrypoint(env) {
     const raw = env.WORKER_ENTRYPOINT_JSON;
     if (typeof raw !== "string" || raw.trim() === "") {
-        return ["python", "-m", "src.worker.main"];
+        return ["/entrypoint.sh", "python", "-m", "src.worker.main"];
     }
     try {
         const parsed = JSON.parse(raw);
@@ -300,15 +300,21 @@ export class WorkerContainer {
 
     async restoreLifecycle() {
         const fact = await this.ctx.storage.get("lifecycle");
-        if (this.ctx.container?.running) {
-            try {
-                await this.holdOpen();
-            } catch (error) {
-                console.error("capacity container hold failed", String(error));
-            }
+        if (fact?.version !== 1) return;
+        if (fact.destroyed || fact.exit) {
+            // A delayed attachment cannot revive an immutable terminal UID.
+            if (this.ctx.container?.running) await this.container.destroy();
+            return;
         }
-        if (fact?.version === 1 && fact.start_requested && !fact.destroyed && !fact.exit) {
+        if (fact.start_requested) {
             this.observeExit(fact.binding);
+            if (this.ctx.container?.running) {
+                try {
+                    await this.holdOpen();
+                } catch {
+                    console.error("container:restore_timeout:Error");
+                }
+            }
         }
     }
 
@@ -318,7 +324,7 @@ export class WorkerContainer {
         if (this._observing) return;
         this._observing = true;
         this.ctx.waitUntil(
-            this.container.monitor().then(
+            Promise.resolve().then(() => this.container.monitor()).then(
                 () => ({ code: 0, message: null }),
                 (error) => ({
                     code: Number.isInteger(error?.exitCode) ? error.exitCode : null,
@@ -353,6 +359,7 @@ export class WorkerContainer {
 
     async handle(request) {
         const url = new URL(request.url);
+        let stage = "request_validation";
         try {
             if (url.pathname === "/start") {
                 const body = await request.json();
@@ -372,6 +379,9 @@ export class WorkerContainer {
                     if (this.container.running) {
                         throw new LifecycleError(502, "running container has no bound lifecycle fact");
                     }
+                    if (!this.container.images?.worker) {
+                        throw new LifecycleError(502, "prepared worker image is unavailable");
+                    }
                     await this.ctx.storage.put("lifecycle", {
                         version: 1,
                         binding,
@@ -379,7 +389,10 @@ export class WorkerContainer {
                         destroyed: false,
                         exit: null,
                     });
+                    stage = "container_start";
                     this.container.start({
+                        image: this.container.images.worker,
+                        instance: "standard-1",
                         env: body.env ?? {},
                         entrypoint: body.entrypoint ?? [],
                         enableInternet: true,
@@ -387,8 +400,13 @@ export class WorkerContainer {
                 }
                 // Set the timeout after accepting startup, including its cold
                 // pending window; a running sample is not a readiness gate.
-                await this.holdOpen();
+                // Observe allocation failure before timeout setup can reject.
+                // A failed attempt remains terminal for this immutable UID;
+                // the controller may provision a new incarnation after cleanup.
+                stage = "exit_observer";
                 this.observeExit(binding);
+                stage = "inactivity_timeout";
+                await this.holdOpen();
                 return json(200, { running: this.container.running === true, lifecycle: "accepted" });
             }
             if (url.pathname === "/destroy") {
@@ -400,7 +418,8 @@ export class WorkerContainer {
                 if (!fact && this.container.running) {
                     throw new LifecycleError(502, "running container has no bound lifecycle fact");
                 }
-                if (this.container.running) await this.container.destroy();
+                // A pending start can still attach after a not-running sample.
+                if (this.container.running || fact?.start_requested) await this.container.destroy();
                 fact ??= { version: 1, binding, start_requested: false, destroyed: false, exit: null };
                 fact.destroyed = true;
                 await this.ctx.storage.put("lifecycle", fact);
@@ -427,7 +446,15 @@ export class WorkerContainer {
             return json(404, { error: "not found" });
         } catch (error) {
             const status = error instanceof LifecycleError ? error.status : 500;
-            return json(status, { error: `${error.name}: ${error.message}`.slice(0, 200) });
+            // Runtime messages can contain startup environment values. Retain
+            // only fixed stage/type labels so provider logs diagnose a failed
+            // launch without leaking worker credentials.
+            const kind = error instanceof TypeError ? "TypeError"
+                : error instanceof RangeError ? "RangeError"
+                : error instanceof LifecycleError ? "LifecycleError" : "Error";
+            const diagnostic = `container:${stage}:${kind}`;
+            console.error(diagnostic);
+            return json(status, { error: diagnostic });
         }
     }
 }

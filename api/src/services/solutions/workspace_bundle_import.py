@@ -269,7 +269,7 @@ class WorkspaceBundleImporter:
                 raise WorkspaceBundleDecisionError(f"missing staged hash for {item.name}")
             actual_destination_hash = await destination.content_hash(item.name)
             expected_destination_hash = expected_destination_hashes.get(item.name)
-            if actual_destination_hash != expected_destination_hash:
+            if actual_destination_hash not in (expected_destination_hash, expected):
                 raise WorkspaceBundleDecisionError(
                     f"workspace file {item.name} changed after preview; create a new preview"
                 )

@@ -55,7 +55,11 @@ async def admit_kubernetes_platform_job(
             return None
 
         definition = get_platform_job_definition(job.job_type)
-        if definition is None or definition.policy.execution_class != "build":
+        from src.jobs.platform.catalog import get_platform_job_metadata
+
+        metadata = get_platform_job_metadata(job.job_type)
+        if (definition is None or definition.policy.execution_class != "build"
+                or (metadata is not None and metadata.required_compute_capabilities)):
             return None
 
         now = _now()

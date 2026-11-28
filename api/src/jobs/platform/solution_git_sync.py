@@ -11,6 +11,7 @@ from shared.app_build_errors import AppBuildMemoryError
 from src.core.database import get_db_context
 from src.jobs.platform.base import (
     PlatformJobContext,
+    PlatformJobCancelled,
     PlatformJobFailure,
     define_platform_job,
 )
@@ -47,38 +48,46 @@ async def run_solution_git_sync(
                 "This git-connected install has no git_repo_url to pull from.",
             )
 
-        await context.report("Pulling Solution repository", percent=15)
-        try:
-            synced = await sync(db, solution)
-        except NotASolutionWorkspace as exc:
-            raise PlatformJobFailure("invalid_solution_workspace", str(exc)) from exc
-        except SolutionFinalizeIncomplete as exc:
-            raise PlatformJobFailure(
-                "solution_git_finalize_incomplete",
-                "Solution update committed but source storage was unavailable after "
-                "retries. Retry the Git update to complete it.",
-                retryable=True,
-            ) from exc
-        except AppBuildMemoryError as exc:
-            raise PlatformJobFailure("memory_pressure", str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001 - job records the safe failure
-            logger.exception(
-                "Managed Solution Git sync failed",
-                extra={"solution_id": str(payload.solution_id)},
-            )
-            raise PlatformJobFailure(
-                "solution_git_sync_failed",
-                "Solution update from Git failed; correct the repository and retry.",
-                retryable=True,
-            ) from exc
+    await context.report("Pulling Solution repository", percent=15)
+    try:
+        synced = await sync(context, payload.solution_id)
+    except (PlatformJobCancelled, PlatformJobFailure):
+        raise
+    except NotASolutionWorkspace as exc:
+        raise PlatformJobFailure("invalid_solution_workspace", str(exc)) from exc
+    except SolutionFinalizeIncomplete as exc:
+        raise PlatformJobFailure(
+            "solution_git_finalize_incomplete",
+            "Solution update committed but source storage was unavailable after "
+            "retries. Retry the Git update to complete it.",
+            retryable=True,
+        ) from exc
+    except AppBuildMemoryError as exc:
+        raise PlatformJobFailure("memory_pressure", str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - job records the safe failure
+        logger.exception(
+            "Managed Solution Git sync failed",
+            extra={"solution_id": str(payload.solution_id)},
+        )
+        raise PlatformJobFailure(
+            "solution_git_sync_failed",
+            "Solution update from Git failed; correct the repository and retry.",
+            retryable=True,
+        ) from exc
 
-        if not synced:
-            raise PlatformJobFailure(
-                "solution_git_sync_deferred",
-                "Another Solution writer is active; retrying the Git update.",
-                retryable=True,
-            )
+    if not synced:
+        raise PlatformJobFailure(
+            "solution_git_sync_deferred",
+            "Another Solution writer is active; retrying the Git update.",
+            retryable=True,
+        )
 
+    async with get_db_context() as db:
+        if not await context.authorize_effect(db):
+            raise PlatformJobCancelled
+        solution = await db.get(Solution, payload.solution_id)
+        if solution is None:
+            raise PlatformJobFailure("solution_not_found", "Solution not found.")
         if solution.update_available_version is not None:
             solution.update_available_version = None
             await db.commit()

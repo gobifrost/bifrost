@@ -675,4 +675,3 @@ async def identity_sources(
         )
         for user_id, idp_id, name, vendor, pending_since, applies in rows.all()
     }
-

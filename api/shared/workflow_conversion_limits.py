@@ -1,0 +1,15 @@
+"""Small version and resource bounds shared by static analysis transports."""
+
+ANALYZER_VERSION = "30"
+MAX_SOURCE_BYTES = 2_000_000
+MAX_AST_NODES = 256_000
+# Bound the streaming lexical scan separately from AST analysis.
+MAX_LEXICAL_SOURCE_BYTES = 16_000_000
+MAX_LEXICAL_IMPORTS = 1_024
+MAX_LEXICAL_IMPORT_CHARS = 4_096
+MAX_EVENTS_PER_SCOPE = 2_048
+MAX_DEPENDENCIES = 256
+MAX_GRAPH_STEPS = 10_000
+MAX_SDK_CALLS = 2_048
+MAX_EVIDENCE = 4_096
+MAX_SELECTOR_VALUE_CHARS = 2_000

@@ -9,9 +9,15 @@ from uuid import uuid4
 
 import pytest
 
-from shared.app_build_compute import AppBuildTransferManifest
+from shared.app_build_compute import MAX_INPUT_TRANSFER_BYTES
+from shared.worker_transfer import FileTransferManifest
 from src.worker.remote.identity import LauncherIdentity
-from src.worker.remote.app_compile import AppCompileStages
+from src.worker.remote.app_compile import (
+    APP_COMPILE_OPERATION,
+    AppCompileStages,
+    app_compile_operation,
+)
+from src.worker.remote.file_operation import NamedFileOperationStages
 from src.worker.remote.launcher import Launcher
 from src.worker.remote.protocol import ControlEnvelope, MAX_FRAME_BYTES, fragment
 
@@ -153,13 +159,14 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         ).to_json(),
     ]
     launcher = Launcher(socket, identity=identity, secret="secret")
-    manifest = AppBuildTransferManifest(
+    manifest = FileTransferManifest(
         version=1,
         kind="app_build_inputs",
         total_size=1,
         sha256="a" * 64,
         chunk_size=1,
         chunk_count=1,
+        max_total_size=MAX_INPUT_TRANSFER_BYTES,
     )
     payload = {
         "stage_id": str(uuid4()),
@@ -170,7 +177,9 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
     try:
         await launcher.hello({})
         hello = json.loads(socket.send.await_args.args[0])
-        assert hello["compute_capabilities"] == [["app.compile", 2]]
+        assert hello["compute_capabilities"] == [
+            ["workspace.preflight", 1], ["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1],
+        ]
 
         warmed_socket = AsyncMock()
         warmed_socket.recv.side_effect = [
@@ -187,7 +196,7 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
         await warmed.start_agent_compute_template()
         await warmed.hello({})
         warmed_hello = json.loads(warmed_socket.send.await_args.args[0])
-        assert warmed_hello["compute_capabilities"] == [["app.compile", 2], ["agent.loop", 1], ["summary.compute", 1]]
+        assert warmed_hello["compute_capabilities"] == [["workspace.preflight", 1], ["workflow.graph.analyze", 1], ["app.preview.compile", 1], ["app.compile", 2], ["app.bundle", 1], ["agent.loop", 1], ["summary.compute", 1], ["audit.archive", 1], ["audit.export", 1], ["solution.archive.inspect", 1]]
         launcher.app_compiles.prepare(payload)
         assert launcher.inventory()["compute_stages"] == [
             {
@@ -195,11 +204,12 @@ async def test_launcher_advertises_compute_capabilities_only_after_compute_templ
                 "job_id": payload["job_id"],
                 "lease_token": payload["lease_token"],
                 "state": "prepared",
+                "operation": "app.compile.v2",
                 "input_sha256": manifest.sha256,
             }
         ]
     finally:
-        await launcher.app_compiles.shutdown()
+        await launcher.file_operations.shutdown()
 
 
 @pytest.mark.asyncio
@@ -215,16 +225,21 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
     socket = AsyncMock()
     launcher = Launcher(socket, identity=identity, secret="secret")
     launcher.session_generation = 1
-    launcher.app_compiles = AppCompileStages(
-        temp_dir=tmp_path, max_active=2, max_records=2
+    launcher.file_operations = NamedFileOperationStages(
+        operations={APP_COMPILE_OPERATION: app_compile_operation()},
+        temp_dir=tmp_path,
+        max_active=2,
+        max_records=2,
     )
-    manifest = AppBuildTransferManifest(
+    launcher.app_compiles = AppCompileStages(launcher.file_operations)
+    manifest = FileTransferManifest(
         version=1,
         kind="app_build_inputs",
         total_size=1,
         sha256="a" * 64,
         chunk_size=1,
         chunk_count=1,
+        max_total_size=MAX_INPUT_TRANSFER_BYTES,
     )
 
     def payload() -> dict[str, object]:
@@ -246,7 +261,7 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
             generation=1,
         )
         await asyncio.sleep(0)
-        assert launcher.app_compiles.retire_requested is False
+        assert launcher.file_operations.retire_requested is False
         assert not any(
             ControlEnvelope.from_json(call.args[0]).payload == {"event": "draining"}
             for call in socket.send.await_args_list
@@ -270,4 +285,72 @@ async def test_compute_stage_journal_drains_only_after_final_release(tmp_path) -
         with pytest.raises(RuntimeError, match="retirement"):
             launcher.app_compiles.prepare(payload())
     finally:
-        await launcher.app_compiles.shutdown()
+        await launcher.file_operations.shutdown()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("api_version", [None, "older-api"])
+async def test_external_launcher_rejects_an_api_without_its_build_before_bootstrap(api_version):
+    identity = LauncherIdentity(
+        launcher_id=uuid4(), incarnation_id=uuid4(), job_uid=None, pod_uid=None,
+        hostname="external", form="external", resource_uid="resource-1",
+    )
+    socket = AsyncMock()
+    socket.recv.return_value = json.dumps({
+        "event": "welcome", "session_generation": 1, "api_version": api_version,
+    })
+    launcher = Launcher(socket, identity=identity, secret="resource-control-key")
+    with pytest.raises(RuntimeError, match="build must match"):
+        await launcher.hello({})
+    assert socket.recv.await_count == 1
+    assert launcher.session_generation == 0
+
+
+@pytest.mark.asyncio
+async def test_external_launcher_accepts_matching_api_build():
+    from shared.version import get_version
+
+    identity = LauncherIdentity(
+        launcher_id=uuid4(), incarnation_id=uuid4(), job_uid=None, pod_uid=None,
+        hostname="external", form="external", resource_uid="resource-1",
+    )
+    socket = AsyncMock()
+    socket.recv.side_effect = [
+        json.dumps({"event": "welcome", "session_generation": 1, "api_version": get_version()}),
+        ControlEnvelope(
+            session_generation=1, sequence=1, kind="bootstrap",
+            payload={"requirements_content": None},
+        ).to_json(),
+    ]
+    launcher = Launcher(socket, identity=identity, secret="resource-control-key")
+    await launcher.hello({})
+    assert launcher.session_generation == 1
+
+
+@pytest.mark.asyncio
+async def test_compute_only_launcher_never_boots_or_accepts_privileged_runners(monkeypatch) -> None:
+    monkeypatch.setenv("BIFROST_WORKER_COMPUTE_ONLY", "1")
+    identity = LauncherIdentity(uuid4(), uuid4(), "job", "pod", "compute-pod", "job")
+    launcher = Launcher(AsyncMock(), identity=identity, secret="attempt-key")
+    launcher.template.start = Mock(side_effect=AssertionError("privileged template"))
+    launcher.helper = AsyncMock(side_effect=AssertionError("requirements helper"))
+    launcher.task = Mock()
+    real_monitor = launcher.monitor
+    launcher.monitor = Mock(return_value=None)
+    launcher.send = AsyncMock()
+    await launcher.start()
+    assert launcher.handlers == () and launcher.agent_template is None
+    from src.services.execution.requirements_setup_result import RequirementsInstallResult
+    assert RequirementsInstallResult.from_json_dict(launcher.requirements).ok
+    # Exercise one real telemetry tick: it must not revive a legacy template.
+    async def end_tick(_seconds):
+        raise asyncio.CancelledError
+    monkeypatch.setattr("src.worker.remote.launcher.asyncio.sleep", end_tick)
+    with pytest.raises(asyncio.CancelledError):
+        await real_monitor()
+    launcher.template.start.assert_not_called()
+    launcher.session_generation = 1
+    for action in ("platform_job", "workflow", "package_tool"):
+        await launcher.command({"id": action, "action": action, "payload": {}}, generation=1)
+        assert "error" in launcher.send.await_args.args[0]
+    launcher.helper.assert_not_awaited()

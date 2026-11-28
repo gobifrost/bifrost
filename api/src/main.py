@@ -63,6 +63,7 @@ from src.routers.integrations import router as integrations_router
 from src.routers.jobs import router as jobs_router
 from src.routers.knowledge_sources import router as knowledge_sources_router
 from src.routers.kubernetes import admin_router as kubernetes_admin_router
+from src.routers.worker_capacity import router as worker_capacity_router
 from src.routers.llm_config import router as llm_config_router
 from src.routers.maintenance import router as maintenance_router
 from src.routers.mcp import router as mcp_router
@@ -498,6 +499,7 @@ def create_app() -> FastAPI:
     app.include_router(memory_router)
     app.include_router(memory_admin_router)
     app.include_router(kubernetes_admin_router)
+    app.include_router(worker_capacity_router)
     app.include_router(required_instructions_router)
     app.include_router(required_instructions_admin_router)
     app.include_router(agents_router)

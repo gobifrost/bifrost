@@ -117,11 +117,14 @@ async def _request(method: str, path: str, token: str, *, data: dict | None = No
     return _json(response)
 
 
-async def _row(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None, *, expired_ok: bool = False) -> tuple[SystemConfig, dict]:
-    row = (await db.execute(select(SystemConfig).where(
+async def _row(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None, *, expired_ok: bool = False, lock: bool = False) -> tuple[SystemConfig, dict]:
+    query = select(SystemConfig).where(
         SystemConfig.category == "github_setup", SystemConfig.key == str(setup_id),
         SystemConfig.organization_id == scope,
-    ).execution_options(populate_existing=True))).scalar_one_or_none()
+    ).execution_options(populate_existing=True)
+    if lock:
+        query = query.with_for_update()
+    row = (await db.execute(query)).scalar_one_or_none()
     if row is None or row.created_by != str(user_id):
         raise fail("GitHub setup was not found.", 404)
     payload = json.loads(_get_fernet().decrypt(row.value_bytes or b""))
@@ -130,11 +133,12 @@ async def _row(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | Non
     return row, payload
 
 
-async def _save(db: AsyncSession, row: SystemConfig, payload: dict) -> None:
+async def _save(db: AsyncSession, row: SystemConfig, payload: dict, *, commit: bool = True) -> None:
     row.value_bytes = _get_fernet().encrypt(json.dumps(payload).encode())
     row.value_json = {"stage": payload["stage"]}
     row.updated_at = datetime.now(timezone.utc)
-    await db.commit()
+    if commit:
+        await db.commit()
 
 
 async def get_setup(db: AsyncSession, setup_id: UUID, user_id: str, scope: UUID | None) -> GitAppSetupResponse:
@@ -432,10 +436,13 @@ async def select_repository(db: AsyncSession, setup_id: UUID, installation_id: i
     return await get_setup(db, setup_id, user_id, scope)
 
 
-async def activate(db: AsyncSession, config: GitHubConfig, branch: str, updated_by: str) -> None:
+async def activate(db: AsyncSession, config: GitHubConfig, branch: str, updated_by: str, *, commit: bool = True) -> None:
     assert config.setup_id is not None
-    row, payload = await _row(db, config.setup_id, config.setup_user_id or "", config.scope, expired_ok=config.setup_executing)
     await lock_github_config(db, config.scope)
+    row, payload = await _row(db, config.setup_id, config.setup_user_id or "", config.scope,
+                              expired_ok=config.setup_executing, lock=True)
+    if payload["stage"] != "ready" or payload["repository"]["id"] != config.app["repository_id"]:
+        raise fail("The pending GitHub connection changed.", 409)
     current = await get_github_config(db, config.scope)
     if (current.generation if current else None) != payload["prior_generation"]:
         raise fail("The GitHub connection changed during setup. Review it before connecting.", 409)
@@ -444,9 +451,14 @@ async def activate(db: AsyncSession, config: GitHubConfig, branch: str, updated_
     await save_app_github_config(db, config, branch, updated_by, commit=False)
     payload["stage"] = "connected"
     payload["app"] = {key: value for key, value in payload["app"].items() if key not in {"private_key", "client_secret"}}
-    await _save(db, row, payload)
+    await _save(db, row, payload, commit=commit)
+    if commit:
+        await cleanup_setup_credentials(config.setup_id)
+
+
+async def cleanup_setup_credentials(setup_id: UUID) -> None:
     redis = await get_shared_redis()
-    await redis.delete(f"github:setup-user-token:{config.setup_id}")
+    await redis.delete(f"github:setup-user-token:{setup_id}")
 
 
 class GitAppCredentials:
@@ -501,14 +513,23 @@ class GitAppCredentials:
             return result["token"]
 
 
+async def validate_current_connection(db: AsyncSession, config: GitHubConfig) -> None:
+    """Recheck the saved/pending binding without minting a provider token."""
+    if config.auth_kind == "app":
+        await GitAppCredentials(db, config)._current()
+    else:
+        current = await get_github_config(db, config.scope)
+        if not current or current.auth_kind != "pat" or current.generation != config.generation or not current.token:
+            raise fail("The GitHub connection changed. Retry with the current connection.", 409)
+
+
 def credential_provider(db: AsyncSession, config: GitHubConfig):
     if config.auth_kind == "app":
         return GitAppCredentials(db, config).get_token
 
     async def personal_token() -> str:
-        current = await get_github_config(db, config.scope)
-        if not current or current.auth_kind != "pat" or current.generation != config.generation or not current.token:
-            raise fail("The GitHub connection changed. Retry with the current connection.", 409)
-        return current.token
+        await validate_current_connection(db, config)
+        assert config.token is not None
+        return config.token
 
     return personal_token

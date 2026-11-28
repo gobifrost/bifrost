@@ -57,12 +57,17 @@ async def test_queued_job_starts_a_zero_worker_pool_without_memory_wait_phase(db
         assert job.status == "queued" and job.phase is None and job.lease_token is None
 
 
-async def test_queued_job_uses_available_worker_memory(db, jobs):
+@pytest.mark.parametrize("has_compute", [False, True])
+async def test_queued_job_uses_available_worker_memory(db, jobs, has_compute):
     await jobs(memory_required_bytes=128 * MIB)
-    await _executor(db, "launcher", ["workflow.execute"], GIB)
+    worker_id = await _executor(db, "launcher", ["workflow.execute"], GIB)
+    if has_compute:
+        async with db.context() as session:
+            worker = await session.get(ExecutionWorker, worker_id)
+            worker.supported_compute = ["app.compile.v2"]
     pool = controller.WorkerPoolController(FakeCluster(), SETTINGS, SPEC)
 
-    assert await pool.launch_for_demand(POLICY) == []
+    assert len(await pool.launch_for_demand(POLICY)) == (0 if has_compute else 1)
 
 
 @pytest.mark.parametrize("change", [

@@ -20,7 +20,7 @@ import io
 import re
 import zipfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, BinaryIO
 
 import yaml
 
@@ -70,7 +70,7 @@ def _manifest_yaml(root_key: str, bodies: dict[str, dict[str, Any]]) -> str:
 
 def _put_zip_member(zf: zipfile.ZipFile, path: str, data: bytes | str) -> None:
     info = zipfile.ZipInfo(path, date_time=_ZIP_EPOCH)
-    info.compress_type = zipfile.ZIP_DEFLATED
+    info.compress_type = zf.compression
     zf.writestr(info, data)
 
 
@@ -109,17 +109,28 @@ def _file_payload_member(sf: Any) -> str:
     return f".bifrost/file-payloads/{digest}.bin.enc"
 
 
-def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None) -> bytes:
+def build_workspace_zip(
+    bundle: "SolutionBundle", *, password: str | None = None,
+    compression: int = zipfile.ZIP_DEFLATED,
+) -> bytes:
     """Serialize a (pre-remap) bundle into the installable workspace-zip shape.
 
     When ``password`` is provided and the bundle carries sensitive values
     (config_values or table_data), they are encrypted into ``.bifrost/secrets.enc``
     using the password.  Shareable exports (no password) never include the blob.
     """
-    solution = bundle.solution
     buf = io.BytesIO()
+    write_workspace_zip(bundle, buf, password=password, compression=compression)
+    return buf.getvalue()
 
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+
+def write_workspace_zip(
+    bundle: "SolutionBundle", destination: Path | BinaryIO, *,
+    password: str | None = None, compression: int = zipfile.ZIP_DEFLATED,
+) -> None:
+    """Serialize directly to a file without buffering the complete ZIP."""
+    solution = bundle.solution
+    with zipfile.ZipFile(destination, "w", compression) as zf:
 
         def put(path: str, data: bytes | str) -> None:
             _put_zip_member(zf, path, data)
@@ -327,8 +338,6 @@ def build_workspace_zip(bundle: "SolutionBundle", *, password: str | None = None
                 ),
             )
 
-    return buf.getvalue()
-
 
 async def build_workspace_zip_for_export(
     bundle: "SolutionBundle",
@@ -423,7 +432,7 @@ def _copy_source_members(
         ):
             continue
         info = zipfile.ZipInfo(name, date_time=_ZIP_EPOCH)
-        info.compress_type = zipfile.ZIP_DEFLATED
+        info.compress_type = dst.compression
         with src.open(name, "r") as inp, dst.open(info, "w") as out:
             while chunk := inp.read(8 * 1024 * 1024):
                 out.write(chunk)
@@ -453,60 +462,80 @@ async def add_live_content_to_workspace_zip_file(
     ) as dst:
         _copy_source_members(src, dst, readme=bundle.readme, exclude_runtime=True)
 
-        file_sidecar_entries: list[dict[str, Any]] = []
-        if bundle.solution_files:
-            from src.services.file_storage import FileStorageService
-            from src.services.solutions.file_payloads import (
-                write_encrypted_payload_member,
-                write_encrypted_payload_member_from_bytes,
-            )
+        await _write_live_export_content(dst, bundle, db, password=password)
 
-            storage = FileStorageService(db)
-            for sf in bundle.solution_files:
-                payload = _file_payload_member(sf)
-                if sf.content_bytes is not None:
-                    write_encrypted_payload_member_from_bytes(
-                        dst, payload, sf.content_bytes, password=password
-                    )
-                elif sf.s3_key:
-                    await write_encrypted_payload_member(
-                        dst,
-                        payload,
-                        storage.iter_raw_s3_chunks(sf.s3_key),
-                        password=password,
-                    )
-                else:
-                    continue
-                file_sidecar_entries.append(
-                    {
-                        "location": sf.location,
-                        "path": sf.path,
-                        "sha256": sf.sha256,
-                        "size": sf.size,
-                        "payload": payload,
-                        "encryption": "fernet-chunk-v1",
-                    }
+
+async def append_export_runtime_content(
+    source_zip: Path, bundle: "SolutionBundle", db: Any, dest: Path, *, password: str,
+) -> None:
+    """Keep verified compressed source unchanged; append API-encrypted content."""
+    import shutil
+    from shared.file_compute import run_owned_file_io
+
+    await run_owned_file_io(shutil.copyfile, source_zip, dest)
+    with zipfile.ZipFile(dest, "a", zipfile.ZIP_DEFLATED) as dst:
+        if password:
+            await _write_live_export_content(dst, bundle, db, password=password)
+
+
+async def _write_live_export_content(
+    dst: zipfile.ZipFile, bundle: "SolutionBundle", db: Any, *, password: str,
+) -> None:
+    from shared.file_compute import run_owned_file_io
+
+    file_sidecar_entries: list[dict[str, Any]] = []
+    if bundle.solution_files:
+        from src.services.file_storage import FileStorageService
+        from src.services.solutions.file_payloads import (
+            write_encrypted_payload_member,
+            write_encrypted_payload_member_from_bytes,
+        )
+
+        storage = FileStorageService(db)
+        for sf in bundle.solution_files:
+            payload = _file_payload_member(sf)
+            if sf.content_bytes is not None:
+                await run_owned_file_io(
+                    write_encrypted_payload_member_from_bytes,
+                    dst, payload, sf.content_bytes, password=password,
                 )
-
-        if bundle.config_values or bundle.table_data or bundle.table_document_ids or file_sidecar_entries:
-            from src.services.solutions.secrets_blob import (
-                SolutionContent,
-                encode_secrets_blob,
-            )
-
-            _put_zip_member(
-                dst,
-                ".bifrost/secrets.enc",
-                encode_secrets_blob(
-                    SolutionContent(
-                        config_values=bundle.config_values,
-                        table_data=bundle.table_data,
-                        table_document_ids=bundle.table_document_ids,
-                        solution_files=file_sidecar_entries,
-                    ),
+            elif sf.s3_key:
+                await write_encrypted_payload_member(
+                    dst,
+                    payload,
+                    storage.iter_raw_s3_chunks(sf.s3_key),
                     password=password,
-                ),
+                )
+            else:
+                continue
+            file_sidecar_entries.append(
+                {
+                    "location": sf.location,
+                    "path": sf.path,
+                    "sha256": sf.sha256,
+                    "size": sf.size,
+                    "payload": payload,
+                    "encryption": "fernet-chunk-v1",
+                }
             )
+
+    if bundle.config_values or bundle.table_data or bundle.table_document_ids or file_sidecar_entries:
+        from src.services.solutions.secrets_blob import (
+            SolutionContent,
+            encode_secrets_blob,
+        )
+
+        encrypted = await run_owned_file_io(
+            encode_secrets_blob,
+            SolutionContent(
+                config_values=bundle.config_values,
+                table_data=bundle.table_data,
+                table_document_ids=bundle.table_document_ids,
+                solution_files=file_sidecar_entries,
+            ),
+            password=password,
+        )
+        await run_owned_file_io(_put_zip_member, dst, ".bifrost/secrets.enc", encrypted)
 
 
 def add_encrypted_content_to_workspace_zip(

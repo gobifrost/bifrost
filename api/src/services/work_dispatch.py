@@ -215,6 +215,7 @@ async def wait_for_next_pass(
     finally:
         stopped.cancel()
         woken.cancel()
+        await asyncio.gather(stopped, woken, return_exceptions=True)
         wake.clear()
 
 
@@ -366,6 +367,7 @@ async def largest_budget(
             return None
         if launchable is not None:
             epoch, separator, reported = (generation or "").partition(":")
+            reported, _, _fingerprint = reported.partition(":")
             if not separator or not epoch.isdecimal() or reported != launchable:
                 return None
             current_generation = int(await db.scalar(select(func.coalesce(func.max(PackageChange.id), 0))) or 0)

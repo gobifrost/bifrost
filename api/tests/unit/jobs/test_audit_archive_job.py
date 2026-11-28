@@ -7,13 +7,24 @@ storage in tests/e2e/platform/test_audit_archiver.py.
 
 from __future__ import annotations
 
+import threading
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import Any, AsyncGenerator
 from uuid import UUID, uuid4
 
 import pytest
 
+from shared.audit_archive_compute import (
+    AUDIT_ARCHIVE_OPERATION,
+    decode_audit_archive_inputs,
+    decode_audit_archive_results,
+    encode_audit_archive_inputs,
+    encode_audit_archive_results,
+)
+from shared.file_compute import FileComputeResult
+from shared.worker_transfer import FileTransfer, ReceivedFileTransfer
 from src.config import Settings, get_settings
 from src.jobs.platform import audit_archive
 from src.jobs.platform.audit_archive import (
@@ -23,7 +34,12 @@ from src.jobs.platform.audit_archive import (
 )
 from src.jobs.platform.base import PlatformJobCancelled, PlatformJobFailure
 from src.models.contracts.audit_retention import AuditRetentionSettings
-from src.services.audit_retention.format import ArchiveRow, ArchiveVerifyError, Segment
+from src.services.audit_retention.format import (
+    ArchiveRow,
+    ArchiveVerifyError,
+    Segment,
+    build_segments,
+)
 from src.services.platform_job_lease import LeaseLost
 
 FROZEN_CUTOFF = datetime(2020, 3, 1, tzinfo=UTC)
@@ -35,6 +51,20 @@ class FakeContext:
         self.lease_token = uuid4()
         self.checkpoint = checkpoint
         self.checkpoints: list[tuple[dict[str, Any], str]] = []
+        self.compute_operations: list[str] = []
+        self.input_paths: list[Path] = []
+        self.output_paths: list[Path] = []
+
+    async def file_compute(self, operation: str, transfer: FileTransfer) -> FileComputeResult:
+        self.compute_operations.append(operation)
+        self.input_paths.append(transfer.path)
+        rows = decode_audit_archive_inputs(ReceivedFileTransfer(transfer.manifest, transfer.path))
+        output = encode_audit_archive_results(build_segments(rows))
+        self.output_paths.append(output.path)
+        return FileComputeResult(ReceivedFileTransfer(output.manifest, output.path), {})
+
+    async def authorize_effect(self, _db: object) -> bool:
+        return True
 
     async def report(
         self,
@@ -91,6 +121,7 @@ class Calls:
         *,
         job_id: UUID,
         lease_token: UUID,
+        authorize_effect: object | None = None,
     ) -> None:
         self.archived.append(segment)
 
@@ -104,7 +135,9 @@ class Calls:
         self.planned.append((cutoff, expiry))
         return {"cutoff": cutoff.isoformat(), "eligible_rows": 1}
 
-    async def cleanup_expired_exports(self, store: object, *, older_than: datetime) -> int:
+    async def cleanup_expired_exports(
+        self, store: object, *, older_than: datetime, authorize_effect: object,
+    ) -> int:
         self.export_cleanups.append(older_than)
         return 2
 
@@ -222,6 +255,103 @@ async def test_run_removes_expired_exports(calls: Calls) -> None:
 
 
 @pytest.mark.asyncio
+async def test_selected_rows_flow_through_validated_remote_artifacts(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = FakeContext()
+    main_thread = threading.get_ident()
+    codec_threads: list[int] = []
+
+    def encode(rows: object) -> FileTransfer:
+        codec_threads.append(threading.get_ident())
+        return encode_audit_archive_inputs(rows)  # type: ignore[arg-type]
+
+    def decode(transfer: ReceivedFileTransfer, *, expected_rows: object) -> tuple[Segment, ...]:
+        codec_threads.append(threading.get_ident())
+        return decode_audit_archive_results(transfer, expected_rows=expected_rows)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(audit_archive, "encode_audit_archive_inputs", encode)
+    monkeypatch.setattr(audit_archive, "decode_audit_archive_results", decode)
+
+    await run_audit_archive(context, AuditArchivePayload())
+
+    assert context.compute_operations == [AUDIT_ARCHIVE_OPERATION]
+    assert len(calls.archived) == 1
+    assert calls.archived[0].rows[0].action == "test.archive.unit"
+    assert codec_threads and all(thread != main_thread for thread in codec_threads)
+    assert all(not path.exists() for path in context.input_paths + context.output_paths)
+
+
+@pytest.mark.asyncio
+async def test_archive_never_falls_back_to_api_compression(calls: Calls) -> None:
+    context = FakeContext()
+    context.file_compute = None  # type: ignore[method-assign]
+
+    with pytest.raises(PlatformJobFailure, match="No eligible remote") as failure:
+        await run_audit_archive(context, AuditArchivePayload())
+
+    assert failure.value.code == "archive_compute_unavailable"
+    assert calls.archived == []
+
+
+def _crash_window_checkpoint(*, key: str, rows: int) -> dict[str, Any]:
+    return {
+        "dry_run": False,
+        "cutoff": FROZEN_CUTOFF.isoformat(),
+        "expiry": None,
+        "archived_rows": 7,
+        "archived_segments": 2,
+        "expired_segments": 0,
+        "expired_rows": 0,
+        "pending": {"key": key, "rows": rows},
+    }
+
+
+@pytest.mark.asyncio
+async def test_retry_counts_a_cataloged_pending_segment_once(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = FakeContext(checkpoint=_crash_window_checkpoint(key="_audit/committed", rows=3))
+    calls.batches = []
+
+    async def cataloged(_db: object, key: str, job_id: UUID) -> int | None:
+        assert key == "_audit/committed"
+        assert job_id == context.job_id
+        return 3
+
+    monkeypatch.setattr(audit_archive, "_cataloged_pending_rows", cataloged)
+
+    result = await run_audit_archive(context, AuditArchivePayload())
+
+    assert (result["archived_rows"], result["archived_segments"]) == (10, 3)
+    assert "pending" not in result
+    assert context.compute_operations == []
+    assert calls.archived == []
+    assert any("pending" not in checkpoint for checkpoint, _phase in context.checkpoints)
+
+
+@pytest.mark.asyncio
+async def test_retry_does_not_count_an_uncataloged_pending_segment(
+    calls: Calls, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    context = FakeContext(checkpoint=_crash_window_checkpoint(key="_audit/uncommitted", rows=3))
+    calls.batches = []
+
+    async def not_cataloged(_db: object, _key: str, _job_id: UUID) -> int | None:
+        return None
+
+    monkeypatch.setattr(audit_archive, "_cataloged_pending_rows", not_cataloged)
+
+    result = await run_audit_archive(context, AuditArchivePayload())
+
+    assert (result["archived_rows"], result["archived_segments"]) == (7, 2)
+    assert "pending" not in result
+    assert context.compute_operations == []
+    assert calls.archived == []
+    assert any("pending" not in checkpoint for checkpoint, _phase in context.checkpoints)
+
+
+@pytest.mark.asyncio
 async def test_missing_storage_fails_without_deleting(
     calls: Calls, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -252,6 +382,7 @@ async def test_verify_error_becomes_operator_failure(
         *,
         job_id: UUID,
         lease_token: UUID,
+        authorize_effect: object | None = None,
     ) -> None:
         raise ArchiveVerifyError("sha256 mismatch")
 
@@ -277,6 +408,7 @@ async def test_failure_keeps_counts_archived_before_it(
         *,
         job_id: UUID,
         lease_token: UUID,
+        authorize_effect: object | None = None,
     ) -> None:
         if archived:
             raise ArchiveVerifyError("sha256 mismatch")
@@ -308,6 +440,7 @@ async def test_lease_lost_during_expiry_cancels(
         expiry: datetime,
         job_id: UUID,
         lease_token: UUID,
+        authorize_effect: object | None = None,
         limit: int = 100,
     ) -> tuple[int, int]:
         raise LeaseLost(str(job_id))

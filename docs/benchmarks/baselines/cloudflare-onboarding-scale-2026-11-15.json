@@ -1,0 +1,81 @@
+{
+  "report": "cloudflare-onboarding-scale-2026-11-15",
+  "sanitization": {
+    "excluded": [
+      "credentials",
+      "tokens",
+      "secret bindings",
+      "account identifiers",
+      "worker, resource, and run identifiers not needed for the stated receipts"
+    ]
+  },
+  "phase7_onboarding": {
+    "api_source_commit": "1c7f2bba3",
+    "api_url": "https://bifrost-d1b5ca3f-oglx.eu1.netbird.services",
+    "worker_image": {
+      "registry_image": "registry.cloudflare.com/<account>/bifrost-spike-1400-p7@sha256:94466c72c3eea2adf2ed776d8e491076298974ae8c366659b18b656bde56d75e",
+      "digest": "sha256:94466c72c3eea2adf2ed776d8e491076298974ae8c366659b18b656bde56d75e"
+    },
+    "provider_deployment_image": {
+      "registry_image": "registry.cloudflare.com/<account>/bifrost-spike-1400-p7@sha256:2988f648a5325ef39f4425c3e5796cb9db81e2cfa1fe7e84ec258bf770aed87b",
+      "digest": "sha256:2988f648a5325ef39f4425c3e5796cb9db81e2cfa1fe7e84ec258bf770aed87b"
+    },
+    "settings_onboarding": {
+      "job_id": "f9a7e044-54f5-4ac9-a42c-181e5dc6e8d2",
+      "status": "succeeded",
+      "screenshot_path": "/tmp/bifrost-1400-spike/cloudflare-phase7/screenshots/onboarding-desktop.png"
+    },
+    "fresh_workflow": {
+      "execution_id": "367d596a-59fe-44aa-b1be-f271623ae417",
+      "status_at_deadline": "Pending",
+      "observation_deadline_seconds": 240,
+      "terminal_status": "Cancelled",
+      "warm_start_count": 0,
+      "container_started_count": 0,
+      "fresh_end_to_end_qualified": false
+    }
+  },
+  "phase6_native": {
+    "api_and_worker_source_commit": "304c0d130",
+    "provider_repair_source_commit": "1c7f2bba3",
+    "source_differential": "The manual provider repair and phase-six API/image are distinct from phase-seven settings onboarding.",
+    "bounded_successes": [
+      "external-worker application deployment",
+      "native agent execution",
+      "parent-child delegation with completed summaries",
+      "corrected five-summary backfill"
+    ],
+    "corrected_summary_scale": {
+      "backfill_status": "complete",
+      "summaries_succeeded": 5,
+      "summaries_failed": 0,
+      "physical_container_started_count": 2,
+      "distinct_external_claim_workers": 2,
+      "actual_cost_usd": "0.01108000",
+      "scale_two_execution_proven": true
+    },
+    "earlier_256_profile": {
+      "agent_status": "completed",
+      "summary_status": "failed",
+      "actual_cost_usd": "0.00391600"
+    },
+    "prior_scale_probe": {
+      "physical_container_started_count": 2,
+      "children_succeeded": 0,
+      "children_failed": 5,
+      "provider_reported_cost_usd": "0.0000",
+      "scale_two_execution_proven": false
+    },
+    "aggregate_native_usage": {
+      "reported": false,
+      "reason": "Receipts for other native agent and delegation usage are incomplete, so no accurate aggregate is available."
+    }
+  },
+  "claims_not_made": [
+    "current Cloudflare capacity conformance",
+    "fresh end-to-end workflow qualification from settings onboarding",
+    "general workflow scale or recovery qualification",
+    "aggregate provider cost or invoice attribution",
+    "production readiness"
+  ]
+}

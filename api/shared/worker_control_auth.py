@@ -29,6 +29,13 @@ def external_worker_control_key(
     ).hexdigest()
 
 
+def kubernetes_compute_control_key(root_key: str, worker_id: UUID, lease_token: UUID) -> str:
+    """A compute pod cannot derive a sibling worker or retry's credential."""
+    binding = json.dumps([str(worker_id), str(lease_token)], separators=(",", ":")).encode()
+    return hmac.new(root_key.encode(), b"bifrost.kubernetes.compute.control.v1\0" + binding,
+                    hashlib.sha256).hexdigest()
+
+
 def external_worker_environment(
     base: Mapping[str, str], provider_key: str, worker_id: UUID, resource_uid: str,
     *, hostname: str,

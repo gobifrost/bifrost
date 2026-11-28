@@ -202,6 +202,7 @@ CLI_ROUTES: tuple[str, ...] = ("/api/version",)
 # remains an opaque JSON/YAML dictionary, so no newer CLI is required.
 # Standalone field placements are additive within that optional layout.
 # Integration choice labels are additive metadata; existing scalar options and CLI minimum are unchanged.
+# Optional PlatformJob executor attribution is additive; older CLIs ignore it.
 # Optional integration workflow shortcuts are additive; existing CLI callers remain compatible.
 EXPECTED_CONTRACT_FINGERPRINT = (
     # ApplicationCreate.app_model default flipped inline_v1 → standalone_v2
@@ -431,11 +432,17 @@ EXPECTED_CONTRACT_FINGERPRINT = (
     # omit it and retain automatic/legacy-normal scheduling.
     # Private Solution source IDs and setup purpose/scope are additive (2026-11-09).
     # Preserve both merged surfaces; existing CLI minimum stays unchanged.
-    # Hardware-only capacity profiles and optional PlatformJob attribution
-    # preserve the CLI/SDK wire shapes and MIN_CLI_VERSION.
-    # Inline-code permission clarification is description-only.
-    # Browser frame sign-in adds shared DTOs without changing a CLI/SDK wire shape.
-    "0a2823174ef129f3cf1b0f52f745856749a9233f2cc38369b4f25df7ba6c1bb0"
+    # Preserve the existing hardware-only capacity profile; worker Hello owns
+    # capabilities. Unreleased provider job declarations have been removed.
+    # Cloudflare setup DTOs are additive; MIN_CLI_VERSION remains unchanged.
+    # Optional PlatformJob executor attribution is additive and sanitizes
+    # provider resource identifiers from the CLI-visible response.
+    # Other Jobs is an additive Cloudflare overflow rule with a default;
+    # existing CLI requests and minimum version remain compatible.
+    # Inline-code permission clarification only changes an existing field description.
+    # CLI shapes and MIN_CLI_VERSION remain unchanged.
+    # Browser frame sign-in adds compatible shared DTOs.
+    "7170aad98b28ea9bd9a8ef5098d2c2659fc2884367cd1b61ae1555231e148e81"
 )
 
 

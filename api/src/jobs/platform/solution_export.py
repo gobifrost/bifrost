@@ -22,7 +22,7 @@ async def run_solution_export(
     from src.jobs.schedulers.solution_export_jobs import run_solution_export_job
 
     await context.report("Building Solution backup", percent=5)
-    if not await run_solution_export_job(payload.export_job_id):
+    if not await run_solution_export_job(payload.export_job_id, context=context):
         raise PlatformJobFailure(
             "solution_export_failed",
             "Solution backup export failed; see the export job for details.",

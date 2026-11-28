@@ -6087,6 +6087,41 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/worker-capacity/cloudflare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Cloudflare Capacity */
+        get: operations["get_cloudflare_capacity_api_admin_worker_capacity_cloudflare_get"];
+        put?: never;
+        /** Connect Cloudflare Capacity */
+        post: operations["connect_cloudflare_capacity_api_admin_worker_capacity_cloudflare_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/worker-capacity/cloudflare/rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Put Cloudflare Capacity Rules */
+        put: operations["put_cloudflare_capacity_rules_api_admin_worker_capacity_cloudflare_rules_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/required-instructions": {
         parameters: {
             query?: never;
@@ -16421,6 +16456,110 @@ export interface components {
              */
             failed: number;
         };
+        /** CloudflareCapacityAccount */
+        CloudflareCapacityAccount: {
+            /** Id */
+            id: string;
+            /** Name */
+            name: string;
+        };
+        /** CloudflareCapacityConnectAccepted */
+        CloudflareCapacityConnectAccepted: {
+            /**
+             * Job Id
+             * Format: uuid
+             */
+            job_id: string;
+            connection: components["schemas"]["CloudflareCapacityStatus"];
+        };
+        /**
+         * CloudflareCapacityConnectRequest
+         * @description Write-only credential and setup choices; never returned by the API.
+         */
+        CloudflareCapacityConnectRequest: {
+            /** Api Key */
+            api_key?: string | null;
+            /** Account Id */
+            account_id?: string | null;
+            /** Bifrost Api Origin */
+            bifrost_api_origin?: string | null;
+            /** Max Workers */
+            max_workers?: number | null;
+        };
+        /**
+         * CloudflareCapacityRules
+         * @description Triggers for starting capacity; admitted workers retain their capabilities.
+         */
+        CloudflareCapacityRules: {
+            /**
+             * Workflows
+             * @default true
+             */
+            workflows: boolean;
+            /**
+             * Agents
+             * @default true
+             */
+            agents: boolean;
+            /**
+             * App Builds
+             * @default true
+             */
+            app_builds: boolean;
+            /**
+             * Other Jobs
+             * @default true
+             */
+            other_jobs: boolean;
+            /**
+             * Prefer Kubernetes
+             * @default false
+             */
+            prefer_kubernetes: boolean;
+        };
+        /**
+         * CloudflareCapacityStatus
+         * @description Redacted setup state. Credentials are never part of this contract.
+         */
+        CloudflareCapacityStatus: {
+            /**
+             * Configured
+             * @default false
+             */
+            configured: boolean;
+            /**
+             * Active
+             * @default false
+             */
+            active: boolean;
+            /**
+             * Status
+             * @default unconfigured
+             * @enum {string}
+             */
+            status: "unconfigured" | "provisioning" | "account_selection_required" | "ready" | "failed";
+            /** Account Id */
+            account_id?: string | null;
+            /** Accounts */
+            accounts?: components["schemas"]["CloudflareCapacityAccount"][];
+            /** Endpoint */
+            endpoint?: string | null;
+            /** Scope */
+            scope?: string | null;
+            /** Image Digest */
+            image_digest?: string | null;
+            /** Worker Version */
+            worker_version?: string | null;
+            /** Max Workers */
+            max_workers?: number | null;
+            /** Memory Limit Bytes */
+            memory_limit_bytes?: number | null;
+            /** Last Job Id */
+            last_job_id?: string | null;
+            /** Error */
+            error?: string | null;
+            rules?: components["schemas"]["CloudflareCapacityRules"];
+        };
         /**
          * CommitHistoryResponse
          * @description Response with commit history and pagination
@@ -26172,6 +26311,90 @@ export interface components {
             /** Refreshed At */
             refreshed_at: string;
         };
+        /**
+         * PlatformWorkerCapacityOverview
+         * @description Shared managed-worker bounds and counts for operator diagnostics.
+         */
+        PlatformWorkerCapacityOverview: {
+            /** Global Managed Limit */
+            global_managed_limit: number;
+            /** Managed In Use */
+            managed_in_use: number;
+            /** Cloudflare Profile Limit */
+            cloudflare_profile_limit?: number | null;
+            /** Cleanup Pending Count */
+            cleanup_pending_count: number;
+            /** Forms */
+            forms?: components["schemas"]["PlatformWorkerFormCapacity"][];
+        };
+        /**
+         * PlatformWorkerFormCapacity
+         * @description Canonical worker counts for a form, independent of Redis liveness.
+         */
+        PlatformWorkerFormCapacity: {
+            /**
+             * Form
+             * @enum {string}
+             */
+            form: "job" | "external" | "static";
+            /** Active */
+            active: number;
+            /** Reserved */
+            reserved: number;
+            /** Starting */
+            starting: number;
+            /** Ready */
+            ready: number;
+            /** Draining */
+            draining: number;
+        };
+        /**
+         * PlatformWorkerIncarnation
+         * @description Operator-safe lifecycle record for one canonical execution worker.
+         */
+        PlatformWorkerIncarnation: {
+            /**
+             * Worker Id
+             * Format: uuid
+             */
+            worker_id: string;
+            /**
+             * Form
+             * @enum {string}
+             */
+            form: "job" | "external" | "static";
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "reserved" | "starting" | "ready" | "draining" | "lost" | "retired";
+            /** Execution Lane */
+            execution_lane: string;
+            /** Version */
+            version?: string | null;
+            /** Capacity Scope */
+            capacity_scope?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Ready At */
+            ready_at?: string | null;
+            /** Ended At */
+            ended_at?: string | null;
+            /** End Reason */
+            end_reason?: string | null;
+            /** Memory Budget Bytes */
+            memory_budget_bytes?: number | null;
+            /**
+             * Memory Reserved Bytes
+             * @default 0
+             */
+            memory_reserved_bytes: number;
+            /** Cleanup Confirmed */
+            cleanup_confirmed?: boolean | null;
+        };
         /** Policy */
         Policy: {
             /** Name */
@@ -26324,6 +26547,7 @@ export interface components {
             last_heartbeat?: string | null;
             /** Processes */
             processes?: components["schemas"]["ProcessInfo"][];
+            incarnation?: components["schemas"]["PlatformWorkerIncarnation"] | null;
         };
         /**
          * PoolStatsResponse
@@ -26410,6 +26634,7 @@ export interface components {
              * @description Memory limit of the worker container in bytes (from cgroup, -1 if unlimited)
              */
             memory_max_bytes?: number | null;
+            incarnation?: components["schemas"]["PlatformWorkerIncarnation"] | null;
         };
         /**
          * PoolsListResponse
@@ -26420,6 +26645,7 @@ export interface components {
             pools: components["schemas"]["PoolSummary"][];
             /** Total */
             total: number;
+            capacity_overview?: components["schemas"]["PlatformWorkerCapacityOverview"] | null;
         };
         /**
          * PreflightIssueResponse
@@ -44183,6 +44409,92 @@ export interface operations {
             };
         };
     };
+    get_cloudflare_capacity_api_admin_worker_capacity_cloudflare_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudflareCapacityStatus"];
+                };
+            };
+        };
+    };
+    connect_cloudflare_capacity_api_admin_worker_capacity_cloudflare_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudflareCapacityConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudflareCapacityConnectAccepted"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    put_cloudflare_capacity_rules_api_admin_worker_capacity_cloudflare_rules_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["CloudflareCapacityRules"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CloudflareCapacityStatus"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_required_instructions_api_required_instructions_get: {
         parameters: {
             query?: never;
@@ -55156,7 +55468,10 @@ export interface operations {
     };
     list_pools_api_platform_workers_get: {
         parameters: {
-            query?: never;
+            query?: {
+                /** @description Include canonical execution-worker lifecycle records and capacity overview */
+                include_incarnations?: boolean;
+            };
             header?: never;
             path?: never;
             cookie?: never;
@@ -55170,6 +55485,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["PoolsListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

@@ -364,6 +364,61 @@ class WorkerCapacityResource(BaseModel):
     out_of_memory: bool = Field(default=False, strict=True)
 
 
+class CloudflareCapacityRules(BaseModel):
+    """Triggers for starting capacity; admitted workers retain their capabilities."""
+
+    model_config = ConfigDict(extra="forbid")
+    workflows: bool = True
+    agents: bool = True
+    app_builds: bool = True
+    other_jobs: bool = True
+    prefer_kubernetes: bool = False
+
+
+class CloudflareCapacityAccount(BaseModel):
+    id: str = Field(pattern=r"^[0-9a-f]{32}$")
+    name: str
+
+
+class CloudflareCapacityConnectRequest(BaseModel):
+    """Write-only credential and setup choices; never returned by the API."""
+
+    api_key: SecretStr | None = Field(default=None, min_length=1, max_length=512)
+    account_id: str | None = Field(default=None, pattern=r"^[0-9a-f]{32}$")
+    bifrost_api_origin: str | None = Field(default=None, max_length=2048)
+    max_workers: int | None = Field(default=None, ge=1, le=50)
+
+
+class CloudflareCapacityStatus(BaseModel):
+    """Redacted setup state. Credentials are never part of this contract."""
+
+    configured: bool = False
+    active: bool = False
+    status: Literal["unconfigured", "provisioning", "account_selection_required", "ready", "failed"] = "unconfigured"
+    account_id: str | None = None
+    accounts: list[CloudflareCapacityAccount] = Field(default_factory=list)
+    endpoint: str | None = None
+    scope: str | None = None
+    image_digest: str | None = None
+    worker_version: str | None = None
+    max_workers: int | None = None
+    memory_limit_bytes: int | None = None
+    last_job_id: UUID | None = None
+    error: str | None = None
+    rules: CloudflareCapacityRules = Field(default_factory=CloudflareCapacityRules)
+
+
+class CloudflareCapacityConnectAccepted(BaseModel):
+    job_id: UUID
+    connection: CloudflareCapacityStatus
+
+
+class CloudflareCapacityApplyPayload(BaseModel):
+    """A reference to encrypted installation configuration, never a credential."""
+
+    generation: UUID
+
+
 class PlatformJobExecutorAttribution(BaseModel):
     """Sanitized durable identity of the worker that last ran a PlatformJob."""
 
@@ -374,6 +429,45 @@ class PlatformJobExecutorAttribution(BaseModel):
     compute_capability: str | None = None
     stage_id: UUID | None = None
     input_sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+
+
+class PlatformWorkerIncarnation(BaseModel):
+    """Operator-safe lifecycle record for one canonical execution worker."""
+
+    worker_id: UUID
+    form: Literal["job", "external", "static"]
+    state: Literal["reserved", "starting", "ready", "draining", "lost", "retired"]
+    execution_lane: str
+    version: str | None = None
+    capacity_scope: str | None = None
+    created_at: datetime
+    ready_at: datetime | None = None
+    ended_at: datetime | None = None
+    end_reason: str | None = None
+    memory_budget_bytes: int | None = None
+    memory_reserved_bytes: int = 0
+    cleanup_confirmed: bool | None = None
+
+
+class PlatformWorkerFormCapacity(BaseModel):
+    """Canonical worker counts for a form, independent of Redis liveness."""
+
+    form: Literal["job", "external", "static"]
+    active: int = Field(ge=0)
+    reserved: int = Field(ge=0)
+    starting: int = Field(ge=0)
+    ready: int = Field(ge=0)
+    draining: int = Field(ge=0)
+
+
+class PlatformWorkerCapacityOverview(BaseModel):
+    """Shared managed-worker bounds and counts for operator diagnostics."""
+
+    global_managed_limit: int = Field(ge=0)
+    managed_in_use: int = Field(ge=0)
+    cloudflare_profile_limit: int | None = Field(default=None, ge=0)
+    cleanup_pending_count: int = Field(ge=0)
+    forms: list[PlatformWorkerFormCapacity] = Field(default_factory=list)
 
 
 class SolutionAppBuildCandidate(BaseModel):

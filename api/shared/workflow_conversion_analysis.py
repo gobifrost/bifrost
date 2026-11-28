@@ -29,20 +29,21 @@ from shared.workflow_conversion_sdk import (
     sdk_object_methods,
 )
 
-ANALYZER_VERSION = "30"
-MAX_SOURCE_BYTES = 2_000_000
-MAX_AST_NODES = 256_000
-# Oversized sources fall back to a streaming token scan, which is bounded
-# separately: it never retains the file's tokens or a syntax tree.
-MAX_LEXICAL_SOURCE_BYTES = 16_000_000
-MAX_LEXICAL_IMPORTS = 1_024
-MAX_LEXICAL_IMPORT_CHARS = 4_096
-MAX_EVENTS_PER_SCOPE = 2_048
-MAX_DEPENDENCIES = 256
-MAX_GRAPH_STEPS = 10_000
-MAX_SDK_CALLS = 2_048
-MAX_EVIDENCE = 4_096
-MAX_SELECTOR_VALUE_CHARS = 2_000
+from shared.workflow_conversion_limits import (
+    ANALYZER_VERSION as ANALYZER_VERSION,
+    MAX_SOURCE_BYTES as MAX_SOURCE_BYTES,
+    MAX_AST_NODES as MAX_AST_NODES,
+    MAX_LEXICAL_SOURCE_BYTES as MAX_LEXICAL_SOURCE_BYTES,
+    MAX_LEXICAL_IMPORTS as MAX_LEXICAL_IMPORTS,
+    MAX_LEXICAL_IMPORT_CHARS as MAX_LEXICAL_IMPORT_CHARS,
+    MAX_EVENTS_PER_SCOPE as MAX_EVENTS_PER_SCOPE,
+    MAX_DEPENDENCIES as MAX_DEPENDENCIES,
+    MAX_GRAPH_STEPS as MAX_GRAPH_STEPS,
+    MAX_SDK_CALLS as MAX_SDK_CALLS,
+    MAX_EVIDENCE as MAX_EVIDENCE,
+    MAX_SELECTOR_VALUE_CHARS as MAX_SELECTOR_VALUE_CHARS,
+)
+
 _MODULE_INIT = "<import>"
 # ``isinstance`` against these built-ins proves a value is ordinary data.
 _ISINSTANCE_DATA_KINDS = {

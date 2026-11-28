@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete
 
 from src.jobs.schedulers import platform_jobs as scheduler
 from src.models.orm.execution_workers import ExecutionWorker
@@ -33,6 +34,7 @@ def _worker(*, capability: str = "app.compile.v2") -> ExecutionWorker:
     return ExecutionWorker(
         id=uuid4(),
         form="external",
+        state="ready",
         capacity_scope="cloudflare",
         capacity_resource_uid="provider-private-resource",
         supported_compute=[capability],
@@ -134,19 +136,23 @@ async def test_stale_lease_or_remote_owner_cannot_record_attribution(
 async def test_retry_claim_clears_old_stage_and_rebinds_worker(
     db_session: AsyncSession, platform_context
 ):
-    old_worker = _worker()
-    new_worker = _worker()
-    job = _job()
+    old_worker = _worker(capability="app.bundle.v1")
+    new_worker = _worker(capability="app.bundle.v1")
+    job = _job(job_type="application.publish")
+    # Keep this direct claim test out of the live worker's local queue when
+    # it runs alongside cross-process tests. Only the caller below owns it.
+    job.execution_backend = "fixture-attribution"
     job.attempt = 1
     job.executor_attempt = 1
     job.executor_worker_id = old_worker.id
     job.executor_stage_id = uuid4()
     job.executor_input_sha256 = "a" * 64
-    job.executor_compute_capability = "app.compile.v2"
+    job.executor_compute_capability = "app.bundle.v1"
     db_session.add_all((old_worker, new_worker, job))
     await db_session.commit()
 
     claim = await scheduler.claim_platform_job(
+        backend="fixture-attribution",
         fits_bytes=2**40,
         job_types=frozenset((job.job_type,)),
         executor_worker_id=new_worker.id,
@@ -188,3 +194,102 @@ async def test_recorded_compute_identity_only_accepts_identical_replay(
     await db_session.refresh(job)
     assert job.executor_stage_id == stage
     assert job.executor_input_sha256 == "a" * 64
+
+
+@pytest.mark.asyncio
+async def test_file_compute_stage_advances_only_from_its_exact_predecessor(
+    db_session: AsyncSession, platform_context,
+):
+    job, lease = await _running_job(db_session)
+    worker, other_worker = _worker(), _worker()
+    db_session.add_all((worker, other_worker))
+    await db_session.commit()
+    first_stage, second_stage = uuid4(), uuid4()
+    first = dict(
+        worker_id=worker.id,
+        compute_capability="app.compile.v2",
+        stage_id=first_stage,
+        input_sha256="a" * 64,
+    )
+    assert await service.record_platform_job_executor_attribution(job.id, lease, **first)
+
+    assert await service.record_platform_job_executor_attribution(
+        job.id, lease, worker_id=worker.id, compute_capability="app.compile.v2",
+        stage_id=second_stage, input_sha256="b" * 64,
+        predecessor_stage_id=first_stage,
+    )
+    await db_session.refresh(job)
+    assert job.executor_stage_id == second_stage
+    assert job.executor_input_sha256 == "b" * 64
+
+    with pytest.raises(service.PlatformJobExecutorAttributionConflict):
+        await service.record_platform_job_executor_attribution(
+            job.id, lease, worker_id=worker.id, compute_capability="app.compile.v2",
+            stage_id=uuid4(), input_sha256="c" * 64,
+            predecessor_stage_id=first_stage,
+        )
+    with pytest.raises(service.PlatformJobExecutorAttributionConflict):
+        await service.record_platform_job_executor_attribution(
+            job.id, lease, worker_id=other_worker.id, compute_capability="app.compile.v2",
+            stage_id=uuid4(), input_sha256="d" * 64,
+            predecessor_stage_id=second_stage,
+        )
+
+
+@pytest.mark.parametrize("next_capability,accepted", [
+    ("audit.archive.v1", True), ("audit.export.v1", False),
+])
+async def test_next_stage_requires_a_code_declared_capability_even_on_a_capable_image(
+    db_session: AsyncSession, platform_context, monkeypatch, next_capability, accepted,
+):
+    from dataclasses import replace
+    from src.jobs.platform import catalog
+
+    job, lease = await _running_job(db_session)
+    metadata = catalog.get_platform_job_metadata(job.job_type)
+    assert metadata is not None
+    monkeypatch.setattr(catalog, "_METADATA", {
+        **catalog._METADATA,
+        metadata.job_type: replace(metadata, additional_compute_capabilities=("audit.archive.v1",)),
+    })
+    worker = _worker()
+    worker.supported_compute = ["app.compile.v2", "audit.archive.v1", "audit.export.v1"]
+    db_session.add(worker)
+    await db_session.commit()
+    first, following = uuid4(), uuid4()
+    assert await service.record_platform_job_executor_attribution(
+        job.id, lease, worker_id=worker.id, compute_capability="app.compile.v2",
+        stage_id=first, input_sha256="a" * 64,
+    )
+    assert await service.record_platform_job_executor_attribution(
+        job.id, lease, worker_id=worker.id, compute_capability=next_capability,
+        stage_id=following, input_sha256="b" * 64, predecessor_stage_id=first,
+    ) is accepted
+    await db_session.refresh(job)
+    assert job.executor_stage_id == (following if accepted else first)
+
+
+@pytest.mark.parametrize("complete", [False, True])
+async def test_solution_claim_requires_both_inspection_and_compilation(
+    db_session: AsyncSession, platform_context, complete,
+):
+    worker = _worker(capability="solution.archive.inspect.v1")
+    if complete:
+        worker.supported_compute = ["solution.archive.inspect.v1", "app.compile.v2"]
+    job = _job(job_type="solution.deploy")
+    db_session.add_all((worker, job))
+    await db_session.commit()
+    try:
+        claim = await scheduler.claim_platform_job(
+            fits_bytes=2**40, job_types=frozenset({job.job_type}), executor_worker_id=worker.id,
+        )
+        assert (claim is not None) is complete
+        await db_session.refresh(job)
+        assert job.attempt == int(complete)
+        assert job.executor_worker_id == (worker.id if complete else None)
+        if claim is not None:
+            assert claim.id == job.id
+    finally:
+        await db_session.execute(delete(PlatformJob).where(PlatformJob.id == job.id))
+        await db_session.execute(delete(ExecutionWorker).where(ExecutionWorker.id == worker.id))
+        await db_session.commit()

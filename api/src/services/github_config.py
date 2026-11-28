@@ -136,6 +136,8 @@ async def save_github_config(
     repo_url: str | None,
     branch: str,
     updated_by: str,
+    *,
+    commit: bool = True,
 ) -> None:
     """
     Save GitHub configuration to database.
@@ -192,7 +194,8 @@ async def save_github_config(
         )
         db.add(new_config)
 
-    await db.commit()
+    if commit:
+        await db.commit()
     logger.info(f"Saved GitHub config for org {org_uuid or 'GLOBAL'}")
 
 

@@ -30,6 +30,7 @@ from src.jobs.platform.catalog import (
     list_platform_job_metadata,
 )
 from src.jobs.platform.policy import PlatformJobPolicy
+from src.core.database import get_db_context
 from src.models.contracts.kubernetes import (
     POLICY_BOUNDS,
     KubernetesExecutionJobType,
@@ -50,6 +51,7 @@ from src.services.worker_pool.external_client import (
     CapacityProviderUnavailable,
     ExternalCapacityClient,
 )
+from src.services.worker_pool.connection import load_capacity_provider_connection
 from src.services.worker_pool.external_policy import validate_external_policy
 
 logger = logging.getLogger(__name__)
@@ -433,16 +435,17 @@ class KubernetesExecutionService:
 
         settings = get_settings()
         profile = None
-        if settings.worker_capacity_url or settings.worker_capacity_token:
+        # The connection read must finish before provider I/O so no database
+        # transaction stays open while the remote capacity endpoint is slow.
+        async with get_db_context() as connection_db:
+            connection = await load_capacity_provider_connection(connection_db, settings)
+        if connection is not None:
             # Fetch before the policy advisory lock; a slow provider must not
             # block other administrators while holding the settings lock.
             try:
-                if not settings.worker_capacity_url or not settings.worker_capacity_token:
-                    raise ValueError("Incomplete capacity provider configuration")
                 async with httpx.AsyncClient() as http:
                     client = ExternalCapacityClient(
-                        settings.worker_capacity_url,
-                        settings.worker_capacity_token.get_secret_value(),
+                        connection.endpoint, connection.token,
                         http=http,
                     )
                     profile = await client.profile()
@@ -567,5 +570,30 @@ async def decide_execution_backend(
         return "local"
     policy = await load_kubernetes_policy(db)
     if policy.isolated_jobs_enabled and definition.job_type in policy.enabled_job_types:
+        from src.config import get_settings
+        from src.jobs.platform.catalog import get_platform_job_metadata
+        from src.jobs.platform.policy import EXTERNAL_ISOLATED_BACKEND
+        from src.models.orm.execution_workers import ExecutionWorker
+        from src.services.kubernetes_control import may_manage_jobs
+        from src.services.worker_pool.connection import load_capacity_provider_connection
+        from src.services.worker_pool.sizing import LIVE_STATES
+        from shared.worker_compute import WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES
+
+        settings = get_settings()
+        connection = await load_capacity_provider_connection(db, settings)
+        metadata = get_platform_job_metadata(definition.job_type)
+        if (connection is not None and metadata is not None
+                and metadata.compute_capability is not None
+                and metadata.required_compute_capabilities.issubset(WORKER_IMAGE_COMPUTE_CAPABILITY_NAMES)):
+            local_path = await may_manage_jobs(settings) or bool(await db.scalar(
+                select(ExecutionWorker.id).where(
+                    ExecutionWorker.form == "static", ExecutionWorker.state.in_(LIVE_STATES),
+                    ExecutionWorker.execution_lane == "normal",
+                ).limit(1)
+            ))
+            # A new isolated Kubernetes pod is scale-out, not an already
+            # available local worker. Use the retained provider preference.
+            if not local_path or (connection.rules.app_builds and not connection.rules.prefer_kubernetes):
+                return EXTERNAL_ISOLATED_BACKEND
         return "kubernetes"
     return "local"
