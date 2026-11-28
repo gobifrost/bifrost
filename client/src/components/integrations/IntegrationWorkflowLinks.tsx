@@ -222,7 +222,7 @@ export function IntegrationWorkflowLinks({
 				role="group"
 				aria-label="Integration workflows"
 				ref={toolbarRef}
-				className="relative flex w-full min-w-0 items-center justify-end gap-2 sm:w-0 sm:flex-1"
+				className="relative flex w-0 min-w-0 flex-1 items-center justify-end gap-2"
 			>
 				<div
 					ref={measurementRef}

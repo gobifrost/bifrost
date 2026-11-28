@@ -85,8 +85,8 @@ export function IntegrationPageHeader({
 					</Tooltip>
 				)}
 			</div>
-			{status}
-			<div className="ml-auto flex shrink-0 items-center gap-2">
+			{status && <div className="shrink-0">{status}</div>}
+			<div className="ml-auto flex min-w-max flex-1 items-center justify-end gap-2">
 				{workflowActions}
 					{hasMoreActions && (
 						<DropdownMenu>

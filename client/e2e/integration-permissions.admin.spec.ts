@@ -203,28 +203,25 @@ test.describe("Integration permissions", () => {
 			await expect(page).toHaveURL(
 				new RegExp(`/integrations/${integrationId}$`),
 			);
-			await expect(
-				page.getByRole("button", { name: "Test Connection", exact: true }),
-			).toBeVisible();
-			await expect(
-				page.getByRole("button", { name: "Generate SDK", exact: true }),
-			).toHaveCount(0);
-			await expect(
-				page.getByRole("button", { name: "Edit", exact: true }),
-			).toHaveCount(0);
 			await page
-				.getByRole("button", { name: "Defaults", exact: true })
+				.getByRole("button", { name: /^Configuration:/ })
 				.click();
 			await expect(
-				page.getByRole("button", {
-					name: "Configure default values",
-					exact: true,
-				}),
+				page.getByRole("button", { name: "Configure", exact: true }),
 			).toHaveCount(0);
 			await page.keyboard.press("Escape");
 
 			await page
-				.getByRole("button", { name: "Test Connection", exact: true })
+				.getByRole("button", { name: "More integration actions" })
+				.click();
+			await expect(
+				page.getByRole("menuitem", { name: "Generate SDK", exact: true }),
+			).toHaveCount(0);
+			await expect(
+				page.getByRole("menuitem", { name: "Edit Integration", exact: true }),
+			).toHaveCount(0);
+			await page
+				.getByRole("menuitem", { name: "Test Connection", exact: true })
 				.click();
 			const dialog = page.getByRole("dialog", {
 				name: "Test Integration Connection",
